@@ -1065,7 +1065,7 @@ describe('what the check simulates', () => {
         replayCheck.observations = [evenObservation({ fights: 6 })];
 
         return replayCheck.check().then(() => {
-            expect(game.lastRun.isTaskFight).toBe(false);
+            expect(game.lastRun.taskDamageMode).toBe('off');
         });
     });
 

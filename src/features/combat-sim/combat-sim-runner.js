@@ -13,6 +13,7 @@ import config from '../../core/config.js';
 import { isMobileMode } from '../../utils/mobile.js';
 import { createIdlePoolReaper } from '../../utils/worker-pool.js';
 import { deriveSeed } from './engine/rng.js';
+import { TASK_DAMAGE_OFF, normalizeTaskDamageMode } from './engine/task-damage-mode.js';
 
 let workerBlobURL = null;
 /** Wrappers running a chunk right now. `cancelSimulation` terminates these. */
@@ -567,16 +568,19 @@ function mergeSimResults(results) {
  * @param {number} [params.seed] - RNG seed. Two runs sharing a seed draw the same
  *   random numbers, so comparing them measures the change instead of sampling
  *   noise. Omit for an independent random sample (the default).
- * @param {boolean} [params.isTaskFight] - Override: treat every fight in the run
- *   as the attacker's task fight. Leave it off (the default) unless the spawn
- *   table has already been narrowed to one task monster — the engine otherwise
- *   pays `taskDamage` per encounter, against whichever monsters each player
- *   DTO's `taskMonsterHrids` names.
+ * @param {string} [params.taskDamageMode] - How the run models `taskDamage`:
+ *   `off` (the default — nowhere), `perMonster` (only against monsters each
+ *   player DTO's own `taskMonsterHrids` names) or `everyFight` (every fight
+ *   counts, for a spawn table already narrowed to one task monster). See
+ *   engine/task-damage-mode.js.
+ * @param {boolean} [params.isTaskFight] - The old boolean form of the above;
+ *   `true` still means `everyFight`.
  * @param {Function} [onProgress] - Called with (percent: 0-100)
  * @returns {Promise<Object>} Merged SimResult
  */
 export async function runSimulation(params, onProgress, { preempt = true, workers = 0 } = {}) {
-    const { gameData, playerDTOs, zoneHrid, difficultyTier, hours, communityBuffs, seed, isTaskFight } = params;
+    const { gameData, playerDTOs, zoneHrid, difficultyTier, hours, communityBuffs, seed } = params;
+    const taskDamageMode = normalizeTaskDamageMode(params.taskDamageMode ?? params.isTaskFight);
 
     // Guild buffs are not folded in here: the worker reads each player DTO's
     // own guildCombatBuffs, so party members keep their own guild's bonuses
@@ -647,7 +651,7 @@ export async function runSimulation(params, onProgress, { preempt = true, worker
             difficultyTier,
             simulationTimeLimit: chunkHours * ONE_HOUR_NS,
             extraBuffs,
-            isTaskFight: Boolean(isTaskFight),
+            taskDamageMode,
             // Each chunk needs its own stream or all four would replay the same
             // fights, but chunk N must match across compared runs — so the
             // per-chunk seed is derived from (seed, index), not randomized.
@@ -701,10 +705,10 @@ export function buildCrateBuffs(crateHrids, gameData) {
  * @param {Object} params.communityBuffs - { mooPass, comExp, comDrop }
  * @param {number} [params.seed] - RNG seed shared by runs being compared; omit for
  *   an independent random sample (the default).
- * @param {boolean} [params.isTaskFight] - Override that treats every fight as a
- *   task fight. Off by default, and normally correct off here: a labyrinth
- *   monster is not a task monster, so the per-encounter rule pays nothing
- *   either. Exposed so the lab panel can say otherwise.
+ * @param {string} [params.taskDamageMode] - How the run models `taskDamage`;
+ *   `off` by default, and normally correct off here: a labyrinth monster is not
+ *   a task monster, so `perMonster` would pay nothing either. Exposed so the lab
+ *   panel can say otherwise. The old `isTaskFight` boolean is still accepted.
  * @param {boolean} [params.fullAbilities] - Build the monster with its full
  *   ability kit. ON by default: a tier-0 subset monster drops its stun/shred/
  *   self-buff kit and the sim over-predicts clears. Pass false only for a
@@ -727,6 +731,7 @@ export async function runLabyrinthSimulation(params, onProgress) {
         labyrinthCombatBuffs,
         seed,
         isTaskFight,
+        taskDamageMode,
         fullAbilities,
         zone,
     } = params;
@@ -752,7 +757,7 @@ export async function runLabyrinthSimulation(params, onProgress) {
         difficultyTier: zone ? Number(zone.tier) || 0 : 0,
         simulationTimeLimit: hours * ONE_HOUR_NS,
         extraBuffs,
-        isTaskFight: Boolean(isTaskFight),
+        taskDamageMode: normalizeTaskDamageMode(taskDamageMode ?? isTaskFight),
         labyrinth: {
             monsterHrid,
             roomLevel,
@@ -817,7 +822,7 @@ export async function runBlindBuffProbe(params) {
         // Time is not the stopping rule here — a fixed handful of fights is
         simulationTimeLimit: 3600 * 1e9,
         extraBuffs,
-        isTaskFight: false,
+        taskDamageMode: TASK_DAMAGE_OFF,
         captureBuffs: true,
         labyrinth: {
             monsterHrid,
@@ -873,7 +878,7 @@ export async function runPlayerStatProbe(params) {
         difficultyTier: zone ? Number(zone.tier) || 0 : 0,
         simulationTimeLimit: 3600 * 1e9,
         extraBuffs,
-        isTaskFight: false,
+        taskDamageMode: TASK_DAMAGE_OFF,
         capturePlayerDetails: true,
         playerCombatBuffs: playerCombatBuffs || null,
         labyrinth: {

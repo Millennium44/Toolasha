@@ -32,6 +32,7 @@ onmessage = function (event) {
             precision,
             seed,
             isTaskFight,
+            taskDamageMode,
             captureBuffs,
             capturePlayerDetails,
             playerCombatBuffs,
@@ -100,10 +101,11 @@ onmessage = function (event) {
                 });
             },
             labyrinth,
-            // The override. Absent (every caller that has not opted in) this is
-            // false, and the engine decides taskDamage per encounter from each
-            // player DTO's own taskMonsterHrids instead.
-            Boolean(isTaskFight)
+            // How this run models taskDamage. Absent — every caller that has
+            // not opted in — this normalizes to 'off', which pays no task
+            // damage anywhere. `isTaskFight` is the old boolean wire field and
+            // still means 'everyFight' when true.
+            taskDamageMode ?? isTaskFight
         );
 
         // The blind-buff probe turns on capture around the run and reads back the

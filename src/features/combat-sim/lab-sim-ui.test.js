@@ -1379,7 +1379,7 @@ describe('a labyrinth fight is never a task fight', () => {
         await ui._onSimulate();
 
         expect(sim.calls).toHaveLength(1);
-        expect(sim.calls[0].isTaskFight).toBe(false);
+        expect(sim.calls[0].taskDamageMode).toBe('off');
     });
 
     test('nothing recorded from the panel carries the flag either', async () => {

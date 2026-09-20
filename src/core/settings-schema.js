@@ -2830,6 +2830,24 @@ export const settingsGroups = {
                 default: true,
                 help: 'Runs the baseline and every candidate on the same random draws, so a small difference reflects the upgrade instead of luck. Turn off to give every sim independent randomness (the old behavior).',
             },
+            combatSim_taskDamage: {
+                id: 'combatSim_taskDamage',
+                label: 'Combat Simulator: Task damage',
+                type: 'select',
+                default: 'off',
+                options: [
+                    { value: 'off', label: 'Off' },
+                    { value: 'perMonster', label: 'Only on your task monsters' },
+                    { value: 'everyFight', label: 'Every fight' },
+                ],
+                help:
+                    'Whether a simulation pays the task damage from task badges and trinkets. Off: never, so a ' +
+                    'general zone sim carries no bonus it has not earned. Only on your task monsters: the bonus ' +
+                    'applies against the monsters your own combat tasks name, decided per fight and, in a party, ' +
+                    "from each player's own board. Every fight: treat every fight as a task fight, which " +
+                    'overstates a mixed zone but is what you want comparing task gear head to head. Estimates run ' +
+                    'from the Tasks panel always count the task, whatever this says.',
+            },
             combatSim_rememberUpgradeResults: {
                 id: 'combatSim_rememberUpgradeResults',
                 label: 'Combat & Lab Simulator: Remember upgrade results across refreshes',

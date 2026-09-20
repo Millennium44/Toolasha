@@ -15,6 +15,7 @@ import {
     applyGuildBuffLevel,
 } from './combat-sim-adapter.js';
 import { runSimulation, runLabyrinthSimulation, getMaxWorkers } from './combat-sim-runner.js';
+import { TASK_DAMAGE_OFF } from './engine/task-damage-mode.js';
 import { buildBuffDrinkPools, estimateFoodSimCount, runFoodOptimization } from './food-optimizer.js';
 import { generateLabArmorCandidates, labelItemWithLevel } from './lab-armor-candidates.js';
 import { buildGuidePlan } from './build-guide.js';
@@ -948,11 +949,10 @@ function findBestOffHand(gameData, damageStyle, maxItemLevel) {
  * How much taskDamage the item(s) a candidate equips would carry.
  *
  * Read off the item rather than measured by simulation on purpose: the sims
- * that rank candidates leave the Task Fight override off, so a task badge
- * measures there as what it is worth against that zone's spawns — nothing at
- * all unless one of them is an active combat task, and only that fraction of
- * the fights when one is. This number exists so the row can name the full
- * conditional gain it is mostly *not* counting.
+ * that rank candidates are generic zone fights, run with task damage switched
+ * off, so a task badge measures there as exactly what it is off task — inert.
+ * This number exists only so the row can name the conditional gain it is *not*
+ * counting.
  *
  * @param {Object} candidate - An upgrade candidate
  * @param {Object} gameData - Game data from buildGameDataPayload()
@@ -1602,22 +1602,21 @@ export function generateCandidates(
     }
 
     // taskDamage pays only while the monster in front of you is your combat
-    // task. Every sim below leaves the Task Fight override off, so the engine
-    // pays it per encounter — against the zone's spawns that your tasks name,
-    // and nothing at all in a zone where none of them is. Forcing the bonus on
-    // for every fight is what floated Expert Task Badge to the top of the
-    // table on damage it would only deal while on task. Most of the gain is
-    // therefore real but conditional, so it goes on the row as a caveat rather
+    // task, and an advisor ranking is a generic zone fight — so every sim below
+    // runs with task damage off and the ranked delta on a task badge is its
+    // off-task delta, which for a pure task trinket is nothing. Ranking them
+    // with the bonus on is what floated Expert Task Badge to the top of the
+    // table on damage it would only deal while on task. The gain that does
+    // exist is real but conditional, so it goes on the row as a caveat rather
     // than into the number the table sorts by.
     for (const candidate of candidates) {
         const taskDamage = candidateTaskDamage(candidate, gameData);
         if (candidate.slot !== TRINKET_SLOT && !taskDamage) continue;
         const amount = taskDamage ? `+${(taskDamage * 100).toFixed(1)}% task damage` : 'Task damage';
         candidate.caveat =
-            `${amount} is mostly not in the ranked delta: it applies only while the monster is your active ` +
-            'combat task, so in a zone where none of the spawns is one of your tasks it pays nothing at all, ' +
-            'and in a zone where one is it pays on that fraction of the fights. Sim from that task card (or ' +
-            'tick Task Fight in the combat sim panel) to see the full on-task number.';
+            `${amount} is not in the ranked delta: these sims are generic zone fights, run with task damage ` +
+            'off, where the stat pays nothing. It applies only while the monster is your active combat task — ' +
+            'sim from that task card (or set Task damage in the combat sim panel) to see the on-task number.';
     }
 
     // The crafting-chain walk only reaches base path boots; add their refined
@@ -3301,7 +3300,7 @@ export async function runUpgradeAnalysis(params, onProgress, options = {}) {
     // however carefully the seed is shared. That mismatch put an identical
     // phantom delta on every combat-inert candidate — a skilling house room
     // "improving" DPS by 0.06%.
-    // isTaskFight stays off for the baseline and for every candidate below. A
+    // Task damage stays off for the baseline and for every candidate below. A
     // ranking is a generic zone fight, and switching the task bonus on would
     // credit task gear with damage it only deals while that monster is your
     // task — see the caveat attached in generateCandidates().
@@ -3314,7 +3313,7 @@ export async function runUpgradeAnalysis(params, onProgress, options = {}) {
             hours,
             communityBuffs,
             seed: simSeed,
-            isTaskFight: false,
+            taskDamageMode: TASK_DAMAGE_OFF,
             // The baseline's fight count is what every candidate is paired to,
             // so precision/max-fights on the baseline set the whole run's sample
             // size. Null falls back to the plain time budget (`hours`).
@@ -3417,7 +3416,7 @@ export async function runUpgradeAnalysis(params, onProgress, options = {}) {
                 hours,
                 communityBuffs: applyCommunityBuffCandidate(communityBuffs, candidate),
                 seed: simSeed,
-                isTaskFight: false,
+                taskDamageMode: TASK_DAMAGE_OFF,
             },
             null,
             // One worker each: the queue is what keeps the cores busy here.
@@ -3517,7 +3516,7 @@ export async function runUpgradeAnalysis(params, onProgress, options = {}) {
                                 hours,
                                 communityBuffs,
                                 seed: simSeed,
-                                isTaskFight: false,
+                                taskDamageMode: TASK_DAMAGE_OFF,
                             },
                             null,
                             { preempt: false, workers: 1 }
@@ -5217,7 +5216,7 @@ export async function confirmUpgradeBudgetPlan(picks, context) {
                 hours,
                 communityBuffs: combinedBuffs,
                 seed,
-                isTaskFight: false,
+                taskDamageMode: TASK_DAMAGE_OFF,
                 ...(precision ? { precision } : {}),
             },
             null,

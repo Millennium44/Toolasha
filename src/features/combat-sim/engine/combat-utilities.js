@@ -1,6 +1,12 @@
 // Ported from the MWI Combat Simulator (MIT (c) 2024 AmVoidGuy) - see third-party/mwi-combat-simulator/.
 import { random } from './rng.js';
 import { recordUnknown } from './sim-warnings.js';
+import {
+    TASK_DAMAGE_EVERY_FIGHT,
+    TASK_DAMAGE_OFF,
+    TASK_DAMAGE_PER_MONSTER,
+    normalizeTaskDamageMode,
+} from './task-damage-mode.js';
 
 class CombatUtilities {
     /**
@@ -83,13 +89,21 @@ class CombatUtilities {
      * retaliation paths that is the defending unit striking back, so those
      * callers pass the roles reversed.
      *
+     * Whether any of that is modelled at all is the run's `taskDamageMode`
+     * (see engine/task-damage-mode.js): `off` pays nothing anywhere, `everyFight`
+     * pays always, and only `perMonster` consults the board below.
+     *
      * @param {Object} attacker - The unit whose `taskDamage` is in question
      * @param {Object} defender - The unit being struck by that attacker
-     * @param {boolean} [forceTaskFight] - Override that answers yes regardless
+     * @param {string|boolean} [taskDamageMode] - Run mode, or the legacy
+     *   `isTaskFight` boolean (see `normalizeTaskDamageMode`)
      * @returns {boolean} True when the attacker's taskDamage applies
      */
-    static appliesTaskDamage(attacker, defender, forceTaskFight = false) {
-        if (forceTaskFight) return true;
+    static appliesTaskDamage(attacker, defender, taskDamageMode = TASK_DAMAGE_OFF) {
+        const mode = normalizeTaskDamageMode(taskDamageMode);
+        if (mode === TASK_DAMAGE_OFF) return false;
+        if (mode === TASK_DAMAGE_EVERY_FIGHT) return true;
+        if (mode !== TASK_DAMAGE_PER_MONSTER) return false;
         if (!attacker || !defender) return false;
         // Monsters have no task board, and a player is never anyone's task
         if (defender.isPlayer) return false;
@@ -104,16 +118,14 @@ class CombatUtilities {
      * @param {Object} source - Attacking unit
      * @param {Object} target - Defending unit
      * @param {Object} [abilityEffect] - Ability effect, or null for an auto attack
-     * @param {boolean} [forceTaskFight] - Override: treat every unit as fighting
-     *   its own task monster, whatever it is actually swinging at. Off by
-     *   default, and normally left off — the engine works the condition out per
-     *   encounter from each attacker's own `taskMonsterHrids` (see
-     *   `appliesTaskDamage`). The override exists for a run that has already
-     *   narrowed its spawn table down to one task monster, where saying so is
-     *   cheaper than resolving the task again.
+     * @param {string|boolean} [taskDamageMode] - How this run models `taskDamage`:
+     *   `off` (the default — no task damage anywhere), `perMonster` (only against
+     *   monsters the attacker's own `taskMonsterHrids` names) or `everyFight`
+     *   (every unit counts as fighting its own task monster, whatever it is
+     *   actually swinging at). See `appliesTaskDamage`.
      * @returns {Object} Attack result
      */
-    static processAttack(source, target, abilityEffect = null, forceTaskFight = false) {
+    static processAttack(source, target, abilityEffect = null, taskDamageMode = TASK_DAMAGE_OFF) {
         const combatStyle = abilityEffect
             ? abilityEffect.combatStyleHrid
             : source.combatDetails.combatStats.combatStyleHrid;
@@ -259,7 +271,7 @@ class CombatUtilities {
         // run and let task badges rank in the upgrade advisor on damage they
         // would never deal; credited nowhere it skipped the one fight in the
         // zone where the bonus is genuinely paid.
-        if (CombatUtilities.appliesTaskDamage(source, target, forceTaskFight)) {
+        if (CombatUtilities.appliesTaskDamage(source, target, taskDamageMode)) {
             damageRoll *= 1 + source.combatDetails.combatStats.taskDamage;
         }
         damageRoll *= 1 + target.combatDetails.combatStats.damageTaken;
@@ -306,7 +318,7 @@ class CombatUtilities {
             // Same conditional stat, same rule — with the roles swapped, since
             // here it is the defender hitting back and the original attacker
             // being struck.
-            const targetTaskDamageMultiplier = CombatUtilities.appliesTaskDamage(target, source, forceTaskFight)
+            const targetTaskDamageMultiplier = CombatUtilities.appliesTaskDamage(target, source, taskDamageMode)
                 ? 1.0 + target.combatDetails.combatStats.taskDamage
                 : 1.0;
             const sourceDamageTakenMultiplier = 1.0 + source.combatDetails.combatStats.damageTaken;
@@ -346,7 +358,7 @@ class CombatUtilities {
                 }
 
                 // Roles swapped again: the defender is the one retaliating.
-                const targetTaskDamageMultiplier = CombatUtilities.appliesTaskDamage(target, source, forceTaskFight)
+                const targetTaskDamageMultiplier = CombatUtilities.appliesTaskDamage(target, source, taskDamageMode)
                     ? 1.0 + target.combatDetails.combatStats.taskDamage
                     : 1.0;
                 const sourceDamageTakenMultiplier = 1.0 + source.combatDetails.combatStats.damageTaken;

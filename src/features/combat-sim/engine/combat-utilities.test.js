@@ -18,6 +18,12 @@
 import { describe, test, expect, beforeEach, afterEach, vi } from 'vitest';
 import CombatUtilities from './combat-utilities.js';
 import { clearSimRng, seedSimRng } from './rng.js';
+import {
+    TASK_DAMAGE_EVERY_FIGHT,
+    TASK_DAMAGE_OFF,
+    TASK_DAMAGE_PER_MONSTER,
+    normalizeTaskDamageMode,
+} from './task-damage-mode.js';
 import { getSimWarnings, resetSimWarnings, resetWarnedTypes } from './sim-warnings.js';
 
 const SEED = 20260804;
@@ -78,17 +84,17 @@ function monster(hrid, statOverrides = {}) {
 }
 
 /** One attack from a freshly reseeded stream, so draws repeat exactly. */
-function attackWith(statOverrides, forceTaskFight = false) {
+function attackWith(statOverrides, taskDamageMode = TASK_DAMAGE_PER_MONSTER) {
     seedSimRng(SEED);
-    return CombatUtilities.processAttack(unit(statOverrides), unit(), null, forceTaskFight);
+    return CombatUtilities.processAttack(unit(statOverrides), unit(), null, taskDamageMode);
 }
 
 /** One attack from a freshly reseeded stream, against a named monster. */
-function attackMonster(statOverrides, tasks, monsterHrid, forceTaskFight = false) {
+function attackMonster(statOverrides, tasks, monsterHrid, taskDamageMode = TASK_DAMAGE_PER_MONSTER) {
     seedSimRng(SEED);
     const source = unit(statOverrides);
     source.taskMonsterHrids = tasks ? new Set(tasks) : null;
-    return CombatUtilities.processAttack(source, monster(monsterHrid), null, forceTaskFight);
+    return CombatUtilities.processAttack(source, monster(monsterHrid), null, taskDamageMode);
 }
 
 afterEach(() => {
@@ -194,15 +200,15 @@ describe('taskDamage is decided per encounter, not per run', () => {
         const theirs = unit({ taskDamage: 0.5 });
         theirs.taskMonsterHrids = new Set([OTHER_MONSTER]);
 
-        expect(CombatUtilities.appliesTaskDamage(mine, monster(TASK_MONSTER))).toBe(true);
-        expect(CombatUtilities.appliesTaskDamage(theirs, monster(TASK_MONSTER))).toBe(false);
+        expect(CombatUtilities.appliesTaskDamage(mine, monster(TASK_MONSTER), TASK_DAMAGE_PER_MONSTER)).toBe(true);
+        expect(CombatUtilities.appliesTaskDamage(theirs, monster(TASK_MONSTER), TASK_DAMAGE_PER_MONSTER)).toBe(false);
     });
 
     test("a player is never anyone's task monster", () => {
         const attacker = monster(TASK_MONSTER, { taskDamage: 0.5 });
         attacker.taskMonsterHrids = new Set(['player1']);
 
-        expect(CombatUtilities.appliesTaskDamage(attacker, unit())).toBe(false);
+        expect(CombatUtilities.appliesTaskDamage(attacker, unit(), TASK_DAMAGE_PER_MONSTER)).toBe(false);
     });
 
     test('the Task Fight override still forces it on every fight', () => {
@@ -210,6 +216,70 @@ describe('taskDamage is decided per encounter, not per run', () => {
         const withTask = attackMonster({ taskDamage: 0.5 }, null, OTHER_MONSTER, true);
 
         expect(withTask.damageDone).toBeGreaterThan(plain.damageDone);
+    });
+});
+
+describe('the three task-damage modes', () => {
+    test('off pays nothing, even against the monster that is your task', () => {
+        const plain = attackMonster({}, [TASK_MONSTER], TASK_MONSTER, TASK_DAMAGE_OFF);
+        const withTask = attackMonster({ taskDamage: 0.5 }, [TASK_MONSTER], TASK_MONSTER, TASK_DAMAGE_OFF);
+
+        expect(plain.damageDone).toBeGreaterThan(0);
+        expect(withTask.damageDone).toBe(plain.damageDone);
+    });
+
+    test('perMonster pays on the task monster and on no other', () => {
+        const onTask = attackMonster({ taskDamage: 0.5 }, [TASK_MONSTER], TASK_MONSTER, TASK_DAMAGE_PER_MONSTER);
+        const offTask = attackMonster({ taskDamage: 0.5 }, [TASK_MONSTER], OTHER_MONSTER, TASK_DAMAGE_PER_MONSTER);
+
+        expect(onTask.damageDone).toBeGreaterThan(
+            attackMonster({}, [TASK_MONSTER], TASK_MONSTER, TASK_DAMAGE_PER_MONSTER).damageDone
+        );
+        expect(offTask.damageDone).toBe(
+            attackMonster({}, [TASK_MONSTER], OTHER_MONSTER, TASK_DAMAGE_PER_MONSTER).damageDone
+        );
+    });
+
+    test('everyFight pays with no task board at all', () => {
+        const plain = attackMonster({}, null, OTHER_MONSTER, TASK_DAMAGE_EVERY_FIGHT);
+        const withTask = attackMonster({ taskDamage: 0.5 }, null, OTHER_MONSTER, TASK_DAMAGE_EVERY_FIGHT);
+
+        expect(withTask.damageDone).toBeGreaterThan(plain.damageDone);
+    });
+
+    test('an absent or unrecognized mode is off, which is how the simulator behaved before', () => {
+        const onTask = unit({ taskDamage: 0.5 });
+        onTask.taskMonsterHrids = new Set([TASK_MONSTER]);
+
+        // No third argument at all, and a value that is not a mode
+        expect(CombatUtilities.appliesTaskDamage(onTask, monster(TASK_MONSTER))).toBe(false);
+        expect(CombatUtilities.appliesTaskDamage(onTask, monster(TASK_MONSTER), 'nonsense')).toBe(false);
+        expect(attackMonster({ taskDamage: 0.5 }, [TASK_MONSTER], TASK_MONSTER, 'nonsense').damageDone).toBe(
+            attackMonster({}, [TASK_MONSTER], TASK_MONSTER, 'nonsense').damageDone
+        );
+    });
+});
+
+describe('normalizeTaskDamageMode', () => {
+    test('maps the stored Task Fight boolean onto the new modes', () => {
+        // The old wire field was a boolean whose only meaning was "treat every
+        // fight as a task fight", so true keeps exactly that, and false — the
+        // value anyone who never touched the box had — is off.
+        expect(normalizeTaskDamageMode(true)).toBe(TASK_DAMAGE_EVERY_FIGHT);
+        expect(normalizeTaskDamageMode(false)).toBe(TASK_DAMAGE_OFF);
+    });
+
+    test('an absent, null or unrecognized value is off', () => {
+        expect(normalizeTaskDamageMode(undefined)).toBe(TASK_DAMAGE_OFF);
+        expect(normalizeTaskDamageMode(null)).toBe(TASK_DAMAGE_OFF);
+        expect(normalizeTaskDamageMode('perMonstre')).toBe(TASK_DAMAGE_OFF);
+        expect(normalizeTaskDamageMode(1)).toBe(TASK_DAMAGE_OFF);
+    });
+
+    test('every real mode survives a round trip', () => {
+        expect(normalizeTaskDamageMode(TASK_DAMAGE_OFF)).toBe(TASK_DAMAGE_OFF);
+        expect(normalizeTaskDamageMode(TASK_DAMAGE_PER_MONSTER)).toBe(TASK_DAMAGE_PER_MONSTER);
+        expect(normalizeTaskDamageMode(TASK_DAMAGE_EVERY_FIGHT)).toBe(TASK_DAMAGE_EVERY_FIGHT);
     });
 });
 
@@ -231,7 +301,7 @@ describe('taskDamage on the thorns and retaliation paths', () => {
         defender.combatDetails.defensiveMaxDamage = 300;
         defender.combatDetails.smashAccuracyRating = 1_000_000;
         defender.taskMonsterHrids = playerTasks ? new Set(playerTasks) : null;
-        return CombatUtilities.processAttack(attacker, defender, null, false);
+        return CombatUtilities.processAttack(attacker, defender, null, TASK_DAMAGE_PER_MONSTER);
     }
 
     test("the defender's thorns and retaliation pay when the attacker is their task", () => {
@@ -265,7 +335,7 @@ describe('taskDamage on the thorns and retaliation paths', () => {
         defender.combatDetails.smashAccuracyRating = 1_000_000;
         defender.taskMonsterHrids = null;
 
-        const result = CombatUtilities.processAttack(attacker, defender, null, false);
+        const result = CombatUtilities.processAttack(attacker, defender, null, TASK_DAMAGE_PER_MONSTER);
         const plain = monsterAttacksPlayer({}, null, TASK_MONSTER);
 
         expect(result.thornDamageDone).toBe(plain.thornDamageDone);

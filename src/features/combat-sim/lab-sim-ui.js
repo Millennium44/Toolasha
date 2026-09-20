@@ -18,6 +18,7 @@ import {
     guildBuffMaxLevel,
 } from './combat-sim-adapter.js';
 import { runLabyrinthSimulation, cancelActiveSimulations } from './combat-sim-runner.js';
+import { TASK_DAMAGE_OFF } from './engine/task-damage-mode.js';
 import { wilsonInterval } from './engine/wilson.js';
 import { findMaxLabyrinthLevel, defaultThreshold } from './labyrinth-level-finder.js';
 import {
@@ -2571,7 +2572,7 @@ class LabSimUI {
                         // combat task, so taskDamage pays nothing here — the
                         // panel used to offer a checkbox for it, which could
                         // only ever be ticked to get a wrong answer.
-                        isTaskFight: false,
+                        taskDamageMode: TASK_DAMAGE_OFF,
                     },
                     (percent) => {
                         const { text: remaining } = eta.update(percent / 100);

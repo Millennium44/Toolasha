@@ -41,6 +41,7 @@ import { makeDraggable } from '../../utils/floating-panel.js';
 import { restoreGeometry, saveGeometry, saveOpenState, reopenIfLeftOpen } from '../../utils/panel-geometry.js';
 import { attachMinimize } from '../../utils/panel-minimize.js';
 import { saveUpgradeResults, loadUpgradeResults, clearUpgradeResults } from './upgrade-results-store.js';
+import { normalizeTaskDamageMode } from './engine/task-damage-mode.js';
 import { readScoped, writeScoped } from '../../utils/character-key.js';
 import { scriptVersion } from '../../utils/script-version.js';
 import {
@@ -610,10 +611,10 @@ const ROW_NOTE_STYLE = 'font-size:9px; margin-left:4px; padding:0 3px; border-ra
  *   purchase. That term is the largest in the cost, and it lived only in the
  *   Ability Swaps checkbox tooltip, where a row quoting 900M gave no hint of
  *   which of the three it meant — and a row quoting 0 gave none either.
- * - **on task** — the row's ranked gain was simulated against a zone where none
- *   of the spawns is one of your combat tasks, so taskDamage pays nothing and a
- *   task trinket's headline stat is not in the number. The chip's tooltip names
- *   what it would add on task instead.
+ * - **on task** — the row's ranked gain was simulated with task damage off,
+ *   where taskDamage pays nothing, so a task trinket's headline stat is
+ *   deliberately not in the number. The chip's tooltip names what it would add
+ *   on task instead.
  *
  * @param {Object} result - An upgrade result row
  * @returns {string} HTML, empty when the row needs no qualifier
@@ -2012,9 +2013,13 @@ class CombatSimUI {
                 <input type="checkbox" id="mwi-csim-maxfood" style="${checkboxStyle}" disabled>
                 Max-tier Food
             </label>
-            <label style="${labelStyle}" title="Override. Leave this off and taskDamage from trinkets and task badges is already paid correctly &mdash; on whichever monsters in the zone your active combat tasks actually name, and on no others. Tick it to force every fight in the run to count as a task fight, which overstates a mixed zone but is what you want when you are comparing task gear head to head.">
-                <input type="checkbox" id="mwi-csim-taskfight" style="${checkboxStyle}">
-                Task Fight
+            <label style="${labelStyle}" title="Whether this run pays taskDamage from trinkets and task badges. Off: never, so a mixed zone carries no bonus it has not earned. On task: only against the monsters in the zone your own combat tasks actually name. Every fight: force every fight to count, which overstates a mixed zone but is what you want comparing task gear head to head. Shares the Task damage setting.">
+                Task damage
+                <select id="mwi-csim-taskdamage" style="background:#1a1a2e; color:#e0e0e0; border:1px solid #444; border-radius:4px; padding:2px 4px; font-size:11px; cursor:pointer;">
+                    <option value="off">Off</option>
+                    <option value="perMonster">On task</option>
+                    <option value="everyFight">Every fight</option>
+                </select>
             </label>
         `;
 
@@ -2498,6 +2503,17 @@ class CombatSimUI {
             this._earlyExitEnabled = e.target.checked;
         });
 
+        // Task damage mode. The panel control and the settings entry are one
+        // value, not two: the dropdown opens on whatever the setting says and
+        // writes back to it, so a run never disagrees with the settings page.
+        const taskDamageSelect = this.panel.querySelector('#mwi-csim-taskdamage');
+        if (taskDamageSelect) {
+            taskDamageSelect.value = normalizeTaskDamageMode(config.getSettingValue('combatSim_taskDamage', 'off'));
+            taskDamageSelect.addEventListener('change', (e) => {
+                config.setSettingValue('combatSim_taskDamage', normalizeTaskDamageMode(e.target.value));
+            });
+        }
+
         // Max-tier food toggle
         this.panel.querySelector('#mwi-csim-maxfood').addEventListener('change', (e) => {
             this._maxTierFoodEnabled = e.target.checked;
@@ -2656,6 +2672,20 @@ class CombatSimUI {
             label.style.opacity = enabled ? '' : '0.45';
             label.style.cursor = enabled ? 'pointer' : 'not-allowed';
         }
+    }
+
+    /**
+     * How this panel's next run should model `taskDamage`.
+     *
+     * The dropdown is the live value when the panel is built; the setting is the
+     * fallback for a run started before it exists.
+     *
+     * @private
+     * @returns {string} One of the TASK_DAMAGE_* modes
+     */
+    _taskDamageMode() {
+        const select = this.panel?.querySelector('#mwi-csim-taskdamage');
+        return normalizeTaskDamageMode(select ? select.value : config.getSettingValue('combatSim_taskDamage', 'off'));
     }
 
     /** @private */
@@ -4545,7 +4575,7 @@ class CombatSimUI {
                     difficultyTier,
                     hours,
                     communityBuffs,
-                    isTaskFight: Boolean(this.panel.querySelector('#mwi-csim-taskfight')?.checked),
+                    taskDamageMode: this._taskDamageMode(),
                 },
                 (percent) => {
                     const { text: remaining } = eta.update(percent / 100);

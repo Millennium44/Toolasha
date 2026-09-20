@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Combat Sim: task damage is now your choice, off by default
+
+- Task damage from badges and trinkets is a three-way setting — off, only on the monsters your own combat tasks name, or every fight — defaulting to off so a general zone sim never quietly carries a bonus most of its fights would not earn; estimates run from the Tasks panel always count the task whatever it is set to.
+
 ### Written verification status for four inherited simulator claims
 
 - `docs/sim-claim-verification.md` records, for each of the four engine behaviors that were once scored correct by code reading alone, what its verification actually rests on and exactly how the live stream could decide it — including one, the dungeon-clear revival, where a second reading disputes the original score.

@@ -5,6 +5,7 @@ import { hasConverged, isStoppingRule } from './wilson.js';
 /** How far apart the decision checkpoints sit — each is 1.5x the last */
 const STOP_CHECK_GROWTH = 1.5;
 import CombatUtilities from './combat-utilities.js';
+import { TASK_DAMAGE_OFF, normalizeTaskDamageMode } from './task-damage-mode.js';
 import AutoAttackEvent from './events/auto-attack-event.js';
 import DamageOverTimeEvent from './events/damage-over-time-event.js';
 import CheckBuffExpirationEvent from './events/check-buff-expiration-event.js';
@@ -148,19 +149,19 @@ class CombatSimulator {
      * @param {Object} zone
      * @param {Function} [onProgress] - Optional progress callback receiving { zone, difficultyTier, progress }
      * @param {Labyrinth} [labyrinth] - Optional labyrinth encounter manager (replaces zone encounter logic)
-     * @param {boolean} [forceTaskFight] - Override: treat every fight in this run
-     *   as the attacker's task fight. Default false, which is what almost every
-     *   caller wants — the engine then decides per encounter, from each player's
-     *   own `taskMonsterHrids`, whether `taskDamage` pays against the monster
-     *   actually in front of them (see engine/combat-utilities.js). The override
-     *   is for a run whose spawn table has already been narrowed to one task
-     *   monster.
+     * @param {string|boolean} [taskDamageMode] - How this run models `taskDamage`:
+     *   `off` (the default — no task damage anywhere), `perMonster` (decided per
+     *   encounter from each player's own `taskMonsterHrids`) or `everyFight`
+     *   (every fight counts as the attacker's task fight, for a run whose spawn
+     *   table has already been narrowed to one task monster, or a head-to-head
+     *   comparison of task gear). See engine/task-damage-mode.js. A legacy
+     *   `isTaskFight` boolean is still accepted and `true` means `everyFight`.
      */
-    constructor(players, zone, onProgress, labyrinth, forceTaskFight = false) {
+    constructor(players, zone, onProgress, labyrinth, taskDamageMode = TASK_DAMAGE_OFF) {
         this.players = players;
         this.zone = zone;
         this.labyrinth = labyrinth || null;
-        this.forceTaskFight = Boolean(forceTaskFight);
+        this.taskDamageMode = normalizeTaskDamageMode(taskDamageMode);
         this.onProgress = onProgress;
         this.eventQueue = new EventQueue();
         this.simResult = new SimResult(zone, players.length);
@@ -810,7 +811,7 @@ class CombatSimulator {
             // attack so a corpse can never be credited as a fresh death.
             const targetWasAlive = target.combatDetails.currentHitpoints > 0;
 
-            const attackResult = CombatUtilities.processAttack(source, target, null, this.forceTaskFight);
+            const attackResult = CombatUtilities.processAttack(source, target, null, this.taskDamageMode);
             if (this.zone.isDungeon && target.isPlayer && attackResult.didHit && attackResult.damageDone > 0) {
                 const log = this.generateCombatLog(source, 'autoAttack', target, attackResult);
                 this.addToWipeLogs(log);
@@ -1811,7 +1812,7 @@ class CombatSimulator {
                 const tempTarget = source;
                 const tempSource = parryTarget;
 
-                const attackResult = CombatUtilities.processAttack(tempSource, tempTarget, null, this.forceTaskFight);
+                const attackResult = CombatUtilities.processAttack(tempSource, tempTarget, null, this.taskDamageMode);
 
                 this.simResult.addAttack(
                     tempSource,
@@ -1891,7 +1892,7 @@ class CombatSimulator {
                     break;
                 }
 
-                const attackResult = CombatUtilities.processAttack(source, target, abilityEffect, this.forceTaskFight);
+                const attackResult = CombatUtilities.processAttack(source, target, abilityEffect, this.taskDamageMode);
 
                 if (this.zone.isDungeon && target.isPlayer && attackResult.didHit && attackResult.damageDone > 0) {
                     const log = this.generateCombatLog(source, ability.hrid, target, attackResult);

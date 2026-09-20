@@ -176,6 +176,7 @@ import {
     getCurrentCombatZone,
 } from '../combat-sim/combat-sim-adapter.js';
 import { runSimulation } from '../combat-sim/combat-sim-runner.js';
+import { TASK_DAMAGE_OFF } from '../combat-sim/engine/task-damage-mode.js';
 import combatRecorder, {
     onRecordingCheckpoint,
     onRecordingComplete,
@@ -2128,7 +2129,7 @@ class ReplayCheck {
             // character's tasks as they are NOW, and the engine would then pay
             // taskDamage against whichever recorded monster happens to match —
             // a fact about today's task board, not about the run being
-            // replayed. See the isTaskFight note below: the feed never said.
+            // replayed. See the task-damage note below: the feed never said.
             const dto = { ...applyLoadoutSnapshot(current, observed.loadout), taskMonsterHrids: [] };
 
             const simResult = await runSimulation(
@@ -2149,7 +2150,7 @@ class ReplayCheck {
                     // somewhere else, where changing it would silently change
                     // what this measures. The override off and the DTO's tasks
                     // emptied above are the two halves of the same decision.
-                    isTaskFight: false,
+                    taskDamageMode: TASK_DAMAGE_OFF,
                 },
                 (percent) => {
                     this.progress = percent;

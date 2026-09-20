@@ -693,6 +693,56 @@ describe('_runCombatSimEstimate: the estimate itself simulates at the last-used 
         expect(container.innerHTML).toContain('T3');
     });
 
+    test('a task-card estimate counts the task however the general setting is set', async () => {
+        // The Tasks panel is a task sim by definition: it must not lose the
+        // task bonus because a general zone sim is set not to pay it. The
+        // setting is pinned Off here and the estimate asks for it anyway.
+        const settingSpy = vi.spyOn(config, 'getSettingValue').mockReturnValue('off');
+        dataManager.initClientData = {
+            ...buildGameData([
+                {
+                    hrid: '/actions/combat/gobo_planet',
+                    name: 'Gobo Planet',
+                    category: '/categories/gobo',
+                    sortIndex: 1,
+                    monsters: ['/monsters/gobo'],
+                },
+            ]),
+            combatMonsterDetailMap: { '/monsters/gobo': { name: 'Gobo' } },
+        };
+        dataManager.characterActions = [];
+
+        buildGameDataPayload.mockReturnValue(dataManager.initClientData);
+        buildAllPlayerDTOs.mockResolvedValue({ players: [{ hrid: 'player1' }] });
+        runSimulation.mockResolvedValue({ deaths: { '/monsters/gobo': 10 }, encounters: 10 });
+
+        const cardTaskNode = document.createElement('div');
+        cardTaskNode.className = 'RandomTask_taskInfo__1a';
+        const container = document.createElement('div');
+        cardTaskNode.appendChild(container);
+        document.body.appendChild(cardTaskNode);
+
+        const taskData = {
+            description: 'Defeat - Gobo',
+            quantity: 100,
+            currentProgress: 0,
+            coinReward: 0,
+            taskTokenReward: 0,
+        };
+
+        // Both modes: solo has already narrowed the spawn table to this card's
+        // monster, and zone covers the whole table, where forcing the bonus on
+        // every fight would credit it against monsters that are nobody's task
+        await taskProfitDisplay._runCombatSimEstimate(container, taskData, '', 'solo');
+        expect(runSimulation).toHaveBeenCalledWith(expect.objectContaining({ taskDamageMode: 'perMonster' }));
+
+        runSimulation.mockClear();
+        await taskProfitDisplay._runCombatSimEstimate(container, taskData, '', 'zone');
+        expect(runSimulation).toHaveBeenCalledWith(expect.objectContaining({ taskDamageMode: 'perMonster' }));
+
+        settingSpy.mockRestore();
+    });
+
     test('a zone nowhere in the queue simulates at T0 and the card says the tier is not recorded', async () => {
         dataManager.initClientData = {
             ...buildGameData([

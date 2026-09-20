@@ -122,26 +122,41 @@ describe('how wide one simulation spreads itself', () => {
     });
 });
 
-describe('whether the run counts as a task fight', () => {
+describe('how the run models task damage', () => {
     // taskDamage is a conditional stat — it pays only while the monster is your
     // combat task — so the engine needs telling, and the only way it can be told
     // is through the worker message. A caller that says nothing must get the
-    // off-task answer, because most callers are generic zone sims and rankings.
-    test('a caller who says nothing gets off task', async () => {
+    // off answer, because most callers are generic zone sims and rankings.
+    test('a caller who says nothing gets it off', async () => {
         const messages = captureWorkerMessages();
 
         await runSimulation({ zoneHrid: '/actions/combat/fly', difficultyTier: 0, hours: 1 });
 
         expect(messages).toHaveLength(1);
-        expect(messages[0].isTaskFight).toBe(false);
+        expect(messages[0].taskDamageMode).toBe('off');
     });
 
-    test('and a task-card sim carries the flag through to the worker', async () => {
+    test('each of the three modes reaches the worker as itself', async () => {
+        for (const mode of ['off', 'perMonster', 'everyFight']) {
+            const messages = captureWorkerMessages();
+
+            await runSimulation({
+                zoneHrid: '/actions/combat/fly',
+                difficultyTier: 0,
+                hours: 1,
+                taskDamageMode: mode,
+            });
+
+            expect(messages[0].taskDamageMode).toBe(mode);
+        }
+    });
+
+    test('the old isTaskFight boolean still means every fight', async () => {
         const messages = captureWorkerMessages();
 
         await runSimulation({ zoneHrid: '/actions/combat/fly', difficultyTier: 0, hours: 1, isTaskFight: true });
 
-        expect(messages[0].isTaskFight).toBe(true);
+        expect(messages[0].taskDamageMode).toBe('everyFight');
     });
 
     test('every chunk of a split run agrees about it', async () => {
@@ -149,10 +164,15 @@ describe('whether the run counts as a task fight', () => {
         // task would make the merged result a blend of two different fights
         const messages = captureWorkerMessages();
 
-        await runSimulation({ zoneHrid: '/actions/combat/fly', difficultyTier: 0, hours: 100, isTaskFight: true });
+        await runSimulation({
+            zoneHrid: '/actions/combat/fly',
+            difficultyTier: 0,
+            hours: 100,
+            taskDamageMode: 'everyFight',
+        });
 
         expect(messages).toHaveLength(4);
-        expect(messages.every((m) => m.isTaskFight === true)).toBe(true);
+        expect(messages.every((m) => m.taskDamageMode === 'everyFight')).toBe(true);
     });
 
     test('and labyrinth runs default off, since no labyrinth monster is a task', async () => {
@@ -160,7 +180,7 @@ describe('whether the run counts as a task fight', () => {
 
         await runLabyrinthSimulation({ zoneHrid: '/actions/combat/fly', monsterHrid: '/monsters/x', hours: 1 });
 
-        expect(messages[0].isTaskFight).toBe(false);
+        expect(messages[0].taskDamageMode).toBe('off');
     });
 });
 

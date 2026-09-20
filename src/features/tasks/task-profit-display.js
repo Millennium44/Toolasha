@@ -36,6 +36,7 @@ import { debugEquipmentSpeedBonuses, parseEquipmentSpeedBonuses } from '../../ut
 import { MIN_ACTION_TIME_SECONDS } from '../../utils/profit-constants.js';
 import { readScoped, writeScoped } from '../../utils/character-key.js';
 import { runSimulation } from '../combat-sim/combat-sim-runner.js';
+import { TASK_DAMAGE_PER_MONSTER } from '../combat-sim/engine/task-damage-mode.js';
 import {
     buildAllPlayerDTOs,
     buildGameDataPayload,
@@ -1748,6 +1749,14 @@ class TaskProfitDisplay {
                         difficultyTier: estimateTier,
                         hours: SIM_HOURS,
                         communityBuffs: getCommunityBuffs(),
+                        // The Tasks panel is a task estimate by definition, so
+                        // it never consults the general task-damage setting —
+                        // an estimate of how long a task takes must model the
+                        // gear you are wearing for it. Zone mode covers the
+                        // whole spawn table, so the honest rule here is the
+                        // per-monster one: the bonus pays on the monsters your
+                        // own board names and on no others.
+                        taskDamageMode: TASK_DAMAGE_PER_MONSTER,
                     });
                     this._zoneSimCache.set(cacheKey, { promise, t: Date.now() });
                     try {
@@ -1765,13 +1774,13 @@ class TaskProfitDisplay {
                     difficultyTier: estimateTier,
                     hours: SIM_HOURS,
                     communityBuffs: getCommunityBuffs(),
-                    // Solo mode filtered the spawn table down to this card's
-                    // task monster, so every fight in the run is the task
-                    // fight — the one place taskDamage genuinely applies. The
-                    // shared zone-mode sim above stays off: it covers the
-                    // whole spawn table and is reused by every card in the
-                    // zone, so most of its fights are not anyone's task.
-                    isTaskFight: true,
+                    // The same per-monster rule as the zone sim above, and for
+                    // the same reason. Solo mode has already narrowed the spawn
+                    // table to this card's task monster, so "every fight counts"
+                    // would reach the same answer — but only by a different
+                    // route, and it would be wrong the moment the table is not
+                    // narrowed. One code path, and it is the honest one.
+                    taskDamageMode: TASK_DAMAGE_PER_MONSTER,
                 });
             }
 

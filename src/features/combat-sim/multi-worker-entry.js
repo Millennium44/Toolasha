@@ -236,7 +236,9 @@ onmessage = async function (event) {
                     // An all-zones sweep is a survey of generic fights,
                     // never one task's monster — so taskDamage stays off
                     // and task gear does not inflate the zone rankings
-                    isTaskFight: false,
+                    // Literal rather than the shared constant: this file is
+                    // bundled as a standalone worker string and imports nothing.
+                    taskDamageMode: 'off',
                 });
                 child.hasData = true;
             });
