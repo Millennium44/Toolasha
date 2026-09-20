@@ -188,6 +188,17 @@ class DataManager {
         this.bossMonsterHrids = new Set(); // Monster HRIDs that appear in bossSpawns
         this.battleData = null; // Current battle data (for Combat Sim export on Steam)
 
+        // Who this character last fought alongside, from `new_battle`'s `players`.
+        //
+        // `characterData.partyInfo` is only ever what `init_character_data` carried,
+        // so a party joined or left after the page loaded is invisible to it until a
+        // reload — and during a dungeon the game empties `partySlotMap` outright.
+        // The battle payload names every member with their id, which is the same
+        // pair the slot map carries, so it can stand in for it. Its limit is that it
+        // only moves when a fight starts: a party changed while idle is not seen
+        // until the next battle. Shape: {members: [{characterID, characterName}], updatedAt}.
+        this.battlePartyRoster = null;
+
         // When the front action's currently in-progress base action unit started:
         // { actionId, currentCount, unitStartTime }. Callers that model "time remaining"
         // count that in-flight unit as a whole one, so without this an ETA re-anchors to a
@@ -1159,6 +1170,7 @@ class DataManager {
             this.guildShrineHydration = null;
             this.guildShrineGuildId = null;
             this.battleData = null;
+            this.battlePartyRoster = null;
             this.actionUnitBoundary = null;
 
             // Reset switching flag (cleanup complete, ready for re-init)
@@ -1684,6 +1696,8 @@ class DataManager {
 
             // Store battle data (includes party consumables)
             this.battleData = data;
+
+            this._notePartyFromBattle(data);
 
             // The only message that carries the equipped kit whole rather than
             // as a delta, so it is the backstop: whatever the labyrinth did to
@@ -2449,6 +2463,79 @@ class DataManager {
      */
     getActionDrinkSlots(actionTypeHrid) {
         return this.actionTypeDrinkSlotsMap.get(actionTypeHrid) || [];
+    }
+
+    /**
+     * Record the party the server just put this character into a fight with.
+     *
+     * Only the client's own fights count: the payload must name this character,
+     * which a spectated stream never does. A member with no id is no use to
+     * anything downstream — a loadout is looked up by character id — so a roster
+     * that cannot be keyed whole is not taken at all rather than taken in part.
+     *
+     * The message repeats throughout a fight, so the event fires only when the
+     * membership actually moves; a panel listening to it is not redrawn per tick.
+     *
+     * @param {Object} data - `new_battle` message data
+     * @private
+     */
+    _notePartyFromBattle(data) {
+        const players = Array.isArray(data?.players) ? data.players : null;
+        if (!players || players.length === 0) return;
+
+        const members = [];
+        let sawSelf = false;
+        for (const player of players) {
+            const characterID = player?.character?.id;
+            if (!characterID) return;
+            if (characterID === this.currentCharacterId) sawSelf = true;
+            members.push({ characterID, characterName: player?.character?.name || '' });
+        }
+        if (!sawSelf) return;
+
+        const key = members
+            .map((member) => member.characterID)
+            .sort()
+            .join(',');
+        const previous = (this.battlePartyRoster?.members || [])
+            .map((member) => member.characterID)
+            .sort()
+            .join(',');
+
+        this.battlePartyRoster = { members, updatedAt: Date.now() };
+        if (key === previous) return;
+
+        this.emit('party_roster_updated', { members: members.map((member) => ({ ...member })), source: 'battle' });
+    }
+
+    /**
+     * Who this character is grouped with, and how fresh that reading is.
+     *
+     * Two sources, and the battle one wins whenever it exists: `partyInfo` is
+     * frozen at page load (see `battlePartyRoster`), so anything recorded from a
+     * fight happened later by construction. `source` is what a caller shows the
+     * user — `'battle'` can lag a party changed while idle, `'login'` lags every
+     * change since the page loaded, and neither is worth hiding from a reader.
+     *
+     * @returns {{members: Array<{characterID: string, characterName: string}>, source: string, updatedAt: number|null}}
+     */
+    getPartyMembers() {
+        const battle = this.battlePartyRoster;
+        if (battle?.members?.length) {
+            return {
+                members: battle.members.map((member) => ({ ...member })),
+                source: 'battle',
+                updatedAt: battle.updatedAt,
+            };
+        }
+
+        const slots = this.characterData?.partyInfo?.partySlotMap;
+        const members = slots
+            ? Object.values(slots)
+                  .filter((member) => member?.characterID)
+                  .map((member) => ({ characterID: member.characterID, characterName: member.characterName || '' }))
+            : [];
+        return { members, source: members.length ? 'login' : 'none', updatedAt: null };
     }
 
     /**

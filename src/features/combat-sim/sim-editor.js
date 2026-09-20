@@ -83,6 +83,10 @@ export class SimEditor {
         this._importSkipped = [];
         this._editorInitialized = false;
         this._selectedLoadoutName = '';
+        // The party the loaded player list was built from, so a party that has
+        // moved since can be said out loud rather than sat on. Null means the
+        // list makes no claim to be a party (an import, an external DTO).
+        this._partyKeyAtLoad = null;
     }
 
     getEditedDTOs() {
@@ -196,7 +200,13 @@ export class SimEditor {
         const shrines = () => JSON.stringify(this._editedDTOs?.[this._selfHrid]?.guildShrineLevels || {});
         const before = shrines();
         this._syncGuildShrinesFromGame();
-        if (shrines() === before) return false;
+        // The party is checked here too, and deliberately only redrawn rather
+        // than reloaded: the loaded players are the user's scenario, and a panel
+        // that silently replaced them on reopen would throw away edits. What
+        // changes is the note and the Reset to Party button, which is the hint
+        // the user needs to make that call themselves.
+        const partyMoved = this._partyKeyAtLoad !== null && this._partySignature().key !== this._partyKeyAtLoad;
+        if (shrines() === before && !partyMoved) return false;
         this.renderEditor();
         return true;
     }
@@ -339,6 +349,7 @@ export class SimEditor {
             this._activeEditPlayer = selfHrid;
             this._missingMembers = missingMembers;
             this._importSkipped = [];
+            this._partyKeyAtLoad = this._partySignature().key;
             this._editorInitialized = true;
 
             this.renderEditor();
@@ -367,6 +378,7 @@ export class SimEditor {
         this._activeEditPlayer = 'player1';
         this._missingMembers = [];
         this._importSkipped = [];
+        this._partyKeyAtLoad = null;
         this._editorInitialized = true;
         this.renderEditor();
     }
@@ -409,6 +421,7 @@ export class SimEditor {
         // — the hole silently back, which is the whole thing the note is for.
         // The paths that genuinely replace the loaded players clear it outright.
         this._importSkipped = [...(this._importSkipped || []), ...(Array.isArray(skipped) ? skipped : [])];
+        this._partyKeyAtLoad = null;
         this._editorInitialized = true;
         this._selectedLoadoutName = '';
 
@@ -426,9 +439,29 @@ export class SimEditor {
      * @returns {boolean} True when the character is grouped with someone
      */
     hasPartyData() {
-        const slots = dataManager.characterData?.partyInfo?.partySlotMap;
-        if (!slots) return false;
-        return Object.values(slots).filter((member) => member?.characterID).length > 1;
+        return this._partySignature().count > 1;
+    }
+
+    /**
+     * The party as the game states it now: who, how many, and where that came from.
+     *
+     * `dataManager.getPartyMembers()` prefers the roster the last battle named over
+     * the one `init_character_data` carried, which is the whole reason a party
+     * joined after the page loaded ever reaches this panel.
+     *
+     * @private
+     * @returns {{key: string, count: number, source: string}}
+     */
+    _partySignature() {
+        const { members = [], source = 'none' } = dataManager.getPartyMembers?.() || {};
+        return {
+            key: members
+                .map((member) => member.characterID)
+                .sort()
+                .join(','),
+            count: members.length,
+            source,
+        };
     }
 
     /**
@@ -461,6 +494,7 @@ export class SimEditor {
         this._missingMembers = [];
         this._importSkipped = [];
         this._selectedLoadoutName = '';
+        this._partyKeyAtLoad = this._partySignature().key;
         this._editorInitialized = true;
 
         this.renderEditor();
@@ -472,7 +506,9 @@ export class SimEditor {
      * Throw away the loaded players and load this character plus the current party.
      *
      * This is `initEditor` again, which is exactly right: that is the path that
-     * reads the live party and it re-reads it every time. What a party member's
+     * reads the live party and it re-reads it every time — and what it re-reads
+     * now moves, because `dataManager.getPartyMembers()` prefers the roster the
+     * last battle stated over the frozen login one. What a party member's
      * loadout is built from is a cached `profile_shared` payload — their gear,
      * skills, abilities and house from the last time their character card was
      * opened, plus live consumables when a fight is in progress — so a member
@@ -501,6 +537,7 @@ export class SimEditor {
         this._missingMembers = [];
         this._importSkipped = [];
         this._selectedLoadoutName = '';
+        this._partyKeyAtLoad = null;
     }
 
     /**
@@ -536,6 +573,40 @@ export class SimEditor {
             inParty ? '' : ' disabled'
         }>Reset to Party</button>`;
         return html;
+    }
+
+    /**
+     * Where the party on screen came from, and whether it still matches the game.
+     *
+     * The list is only ever as fresh as its source, and both sources lag: the
+     * login payload states the party once and never again, and the battle roster
+     * moves only when a fight starts, so a party changed while idle waits for the
+     * next one. A reader with no hint of that reads a stale roster as a current
+     * one — which is exactly how a panel showing last session's two members went
+     * unnoticed. So the panel says which it is, and says so loudly when the party
+     * has moved out from under the loaded list.
+     *
+     * @private
+     * @returns {string} HTML for the note, or '' when there is nothing to say
+     */
+    _renderPartyNote() {
+        const { key, count, source } = this._partySignature();
+
+        if (this._partyKeyAtLoad !== null && key !== this._partyKeyAtLoad) {
+            return `<div style="color:#c9a227; font-size:11px; margin:-4px 0 8px;">
+                Your party has changed since this list was loaded — Reset to Party to load it.
+            </div>`;
+        }
+        if (count < 2) return '';
+
+        const from = source === 'battle' ? 'your last fight' : 'when the page loaded';
+        const why =
+            source === 'battle'
+                ? 'The game only names the party when a battle starts, so someone joining or leaving while you are idle shows up at your next fight.'
+                : 'The game states the party once, at page load. It is re-read when your next battle starts.';
+        return `<div style="color:#666; font-size:11px; margin:-4px 0 8px;" title="${why}">
+            Party as of ${from}.
+        </div>`;
     }
 
     /**
@@ -617,6 +688,7 @@ export class SimEditor {
                     <div style="display:flex; gap:6px; justify-content:center; margin-bottom:10px; flex-wrap:wrap;">
                         ${this._renderResetControls()}
                     </div>
+                    ${this._renderPartyNote()}
                     <button id="mwi-csim-import-btn" style="
                         background:${ACCENT_BTN_BG}; border:1px solid ${ACCENT_BTN_BORDER}; color:${ACCENT};
                         padding:5px 14px; border-radius:5px; font-size:12px; cursor:pointer;
@@ -711,6 +783,7 @@ export class SimEditor {
             font-family:inherit;" title="Import players from Shykai export string">+ Import</button>`;
         html += this._renderResetControls();
         html += '</div>';
+        html += this._renderPartyNote();
         html += this._renderMissingMembersNote();
         html += this._renderImportSkippedNote();
 

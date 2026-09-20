@@ -913,9 +913,16 @@ export async function buildAllPlayerDTOs() {
         return { players: [], playerInfo: [], selfHrid: 'player1', missingMembers: [] };
     }
 
-    const hasParty = characterData.partyInfo?.partySlotMap;
+    // Not `partyInfo.partySlotMap` directly: that map is frozen at page load and
+    // is emptied outright mid-dungeon, so the party the user is actually in went
+    // unseen until a reload. `getPartyMembers()` prefers the roster the last
+    // battle stated and falls back to the login map. One filled slot is a solo
+    // character with the map the game always sends, and an empty map is the
+    // mid-dungeon hole — both belong on the solo path, which used to produce an
+    // empty player list for the latter.
+    const partyMembers = dataManager.getPartyMembers?.().members || [];
 
-    if (!hasParty) {
+    if (partyMembers.length < 2) {
         // Solo mode
         const selfDTO = buildPlayerDTO();
         if (!selfDTO) return { players: [], playerInfo: [], selfHrid: 'player1', missingMembers: [] };
@@ -944,9 +951,7 @@ export async function buildAllPlayerDTOs() {
     let selfHrid = null;
     let slotIndex = 1;
 
-    for (const member of Object.values(characterData.partyInfo.partySlotMap)) {
-        if (!member.characterID) continue;
-
+    for (const member of partyMembers) {
         if (member.characterID === characterData.character.id) {
             // Self
             const selfDTO = buildPlayerDTO();

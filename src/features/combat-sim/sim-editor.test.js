@@ -23,6 +23,8 @@ const game = vi.hoisted(() => ({
     allPlayers: null,
     /** What the game says the house is now: Map of room hrid → {level} */
     houseRooms: null,
+    /** The roster the last `new_battle` named, or null before any fight */
+    battleParty: null,
 }));
 
 vi.mock('../../core/data-manager.js', () => ({
@@ -34,6 +36,20 @@ vi.mock('../../core/data-manager.js', () => ({
         getInitClientData: () => ({ itemDetailMap: {}, abilityDetailMap: {} }),
         getItemDetails: () => null,
         getHouseRooms: () => game.houseRooms,
+        // The same precedence the real one applies: a roster read off a battle
+        // beats the one `init_character_data` froze at page load
+        getPartyMembers: () => {
+            if (game.battleParty) {
+                return { members: game.battleParty.map((member) => ({ ...member })), source: 'battle', updatedAt: 1 };
+            }
+            const slots = game.characterData?.partyInfo?.partySlotMap;
+            const members = slots
+                ? Object.values(slots)
+                      .filter((member) => member?.characterID)
+                      .map((member) => ({ characterID: member.characterID, characterName: member.characterName || '' }))
+                : [];
+            return { members, source: members.length ? 'login' : 'none', updatedAt: null };
+        },
     },
 }));
 
@@ -117,6 +133,8 @@ const emptyDTO = (hrid) => ({
     intelligenceLevel: 1,
 });
 
+const PARTY_BTN = '[data-reset-players="party"]';
+
 /** An editor with two imported strangers loaded and nothing of the player's own */
 function editorWithStrangers() {
     const el = document.createElement('div');
@@ -137,6 +155,7 @@ beforeEach(() => {
     game.charId = 'me';
     game.buildHold = null;
     game.characterData = { character: { id: 'me', name: 'Milkman' } };
+    game.battleParty = null;
     game.selfDTO = { ...emptyDTO('player1'), attackLevel: 90, debuffOnLevelGap: 0.3 };
     game.houseRooms = null;
     game.allPlayers = {
@@ -372,6 +391,134 @@ describe('the reset buttons', () => {
 
         el.querySelector('[data-reset-players="self"]').click();
         expect(editor.getPlayerInfo()).toEqual([{ hrid: 'player1', name: 'Milkman' }]);
+    });
+});
+
+/**
+ * The party the panel offers, and whether it is the party the player is in.
+ *
+ * The reported bug: a five-person party joined after the page loaded, and the
+ * panel still listed the two characters from the previous session — because the
+ * only party the client ever states is the one `init_character_data` carried.
+ * The roster the last battle named moves, so the panel follows that instead, and
+ * says which of the two it is reading.
+ */
+describe('a party joined after the page loaded', () => {
+    test('enables Reset to Party without a reload', () => {
+        // Logged in alone, so the frozen login map knows nothing about it
+        const { el, editor } = editorWithStrangers();
+        expect(editor.hasPartyData()).toBe(false);
+
+        game.battleParty = [
+            { characterID: 'me', characterName: 'Milkman' },
+            { characterID: 'a', characterName: 'Ally' },
+        ];
+        editor.renderEditor();
+
+        expect(editor.hasPartyData()).toBe(true);
+        expect(el.querySelector(PARTY_BTN).disabled).toBe(false);
+    });
+
+    test('beats the stale login party rather than being merged with it', () => {
+        game.characterData.partyInfo = {
+            partySlotMap: { 1: { characterID: 'me' }, 2: { characterID: 'old' } },
+        };
+        game.battleParty = [{ characterID: 'me', characterName: 'Milkman' }];
+        const { editor } = editorWithStrangers();
+
+        expect(editor.hasPartyData()).toBe(false);
+    });
+
+    test('a party left while idle still disables the button once a solo fight lands', () => {
+        game.characterData.partyInfo = {
+            partySlotMap: { 1: { characterID: 'me' }, 2: { characterID: 'old' } },
+        };
+        const { el, editor } = editorWithStrangers();
+        expect(el.querySelector(PARTY_BTN).disabled).toBe(false);
+
+        game.battleParty = [{ characterID: 'me', characterName: 'Milkman' }];
+        editor.renderEditor();
+
+        expect(el.querySelector(PARTY_BTN).disabled).toBe(true);
+        expect(el.querySelector(PARTY_BTN).getAttribute('title')).toContain('not in a party');
+    });
+});
+
+describe('the panel says how fresh its party is', () => {
+    test('a list loaded from the login party says so', async () => {
+        game.characterData.partyInfo = {
+            partySlotMap: { 1: { characterID: 'me' }, 2: { characterID: 'old' } },
+        };
+        const el = document.createElement('div');
+        const editor = new SimEditor({ editorEl: el });
+        await editor.initEditor();
+
+        expect(el.textContent).toContain('Party as of when the page loaded');
+    });
+
+    test('a list loaded from a battle roster says that instead', async () => {
+        game.battleParty = [
+            { characterID: 'me', characterName: 'Milkman' },
+            { characterID: 'a', characterName: 'Ally' },
+        ];
+        const el = document.createElement('div');
+        const editor = new SimEditor({ editorEl: el });
+        await editor.initEditor();
+
+        expect(el.textContent).toContain('Party as of your last fight');
+    });
+
+    test('a party that moves under the loaded list is called out', async () => {
+        game.characterData.partyInfo = {
+            partySlotMap: { 1: { characterID: 'me' }, 2: { characterID: 'old' } },
+        };
+        const el = document.createElement('div');
+        const editor = new SimEditor({ editorEl: el });
+        await editor.initEditor();
+        expect(el.textContent).not.toContain('has changed since this list was loaded');
+
+        game.battleParty = [
+            { characterID: 'me', characterName: 'Milkman' },
+            { characterID: 'a', characterName: 'Ally' },
+            { characterID: 'b', characterName: 'Buddy' },
+        ];
+
+        // What reopening the panel calls — the loaded players are the user's
+        // scenario, so the change is reported rather than applied behind them
+        expect(editor.refreshFromGame()).toBe(true);
+        expect(el.textContent).toContain('has changed since this list was loaded');
+        expect(editor.getPlayerInfo()).toHaveLength(2);
+    });
+
+    test('a solo character is told nothing, because there is nothing to be stale', () => {
+        const { el } = editorWithStrangers();
+
+        expect(el.textContent).not.toContain('Party as of');
+        expect(el.textContent).not.toContain('has changed since this list was loaded');
+    });
+
+    test('an import is not a party, so it is never accused of drifting from one', () => {
+        game.battleParty = [
+            { characterID: 'me', characterName: 'Milkman' },
+            { characterID: 'a', characterName: 'Ally' },
+        ];
+        const { el } = editorWithStrangers();
+
+        expect(el.textContent).not.toContain('has changed since this list was loaded');
+    });
+
+    test('a member with no shared profile still gets the Not loaded note', async () => {
+        game.battleParty = [
+            { characterID: 'me', characterName: 'Milkman' },
+            { characterID: 'a', characterName: 'Ally' },
+        ];
+        game.allPlayers = { ...game.allPlayers, missingMembers: ['Ally'] };
+        const el = document.createElement('div');
+        const editor = new SimEditor({ editorEl: el });
+        await editor.initEditor();
+
+        expect(el.textContent).toContain('Not loaded: Ally');
+        expect(el.textContent).toContain('shared profile');
     });
 });
 

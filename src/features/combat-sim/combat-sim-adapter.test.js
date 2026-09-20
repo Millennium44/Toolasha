@@ -22,6 +22,10 @@ const mocks = vi.hoisted(() => ({
     personalActionTypeBuffsMap: null,
     taskMonsters: [],
     taskMonsterRemaining: {},
+    /** What dataManager.getPartyMembers() answers: the roster the panel builds from */
+    partyMembers: [],
+    /** The shared profiles IndexedDB is holding */
+    profileList: [],
 }));
 
 vi.mock('../../core/data-manager.js', () => ({
@@ -36,6 +40,12 @@ vi.mock('../../core/data-manager.js', () => ({
         getAchievementBuffs: () => [],
         getActiveTaskMonsterHrids: () => mocks.taskMonsters,
         getActiveTaskMonsterRemaining: () => mocks.taskMonsterRemaining,
+        getPartyMembers: () => ({
+            members: mocks.partyMembers.map((member) => ({ ...member })),
+            source: mocks.partyMembers.length ? 'battle' : 'none',
+            updatedAt: 1,
+        }),
+        battleData: null,
         get characterData() {
             return mocks.characterData;
         },
@@ -47,7 +57,9 @@ vi.mock('../../core/data-manager.js', () => ({
         },
     },
 }));
-vi.mock('../../core/storage.js', () => ({ default: {} }));
+vi.mock('../../core/storage.js', () => ({
+    default: { getJSON: async () => mocks.profileList },
+}));
 vi.mock('../../core/config.js', () => ({ default: { getSetting: () => null, getSettingValue: (_k, d) => d } }));
 vi.mock('../combat/loadout-snapshot.js', () => ({ default: {} }));
 vi.mock('../../api/marketplace.js', () => ({ default: {} }));
@@ -68,6 +80,7 @@ const {
     readGuildShrineSnapshot,
     buildGuildBuffsFromLevels,
     buildPlayerDTO,
+    buildAllPlayerDTOs,
     buildPlayerDTOFromProfile,
     parseShykaiImport,
     taxedDropValue,
@@ -75,6 +88,59 @@ const {
     getLabyrinthMonsters,
 } = await import('./combat-sim-adapter.js');
 const { MARKET_TAX, COWBELL_BAG_TAX } = await import('../../utils/profit-constants.js');
+
+/**
+ * The player list the Configure tab starts from.
+ *
+ * It used to read `partyInfo.partySlotMap` straight, which is frozen at page
+ * load, so a party joined afterwards never reached the panel. It now asks
+ * dataManager for the party, which prefers the roster the last battle stated.
+ */
+describe('the party a sim is built for', () => {
+    beforeEach(() => {
+        mocks.characterData = { character: { id: 'me', name: 'Milkman' }, characterSkills: [] };
+        mocks.clientData = { itemDetailMap: {}, abilityDetailMap: {} };
+        mocks.partyMembers = [];
+        mocks.profileList = [];
+    });
+
+    test('is the roster dataManager reports, not the login slot map', async () => {
+        mocks.characterData.partyInfo = { partySlotMap: { 1: { characterID: 'me' } } };
+        mocks.partyMembers = [
+            { characterID: 'me', characterName: 'Milkman' },
+            { characterID: 'ally', characterName: 'Ally' },
+        ];
+        mocks.profileList = [{ characterID: 'ally', characterName: 'Ally', profile: {} }];
+
+        const { playerInfo, selfHrid } = await buildAllPlayerDTOs();
+
+        expect(playerInfo.map((entry) => entry.name)).toEqual(['Milkman', 'Ally']);
+        expect(selfHrid).toBe('player1');
+    });
+
+    test('a member with no shared profile is named as missing rather than invented', async () => {
+        mocks.partyMembers = [
+            { characterID: 'me', characterName: 'Milkman' },
+            { characterID: 'ally', characterName: 'Ally' },
+        ];
+
+        const { players, missingMembers } = await buildAllPlayerDTOs();
+
+        expect(players).toHaveLength(1);
+        expect(missingMembers).toEqual(['Ally']);
+    });
+
+    test('an emptied slot map is a solo player, not an empty panel', async () => {
+        // Mid-dungeon the game clears partySlotMap outright; the old truthiness
+        // check took `{}` as a party and built nobody at all
+        mocks.characterData.partyInfo = { partySlotMap: {} };
+
+        const { players, playerInfo } = await buildAllPlayerDTOs();
+
+        expect(players).toHaveLength(1);
+        expect(playerInfo[0].name).toBe('Milkman');
+    });
+});
 
 const FORCE = {
     hrid: '/guild_buffs/force_combat',

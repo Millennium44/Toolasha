@@ -1535,3 +1535,101 @@ describe('the monsters the active combat tasks name', () => {
         expect(taskManager.getActiveTaskMonsterHrids()).toEqual([]);
     });
 });
+
+/**
+ * The party roster, and why it cannot come from the login payload alone.
+ *
+ * `characterData.partyInfo` is whatever `init_character_data` carried and is
+ * never sent again, so a party joined or left after the page loaded is invisible
+ * to it — which is how the Combat Sim kept offering last session's members until
+ * a reload. `new_battle` names every player in the fight with their character
+ * id, which is the same pair the slot map carries, so it can stand in for it.
+ */
+describe('the party roster', () => {
+    /** The singleton, put back to a character in a two-person login party. */
+    async function loggedIn(partySlotMap = null) {
+        const { default: dataManager } = await import('./data-manager.js');
+        resetCharacter(dataManager);
+        dataManager.battlePartyRoster = null;
+        dataManager.currentCharacterId = 'me';
+        dataManager.currentCharacterName = 'Milkman';
+        dataManager.characterData = { character: { id: 'me', name: 'Milkman' } };
+        if (partySlotMap) dataManager.characterData.partyInfo = { partySlotMap };
+        return dataManager;
+    }
+
+    const battle = (...ids) => ({
+        players: ids.map((id) => ({ character: { id, name: id.toUpperCase() } })),
+    });
+
+    test('falls back to the login slot map before any fight', async () => {
+        const dataManager = await loggedIn({
+            1: { characterID: 'me', characterName: 'Milkman' },
+            2: { characterID: 'old', characterName: 'Oldfriend' },
+        });
+
+        const { members, source } = dataManager.getPartyMembers();
+        expect(members.map((member) => member.characterID)).toEqual(['me', 'old']);
+        expect(source).toBe('login');
+    });
+
+    test('a fight with a new party replaces it without a reload', async () => {
+        const dataManager = await loggedIn({
+            1: { characterID: 'me', characterName: 'Milkman' },
+            2: { characterID: 'old', characterName: 'Oldfriend' },
+        });
+
+        webSocketHandlers.get('new_battle')(battle('me', 'a', 'b', 'c', 'd'));
+
+        const { members, source } = dataManager.getPartyMembers();
+        expect(members.map((member) => member.characterID)).toEqual(['me', 'a', 'b', 'c', 'd']);
+        expect(source).toBe('battle');
+    });
+
+    test('a solo fight says so, even though the login map still names a party', async () => {
+        const dataManager = await loggedIn({
+            1: { characterID: 'me', characterName: 'Milkman' },
+            2: { characterID: 'old', characterName: 'Oldfriend' },
+        });
+
+        webSocketHandlers.get('new_battle')(battle('me'));
+
+        expect(dataManager.getPartyMembers().members).toHaveLength(1);
+    });
+
+    test('a fight this character is not in is not this character’s party', async () => {
+        const dataManager = await loggedIn();
+
+        webSocketHandlers.get('new_battle')(battle('someone', 'else'));
+
+        expect(dataManager.battlePartyRoster).toBeNull();
+        expect(dataManager.getPartyMembers()).toMatchObject({ members: [], source: 'none' });
+    });
+
+    test('a roster that cannot be keyed whole is not taken in part', async () => {
+        const dataManager = await loggedIn();
+
+        webSocketHandlers.get('new_battle')({
+            players: [{ character: { id: 'me', name: 'Milkman' } }, { character: { name: 'Nameless' } }],
+        });
+
+        expect(dataManager.battlePartyRoster).toBeNull();
+    });
+
+    test('the event fires on a membership change and not on every tick of one fight', async () => {
+        const dataManager = await loggedIn();
+        const listener = vi.fn();
+        dataManager.on('party_roster_updated', listener);
+
+        webSocketHandlers.get('new_battle')(battle('me', 'a'));
+        webSocketHandlers.get('new_battle')(battle('me', 'a'));
+        await new Promise((resolve) => setTimeout(resolve, 0));
+        expect(listener).toHaveBeenCalledTimes(1);
+
+        webSocketHandlers.get('new_battle')(battle('me', 'a', 'b'));
+        await new Promise((resolve) => setTimeout(resolve, 0));
+        expect(listener).toHaveBeenCalledTimes(2);
+
+        dataManager.off('party_roster_updated', listener);
+    });
+});
