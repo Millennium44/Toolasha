@@ -357,6 +357,17 @@ class GoalPlannerPanel {
         this.busy = false;
         this.formType = null;
         this.loaded = null;
+        this.generation = 0;
+    }
+
+    /**
+     * Capture the character and feature lifetime for an asynchronous operation.
+     * @returns {() => boolean} Whether the result still belongs to this panel
+     */
+    _currentOperation() {
+        const generation = this.generation;
+        const owner = dataManager.getCurrentCharacterId() || null;
+        return () => this.generation === generation && (dataManager.getCurrentCharacterId() || null) === owner;
     }
 
     /**
@@ -388,8 +399,12 @@ class GoalPlannerPanel {
 
     /** Feature-registry entry point: read the goals back and reopen if left open */
     async initialize() {
+        const current = this._currentOperation();
         await this.load();
-        reopenIfLeftOpen(GEOMETRY_KEY, () => this.show({ remember: false }));
+        if (!current()) return;
+        reopenIfLeftOpen(GEOMETRY_KEY, () => {
+            if (current()) this.show({ remember: false });
+        });
 
         registerCommand({
             name: 'Goal Planner',
@@ -412,8 +427,13 @@ class GoalPlannerPanel {
      * coins, presented as this one's.
      */
     disable() {
+        this.generation += 1;
         unregisterCommand('Goal Planner');
         this._remove();
+        this.busy = false;
+        this.loaded = null;
+        this.formType = null;
+        this.goals = [];
         this.context = null;
         this.plans = [];
         this.rateNotes = [];
@@ -427,12 +447,14 @@ class GoalPlannerPanel {
      * @returns {Promise<void>}
      */
     async load() {
-        this.goals = await loadGoals();
+        const current = this._currentOperation();
+        const goals = await loadGoals();
+        if (!current()) return;
         const snapshot = await loadSnapshot();
-        if (snapshot) {
-            this.plans = snapshot.plans;
-            this.pricedAt = snapshot.computedAt;
-        }
+        if (!current()) return;
+        this.goals = goals;
+        this.plans = snapshot?.plans || [];
+        this.pricedAt = snapshot?.computedAt ?? null;
         this._render();
     }
 
@@ -483,7 +505,8 @@ class GoalPlannerPanel {
         // step costs, stamped as priced just now, and `saveSnapshot`'s
         // `writeScoped` filed them over the arriving character's own snapshot.
         const owner = dataManager.getCurrentCharacterId() || null;
-        const gone = () => (dataManager.getCurrentCharacterId() || null) !== owner;
+        const current = this._currentOperation();
+        const gone = () => !current();
         try {
             if (reprice || !this.context) {
                 const context = await buildPlannerContext();
@@ -504,14 +527,17 @@ class GoalPlannerPanel {
             await saveSnapshot(this.plans, owner);
             await this._recordReservations(gone);
         } catch (error) {
+            if (gone()) return;
             console.error('[GoalPlanner] Planning failed:', error);
             // On `notice` rather than straight to the status line: the redraw in
             // `finally` rewrites that line, so a message put there directly is
             // gone before anybody reads it
             this.notice = reprice ? 'Pricing failed — see the console.' : 'Planning failed — see the console.';
         } finally {
-            this.busy = false;
-            this._render();
+            if (current()) {
+                this.busy = false;
+                this._render();
+            }
         }
     }
 
@@ -562,7 +588,10 @@ class GoalPlannerPanel {
      * @returns {Promise<void>}
      */
     async addGoal(raw) {
-        this.goals = await addGoal(raw);
+        const current = this._currentOperation();
+        const goals = await addGoal(raw);
+        if (!current()) return;
+        this.goals = goals;
         this.formType = null;
         this._render();
         await this.replan();
@@ -586,13 +615,17 @@ class GoalPlannerPanel {
         // time, so an unpinned call is a silent handoff of one character's
         // plans to another's snapshot.
         const owner = dataManager.getCurrentCharacterId() || null;
-        this.goals = await removeGoal(goalId);
+        const current = this._currentOperation();
+        const goals = await removeGoal(goalId);
+        if (!current()) return;
+        this.goals = goals;
         this.plans = this.plans.filter((plan) => plan.goalId !== goalId);
 
         if (!this.context) {
             // Nothing has been priced this session, so there is nothing to
             // reallocate against; saying so beats a silent full market fetch
             await saveSnapshot(this.plans, owner);
+            if (!current()) return;
             this._render();
             this._status('Removed — press Refresh to price the rest.');
             return;
