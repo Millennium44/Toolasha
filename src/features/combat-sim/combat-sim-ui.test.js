@@ -56,6 +56,8 @@ const mocks = vi.hoisted(() => ({
     /** What `buildGameDataPayload` and `buildAllPlayerDTOs` hand the panel */
     gameData: { itemDetailMap: {} },
     playerDTOs: [{ hrid: 'player1', equipment: {} }],
+    /** Optional override for a delayed or failed live-player profile read */
+    buildPlayerDTOs: null,
     /** buffHrid → detail, what `getGuildBuffDetailMap` hands the shrine grid */
     guildBuffDetailMap: {},
     /** hrid → detail, what `dataManager.getInitClientData().houseRoomDetailMap` hands the house grid */
@@ -80,6 +82,9 @@ const mocks = vi.hoisted(() => ({
     simResult: null,
     /** playerHrid each calculateSimRevenue() call was made with, in order */
     revenueCalls: [],
+    /** How many upgrade-advisor runs and worker cancellations were requested */
+    upgradeRuns: 0,
+    cancelActiveCalls: 0,
     /** Who is logged in; a test moves it mid-run to stage a character switch */
     characterId: 'char1',
 }));
@@ -253,7 +258,7 @@ vi.mock('../../utils/panel-geometry.js', () => ({
 
 vi.mock('./combat-sim-adapter.js', () => ({
     buildGameDataPayload: () => mocks.gameData,
-    buildAllPlayerDTOs: async () => ({ players: mocks.playerDTOs }),
+    buildAllPlayerDTOs: async () => (mocks.buildPlayerDTOs ? mocks.buildPlayerDTOs() : { players: mocks.playerDTOs }),
     getCombatZones: () => mocks.zones,
     getCurrentCombatZone: () => null,
     getCommunityBuffs: () => ({}),
@@ -276,7 +281,9 @@ vi.mock('./combat-sim-runner.js', () => ({
     runSimulation: async () => mocks.simResult || {},
     runLabyrinthSimulation: async () => ({}),
     cancelSimulation: () => {},
-    cancelActiveSimulations: () => {},
+    cancelActiveSimulations: () => {
+        mocks.cancelActiveCalls++;
+    },
     getMaxWorkers: () => 4,
     plannedWorkerCount: () => 1,
 }));
@@ -421,6 +428,7 @@ vi.mock('./upgrade-advisor.js', async (importOriginal) => {
     return {
         ...actual,
         runUpgradeAnalysis: async (...args) => {
+            mocks.upgradeRuns++;
             mocks.onRun?.(...args);
             return mocks.upgradeResult;
         },
@@ -702,6 +710,9 @@ describe('the panel', () => {
     beforeEach(() => {
         mocks.upgradeResult = { baseline: null, results: [], food: null };
         mocks.onRun = null;
+        mocks.buildPlayerDTOs = null;
+        mocks.upgradeRuns = 0;
+        mocks.cancelActiveCalls = 0;
         mocks.wasOpen = false;
         mocks.openCalls = [];
         mocks.editorCalls = [];
@@ -787,6 +798,23 @@ describe('the panel', () => {
         ui._switchTab('seek');
         expect(text()).toContain('Simulating 40 upgrades');
         ui._upgradeRunning = false;
+    });
+
+    test('a second click before player loading resolves does not start a concurrent analysis', async () => {
+        selectZone();
+
+        const first = ui._onUpgradeAnalyze();
+        const second = ui._onUpgradeAnalyze();
+        await Promise.all([first, second]);
+
+        expect(mocks.upgradeRuns).toBe(1);
+    });
+
+    test('upgrade Stop terminates the simulation already in flight', () => {
+        ui.panel.querySelector('#mwi-csim-upgrade-stop').dispatchEvent(new window.Event('click'));
+
+        expect(ui._upgradeAborted).toBe(true);
+        expect(mocks.cancelActiveCalls).toBe(1);
     });
 
     test('a cancelled analysis still shows the candidates that finished', async () => {
@@ -1232,6 +1260,8 @@ describe('results outliving the character they were run for', () => {
     beforeEach(() => {
         mocks.store.clear();
         mocks.characterId = 'char1';
+        mocks.buildPlayerDTOs = null;
+        mocks.upgradeRuns = 0;
     });
 
     afterEach(() => {
@@ -1241,6 +1271,7 @@ describe('results outliving the character they were run for', () => {
         mocks.zones = [];
         mocks.allZonesResult = [];
         mocks.onRun = null;
+        mocks.buildPlayerDTOs = null;
         vi.restoreAllMocks();
     });
 
@@ -1321,6 +1352,24 @@ describe('results outliving the character they were run for', () => {
         expect(
             mocks.store.get('combatExport:combatSimUpgradeResults_char2').data.results[0].candidate.description
         ).toBe('the alt’s own run');
+    });
+
+    test('an upgrade analysis waiting for player profiles does not start after a character switch', async () => {
+        let releaseProfiles;
+        mocks.buildPlayerDTOs = () =>
+            new Promise((resolve) => {
+                releaseProfiles = resolve;
+            });
+        ui.buildPanel();
+        selectZone();
+
+        const analysis = ui._onUpgradeAnalyze();
+        mocks.characterId = 'char2';
+        releaseProfiles({ players: mocks.playerDTOs });
+        await analysis;
+
+        expect(mocks.upgradeRuns).toBe(0);
+        expect(ui._upgradeRunning).toBe(false);
     });
 });
 

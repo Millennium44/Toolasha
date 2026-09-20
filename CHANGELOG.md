@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Combat Sim: Upgrade Analysis stops when you tell it to
+
+- Upgrade Stop now ends the simulation already running instead of waiting for it to reach the next candidate, a second click while profiles are still loading no longer starts a parallel run, and switching character mid-load abandons the analysis rather than finishing it for the wrong character.
+
 ### The ▶ combat-zone button opens the zone straight away instead of after a five-second pause
 
 - Pressed mid-fight, ▶ jumped to Combat and then sat there: it waited the full timeout for a zones list that cannot render until the Combat Zones tab is showing. It now reads which tab is selected — free, and instantly — and switches onto Combat Zones before waiting, giving the game a brief moment to navigate there itself first.

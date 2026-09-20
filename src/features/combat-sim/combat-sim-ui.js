@@ -2404,6 +2404,10 @@ class CombatSimUI {
         this.panel.querySelector('#mwi-csim-upgrade-run').addEventListener('click', () => this._onUpgradeAnalyze());
         this.panel.querySelector('#mwi-csim-upgrade-stop').addEventListener('click', () => {
             this._upgradeAborted = true;
+            // The advisor only polls the abort flag between simulations. Stop
+            // the one already in flight too, otherwise an uncapped run can
+            // make the button appear unresponsive for a very long time.
+            cancelActiveSimulations();
         });
         this.panel.querySelectorAll('[data-upgrade-mode]').forEach((box) => {
             box.addEventListener('change', () => {
@@ -7420,6 +7424,8 @@ class CombatSimUI {
      * @private
      */
     async _onUpgradeAnalyze() {
+        if (this._isBusy()) return;
+
         // Captured before the first await — see `_stillSameCharacter`
         const ownerId = dataManager.getCurrentCharacterId();
         const zoneHrid = this.panel.querySelector('#mwi-csim-zone')?.value;
@@ -7465,17 +7471,38 @@ class CombatSimUI {
             return;
         }
 
+        // Claim the run before loading live DTOs. The button is not hidden
+        // until that await completes, so without this latch a rapid second
+        // click can launch a fully independent analysis against the same UI.
+        this._upgradeRunning = true;
+
         // Get player DTOs (edited or live)
         let playerDTOs;
-        const editedDTOs = this._editor?.getEditedDTOs();
-        if (editedDTOs) {
-            playerDTOs = Object.values(editedDTOs);
-        } else {
-            const result = await buildAllPlayerDTOs();
-            playerDTOs = result.players;
+        try {
+            const editedDTOs = this._editor?.getEditedDTOs();
+            if (editedDTOs) {
+                playerDTOs = Object.values(editedDTOs);
+            } else {
+                const result = await buildAllPlayerDTOs();
+                playerDTOs = result.players;
+            }
+        } catch (error) {
+            this._upgradeRunning = false;
+            console.error('[CombatSimUI] Failed to load players for upgrade analysis:', error);
+            this._setStatus('Analysis failed: ' + error.message);
+            return;
+        }
+
+        // A character switch destroys and rebuilds this singleton while the
+        // profile read is pending. Do not resume the old character's run in
+        // the arriving character's fresh panel.
+        if (!this._stillSameCharacter(ownerId)) {
+            this._upgradeRunning = false;
+            return;
         }
 
         if (!playerDTOs?.length || !playerDTOs[playerIndex]) {
+            this._upgradeRunning = false;
             this._setStatus('No player data available. Configure a simulation first.');
             return;
         }
