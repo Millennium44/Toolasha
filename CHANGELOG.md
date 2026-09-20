@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Guild trial events held during loading stay with their character
+
+- Switching characters while a trace manifest loads now finishes restoring and flushing the departing capture under its original owner. Queued opening events preserve both characters' stored traces instead of replacing either manifest with a fresh recording.
+
 ### Guild trial trace exports keep a consistent snapshot and report missing chunks
 
 - Live ticks no longer change a trace file beneath its header, and clearing or flushing waits for an export's chunk reads. Exports identify missing or unreadable chunks, and recording during a clear no longer lets the old cleanup delete the new trace's manifest.
