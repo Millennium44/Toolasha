@@ -67,3 +67,38 @@ describe('EventQueue clear* methods', () => {
         expect(drainTimes(queue)).toEqual([6]);
     });
 });
+
+describe('EventQueue ordering', () => {
+    test('preserves insertion order for events with the same timestamp', () => {
+        const queue = new EventQueue();
+        const events = ['first', 'second', 'third', 'fourth', 'fifth'].map((type) => makeEvent(10, type));
+
+        for (const event of events) {
+            queue.addEvent(event);
+        }
+
+        expect(events.map(() => queue.getNextEvent().type)).toEqual([
+            'first',
+            'second',
+            'third',
+            'fourth',
+            'fifth',
+        ]);
+    });
+
+    test('keeps stable equal-time ordering after an earlier event is removed', () => {
+        const queue = new EventQueue();
+        const earlier = makeEvent(5, 'earlier');
+        const simultaneous = ['first', 'second', 'third', 'fourth'].map((type) => makeEvent(10, type));
+
+        queue.addEvent(simultaneous[0]);
+        queue.addEvent(earlier);
+        for (const event of simultaneous.slice(1)) {
+            queue.addEvent(event);
+        }
+
+        queue.clearEventsOfType('earlier');
+
+        expect(simultaneous.map(() => queue.getNextEvent().type)).toEqual(['first', 'second', 'third', 'fourth']);
+    });
+});
