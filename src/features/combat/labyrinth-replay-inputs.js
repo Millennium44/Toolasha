@@ -38,6 +38,13 @@ function buildKey(inputs) {
     // The worker explicitly removes these in labyrinth mode; crate buffs replace them.
     delete playerDTO.food;
     delete playerDTO.drinks;
+    // These support the skilling simulator or build editor. The combat worker
+    // consumes neither tokenUpgrades nor these level maps: shared community
+    // buffs arrive separately, and guildCombatBuffs already carries the resolved
+    // combat effects. Keep those actual buffs in the key.
+    delete playerDTO.tokenUpgrades;
+    delete playerDTO.communityBuffLevels;
+    delete playerDTO.guildShrineLevels;
     // Player.createFromDTO reads only the seven combat levels.
     for (const skill of [
         'woodcutting',

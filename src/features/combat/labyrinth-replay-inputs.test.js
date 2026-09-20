@@ -28,6 +28,28 @@ const fight = (extra = {}) => ({
 });
 
 describe('recorded replay builds', () => {
+    test('noncombat DTO metadata does not split a build while resolved combat buffs still do', () => {
+        const original = inputs();
+        original.playerDTO.tokenUpgrades = { speed: 1, experience: 1 };
+        original.playerDTO.communityBuffLevels = { productionEfficiency: 1, experience: 1 };
+        original.playerDTO.guildShrineLevels = { '/guild_buffs/force': 1 };
+        original.playerDTO.guildCombatBuffs = [{ typeHrid: '/buff_types/physical_damage', ratioBoost: 0.01 }];
+        const metadataOnly = structuredClone(original);
+        metadataOnly.playerDTO.tokenUpgrades.speed = 2;
+        metadataOnly.playerDTO.communityBuffLevels.productionEfficiency = 2;
+        metadataOnly.playerDTO.guildShrineLevels['/guild_buffs/force'] = 2;
+        const combatChanged = structuredClone(metadataOnly);
+        combatChanged.playerDTO.guildCombatBuffs[0].ratioBoost = 0.02;
+        const { candidates } = replayCandidates(
+            [
+                fight({ replayInputs: original }),
+                fight({ replayInputs: metadataOnly }),
+                fight({ replayInputs: combatChanged }),
+            ],
+            null
+        );
+        expect(candidates.map(({ group }) => group.fights)).toEqual([2, 1]);
+    });
     test('noncombat levels and food disabled by the labyrinth worker do not split a build', () => {
         const other = inputs();
         other.playerDTO.woodcuttingLevel = 99;
