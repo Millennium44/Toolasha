@@ -11,6 +11,7 @@ class AutoAllButton {
     constructor() {
         this.processedContainers = new WeakSet();
         this.itemNameToHridCache = null;
+        this.pendingTimers = new Set();
     }
 
     /**
@@ -44,13 +45,15 @@ class AutoAllButton {
         this.processedContainers.add(container);
 
         // Small delay to let content fully render
-        setTimeout(() => {
+        const timer = setTimeout(() => {
+            this.pendingTimers.delete(timer);
             try {
                 this.processContainer(container);
             } catch (error) {
                 console.error('[AutoAllButton] Error processing container:', error);
             }
         }, 50);
+        this.pendingTimers.add(timer);
     }
 
     /**
@@ -148,6 +151,10 @@ class AutoAllButton {
      */
     disable() {
         tooltipObserver.unsubscribe('auto-all-button');
+        for (const timer of this.pendingTimers) {
+            clearTimeout(timer);
+        }
+        this.pendingTimers.clear();
         this.processedContainers = new WeakSet();
         this.itemNameToHridCache = null;
     }
