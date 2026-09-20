@@ -179,27 +179,57 @@ Where: the blind branch at the tail of `addNextAttackEvent`,
 `src/features/combat-sim/engine/combat-simulator.js`. A blinded unit falls out of the function with no
 `AutoAttackEvent` queued, so it swings again only when `processBlindExpirationEvent` lifts the flag.
 
-**Status: unverified.** This arrived with the engine and has never been checked against the game. The two
-candidate behaviors are "a blinded unit does not swing" and "a blinded unit swings and misses", and they
-differ by the whole of that unit's damage for the blind's duration — a much larger error than any
-bookkeeping around it. Reading the branch again does not settle it, and nothing in the fork should quote
-it as settled.
+**Status: settled from source — the engine is right.** The game's own in-client documentation defines all
+three crowd-control effects, verbatim:
 
-What was fixed here is a separate and smaller thing: the branch used to also set `isOutOfMana`, which is
-the fork's own bookkeeping for a unit parked waiting on mana. That flag gates the three
-mana-restoration wakes and feeds `timeOutOfManaSeconds` / `manaExhaustionFraction`, which the food
-optimizer reads, so a merely blinded unit reported as mana-starved. Blindness no longer touches it. That
-correction stands whichever way the attack question resolves, and the tests assert only the flag — never
-that the blinded unit queues nothing.
+> Blind: Prevents using auto attacks.
+>
+> Silence: Prevents using abilities.
+>
+> Stun: Prevents using auto attacks, abilities, and consumables.
 
-Measurable from the live stream: plausibly, and it is the only blind in the game to measure.
+That is the server's own statement of the rule, so it is better evidence than anything measurable from the
+client, and it closes the claim in the engine's favor: a blinded unit does not swing. It also settles the
+half of the claim nobody asked — blind stops auto attacks **only**, so a blinded unit still casts, which is
+why the blind branch sits after the ability loop rather than at the top of the function.
 
-- Source: Nature's Veil, 0.5 chance, 5 s, carried by Dryad, Enchanted Bishop, Jackalope, Luna Empress,
-  Squawker, Trial Hedgehog and Zombie.
-- Fields: the victim's `atkCounter` across the blind window. The payload carries no blind flag (see the
-  limits under claim 1), so the window has to be pinned from the caster's side — the tick the ability
-  lands — rather than read off the victim.
-- Discriminator: `atkCounter` rising during the window means the game keeps swinging and the engine
-  understates blinded damage. A flat counter for the full 5 s, on a unit whose attack interval is
-  comfortably shorter than that, means the engine is right.
-- Falsifier for the engine's current behavior: any `atkCounter` move inside a confirmed window.
+**The earlier measurement was invalid and its plan is withdrawn.** The inconclusive run that left this
+claim unverified was taken on a magic build, whose damage comes from casts — exactly the thing blind does
+not affect. It could not have moved the discriminator whichever way the game behaves, so it is not a weak
+sample to be topped up; it is the wrong experiment. The measurement plan that stood here (Nature's Veil
+windows pinned from the caster's side, `atkCounter` read across them) is removed rather than left as an
+invitation: there is nothing left to decide, and a fresh sample could only disagree with the server's own
+documentation.
+
+What was also fixed here is a separate and smaller thing: the branch used to set `isOutOfMana`, which is
+the fork's own bookkeeping for a unit parked waiting on mana. That flag gates the three mana-restoration
+wakes and feeds `timeOutOfManaSeconds` / `manaExhaustionFraction`, which the food optimizer reads, so a
+merely blinded unit reported as mana-starved. Blindness no longer touches it.
+
+Silence is settled by the same quotation: `Ability.shouldTrigger` refuses while `isSilenced` and nothing
+else does, so a silenced unit keeps swinging. That is what the documentation says.
+
+## 7. Stun blocked abilities and consumables but not the scheduling of auto attacks
+
+Where: `addNextAttackEvent` in `src/features/combat-sim/engine/combat-simulator.js`, against the stun
+definition quoted under claim 6.
+
+**Status: settled from source — the engine was wrong, and is fixed.** Two of the three things stun forbids
+were enforced on the state: `ability.js` refuses to trigger while `isStunned`, and `consumable.js` the
+same. The third was enforced on the **queue** instead. Applying a stun cleared the target's queued
+`AutoAttackEvent` and nothing re-armed it until `processStunExpirationEvent` fired — which holds only while
+nothing else calls `addNextAttackEvent` during the stun, and things do. `startAttacks()` arms every living
+unit at each wave spawn, so a unit stunned near the end of a wave was handed a swing by the next spawn and
+attacked straight through its stun; the mana-restoration wakes reach the same function.
+
+The fix is a guard on `isStunned` at the **top** of `addNextAttackEvent`, ahead of the ability loop rather
+than beside the blind branch below it, because every path left in that function — cast or swing — is
+something stun forbids. It must not raise `isOutOfMana`, for the same reason blind must not.
+`processStunExpirationEvent` lowers `isStunned` before it calls back in, so the unit is re-armed there and
+resumes; that ordering is now pinned by a test, because reversing it would leave a stunned unit idle for
+the rest of the run.
+
+Direction of the correction: slightly **less** player damage in any run where players get stunned, since
+the engine was giving them swings the game does not. Runs without stun are unchanged, which is why the
+golden run's pinned totals did not move — neither side of that fixture has an ability, and an ability
+effect is the only thing in the engine that applies a stun.

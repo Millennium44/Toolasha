@@ -1263,6 +1263,33 @@ class CombatSimulator {
         if (source.combatDetails.currentHitpoints <= 0) {
             return;
         }
+
+        if (source.isStunned) {
+            // The game's own documentation: "Stun: Prevents using auto attacks,
+            // abilities, and consumables." So a stunned unit has nothing to
+            // schedule here, and the return is at the top rather than beside
+            // the blind branch below because this function's every remaining
+            // path — the ability loop and the auto attack — is one of the
+            // things stun forbids. (`Ability.shouldTrigger` already refuses
+            // while stunned, so running the loop would be harmless, merely
+            // wasted work that reads as if a stunned unit might cast.)
+            //
+            // Before this guard, stun stopped auto attacks only indirectly:
+            // applying it cleared the target's queued AutoAttackEvent and
+            // nothing re-armed it until the expiration event. Anything else
+            // calling in re-armed it early — `startAttacks()` hands every
+            // living unit a swing at each wave spawn, so a unit stunned near
+            // the end of a wave started swinging again through the stun.
+            //
+            // Like blind, this must NOT raise `isOutOfMana`: that flag gates
+            // the mana-restoration wakes and feeds `timeOutOfManaSeconds` ->
+            // `manaExhaustionFraction`, which the food optimizer reads, so a
+            // merely stunned unit would report as mana-starved.
+            //
+            // `processStunExpirationEvent` lowers `isStunned` before it calls
+            // back in, so the unit is re-armed there and resumes normally.
+            return;
+        }
         // Check both event types via indexed lookups instead of O(n) getMatching
         if (
             this.eventQueue.getByTypeAndSource(AbilityCastEndEvent.type, source) ||
@@ -1323,17 +1350,17 @@ class CombatSimulator {
         }
 
         if (source.isBlinded) {
+            // Settled from the game's own documentation: "Blind: Prevents using
+            // auto attacks." Only auto attacks — which is why this branch sits
+            // after the ability loop rather than at the top of the function,
+            // where stun returns: a blinded unit still casts. See claim 6 in
+            // docs/sim-claim-verification.md.
+            //
             // Blind is not a mana state. It has its own flag and its own
             // expiration event, so it must not raise `isOutOfMana` — that flag
             // gates the mana-restoration wakes and feeds the reported
             // exhaustion time, and raising it here made a merely blinded unit
             // read as mana-starved.
-            //
-            // OPEN QUESTION, do not read this branch as confirmed: scheduling
-            // nothing for a blinded unit is inherited and unmeasured. Nobody
-            // has checked whether the game stops a blinded unit's swings or
-            // lets them continue and miss. See claim 6 in
-            // docs/sim-claim-verification.md.
             return;
         }
 

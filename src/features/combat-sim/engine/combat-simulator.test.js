@@ -1944,3 +1944,166 @@ describe('out-of-mana is a mana state and nothing else', () => {
         expect(player.isOutOfMana).toBe(true);
     });
 });
+
+/**
+ * The three crowd-control effects, as the game's own in-client documentation
+ * defines them:
+ *
+ *   Blind: Prevents using auto attacks.
+ *   Silence: Prevents using abilities.
+ *   Stun: Prevents using auto attacks, abilities, and consumables.
+ *
+ * Stun is the only one of the three that was ever enforced indirectly. Applying
+ * it cleared the target's queued swing and nothing re-armed it until the stun
+ * expired — which holds only while nothing else calls `addNextAttackEvent`, and
+ * things do: `startAttacks()` arms every living unit at each wave spawn, so a
+ * unit stunned near the end of a wave was handed a swing by the next spawn and
+ * attacked straight through its stun. The guard at the top of
+ * `addNextAttackEvent` is what makes the state, rather than the queue, decide.
+ */
+describe('stun stops every action, blind and silence stop one each', () => {
+    /**
+     * A solo fight standing one second in, with the player's own events swept
+     * so `addNextAttackEvent` is reached rather than short-circuited by the
+     * swing already queued for them.
+     * @returns {{sim: CombatSimulator, player: Object}} The simulator and its player
+     */
+    function soloFight() {
+        installGameData();
+        seedSimRng(11);
+        const zone = new Zone(ZONE_HRID, 0);
+        const player = fixturePlayer();
+        player.zoneBuffs = zone.buffs;
+        player.extraBuffs = [];
+        const sim = new CombatSimulator([player], zone);
+        sim.reset();
+        sim.simulationTime = ONE_SECOND;
+        player.reset(sim.simulationTime);
+        sim.startNewEncounter();
+        sim.eventQueue.clearEventsForUnit(player);
+        return { sim, player };
+    }
+
+    /**
+     * The least an ability has to be for `addNextAttackEvent` to consider it.
+     * It triggers unconditionally on purpose: the real `Ability.shouldTrigger`
+     * refuses while stunned or silenced, and a stub that copied those refusals
+     * would only prove itself. This one leaves the refusing to the simulator.
+     * @param {number} manaCost - What the cast costs
+     * @returns {Object} A stand-in ability
+     */
+    function alwaysTriggers(manaCost) {
+        return {
+            hrid: '/abilities/fixture',
+            manaCost,
+            castDuration: 0,
+            lastUsed: 0,
+            shouldTrigger: () => true,
+        };
+    }
+
+    /**
+     * Events of one type standing for one unit.
+     * @param {CombatSimulator} sim - The simulator to read
+     * @param {string} type - The event type
+     * @param {Object} unit - The unit the events must name
+     * @returns {Object[]} The matching events
+     */
+    function queued(sim, type, unit) {
+        return sim.eventQueue.minHeap.data.filter((event) => event.type === type && event.source === unit);
+    }
+
+    afterEach(() => {
+        clearSimRng();
+        setGameData(null);
+    });
+
+    test('a stunned unit is handed nothing at all', () => {
+        const { sim, player } = soloFight();
+        player.abilities = [alwaysTriggers(10)];
+        player.combatDetails.currentManapoints = player.combatDetails.maxManapoints;
+        player.isStunned = true;
+
+        sim.addNextAttackEvent(player);
+
+        expect(queued(sim, AutoAttackEvent.type, player)).toEqual([]);
+        expect(queued(sim, AbilityCastEndEvent.type, player)).toEqual([]);
+    });
+
+    test('a wave spawn does not re-arm a stunned unit', () => {
+        // The bug in its original shape. The stun's own bookkeeping is intact —
+        // the queue was cleared when it landed, the expiration event is
+        // standing — and the next wave's `startAttacks` still used to hand the
+        // unit a swing, because it only ever asked whether the unit was alive.
+        const { sim, player } = soloFight();
+        player.isStunned = true;
+        player.stunExpireTime = sim.simulationTime + 3 * ONE_SECOND;
+        sim.eventQueue.addEvent(new StunExpirationEvent(player.stunExpireTime, player));
+
+        sim.startAttacks();
+
+        expect(queued(sim, AutoAttackEvent.type, player)).toEqual([]);
+        expect(queued(sim, StunExpirationEvent.type, player).length).toBe(1);
+    });
+
+    test('a unit whose stun expires swings again', () => {
+        // The ordering this pins is inside `processStunExpirationEvent`: it
+        // lowers `isStunned` *before* calling `addNextAttackEvent`. Lower it
+        // afterwards and the new guard is still true at that moment, so the
+        // unit is never re-armed and stands there for the rest of the run.
+        const { sim, player } = soloFight();
+        player.isStunned = true;
+        player.stunExpireTime = sim.simulationTime + 3 * ONE_SECOND;
+        const stunExpirationEvent = new StunExpirationEvent(player.stunExpireTime, player);
+
+        sim.startAttacks();
+        expect(queued(sim, AutoAttackEvent.type, player)).toEqual([]);
+
+        sim.simulationTime = player.stunExpireTime;
+        sim.processStunExpirationEvent(stunExpirationEvent);
+
+        expect(player.isStunned).toBe(false);
+        expect(queued(sim, AutoAttackEvent.type, player).length).toBe(1);
+    });
+
+    test('a stun does not mark a unit out of mana', () => {
+        // Same reason blindness must not: `isOutOfMana` gates the
+        // mana-restoration wakes and feeds `timeOutOfManaSeconds` /
+        // `manaExhaustionFraction`, which the food optimizer reads. The unit is
+        // given an ability it cannot afford, which is the case that would have
+        // reached the mana bookkeeping had the guard let it through.
+        const { sim, player } = soloFight();
+        player.abilities = [alwaysTriggers(10)];
+        player.combatDetails.currentManapoints = 4;
+        player.isStunned = true;
+
+        sim.addNextAttackEvent(player);
+
+        expect(player.isOutOfMana).toBe(false);
+    });
+
+    test('a blinded unit still casts, because blind stops auto attacks only', () => {
+        const { sim, player } = soloFight();
+        player.abilities = [alwaysTriggers(10)];
+        player.combatDetails.currentManapoints = player.combatDetails.maxManapoints;
+        player.isBlinded = true;
+
+        sim.addNextAttackEvent(player);
+
+        expect(queued(sim, AbilityCastEndEvent.type, player).length).toBe(1);
+        expect(queued(sim, AutoAttackEvent.type, player)).toEqual([]);
+    });
+
+    test('a silenced unit still swings, because silence stops abilities only', () => {
+        // No ability is given, because the stub above would cast through a
+        // silence that the real `Ability.shouldTrigger` refuses. What is at
+        // stake here is the other half: silence must leave the auto attack
+        // alone, and a stun guard placed too broadly would take it away.
+        const { sim, player } = soloFight();
+        player.isSilenced = true;
+
+        sim.addNextAttackEvent(player);
+
+        expect(queued(sim, AutoAttackEvent.type, player).length).toBe(1);
+    });
+});

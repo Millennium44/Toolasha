@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Combat Sim: a stunned fighter no longer attacks through the stun
+
+- A stun stopped auto attacks only until the next wave spawned, which handed every living fighter a swing without checking whether it was stunned, so simulated damage counted attacks the game does not allow. Stun now blocks auto attacks, abilities and consumables alike, and a fighter still resumes the moment it expires.
+
 ### The Philosopher's Stone table is wide enough for its last two columns, and opens on Profit/Hr
 
 - Fifteen columns were squeezed into a fixed 1,200px dialog, so Time/Philo and Profit/Hr fell off the right edge on a wide screen while the rest of the window sat empty. The table now grows to the space available, and sorts by profit per hour rather than cost when it opens.
