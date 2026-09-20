@@ -1302,6 +1302,9 @@ class Storage {
             return false;
         }
 
+        // A restore can finish while this caller is waiting for a connection.
+        if (this._refuseDuringRestore(key, storeName, 'save')) return false;
+
         if (immediate) {
             return this._writeNow(key, value, storeName);
         } else {
@@ -1376,6 +1379,8 @@ class Storage {
             console.warn(`[Storage] Database not available, cannot save key: ${key}`);
             return false;
         }
+        // Timer writes reach this path without set()'s post-reconnect check.
+        if (this._refuseDuringRestore(key, storeName, 'save')) return false;
         return this._guardedWrite('set', key, storeName, false, () => this._runSave(key, value, storeName));
     }
 
@@ -1865,6 +1870,7 @@ class Storage {
             console.warn(`[Storage] Database not available, cannot delete key: ${key}`);
             return false;
         }
+        if (this._refuseDuringRestore(key, storeName, 'delete')) return false;
 
         // A queued debounced write to this key predates the delete, and used to
         // land three seconds after it — so a prune, or a "clear this character's
@@ -2135,7 +2141,7 @@ class Storage {
             // chunks would otherwise fill the console with the same sentence
             if (this._refuseDuringRestore('(bulk write)', storeName, 'save')) return 0;
         }
-        const written = await this._putAllWritten(storeName, entries);
+        const written = await this._putAllWritten(storeName, entries, options);
         return written.length;
     }
 
@@ -2146,10 +2152,11 @@ class Storage {
      * and requeue only what failed, which a count cannot tell it.
      * @param {string} storeName - Object store name
      * @param {Record<string, *>} entries - Map of key → value to write
+     * @param {{bypassRestoreLatch?: boolean}} [options] - Restore/bookkeeping write exemption
      * @returns {Promise<Array<string>>} The keys that were written
      * @private
      */
-    async _putAllWritten(storeName, entries) {
+    async _putAllWritten(storeName, entries, options = {}) {
         // Every other write path waits out a reconnect gap; this one used not to,
         // so a ~500ms dropped connection turned a whole store's restore into a
         // silent no-op that still reported "restored".
@@ -2157,6 +2164,9 @@ class Storage {
             console.warn(`[Storage] Database not available, cannot bulk write to store: ${storeName}`);
             return [];
         }
+
+        // Recheck after the connection wait, including flushAll's internal calls.
+        if (!options.bypassRestoreLatch && this._refuseDuringRestore('(bulk write)', storeName, 'save')) return [];
 
         const keys = Object.keys(entries || {});
         if (keys.length === 0) {
