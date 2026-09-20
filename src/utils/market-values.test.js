@@ -412,6 +412,24 @@ describe('applyMarketValuesMessage', () => {
         expect(marketValueFor('/items/log')).toBe(200);
     });
 
+    test.each([6, null])('a stored version %s cannot replace a newer pushed value map', (version) => {
+        const now = Date.now();
+        applyMarketValuesMessage(payload(7, { '/items/log': { 0: 1000 } }));
+        const currentBand = bandFromValue(1000);
+        expect(clampToBand(5000, '/items/log')).toBe(currentBand.max);
+
+        mocks.payload = payload(version, { '/items/log': { 0: 100 } });
+        refreshMarketValues(now + 60_000);
+        expect(marketValueFor('/items/log')).toBe(1000);
+        expect(clampToBand(5000, '/items/log')).toBe(currentBand.max);
+
+        // Retaining the pushed map must not prevent a later stored update.
+        mocks.payload = payload(8, { '/items/log': { 0: 2000 } });
+        refreshMarketValues(now + 120_000);
+        expect(marketValueFor('/items/log')).toBe(2000);
+        expect(clampToBand(5000, '/items/log')).toBe(bandFromValue(2000).max);
+    });
+
     test('a consumer memoised on the old version recomputes', () => {
         applyMarketValuesMessage(payload(1, { '/items/log': { 0: 1000 } }));
         const before = clampToBand(5000, '/items/log');
