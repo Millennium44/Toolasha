@@ -166,6 +166,7 @@ let ticks = [];
 let recording = false;
 let startedAt = 0;
 let recordingStartedAt = 0;
+let recordingStoppedAt = null;
 let onNewBattle = null;
 let onBattleUpdated = null;
 let lostFight = false;
@@ -486,7 +487,7 @@ export function isRecording() {
 export function recordingStatus() {
     return {
         ticks: ticks.length,
-        seconds: recordingStartedAt ? (Date.now() - recordingStartedAt) / 1000 : 0,
+        seconds: recordingStartedAt ? ((recordingStoppedAt ?? Date.now()) - recordingStartedAt) / 1000 : 0,
         full: lostFight,
         fights: completedFights,
         segments: segmentIndex + 1,
@@ -524,6 +525,7 @@ export function startRecording({ seconds = 0, thenDownload = false, target: want
     marginPct = null;
     startedAt = Date.now();
     recordingStartedAt = startedAt;
+    recordingStoppedAt = null;
     recording = true;
     loadout = captureLoadout();
 
@@ -685,6 +687,9 @@ export function stopRecording() {
     // announcing it would have every listener read the same run twice
     const wasRecording = recording;
     const finished = recording && ticks.length > 0;
+    // Exports may happen long after stopping. Their duration describes capture,
+    // while exportedAt describes the later download. Repeated stops keep the first time.
+    if (wasRecording) recordingStoppedAt = Date.now();
     recording = false;
     if (finished) notify(completionListeners, recordingFile());
 
@@ -707,7 +712,7 @@ export function recordingFile() {
     return {
         format: 'toolasha-combat-recording',
         version: 1,
-        seconds: startedAt ? (Date.now() - startedAt) / 1000 : 0,
+        seconds: startedAt ? ((recordingStoppedAt ?? Date.now()) - startedAt) / 1000 : 0,
         truncated: lostFight,
         segment: segmentIndex,
         loadout,
@@ -744,7 +749,7 @@ export function sessionFile() {
         isTestServer: host ? host.includes('test.') : null,
         recordedAt: recordingStartedAt || null,
         exportedAt: Date.now(),
-        seconds: recordingStartedAt ? (Date.now() - recordingStartedAt) / 1000 : 0,
+        seconds: recordingStartedAt ? ((recordingStoppedAt ?? Date.now()) - recordingStartedAt) / 1000 : 0,
         fights: completedFights,
         live: recording,
         truncated: all.some((entry) => entry.truncated),
