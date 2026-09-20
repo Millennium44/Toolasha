@@ -925,6 +925,45 @@ describe('Config — two settings loads in flight across a character switch', ()
         dataManagerMock.characterId = 'char-A';
     });
 
+    test('clearing during teardown invalidates a pending load before the character id moves', async () => {
+        const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+        try {
+            let releaseA;
+            settingsStorageMock.loadSettings.mockReturnValueOnce(
+                new Promise((resolve) => {
+                    releaseA = () => resolve({ checkbox: { id: 'checkbox', isTrue: true } });
+                })
+            );
+            const loaded = vi.fn();
+            config.onSettingsLoaded(loaded);
+            const loadA = config.loadSettings();
+
+            // The switch clears synchronously, then waits for feature teardown.
+            // Data-manager keeps A current until that awaited teardown finishes.
+            config.clearSettingsCache();
+            config.setSetting('checkbox', false);
+            releaseA();
+            await loadA;
+
+            expect(config.settingsMap).toEqual({});
+            expect(config.characterSettingsLoaded).toBe(false);
+            expect(config._pendingWrites).toHaveLength(1);
+            expect(settingsStorageMock.saveSettings).not.toHaveBeenCalled();
+            expect(loaded).not.toHaveBeenCalled();
+
+            dataManagerMock.characterId = 'char-B';
+            settingsStorageMock.loadSettings.mockResolvedValueOnce({ checkbox: { id: 'checkbox', isTrue: true } });
+            await config.loadSettings();
+
+            expect(config.settingsOwner).toBe('char-B');
+            expect(config.getSetting('checkbox')).toBe(true);
+            expect(config._pendingWrites).toHaveLength(0);
+            expect(loaded).toHaveBeenCalledTimes(1);
+        } finally {
+            warn.mockRestore();
+        }
+    });
+
     test('the departing character’s late read does not overwrite the arriving one’s map', async () => {
         const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
         try {
