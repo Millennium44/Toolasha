@@ -543,6 +543,90 @@ describe('MarketAPI price patch notifications', () => {
     });
 });
 
+describe('MarketAPI patch freshness ordering', () => {
+    beforeEach(() => {
+        vi.resetModules();
+        vi.useFakeTimers();
+        vi.setSystemTime(100_000);
+    });
+
+    afterEach(() => {
+        vi.useRealTimers();
+        vi.restoreAllMocks();
+    });
+
+    test('an older pooled sighting cannot replace a newer live order book', async () => {
+        createMocks(true);
+        const { default: marketAPI } = await import('./marketplace.js');
+        const { default: storage } = await import('../core/storage.js');
+        const listener = vi.fn();
+        marketAPI.on(listener);
+        marketAPI.lastFetchTimestamp = 50_000;
+        marketAPI.updatePrice('/items/plank', 0, 100, 90, 90_000);
+        vi.advanceTimersByTime(marketAPI.NOTIFY_COALESCE_MS);
+        storage.setJSON.mockClear();
+        listener.mockClear();
+
+        marketAPI.updatePrice('/items/plank', 0, 60, 50, 60_000);
+        vi.advanceTimersByTime(marketAPI.NOTIFY_COALESCE_MS);
+
+        expect(marketAPI.getPrice('/items/plank')).toEqual({ ask: 100, bid: 90 });
+        expect(marketAPI.getPriceTimestamp('/items/plank')).toBe(90_000);
+        expect(storage.setJSON).not.toHaveBeenCalled();
+        expect(listener).not.toHaveBeenCalled();
+    });
+
+    test('a pending storage read retains live patches and still imports newer stored patches', async () => {
+        const { get, getJSON } = createMocks(true);
+        get.mockResolvedValue(1);
+        const { promise, resolve } = Promise.withResolvers();
+        getJSON.mockReturnValue(promise);
+        const { default: marketAPI } = await import('./marketplace.js');
+        marketAPI.lastFetchTimestamp = 50_000;
+
+        const loading = marketAPI.loadPatches();
+        await Promise.resolve();
+        expect(getJSON).toHaveBeenCalled();
+        marketAPI.updatePrice('/items/plank', 0, 100, 90, 90_000);
+        marketAPI.updatePrice('/items/milk', 0, 30, 20, 90_000);
+        marketAPI.updatePrice('/items/cheese', 0, 50, 40, 60_000);
+        resolve({
+            '/items/plank:0': { a: 60, b: 50, timestamp: 60_000 },
+            '/items/cheese:0': { a: 70, b: 60, timestamp: 95_000 },
+        });
+        await loading;
+
+        expect(marketAPI.getPrice('/items/plank')).toEqual({ ask: 100, bid: 90 });
+        expect(marketAPI.getPrice('/items/milk')).toEqual({ ask: 30, bid: 20 });
+        expect(marketAPI.getPrice('/items/cheese')).toEqual({ ask: 70, bid: 60 });
+    });
+
+    test('an unreadable patch cache does not erase prices already observed in this session', async () => {
+        const { get, getJSON } = createMocks(true);
+        get.mockResolvedValue(1);
+        getJSON.mockRejectedValue(new Error('storage unavailable'));
+        vi.spyOn(console, 'error').mockImplementation(() => {});
+        const { default: marketAPI } = await import('./marketplace.js');
+        marketAPI.updatePrice('/items/plank', 0, 100, 90, 90_000);
+
+        await marketAPI.loadPatches();
+
+        expect(marketAPI.getPrice('/items/plank')).toEqual({ ask: 100, bid: 90 });
+    });
+
+    test('patch migration drops the old stored format while preserving current-session observations', async () => {
+        const { get, getJSON } = createMocks(true);
+        get.mockResolvedValue(0);
+        const { default: marketAPI } = await import('./marketplace.js');
+        marketAPI.updatePrice('/items/plank', 0, 100, 90, 90_000);
+
+        await marketAPI.loadPatches();
+
+        expect(getJSON).not.toHaveBeenCalled();
+        expect(marketAPI.getPrice('/items/plank')).toEqual({ ask: 100, bid: 90 });
+    });
+});
+
 /**
  * The snapshot cache is kept valid by an age, and an age is a subtraction
  * against a clock that can step backwards.
