@@ -9,6 +9,7 @@ const mocks = vi.hoisted(() => ({
     loadCurrentSessionId: vi.fn(),
     saveSessions: vi.fn(async () => true),
     saveCurrentSessionId: vi.fn(async () => true),
+    characterId: 'c1',
 }));
 
 vi.mock('../../core/config.js', () => ({
@@ -17,6 +18,7 @@ vi.mock('../../core/config.js', () => ({
 
 vi.mock('../../core/data-manager.js', () => ({
     default: {
+        getCurrentCharacterId: () => mocks.characterId,
         getInitClientData: vi.fn(() => ({
             itemDetailMap: {
                 '/items/sword': { name: 'Sword' },
@@ -45,8 +47,9 @@ vi.mock('./tooltip-enhancement.js', () => ({
     getEnhancementMaterialPrice: vi.fn(() => 0),
 }));
 
-import { createSession } from './enhancement-session.js';
+import { createSession, SessionState } from './enhancement-session.js';
 import enhancementTracker from './enhancement-tracker.js';
+import enhancementCalibration from '../insights/enhancement-calibration.js';
 
 /** Load the singleton fresh with the given session as the current one. */
 async function loadWith(session) {
@@ -60,6 +63,100 @@ async function loadWith(session) {
 
 beforeEach(() => {
     vi.clearAllMocks();
+    mocks.characterId = 'c1';
+});
+
+function deferred() {
+    let resolve;
+    const promise = new Promise((done) => {
+        resolve = done;
+    });
+    return { promise, resolve };
+}
+
+describe('EnhancementTracker completion ownership', () => {
+    test('keeps a new session active while recording the previous completed run', async () => {
+        const finished = createSession('/items/sword', 'Sword', 0, 1, 0);
+        finished.id = 'finished';
+        await loadWith(finished);
+        const saving = deferred();
+        mocks.saveSessions.mockReturnValueOnce(saving.promise);
+
+        const completion = enhancementTracker.recordSuccess(0, 1);
+        const nextId = await enhancementTracker.startSession('/items/sword', 1, 3);
+        mocks.saveCurrentSessionId.mockClear();
+        saving.resolve();
+        await completion;
+
+        expect(enhancementTracker.currentSessionId).toBe(nextId);
+        expect(mocks.saveCurrentSessionId).not.toHaveBeenCalledWith(null);
+        expect(enhancementCalibration.recordCompletion).toHaveBeenCalledWith(finished);
+    });
+
+    test.each(['saveSessions', 'saveCurrentSessionId'])(
+        'does not finish the departing character after waiting for %s',
+        async (saveMethod) => {
+            const finished = createSession('/items/sword', 'Sword', 0, 1, 0);
+            await loadWith(finished);
+            const saving = deferred();
+            const entered = deferred();
+            mocks[saveMethod].mockImplementationOnce(() => {
+                entered.resolve();
+                return saving.promise;
+            });
+
+            const completion = enhancementTracker.recordSuccess(0, 1);
+            await entered.promise;
+            enhancementTracker.disable();
+            mocks.characterId = 'c2';
+            const arriving = createSession('/items/sword', 'Sword', 3, 5, 0);
+            await loadWith(arriving);
+            mocks.saveCurrentSessionId.mockClear();
+            saving.resolve();
+            await completion;
+
+            expect(enhancementTracker.getCurrentSession()).toBe(arriving);
+            expect(mocks.saveCurrentSessionId).not.toHaveBeenCalled();
+            expect(enhancementCalibration.recordCompletion).not.toHaveBeenCalled();
+            expect(finished.state).toBe(SessionState.COMPLETED);
+        }
+    );
+
+    test('finalizing an old session does not clear a session started during its save', async () => {
+        const previous = createSession('/items/sword', 'Sword', 0, 5, 0);
+        previous.id = 'previous';
+        await loadWith(previous);
+        const saving = deferred();
+        mocks.saveSessions.mockReturnValueOnce(saving.promise);
+        const finalizing = enhancementTracker.finalizeCurrentSession();
+        const nextId = await enhancementTracker.startSession('/items/sword', 1, 3);
+        mocks.saveCurrentSessionId.mockClear();
+
+        saving.resolve();
+        await finalizing;
+
+        expect(enhancementTracker.currentSessionId).toBe(nextId);
+        expect(mocks.saveCurrentSessionId).not.toHaveBeenCalled();
+    });
+
+    test('keeps an extended session active and calibrates the leg that actually finished', async () => {
+        const session = createSession('/items/sword', 'Sword', 0, 1, 0);
+        await loadWith(session);
+        const saving = deferred();
+        mocks.saveSessions.mockReturnValueOnce(saving.promise);
+        const completion = enhancementTracker.recordSuccess(0, 1);
+        await enhancementTracker.extendSessionTarget(session.id, 3);
+        mocks.saveCurrentSessionId.mockClear();
+
+        saving.resolve();
+        await completion;
+
+        expect(enhancementTracker.getCurrentSession()).toBe(session);
+        expect(mocks.saveCurrentSessionId).not.toHaveBeenCalled();
+        expect(enhancementCalibration.recordCompletion).toHaveBeenCalledWith(
+            expect.objectContaining({ id: session.id, targetLevel: 1, currentLevel: 1, state: SessionState.COMPLETED })
+        );
+    });
 });
 
 describe('EnhancementTracker Blessed tracking', () => {
