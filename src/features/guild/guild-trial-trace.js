@@ -631,6 +631,10 @@ class GuildTrialTrace {
                 this.lastFlushAt = at;
             }
 
+            if (type === BOUNDARY_MESSAGE) {
+                // Matching payloads in different fights are not duplicate ticks.
+                this.lastGuildBattleKey = null;
+            }
             if (type === 'guild_battle_updated') {
                 // Drop an exact repeat of the previous tick: the hook exempts
                 // this message from its own dedup (consecutive ticks open with

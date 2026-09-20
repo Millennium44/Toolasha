@@ -204,6 +204,25 @@ describe('capture', () => {
         expect(status.duplicatesDiscarded).toBe(1);
     });
 
+    test('a new fight preserves an identical update without a battle id', async () => {
+        const update = { pMap: tick.pMap, mMap: tick.mMap };
+        emit('new_guild_battle', { tier: 1 });
+        emit('guild_battle_updated', update);
+        emit('new_guild_battle', { tier: 2 });
+        emit('guild_battle_updated', update);
+        expect(trace.status().eventCount).toBe(4);
+        expect(trace.status().duplicatesDiscarded).toBe(0);
+        emit('guild_battle_updated', update);
+        expect(trace.status().eventCount).toBe(4);
+        expect(trace.status().duplicatesDiscarded).toBe(1);
+        expect((await tracedEvents()).map((event) => event.type)).toEqual([
+            'new_guild_battle',
+            'guild_battle_updated',
+            'new_guild_battle',
+            'guild_battle_updated',
+        ]);
+    });
+
     test('the same reading returning later is kept — only adjacency is noise', () => {
         emit('guild_battle_updated', tick);
         emit('guild_battle_updated', { ...tick, pMap: { 0: { cHP: 90 } } });
