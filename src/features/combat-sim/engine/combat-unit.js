@@ -262,9 +262,10 @@ class CombatUnit {
                 (1 + this.combatDetails.combatStats.maxManapointsRatio + maxMpBoost.ratioBoost)
         );
 
-        const accuracyRatioBoostFromFury = boostOf('/buff_types/fury_accuracy').ratioBoost;
-        const damageRatioBoostFromFury = boostOf('/buff_types/fury_damage').ratioBoost;
-
+        // Fury is in these two pools, not on top of them. It types itself
+        // `/buff_types/accuracy` and `/buff_types/damage` exactly as the game
+        // does (see `updateFuryBuffs`), so `_buffIndex` sums it in with Berserk
+        // and the guild damage buff and the rating is `base × (1 + d + f)`.
         const accuracyRatioBoost = boostOf('/buff_types/accuracy').ratioBoost;
         const damageRatioBoost = boostOf('/buff_types/damage').ratioBoost;
 
@@ -272,13 +273,11 @@ class CombatUnit {
             this.combatDetails[style + 'AccuracyRating'] =
                 (10 + this.combatDetails.attackLevel) *
                 (1 + this.combatDetails.combatStats[style + 'Accuracy']) *
-                (1 + accuracyRatioBoost) *
-                (1 + accuracyRatioBoostFromFury);
+                (1 + accuracyRatioBoost);
             this.combatDetails[style + 'MaxDamage'] =
                 (10 + this.combatDetails.meleeLevel) *
                 (1 + this.combatDetails.combatStats[style + 'Damage']) *
-                (1 + damageRatioBoost) *
-                (1 + damageRatioBoostFromFury);
+                (1 + damageRatioBoost);
             const baseEvasion =
                 (10 + this.combatDetails.defenseLevel) * (1 + this.combatDetails.combatStats[style + 'Evasion']);
             this.combatDetails[style + 'EvasionRating'] = baseEvasion;
@@ -292,8 +291,7 @@ class CombatUnit {
         this.combatDetails.defensiveMaxDamage =
             (10 + this.combatDetails.defenseLevel) *
             (1 + this.combatDetails.combatStats.defensiveDamage) *
-            (1 + damageRatioBoost) *
-            (1 + damageRatioBoostFromFury);
+            (1 + damageRatioBoost);
 
         // when equiped bulwark
         if (this.equipment?.['/equipment_types/two_hand']?.hrid.includes('bulwark')) {
@@ -303,13 +301,11 @@ class CombatUnit {
         this.combatDetails.rangedAccuracyRating =
             (10 + this.combatDetails.attackLevel) *
             (1 + this.combatDetails.combatStats.rangedAccuracy) *
-            (1 + accuracyRatioBoost) *
-            (1 + accuracyRatioBoostFromFury);
+            (1 + accuracyRatioBoost);
         this.combatDetails.rangedMaxDamage =
             (10 + this.combatDetails.rangedLevel) *
             (1 + this.combatDetails.combatStats.rangedDamage) *
-            (1 + damageRatioBoost) *
-            (1 + damageRatioBoostFromFury);
+            (1 + damageRatioBoost);
 
         const baseRangedEvasion =
             (10 + this.combatDetails.defenseLevel) * (1 + this.combatDetails.combatStats.rangedEvasion);
@@ -325,13 +321,11 @@ class CombatUnit {
         this.combatDetails.magicAccuracyRating =
             (10 + this.combatDetails.attackLevel) *
             (1 + this.combatDetails.combatStats.magicAccuracy) *
-            (1 + accuracyRatioBoost) *
-            (1 + accuracyRatioBoostFromFury);
+            (1 + accuracyRatioBoost);
         this.combatDetails.magicMaxDamage =
             (10 + this.combatDetails.magicLevel) *
             (1 + this.combatDetails.combatStats.magicDamage) *
-            (1 + damageRatioBoost) *
-            (1 + damageRatioBoostFromFury);
+            (1 + damageRatioBoost);
 
         const baseMagicEvasion =
             (10 + this.combatDetails.defenseLevel) * (1 + this.combatDetails.combatStats.magicEvasion);
@@ -510,6 +504,17 @@ class CombatUnit {
 
     /**
      * Update fury accuracy and damage buffs in a single batch, calling updateCombatDetails() once.
+     *
+     * The entries are shaped exactly as the game's own `combatBuffMap` shapes
+     * them: Fury's identity is its **unique** hrid, and its **type** is the
+     * ordinary `/buff_types/accuracy` / `/buff_types/damage`. That is what puts
+     * Fury in the same pool as Berserk and the guild damage buff — measured
+     * against the live client, a rating is `base × (1 + d + f)`, not
+     * `base × (1 + d) × (1 + f)`. Types the engine invented for itself used to
+     * make this the one buff whose sim-built form differed from the folded live
+     * form, and the separate factor was only ever exercised by the sim-built
+     * one, which is how it went unnoticed.
+     *
      * @param {number} furyAmount - Current fury stack count (0-5)
      * @param {number} furyStat - Fury combat stat value
      * @param {number} currentTime - Simulation time for buff start
@@ -519,7 +524,7 @@ class CombatUnit {
         if (furyAmount > 0) {
             this.combatBuffs['/buff_uniques/fury_accuracy'] = {
                 uniqueHrid: '/buff_uniques/fury_accuracy',
-                typeHrid: '/buff_types/fury_accuracy',
+                typeHrid: '/buff_types/accuracy',
                 ratioBoost: furyAmount * furyStat,
                 ratioBoostLevelBonus: 0,
                 flatBoost: 0,
@@ -529,7 +534,7 @@ class CombatUnit {
             };
             this.combatBuffs['/buff_uniques/fury_damage'] = {
                 uniqueHrid: '/buff_uniques/fury_damage',
-                typeHrid: '/buff_types/fury_damage',
+                typeHrid: '/buff_types/damage',
                 ratioBoost: furyAmount * furyStat,
                 ratioBoostLevelBonus: 0,
                 flatBoost: 0,

@@ -2,16 +2,20 @@
  * Fury stacking check — is the Fury buff additive with the other damage and
  * accuracy buffs, or multiplicative on top of them?
  *
- * ## The dispute
+ * ## The dispute, and how it ended
  *
- * The sim engine gives Fury its own factor
- * (`combat-sim/engine/combat-unit.js`): an accuracy rating is
+ * The sim engine used to give Fury its own factor
+ * (`combat-sim/engine/combat-unit.js`): an accuracy rating was
  * `base × (1 + d) × (1 + f)`, where `d` is the summed ratio boost of
- * `/buff_types/accuracy` and `f` that of `/buff_types/fury_accuracy`, and the
- * same shape repeats for damage and for every style. Another simulator claims
- * the game pools the two instead — `base × (1 + d + f)`. One hand reading
- * favoured our form, which is one observation, so this measures it on every
- * reading the wire offers and keeps score.
+ * `/buff_types/accuracy` and `f` that of Fury's own effect, the same shape
+ * repeating for damage and for every style. The competing claim was that the
+ * game pools the two instead — `base × (1 + d + f)`. This check settled it on
+ * live readings: pooled. The engine now pools them too, by typing Fury's
+ * entries the way the game types them, so `f` is simply part of `d`'s pool.
+ *
+ * The check stays because the measurement is cheap and the regression it would
+ * catch is expensive — and because the readings it grades come from the game,
+ * not from the sim, so it remains an independent witness.
  *
  * ## Why the game can settle it without the sim
  *
@@ -101,10 +105,12 @@ export const METRICS = ['accuracy', 'damage'];
  * Buff identities per metric: the non-Fury pool, and the two ways a Fury entry
  * can name itself.
  *
- * `/buff_types/fury_accuracy` is the **engine's** type. It is synthesized in
- * `combat-sim/engine/combat-unit.js` (`updateFuryBuffs`) and that is the only
- * place in this codebase the value is ever produced — nothing reads it off the
- * wire. What a live `combatBuffMap` states is an entry keyed by its *unique*
+ * `/buff_types/fury_accuracy` was the **engine's** type. It was synthesized in
+ * `combat-sim/engine/combat-unit.js` (`updateFuryBuffs`), the only place in
+ * this codebase the value was ever produced — nothing reads it off the wire,
+ * and the engine no longer writes it either. It stays recognized here so a
+ * client or a saved tally from before that change still reads correctly.
+ * What a live `combatBuffMap` states is an entry keyed by its *unique*
  * hrid, `/buff_uniques/fury_accuracy`, and the stat-check panel's fold (which
  * lists only entries whose `typeHrid` the engine knows) has been seen naming
  * both "fury accuracy" and "fury damage" off a live player sheet while this

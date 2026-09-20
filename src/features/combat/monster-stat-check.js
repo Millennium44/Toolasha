@@ -85,9 +85,7 @@ export function activeBuffNames(combatBuffMap) {
 /** A buff type → the compared `combatDetails` keys it raises. */
 const BUFF_TYPE_TO_KEYS = {
     '/buff_types/accuracy': (style) => [`${style}AccuracyRating`],
-    '/buff_types/fury_accuracy': (style) => [`${style}AccuracyRating`],
     '/buff_types/damage': (style) => [`${style}MaxDamage`],
-    '/buff_types/fury_damage': (style) => [`${style}MaxDamage`],
     '/buff_types/evasion': () => EVASION_ROWS.map(([key]) => key),
     '/buff_types/armor': () => ['totalArmor'],
     '/buff_types/max_hitpoints': () => ['maxHitpoints'],
@@ -122,8 +120,6 @@ export const ENGINE_BUFF_TYPES = new Set([
     '/buff_types/experience',
     '/buff_types/fire_amplify',
     '/buff_types/fire_resistance',
-    '/buff_types/fury_accuracy',
-    '/buff_types/fury_damage',
     '/buff_types/gourmet',
     '/buff_types/healing_amplify',
     '/buff_types/hp_regen',

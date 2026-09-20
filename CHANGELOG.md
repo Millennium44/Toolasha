@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Combat Sim: Fury was simulated too strong
+
+- Measured against the game, Fury adds into the same pool as your other damage and accuracy buffs rather than multiplying on top of them, so every past simulation of a build running Fury was optimistic about its damage and accuracy; the fix also makes the simulator's internal buff shape match the game's, so the sim-built and live-folded stats can no longer disagree.
+
 ### Fury Stacking: the check was not finding Fury at all
 
 - It looked the buff up under a type only the simulator produces, so every reading was filed as "no Fury up" and the panel showed a confident zero; it now recognises Fury by the name the game uses, and says loudly when a run of readings never finds Fury rather than looking merely patient.

@@ -1647,8 +1647,6 @@ const COMBAT_BUFF_TYPES = new Set([
     '/buff_types/evasion',
     '/buff_types/fire_amplify',
     '/buff_types/fire_resistance',
-    '/buff_types/fury_accuracy',
-    '/buff_types/fury_damage',
     '/buff_types/healing_amplify',
     '/buff_types/hp_regen',
     '/buff_types/life_steal',

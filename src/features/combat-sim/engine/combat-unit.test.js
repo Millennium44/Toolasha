@@ -113,7 +113,7 @@ describe('CombatUnit.removeExpiredBuffs fallback', () => {
         const unit = makeUnit();
         unit.combatBuffs['/buff_uniques/fury_damage'] = {
             uniqueHrid: '/buff_uniques/fury_damage',
-            typeHrid: '/buff_types/fury_damage',
+            typeHrid: '/buff_types/damage',
             ratioBoost: 0.5,
             flatBoost: 0,
             startTime: 0,
@@ -267,5 +267,141 @@ describe('threat with a /buff_types/threat boost', () => {
         player.updateCombatDetails();
 
         expect(player.combatDetails.combatStats.threat).toBeCloseTo(170, 9);
+    });
+});
+
+/**
+ * Fury pools with the other damage and accuracy buffs rather than multiplying
+ * on top of them.
+ *
+ * Measured against the live client: with `d = 0.036` of other damage buff and
+ * `f = 0.16` of Fury, the game reported a stab max damage of 1471.721, which
+ * is `base × (1 + d + f)` exactly; `base × (1 + d) × (1 + f)` is 1478.809.
+ *
+ * The engine used to invent `/buff_types/fury_damage` and
+ * `/buff_types/fury_accuracy` so it could give Fury its own factor. Those types
+ * exist nowhere in the game's own `combatBuffMap` — it keys Fury by its unique
+ * hrid and types it as an ordinary damage/accuracy buff — and that divergence
+ * is what hid the bug: the stat-check panel folds the game's buff map straight
+ * into a sim unit, so the folded path read Fury additively and agreed with the
+ * game, while every real simulation built Fury itself and took the extra
+ * factor. The last test here pins the two paths together so they cannot drift
+ * apart again.
+ */
+describe('Fury is in the same pool as the other damage and accuracy buffs', () => {
+    const GEAR_ACCURACY = 0.11;
+    const GEAR_DAMAGE = 0.19;
+    const OTHER = 0.036;
+    const FURY_STACKS = 4;
+    const FURY_PER_STACK = 0.04;
+    const FURY = FURY_STACKS * FURY_PER_STACK;
+
+    /**
+     * A wire-shaped buff entry, keyed by unique hrid and typed as the game types it.
+     * @param {string} uniqueHrid - The buff's unique hrid
+     * @param {string} typeHrid - The buff's type hrid
+     * @param {number} ratioBoost - Ratio boost
+     * @returns {Object} The entry
+     */
+    const entry = (uniqueHrid, typeHrid, ratioBoost) => ({
+        uniqueHrid,
+        typeHrid,
+        ratioBoost,
+        ratioBoostLevelBonus: 0,
+        flatBoost: 0,
+        flatBoostLevelBonus: 0,
+        startTime: 0,
+        duration: 60 * NS,
+    });
+
+    /**
+     * A unit with levels and gear ratios, before any buff.
+     * @returns {CombatUnit} The unit
+     */
+    function baseUnit() {
+        const unit = new CombatUnit();
+        unit.attackLevel = 100;
+        unit.meleeLevel = 90;
+        unit.rangedLevel = 80;
+        unit.magicLevel = 70;
+        unit.defenseLevel = 60;
+        for (const style of ['stab', 'slash', 'smash', 'ranged', 'magic']) {
+            unit.combatDetails.combatStats[style + 'Accuracy'] = GEAR_ACCURACY;
+            unit.combatDetails.combatStats[style + 'Damage'] = GEAR_DAMAGE;
+        }
+        unit.combatDetails.combatStats.defensiveDamage = GEAR_DAMAGE;
+        return unit;
+    }
+
+    /**
+     * The accuracy and damage numbers a comparison is about.
+     * @param {CombatUnit} unit - The unit to read
+     * @returns {Object} The rating and max-damage keys
+     */
+    const ratings = (unit) => {
+        const keys = [
+            'stabAccuracyRating',
+            'slashAccuracyRating',
+            'smashAccuracyRating',
+            'rangedAccuracyRating',
+            'magicAccuracyRating',
+            'stabMaxDamage',
+            'slashMaxDamage',
+            'smashMaxDamage',
+            'rangedMaxDamage',
+            'magicMaxDamage',
+            'defensiveMaxDamage',
+        ];
+        return Object.fromEntries(keys.map((key) => [key, unit.combatDetails[key]]));
+    };
+
+    test('a Fury stack adds to the other buffs instead of multiplying them', () => {
+        const unit = baseUnit();
+        unit.combatBuffs['/buff_uniques/berserk'] = entry('/buff_uniques/berserk', '/buff_types/damage', OTHER);
+        unit.combatBuffs['/buff_uniques/precision'] = entry('/buff_uniques/precision', '/buff_types/accuracy', OTHER);
+        unit.updateFuryBuffs(FURY_STACKS, FURY_PER_STACK, 0, 60 * NS);
+
+        const damageBase = (10 + 90) * (1 + GEAR_DAMAGE);
+        expect(unit.combatDetails.stabMaxDamage).toBeCloseTo(damageBase * (1 + OTHER + FURY), 9);
+        expect(unit.combatDetails.stabMaxDamage).not.toBeCloseTo(damageBase * (1 + OTHER) * (1 + FURY), 3);
+
+        const accuracyBase = (10 + 100) * (1 + GEAR_ACCURACY);
+        expect(unit.combatDetails.stabAccuracyRating).toBeCloseTo(accuracyBase * (1 + OTHER + FURY), 9);
+    });
+
+    test('with no other buff of the type, Fury is the whole pool', () => {
+        const unit = baseUnit();
+        unit.updateFuryBuffs(FURY_STACKS, FURY_PER_STACK, 0, 60 * NS);
+
+        expect(unit.combatDetails.magicMaxDamage).toBeCloseTo((10 + 70) * (1 + GEAR_DAMAGE) * (1 + FURY), 9);
+    });
+
+    test('dropping the stacks takes Fury back out of the pool', () => {
+        const unit = baseUnit();
+        unit.updateFuryBuffs(FURY_STACKS, FURY_PER_STACK, 0, 60 * NS);
+        unit.updateFuryBuffs(0, 0, 0, 0);
+
+        expect(unit.combatDetails.stabMaxDamage).toBeCloseTo((10 + 90) * (1 + GEAR_DAMAGE), 9);
+    });
+
+    test('the sim-built Fury and the folded live buff map produce the same stats', () => {
+        // The fold, as `monster-stat-check-ui.js` does it: the game's own
+        // combatBuffMap copied onto a sim unit, then a plain stat rebuild.
+        const built = baseUnit();
+        built.combatBuffs['/buff_uniques/berserk'] = entry('/buff_uniques/berserk', '/buff_types/damage', OTHER);
+        built.combatBuffs['/buff_uniques/precision'] = entry('/buff_uniques/precision', '/buff_types/accuracy', OTHER);
+        built.updateFuryBuffs(FURY_STACKS, FURY_PER_STACK, 0, 60 * NS);
+
+        const wireBuffMap = {
+            '/buff_uniques/berserk': entry('/buff_uniques/berserk', '/buff_types/damage', OTHER),
+            '/buff_uniques/precision': entry('/buff_uniques/precision', '/buff_types/accuracy', OTHER),
+            '/buff_uniques/fury_damage': entry('/buff_uniques/fury_damage', '/buff_types/damage', FURY),
+            '/buff_uniques/fury_accuracy': entry('/buff_uniques/fury_accuracy', '/buff_types/accuracy', FURY),
+        };
+        const folded = baseUnit();
+        folded.combatBuffs = { ...wireBuffMap };
+        folded.updateCombatDetails();
+
+        expect(ratings(folded)).toEqual(ratings(built));
     });
 });
