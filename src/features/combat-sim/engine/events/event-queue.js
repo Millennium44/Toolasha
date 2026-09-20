@@ -65,7 +65,7 @@ class IndexedMinHeap {
         const data = this.data;
         while (idx > 0) {
             const parent = (idx - 1) >> 1;
-            if (data[idx].time >= data[parent].time) break;
+            if (!this._comesBefore(data[idx], data[parent])) break;
             const tmp = data[parent];
             data[parent] = data[idx];
             data[idx] = tmp;
@@ -83,8 +83,8 @@ class IndexedMinHeap {
             const left = 2 * idx + 1;
             const right = 2 * idx + 2;
 
-            if (left < len && data[left].time < data[smallest].time) smallest = left;
-            if (right < len && data[right].time < data[smallest].time) smallest = right;
+            if (left < len && this._comesBefore(data[left], data[smallest])) smallest = left;
+            if (right < len && this._comesBefore(data[right], data[smallest])) smallest = right;
 
             if (smallest === idx) break;
 
@@ -96,6 +96,10 @@ class IndexedMinHeap {
             idx = smallest;
         }
     }
+
+    _comesBefore(left, right) {
+        return left.time < right.time || (left.time === right.time && left._queueSequence < right._queueSequence);
+    }
 }
 
 /**
@@ -104,6 +108,7 @@ class IndexedMinHeap {
 class EventQueue {
     constructor() {
         this.minHeap = new IndexedMinHeap();
+        this.nextSequence = 0;
     }
 
     /**
@@ -111,6 +116,10 @@ class EventQueue {
      * @param {Object} event
      */
     addEvent(event) {
+        // A binary heap does not otherwise preserve insertion order among equal
+        // timestamps. Combat frequently schedules simultaneous expirations,
+        // attacks, and ticks, so use a queue-local sequence as a stable tie-break.
+        event._queueSequence = this.nextSequence++;
         this.minHeap.push(event);
     }
 
@@ -219,6 +228,7 @@ class EventQueue {
      */
     clear() {
         this.minHeap = new IndexedMinHeap();
+        this.nextSequence = 0;
     }
 
     /**
