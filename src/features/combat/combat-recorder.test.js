@@ -119,8 +119,8 @@ describe('recording the combat feed', () => {
         expect(recorder.sessionFile().fights).toBe(1);
         recorder.default.cleanup();
         expect(recorder.recordingStatus()).toMatchObject({ fights: 0, ticks: 0, seconds: 0 });
-        expect(recorder.sessionFile()).toMatchObject({ recordedAt: null, fights: 0, seconds: 0 });
-        expect(recorder.recordingFile()).toMatchObject({ ticks: [], loadout: null, segment: 0 });
+        expect(recorder.sessionFile()).toMatchObject({ recordingId: null, recordedAt: null, fights: 0, seconds: 0 });
+        expect(recorder.recordingFile()).toMatchObject({ recordingId: null, ticks: [], loadout: null, segment: 0 });
     });
 
     test('it keeps what attribution reads and nothing else', () => {
