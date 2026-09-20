@@ -2510,6 +2510,9 @@ class LabSimUI {
         // source for it, since the same sim takes wildly different times by
         // hours, party size and machine
         const eta = createEtaTracker();
+        // A teardown can rebuild this singleton for the same character before
+        // the old worker's resolution or cancellation reaches this await.
+        const isCurrentRun = () => startToken === this._runStartToken && this._stillSameCharacter(ownerId);
 
         try {
             if (this._labyFindMaxMode) {
@@ -2541,6 +2544,7 @@ class LabSimUI {
                         referenceLevel,
                     },
                     (progress) => {
+                        if (!isCurrentRun()) return;
                         const percent = Math.round((progress.step / progress.totalSteps) * 100);
                         const { text: remaining } = eta.update(progress.step / progress.totalSteps);
                         progressFill.style.width = `${percent}%`;
@@ -2551,6 +2555,7 @@ class LabSimUI {
                     }
                 );
 
+                if (!isCurrentRun()) return;
                 this._maxLevel = maxResult.maxLevel;
                 // Filed against the monster it was searched for, so the Upgrade
                 // tab's "Sim max" can use it without re-searching and without
@@ -2599,12 +2604,14 @@ class LabSimUI {
                         taskDamageMode: TASK_DAMAGE_OFF,
                     },
                     (percent) => {
+                        if (!isCurrentRun()) return;
                         const { text: remaining } = eta.update(percent / 100);
                         progressFill.style.width = `${percent}%`;
                         progressText.textContent = remaining ? `${percent}% · ${remaining}` : `${percent}%`;
                     }
                 );
 
+                if (!isCurrentRun()) return;
                 this._displaySimResults(simResult, monsterHrid, roomLevel, hours, simStartTime, playerDTOs[0].hrid);
                 await this._recordSingleTargetRun(simResult, {
                     monsterHrid,
@@ -2616,18 +2623,21 @@ class LabSimUI {
                 });
             }
         } catch (error) {
+            if (!isCurrentRun()) return;
             if (error.message !== 'Cancelled') {
                 console.error('[LabSimUI] Simulation failed:', error);
                 this._setStatus('Simulation failed: ' + error.message);
             }
         } finally {
-            this.isRunning = false;
-            runBtn.disabled = false;
-            runBtn.style.opacity = '1';
-            runBtn.style.cursor = 'pointer';
-            progressContainer.style.display = 'none';
-            clearInterval(this.elapsedTimer);
-            this.elapsedTimer = null;
+            if (isCurrentRun()) {
+                this.isRunning = false;
+                runBtn.disabled = false;
+                runBtn.style.opacity = '1';
+                runBtn.style.cursor = 'pointer';
+                progressContainer.style.display = 'none';
+                clearInterval(this.elapsedTimer);
+                this.elapsedTimer = null;
+            }
         }
     }
 
@@ -2709,13 +2719,17 @@ class LabSimUI {
      * @private
      */
     async _recordSingleTargetRun(simResult, { monsterHrid, roomLevel, hours, crates, playerHrid, ownerId }) {
+        const token = this._runStartToken;
+        const comparison = this._comparison;
+        const isCurrentRun = () => token === this._runStartToken && this._stillSameCharacter(ownerId);
         try {
             // The run measured the character it started under. Recorded after a
             // switch it would join the arriving character's comparison table,
             // where it reads as their own "before" and skews every delta.
-            if (!this._stillSameCharacter(ownerId)) return;
-            await this._comparison.load();
-            await this._comparison.add(
+            if (!isCurrentRun()) return;
+            await comparison.load();
+            if (!isCurrentRun()) return;
+            await comparison.add(
                 makeLabRunEntry({
                     monsterHrid,
                     monsterName: getLabyrinthMonsters().find((m) => m.hrid === monsterHrid)?.name,
@@ -2729,8 +2743,9 @@ class LabSimUI {
                     simHours: (simResult.simulatedTime || 0) / (3600 * 1e9) || hours,
                 })
             );
-            this._renderComparisonSection();
+            if (isCurrentRun()) this._renderComparisonSection();
         } catch (error) {
+            if (!isCurrentRun()) return;
             console.error('[LabSimUI] Failed to record run for comparison:', error);
         }
     }

@@ -1467,6 +1467,83 @@ describe('a labyrinth run waiting for the live profile', () => {
         expect(sim.calls).toHaveLength(0);
         expect(ui._runStarting).toBe(false);
     });
+
+    test('a departed labyrinth result cannot draw or release a newer run', async () => {
+        const runner = await import('./combat-sim-runner.js');
+        let resolveOld;
+        const worker = vi
+            .spyOn(runner, 'runLabyrinthSimulation')
+            .mockImplementationOnce(() => new Promise((resolve) => (resolveOld = resolve)));
+        const oldRun = ui._onSimulate();
+        releaseProfile(profileResult());
+        await vi.waitFor(() => expect(worker).toHaveBeenCalledOnce());
+
+        ui.destroy();
+        game.characterId = 'alt';
+        ui.buildPanel();
+        await settle();
+        ui.isRunning = true;
+        const display = vi.spyOn(ui, '_displaySimResults');
+        resolveOld({ labyAttemptCount: 100, encounters: 70, deaths: {}, simulatedTime: 3 * 3600 * 1e9 });
+        await oldRun;
+
+        try {
+            expect(display).not.toHaveBeenCalled();
+            expect(ui.isRunning).toBe(true);
+        } finally {
+            vi.restoreAllMocks();
+        }
+    });
+
+    test('a cancelled labyrinth worker cannot clear the next same-character run', async () => {
+        const runner = await import('./combat-sim-runner.js');
+        let rejectOld;
+        const worker = vi
+            .spyOn(runner, 'runLabyrinthSimulation')
+            .mockImplementationOnce(() => new Promise((_resolve, reject) => (rejectOld = reject)));
+        const oldRun = ui._onSimulate();
+        releaseProfile(profileResult());
+        await vi.waitFor(() => expect(worker).toHaveBeenCalledOnce());
+
+        ui.destroy();
+        ui.buildPanel();
+        await settle();
+        ui.isRunning = true;
+        rejectOld(new Error('Cancelled'));
+        await oldRun;
+
+        try {
+            expect(ui.isRunning).toBe(true);
+        } finally {
+            vi.restoreAllMocks();
+        }
+    });
+
+    test('a comparison store load cannot file a departed result under the arriving character', async () => {
+        let releaseLoad;
+        vi.spyOn(ui._comparison, 'load').mockImplementationOnce(
+            () => new Promise((resolve) => (releaseLoad = resolve))
+        );
+        const recording = ui._recordSingleTargetRun(
+            { labyAttemptCount: 100, encounters: 70, deaths: {}, simulatedTime: 3 * 3600 * 1e9 },
+            { monsterHrid: '/monsters/mimic', roomLevel: 100, hours: 24, crates: [], playerHrid: 'p1', ownerId: 'me' }
+        );
+
+        ui.destroy();
+        game.characterId = 'alt';
+        delete storage.written.labSimComparisonRuns_alt;
+        ui.buildPanel();
+        await settle();
+        releaseLoad();
+        await recording;
+
+        try {
+            expect(ui._comparison.runs).toEqual([]);
+            expect(storage.written.labSimComparisonRuns_alt).toBeUndefined();
+        } finally {
+            vi.restoreAllMocks();
+        }
+    });
 });
 
 describe('a labyrinth fight is never a task fight', () => {
