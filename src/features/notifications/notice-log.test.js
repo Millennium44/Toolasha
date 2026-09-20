@@ -15,7 +15,7 @@
 
 import { describe, test, expect, beforeEach, vi } from 'vitest';
 
-const store = vi.hoisted(() => ({ data: new Map(), character: 'char-1', dmHandlers: {} }));
+const store = vi.hoisted(() => ({ data: new Map(), character: 'char-1', dmHandlers: {}, read: null }));
 
 vi.mock('../../core/data-manager.js', () => ({
     default: {
@@ -31,7 +31,7 @@ vi.mock('../../core/data-manager.js', () => ({
 
 vi.mock('../../core/storage.js', () => ({
     default: {
-        getJSON: async (key) => store.data.get(key) ?? null,
+        getJSON: async (key) => (store.read ? store.read(key) : (store.data.get(key) ?? null)),
         setJSON: async (key, value) => {
             // Cloned on the way in, as IndexedDB would: a store handing back the
             // same object the log is still mutating would hide every bug here
@@ -78,6 +78,7 @@ async function settle() {
 beforeEach(() => {
     store.data.clear();
     store.character = 'char-1';
+    store.read = null;
     _resetNoticeLog();
 });
 
@@ -221,6 +222,107 @@ describe('what has been read', () => {
 });
 
 describe('character_switching', () => {
+    test('the departing read mark does not mark the arriving character notices as read', async () => {
+        store.data.set(noticeLogKey('char-1'), { entries: [notice({ at: 400 })], seenAt: 0 });
+        await loadNoticeLog();
+        markNoticesSeen(1_000);
+        await settle();
+
+        store.dmHandlers.character_switching();
+        store.character = 'char-2';
+        store.data.set(noticeLogKey('char-2'), { entries: [notice({ at: 500 })], seenAt: 0 });
+        await loadNoticeLog();
+
+        expect(unreadNoticeCount()).toBe(1);
+
+        store.dmHandlers.character_switching();
+        store.character = 'char-1';
+        await loadNoticeLog();
+        expect(noticeCount()).toBe(1);
+        expect(unreadNoticeCount()).toBe(0);
+    });
+
+    test('a notice arriving before the new character log loads survives under its owner', async () => {
+        appendNotice(notice({ subject: 'char-1 notice' }));
+        await loadNoticeLog();
+        store.dmHandlers.character_switching();
+        store.character = 'char-2';
+
+        appendNotice(notice({ subject: 'char-2 notice' }));
+        await loadNoticeLog();
+
+        expect(readNotices().map((entry) => entry.subject)).toEqual(['char-2 notice']);
+        expect(store.data.get(noticeLogKey('char-2')).entries[0].subject).toBe('char-2 notice');
+        expect(store.data.get(noticeLogKey('char-1')).entries[0].subject).toBe('char-1 notice');
+    });
+
+    test('returning to a settled character reloads changes saved outside this log', async () => {
+        await loadNoticeLog();
+        store.dmHandlers.character_switching();
+        store.character = 'char-2';
+        await loadNoticeLog();
+        store.data.set(noticeLogKey('char-1'), { entries: [notice({ subject: 'externally saved' })], seenAt: 0 });
+
+        store.dmHandlers.character_switching();
+        store.character = 'char-1';
+        await loadNoticeLog();
+
+        expect(readNotices().map((entry) => entry.subject)).toEqual(['externally saved']);
+    });
+
+    test('a departing pending read cannot refill the arriving character view', async () => {
+        let finishRead;
+        store.read = () => new Promise((resolve) => (finishRead = resolve));
+        const loading = loadNoticeLog();
+        appendNotice(notice({ at: 2, subject: 'live char-1' }));
+
+        store.dmHandlers.character_switching();
+        store.character = 'char-2';
+        finishRead({ entries: [notice({ at: 1, subject: 'saved char-1' })], seenAt: 0 });
+        await loading;
+
+        expect(readNotices()).toEqual([]);
+        expect(store.data.get(noticeLogKey('char-1')).entries.map((entry) => entry.subject)).toEqual([
+            'saved char-1',
+            'live char-1',
+        ]);
+    });
+
+    test('rapid A to B to A switches reuse A hydration without mixing or losing notices', async () => {
+        let finishRead;
+        store.read = vi.fn((key) => {
+            if (key === noticeLogKey('char-1')) return new Promise((resolve) => (finishRead = resolve));
+            return { entries: [notice({ at: 1, subject: 'saved char-2' })], seenAt: 0 };
+        });
+        const firstLoad = loadNoticeLog();
+        appendNotice(notice({ at: 2, subject: 'first char-1' }));
+
+        store.dmHandlers.character_switching();
+        store.character = 'char-2';
+        await loadNoticeLog();
+        appendNotice(notice({ at: 3, subject: 'live char-2' }));
+        await settle();
+
+        store.dmHandlers.character_switching();
+        store.character = 'char-1';
+        appendNotice(notice({ at: 4, subject: 'returned char-1' }));
+        const returnedLoad = loadNoticeLog();
+        finishRead({ entries: [notice({ at: 1, subject: 'saved char-1' })], seenAt: 0 });
+        await Promise.all([firstLoad, returnedLoad]);
+
+        expect(store.read).toHaveBeenCalledTimes(2);
+        expect(readNotices().map((entry) => entry.subject)).toEqual([
+            'returned char-1',
+            'first char-1',
+            'saved char-1',
+        ]);
+        expect(store.data.get(noticeLogKey('char-1')).entries).toHaveLength(3);
+        expect(store.data.get(noticeLogKey('char-2')).entries.map((entry) => entry.subject)).toEqual([
+            'saved char-2',
+            'live char-2',
+        ]);
+    });
+
     test('clears the in-memory log immediately, before loadNoticeLog() would notice the switch', async () => {
         // loadNoticeLog() only clears entries once it actually runs — from
         // notice-log-panel.js's initialize(), on character_switched, deferred
@@ -289,6 +391,7 @@ describe('character_switching', () => {
         markNoticesSeen(50);
         await settle();
         expect(store.data.get(noticeLogKey('char-1')).entries).toHaveLength(5);
+        expect(readNotices()).toEqual([]);
 
         // A notice arriving in the gap must not replace the saved log with
         // itself either — it loads first, so the five are still underneath.
@@ -296,5 +399,19 @@ describe('character_switching', () => {
         for (let tick = 0; tick < 5; tick += 1) await settle();
         const savedAt = store.data.get(noticeLogKey('char-1')).entries.map((entry) => entry.at);
         expect(savedAt).toEqual(expect.arrayContaining([10, 11, 12, 13, 14]));
+        expect(readNotices()).toEqual([]);
     });
+});
+
+test('clearing during a pending read does not resurrect the saved notices', async () => {
+    let finishRead;
+    store.read = () => new Promise((resolve) => (finishRead = resolve));
+    const loading = loadNoticeLog();
+
+    await clearNotices();
+    finishRead({ entries: [notice({ subject: 'already cleared' })], seenAt: 0 });
+    await loading;
+
+    expect(readNotices()).toEqual([]);
+    expect(store.data.get(noticeLogKey('char-1')).entries).toEqual([]);
 });
