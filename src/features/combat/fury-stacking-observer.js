@@ -43,7 +43,7 @@ import dataManager from '../../core/data-manager.js';
 import storage from '../../core/storage.js';
 import webSocketHook from '../../core/websocket.js';
 import { wilsonInterval } from '../combat-sim/engine/wilson.js';
-import { emptyTally, foldReading, readUnit, summarize, METRICS, MIN_READINGS } from './fury-stacking.js';
+import { emptyTally, foldReading, readUnit, summarize, METRICS, MIN_READINGS, TALLY_VERSION } from './fury-stacking.js';
 import { webSocketHook as sharedWebSocketHook } from '../../utils/bundle-bridge.js';
 import { createCleanupRegistry } from '../../utils/cleanup-registry.js';
 import { captureOwner, noteTeardown, stillOurs } from '../../utils/init-ownership.js';
@@ -188,7 +188,10 @@ const furyStacking = {
         try {
             const stored = await storage.get(STORAGE_KEY, STORAGE_STORE, null);
             if (!stillOurs(ticket)) return;
-            if (stored && stored.version === 1) tally = stored;
+            // A tally in an older shape is dropped rather than merged: the
+            // shape before this one could not tell "Fury never up" from "Fury
+            // never found", so its counts are not evidence of either
+            if (stored && stored.version === TALLY_VERSION) tally = stored;
         } catch (error) {
             console.error('[FuryStacking] Could not read the tally back:', error);
         }
@@ -327,6 +330,19 @@ export const furyStackingPanel = createPanel({
         );
 
         const summary = furyStacking.summary();
+
+        // Ahead of every count, because a count from a check that is not
+        // finding Fury is not a small number — it is not a number
+        body.appendChild(
+            panelLine(
+                'Fury sightings',
+                `${summary.observed.withFury} of ${summary.observed.units} snapshots`,
+                summary.health.ok ? ACCENT : '#e56b6b',
+                summary.health.text
+            )
+        );
+        if (!summary.health.ok) body.appendChild(panelNote(summary.health.text));
+
         if (summary.updatedAt) {
             body.appendChild(panelLine('Last reading', formatRelativeTime(Date.now() - summary.updatedAt), '#9aa4bb'));
         }
@@ -384,7 +400,9 @@ registerRow({
 
         const summary = furyStacking.summary();
         const total = METRICS.reduce((sum, metric) => sum + summary.metrics[metric].discriminating, 0);
-        if (!total) return;
+        // A broken check is worth a row of its own: with no Fury ever found
+        // there will never be a discriminating reading to draw one
+        if (!total && summary.health.ok) return;
 
         Object.assign(container.style, { display: 'flex', justifyContent: 'space-between', gap: '10px' });
 
@@ -393,14 +411,18 @@ registerRow({
 
         const decided = METRICS.filter((metric) => summary.metrics[metric].verdict.decided);
         const value = document.createElement('span');
-        value.textContent = decided.length
-            ? `${summary.metrics[decided[0]].fraction > 0.5 ? 'multiplicative' : 'additive'} (${total})`
-            : `${total} discriminating`;
-        value.style.color = decided.length ? ACCENT : '#9aa4bb';
+        if (!summary.health.ok) value.textContent = 'not finding Fury';
+        else if (decided.length)
+            value.textContent = `${summary.metrics[decided[0]].fraction > 0.5 ? 'multiplicative' : 'additive'} (${total})`;
+        else value.textContent = `${total} discriminating`;
+        if (!summary.health.ok) value.style.color = '#e56b6b';
+        else value.style.color = decided.length ? ACCENT : '#9aa4bb';
         value.style.whiteSpace = 'nowrap';
 
         container.append(label, value);
-        container.title = 'Double-click for the per-metric verdicts, the split and the audit rows.';
+        container.title = summary.health.ok
+            ? 'Double-click for the per-metric verdicts, the split and the audit rows.'
+            : summary.health.text;
     },
 });
 

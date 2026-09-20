@@ -3,10 +3,14 @@ import { wilsonInterval } from '../combat-sim/engine/wilson.js';
 import {
     emptyTally,
     foldReading,
+    healthOf,
+    isFuryEntry,
+    observeBuffs,
+    poolBoosts,
     readMetric,
     readUnit,
     summarize,
-    sumBoost,
+    FURY_ALARM_READINGS,
     MIN_READINGS,
     MIN_GAP_UNITS,
 } from './fury-stacking.js';
@@ -40,9 +44,12 @@ function factor(model, d, f) {
  * @param {{d: number, f: number, model?: string, scale?: number}} spec.acc - Accuracy terms
  * @param {{d: number, f: number, model?: string, scale?: number}} spec.dmg - Damage terms
  * @param {number} [spec.accFlat] - A flat boost on the accuracy buff type
+ * @param {boolean} [spec.engineTypes] - Type the Fury entries the way the sim
+ *   engine synthesizes them instead of the way the wire states them
+ * @param {boolean} [spec.noBuffMap] - Leave the snapshot's buff map off entirely
  * @returns {Object} A unit with `combatDetails` and `combatBuffMap`
  */
-function buildUnit({ acc, dmg, accFlat = 0 }) {
+function buildUnit({ acc, dmg, accFlat = 0, engineTypes = false, noBuffMap = false }) {
     const accFactor = factor(acc.model || 'multiplicative', acc.d, acc.f) * (acc.scale ?? 1);
     const dmgFactor = factor(dmg.model || 'multiplicative', dmg.d, dmg.f) * (dmg.scale ?? 1);
 
@@ -63,34 +70,99 @@ function buildUnit({ acc, dmg, accFlat = 0 }) {
     }
     combatDetails.defensiveMaxDamage = Math.round((10 + LEVEL) * dmgFactor);
 
-    return {
-        isPlayer: true,
-        combatDetails,
-        combatBuffMap: {
-            '/buff_uniques/precision': {
-                typeHrid: '/buff_types/accuracy',
-                ratioBoost: acc.d,
-                flatBoost: accFlat,
-            },
-            '/buff_uniques/fury_a': { typeHrid: '/buff_types/fury_accuracy', ratioBoost: acc.f, flatBoost: 0 },
-            '/buff_uniques/berserk': { typeHrid: '/buff_types/damage', ratioBoost: dmg.d, flatBoost: 0 },
-            '/buff_uniques/fury_d': { typeHrid: '/buff_types/fury_damage', ratioBoost: dmg.f, flatBoost: 0 },
-        },
-    };
+    if (noBuffMap) return { isPlayer: true, combatDetails };
+
+    return { isPlayer: true, combatDetails, combatBuffMap: buffMap({ acc, dmg, accFlat, engineTypes }) };
+}
+
+/**
+ * A live buff map in the shape the wire states one.
+ *
+ * Keyed by unique hrid, each record repeating its own `uniqueHrid` and carrying
+ * `{typeHrid, ratioBoost, flatBoost}` — the shape `combat-unit-buff-bars.js`
+ * reads chips out of and `monster-stat-check.js` folds into the sim. Fury's two
+ * effects are named `/buff_uniques/fury_accuracy` and `/buff_uniques/fury_damage`
+ * there; `/buff_types/fury_accuracy` is the sim engine's own synthetic type and
+ * `engineTypes` is what builds that variant, so both are covered.
+ *
+ * @param {Object} spec - Terms
+ * @param {{d: number, f: number}} spec.acc - Accuracy terms
+ * @param {{d: number, f: number}} spec.dmg - Damage terms
+ * @param {number} [spec.accFlat] - A flat boost on the accuracy buff type
+ * @param {boolean} [spec.engineTypes] - Use the engine's synthetic Fury types
+ * @returns {Object} A `combatBuffMap`
+ */
+function buffMap({ acc, dmg, accFlat = 0, engineTypes = false }) {
+    const entry = (uniqueHrid, typeHrid, ratioBoost, flatBoost = 0) => [
+        uniqueHrid,
+        { uniqueHrid, typeHrid, ratioBoost, flatBoost },
+    ];
+    return Object.fromEntries([
+        entry('/buff_uniques/precision', '/buff_types/accuracy', acc.d, accFlat),
+        entry('/buff_uniques/berserk', '/buff_types/damage', dmg.d),
+        entry('/buff_uniques/fury_accuracy', engineTypes ? '/buff_types/fury_accuracy' : '/buff_types/accuracy', acc.f),
+        entry('/buff_uniques/fury_damage', engineTypes ? '/buff_types/fury_damage' : '/buff_types/damage', dmg.f),
+    ]);
 }
 
 /** A pair of terms wide enough that the two models cannot both be satisfied. */
 const WIDE = { d: 0.5, f: 0.4 };
 
-describe('sumBoost', () => {
+describe('finding Fury in a live buff map', () => {
     it('totals every buff of a type, the way the engine does', () => {
         const map = {
-            a: { typeHrid: '/buff_types/damage', ratioBoost: 0.1, flatBoost: 0 },
-            b: { typeHrid: '/buff_types/damage', ratioBoost: 0.2, flatBoost: 3 },
-            c: { typeHrid: '/buff_types/accuracy', ratioBoost: 0.9, flatBoost: 0 },
+            a: { uniqueHrid: '/buff_uniques/berserk', typeHrid: '/buff_types/damage', ratioBoost: 0.1, flatBoost: 0 },
+            b: { uniqueHrid: '/buff_uniques/rage', typeHrid: '/buff_types/damage', ratioBoost: 0.2, flatBoost: 3 },
+            c: {
+                uniqueHrid: '/buff_uniques/precision',
+                typeHrid: '/buff_types/accuracy',
+                ratioBoost: 0.9,
+                flatBoost: 0,
+            },
         };
-        expect(sumBoost(map, '/buff_types/damage')).toEqual({ ratio: 0.30000000000000004, flat: 3 });
-        expect(sumBoost(map, '/buff_types/fury_damage')).toEqual({ ratio: 0, flat: 0 });
+        const damage = poolBoosts(map, 'damage');
+        expect(damage.other).toEqual({ ratio: 0.30000000000000004, flat: 3 });
+        expect(damage.fury).toEqual({ ratio: 0, flat: 0 });
+        expect(damage.entries).toBe(3);
+        expect(damage.furyEntries).toBe(0);
+    });
+
+    it('recognises Fury by the name the wire gives it, not only by the sim engine type', () => {
+        // The bug this check shipped with: the live entry is keyed by its
+        // unique hrid and types itself as the ordinary accuracy buff, so a
+        // lookup for `/buff_types/fury_accuracy` — a value only the sim engine
+        // ever produces — found nothing and filed every reading as "no Fury"
+        const map = buffMap({ acc: { d: 0.5, f: 0.4 }, dmg: { d: 0.5, f: 0.4 } });
+        expect(map['/buff_uniques/fury_accuracy'].typeHrid).toBe('/buff_types/accuracy');
+
+        const pool = poolBoosts(map, 'accuracy');
+        expect(pool.furyEntries).toBe(1);
+        expect(pool.fury.ratio).toBeCloseTo(0.4, 10);
+        // …and it is not also counted in the other pool, which would compare
+        // the two models using the same number twice
+        expect(pool.other.ratio).toBeCloseTo(0.5, 10);
+    });
+
+    it('still recognises the sim engine’s own synthetic Fury type', () => {
+        const map = buffMap({ acc: { d: 0.5, f: 0.4 }, dmg: { d: 0.5, f: 0.4 }, engineTypes: true });
+        const pool = poolBoosts(map, 'accuracy');
+        expect(pool.fury.ratio).toBeCloseTo(0.4, 10);
+        expect(pool.other.ratio).toBeCloseTo(0.5, 10);
+    });
+
+    it('does not mistake another buff for Fury’s', () => {
+        expect(isFuryEntry('/buff_uniques/fury_accuracy', '/buff_types/accuracy', 'accuracy')).toBe(true);
+        expect(isFuryEntry('/buff_uniques/fury_damage', '/buff_types/damage', 'damage')).toBe(true);
+        // Fury's accuracy effect is not Fury's damage effect
+        expect(isFuryEntry('/buff_uniques/fury_accuracy', '/buff_types/accuracy', 'damage')).toBe(false);
+        expect(isFuryEntry('/buff_uniques/precision', '/buff_types/accuracy', 'accuracy')).toBe(false);
+        expect(isFuryEntry('/buff_uniques/berserk', '/buff_types/damage', 'damage')).toBe(false);
+    });
+
+    it('reads a discriminating reading off the wire shape', () => {
+        const unit = buildUnit({ acc: { ...WIDE, model: 'multiplicative' }, dmg: { ...WIDE } });
+        expect(readMetric('accuracy', unit).discriminating).toBe(true);
+        expect(readMetric('damage', unit).discriminating).toBe(true);
     });
 });
 
@@ -131,6 +203,17 @@ describe('a discriminating reading', () => {
 });
 
 describe('readings that cannot tell the models apart', () => {
+    it('separates a snapshot carrying no buffs at all from one with Fury down', () => {
+        // Identical tallies under the old shape, opposite meanings: the first
+        // is a reader that is not being fed, the second is a quiet fight
+        const blind = readMetric('accuracy', buildUnit({ acc: { ...WIDE }, dmg: { ...WIDE }, noBuffMap: true }));
+        expect(blind.discriminating).toBe(false);
+        expect(blind.reason).toBe('noBuffMap');
+
+        const quiet = readMetric('accuracy', buildUnit({ acc: { d: 0.8, f: 0 }, dmg: { d: 0.8, f: 0 } }));
+        expect(quiet.reason).toBe('noFury');
+    });
+
     it('refuses a reading with no Fury, however well it matches', () => {
         const unit = buildUnit({ acc: { d: 0.8, f: 0 }, dmg: { d: 0.8, f: 0 } });
         const reading = readMetric('accuracy', unit);
@@ -277,5 +360,66 @@ describe('accuracy and damage are graded apart', () => {
         expect(row.multiplicative).toBeCloseTo(BASE * 1.5 * 1.4, 2);
         expect(row.additive).toBeCloseTo(BASE * 1.9, 2);
         expect(row.gap).toBeCloseTo(BASE * WIDE.d * WIDE.f, 2);
+    });
+});
+
+describe('a check that is not finding Fury says so', () => {
+    /** One snapshot's worth of sighting, as `readUnit` reports it. */
+    const sighting = (map) => observeBuffs(map);
+
+    it('counts what the buff map held, Fury included', () => {
+        const seen = sighting(buffMap({ acc: { d: 0.5, f: 0.4 }, dmg: { d: 0.5, f: 0.4 } }));
+        expect(seen.entries).toBe(4);
+        expect(seen.fury).toBe(2);
+        expect(seen.uniques).toContain('/buff_uniques/fury_accuracy');
+    });
+
+    it('is healthy while Fury is being found', () => {
+        const tally = emptyTally();
+        foldReading(tally, readUnit(buildUnit({ acc: { ...WIDE }, dmg: { ...WIDE } })), 1000);
+        const summary = summarize(tally, wilsonInterval);
+        expect(summary.observed.withFury).toBe(1);
+        expect(summary.health.ok).toBe(true);
+    });
+
+    it('calls a long run with Fury never once seen a fault, not patience', () => {
+        // Exactly the live failure: readings pile up, every one lands under
+        // noFury, and the panel reads as a patient zero. It is not one.
+        const tally = emptyTally();
+        for (let i = 0; i < FURY_ALARM_READINGS; i += 1) {
+            const unit = buildUnit({ acc: { d: 0.8, f: 0 }, dmg: { d: 0.8, f: 0 } });
+            delete unit.combatBuffMap['/buff_uniques/fury_accuracy'];
+            delete unit.combatBuffMap['/buff_uniques/fury_damage'];
+            foldReading(tally, readUnit(unit), 1000 + i);
+        }
+
+        const summary = summarize(tally, wilsonInterval);
+        expect(summary.metrics.accuracy.discriminating).toBe(0);
+        expect(summary.observed.units).toBe(FURY_ALARM_READINGS);
+        expect(summary.observed.withFury).toBe(0);
+        expect(summary.health.ok).toBe(false);
+        expect(summary.health.text).toContain('NOT FINDING FURY');
+        // And it names what it did see, which is what tells a renamed buff
+        // from an absent one
+        expect(summary.health.text).toContain('precision');
+    });
+
+    it('distinguishes a reader that is being fed no buffs at all', () => {
+        const tally = emptyTally();
+        for (let i = 0; i < FURY_ALARM_READINGS; i += 1) {
+            foldReading(tally, readUnit(buildUnit({ acc: { ...WIDE }, dmg: { ...WIDE }, noBuffMap: true })), 1000 + i);
+        }
+
+        const summary = summarize(tally, wilsonInterval);
+        expect(summary.health.ok).toBe(false);
+        expect(summary.health.text).toContain('NOT READING BUFFS');
+        expect(summary.metrics.accuracy.reasons.find((row) => row.reason === 'noBuffMap').count).toBe(
+            FURY_ALARM_READINGS
+        );
+    });
+
+    it('holds its tongue while the sample is still short', () => {
+        expect(healthOf({ units: 3, withBuffMap: 3, withFury: 0, types: {}, uniques: [] }).ok).toBe(true);
+        expect(healthOf({ units: 0, withBuffMap: 0, withFury: 0, types: {}, uniques: [] }).ok).toBe(true);
     });
 });

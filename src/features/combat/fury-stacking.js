@@ -97,11 +97,36 @@ export const MAX_SEEN_SIGNATURES = 500;
 /** The two metrics, graded separately. */
 export const METRICS = ['accuracy', 'damage'];
 
-/** Buff types per metric: the non-Fury pool and the Fury pool. */
+/**
+ * Buff identities per metric: the non-Fury pool, and the two ways a Fury entry
+ * can name itself.
+ *
+ * `/buff_types/fury_accuracy` is the **engine's** type. It is synthesized in
+ * `combat-sim/engine/combat-unit.js` (`updateFuryBuffs`) and that is the only
+ * place in this codebase the value is ever produced — nothing reads it off the
+ * wire. What a live `combatBuffMap` states is an entry keyed by its *unique*
+ * hrid, `/buff_uniques/fury_accuracy`, and the stat-check panel's fold (which
+ * lists only entries whose `typeHrid` the engine knows) has been seen naming
+ * both "fury accuracy" and "fury damage" off a live player sheet while this
+ * check, keyed on the engine type alone, found no Fury at all in the same
+ * message. So a Fury entry is recognised by **either** name, and an entry
+ * recognised as Fury is kept out of the other pool whatever type it declares —
+ * otherwise a Fury entry carrying the plain accuracy type would be counted as
+ * `d` as well, and the two models compared using the same number twice.
+ */
 const BUFF_TYPES = {
     accuracy: { other: '/buff_types/accuracy', fury: '/buff_types/fury_accuracy' },
     damage: { other: '/buff_types/damage', fury: '/buff_types/fury_damage' },
 };
+
+/** Readings to sit through before "no Fury in any of them" is called a fault. */
+export const FURY_ALARM_READINGS = 10;
+
+/** The most distinct buff identities remembered for the diagnosis. */
+export const MAX_OBSERVED_IDENTITIES = 40;
+
+/** The tally shape. A tally written in an older shape is dropped, not merged. */
+export const TALLY_VERSION = 2;
 
 /**
  * `[combatDetails key, level field, combatStats ratio field]` per style, mirroring
@@ -132,10 +157,19 @@ export const STYLES = {
 };
 
 /** Why a reading could not discriminate, in the order the panel lists them. */
-export const NON_DISCRIMINATING_REASONS = ['noFury', 'noOtherBuff', 'gapTooSmall', 'flatBoost', 'noData', 'duplicate'];
+export const NON_DISCRIMINATING_REASONS = [
+    'noBuffMap',
+    'noFury',
+    'noOtherBuff',
+    'gapTooSmall',
+    'flatBoost',
+    'noData',
+    'duplicate',
+];
 
 /** Plain-language names for those reasons. */
 export const REASON_LABELS = {
+    noBuffMap: 'The snapshot carried no buffs at all — nothing to read Fury from',
     noFury: 'No Fury stacks up — both models agree exactly',
     noOtherBuff: 'No other buff of that type — both models agree exactly',
     gapTooSmall: `Both models within ${MIN_GAP_UNITS} units of each other — rounding hides the difference`,
@@ -148,25 +182,88 @@ export const REASON_LABELS = {
 export const OUTCOMES = ['multiplicative', 'additive', 'neither', 'mixed'];
 
 /**
- * Sum the ratio and flat boosts of one buff type across a live buff map.
+ * Whether one buff entry is Fury's effect on a metric.
+ *
+ * Either name settles it: the engine's synthetic `typeHrid`, or a unique hrid
+ * whose last segment is Fury's and names this metric (`fury_accuracy`,
+ * `fury_damage`). Named rather than typed, because the type is the half of the
+ * pair this codebase invents and the wire is the half that decides.
+ *
+ * @param {string} identity - The entry's unique hrid (or its map key)
+ * @param {string} typeHrid - The entry's buff type
+ * @param {string} metric - `'accuracy'` or `'damage'`
+ * @returns {boolean} Whether it is Fury's
+ */
+export function isFuryEntry(identity, typeHrid, metric) {
+    if (typeHrid === BUFF_TYPES[metric]?.fury) return true;
+    const segment = String(identity || '')
+        .split('/')
+        .pop();
+    return segment.startsWith('fury') && segment.includes(metric);
+}
+
+/**
+ * One metric's two pools, totalled off a live buff map in one pass.
+ *
+ * A Fury entry goes to the Fury pool and nowhere else, however it types itself;
+ * everything else of the metric's plain type goes to the other pool.
  *
  * Summed, not maxed, because that is what the engine's buff index does: every
- * active buff of a type contributes its `ratioBoost` to one total which is
- * applied once.
+ * active buff of a type contributes its `ratioBoost` to one total, applied
+ * once.
  *
  * @param {Object} combatBuffMap - A unit's live `combatBuffMap`
- * @param {string} typeHrid - The buff type to total
- * @returns {{ratio: number, flat: number}} The totals
+ * @param {string} metric - `'accuracy'` or `'damage'`
+ * @returns {{other: {ratio: number, flat: number}, fury: {ratio: number, flat: number},
+ *   entries: number, furyEntries: number}} The pools, and what they were read from
  */
-export function sumBoost(combatBuffMap, typeHrid) {
-    let ratio = 0;
-    let flat = 0;
-    for (const buff of Object.values(combatBuffMap || {})) {
-        if (buff?.typeHrid !== typeHrid) continue;
-        ratio += Number(buff.ratioBoost) || 0;
-        flat += Number(buff.flatBoost) || 0;
+export function poolBoosts(combatBuffMap, metric) {
+    const types = BUFF_TYPES[metric];
+    const other = { ratio: 0, flat: 0 };
+    const fury = { ratio: 0, flat: 0 };
+    let entries = 0;
+    let furyEntries = 0;
+    for (const [key, buff] of Object.entries(combatBuffMap || {})) {
+        entries += 1;
+        const identity = buff?.uniqueHrid || key;
+        const isFury = isFuryEntry(identity, buff?.typeHrid, metric);
+        let pool = null;
+        if (isFury) pool = fury;
+        else if (buff?.typeHrid === types.other) pool = other;
+        if (!pool) continue;
+        if (isFury) furyEntries += 1;
+        pool.ratio += Number(buff?.ratioBoost) || 0;
+        pool.flat += Number(buff?.flatBoost) || 0;
     }
-    return { ratio, flat };
+    return { other, fury, entries, furyEntries };
+}
+
+/**
+ * What a snapshot's buff map actually held, kept so a run of zero
+ * discriminating readings can say *why*.
+ *
+ * "Fury was never up" and "Fury is never being found" produce an identical
+ * tally otherwise, and they mean opposite things: the first is a quiet zone,
+ * the second is this check being broken. The identities come with it, because
+ * the only way to tell a renamed buff from an absent one is to read the names
+ * the wire is using.
+ *
+ * @param {Object} combatBuffMap - A unit's live `combatBuffMap`
+ * @returns {{entries: number, fury: number, types: string[], uniques: string[]}} The sighting
+ */
+export function observeBuffs(combatBuffMap) {
+    const types = [];
+    const uniques = [];
+    let fury = 0;
+    let entries = 0;
+    for (const [key, buff] of Object.entries(combatBuffMap || {})) {
+        entries += 1;
+        const identity = String(buff?.uniqueHrid || key);
+        uniques.push(identity);
+        if (buff?.typeHrid) types.push(String(buff.typeHrid));
+        if (METRICS.some((metric) => isFuryEntry(identity, buff?.typeHrid, metric))) fury += 1;
+    }
+    return { entries, fury, types, uniques };
 }
 
 /**
@@ -281,9 +378,9 @@ function decide(base, game, other, fury) {
  */
 export function readMetric(metric, unit) {
     const combatDetails = unit?.combatDetails;
-    const types = BUFF_TYPES[metric];
-    const otherBoost = sumBoost(unit?.combatBuffMap, types.other);
-    const furyBoost = sumBoost(unit?.combatBuffMap, types.fury);
+    const pool = poolBoosts(unit?.combatBuffMap, metric);
+    const otherBoost = pool.other;
+    const furyBoost = pool.fury;
     const other = otherBoost.ratio;
     const fury = furyBoost.ratio;
 
@@ -296,6 +393,10 @@ export function readMetric(metric, unit) {
     const base = { metric, other, fury, styles, discriminating: false, outcome: null, reason: null, signature: null };
 
     if (!styles.length) return { ...base, reason: 'noData' };
+    // Separated from `noFury` deliberately: a snapshot carrying no buff map at
+    // all is one this check cannot read, and filing it under "Fury was down" is
+    // the difference between a quiet zone and a broken reader
+    if (!pool.entries) return { ...base, reason: 'noBuffMap' };
     if (Math.abs(fury) < EPSILON) return { ...base, reason: 'noFury' };
     if (Math.abs(other) < EPSILON) return { ...base, reason: 'noOtherBuff' };
     // A flat boost of the same type has no term in either model, so a reading
@@ -355,7 +456,11 @@ export function signatureOf(metric, other, fury, deciding) {
  * @returns {{accuracy: Object, damage: Object}} The readings
  */
 export function readUnit(unit) {
-    return { accuracy: readMetric('accuracy', unit), damage: readMetric('damage', unit) };
+    return {
+        accuracy: readMetric('accuracy', unit),
+        damage: readMetric('damage', unit),
+        observed: observeBuffs(unit?.combatBuffMap),
+    };
 }
 
 /** A fresh, empty tally. @returns {Object} The tally */
@@ -378,11 +483,12 @@ export function emptyTally() {
         styles: styleCounts(name),
     });
     return {
-        version: 1,
+        version: TALLY_VERSION,
         startedAt: null,
         updatedAt: null,
         accuracy: metric('accuracy'),
         damage: metric('damage'),
+        observed: { units: 0, withBuffMap: 0, withFury: 0, types: {}, uniques: [] },
         audit: [],
         seen: [],
     };
@@ -403,6 +509,7 @@ export function foldReading(tally, readings, now = Date.now()) {
     if (!tally || !readings) return tally;
     if (tally.startedAt === null) tally.startedAt = now;
     tally.updatedAt = now;
+    foldObservation(tally, readings.observed);
 
     if (!Array.isArray(tally.seen)) tally.seen = [];
     const seen = new Set(tally.seen);
@@ -440,6 +547,31 @@ export function foldReading(tally, readings, now = Date.now()) {
         if (tally.audit.length > MAX_AUDIT_ROWS) tally.audit.length = MAX_AUDIT_ROWS;
     }
     return tally;
+}
+
+/**
+ * Fold one snapshot's buff sighting into the tally's diagnosis, in place.
+ *
+ * @param {Object} tally - The tally
+ * @param {{entries: number, fury: number, types: string[], uniques: string[]}} [observed] - A sighting
+ * @returns {void}
+ */
+function foldObservation(tally, observed) {
+    if (!observed) return;
+    if (!tally.observed) tally.observed = { units: 0, withBuffMap: 0, withFury: 0, types: {}, uniques: [] };
+    const seen = tally.observed;
+    seen.units += 1;
+    if (observed.entries > 0) seen.withBuffMap += 1;
+    if (observed.fury > 0) seen.withFury += 1;
+    for (const type of observed.types) {
+        if (seen.types[type] === undefined && Object.keys(seen.types).length >= MAX_OBSERVED_IDENTITIES) continue;
+        seen.types[type] = (seen.types[type] || 0) + 1;
+    }
+    for (const unique of observed.uniques) {
+        if (seen.uniques.includes(unique)) continue;
+        if (seen.uniques.length >= MAX_OBSERVED_IDENTITIES) break;
+        seen.uniques.push(unique);
+    }
 }
 
 /**
@@ -492,6 +624,7 @@ function round(value, places) {
  */
 export function summarize(tally, wilsonInterval) {
     const safe = tally || emptyTally();
+    const observed = safe.observed || emptyTally().observed;
     const metrics = {};
     for (const metric of METRICS) {
         const bucket = safe[metric] || emptyTally()[metric];
@@ -527,7 +660,14 @@ export function summarize(tally, wilsonInterval) {
         summary.verdict = verdictFor(summary);
         metrics[metric] = summary;
     }
-    return { metrics, audit: safe.audit || [], updatedAt: safe.updatedAt, startedAt: safe.startedAt };
+    return {
+        metrics,
+        observed,
+        health: healthOf(observed),
+        audit: safe.audit || [],
+        updatedAt: safe.updatedAt,
+        startedAt: safe.startedAt,
+    };
 }
 
 /**
@@ -594,5 +734,62 @@ export function verdictFor(summary) {
             `${name}: readings disagree — ${summary.multiplicative} multiplicative, ${summary.additive} additive ` +
             `out of ${summary.decided} decided (95% CI ${band}). A deterministic formula cannot do both, so ` +
             `something else differs between the readings.${caution}`,
+    };
+}
+
+/**
+ * Whether the check is working, as distinct from whether it has learned
+ * anything yet.
+ *
+ * The failure this exists for: the feature ran for twenty-eight snapshots,
+ * filed every one under "no Fury up", and printed a tidy zero — which is
+ * exactly what a quiet zone looks like, and exactly what a Fury lookup matching
+ * nothing looks like. Reading counts alone cannot tell the two apart, so the
+ * sighting counts are kept and read here, and a run this long with Fury never
+ * once seen is reported as a fault rather than as patience.
+ *
+ * @param {{units: number, withBuffMap: number, withFury: number, types: Object, uniques: string[]}} observed
+ *   The tally's sighting counts
+ * @returns {{ok: boolean, text: string}} The diagnosis
+ */
+export function healthOf(observed) {
+    const units = observed?.units || 0;
+    const withBuffMap = observed?.withBuffMap || 0;
+    const withFury = observed?.withFury || 0;
+    const uniques = observed?.uniques || [];
+
+    if (!units) return { ok: true, text: 'No snapshots read yet. Fight with Fury up and this fills in.' };
+
+    if (withFury > 0) {
+        return {
+            ok: true,
+            text: `Fury found in ${withFury} of ${units} snapshots — the check is reading the buff map.`,
+        };
+    }
+
+    if (units < FURY_ALARM_READINGS) {
+        return { ok: true, text: `No Fury in the ${units} snapshots so far — too few to mean anything yet.` };
+    }
+
+    if (!withBuffMap) {
+        return {
+            ok: false,
+            text:
+                `NOT READING BUFFS: none of ${units} snapshots carried a buff map at all, so every reading is ` +
+                'non-discriminating by construction and the counts below mean nothing. The messages being watched ' +
+                'are not the ones carrying your live buffs.',
+        };
+    }
+
+    const names = uniques
+        .map((hrid) => String(hrid).split('/').pop())
+        .slice(0, 12)
+        .join(', ');
+    return {
+        ok: false,
+        text:
+            `NOT FINDING FURY: ${units} snapshots, ${withBuffMap} of them carrying buffs, and no Fury effect ` +
+            'recognised in any of them. Either Fury was genuinely never up for the whole run, or this check does ' +
+            `not recognise what the game is calling it. Buffs seen: ${names || 'none'}.`,
     };
 }

@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Fury Stacking: the check was not finding Fury at all
+
+- It looked the buff up under a type only the simulator produces, so every reading was filed as "no Fury up" and the panel showed a confident zero; it now recognises Fury by the name the game uses, and says loudly when a run of readings never finds Fury rather than looking merely patient.
+
 ### Wave Gap: measure the real gap between a wave clearing and the next one starting
 
 - A new off-by-default combat diagnostic times the last monster of a wave dying to the next wave starting, keeping open-zone respawns, dungeon wave transitions and dungeon run boundaries apart, and reports the distribution, the cycle-position bins and the arrival-time noise it measured in its own ruler — so the simulator's single respawn constant can be checked against our own data instead of taken on trust.
