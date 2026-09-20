@@ -1797,7 +1797,7 @@ class CombatSimulator {
             // in this method can't drift out of sync by accident.)
             const haste = source.combatDetails.combatStats.abilityHaste;
             for (const ab of source.abilities) {
-                if (ab && ab.lastUsed) {
+                if (ab && Number.isFinite(ab.lastUsed)) {
                     const scaledCooldown =
                         haste > 0 ? (ab.cooldownDuration * 100) / (100 + haste) : ab.cooldownDuration;
                     const remainingCooldown = ab.lastUsed + scaledCooldown - this.simulationTime;

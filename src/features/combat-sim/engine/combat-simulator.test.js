@@ -235,6 +235,39 @@ describe('a player DTO carries its own combat tasks', () => {
     });
 });
 
+describe('Ripple cooldown reduction', () => {
+    test('reduces the cooldown of an ability first cast at time zero', () => {
+        const ability = {
+            hrid: '/abilities/instant_test',
+            manaCost: 0,
+            cooldownDuration: 10 * ONE_SECOND,
+            lastUsed: Number.MIN_SAFE_INTEGER,
+            abilityEffects: [],
+        };
+        const source = {
+            hrid: 'player1',
+            isPlayer: true,
+            abilities: [ability],
+            abilityManaCosts: new Map(),
+            combatDetails: {
+                currentHitpoints: 100,
+                currentManapoints: 0,
+                combatStats: { abilityHaste: 0, blaze: 0, bloom: 0, ripple: 1 },
+            },
+            addManapoints: () => 10,
+        };
+        const simulator = new CombatSimulator([source], { hrid: ZONE_HRID, difficultyTier: 0, isDungeon: false });
+        simulator.simulationTime = 0;
+        simulator.addNextAttackEvent = () => {};
+        simulator.checkEncounterEnd = () => false;
+        simulator.simResult.addManapointsGained = () => {};
+
+        simulator.tryUseAbility(source, ability);
+
+        expect(ability.lastUsed).toBe(-2 * ONE_SECOND);
+    });
+});
+
 /**
  * A task is a number of kills, so the bonus it pays has an end. These pin who
  * it is counted for (each player's own board), how often (once per death, not
