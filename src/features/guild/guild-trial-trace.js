@@ -224,9 +224,8 @@ class GuildTrialTrace {
         this._lastProbeAt = 0;
         this._probing = false;
         /**
-         * Bumped by {@link disable}. A restore that began under the departing
-         * character finds the number moved and refuses to adopt that
-         * character's manifest into the arriving character's trace.
+         * Invalidates abandoned restores. A character switch increments this
+         * after draining the departing capture, before the next initialize.
          */
         this._generation = 0;
         this._reset();
@@ -241,10 +240,9 @@ class GuildTrialTrace {
         this.eventCount = 0; // retained events: persisted chunks + pending
         this.traceId = null;
         /**
-         * Which character this trace belongs to. Set once — when a manifest is
-         * adopted, or when the first event starts a fresh trace — and every key
-         * the trace touches afterwards is built from it, never from whoever is
-         * current at the moment of the write.
+         * Which character this capture belongs to, fixed at initialization
+         * before a restore or any event can wait. Every key uses this owner,
+         * including held events flushed while a character switch is finishing.
          */
         this.ownerId = null;
         this.startedAt = 0;
@@ -285,9 +283,8 @@ class GuildTrialTrace {
     /**
      * A key for the character this trace belongs to.
      *
-     * Falls back to whoever is current only while no trace exists — the first
-     * write of a trace is what fixes the owner, and there is nothing to
-     * mis-file before that.
+     * Falls back to whoever is current only before initialization has fixed
+     * the capture's owner.
      * @param {string} base - The unscoped key
      * @returns {string} The scoped key
      */
@@ -306,6 +303,8 @@ class GuildTrialTrace {
         if (this.initialized) return;
         this.initialized = true;
         this._restored = false;
+        this.ownerId ||= traceCharId();
+        const generation = this._generation;
 
         this.handlers = new Map();
         for (const type of TRACE_MESSAGES) {
@@ -323,7 +322,7 @@ class GuildTrialTrace {
                 // The message path may have given up on this restore already
                 // (see _abandonRestore); a late answer must not reopen the wait
                 // or re-settle a trace that is running.
-                if (this._restored) return;
+                if (this._generation !== generation || this._restored) return;
                 if (outcome === 'unknown') {
                     // The manifest could not be read. That is not "no trace": a
                     // fresh manifest written now would orphan every chunk the
@@ -345,8 +344,8 @@ class GuildTrialTrace {
      * written after an adoption continue from the adopted manifest's last.
      *
      * @param {boolean} sweep - Whether the decision was trustworthy enough to
-     *   reclaim orphaned chunks from. A restore a character switch superseded,
-     *   or one that gave up on an unreadable manifest, knows nothing about
+     *   reclaim orphaned chunks from. A restore that was abandoned or one
+     *   that gave up on an unreadable manifest knows nothing about
      *   which chunks are live and must not delete any.
      */
     _settleRestore(sweep) {
@@ -391,13 +390,14 @@ class GuildTrialTrace {
 
         this._probing = true;
         this._lastProbeAt = now;
+        const generation = this._generation;
         this._restorePromise = this._restore()
             .catch((error) => {
                 console.error('[GuildTrialTrace] Re-reading the trace manifest failed:', error);
                 return 'unknown';
             })
             .then((outcome) => {
-                if (!this._manifestUnknown) return; // cleared meanwhile
+                if (this._generation !== generation || !this._manifestUnknown) return;
                 if (outcome === 'unknown') {
                     if (!overdue) return;
                     console.warn(
@@ -409,7 +409,7 @@ class GuildTrialTrace {
                 this._settleRestore(outcome === 'adopted' || outcome === 'fresh');
             })
             .finally(() => {
-                this._probing = false;
+                if (this._generation === generation) this._probing = false;
             });
     }
 
@@ -448,16 +448,18 @@ class GuildTrialTrace {
      */
     async disable() {
         this.cleanup();
-        this._generation++;
         try {
-            // Any restore in flight settles (refusing to adopt, now that the
-            // generation has moved) before the flush that follows it
+            // Resume the departing owner's stored trace before appending held
+            // events. Rejecting its restore here would overwrite that manifest
+            // with a fresh trace. The feature lifecycle awaits disable before
+            // initializing the arriving character.
             await this._settle();
             this._scheduleFlush();
             await this._settle();
         } catch (error) {
             console.error('[GuildTrialTrace] Standing the trace down failed:', error);
         }
+        this._generation++;
         this._reset();
         this._restored = false;
         this._manifestUnknown = false;
@@ -472,21 +474,27 @@ class GuildTrialTrace {
      * answers `'unknown'` and the caller waits; only a trustworthy absence goes
      * on to the legacy-adoption read and a fresh start.
      * @returns {Promise<'adopted'|'fresh'|'unknown'|'stale'>} What was decided; `'stale'`
-     *   means a character switch superseded this read and nothing was adopted
+     *   means the capture abandoned this read and nothing was adopted
      */
     async _restore() {
         if (this.traceId) return 'fresh';
-        // Captured before the first read; every key below is built from it, and
-        // a switch landing inside the reads stands the adoption down rather
-        // than handing the departing character's trace to the arriving one.
-        const charId = traceCharId();
+        // A pending restore and its held events belong to the initialized
+        // capture, even if the current-character pointer has already moved.
+        const charId = this.ownerId || traceCharId();
         const started = this._generation;
-        const stale = () => this._generation !== started || traceCharId() !== charId;
+        const stale = () => this._generation !== started;
 
         const probe = await storage.tryGet(charKey(MANIFEST_BASE, charId), TRACE_STORE);
         if (stale()) return 'stale';
         if (probe === null) return 'unknown';
-        const manifest = probe.found ? probe.value : await readScoped(MANIFEST_BASE, TRACE_STORE, null);
+        // Legacy adoption consults the current character. If that pointer has
+        // moved, the successful scoped probe is enough to establish absence;
+        // leave legacy data for its owner's next initialization.
+        const manifest = probe.found
+            ? probe.value
+            : traceCharId() === charId
+              ? await readScoped(MANIFEST_BASE, TRACE_STORE, null)
+              : null;
         if (stale()) return 'stale';
         if (!manifest) return 'fresh';
 
@@ -595,8 +603,8 @@ class GuildTrialTrace {
      * minutes of silence from storage — long past the point where the events
      * still arriving matter more than the ones on disk.
      *
-     * The generation bump is the refusal {@link disable} uses: a restore that
-     * began before this point checks the generation before it touches any
+     * The generation bump invalidates a restore that began before this point:
+     * it checks the generation before it touches any
      * state, so a late answer cannot adopt a manifest into the fresh trace now
      * being recorded — nor may the sweep run, since nothing trustworthy is
      * known about which chunks are live. The restore promise is replaced with a
@@ -626,7 +634,7 @@ class GuildTrialTrace {
                 // spectator joining mid-fight still gets a trace, and the file
                 // says so via startedMidFight
                 this.traceId = `${at.toString(36)}-${(traceSeq++).toString(36)}-${Math.random().toString(36).slice(2, 6)}`;
-                this.ownerId = traceCharId();
+                this.ownerId ||= traceCharId();
                 this.startedAt = at;
                 this.lastFlushAt = at;
             }
@@ -873,6 +881,7 @@ class GuildTrialTrace {
         const owner = this.ownerId || traceCharId();
         const restored = this._restored;
         this._reset();
+        this.ownerId = owner;
         this._restored = restored;
         // Whatever the unreadable manifest named is being thrown away anyway;
         // there is nothing left to wait for

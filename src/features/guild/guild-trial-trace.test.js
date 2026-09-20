@@ -1270,6 +1270,99 @@ describe('character switches', () => {
         }
     });
 
+    test.each([false, true])(
+        'events held during restore preserve both characters (departing manifest: %s)',
+        async (hasDepartingManifest) => {
+            if (hasDepartingManifest) seedTrace('c1', 'departing-trace');
+            seedTrace('c2', 'arriving-trace');
+            const arrivingManifest = store.get('trialTraceManifest_c2');
+            const arrivingChunk = store.get('trialTraceChunk_0_c2');
+            let release;
+            storageMock.gate = new Promise((resolve) => {
+                release = resolve;
+            });
+            const instance = new GuildTrialTrace({ flushEvents: 1 });
+            instance.initialize();
+            emit('new_guild_battle', { battleId: 2, owner: 'c1', held: true });
+            expect(instance.status().heldCount).toBe(1);
+            try {
+                chars.current = 'c2';
+                const departing = instance.disable();
+                storageMock.gate = null;
+                release();
+                await departing;
+
+                expect(store.get('trialTraceManifest_c2')).toEqual(arrivingManifest);
+                expect(store.get('trialTraceChunk_0_c2')).toEqual(arrivingChunk);
+                expect(store.get('trialTraceManifest_c1').eventCount).toBe(hasDepartingManifest ? 2 : 1);
+                if (hasDepartingManifest) {
+                    expect(store.get('trialTraceManifest_c1').traceId).toBe('departing-trace');
+                }
+
+                instance.initialize();
+                await instance.whenReady();
+                expect(instance.activeTraceId()).toBe('arriving-trace');
+                expect((await tracedEvents(instance)).map((event) => event.payload.owner)).toEqual(['c2']);
+                await instance.disable();
+
+                chars.current = 'c1';
+                instance.initialize();
+                await instance.whenReady();
+                const events = await tracedEvents(instance);
+                expect(events.map((event) => event.payload.owner)).toEqual(
+                    hasDepartingManifest ? ['c1', 'c1'] : ['c1']
+                );
+                expect(events.at(-1).payload.held).toBe(true);
+            } finally {
+                release();
+                storageMock.gate = null;
+                chars.current = 'c1';
+                instance.cleanup();
+            }
+        }
+    );
+
+    test("an abandoned restore cannot settle the arriving character's held events", async () => {
+        let releaseDeparting;
+        let releaseArriving;
+        storageMock.gate = new Promise((resolve) => {
+            releaseDeparting = resolve;
+        });
+        const instance = new GuildTrialTrace({ maxQueuedEvents: 1, flushEvents: 1 });
+        instance.initialize();
+        const lateRestore = instance.whenReady();
+        emit('new_guild_battle', { battleId: 1 });
+        emit('guild_battle_updated', { battleId: 1, owner: 'c1' });
+        expect(instance.status().restoreAbandoned).toBe(true);
+        try {
+            await instance.disable();
+            chars.current = 'c2';
+            seedTrace('c2', 'arriving-trace');
+            storageMock.gate = new Promise((resolve) => {
+                releaseArriving = resolve;
+            });
+            instance.initialize();
+            emit('new_guild_battle', { battleId: 2, owner: 'c2' });
+
+            releaseDeparting();
+            await lateRestore;
+            expect(instance.status().heldCount).toBe(1);
+            expect(instance.activeTraceId()).toBeNull();
+            expect(store.get('trialTraceManifest_c2').traceId).toBe('arriving-trace');
+
+            releaseArriving();
+            await instance.whenReady();
+            expect(instance.activeTraceId()).toBe('arriving-trace');
+            expect((await tracedEvents(instance)).map((event) => event.payload.owner)).toEqual(['c2', 'c2']);
+        } finally {
+            releaseDeparting();
+            releaseArriving?.();
+            storageMock.gate = null;
+            chars.current = 'c1';
+            instance.cleanup();
+        }
+    });
+
     test("one trace's chunks and manifest never split across two characters' keys", async () => {
         const instance = new GuildTrialTrace({ flushEvents: 1 });
         instance.initialize();
