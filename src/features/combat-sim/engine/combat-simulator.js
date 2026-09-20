@@ -1850,6 +1850,11 @@ class CombatSimulator {
             // in this method can't drift out of sync by accident.)
             const haste = source.combatDetails.combatStats.abilityHaste;
             for (const ab of source.abilities) {
+                // `Number.isFinite` rather than truthiness: the only value the
+                // two disagree on is the legitimate timestamp 0, which a cast
+                // finishing at simulation time zero would carry. Hardening, not
+                // an observed bug -- reaching it needs an ability with
+                // castDuration 0, and no such ability is known.
                 if (ab && Number.isFinite(ab.lastUsed)) {
                     const scaledCooldown =
                         haste > 0 ? (ab.cooldownDuration * 100) / (100 + haste) : ab.cooldownDuration;

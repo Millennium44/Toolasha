@@ -97,6 +97,18 @@ class IndexedMinHeap {
         }
     }
 
+    /**
+     * Heap order: earlier time first, and insertion order between events that
+     * share a nanosecond.
+     *
+     * The tie-break is a CONVENTION, not a measured mechanic. What the server
+     * does with two simultaneous events is not observable from the client: the
+     * stream batches a tick, our arrival timestamps carry about 20 ms of
+     * jitter, and same-timestamp events cannot be separated at all. What this
+     * buys is that the order stops depending on heap topology, so it no longer
+     * shifts when unrelated scheduling changes move a sift around. Do not read
+     * FIFO here as something the game was observed to do.
+     */
     _comesBefore(left, right) {
         return left.time < right.time || (left.time === right.time && left._queueSequence < right._queueSequence);
     }
