@@ -110,13 +110,28 @@ describe('checkBridgeStamp', () => {
         expect(console.warn).toHaveBeenCalledWith(expect.stringContaining('may be stale'));
     });
 
-    test('a corrupt meta value is treated the same as no stamp (legacy, unverified)', () => {
+    test('a corrupt ownership stamp is refused for character-specific data', () => {
         globalThis.GM_getValue = vi.fn(() => '{not valid json');
 
         const ok = checkBridgeStamp('toolasha_init_character_data', 'Character data', { enforceOwner: true });
 
-        expect(ok).toBe(true);
-        expect(console.warn).toHaveBeenCalledWith(expect.stringContaining('legacy, unverified'));
+        expect(ok).toBe(false);
+        expect(getLastBridgeIssue()).toContain('corrupt ownership stamp');
+        expect(console.warn).toHaveBeenCalledWith(expect.stringContaining('re-focus the game tab'));
+    });
+
+    test('a present stamp without a character id is also refused', () => {
+        globalThis.GM_getValue = vi.fn(() => JSON.stringify({ writtenAt: Date.now() }));
+
+        expect(checkBridgeStamp('toolasha_init_character_data', 'Character data', { enforceOwner: true })).toBe(false);
+        expect(getLastBridgeIssue()).toContain('corrupt ownership stamp');
+    });
+
+    test('corrupt metadata does not block shared client data', () => {
+        globalThis.GM_getValue = vi.fn(() => '{not valid json');
+
+        expect(checkBridgeStamp('toolasha_init_client_data', 'Client data', { enforceOwner: false })).toBe(true);
+        expect(getLastBridgeIssue()).toBeNull();
     });
 });
 
