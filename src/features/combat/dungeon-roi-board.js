@@ -284,9 +284,26 @@ export function priceRewards(rewards, pricing) {
 }
 
 /**
- * What the keys for one completion cost: one entry key to get in, one chest key
- * per chest the completion pays (refinement chests included — they take a chest
- * key to open like any other).
+ * What the keys for one completion cost: one entry key per reward chest, and one
+ * chest key per chest the completion pays (refinement chests included — they take
+ * a chest key to open like any other).
+ *
+ * The entry key is charged against the **reward chests**, not once a run. The
+ * Game Guide: "Each person must have a key, which will be consumed after beating
+ * the final boss for the dungeon reward chest. If you complete a dungeon with
+ * fewer players, you will have a chance of looting an additional chest at the
+ * cost of an extra key." A solo run is paid five shares of the chest and pays
+ * five keys for them; a full party is paid one and pays one. This used to charge
+ * one key whatever the party size, which credited a solo run about five chests
+ * against a single door — and entry keys are the largest cost line a solo run
+ * has, so the board and the simulator's Results view reported different nets for
+ * the same dungeon. `calculateDungeonKeyCosts` in the sim adapter already
+ * charged them 1:1; this is the same rule.
+ *
+ * Refinement chests are excluded, through the same distinction
+ * `dungeon-chest-luck.js` draws: a refinement chest takes a chest key like any
+ * other, but it is not the per-completion payout, so no entry key was spent on
+ * it.
  *
  * @param {string} dungeonHrid - The dungeon action
  * @param {Object} rewards - From `priceRewards`
@@ -307,10 +324,14 @@ export function priceKeys(dungeonHrid, rewards, { entryKeyFor, keyCost }) {
 
     const entryKey = entryKeyFor?.(dungeonHrid) ?? null;
     if (entryKey) {
+        // One per reward chest. A reward table that named no chest at all still
+        // took a key to walk through the door, so the floor is one rather than
+        // nothing — a missing table must not make the dungeon free.
+        const entryKeys = rewards.chestsPerRun > 0 ? rewards.chestsPerRun : 1;
         const unitCost = keyCost?.(entryKey) ?? null;
-        entries.push({ itemHrid: entryKey, count: 1, unitCost });
+        entries.push({ itemHrid: entryKey, count: entryKeys, unitCost });
         if (Number.isFinite(unitCost)) {
-            total += unitCost;
+            total += unitCost * entryKeys;
             anyPriced = true;
         }
     } else {

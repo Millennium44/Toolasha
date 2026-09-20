@@ -97,15 +97,47 @@ describe('pricing a completion', () => {
         expect(rewards.tokenHrid).toBe('/items/chimerical_token');
     });
 
-    test('keys: one entry key, one chest key per chest of either kind', () => {
+    test('keys: one entry key per reward chest, one chest key per chest of either kind', () => {
+        // Solo: the completion pays five shares of the chest and costs five
+        // keys, not one. Refinement chests take a chest key and no entry key.
         const rewards = priceRewards(rewardsPerRun(DEN, 0, 1, 0), pricing);
         const keys = priceKeys(DEN, rewards, pricing);
         expect(keys.entries).toEqual([
-            { itemHrid: '/items/chimerical_entry_key', count: 1, unitCost: 3_000 },
+            { itemHrid: '/items/chimerical_entry_key', count: 5, unitCost: 3_000 },
             { itemHrid: '/items/chimerical_chest_key', count: 5.02, unitCost: 1_000 },
         ]);
-        expect(keys.total).toBeCloseTo(3_000 + 5.02 * 1_000);
+        expect(keys.total).toBeCloseTo(5 * 3_000 + 5.02 * 1_000);
         expect(keys.complete).toBe(true);
+    });
+
+    test('a full party is charged one entry key, and a quantity bonus buys extra chests at extra keys', () => {
+        const full = priceKeys(DEN, priceRewards(rewardsPerRun(DEN, 0, 5, 0), pricing), pricing);
+        expect(full.entries[0]).toEqual({ itemHrid: '/items/chimerical_entry_key', count: 1, unitCost: 3_000 });
+
+        const bonus = priceKeys(DEN, priceRewards(rewardsPerRun(DEN, 0, 5, 0.295), pricing), pricing);
+        expect(bonus.entries[0].count).toBeCloseTo(1.295);
+    });
+
+    test('a reward table with no chest still charges the one key the door took', () => {
+        const rewards = priceRewards(new Map([['/items/chimerical_token', 40]]), pricing);
+        const keys = priceKeys(DEN, rewards, pricing);
+        expect(keys.entries).toEqual([{ itemHrid: '/items/chimerical_entry_key', count: 1, unitCost: 3_000 }]);
+        expect(keys.total).toBeCloseTo(3_000);
+    });
+
+    test('refinement chests pull a chest key but never an entry key', () => {
+        const rewards = priceRewards(
+            new Map([
+                ['/items/chimerical_chest', 1],
+                ['/items/chimerical_refinement_chest', 2],
+            ]),
+            pricing
+        );
+        const keys = priceKeys(DEN, rewards, pricing);
+        expect(keys.entries).toEqual([
+            { itemHrid: '/items/chimerical_entry_key', count: 1, unitCost: 3_000 },
+            { itemHrid: '/items/chimerical_chest_key', count: 3, unitCost: 1_000 },
+        ]);
     });
 
     test('an unpriceable key leaves the total null rather than free', () => {
@@ -256,7 +288,8 @@ describe('buildDungeonRoiRows', () => {
 
         // Solo at no quantity bonus: 5 chests, 40 tokens, refinement at T1 = 0.03
         const revenue = 5 * 20_000 + 0.03 * 50_000 + 40 * 100;
-        const keys = 3_000 + 5.03 * 1_000;
+        // Five chests cost five entry keys, and every chest a chest key
+        const keys = 5 * 3_000 + 5.03 * 1_000;
         expect(den1.revenuePerRun).toBeCloseTo(revenue);
         expect(den1.keyCostPerRun).toBeCloseTo(keys);
         // No sessions and no sim for this tier: the food bill is unknown, so

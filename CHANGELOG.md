@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Dungeon ROI board: a solo run is charged every entry key it spends
+
+- The board charged one entry key a run whatever the party size, while crediting the run the five chest shares a solo clear is paid — the game consumes one key per reward chest. Solo dungeon rows were about four keys a run too cheap, and now agree with the simulator's own Results view.
+
 ### Combat Sim: a stunned fighter no longer attacks through the stun
 
 - A stun stopped auto attacks only until the next wave spawned, which handed every living fighter a swing without checking whether it was stunned, so simulated damage counted attacks the game does not allow. Stun now blocks auto attacks, abilities and consumables alike, and a fighter still resumes the moment it expires.
