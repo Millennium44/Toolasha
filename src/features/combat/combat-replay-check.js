@@ -2560,7 +2560,7 @@ function drawSaveButton(card) {
  * The recorder's summaries carry no names, but the raw `new_battle` payloads
  * kept in the segments do — a player unit names its character outright. The
  * sanitized export hashes the name (stable, so two files from one character
- * still correlate) and drops the character object and id; everything a re-sim
+ * still correlate) and drops the character object, id and identifying item hashes; everything a re-sim
  * reads — hitpoints, abilities, combatDetails — stays.
  *
  * @param {Object} unit - A player unit from a new_battle payload
@@ -2572,6 +2572,16 @@ function sanitizeBattleUnit(unit) {
     void character;
     void characterID;
     if (typeof rest.name === 'string' && rest.name) rest.name = hashPlayerName(rest.name);
+    if (Array.isArray(rest.combatConsumables)) {
+        rest.combatConsumables = rest.combatConsumables.map((consumable) => {
+            if (!consumable || typeof consumable !== 'object') return consumable;
+            // The wire hash starts with the character ID. Replay uses itemHrid
+            // and the other explicit fields, so this inventory key is redundant.
+            const { itemHash, ...combatFields } = consumable;
+            void itemHash;
+            return combatFields;
+        });
+    }
     return rest;
 }
 

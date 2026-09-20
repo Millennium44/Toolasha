@@ -802,6 +802,29 @@ describe('the sanitized export', () => {
         expect(player.name).toMatch(/^p[0-9a-f]{8}$/);
         expect(player.characterID).toBeUndefined();
     });
+
+    test('consumable item hashes cannot expose the character ID in a sanitized battle', () => {
+        const original = file();
+        const consumable = {
+            itemHash: '7::/item_locations/inventory::/items/channeling_coffee::0',
+            itemHrid: '/items/channeling_coffee',
+            enhancementLevel: 0,
+            count: 1126,
+            availableTime: '2026-09-20T19:33:55.22006917Z',
+        };
+        original.recording.segments[0].ticks[0].payload.players[0].combatConsumables = [consumable];
+
+        const clean = sanitizeExportFile(original);
+        const saved = clean.recording.segments[0].ticks[0].payload.players[0].combatConsumables[0];
+        expect(saved.itemHash).toBeUndefined();
+        expect(saved).toEqual({
+            itemHrid: consumable.itemHrid,
+            enhancementLevel: consumable.enhancementLevel,
+            count: consumable.count,
+            availableTime: consumable.availableTime,
+        });
+        expect(consumable.itemHash).toBe('7::/item_locations/inventory::/items/channeling_coffee::0');
+    });
 });
 
 describe('the survival claim', () => {
