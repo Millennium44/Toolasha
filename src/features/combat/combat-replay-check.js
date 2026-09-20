@@ -2042,6 +2042,7 @@ class ReplayCheck {
             observations: this.observations,
             aggregate: observed,
             comparison: this.comparison,
+            checkError: this.error,
             // The per-monster incoming decomposition, when the last check made
             // one. Carries hrids, counters and damage figures only — nothing
             // the sanitized path would need to strip.
@@ -2097,6 +2098,14 @@ class ReplayCheck {
     async check() {
         if (this.running) return this.comparison;
 
+        // A new attempt supersedes the current result even when validation or
+        // the worker fails. Past checks remain in history; presenting their
+        // comparison beside this attempt's recording would mislabel the result.
+        this.comparison = null;
+        this.lastSimResult = null;
+        this.uptime = null;
+        this.error = null;
+        this.progress = 0;
         const generation = this.generation;
         const observed = this.observed();
         if (!observed) {
@@ -2113,8 +2122,6 @@ class ReplayCheck {
         }
 
         this.running = true;
-        this.error = null;
-        this.progress = 0;
         try {
             const current = buildPlayerDTO();
             if (!current) {

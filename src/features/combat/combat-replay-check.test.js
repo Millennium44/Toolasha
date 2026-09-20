@@ -2517,6 +2517,66 @@ describe('the panel, on everything it now says', () => {
         delete window.Toolasha;
     });
 
+    test('a rejected party check removes the previous solo result from the panel and export', async () => {
+        replayCheck.ensureWatching();
+        await settle();
+        replayCheck.observations = [evenObservation({ fights: 6 })];
+        game.simResult = fullSim;
+        expect(await replayCheck.check()).toBeTruthy();
+        replayCheck.history = [{ ...replayCheck.history[0], at: Date.now() - 100_000 }, ...replayCheck.history];
+        const history = structuredClone(replayCheck.history);
+        replayCheckPanel.show({ remember: false });
+        expect(text()).toContain('Observed vs predicted');
+
+        replayCheck.observations = [evenObservation({ fights: 5, partySize: 5 })];
+        game.lastRun = null;
+        expect(await replayCheck.check()).toBeNull();
+        replayCheckPanel.render();
+
+        expect(text()).toContain('Recorded in a party of 5');
+        expect(text()).not.toContain('Observed vs predicted');
+        expect(text()).not.toContain('could not be drawn');
+        expect(text()).toContain('Past checks');
+        expect(game.lastRun).toBeNull();
+        expect(replayCheck.exportFile()).toMatchObject({
+            comparison: null,
+            uptime: null,
+            history,
+            checkError: 'Recorded in a party of 5. Only solo runs can be compared to a solo sim.',
+        });
+        expect(replayCheck.lastSimResult).toBeNull();
+    });
+
+    test('a pending check and its failure cannot export the previous result as current', async () => {
+        replayCheck.observations = [evenObservation({ fights: 6 })];
+        game.simResult = fullSim;
+        expect(await replayCheck.check()).toBeTruthy();
+        const history = structuredClone(replayCheck.history);
+        let fail;
+        game.runGate = new Promise((_resolve, reject) => {
+            fail = reject;
+        });
+        const log = vi.spyOn(console, 'error').mockImplementation(() => {});
+        try {
+            const pending = replayCheck.check();
+            const whilePending = replayCheck.exportFile();
+            fail(new Error('worker unavailable'));
+            expect(await pending).toBeNull();
+
+            expect(whilePending).toMatchObject({ comparison: null, uptime: null, history, checkError: null });
+            expect(replayCheck.exportFile()).toMatchObject({
+                comparison: null,
+                uptime: null,
+                history,
+                checkError: 'The simulation failed: worker unavailable',
+            });
+            expect(replayCheck.lastSimResult).toBeNull();
+            expect(replayCheck.error).toBe('The simulation failed: worker unavailable');
+        } finally {
+            log.mockRestore();
+        }
+    });
+
     test('the suggestion offers a target, and pressing it sets one', async () => {
         const recorder = {
             recording: false,
