@@ -53,6 +53,8 @@ const game = vi.hoisted(() => ({
     characterSetting: null,
     /** What the Configure editor reports, or null when it has none */
     editedDTOs: null,
+    /** Optional delayed/failed live-profile read for run-start lifecycle tests */
+    buildPlayers: null,
     /** Who is logged in; a test moves it mid-run to stage a character switch */
     characterId: 'me',
     /** Whether the opt-in "remember upgrade results" setting is on */
@@ -167,7 +169,8 @@ vi.mock('./combat-sim-adapter.js', () => ({
         houseRoomDetailMap: game.houseRoomDetailMap,
         abilityDetailMap: game.abilityDetailMap,
     }),
-    buildAllPlayerDTOs: async () => ({ players: game.players, selfHrid: game.players[0]?.hrid }),
+    buildAllPlayerDTOs: async () =>
+        game.buildPlayers ? game.buildPlayers() : { players: game.players, selfHrid: game.players[0]?.hrid },
     getCombatZones: () => [],
     getCommunityBuffs: () => ({}),
     getLabyrinthMonsters: () => game.monsters,
@@ -844,6 +847,8 @@ describe('a house room level reaches the character the simulation is handed', ()
         game.houseRooms = {};
         game.houseRoomDetailMap = {};
         game.players = [];
+        game.buildPlayers = null;
+        game.characterId = 'me';
         ui.destroy();
     });
 
@@ -882,6 +887,38 @@ describe('a house room level reaches the character the simulation is handed', ()
 
         // One baseline plus one run per combat-relevant room — not doubled
         expect(sim.calls).toHaveLength(3);
+    });
+
+    test('an analysis does not start after the character changes while its profile loads', async () => {
+        checkOnlyHouse();
+        let releaseProfile;
+        game.buildPlayers = () =>
+            new Promise((resolve) => {
+                releaseProfile = resolve;
+            });
+
+        const analysis = ui._onUpgradeAnalyze();
+        game.characterId = 'alt';
+        releaseProfile({ players: game.players, selfHrid: 'p1' });
+        await analysis;
+
+        expect(sim.calls).toHaveLength(0);
+        expect(ui._upgradeRunning).toBe(false);
+        game.characterId = 'me';
+        game.buildPlayers = null;
+    });
+
+    test('a failed profile read releases the upgrade-analysis latch', async () => {
+        checkOnlyHouse();
+        game.buildPlayers = async () => {
+            throw new Error('profile unavailable');
+        };
+
+        await ui._onUpgradeAnalyze();
+
+        expect(ui._upgradeRunning).toBe(false);
+        expect(ui.panel.querySelector('#mwi-labsim-status').textContent).toContain('profile unavailable');
+        game.buildPlayers = null;
     });
 
     test('Stop terminates the workers, not just the loop between sims', () => {
@@ -1346,6 +1383,89 @@ describe('a single-target result can be read against the last one', () => {
 
         expect(ui._comparison.runs).toHaveLength(2);
         expect(ui.panel.querySelector('#mwi-labsim-comparison')).toBeNull();
+    });
+});
+
+describe('a labyrinth run waiting for the live profile', () => {
+    let releaseProfile;
+
+    const profileResult = () => ({ players: game.players, selfHrid: game.players[0]?.hrid });
+
+    const selectFight = () => {
+        ui.panel.querySelector('#mwi-labsim-monster').value = '/monsters/mimic';
+    };
+
+    beforeEach(async () => {
+        geometry.saved = null;
+        geometry.wasOpen = false;
+        game.characterId = 'me';
+        game.monsters = [{ hrid: '/monsters/mimic', name: 'Mimic' }];
+        game.players = [{ hrid: 'p1', equipment: {}, abilities: [], houseRooms: {} }];
+        game.editedDTOs = null;
+        sim.calls = [];
+        game.buildPlayers = () =>
+            new Promise((resolve) => {
+                releaseProfile = resolve;
+            });
+        ui.buildPanel();
+        await settle();
+        selectFight();
+    });
+
+    afterEach(() => {
+        ui.destroy();
+        game.buildPlayers = null;
+        game.characterId = 'me';
+        game.players = [];
+        game.monsters = [];
+        sim.calls = [];
+    });
+
+    test('rapid clicks start only one labyrinth worker run', async () => {
+        const first = ui._onSimulate();
+        const second = ui._onSimulate();
+        releaseProfile(profileResult());
+        await Promise.all([first, second]);
+
+        expect(sim.calls).toHaveLength(1);
+    });
+
+    test('the run does not start after the character changes while the profile loads', async () => {
+        const run = ui._onSimulate();
+        game.characterId = 'alt';
+        releaseProfile(profileResult());
+        await run;
+
+        expect(sim.calls).toHaveLength(0);
+    });
+
+    test('a destroyed panel cannot resume into a newer same-character run', async () => {
+        const staleRun = ui._onSimulate();
+        const releaseStale = releaseProfile;
+
+        ui.destroy();
+        ui.buildPanel();
+        await settle();
+        selectFight();
+        const currentRun = ui._onSimulate();
+        const releaseCurrent = releaseProfile;
+
+        releaseStale(profileResult());
+        await staleRun;
+        expect(sim.calls).toHaveLength(0);
+
+        releaseCurrent(profileResult());
+        await currentRun;
+        expect(sim.calls).toHaveLength(1);
+    });
+
+    test('a single fight cannot preempt an upgrade analysis', async () => {
+        ui._upgradeRunning = true;
+        await ui._onSimulate();
+        ui._upgradeRunning = false;
+
+        expect(sim.calls).toHaveLength(0);
+        expect(ui._runStarting).toBe(false);
     });
 });
 

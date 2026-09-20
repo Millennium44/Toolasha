@@ -627,6 +627,8 @@ class LabSimUI {
         this._editor = null;
         this._skillingEditor = null;
         this.isRunning = false;
+        this._runStarting = false;
+        this._runStartToken = 0;
         this._detachDrag = null;
         this.elapsedTimer = null;
         this._activeTab = 'configure';
@@ -2408,11 +2410,13 @@ class LabSimUI {
 
     /** @private */
     async _onSimulate() {
+        if (this._runStarting) return;
         if (this.isRunning) {
             cancelActiveSimulations();
             this._setStatus('Labyrinth simulation cancelled.');
             return;
         }
+        if (this._upgradeRunning) return;
 
         // Captured before the first await — see `_stillSameCharacter`
         const ownerId = dataManager.getCurrentCharacterId();
@@ -2447,15 +2451,34 @@ class LabSimUI {
         const crates = this.getSelectedCrates();
         const labyrinthCombatBuffs = this._labyrinthCombatBuffs();
 
+        // A live profile read yields before `isRunning` is set. Claim that
+        // window so a rapid second click cannot start another worker run, and
+        // use a generation token so a destroyed panel cannot resume into the
+        // same character's newly rebuilt panel.
+        this._runStarting = true;
+        const startToken = ++this._runStartToken;
         let selfDTO;
-        const editedDTOs = this._editor?.getEditedDTOs();
-        if (editedDTOs) {
-            const selfHrid = this._editor.getSelfHrid();
-            selfDTO = editedDTOs[selfHrid] || Object.values(editedDTOs)[0];
-        } else {
-            const result = await buildAllPlayerDTOs();
-            selfDTO = result.players.find((p) => p.hrid === result.selfHrid) || result.players[0];
+        try {
+            const editedDTOs = this._editor?.getEditedDTOs();
+            if (editedDTOs) {
+                const selfHrid = this._editor.getSelfHrid();
+                selfDTO = editedDTOs[selfHrid] || Object.values(editedDTOs)[0];
+            } else {
+                const result = await buildAllPlayerDTOs();
+                selfDTO = result.players.find((p) => p.hrid === result.selfHrid) || result.players[0];
+            }
+        } catch (error) {
+            if (startToken !== this._runStartToken) return;
+            this._runStarting = false;
+            if (!this._stillSameCharacter(ownerId)) return;
+            console.error('[LabSimUI] Failed to load player for simulation:', error);
+            this._setStatus('Simulation failed: ' + error.message);
+            return;
         }
+        if (startToken !== this._runStartToken) return;
+        this._runStarting = false;
+
+        if (!this._stillSameCharacter(ownerId)) return;
 
         if (!selfDTO) {
             this._setStatus('No character data available.');
@@ -2842,8 +2865,9 @@ class LabSimUI {
         // function, so a second click landing in that window would otherwise
         // start a concurrent run sharing this._upgradeAborted and clobbering
         // the first run's results.
-        if (this._upgradeRunning) return;
+        if (this._upgradeRunning || this._runStarting || this.isRunning) return;
         this._upgradeRunning = true;
+        const startToken = ++this._runStartToken;
 
         // Captured before the first await — see `_stillSameCharacter`
         const ownerId = dataManager.getCurrentCharacterId();
@@ -2893,12 +2917,27 @@ class LabSimUI {
         }
 
         let playerDTOs;
-        const editedDTOs = this._editor?.getEditedDTOs();
-        if (editedDTOs) {
-            playerDTOs = Object.values(editedDTOs);
-        } else {
-            const result = await buildAllPlayerDTOs();
-            playerDTOs = result.players;
+        try {
+            const editedDTOs = this._editor?.getEditedDTOs();
+            if (editedDTOs) {
+                playerDTOs = Object.values(editedDTOs);
+            } else {
+                const result = await buildAllPlayerDTOs();
+                playerDTOs = result.players;
+            }
+        } catch (error) {
+            if (startToken !== this._runStartToken) return;
+            this._upgradeRunning = false;
+            if (!this._stillSameCharacter(ownerId)) return;
+            console.error('[LabSimUI] Failed to load players for upgrade analysis:', error);
+            this._setStatus('Upgrade analysis failed: ' + error.message);
+            return;
+        }
+
+        if (startToken !== this._runStartToken) return;
+        if (!this._stillSameCharacter(ownerId)) {
+            this._upgradeRunning = false;
+            return;
         }
 
         if (!playerDTOs?.length || !playerDTOs[playerIndex]) {
@@ -6358,6 +6397,10 @@ class LabSimUI {
             this.panel = null;
         }
         this.isRunning = false;
+        this._runStartToken++;
+        this._runStarting = false;
+        this._upgradeRunning = false;
+        this._upgradeAborted = true;
         if (this._editor) this._editor.reset();
         if (this._skillingEditor) this._skillingEditor.reset();
         this._maxLevel = null;
