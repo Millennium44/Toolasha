@@ -360,6 +360,58 @@ describe('the master switch', () => {
 });
 
 describe('disable', () => {
+    test('a character switch discards a pending sighting and stops the queued lookups', async () => {
+        await priceTargetAlerts.initialize();
+        let resolveHistory;
+        const pending = new Promise((resolve) => {
+            resolveHistory = resolve;
+        });
+        game.pins = Array.from({ length: 6 }, (_, level) => pin({ level }));
+        for (const entry of game.pins) game.history[entry.key] = pending;
+
+        const refresh = priceTargetAlerts.refreshObservations();
+        expect(game.fetched).toHaveLength(4);
+        game.dmHandlers.character_switching();
+        resolveHistory([{ ask: 1_000_000, bid: null, time: NOW }]);
+        await refresh;
+
+        expect(game.fetched).toHaveLength(4);
+        expect(priceTargetAlerts.observations.size).toBe(0);
+        expect(priceTargetAlerts.targetStates.size).toBe(0);
+        expect(game.notified).toHaveLength(0);
+        expect(game.reaches).toHaveLength(0);
+    });
+
+    test('an old completion cannot release the new session refresh lock', async () => {
+        game.pins = [pin()];
+        let resolveOld;
+        game.history[pin().key] = new Promise((resolve) => {
+            resolveOld = resolve;
+        });
+        const oldRefresh = priceTargetAlerts.refreshObservations();
+        priceTargetAlerts.disable();
+
+        let resolveNew;
+        game.history[pin().key] = new Promise((resolve) => {
+            resolveNew = resolve;
+        });
+        const newRefresh = priceTargetAlerts.refreshObservations();
+        resolveOld([{ ask: 1_000_000, bid: null, time: NOW }]);
+        await oldRefresh;
+
+        expect(priceTargetAlerts.refreshInFlight).toBe(true);
+        expect(priceTargetAlerts.observations.size).toBe(0);
+        expect(game.notified).toHaveLength(0);
+        await priceTargetAlerts.refreshObservations();
+        expect(game.fetched).toHaveLength(2);
+
+        resolveNew([{ ask: 4_100_000, bid: null, time: NOW }]);
+        await newRefresh;
+        expect(priceTargetAlerts.refreshInFlight).toBe(false);
+        expect(game.notified).toHaveLength(1);
+        expect(game.notified[0].message).toContain('ask 4.10M');
+    });
+
     test('drops the armed bits, so a re-enable does not inherit another session’s idea', async () => {
         game.pins = [pin()];
         await sight({ ask: 1_000_000 });

@@ -72,6 +72,8 @@ class MarketUndercutAlerts {
         this.refreshInFlight = false;
         /** True while a Mooket refresh is in flight, so an overlapping tick is skipped */
         this.mooketRefreshInFlight = false;
+        /** Invalidates pending refreshes when the feature or character is torn down */
+        this.refreshGeneration = 0;
         /** Whether the listeners and the refresh timer are already up */
         this.isInitialized = false;
     }
@@ -167,18 +169,26 @@ class MarketUndercutAlerts {
      * @returns {Promise<void>}
      */
     async refreshMooketObservations() {
+        if (!config.getSetting(MASTER_SETTING)) return;
         if (!config.getSetting(POOLED_HISTORY_SETTING)) return;
         if (this.mooketRefreshInFlight) return;
 
         const items = this.distinctActiveItems();
         if (!items.length) return;
 
+        const generation = this.refreshGeneration;
+        const isCurrent = () =>
+            generation === this.refreshGeneration &&
+            config.getSetting(MASTER_SETTING) &&
+            config.getSetting(POOLED_HISTORY_SETTING);
         this.mooketRefreshInFlight = true;
         let learned = false;
         try {
             await runPool(items, MOOKET_CONCURRENCY, async (item) => {
+                if (!isCurrent()) return;
                 try {
                     const rows = await marketHistoryAPI.fetchHistory(item.itemHrid, item.enhancementLevel, 1);
+                    if (!isCurrent()) return;
                     const sighting = freshestSighting(rows);
                     if (!sighting || (sighting.ask === null && sighting.bid === null)) return;
                     this.mooketObservations.set(`${item.itemHrid}:${item.enhancementLevel}`, {
@@ -192,10 +202,11 @@ class MarketUndercutAlerts {
                 }
             });
         } finally {
-            this.mooketRefreshInFlight = false;
+            // A newer session may already have started its own refresh.
+            if (generation === this.refreshGeneration) this.mooketRefreshInFlight = false;
         }
 
-        if (learned) this.check();
+        if (learned && isCurrent()) this.check();
     }
 
     /**
@@ -221,18 +232,20 @@ class MarketUndercutAlerts {
      * beyond what the cache already permits.
      */
     async refreshSnapshot() {
+        if (!config.getSetting(MASTER_SETTING)) return;
         if (this.refreshInFlight) {
             // A previous fetch has not settled; do not stack a second one
             return;
         }
 
+        const generation = this.refreshGeneration;
         this.refreshInFlight = true;
         try {
             await marketAPI.fetch();
         } catch (error) {
             console.error('[MarketUndercutAlerts] Market snapshot refresh failed:', error);
         } finally {
-            this.refreshInFlight = false;
+            if (generation === this.refreshGeneration) this.refreshInFlight = false;
         }
     }
 
@@ -407,6 +420,7 @@ class MarketUndercutAlerts {
      * Cleanup
      */
     disable() {
+        this.refreshGeneration += 1;
         if (this.characterSwitchingHandler) {
             dataManager.off('character_switching', this.characterSwitchingHandler);
             this.characterSwitchingHandler = null;

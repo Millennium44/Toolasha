@@ -12,6 +12,7 @@
 import { describe, test, expect, beforeEach, afterEach, vi } from 'vitest';
 import { getSettingDefinition } from '../../core/settings-schema.js';
 import marketAPI from '../../api/marketplace.js';
+import marketHistoryAPI from '../market/mooket/market-history-api.js';
 
 const NOW = new Date('2026-01-01T12:00:00Z').getTime();
 
@@ -403,6 +404,60 @@ describe('market undercut alerts', () => {
     describe('Mooket-backed freshness', () => {
         const POOLED = 'market_pooledHistory';
 
+        test('a character switch discards pending sightings and stops queued lookups', async () => {
+            game.settings[POOLED] = true;
+            let resolveHistory;
+            const pending = new Promise((resolve) => {
+                resolveHistory = resolve;
+            });
+            game.listings = Array.from({ length: 6 }, (_, level) => listing({ id: level, enhancementLevel: level }));
+            for (const entry of game.listings) game.mooketRows[`/items/cheese:${entry.enhancementLevel}`] = pending;
+            const fetchSpy = vi.spyOn(marketHistoryAPI, 'fetchHistory');
+            try {
+                const refresh = marketUndercutAlerts.refreshMooketObservations();
+                expect(fetchSpy).toHaveBeenCalledTimes(4);
+                game.dmHandlers.character_switching();
+                resolveHistory([{ a: 274000, b: 270000, time: NOW / 1000 }]);
+                await refresh;
+
+                expect(fetchSpy).toHaveBeenCalledTimes(4);
+                expect(marketUndercutAlerts.mooketObservations.size).toBe(0);
+                expect(marketUndercutAlerts.listingStates.size).toBe(0);
+                expect(game.notified).toHaveLength(0);
+            } finally {
+                fetchSpy.mockRestore();
+            }
+        });
+
+        test('an old completion cannot release the new session Mooket refresh lock', async () => {
+            game.settings[POOLED] = true;
+            game.listings = [listing()];
+            let resolveOld;
+            game.mooketRows['/items/cheese:0'] = new Promise((resolve) => {
+                resolveOld = resolve;
+            });
+            const oldRefresh = marketUndercutAlerts.refreshMooketObservations();
+            marketUndercutAlerts.disable();
+
+            let resolveNew;
+            game.mooketRows['/items/cheese:0'] = new Promise((resolve) => {
+                resolveNew = resolve;
+            });
+            const newRefresh = marketUndercutAlerts.refreshMooketObservations();
+            resolveOld([{ a: 274000, b: 270000, time: NOW / 1000 }]);
+            await oldRefresh;
+
+            expect(marketUndercutAlerts.mooketRefreshInFlight).toBe(true);
+            expect(marketUndercutAlerts.mooketObservations.size).toBe(0);
+            expect(game.notified).toHaveLength(0);
+
+            resolveNew([{ a: 276000, b: 270000, time: NOW / 1000 }]);
+            await newRefresh;
+            expect(marketUndercutAlerts.mooketRefreshInFlight).toBe(false);
+            expect(game.notified).toHaveLength(1);
+            expect(game.notified[0].message).toContain('ask now 276K');
+        });
+
         /** A single history row the mocked pool returns, `ageMs` old */
         function mooketSighting(itemHrid, level, ask, bid, ageMs) {
             game.mooketRows[`${itemHrid}:${level}`] = [{ a: ask, b: bid, time: Math.floor((NOW - ageMs) / 1000) }];
@@ -489,6 +544,34 @@ describe('market undercut alerts', () => {
     // wires the feature up with the master switch on, so the timer is running.
     describe('snapshot refresh', () => {
         const CACHE = marketAPI.CACHE_DURATION;
+
+        test('an old completion cannot release the new session snapshot refresh lock', async () => {
+            let resolveOld;
+            game.fetchImpl = () =>
+                new Promise((resolve) => {
+                    resolveOld = resolve;
+                });
+            const oldRefresh = marketUndercutAlerts.refreshSnapshot();
+            marketUndercutAlerts.disable();
+            await marketUndercutAlerts.initialize();
+
+            let resolveNew;
+            game.fetchImpl = () =>
+                new Promise((resolve) => {
+                    resolveNew = resolve;
+                });
+            const newRefresh = marketUndercutAlerts.refreshSnapshot();
+            resolveOld();
+            await oldRefresh;
+
+            expect(marketUndercutAlerts.refreshInFlight).toBe(true);
+            await marketUndercutAlerts.refreshSnapshot();
+            expect(marketAPI.fetch).toHaveBeenCalledTimes(2);
+
+            resolveNew();
+            await newRefresh;
+            expect(marketUndercutAlerts.refreshInFlight).toBe(false);
+        });
 
         test('an undercut against a stale snapshot is finally caught on the next refresh', async () => {
             // The player holds the best ask in the snapshot the script currently

@@ -82,6 +82,8 @@ class PriceTargetAlerts {
         this.timers = createTimerRegistry();
         /** True while a refresh is in flight, so an overlapping tick is skipped */
         this.refreshInFlight = false;
+        /** Invalidates pending lookups when the feature or character is torn down */
+        this.refreshGeneration = 0;
         /** Whether the listeners and the refresh timer are already up */
         this.isInitialized = false;
     }
@@ -184,12 +186,19 @@ class PriceTargetAlerts {
         const pins = this.targetedPins();
         if (!pins.length) return;
 
+        const generation = this.refreshGeneration;
+        const isCurrent = () =>
+            generation === this.refreshGeneration &&
+            config.getSetting(MASTER_SETTING) &&
+            config.getSetting(POOLED_HISTORY_SETTING);
         this.refreshInFlight = true;
         let learned = false;
         try {
             await runPool(pins, MOOKET_CONCURRENCY, async (pin) => {
+                if (!isCurrent()) return;
                 try {
                     const rows = await marketHistoryAPI.fetchHistory(pin.itemHrid, pin.enhancementLevel, 1);
+                    if (!isCurrent()) return;
                     const sighting = freshestSighting(rows);
                     if (!sighting || (sighting.ask === null && sighting.bid === null)) return;
                     this.observations.set(`${pin.itemHrid}:${pin.enhancementLevel}`, {
@@ -203,10 +212,11 @@ class PriceTargetAlerts {
                 }
             });
         } finally {
-            this.refreshInFlight = false;
+            // A newer session may already have started its own refresh.
+            if (generation === this.refreshGeneration) this.refreshInFlight = false;
         }
 
-        if (learned) this.check();
+        if (learned && isCurrent()) this.check();
     }
 
     /**
@@ -338,6 +348,7 @@ class PriceTargetAlerts {
      * Cleanup
      */
     disable() {
+        this.refreshGeneration += 1;
         unregisterCommand('Refresh watchlist prices');
 
         if (this.characterSwitchingHandler) {
