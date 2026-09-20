@@ -133,6 +133,10 @@ export const LOCAL_ONLY_KEY_PREFIXES = [
     // it would drop however many this one had counted, and a sum would
     // double-count every episode that had already travelled — so it stays put
     'stunPersistenceTally',
+    // Snapshots this machine judged. Another device's copy would overwrite
+    // however many this one had counted, and a sum would double-count every
+    // reading that had already travelled — so it stays put
+    'furyStackingTally',
 ];
 
 /**

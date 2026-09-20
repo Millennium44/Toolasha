@@ -174,6 +174,9 @@ export const OWNED_KEY_PREFIXES = [
     // A measurement of this machine's own observations of the battle stream —
     // ours, and device-local, see LOCAL_ONLY_KEY_PREFIXES
     'stunPersistenceTally',
+    // The same: this machine's own readings of its own stat snapshots, and
+    // device-local for the same reason, see LOCAL_ONLY_KEY_PREFIXES
+    'furyStackingTally',
     'combatProfitView',
     'combatIncomeNetSalesTax',
     'combatLevelSelection',

@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Fury Stacking: measure whether Fury multiplies the other buffs or pools with them
+
+- A new off-by-default combat diagnostic checks every snapshot of your own resolved stats against both candidate formulas, counting only readings where Fury and another buff of the same type are both up — the two formulas are identical otherwise — and reports separate verdicts for accuracy and max damage.
+
 ### Stun Persistence: measure whether a stun outlives the monster that cast it
 
 - A new off-by-default combat diagnostic watches the battle stream for stuns whose caster died mid-stun, keeping only waves where exactly one thing could have cast it, and reports how often the stun kept being flagged afterwards — with the end-bracket widths and the discard reasons beside it, because both are how you tell whether the number means anything. Stun only: the payload carries no blind or silence flag.

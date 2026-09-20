@@ -1275,6 +1275,13 @@ function registerFeatures() {
             async: true,
         },
         {
+            key: 'furyStackingWatch',
+            name: 'Fury Stacking',
+            category: 'Combat',
+            module: Combat.furyStacking,
+            async: true,
+        },
+        {
             key: 'combatRecorder_autoStart',
             name: 'Combat Recorder',
             category: 'Combat',

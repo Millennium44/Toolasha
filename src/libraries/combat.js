@@ -39,6 +39,8 @@ import '../features/profile/build-score-row.js';
 import replayCheck, { dungeonWaveTiming } from '../features/combat/combat-replay-check.js';
 // Registers the Stun Persistence overlay row and its panel
 import stunPersistence from '../features/combat/stun-persistence-observer.js';
+// Registers the Fury Stacking overlay row and its panel
+import furyStacking from '../features/combat/fury-stacking-observer.js';
 import {
     waveHridsOf,
     nonDamagingByHrid,
@@ -165,6 +167,7 @@ toolashaRoot.Combat = {
     salesTaxView,
     combatRecordControl,
     stunPersistence,
+    furyStacking,
     abilityBookCalculator,
     abilityTooltipTiming,
     manaTracker,
