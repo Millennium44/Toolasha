@@ -23,11 +23,14 @@ import config from '../../core/config.js';
 import storage from '../../core/storage.js';
 import webSocketHook from '../../core/websocket.js';
 import {
+    battleRosterSize,
     createTickPeriodWatch,
     emptyTally,
     foldHpFall,
     foldObservation,
     foldRejection,
+    foldRoster,
+    loadTally,
     summarize,
     EFFECTS,
 } from './tick-period.js';
@@ -173,7 +176,10 @@ const tickPeriod = {
         try {
             const stored = await storage.get(STORAGE_KEY, STORAGE_STORE, null);
             if (!stillOurs(ticket)) return;
-            if (stored && stored.version === 1) tally = stored;
+            // Not assigned as it was stored: an older record is short of
+            // counters a newer build folds into, and a pre-gate one carries
+            // recovery intervals that are gaps between meals
+            tally = loadTally(stored);
         } catch (error) {
             console.error('[TickPeriod] Could not read the tally back:', error);
         }
@@ -183,10 +189,17 @@ const tickPeriod = {
         watch = createTickPeriodWatch();
         calibration = createArrivalCalibration();
 
-        onNewBattle = () => {
+        onNewBattle = (data) => {
             try {
                 watch.newBattle();
                 calibration.reset();
+                // The roster decides whether the recovery row can fill at all,
+                // and this message is the only statement of it
+                const roster = battleRosterSize(data);
+                if (roster) {
+                    foldRoster(tally, roster);
+                    scheduleWrite();
+                }
                 collect();
             } catch (error) {
                 console.error('[TickPeriod] new_battle failed:', error);
@@ -255,6 +268,9 @@ function drawEffect(body, effect) {
     card.appendChild(panelNote(effect.signature));
     card.appendChild(panelLine('Engine assumes', seconds(effect.assumedMs), '#e8ecf5'));
     card.appendChild(panelLine('Verdict', effect.text, STATE_COLORS[effect.state] || '#e8ecf5'));
+    // An empty row with no explanation reads as a broken tool rather than as a
+    // measurement this fight cannot make
+    if (effect.limit) card.appendChild(panelLine('Measurement limit', effect.limit, ACCENT));
 
     if (!effect.cluster) {
         card.appendChild(panelLine('Intervals', '0', '#9aa4bb'));

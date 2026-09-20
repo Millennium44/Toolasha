@@ -1,16 +1,20 @@
 import { describe, it, expect } from 'vitest';
 import {
+    battleRosterSize,
     createTickPeriodWatch,
     emptyTally,
     enrageBoost,
     foldHpFall,
     foldObservation,
     foldRejection,
+    foldRoster,
     healOverTimeInstances,
+    loadTally,
     modeCluster,
     multiples,
     summarize,
     EFFECTS,
+    TALLY_VERSION,
 } from './tick-period.js';
 import recordedRun from '../../utils/__fixtures__/combat-run.json';
 import recordedRefresh from '../../utils/__fixtures__/combat-refresh.json';
@@ -357,5 +361,104 @@ describe('summarize', () => {
         foldObservation(tally, { effect: EFFECTS.enrage, intervalMs: 60_000, at: 1 });
         const enrage = summarize(tally).effects.find((effect) => effect.key === EFFECTS.enrage);
         expect(enrage.state).toBe('provisional');
+    });
+});
+
+describe('loadTally', () => {
+    /**
+     * A tally as the build before the continuity gate stored one: recovery
+     * intervals that are gaps between meals, and no counter for the gate that
+     * did not exist yet.
+     * @returns {Object} A version 1 record
+     */
+    function preGateRecord() {
+        const stored = emptyTally();
+        stored.version = 1;
+        for (const intervalMs of [8146, 141_792, 24_962, 42_485, 9762, 9996, 68_281]) {
+            foldObservation(stored, { effect: EFFECTS.hot, intervalMs, at: intervalMs });
+        }
+        for (let index = 0; index < 289; index += 1) {
+            foldObservation(stored, { effect: EFFECTS.regen, intervalMs: 10_000, at: index });
+        }
+        foldRejection(stored, EFFECTS.hot, 'abilityInTick');
+        foldRejection(stored, EFFECTS.regen, 'hidden');
+        foldHpFall(stored, true);
+        delete stored.rejections[EFFECTS.hot].effectNotContinuous;
+        delete stored.roster;
+        return stored;
+    }
+
+    it('throws the pre-gate recovery sample away and keeps the regeneration answer', () => {
+        const loaded = loadTally(preGateRecord());
+
+        expect(loaded.version).toBe(TALLY_VERSION);
+        expect(loaded.effects[EFFECTS.hot].rows).toEqual([]);
+        expect(loaded.effects[EFFECTS.hot].n).toBe(0);
+        // The discards belong to the same wrong question the intervals answered
+        expect(loaded.rejections[EFFECTS.hot].abilityInTick).toBe(0);
+
+        // The one constant this tool has confirmed, and it was never in question
+        expect(loaded.effects[EFFECTS.regen].n).toBe(289);
+        expect(loaded.effects[EFFECTS.regen].rows).toHaveLength(289);
+        expect(summarize(loaded).effects.find((effect) => effect.key === EFFECTS.regen).cluster.median).toBe(10_000);
+        expect(loaded.rejections[EFFECTS.regen].hidden).toBe(1);
+        expect(loaded.hpFalls.attributed).toBe(1);
+    });
+
+    it('starts a counter an older record never had at zero, not at nothing', () => {
+        const loaded = loadTally(preGateRecord());
+        expect(loaded.rejections[EFFECTS.hot].effectNotContinuous).toBe(0);
+        expect(loaded.roster).toEqual({ last: 0, max: 0 });
+
+        // The same for every other counter a record can be short of: folding
+        // into a missing one gives `undefined + 1`, which comes back out of
+        // storage as null and draws as a blank where a count belongs
+        const thin = { version: TALLY_VERSION, effects: { regen: { rows: [] } }, rejections: {} };
+        const loadedThin = loadTally(thin);
+        foldObservation(loadedThin, { effect: EFFECTS.regen, intervalMs: 10_000, at: 1, simultaneous: 2 });
+        foldRejection(loadedThin, EFFECTS.regen, 'hidden');
+        foldHpFall(loadedThin, false);
+        expect(loadedThin.effects[EFFECTS.regen].n).toBe(1);
+        expect(loadedThin.effects[EFFECTS.regen].simultaneous).toBe(1);
+        expect(loadedThin.rejections[EFFECTS.regen].hidden).toBe(1);
+        expect(loadedThin.hpFalls.unattributed).toBe(1);
+        for (const bucket of Object.values(loadedThin.rejections)) {
+            for (const value of Object.values(bucket)) expect(Number.isFinite(value)).toBe(true);
+        }
+    });
+
+    it('keeps a current record whole and refuses one from a schema it does not know', () => {
+        const current = emptyTally();
+        foldObservation(current, { effect: EFFECTS.regen, intervalMs: 10_000, at: 1 });
+        expect(loadTally(current).effects[EFFECTS.regen].rows).toEqual([10_000]);
+        expect(loadTally({ version: 99, effects: { regen: { n: 500, rows: [1] } } }).effects[EFFECTS.regen].n).toBe(0);
+        expect(loadTally(null).effects[EFFECTS.regen].n).toBe(0);
+    });
+});
+
+describe('the party limit on recovery', () => {
+    it('reads the roster off the battle the server described', () => {
+        expect(battleRosterSize({ players: [{}, {}, {}, {}, {}] })).toBe(5);
+        expect(battleRosterSize({ players: [{}] })).toBe(1);
+        expect(battleRosterSize({})).toBe(0);
+    });
+
+    it('says why the row cannot fill in a party, and says nothing of the kind when solo', () => {
+        const party = emptyTally();
+        foldRoster(party, 5);
+        for (let index = 0; index < 334; index += 1) foldRejection(party, EFFECTS.hot, 'abilityInTick');
+        const inParty = summarize(party).effects.find((effect) => effect.key === EFFECTS.hot);
+        expect(inParty.limit).toContain('5 players');
+        expect(inParty.limit).toContain('Fight solo');
+        // A limit of the measurement, not a verdict on the constant
+        expect(inParty.state).toBe('unresolved');
+
+        const solo = emptyTally();
+        foldRoster(solo, 1);
+        expect(summarize(solo).effects.find((effect) => effect.key === EFFECTS.hot).limit).toBeNull();
+        // And nothing else carries the note either
+        for (const effect of summarize(party).effects) {
+            if (effect.key !== EFFECTS.hot) expect(effect.limit).toBeNull();
+        }
     });
 });

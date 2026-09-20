@@ -77,6 +77,23 @@
  * no such instance shared across both ends is discarded and counted as
  * discarded, which is why the row can shrink to nothing and say so.
  *
+ * ## A party cannot measure recovery, whatever else is true
+ *
+ * The tick-wide ability veto costs nothing when one person is fighting and
+ * everything when five are. A live reading in a five-player party shows the
+ * recovery row discarding every candidate under "something named an ability on
+ * that tick" and nothing at all reaching the continuity gate behind it: in a
+ * group, nearly every tick names somebody's cast. So the row cannot fill in a
+ * party, and the panel says that where the row would be rather than leaving an
+ * empty row to be read as a fault.
+ *
+ * That is a limit of this measurement, not a finding about the constant.
+ * Whether food recovery is measurable at all from a solo stream is still open —
+ * a separate look at one player's `combatBuffMap` over a minute found no
+ * recovery entry, only permanent passives, long drinks and short ability buffs,
+ * which is suggestive and nothing more: the player was near full health
+ * throughout, and that map only arrives on the `new_battle` snapshot.
+ *
  * ## What the intervals are measured with
  *
  * Both ends are client arrival times. That noise is measured rather than
@@ -195,6 +212,16 @@ const Z95 = 1.96;
 const FLOOR_MS = 1;
 
 /**
+ * The stored shape's version.
+ *
+ * Bumped to 2 when recovery stopped being timed between meals and started being
+ * timed across ticks of one running effect: every `hot` interval collected
+ * before that gate is a gap between separate eats and is not a measurement of
+ * anything, so it has to leave rather than be averaged in.
+ */
+export const TALLY_VERSION = 2;
+
+/**
  * An empty tally, which is also the shape stored.
  * @returns {Object} Tally
  */
@@ -207,13 +234,113 @@ export function emptyTally() {
         for (const reason of Object.keys(REJECTIONS)) rejections[spec.key][reason] = 0;
     }
     return {
-        version: 1,
+        version: TALLY_VERSION,
         effects,
         rejections,
         hpFalls: { attributed: 0, unattributed: 0 },
         jitter: { rows: [], seen: 0 },
+        roster: { last: 0, max: 0 },
         updatedAt: 0,
     };
+}
+
+/**
+ * A stored counter as a number, whatever an older record left in its place.
+ *
+ * A record written before a counter existed comes back without the field, and
+ * `undefined + 1` is `NaN` — which storage hands back as `null` and the panel
+ * draws as a blank where a count belongs. Every counter read off a stored tally
+ * goes through this, so the whole class is closed rather than the one field that
+ * happened to be noticed.
+ *
+ * @param {*} value - Whatever was stored
+ * @returns {number} The count, or 0
+ */
+function count(value) {
+    return Number.isFinite(Number(value)) ? Number(value) : 0;
+}
+
+/**
+ * A stored tally read back into the current shape.
+ *
+ * Two jobs, and they are separate. Fields a newer build added are filled in at
+ * 0, so an older record keeps everything it measured. A record from before the
+ * continuity gate loses its `hot` rows and `hot` discards *only*: regeneration
+ * is the one constant this tool has actually confirmed and its intervals were
+ * never in question, so discarding the whole document to be rid of the bad
+ * effect would throw away the answer to keep the tidiness.
+ *
+ * @param {Object|null} stored - What came back from storage
+ * @returns {Object} A tally safe to fold into
+ */
+export function loadTally(stored) {
+    const fresh = emptyTally();
+    if (!stored || typeof stored !== 'object') return fresh;
+    const storedVersion = Number(stored.version);
+    if (!(storedVersion >= 1) || storedVersion > TALLY_VERSION) return fresh;
+
+    // Pre-gate recovery intervals are gaps between meals, not ticks of one
+    // running effect, and their discard counts belong to the same wrong question
+    const dropHot = storedVersion < 2;
+
+    for (const spec of EFFECT_SPECS) {
+        const bucket = stored.effects?.[spec.key];
+        if (bucket && !(dropHot && spec.key === EFFECTS.hot)) {
+            const rows = Array.isArray(bucket.rows) ? bucket.rows.filter((row) => Number.isFinite(row)) : [];
+            fresh.effects[spec.key] = {
+                n: count(bucket.n),
+                rows,
+                simultaneous: count(bucket.simultaneous),
+            };
+        }
+        if (dropHot && spec.key === EFFECTS.hot) continue;
+        for (const reason of Object.keys(REJECTIONS)) {
+            fresh.rejections[spec.key][reason] = count(stored.rejections?.[spec.key]?.[reason]);
+        }
+    }
+
+    fresh.hpFalls = {
+        attributed: count(stored.hpFalls?.attributed),
+        unattributed: count(stored.hpFalls?.unattributed),
+    };
+    fresh.jitter = {
+        rows: Array.isArray(stored.jitter?.rows) ? stored.jitter.rows.filter((row) => Number.isFinite(row)) : [],
+        seen: count(stored.jitter?.seen),
+    };
+    fresh.roster = { last: count(stored.roster?.last), max: count(stored.roster?.max) };
+    fresh.updatedAt = count(stored.updatedAt);
+    return fresh;
+}
+
+/**
+ * Remember how many players the current fight has.
+ *
+ * Recorded because it decides whether the recovery row *can* fill: a heal names
+ * only its caster, so the only safe response to a tick naming any ability is to
+ * void every recovery on it, and in a party nearly every tick names one.
+ *
+ * @param {Object} tally - Tally, mutated
+ * @param {number} size - How many players the battle listed
+ * @returns {void}
+ */
+export function foldRoster(tally, size) {
+    if (!tally?.roster || !(size > 0)) return;
+    tally.roster.last = size;
+    tally.roster.max = Math.max(count(tally.roster.max), size);
+}
+
+/**
+ * How many players a `new_battle` says are in this fight.
+ *
+ * The same `players` array `battlePartyNames()` in `./dungeon-tracker.js` reads,
+ * taken for its length rather than its names: a roster with a name missing is
+ * still a roster of that size.
+ *
+ * @param {Object} data - `new_battle` payload
+ * @returns {number} The count, or 0 when the message did not say
+ */
+export function battleRosterSize(data) {
+    return Array.isArray(data?.players) ? data.players.length : 0;
 }
 
 /**
@@ -226,10 +353,11 @@ export function foldObservation(tally, observation) {
     const bucket = tally.effects?.[observation.effect];
     if (!bucket) return;
     if (!Number.isFinite(observation.intervalMs)) return;
-    bucket.n += 1;
+    bucket.n = count(bucket.n) + 1;
+    if (!Array.isArray(bucket.rows)) bucket.rows = [];
     bucket.rows.push(Math.round(observation.intervalMs));
     if (bucket.rows.length > MAX_ROWS) bucket.rows.splice(0, bucket.rows.length - MAX_ROWS);
-    if (observation.simultaneous > 1) bucket.simultaneous += 1;
+    if (observation.simultaneous > 1) bucket.simultaneous = count(bucket.simultaneous) + 1;
     tally.updatedAt = observation.at || tally.updatedAt;
 }
 
@@ -243,7 +371,7 @@ export function foldObservation(tally, observation) {
 export function foldRejection(tally, effect, reason) {
     const bucket = tally.rejections?.[effect];
     if (!bucket || !(reason in REJECTIONS)) return;
-    bucket[reason] += 1;
+    bucket[reason] = count(bucket[reason]) + 1;
 }
 
 /**
@@ -259,8 +387,8 @@ export function foldRejection(tally, effect, reason) {
  */
 export function foldHpFall(tally, attributed) {
     if (!tally.hpFalls) return;
-    if (attributed) tally.hpFalls.attributed += 1;
-    else tally.hpFalls.unattributed += 1;
+    if (attributed) tally.hpFalls.attributed = count(tally.hpFalls.attributed) + 1;
+    else tally.hpFalls.unattributed = count(tally.hpFalls.unattributed) + 1;
 }
 
 /**
@@ -324,6 +452,32 @@ export function multiples(values, period, tolerance = CLUSTER_TOLERANCE) {
         else other += 1;
     }
     return { x2, x3, other };
+}
+
+/**
+ * Why the recovery row cannot fill while the fight has other people in it.
+ *
+ * `abilityHrid` names the *caster*, so a heal cast on somebody else leaves no
+ * mark on the unit that gained the health, and the only safe reading of a tick
+ * that named any ability is to void every recovery on it. With five people
+ * casting, almost every tick names one, and the candidates are all gone before
+ * anything else about them is even looked at. That is a limit of the
+ * measurement, not a fault in it, and not evidence about the constant.
+ *
+ * @param {Object} spec - An entry of {@link EFFECT_SPECS}
+ * @param {Object} tally - The stored tally
+ * @returns {string|null} The note, or null when nothing limits this row
+ */
+function measurementLimit(spec, tally) {
+    if (spec.key !== EFFECTS.hot) return null;
+    const roster = Number(tally.roster?.last) || 0;
+    if (roster < 2) return null;
+    return (
+        `Cannot fill in a party. This fight has ${roster} players, and a cast names only the caster — a heal ` +
+        'on somebody else is invisible on whoever gained the health — so every recovery on a tick where ' +
+        'anyone used an ability has to be thrown away. In a group that is nearly every tick. Fight solo ' +
+        'with this switched on to measure this one.'
+    );
 }
 
 /**
@@ -397,6 +551,7 @@ function summarizeEffect(spec, tally) {
         rejected,
         state,
         text,
+        limit: measurementLimit(spec, tally),
     };
 }
 

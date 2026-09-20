@@ -128,7 +128,7 @@ Where: `src/features/combat-sim/engine/combat-simulator.js:122`–`126` — `HOT
 the engine and none of them was ever checked here. The observer for them is
 `src/features/combat/tick-period.js` and `tick-period-observer.js`, behind the `tickPeriodWatch` setting.
 
-**Hitpoint and mana regeneration, 10 s — measured, and consistent.** 57 clean intervals off the live
+**Hitpoint and mana regeneration, 10 s — measured, and consistent.** 289 clean intervals off the live
 stream, median 10,000 ms. The signature is a simultaneous rise in `cHP` and `cMP` on a unit whose own
 `dmgCounter` and `atkCounter` did not move, which nothing else on the wire produces.
 
@@ -153,7 +153,22 @@ before it, while a tick missed because it had nothing to add still shows as a cl
 matched on what the wire names them, not on an engine-side name: the engine calls this a consumable tick,
 which the server never sends, and Fury is the standing warning that a type name invented here need not
 exist there. Intervals dropped for a lapse are counted under their own discard reason, so the sample can
-shrink to nothing and say why rather than quietly shrinking.
+shrink to nothing and say why rather than quietly shrinking. The 48 intervals collected before the gate are
+discarded on load by a storage version bump; regeneration's rows are kept, because the gate was never about
+them and they are the one constant this tool has confirmed.
+
+**And a party cannot measure it at all.** A cast names only its _caster_, so a heal landing on somebody else
+leaves no mark on the unit that gained the health, and the only safe response to a tick naming any ability
+is to void every recovery on it. A live reading in a five-player party shows exactly that: 334 candidates
+discarded under "something named an ability on that tick" and climbing, with **nothing reaching the
+continuity gate behind it**. In a group nearly every tick names somebody's cast, so the row cannot fill
+whatever else is true, and the panel says so where the row would be rather than leaving a blank that reads
+as a broken tool. This one is **still open** — it is not measured, and it is not settled-unmeasurable the
+way damage over time is. Whether a solo stream can measure it is untested: a separate look at one player's
+`combatBuffMap` over 54 s found no recovery entry at all, only permanent passives (`duration: 0`), 250 s
+drinks and short ability buffs, which is suggestive and no more — that player was near full health
+throughout, and the map only arrives on a `new_battle` snapshot. Measuring it means fighting solo, hurt,
+with the setting on.
 
 **Enrage ramp, 60 s — instrumented, not yet sampled.** One observation a minute at best, off a monster's
 enrage entry restating a larger boost in its `combatBuffMap`.

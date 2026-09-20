@@ -199,3 +199,44 @@ describe('the durable tally', () => {
         expect(tickPeriod.tally().effects[EFFECTS.regen].n).toBe(0);
     });
 });
+
+describe('the party the fight is in', () => {
+    test('says on the panel why the recovery row cannot fill in a group', async () => {
+        await tickPeriod.initialize();
+        state.handlers.get('new_battle')({ players: [{}, {}, {}, {}, {}] });
+        const tally = tickPeriod.tally();
+        for (let index = 0; index < 20; index += 1) foldRejection(tally, EFFECTS.hot, 'abilityInTick');
+
+        tickPeriodPanel.show({ remember: false });
+        expect(text()).not.toContain(FAILED);
+        expect(text()).toContain('Measurement limit');
+        expect(text()).toContain('5 players');
+        expect(text()).toContain('Fight solo');
+    });
+
+    test('says nothing of the kind once the fight is a solo one', async () => {
+        await tickPeriod.initialize();
+        state.handlers.get('new_battle')({ players: [{}, {}, {}] });
+        state.handlers.get('new_battle')({ players: [{}] });
+
+        tickPeriodPanel.show({ remember: false });
+        expect(text()).not.toContain(FAILED);
+        expect(text()).not.toContain('Measurement limit');
+    });
+});
+
+describe('a record from before the continuity gate', () => {
+    test('loses its recovery rows on load and keeps its regeneration ones', async () => {
+        const stored = emptyTally();
+        stored.version = 1;
+        foldObservation(stored, { effect: EFFECTS.hot, intervalMs: 141_792, at: 1 });
+        foldObservation(stored, { effect: EFFECTS.regen, intervalMs: 10_000, at: 2 });
+        delete stored.rejections[EFFECTS.hot].effectNotContinuous;
+        state.stored.set('tickPeriodTally', stored);
+
+        await tickPeriod.initialize();
+        expect(tickPeriod.tally().effects[EFFECTS.hot].rows).toEqual([]);
+        expect(tickPeriod.tally().effects[EFFECTS.regen].rows).toEqual([10_000]);
+        expect(tickPeriod.tally().rejections[EFFECTS.hot].effectNotContinuous).toBe(0);
+    });
+});

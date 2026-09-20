@@ -6,6 +6,11 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Tick Period: the recovery row drops its pre-fix sample and says why a party cannot fill it
+
+- Food and drink intervals measured before the per-effect fix are discarded on load, since they timed gaps between meals; the confirmed 10 s regeneration sample is kept.
+- The recovery row now explains that a group fight cannot measure it — a heal names only its caster — instead of showing an empty row, and a discard count an older save lacked reads 0 rather than blank.
+
 ### Combat Sim: the party list follows the party you are in
 
 - The panel only ever knew the party the page loaded with, so joining or leaving one left it offering the old members until a reload; it now takes the roster from your latest battle, and says whether it is reading that fight or the page load so a list that has gone stale says so.
