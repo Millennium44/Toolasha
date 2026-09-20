@@ -300,8 +300,11 @@ export function buildPlayerDTO() {
         scrollBuffs: [],
     };
 
-    // Extract all skill levels (combat + skilling)
-    for (const skill of characterData.characterSkills || []) {
+    // Levels as they are NOW, not as they were at login. `skills_updated`
+    // refreshes `dataManager.characterSkills` but never writes back into
+    // `characterData.characterSkills`, so reading the login snapshot simulated
+    // every level-up away until the page was reloaded.
+    for (const skill of dataManager.getSkills?.() ?? characterData.characterSkills ?? []) {
         const skillName = skill.skillHrid.split('/').pop();
         const key = skillName + 'Level';
         if (dto[key] !== undefined) {

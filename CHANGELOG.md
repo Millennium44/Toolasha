@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### The simulator reads the levels you have now, not the ones you logged in with
+
+- Levelling up mid-session left every combat simulation, labyrinth tile and clear-rate prediction running on the skill levels from page load, because the update that refreshes them never wrote back to the snapshot the simulator reads. A labyrinth fight is also now filed under the build that started it rather than whatever was worn by the time it ended.
+
 ### The dungeon chest maths is shared rather than copied into two bundles
 
 - Making the simulator and the chest-luck panel agree on a level-gapped payout left the module compiled into both the combat and sim bundles, each with its own state; it is now shared through one copy like the other cross-bundle helpers.

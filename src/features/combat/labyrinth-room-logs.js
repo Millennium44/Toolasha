@@ -810,6 +810,10 @@ class LabyrinthRoomLogs {
             monsterHrid: session.monsterHrid,
             battleId: start.battleId,
             caughtStart: start.caughtStart === true,
+            // Which build fought this, read as the fight OPENS. Read at close
+            // instead, a gear or loadout change mid-fight filed the fight under
+            // whichever cohort the player happened to be wearing by the end.
+            fingerprint: this.simSource?.fingerprint?.() || null,
             monsterMaxHp: start.monsterMaxHp,
             // Absolute health at the fight's start, so the recorder can measure
             // the damage each side dealt — you carry health between rooms, so
@@ -1251,7 +1255,7 @@ class LabyrinthRoomLogs {
             // fight — the replay reads hit-rate and damage-per-hit from these,
             // and the damage-over-time tick count beside them for the hit mix
             ...tallyHitsMisses(fight.attrTally),
-            fingerprint: this.simSource?.fingerprint?.() || null,
+            fingerprint: fight.fingerprint,
             // The clear chance in effect while the fight ran — captured at room
             // entry (or during the fight, if the tile's sim landed late). Null
             // when the room was never simmed; the recorder must not backfill it
