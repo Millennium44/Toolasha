@@ -36,6 +36,7 @@ const {
     cancelSimulation,
     cancelActiveSimulations,
     terminateIdleWorkers,
+    splitTaskRemaining,
 } = await import('./combat-sim-runner.js');
 
 /** The bare shape mergeSimResults walks unconditionally */
@@ -181,6 +182,47 @@ describe('how the run models task damage', () => {
         await runLabyrinthSimulation({ zoneHrid: '/actions/combat/fly', monsterHrid: '/monsters/x', hours: 1 });
 
         expect(messages[0].taskDamageMode).toBe('off');
+    });
+});
+
+describe('sharing a task out across the chunks of a split run', () => {
+    // Each chunk starts from the DTOs it is handed. Hand all four the whole
+    // remaining count and each one finishes "the" task on its own, and the run
+    // pays the bonus four times over.
+    const dtos = [{ hrid: 'player1', taskMonsterRemaining: { '/monsters/fly': 100 } }];
+
+    test('the parts sum to exactly the original count', () => {
+        const chunks = [30, 30, 30, 10];
+        const parts = chunks.map(
+            (_, i) => splitTaskRemaining(dtos, 'perMonster', chunks, i)[0].taskMonsterRemaining['/monsters/fly']
+        );
+
+        expect(parts).toEqual([30, 30, 30, 10]);
+        expect(parts.reduce((a, b) => a + b, 0)).toBe(100);
+    });
+
+    test('an uneven split leaves the remainder on the last chunk, never loses it', () => {
+        const chunks = [1, 1, 1];
+        const parts = chunks.map(
+            (_, i) => splitTaskRemaining(dtos, 'perMonster', chunks, i)[0].taskMonsterRemaining['/monsters/fly']
+        );
+
+        expect(parts.reduce((a, b) => a + b, 0)).toBe(100);
+    });
+
+    test('a single-worker run is handed its DTOs untouched', () => {
+        expect(splitTaskRemaining(dtos, 'perMonster', [10], 0)).toBe(dtos);
+    });
+
+    test('and nothing is split in the other two modes, which count no kills', () => {
+        expect(splitTaskRemaining(dtos, 'off', [10, 10], 0)).toBe(dtos);
+        expect(splitTaskRemaining(dtos, 'everyFight', [10, 10], 0)).toBe(dtos);
+    });
+
+    test('a party member with no board of their own is left alone', () => {
+        const party = [dtos[0], { hrid: 'player2' }];
+
+        expect(splitTaskRemaining(party, 'perMonster', [10, 10], 0)[1]).toBe(party[1]);
     });
 });
 

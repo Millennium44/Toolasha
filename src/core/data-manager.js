@@ -2712,6 +2712,38 @@ class DataManager {
     }
 
     /**
+     * How many more kills each active combat task still wants.
+     *
+     * The simulator's task bonus stops when the task does, so it needs the
+     * REMAINING count — `goalCount - currentCount` — not the goal. Two tasks
+     * can name the same monster, and then their remainders add: the bonus runs
+     * until both are satisfied. A task whose progress already meets its goal
+     * reports 0 rather than a negative number, and pays nothing.
+     *
+     * @returns {Object<string, number>} Monster HRID → kills still needed
+     */
+    getActiveTaskMonsterRemaining() {
+        const remaining = {};
+        if (!this.characterQuests || this.characterQuests.length === 0) {
+            return remaining;
+        }
+
+        for (const quest of this.characterQuests) {
+            if (
+                quest.category !== '/quest_category/random_task' ||
+                quest.status !== '/quest_status/in_progress' ||
+                !quest.monsterHrid
+            ) {
+                continue;
+            }
+            const left = Math.max((Number(quest.goalCount) || 0) - (Number(quest.currentCount) || 0), 0);
+            remaining[quest.monsterHrid] = (remaining[quest.monsterHrid] || 0) + left;
+        }
+
+        return remaining;
+    }
+
+    /**
      * Check if an action is currently an active task
      * @param {string} actionHrid - Action HRID to check
      * @returns {boolean} True if action is an active task

@@ -5,7 +5,7 @@ import { hasConverged, isStoppingRule } from './wilson.js';
 /** How far apart the decision checkpoints sit — each is 1.5x the last */
 const STOP_CHECK_GROWTH = 1.5;
 import CombatUtilities from './combat-utilities.js';
-import { TASK_DAMAGE_OFF, normalizeTaskDamageMode } from './task-damage-mode.js';
+import { TASK_DAMAGE_OFF, TASK_DAMAGE_PER_MONSTER, normalizeTaskDamageMode } from './task-damage-mode.js';
 import AutoAttackEvent from './events/auto-attack-event.js';
 import DamageOverTimeEvent from './events/damage-over-time-event.js';
 import CheckBuffExpirationEvent from './events/check-buff-expiration-event.js';
@@ -168,6 +168,14 @@ class CombatSimulator {
         // The result times a wave's first hit against the clock; only the
         // simulator holds it
         this.simResult.clock = () => this.simulationTime;
+        /**
+         * Per task monster, kills that paid the task bonus and kills that came
+         * after the task was already finished. The second number is what makes
+         * a long run legible: fight a task monster for a day and most of the
+         * day is past the point the task would have ended.
+         * @type {Object<string, {onTask: number, offTask: number}>}
+         */
+        this.taskDamageKills = {};
         this.allPlayersDead = false;
         this.encounterIndex = 0;
         this.stopRule = null;
@@ -179,6 +187,78 @@ class CombatSimulator {
             count: 0,
             maxSize: 200,
         };
+    }
+
+    /**
+     * Record a unit's death, and credit it against any player's combat task.
+     *
+     * Every death in the run goes through here rather than straight to the
+     * SimResult, which is what makes the task counting complete: a monster
+     * killed by thorns or retaliation is as dead as one killed by a swing, and
+     * both paths land here.
+     *
+     * A death is one death. In a party the monster dies once, not once per
+     * player, so this is called once and each player's own board is credited
+     * once from it — the game gives every member of the party credit for the
+     * kill, and their tasks retire independently because their counters are
+     * their own.
+     *
+     * @param {Object} unit - The unit that just died
+     */
+    recordDeath(unit) {
+        this.simResult.addDeath(unit);
+        this._creditTaskKill(unit, 1);
+    }
+
+    /**
+     * Take a death back when a revive undoes it, tasks included.
+     *
+     * @param {Object} unit - The revived unit
+     * @param {number} time - Current simulation time in nanoseconds
+     */
+    undoRecordedDeath(unit, time) {
+        this.simResult.undoDeath(unit, time);
+        if (!unit?.isPlayer) this._creditTaskKill(unit, -1);
+    }
+
+    /**
+     * Count one kill (or un-count one revive) against every player's tasks.
+     *
+     * Only in per-monster mode. With task damage off nothing is paying a bonus
+     * to stop, and with it forced on every fight the user has asked for the
+     * bonus everywhere — silently retiring it partway through a run they
+     * deliberately configured would answer a question they did not ask.
+     *
+     * @private
+     * @param {Object} unit - The monster that died
+     * @param {number} delta - +1 for a death, -1 for a revive
+     */
+    _creditTaskKill(unit, delta) {
+        if (this.taskDamageMode !== TASK_DAMAGE_PER_MONSTER) return;
+        if (!unit || unit.isPlayer || !unit.hrid) return;
+
+        for (const player of this.players) {
+            const tasks = player.taskMonsterHrids;
+            if (!tasks || !tasks.has(unit.hrid)) continue;
+
+            if (!player.taskMonsterKills) player.taskMonsterKills = new Map();
+            const done = player.taskMonsterKills.get(unit.hrid) || 0;
+            // Kills are counted up rather than a remainder counted down, so a
+            // revive can take one back without having to guess whether the kill
+            // it is undoing was the one that finished the task.
+            const index = delta > 0 ? done : done + delta;
+            player.taskMonsterKills.set(unit.hrid, Math.max(done + delta, 0));
+
+            // No count given is an unbounded task: it pays for the whole run.
+            const needed = player.taskMonsterRemaining?.has(unit.hrid)
+                ? player.taskMonsterRemaining.get(unit.hrid)
+                : null;
+            const counted = needed === null || index < needed;
+
+            const tally = (this.taskDamageKills[unit.hrid] ??= { onTask: 0, offTask: 0 });
+            if (counted) tally.onTask += delta;
+            else tally.offTask += delta;
+        }
     }
 
     addToWipeLogs(logEntry) {
@@ -375,6 +455,8 @@ class CombatSimulator {
         }
 
         this.simResult.simulatedTime = this.simulationTime;
+        this.simResult.taskDamageMode = this.taskDamageMode;
+        this.simResult.taskDamageKills = this.taskDamageKills;
         this._collectWarnings();
 
         for (let i = 0; i < this.players.length; i++) {
@@ -915,7 +997,7 @@ class CombatSimulator {
 
             if (targetWasAlive && target.combatDetails.currentHitpoints === 0) {
                 this.eventQueue.clearEventsForUnit(target);
-                this.simResult.addDeath(target);
+                this.recordDeath(target);
                 if (!target.isPlayer) {
                     this.simResult.updateTimeSpentAlive(target.hrid, false, this.simulationTime);
                 }
@@ -927,7 +1009,7 @@ class CombatSimulator {
                 (attackResult.thornDamageDone !== 0 || attackResult.retaliationDamageDone !== 0)
             ) {
                 this.eventQueue.clearEventsForUnit(source);
-                this.simResult.addDeath(source);
+                this.recordDeath(source);
                 if (!source.isPlayer) {
                     this.simResult.updateTimeSpentAlive(source.hrid, false, this.simulationTime);
                 }
@@ -1296,7 +1378,7 @@ class CombatSimulator {
 
         if (targetWasAlive && event.target.combatDetails.currentHitpoints === 0) {
             this.eventQueue.clearEventsForUnit(event.target);
-            this.simResult.addDeath(event.target);
+            this.recordDeath(event.target);
             if (!event.target.isPlayer) {
                 this.simResult.updateTimeSpentAlive(event.target.hrid, false, this.simulationTime);
             }
@@ -1708,7 +1790,7 @@ class CombatSimulator {
         // Could die from reflect damage
         if (source.combatDetails.currentHitpoints === 0) {
             this.eventQueue.clearEventsForUnit(source);
-            this.simResult.addDeath(source);
+            this.recordDeath(source);
             if (!source.isPlayer) {
                 this.simResult.updateTimeSpentAlive(source.hrid, false, this.simulationTime);
             }
@@ -1849,7 +1931,7 @@ class CombatSimulator {
 
                 if (tempTarget.combatDetails.currentHitpoints === 0) {
                     this.eventQueue.clearEventsForUnit(tempTarget);
-                    this.simResult.addDeath(tempTarget);
+                    this.recordDeath(tempTarget);
                     if (!tempTarget.isPlayer) {
                         this.simResult.updateTimeSpentAlive(tempTarget.hrid, false, this.simulationTime);
                     }
@@ -1861,7 +1943,7 @@ class CombatSimulator {
                     (attackResult.thornDamageDone !== 0 || attackResult.retaliationDamageDone !== 0)
                 ) {
                     this.eventQueue.clearEventsForUnit(tempSource);
-                    this.simResult.addDeath(tempSource);
+                    this.recordDeath(tempSource);
                     if (!tempSource.isPlayer) {
                         this.simResult.updateTimeSpentAlive(tempSource.hrid, false, this.simulationTime);
                     }
@@ -2063,7 +2145,7 @@ class CombatSimulator {
 
                 if (target.combatDetails.currentHitpoints === 0) {
                     this.eventQueue.clearEventsForUnit(target);
-                    this.simResult.addDeath(target);
+                    this.recordDeath(target);
                     if (!target.isPlayer) {
                         this.simResult.updateTimeSpentAlive(target.hrid, false, this.simulationTime);
                     }
@@ -2198,7 +2280,7 @@ class CombatSimulator {
             // A monster back on its feet has not been killed yet: take the
             // recorded death back so the adapter's kill count (and the loot it
             // prices from it) counts the spawn once, when it stays down.
-            this.simResult.undoDeath(reviveTarget, this.simulationTime);
+            this.undoRecordedDeath(reviveTarget, this.simulationTime);
         }
     }
 

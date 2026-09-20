@@ -2130,7 +2130,11 @@ class ReplayCheck {
             // taskDamage against whichever recorded monster happens to match —
             // a fact about today's task board, not about the run being
             // replayed. See the task-damage note below: the feed never said.
-            const dto = { ...applyLoadoutSnapshot(current, observed.loadout), taskMonsterHrids: [] };
+            const dto = {
+                ...applyLoadoutSnapshot(current, observed.loadout),
+                taskMonsterHrids: [],
+                taskMonsterRemaining: {},
+            };
 
             const simResult = await runSimulation(
                 {

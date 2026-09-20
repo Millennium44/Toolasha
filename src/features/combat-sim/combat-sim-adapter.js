@@ -470,6 +470,10 @@ export function buildPlayerDTO() {
     // member's DTO is built elsewhere and carries none, because their task
     // board is not something we can see and their tasks are not ours.
     dto.taskMonsterHrids = dataManager.getActiveTaskMonsterHrids?.() || [];
+    // ...and how many kills each of those tasks still wants, so a run long
+    // enough to finish one stops paying its bonus at the right kill rather
+    // than for the whole run.
+    dto.taskMonsterRemaining = dataManager.getActiveTaskMonsterRemaining?.() || {};
 
     return dto;
 }

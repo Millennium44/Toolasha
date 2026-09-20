@@ -3302,6 +3302,55 @@ describe('the summary at the top of the Results tab', () => {
         expect(shown).not.toContain('skilling gear');
         expect(shown).not.toContain('auras do not stack');
     });
+
+    /**
+     * A run long enough to out-kill a task reports a rate averaged over the
+     * part that carried the bonus and the part that did not, so the note says
+     * where the line fell — per task, because two tasks end at two points.
+     */
+    describe('the note about a task finishing mid-run', () => {
+        const GAME_DATA = {
+            combatMonsterDetailMap: { '/monsters/fly': { name: 'Fly' }, '/monsters/rat': { name: 'Rat' } },
+        };
+
+        test('names each task that ran out, and how much of the run it covered', () => {
+            const notes = ui._taskDamageNotes(
+                {
+                    taskDamageMode: 'perMonster',
+                    taskDamageKills: {
+                        '/monsters/fly': { onTask: 250, offTask: 750 },
+                        '/monsters/rat': { onTask: 40, offTask: 60 },
+                    },
+                },
+                GAME_DATA
+            );
+
+            expect(notes).toHaveLength(2);
+            expect(notes[0]).toContain('Fly');
+            expect(notes[0]).toContain('250 of 1,000');
+            expect(notes[0]).toContain('25%');
+            expect(notes[1]).toContain('Rat');
+        });
+
+        test('says nothing about a task that lasted the whole run', () => {
+            const notes = ui._taskDamageNotes(
+                { taskDamageMode: 'perMonster', taskDamageKills: { '/monsters/fly': { onTask: 90, offTask: 0 } } },
+                GAME_DATA
+            );
+
+            expect(notes).toEqual([]);
+        });
+
+        test('and nothing at all in the other two modes', () => {
+            const tallies = { '/monsters/fly': { onTask: 10, offTask: 90 } };
+
+            expect(ui._taskDamageNotes({ taskDamageMode: 'off', taskDamageKills: tallies }, GAME_DATA)).toEqual([]);
+            expect(ui._taskDamageNotes({ taskDamageMode: 'everyFight', taskDamageKills: tallies }, GAME_DATA)).toEqual(
+                []
+            );
+            expect(ui._taskDamageNotes({}, GAME_DATA)).toEqual([]);
+        });
+    });
 });
 
 /**

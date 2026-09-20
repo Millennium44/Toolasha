@@ -133,6 +133,15 @@ class Player extends CombatUnit {
                 ? new Set(dto.taskMonsterHrids)
                 : null;
 
+        // What each of those tasks still needs. Absent means "no count given",
+        // which the engine reads as a task that never finishes — the behavior
+        // a DTO built before this field existed already had.
+        const remaining = dto.taskMonsterRemaining;
+        player.taskMonsterRemaining =
+            remaining && typeof remaining === 'object' && Object.keys(remaining).length > 0
+                ? new Map(Object.entries(remaining).map(([hrid, count]) => [hrid, Number(count) || 0]))
+                : null;
+
         for (const [key, value] of Object.entries(dto.equipment)) {
             player.equipment[key] = value ? Equipment.createFromDTO(value) : null;
         }

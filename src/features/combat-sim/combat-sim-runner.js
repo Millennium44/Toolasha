@@ -13,7 +13,7 @@ import config from '../../core/config.js';
 import { isMobileMode } from '../../utils/mobile.js';
 import { createIdlePoolReaper } from '../../utils/worker-pool.js';
 import { deriveSeed } from './engine/rng.js';
-import { TASK_DAMAGE_OFF, normalizeTaskDamageMode } from './engine/task-damage-mode.js';
+import { TASK_DAMAGE_OFF, TASK_DAMAGE_PER_MONSTER, normalizeTaskDamageMode } from './engine/task-damage-mode.js';
 
 let workerBlobURL = null;
 /** Wrappers running a chunk right now. `cancelSimulation` terminates these. */
@@ -374,6 +374,17 @@ function mergeSimResults(results) {
             merged.deaths[hrid] = (merged.deaths[hrid] || 0) + count;
         }
 
+        // Task-credited kills (per task monster). The chunks were each given a
+        // slice of the remaining count, so summing them gives the run's totals.
+        if (r.taskDamageKills) {
+            if (!merged.taskDamageKills) merged.taskDamageKills = {};
+            for (const [hrid, tally] of Object.entries(r.taskDamageKills)) {
+                const into = (merged.taskDamageKills[hrid] ??= { onTask: 0, offTask: 0 });
+                into.onTask += tally.onTask || 0;
+                into.offTask += tally.offTask || 0;
+            }
+        }
+
         // Experience gained (per player → per skill)
         for (const [playerHrid, skills] of Object.entries(r.experienceGained)) {
             if (!merged.experienceGained[playerHrid]) {
@@ -557,6 +568,55 @@ function mergeSimResults(results) {
 }
 
 /**
+ * Share each player's remaining task kills out across the chunks of a split run.
+ *
+ * A long run is simulated as several independent chunks in parallel, and each
+ * worker starts from the DTOs it is handed. Give every chunk the whole
+ * remaining count and a four-way split pays the task bonus four times over —
+ * each chunk finishing "the" task on its own. Splitting the count in proportion
+ * to each chunk's hours keeps the run's total task-credited kills right, which
+ * is the quantity the numbers are derived from; only the exact moment the bonus
+ * stops is approximate, and it is approximate in the same way the chunking
+ * already is.
+ *
+ * The parts are floored and the remainder rides on the last chunk, so they sum
+ * to exactly the original count.
+ *
+ * @param {Array<Object>} playerDTOs - The run's player DTOs
+ * @param {string} taskDamageMode - The run's mode; only perMonster counts kills
+ * @param {Array<number>} chunks - Hours per chunk
+ * @param {number} index - Which chunk this is
+ * @returns {Array<Object>} DTOs for that chunk (the originals when nothing splits)
+ */
+export function splitTaskRemaining(playerDTOs, taskDamageMode, chunks, index) {
+    if (taskDamageMode !== TASK_DAMAGE_PER_MONSTER || chunks.length < 2) return playerDTOs;
+
+    const totalHours = chunks.reduce((sum, h) => sum + h, 0);
+    if (!(totalHours > 0)) return playerDTOs;
+    const isLast = index === chunks.length - 1;
+
+    return (playerDTOs || []).map((dto) => {
+        const remaining = dto?.taskMonsterRemaining;
+        if (!remaining || Object.keys(remaining).length === 0) return dto;
+
+        const share = {};
+        for (const [hrid, count] of Object.entries(remaining)) {
+            const total = Number(count) || 0;
+            if (isLast) {
+                let given = 0;
+                for (let i = 0; i < chunks.length - 1; i++) {
+                    given += Math.floor((total * chunks[i]) / totalHours);
+                }
+                share[hrid] = Math.max(total - given, 0);
+            } else {
+                share[hrid] = Math.floor((total * chunks[index]) / totalHours);
+            }
+        }
+        return { ...dto, taskMonsterRemaining: share };
+    });
+}
+
+/**
  * Run a combat simulation, parallelized across multiple Workers when beneficial.
  * @param {Object} params
  * @param {Object} params.gameData - Game data maps from buildGameDataPayload()
@@ -646,7 +706,7 @@ export async function runSimulation(params, onProgress, { preempt = true, worker
             type: 'start_simulation',
             taskId,
             gameData,
-            playerDTOs,
+            playerDTOs: splitTaskRemaining(playerDTOs, taskDamageMode, chunks, i),
             zoneHrid,
             difficultyTier,
             simulationTimeLimit: chunkHours * ONE_HOUR_NS,

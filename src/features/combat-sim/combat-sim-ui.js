@@ -2013,7 +2013,7 @@ class CombatSimUI {
                 <input type="checkbox" id="mwi-csim-maxfood" style="${checkboxStyle}" disabled>
                 Max-tier Food
             </label>
-            <label style="${labelStyle}" title="Whether this run pays taskDamage from trinkets and task badges. Off: never, so a mixed zone carries no bonus it has not earned. On task: only against the monsters in the zone your own combat tasks actually name. Every fight: force every fight to count, which overstates a mixed zone but is what you want comparing task gear head to head. Shares the Task damage setting.">
+            <label style="${labelStyle}" title="Whether this run pays taskDamage from trinkets and task badges. Off: never, so a mixed zone carries no bonus it has not earned. On task: only against the monsters in the zone your own combat tasks actually name, and only until the run has killed as many of each as that task still needs. Every fight: force every fight to count, which overstates a mixed zone but is what you want comparing task gear head to head. Shares the Task damage setting.">
                 Task damage
                 <select id="mwi-csim-taskdamage" style="background:#1a1a2e; color:#e0e0e0; border:1px solid #444; border-radius:4px; padding:2px 4px; font-size:11px; cursor:pointer;">
                     <option value="off">Off</option>
@@ -2672,6 +2672,39 @@ class CombatSimUI {
             label.style.opacity = enabled ? '' : '0.45';
             label.style.cursor = enabled ? 'pointer' : 'not-allowed';
         }
+    }
+
+    /**
+     * One line per task the simulated run out-killed.
+     *
+     * Silent unless the run was in per-monster mode and actually ran past a
+     * task's remaining kills — a task that lasted the whole run needs no note,
+     * and the other two modes have no completion to report.
+     *
+     * @private
+     * @param {Object} simResult - The run's result
+     * @param {Object} [gameData] - Game data, for monster names
+     * @returns {Array<string>} HTML-safe note lines, possibly empty
+     */
+    _taskDamageNotes(simResult, gameData) {
+        const tallies = simResult?.taskDamageKills;
+        if (!tallies || normalizeTaskDamageMode(simResult.taskDamageMode) !== 'perMonster') return [];
+
+        const notes = [];
+        for (const [hrid, tally] of Object.entries(tallies)) {
+            const onTask = tally?.onTask || 0;
+            const offTask = tally?.offTask || 0;
+            if (offTask <= 0) continue;
+            const name = gameData?.combatMonsterDetailMap?.[hrid]?.name || hrid;
+            const total = onTask + offTask;
+            const share = Math.round((onTask / total) * 100);
+            notes.push(
+                `Task damage on ${name} stopped after ${formatWithSeparator(onTask)} of ` +
+                    `${formatWithSeparator(total)} kills (${share}% of the run's kills) — the task finishes there, ` +
+                    'and what the next one names is not something a simulation can know.'
+            );
+        }
+        return notes;
     }
 
     /**
@@ -5006,6 +5039,20 @@ class CombatSimUI {
             html += `<div style="margin-bottom:10px; padding:6px 8px; border:1px solid #6b5a1f; background:rgba(255,200,60,0.08); border-radius:4px; font-size:11px; color:#e8c66c;">`;
             for (const warning of simResult.warnings) {
                 html += `<div>&#9888; ${warning}</div>`;
+            }
+            html += '</div>';
+        }
+
+        // How much of the run the task bonus actually covered. A 24-hour run
+        // against a task that finishes in two is mostly not a task fight, and
+        // the rate above is an average over both halves — so each task that
+        // ended mid-run says so, on its own line, because they end at
+        // different points.
+        const taskNotes = this._taskDamageNotes(simResult, gameData);
+        if (taskNotes.length > 0) {
+            html += `<div style="margin-bottom:10px; padding:6px 8px; border:1px solid #2e4a63; background:rgba(96,165,250,0.08); border-radius:4px; font-size:11px; color:#9dc4ea;">`;
+            for (const note of taskNotes) {
+                html += `<div>${note}</div>`;
             }
             html += '</div>';
         }

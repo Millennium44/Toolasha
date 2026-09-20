@@ -21,6 +21,7 @@ const mocks = vi.hoisted(() => ({
     shrineHydrated: false,
     personalActionTypeBuffsMap: null,
     taskMonsters: [],
+    taskMonsterRemaining: {},
 }));
 
 vi.mock('../../core/data-manager.js', () => ({
@@ -34,6 +35,7 @@ vi.mock('../../core/data-manager.js', () => ({
         getCommunityBuffLevel: () => 0,
         getAchievementBuffs: () => [],
         getActiveTaskMonsterHrids: () => mocks.taskMonsters,
+        getActiveTaskMonsterRemaining: () => mocks.taskMonsterRemaining,
         get characterData() {
             return mocks.characterData;
         },
@@ -452,6 +454,13 @@ describe('the combat tasks a player DTO carries', () => {
         mocks.taskMonsters = [];
 
         expect(buildPlayerDTO().taskMonsterHrids).toEqual([]);
+    });
+
+    test('and carry the kills each one still wants, so the bonus can end', () => {
+        mocks.taskMonsters = ['/monsters/jungle_sprite'];
+        mocks.taskMonsterRemaining = { '/monsters/jungle_sprite': 175 };
+
+        expect(buildPlayerDTO().taskMonsterRemaining).toEqual({ '/monsters/jungle_sprite': 175 });
     });
 });
 

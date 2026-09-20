@@ -1495,8 +1495,43 @@ describe('the monsters the active combat tasks name', () => {
         expect(taskManager.getActiveTaskMonsterHrids()).toEqual([]);
     });
 
+    test('carry how many kills each one still wants, not its goal', () => {
+        // The simulator's bonus stops when the task does, so what it needs is
+        // what is left — and two tasks naming one monster add up.
+        taskManager.characterQuests = [
+            {
+                category: '/quest_category/random_task',
+                status: '/quest_status/in_progress',
+                monsterHrid: '/monsters/jungle_sprite',
+                goalCount: 200,
+                currentCount: 75,
+            },
+            {
+                category: '/quest_category/random_task',
+                status: '/quest_status/in_progress',
+                monsterHrid: '/monsters/jungle_sprite',
+                goalCount: 50,
+                currentCount: 0,
+            },
+            // Already met but not yet claimed: nothing left to pay for
+            {
+                category: '/quest_category/random_task',
+                status: '/quest_status/in_progress',
+                monsterHrid: '/monsters/myconid',
+                goalCount: 30,
+                currentCount: 44,
+            },
+        ];
+
+        expect(taskManager.getActiveTaskMonsterRemaining()).toEqual({
+            '/monsters/jungle_sprite': 175,
+            '/monsters/myconid': 0,
+        });
+    });
+
     test('are empty before the quest list has arrived', () => {
         taskManager.characterQuests = null;
+        expect(taskManager.getActiveTaskMonsterRemaining()).toEqual({});
         expect(taskManager.getActiveTaskMonsterHrids()).toEqual([]);
     });
 });

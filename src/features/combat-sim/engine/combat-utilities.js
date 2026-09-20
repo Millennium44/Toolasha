@@ -109,7 +109,20 @@ class CombatUtilities {
         if (defender.isPlayer) return false;
         const tasks = attacker.taskMonsterHrids;
         if (!tasks || typeof tasks.has !== 'function') return false;
-        return tasks.has(defender.hrid);
+        if (!tasks.has(defender.hrid)) return false;
+
+        // A task is a number of kills, not a standing condition. Once the run
+        // has killed as many as the task still wanted, the bonus stops — the
+        // player would draw a new task at that point, and what monster it names
+        // is not something a simulation can know, so nothing replaces it.
+        const remaining = attacker.taskMonsterRemaining;
+        if (remaining && typeof remaining.has === 'function' && remaining.has(defender.hrid)) {
+            const killed = attacker.taskMonsterKills?.get(defender.hrid) || 0;
+            return killed < remaining.get(defender.hrid);
+        }
+        // No count given: an unbounded task, which is how a DTO built before
+        // the counts existed behaves.
+        return true;
     }
 
     /**

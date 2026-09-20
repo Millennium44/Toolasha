@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Combat Sim: a simulated task now finishes
+
+- On-task task damage stops once the run has killed as many of that monster as the task still needs — every task on the board counting down on its own, and per player in a party — so a day-long run against a two-hour task no longer reads as though the bonus lasted all day, and the results say where each task ran out.
+
 ### Combat Sim: task damage is now your choice, off by default
 
 - Task damage from badges and trinkets is a three-way setting — off, only on the monsters your own combat tasks name, or every fight — defaulting to off so a general zone sim never quietly carries a bonus most of its fights would not earn; estimates run from the Tasks panel always count the task whatever it is set to.

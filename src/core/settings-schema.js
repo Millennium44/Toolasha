@@ -2844,7 +2844,8 @@ export const settingsGroups = {
                     'Whether a simulation pays the task damage from task badges and trinkets. Off: never, so a ' +
                     'general zone sim carries no bonus it has not earned. Only on your task monsters: the bonus ' +
                     'applies against the monsters your own combat tasks name, decided per fight and, in a party, ' +
-                    "from each player's own board. Every fight: treat every fight as a task fight, which " +
+                    "from each player's own board, and stopping for each task once the run has killed as many as " +
+                    'that task still needs. Every fight: treat every fight as a task fight, which ' +
                     'overstates a mixed zone but is what you want comparing task gear head to head. Estimates run ' +
                     'from the Tasks panel always count the task, whatever this says.',
             },

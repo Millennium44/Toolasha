@@ -18,6 +18,7 @@
 import { describe, test, expect, afterEach } from 'vitest';
 
 import CombatSimulator, { getCapturedPlayerDetails, setPlayerDetailsCapture } from './combat-simulator.js';
+import CombatUtilities from './combat-utilities.js';
 import AutoAttackEvent from './events/auto-attack-event.js';
 import CombatStartEvent from './events/combat-start-event.js';
 import DamageOverTimeEvent from './events/damage-over-time-event.js';
@@ -181,9 +182,10 @@ afterEach(() => {
 describe('a player DTO carries its own combat tasks', () => {
     /**
      * @param {Array<string>|undefined} taskMonsterHrids - Tasks on the DTO
+     * @param {Object<string, number>} [taskMonsterRemaining] - Kills each still wants
      * @returns {Player} The built player
      */
-    function playerWithTasks(taskMonsterHrids) {
+    function playerWithTasks(taskMonsterHrids, taskMonsterRemaining) {
         installGameData();
         return Player.createFromDTO({
             hrid: 'player1',
@@ -201,6 +203,7 @@ describe('a player DTO carries its own combat tasks', () => {
             houseRooms: {},
             debuffOnLevelGap: 0,
             taskMonsterHrids,
+            taskMonsterRemaining,
         });
     }
 
@@ -216,6 +219,178 @@ describe('a player DTO carries its own combat tasks', () => {
         // taskDamage may stand in for a task board we cannot see.
         expect(playerWithTasks(undefined).taskMonsterHrids).toBeNull();
         expect(playerWithTasks([]).taskMonsterHrids).toBeNull();
+    });
+
+    test('the remaining kill counts come across as a map, or null when absent', () => {
+        const player = playerWithTasks(['/monsters/jungle_sprite'], { '/monsters/jungle_sprite': 45 });
+
+        expect(player.taskMonsterRemaining.get('/monsters/jungle_sprite')).toBe(45);
+        // Absent means an unbounded task, which is what a DTO built before the
+        // counts existed already got
+        expect(playerWithTasks(['/monsters/jungle_sprite']).taskMonsterRemaining).toBeNull();
+        expect(playerWithTasks(['/monsters/jungle_sprite'], {}).taskMonsterRemaining).toBeNull();
+    });
+});
+
+/**
+ * A task is a number of kills, so the bonus it pays has an end. These pin who
+ * it is counted for (each player's own board), how often (once per death, not
+ * once per attacker), from which paths (a thorns kill is a kill), and in which
+ * modes (only per-monster: off pays nothing to stop, and every-fight was asked
+ * for explicitly).
+ */
+describe('a task finishing mid-run', () => {
+    const ZONE_STUB = { hrid: ZONE_HRID, difficultyTier: 0, isDungeon: false };
+
+    /**
+     * A stand-in player carrying a task board, enough for the kill counting.
+     * @param {string} hrid - Player hrid
+     * @param {Object<string, number>} tasks - Monster hrid → kills still needed
+     * @returns {Object} A unit-shaped stub
+     */
+    function taskPlayer(hrid, tasks) {
+        return {
+            hrid,
+            isPlayer: true,
+            taskMonsterHrids: new Set(Object.keys(tasks)),
+            taskMonsterRemaining: new Map(Object.entries(tasks)),
+            taskMonsterKills: null,
+        };
+    }
+
+    /** A monster, as the death paths hand one over. */
+    const deadMonster = (hrid) => ({ hrid, isPlayer: false });
+
+    /**
+     * @param {Array<Object>} players - Units to run with
+     * @param {string} mode - Task damage mode
+     * @returns {CombatSimulator} A simulator that has run nothing
+     */
+    function sim(players, mode = 'perMonster') {
+        return new CombatSimulator(players, ZONE_STUB, null, null, mode);
+    }
+
+    test('the bonus stops on the kill that finishes the task', () => {
+        const player = taskPlayer('player1', { [RAT_HRID]: 3 });
+        const simulator = sim([player]);
+        const rat = deadMonster(RAT_HRID);
+
+        expect(CombatUtilities.appliesTaskDamage(player, rat, 'perMonster')).toBe(true);
+        simulator.recordDeath(rat);
+        simulator.recordDeath(rat);
+        // Two down, one to go — still paying
+        expect(CombatUtilities.appliesTaskDamage(player, rat, 'perMonster')).toBe(true);
+        simulator.recordDeath(rat);
+        expect(CombatUtilities.appliesTaskDamage(player, rat, 'perMonster')).toBe(false);
+
+        simulator.recordDeath(rat);
+        expect(simulator.taskDamageKills[RAT_HRID]).toEqual({ onTask: 3, offTask: 1 });
+    });
+
+    test('two tasks on one board retire independently', () => {
+        const player = taskPlayer('player1', { [RAT_HRID]: 1, [TOAD_HRID]: 3 });
+        const simulator = sim([player]);
+
+        simulator.recordDeath(deadMonster(RAT_HRID));
+
+        expect(CombatUtilities.appliesTaskDamage(player, deadMonster(RAT_HRID), 'perMonster')).toBe(false);
+        expect(CombatUtilities.appliesTaskDamage(player, deadMonster(TOAD_HRID), 'perMonster')).toBe(true);
+    });
+
+    test("one party member finishing theirs does not retire another's", () => {
+        const mine = taskPlayer('player1', { [RAT_HRID]: 1 });
+        const theirs = taskPlayer('player2', { [RAT_HRID]: 5 });
+        const simulator = sim([mine, theirs]);
+
+        simulator.recordDeath(deadMonster(RAT_HRID));
+
+        expect(CombatUtilities.appliesTaskDamage(mine, deadMonster(RAT_HRID), 'perMonster')).toBe(false);
+        expect(CombatUtilities.appliesTaskDamage(theirs, deadMonster(RAT_HRID), 'perMonster')).toBe(true);
+    });
+
+    test('a monster dies once, not once per party member', () => {
+        // Three players swinging at one rat is one kill each of them is
+        // credited with — not three kills off each of their boards.
+        const players = [
+            taskPlayer('player1', { [RAT_HRID]: 2 }),
+            taskPlayer('player2', { [RAT_HRID]: 2 }),
+            taskPlayer('player3', { [RAT_HRID]: 2 }),
+        ];
+        const simulator = sim(players);
+
+        simulator.recordDeath(deadMonster(RAT_HRID));
+
+        for (const player of players) {
+            expect(player.taskMonsterKills.get(RAT_HRID)).toBe(1);
+            expect(CombatUtilities.appliesTaskDamage(player, deadMonster(RAT_HRID), 'perMonster')).toBe(true);
+        }
+        expect(simulator.simResult.deaths[RAT_HRID]).toBe(1);
+    });
+
+    test('a monster killed by thorns counts like any other kill', () => {
+        // Nothing here knows how the monster died: the thorns path reports the
+        // death through the same recordDeath every swing does.
+        const player = taskPlayer('player1', { [RAT_HRID]: 1 });
+        const simulator = sim([player]);
+
+        simulator.recordDeath(deadMonster(RAT_HRID));
+
+        expect(player.taskMonsterKills.get(RAT_HRID)).toBe(1);
+        expect(CombatUtilities.appliesTaskDamage(player, deadMonster(RAT_HRID), 'perMonster')).toBe(false);
+    });
+
+    test('a revived monster gives its task credit back', () => {
+        const player = taskPlayer('player1', { [RAT_HRID]: 1 });
+        const simulator = sim([player]);
+        const rat = deadMonster(RAT_HRID);
+
+        simulator.recordDeath(rat);
+        simulator.undoRecordedDeath(rat, 0);
+
+        expect(player.taskMonsterKills.get(RAT_HRID)).toBe(0);
+        expect(CombatUtilities.appliesTaskDamage(player, rat, 'perMonster')).toBe(true);
+        expect(simulator.taskDamageKills[RAT_HRID]).toEqual({ onTask: 0, offTask: 0 });
+    });
+
+    test('counting is inert with task damage off', () => {
+        const player = taskPlayer('player1', { [RAT_HRID]: 1 });
+        const simulator = sim([player], 'off');
+
+        simulator.recordDeath(deadMonster(RAT_HRID));
+        simulator.recordDeath(deadMonster(RAT_HRID));
+
+        expect(player.taskMonsterKills).toBeNull();
+        expect(simulator.taskDamageKills).toEqual({});
+    });
+
+    test('and inert in every-fight mode, which was asked for deliberately', () => {
+        // Someone comparing task gear head to head wants the bonus on for the
+        // whole run; retiring it partway would answer a different question.
+        const player = taskPlayer('player1', { [RAT_HRID]: 1 });
+        const simulator = sim([player], 'everyFight');
+
+        simulator.recordDeath(deadMonster(RAT_HRID));
+        simulator.recordDeath(deadMonster(RAT_HRID));
+
+        expect(player.taskMonsterKills).toBeNull();
+        expect(CombatUtilities.appliesTaskDamage(player, deadMonster(RAT_HRID), 'everyFight')).toBe(true);
+    });
+
+    test('a task with no remaining count given never finishes', () => {
+        // A DTO built before the counts existed, or an import
+        const player = {
+            hrid: 'player1',
+            isPlayer: true,
+            taskMonsterHrids: new Set([RAT_HRID]),
+            taskMonsterRemaining: null,
+        };
+        const simulator = sim([player]);
+
+        simulator.recordDeath(deadMonster(RAT_HRID));
+        simulator.recordDeath(deadMonster(RAT_HRID));
+
+        expect(CombatUtilities.appliesTaskDamage(player, deadMonster(RAT_HRID), 'perMonster')).toBe(true);
+        expect(simulator.taskDamageKills[RAT_HRID]).toEqual({ onTask: 2, offTask: 0 });
     });
 });
 

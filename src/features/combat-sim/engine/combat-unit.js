@@ -34,6 +34,24 @@ class CombatUnit {
      * @type {Set<string>|null}
      */
     taskMonsterHrids = null;
+    /**
+     * How many more kills of each of those monsters this unit's tasks still
+     * want, or null when the caller did not say. Counted down by the simulator
+     * as the unit's party kills them; at zero that monster's task is finished
+     * and its `taskDamage` stops. Per unit for the same reason the set above
+     * is: two players in a party hold two different boards, and one finishing
+     * their task must not retire the other's.
+     * @type {Map<string, number>|null}
+     */
+    taskMonsterRemaining = null;
+    /**
+     * Kills of each of those monsters this run has already credited to this
+     * unit's tasks, so `taskMonsterRemaining` above stays the run's starting
+     * figure. Counting up rather than counting that down is what lets a revive
+     * take a kill back without guessing whether it was the finishing one.
+     * @type {Map<string, number>|null}
+     */
+    taskMonsterKills = null;
     isStunned = false;
     stunExpireTime = null;
     isBlinded = false;
