@@ -20,6 +20,10 @@ import { GistError } from './gist-client.js';
 /** PBKDF2 rounds for newly written gists (OWASP's SHA-256 floor) */
 export const KDF_ITERATIONS = 310_000;
 
+/** Accepted PBKDF2 range for pulled gists, bounded to prevent a hostile manifest freezing the page. */
+export const MIN_KDF_ITERATIONS = 100_000;
+export const MAX_KDF_ITERATIONS = 2_000_000;
+
 const SALT_BYTES = 16;
 const IV_BYTES = 12;
 
@@ -144,7 +148,18 @@ export async function decryptText(sealed, passphrase) {
 export async function decryptBytes(sealed, passphrase) {
     const { ciphertext, salt, iv } = sealed || {};
     const iterations = Number(sealed?.iterations);
-    if (typeof ciphertext !== 'string' || typeof salt !== 'string' || typeof iv !== 'string' || !(iterations > 0)) {
+    const algorithm = sealed?.algorithm;
+    const kdf = sealed?.kdf;
+    if (
+        typeof ciphertext !== 'string' ||
+        typeof salt !== 'string' ||
+        typeof iv !== 'string' ||
+        !Number.isSafeInteger(iterations) ||
+        iterations < MIN_KDF_ITERATIONS ||
+        iterations > MAX_KDF_ITERATIONS ||
+        (algorithm !== undefined && algorithm !== 'AES-256-GCM') ||
+        (kdf !== undefined && kdf !== 'PBKDF2-SHA-256')
+    ) {
         throw new GistError('parse', 'The sync gist’s encryption record is incomplete. Push again to replace it.');
     }
 
@@ -154,6 +169,12 @@ export async function decryptBytes(sealed, passphrase) {
         ivBytes = base64ToBytes(iv);
         cipherBytes = base64ToBytes(ciphertext);
     } catch {
+        throw new GistError('parse', 'The sync gist’s encrypted payload is corrupt. Push again to replace it.');
+    }
+
+    // Exact nonce sizes are part of the envelope format. AES-GCM ciphertext
+    // must also contain at least its 16-byte authentication tag.
+    if (saltBytes.length !== SALT_BYTES || ivBytes.length !== IV_BYTES || cipherBytes.length < 16) {
         throw new GistError('parse', 'The sync gist’s encrypted payload is corrupt. Push again to replace it.');
     }
 
@@ -169,4 +190,14 @@ export async function decryptBytes(sealed, passphrase) {
     }
 }
 
-export default { KDF_ITERATIONS, encryptText, encryptBytes, decryptText, decryptBytes, bytesToBase64, base64ToBytes };
+export default {
+    KDF_ITERATIONS,
+    MIN_KDF_ITERATIONS,
+    MAX_KDF_ITERATIONS,
+    encryptText,
+    encryptBytes,
+    decryptText,
+    decryptBytes,
+    bytesToBase64,
+    base64ToBytes,
+};

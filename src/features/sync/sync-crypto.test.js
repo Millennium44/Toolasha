@@ -6,7 +6,15 @@
  * and a truncated or hand-edited gist must not decrypt at all.
  */
 import { describe, test, expect } from 'vitest';
-import { encryptText, decryptText, bytesToBase64, base64ToBytes, KDF_ITERATIONS } from './sync-crypto.js';
+import {
+    encryptText,
+    decryptText,
+    bytesToBase64,
+    base64ToBytes,
+    KDF_ITERATIONS,
+    MIN_KDF_ITERATIONS,
+    MAX_KDF_ITERATIONS,
+} from './sync-crypto.js';
 import { GistError } from './gist-client.js';
 
 describe('encryptText / decryptText', () => {
@@ -56,6 +64,37 @@ describe('encryptText / decryptText', () => {
         const failure = await decryptText({ ciphertext: 'abc', salt: null, iv: 'a', iterations: 1 }, 'pass').catch(
             (error) => error
         );
+        expect(failure).toBeInstanceOf(GistError);
+        expect(failure.kind).toBe('parse');
+    });
+
+    test.each([MIN_KDF_ITERATIONS - 1, MAX_KDF_ITERATIONS + 1, 310_000.5])(
+        'rejects an unsafe PBKDF2 iteration count (%s) before deriving a key',
+        async (iterations) => {
+            const sealed = await encryptText('{"safe":true}', 'pass');
+            const failure = await decryptText({ ...sealed, iterations }, 'pass').catch((error) => error);
+            expect(failure).toBeInstanceOf(GistError);
+            expect(failure.kind).toBe('parse');
+        }
+    );
+
+    test.each([
+        ['algorithm', 'AES-128-CBC'],
+        ['kdf', 'scrypt'],
+    ])('rejects an unsupported %s', async (field, value) => {
+        const sealed = await encryptText('{"safe":true}', 'pass');
+        const failure = await decryptText({ ...sealed, [field]: value }, 'pass').catch((error) => error);
+        expect(failure).toBeInstanceOf(GistError);
+        expect(failure.kind).toBe('parse');
+    });
+
+    test.each([
+        ['salt', new Uint8Array(15)],
+        ['iv', new Uint8Array(11)],
+        ['ciphertext', new Uint8Array(15)],
+    ])('rejects an invalid %s length', async (field, bytes) => {
+        const sealed = await encryptText('{"safe":true}', 'pass');
+        const failure = await decryptText({ ...sealed, [field]: bytesToBase64(bytes) }, 'pass').catch((error) => error);
         expect(failure).toBeInstanceOf(GistError);
         expect(failure.kind).toBe('parse');
     });
