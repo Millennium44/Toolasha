@@ -7,7 +7,7 @@
 import config from '../../core/config.js';
 import dataManager from '../../core/data-manager.js';
 import storage from '../../core/storage.js';
-import { timeReadable } from '../../utils/formatters.js';
+import { formatRelativeTime, timeReadable } from '../../utils/formatters.js';
 import { createTimerRegistry } from '../../utils/timer-registry.js';
 import { registerFloatingPanel, unregisterFloatingPanel, bringPanelToFront } from '../../utils/panel-z-index.js';
 import { captureOwner, stillOurs, noteTeardown } from '../../utils/init-ownership.js';
@@ -278,9 +278,12 @@ class QueueMonitorUI {
         let html = '';
         for (const snap of snapshots) {
             const elapsed = (Date.now() - snap.timestamp) / 1000;
+            const ageMs = Math.max(0, Date.now() - snap.timestamp);
             const remaining = Math.max(0, snap.totalQueueSeconds - elapsed);
-            const isStale = Date.now() - snap.timestamp > STALE_THRESHOLD;
+            const isStale = ageMs > STALE_THRESHOLD;
             const isExpanded = this._expandedChars.has(String(snap.characterId));
+            const relativeAge = formatRelativeTime(ageMs);
+            const ageLabel = relativeAge === 'Just now' ? 'just now' : `${relativeAge} ago`;
 
             // Color coding
             let dotColor;
@@ -316,10 +319,7 @@ class QueueMonitorUI {
             html += `<span style="color:#aaa; font-size:11px; white-space:nowrap;">${timeDisplay}</span>`;
             html += `<span style="color:#555; font-size:10px;">${isExpanded ? '▾' : '▸'}</span>`;
             html += `</div>`;
-
-            if (isStale) {
-                html += `<div style="color:#f39c12; font-size:10px; margin-left:14px; margin-top:2px;">Stale (>${Math.round((Date.now() - snap.timestamp) / 3600000)}h ago)</div>`;
-            }
+            html += `<div class="toolasha-qm-age" style="color:${isStale ? '#f39c12' : '#666'}; font-size:10px; margin-left:14px; margin-top:2px;">Updated ${ageLabel}${isStale ? ' · stale' : ''}</div>`;
 
             // Expanded action details
             if (isExpanded && snap.actions.length > 0) {
