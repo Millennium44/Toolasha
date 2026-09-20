@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Guild trial trace exports keep a consistent snapshot and report missing chunks
+
+- Live ticks no longer change a trace file beneath its header, and clearing or flushing waits for an export's chunk reads. Exports now state how many retained events were actually written and identify missing or unreadable chunks.
+
 ### The simulator reads the levels you have now, not the ones you logged in with
 
 - Levelling up mid-session left every combat simulation, labyrinth tile and clear-rate prediction running on the skill levels from page load, because the update that refreshes them never wrote back to the snapshot the simulator reads. A labyrinth fight is also now filed under the build that started it rather than whatever was worn by the time it ended.

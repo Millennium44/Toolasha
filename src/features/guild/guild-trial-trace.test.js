@@ -14,6 +14,7 @@
  */
 
 import { describe, test, expect, beforeEach, afterEach, vi } from 'vitest';
+import storage from '../../core/storage.js';
 
 const bus = vi.hoisted(() => new Map());
 vi.mock('../../core/websocket.js', () => ({
@@ -830,6 +831,116 @@ describe('the trace metadata', () => {
 });
 
 describe('NDJSON export', () => {
+    test('marks missing and unreadable chunks in the exported file', async () => {
+        for (let i = 0; i < 3; i++) {
+            emit('new_guild_battle', { battleId: i });
+            trace._scheduleFlush();
+            await trace._settle();
+        }
+        store.delete('trialTraceChunk_0_c1');
+        const realRead = storage.get.bind(storage);
+        const read = vi.spyOn(storage, 'get').mockImplementation(async (...args) => {
+            if (args[0] === 'trialTraceChunk_1_c1') throw new Error('chunk unavailable');
+            return realRead(...args);
+        });
+        const log = vi.spyOn(console, 'error').mockImplementation(() => {});
+        try {
+            const lines = (await trace.buildTraceNdjson()).trimEnd().split('\n');
+            const metadata = JSON.parse(lines[0]);
+            expect(metadata).toMatchObject({
+                eventCount: 3,
+                exportedEventCount: 1,
+                exportComplete: false,
+                missingChunkSeqs: [0],
+                unreadableChunkSeqs: [1],
+            });
+            expect(lines.slice(1).map((line) => JSON.parse(line).payload.battleId)).toEqual([2]);
+            // Export quality is a property of this read, not a retention drop.
+            expect(trace.status().eventsDropped).toBe(0);
+        } finally {
+            read.mockRestore();
+            log.mockRestore();
+        }
+    });
+
+    test('a live tick during a chunk read is kept for the next export', async () => {
+        emit('new_guild_battle', { battleId: 1 });
+        trace._scheduleFlush();
+        await trace._settle();
+        emit('guild_battle_updated', tick);
+        let release;
+        let entered;
+        const gate = new Promise((resolve) => {
+            release = resolve;
+        });
+        const reading = new Promise((resolve) => {
+            entered = resolve;
+        });
+        const realRead = storage.get.bind(storage);
+        const read = vi.spyOn(storage, 'get').mockImplementation(async (...args) => {
+            entered();
+            await gate;
+            return realRead(...args);
+        });
+        try {
+            const exporting = trace.buildTraceNdjson();
+            await reading;
+            emit('guild_battle_updated', { ...tick, marker: 'later' });
+            release();
+            const lines = (await exporting).trimEnd().split('\n');
+            expect(JSON.parse(lines[0]).eventCount).toBe(2);
+            expect(lines.slice(1)).toHaveLength(2);
+            expect(JSON.parse(lines[2]).payload).toEqual(tick);
+            expect(await tracedEvents()).toHaveLength(3);
+        } finally {
+            release();
+            read.mockRestore();
+        }
+    });
+
+    test('clear waits for an export to finish reading the chunks it owns', async () => {
+        emit('new_guild_battle', { battleId: 1 });
+        trace._scheduleFlush();
+        await trace._settle();
+        const id = trace.activeTraceId();
+        let release;
+        let entered;
+        const gate = new Promise((resolve) => {
+            release = resolve;
+        });
+        const reading = new Promise((resolve) => {
+            entered = resolve;
+        });
+        const realRead = storage.get.bind(storage);
+        const read = vi.spyOn(storage, 'get').mockImplementation(async (...args) => {
+            entered();
+            await gate;
+            return realRead(...args);
+        });
+        try {
+            const exporting = trace.buildTraceNdjson();
+            await reading;
+            let cleared = false;
+            const clearing = (async () => {
+                await trace.clear();
+                cleared = true;
+            })();
+            // Let an unguarded clear reach its delete calls while the read waits.
+            await new Promise((resolve) => setTimeout(resolve, 0));
+            expect(cleared).toBe(false);
+            release();
+            const lines = (await exporting).trimEnd().split('\n');
+            expect(JSON.parse(lines[0]).traceId).toBe(id);
+            expect(lines.slice(1)).toHaveLength(1);
+            await clearing;
+            expect(trace.activeTraceId()).toBeNull();
+            expect(store.has('trialTraceChunk_0_c1')).toBe(false);
+        } finally {
+            release();
+            read.mockRestore();
+        }
+    });
+
     /** Stub the download plumbing and hand back what exportTrace wrote */
     function armDownload() {
         const written = { blob: null, link: null };
@@ -863,6 +974,8 @@ describe('NDJSON export', () => {
         const metadata = JSON.parse(lines[0]);
         expect(metadata.format).toBe('toolasha-guild-trial-trace');
         expect(metadata.eventCount).toBe(2);
+        expect(metadata.exportedEventCount).toBe(2);
+        expect(metadata.exportComplete).toBe(true);
         expect(metadata.events).toBeUndefined();
 
         expect(JSON.parse(lines[1])).toMatchObject({ type: 'new_guild_battle', rel: expect.any(Number) });

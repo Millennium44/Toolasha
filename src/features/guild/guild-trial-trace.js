@@ -987,22 +987,72 @@ class GuildTrialTrace {
      * @returns {Promise<string>}
      */
     async buildTraceNdjson() {
-        await this._settle();
-        const parts = [JSON.stringify(this._buildMetadata())];
-        for (const chunk of this.chunks) {
+        await this._restorePromise;
+        const previous = this._flushChain;
+        const exported = (async () => {
+            await previous;
+            return this._buildTraceNdjsonNow();
+        })();
+        // A flush may evict chunks, and clear/disable may delete them or reuse
+        // their keys. Keep those operations behind the export's storage reads.
+        // Capture still appends pending lines while this barrier is in place.
+        this._flushChain = (async () => {
             try {
-                const record = await storage.get(this._key(chunkBase(chunk.seq)), TRACE_STORE, null);
+                await exported;
+            } catch {
+                // The caller receives the failure; later persistence must run.
+            }
+        })();
+        return exported;
+    }
+
+    /**
+     * Read one retained snapshot while the persistence chain holds its chunks.
+     * `exportComplete` describes this snapshot, not whether capture began at the
+     * fight opening or the retention cap previously dropped older events.
+     * @returns {Promise<string>} NDJSON with explicit export completeness
+     */
+    async _buildTraceNdjsonNow() {
+        const metadata = this._buildMetadata();
+        const chunks = this.chunks.slice();
+        const pending = this.pending.slice();
+        const owner = this.ownerId || traceCharId();
+        const parts = [];
+        const missingChunkSeqs = [];
+        const unreadableChunkSeqs = [];
+        let exportedEventCount = pending.length;
+        for (const chunk of chunks) {
+            try {
+                const record = await storage.get(charKey(chunkBase(chunk.seq), owner), TRACE_STORE, null);
                 if (!record) {
+                    missingChunkSeqs.push(chunk.seq);
                     console.error(`[GuildTrialTrace] Trace chunk ${chunk.seq} is missing from storage`);
                     continue;
                 }
                 const text = record.gz ? await gunzipToText(record.data) : record.data;
-                if (text) parts.push(text);
+                if (typeof text !== 'string') throw new Error('trace chunk has no text');
+                if (text) {
+                    parts.push(text);
+                    exportedEventCount += text.split('\n').filter((line) => line.length > 0).length;
+                }
             } catch (error) {
+                unreadableChunkSeqs.push(chunk.seq);
                 console.error(`[GuildTrialTrace] Reading trace chunk ${chunk.seq} failed:`, error);
             }
         }
-        for (const line of this.pending) parts.push(line);
+        for (const line of pending) parts.push(line);
+        parts.unshift(
+            JSON.stringify({
+                ...metadata,
+                exportedEventCount,
+                exportComplete:
+                    exportedEventCount === metadata.eventCount &&
+                    missingChunkSeqs.length === 0 &&
+                    unreadableChunkSeqs.length === 0,
+                missingChunkSeqs,
+                unreadableChunkSeqs,
+            })
+        );
         return parts.join('\n') + '\n';
     }
 
