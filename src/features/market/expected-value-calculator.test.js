@@ -397,6 +397,35 @@ describe('nested containers', () => {
         expect(outerFirst).toBeGreaterThan(0);
     });
 
+    test('opening a tradable nested container taxes its contents only once', () => {
+        mocks.itemDetails[INNER].isTradable = true;
+
+        const result = expectedValueCalculator.calculateContainerValue(OUTER, mocks.initData);
+
+        expect(result.expectedValue).toBe(1000 * (1 - MARKET_TAX));
+        expect(result.isPartial).toBe(false);
+    });
+
+    test('the public breakdown preserves the nested container value after contents tax', () => {
+        mocks.itemDetails[INNER].isTradable = true;
+        expectedValueCalculator.isInitialized = true;
+
+        const result = expectedValueCalculator.calculateExpectedValue(OUTER);
+
+        expect(result.expectedValue).toBe(1000 * (1 - MARKET_TAX));
+        expect(result.drops[0].priceEach).toBe(result.drops[0].expectedValue);
+    });
+
+    test('the worker price map taxes ordinary sales but preserves already-net valuations', () => {
+        mocks.itemDetails[INNER].isTradable = true;
+        const priceMap = expectedValueCalculator.buildPriceMap([OUTER, INNER, CHEST_HRID], mocks.initData);
+
+        expect(priceMap[INNER]).toEqual({ price: 1000 * (1 - MARKET_TAX), canBeSold: false });
+        expect(priceMap[GEM_HRID]).toEqual({ price: 1000, canBeSold: true });
+        expect(priceMap[JUNK_HRID]).toEqual({ price: 50, canBeSold: false });
+        expect(priceMap['/items/coin']).toEqual({ price: 1, canBeSold: false });
+    });
+
     test('a container that contains itself terminates instead of recursing forever', () => {
         mocks.initData.openableLootDropMap[INNER] = [
             { itemHrid: OUTER, dropRate: 1, minCount: 1, maxCount: 1 },
