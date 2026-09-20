@@ -42,6 +42,7 @@ import { restoreGeometry, saveGeometry, saveOpenState, reopenIfLeftOpen } from '
 import { attachMinimize } from '../../utils/panel-minimize.js';
 import { saveUpgradeResults, loadUpgradeResults, clearUpgradeResults } from './upgrade-results-store.js';
 import { readScoped, writeScoped } from '../../utils/character-key.js';
+import { scriptVersion } from '../../utils/script-version.js';
 import {
     ALL_ZONES_SNAPSHOT_KEY,
     ALL_ZONES_SNAPSHOT_STORE,
@@ -4905,6 +4906,12 @@ class CombatSimUI {
                 zoneHrid: simResult.zoneName || null,
                 difficultyTier: simResult.difficultyTier ?? 0,
                 savedAt: Date.now(),
+                // A rate is a simulator output, not a measurement, so it is
+                // only as current as the engine that produced it — a build that
+                // changes how fast a fight ends changes how fast the fight eats
+                // food. Stamped here and checked on every read, the way the
+                // labyrinth sim cache stamps its persisted combat results
+                scriptVersion: scriptVersion(),
                 perHour,
             };
             writeScoped('simConsumableRates', record, 'combatExport').catch(() => {});

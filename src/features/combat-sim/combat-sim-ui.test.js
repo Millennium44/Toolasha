@@ -1150,6 +1150,33 @@ describe('persisted consumable rates name the character explicitly', () => {
         expect(stored.perHour).toEqual({ '/items/cheese': 5 });
     });
 
+    test('the rate is stamped with the build that simulated it', async () => {
+        // A rate is an engine output, so the readers have to be able to tell a
+        // rate this build produced from one an older engine produced. The
+        // stamp is null outside the userscript sandbox; that the field is
+        // written at all is what a reader needs
+        globalThis.GM_info = { script: { version: '9.9.9' } };
+        try {
+            const simResult = {
+                simulatedTime: 3600 * 1e9,
+                zoneName: '/actions/combat/fly',
+                difficultyTier: 0,
+                consumablesUsed: { player1: { '/items/cheese': 5 } },
+            };
+
+            ui._persistConsumableRates(simResult, 'player1', 'char1');
+            await Promise.resolve();
+            await Promise.resolve();
+
+            const stored = await readScoped('simConsumableRates', 'combatExport', null);
+            expect(stored.scriptVersion).toBe('9.9.9');
+            const byZone = await readScoped('simConsumableRatesByZone', 'combatExport', {});
+            expect(byZone['/actions/combat/fly|0'].scriptVersion).toBe('9.9.9');
+        } finally {
+            delete globalThis.GM_info;
+        }
+    });
+
     test('a null selfHrid — an imported profile simmed alone — persists nothing', async () => {
         // openWithExternalDTO leaves the editor's selfHrid null: nobody in this
         // run is the live character. Falling back to the first key (the old

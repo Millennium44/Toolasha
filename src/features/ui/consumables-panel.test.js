@@ -816,6 +816,28 @@ describe('the idle plan pins across a character switch', () => {
 
         expect(consumablesPanel._simRates).toEqual({ rate: 'char2-rate' });
     });
+
+    test('a rate simulated by an older build is dropped rather than rated against today’s plan', async () => {
+        // The engine that produced a rate decides how fast the fight ends, and
+        // therefore how fast it eats food. A build that changes the engine must
+        // not keep serving its predecessor's appetite as its own
+        globalThis.GM_info = { script: { version: '9.9.9' } };
+        try {
+            store.data.simConsumableRates_char1 = { scriptVersion: '9.9.8', perHour: { '/items/cheese': 5 } };
+            store.data.simConsumableRatesByZone_char1 = {
+                'old|0': { scriptVersion: '9.9.8', perHour: { '/items/cheese': 5 } },
+                'now|0': { scriptVersion: '9.9.9', perHour: { '/items/cheese': 7 } },
+            };
+
+            bus.characterId = 'char1';
+            await consumablesPanel._refreshStoredReadings();
+
+            expect(consumablesPanel._simRates).toBe(null);
+            expect(Object.keys(consumablesPanel._simRatesByZone)).toEqual(['now|0']);
+        } finally {
+            delete globalThis.GM_info;
+        }
+    });
 });
 
 describe('the labyrinth burn trend', () => {

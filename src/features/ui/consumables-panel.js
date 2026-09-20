@@ -106,6 +106,7 @@ import { calculatePlayerStats } from '../combat-stats/combat-stats-calculator.js
 import { dungeonTracker, queueLengthEstimator } from '../../utils/bundle-bridge.js';
 import { getDrinkConcentration } from '../../utils/tea-parser.js';
 import { readScoped, writeScoped } from '../../utils/character-key.js';
+import { currentBuildEntries, fromCurrentBuild } from '../../utils/script-version.js';
 import { entriesOf } from '../../utils/cleared-record.js';
 
 const PANEL_ID = 'toolasha-consumables-panel';
@@ -337,7 +338,7 @@ class ConsumablesPanel {
     async _refreshStoredReadings() {
         const started = (this._storedReadingsGeneration += 1);
         try {
-            const [rates, byZone, ledger, runs, profiles] = await Promise.all([
+            const [storedRates, storedByZone, ledger, runs, profiles] = await Promise.all([
                 readScoped('simConsumableRates', 'combatExport', null).catch(() => null),
                 readScoped('simConsumableRatesByZone', 'combatExport', {}).catch(() => ({})),
                 readScoped('labyrinthRunLedger', 'labyrinth', []).catch(() => []),
@@ -348,6 +349,13 @@ class ConsumablesPanel {
             // before this one's reads landed — already applied its own answer;
             // this one belongs to a character the panel has since left
             if (started !== this._storedReadingsGeneration) return;
+            // A sim rate outlives the engine that produced it. A build that
+            // changes how a fight resolves changes how fast that fight eats
+            // food, so a rate saved under an older build is dropped rather than
+            // rated against today's plan: the panel then reads as unsimmed,
+            // which is what it is, and one sim restores it
+            const rates = fromCurrentBuild(storedRates) ? storedRates : null;
+            const byZone = currentBuildEntries(storedByZone);
             const changed =
                 JSON.stringify(rates) !== JSON.stringify(this._simRates) ||
                 JSON.stringify(byZone) !== JSON.stringify(this._simRatesByZone) ||
@@ -393,9 +401,13 @@ class ConsumablesPanel {
         // The idle plan's pins: which loadout to plan for, which simmed zone rates its food
         await this.reloadIdlePins();
         // The sims' measured consumable use, for rating food while idle
-        this._simRates = await readScoped('simConsumableRates', 'combatExport', null).catch(() => null);
-        this._simRatesByZone =
-            (await readScoped('simConsumableRatesByZone', 'combatExport', {}).catch(() => ({}))) || {};
+        // Older builds' rates are dropped here for the same reason
+        // `_refreshStoredReadings` drops them
+        const storedRates = await readScoped('simConsumableRates', 'combatExport', null).catch(() => null);
+        this._simRates = fromCurrentBuild(storedRates) ? storedRates : null;
+        this._simRatesByZone = currentBuildEntries(
+            await readScoped('simConsumableRatesByZone', 'combatExport', {}).catch(() => ({}))
+        );
         this._ledgerRuns = (await readScoped('labyrinthRunLedger', 'labyrinth', []).catch(() => [])) || [];
         // The dungeon readiness card: how many runs to plan for, the recorded
         // run history that turns "hours of food" into "runs of food", and the

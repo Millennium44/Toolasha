@@ -30,6 +30,7 @@ import { formatKeyCostNote, getKeyPricingMode, resolveKeyPricing } from '../../u
 import { shortDuration } from '../../utils/overlay-format.js';
 import { compareBurnToSim, formatBurnLine } from '../../utils/consumable-burn.js';
 import { readScoped, writeScoped } from '../../utils/character-key.js';
+import { fromCurrentBuild } from '../../utils/script-version.js';
 import { runningAction } from '../../utils/combat-actions.js';
 import { fillChatOrCopy, describeChatFill, chatBudgetBytes, utf8Length } from '../../utils/chat-fill.js';
 import { registerCommand, unregisterCommand } from '../../utils/command-registry.js';
@@ -709,7 +710,12 @@ class CombatStatsUI {
             );
             const difficultyTier = Number(live?.difficultyTier) || 0;
             const byZone = (await readScoped('simConsumableRatesByZone', 'combatExport', {})) || {};
-            return { actionHrid, difficultyTier, simRecord: byZone[`${actionHrid}|${difficultyTier}`] || null };
+            // A rate simulated by an older build answers a question about an
+            // engine that is no longer running, and the burn line's whole job
+            // is to say whether today's fight matches today's simulation — so
+            // an unstamped or older record shows no line rather than a stale one
+            const stored = byZone[`${actionHrid}|${difficultyTier}`];
+            return { actionHrid, difficultyTier, simRecord: fromCurrentBuild(stored) ? stored : null };
         } catch (error) {
             console.error('[Combat Stats] Reading the sim consumable rates failed:', error);
             return null;

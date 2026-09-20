@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Saved sim consumable rates no longer outlive the engine that produced them
+
+- A per-hour food rate is now stamped with the build that simulated it, and a rate from an older build is ignored rather than served as current — so an engine fix like this release's Fury change no longer leaves the Consumables panel and the combat burn line rating today's fight against yesterday's simulator.
+
 ### Fury Stacking: the measurement is removed
 
 - The check answered its question — Fury pools with your other buffs rather than multiplying them — and the engine now does that, so the diagnostic, its setting and its panel are gone.
