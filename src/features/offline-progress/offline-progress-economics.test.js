@@ -270,6 +270,44 @@ describe('offline-progress-economics', () => {
         expect(document.querySelector('#mwi-offline-economics').textContent).toContain('999');
     });
 
+    test('a reconnect cannot reprice an existing modal using the next offline snapshot', () => {
+        offlineProgressEconomics.initialize();
+        triggerCharacterInitialized();
+        const firstModal = buildModalNode();
+        mockOnClass.mock.calls[0][2](firstModal);
+        const firstSnapshot = mockCalculateOfflineEconomics.mock.calls[0][0];
+
+        const nextItems = [{ itemHrid: '/items/log', enhancementLevel: 0, offlineCount: 25 }];
+        triggerCharacterInitialized({ offlineItems: nextItems, currentTimestamp: '2026-08-19T13:00:00.000Z' });
+        for (const cb of settingChangeCallbacks.get('profitCalc_pricingMode')) cb('optimistic');
+
+        expect(mockCalculateOfflineEconomics).toHaveBeenLastCalledWith(firstSnapshot);
+
+        const nextModal = buildModalNode();
+        mockOnClass.mock.calls[0][2](nextModal);
+        for (const cb of settingChangeCallbacks.get('profitCalc_pricingMode')) cb('pessimistic');
+        expect(mockCalculateOfflineEconomics).toHaveBeenLastCalledWith(
+            expect.objectContaining({ offlineItems: nextItems })
+        );
+        expect(document.querySelectorAll('#mwi-offline-economics')).toHaveLength(1);
+    });
+
+    test('an empty reconnect snapshot does not stop repricing the still-open earlier modal', () => {
+        offlineProgressEconomics.initialize();
+        triggerCharacterInitialized();
+        const modalNode = buildModalNode();
+        mockOnClass.mock.calls[0][2](modalNode);
+        const firstSnapshot = mockCalculateOfflineEconomics.mock.calls[0][0];
+
+        triggerCharacterInitialized({ offlineItems: [] });
+        mockCalculateOfflineEconomics.mockReturnValue({ ...SAMPLE_ECONOMICS, revenue: 999 });
+        for (const cb of settingChangeCallbacks.get('profitCalc_pricingMode')) cb('optimistic');
+
+        expect(mockCalculateOfflineEconomics).toHaveBeenCalledTimes(2);
+        expect(mockCalculateOfflineEconomics).toHaveBeenLastCalledWith(firstSnapshot);
+        expect(document.querySelector('#mwi-offline-economics').textContent).toContain('999');
+    });
+
     test('a stale watch from a leftover previous modal cannot tear down the current character’s block', () => {
         // Character A's modal appears and gets a block.
         offlineProgressEconomics.initialize();
