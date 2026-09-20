@@ -1549,6 +1549,113 @@ describe('runs waiting for live player profiles', () => {
         expect(mocks.allZonesRuns).toBe(0);
         expect(ui._runStarting).toBe(false);
     });
+
+    test('a cancelled worker from a destroyed panel cannot release a newer run', async () => {
+        const runner = await import('./combat-sim-runner.js');
+        let rejectOld;
+        let resolveCurrent;
+        const worker = vi
+            .spyOn(runner, 'runSimulation')
+            .mockImplementationOnce(() => new Promise((_resolve, reject) => (rejectOld = reject)))
+            .mockImplementationOnce(() => new Promise((resolve) => (resolveCurrent = resolve)));
+        configureSingle();
+        const oldRun = ui._onSimulate();
+        releaseProfiles(profileResult());
+        await vi.waitFor(() => expect(worker).toHaveBeenCalledTimes(1));
+
+        ui.destroy();
+        ui.buildPanel();
+        configureSingle();
+        const currentRun = ui._onSimulate();
+        releaseProfiles(profileResult());
+        await vi.waitFor(() => expect(worker).toHaveBeenCalledTimes(2));
+        const status = vi.spyOn(ui, '_setStatus');
+
+        rejectOld(new Error('Cancelled'));
+        await oldRun;
+        try {
+            expect(ui.isRunning).toBe(true);
+            expect(ui.panel.querySelector('#mwi-csim-run').disabled).toBe(true);
+            expect(status).not.toHaveBeenCalledWith('Simulation cancelled.');
+        } finally {
+            resolveCurrent(mocks.simResult);
+            await currentRun;
+        }
+    });
+
+    test('a completed worker from the departing character cannot repopulate the new panel', async () => {
+        const runner = await import('./combat-sim-runner.js');
+        let resolveOld;
+        const worker = vi
+            .spyOn(runner, 'runSimulation')
+            .mockImplementationOnce(() => new Promise((resolve) => (resolveOld = resolve)));
+        configureSingle();
+        const oldRun = ui._onSimulate();
+        releaseProfiles(profileResult());
+        await vi.waitFor(() => expect(worker).toHaveBeenCalledOnce());
+
+        ui.destroy();
+        mocks.characterId = 'char2';
+        ui.buildPanel();
+        const status = vi.spyOn(ui, '_setStatus');
+        resolveOld(mocks.simResult);
+        await oldRun;
+
+        expect(ui._lastSimResult).toBeNull();
+        expect(ui._simHistory).toEqual([]);
+        expect(status).not.toHaveBeenCalled();
+    });
+
+    test('all-zones finalization cannot save or release a newer same-character run', async () => {
+        let releaseDisplay;
+        const display = vi
+            .spyOn(ui, '_buildBestiaryPlanZones')
+            .mockImplementationOnce(() => new Promise((resolve) => (releaseDisplay = resolve)));
+        configureAllZones();
+        const oldRun = ui._onSimulateAllZones();
+        releaseProfiles(profileResult());
+        await vi.waitFor(() => expect(display).toHaveBeenCalledOnce());
+
+        ui.destroy();
+        ui.buildPanel();
+        const currentPlans = [{ zoneName: 'Current plan' }];
+        ui._bestiaryPlanZones = currentPlans;
+        ui.isRunning = true;
+        const status = vi.spyOn(ui, '_setStatus');
+        mocks.store.clear();
+        releaseDisplay([]);
+        await oldRun;
+
+        expect(ui._bestiaryPlanZones).toBe(currentPlans);
+        expect(await loadAllZonesSnapshot()).toBeNull();
+        expect(ui.isRunning).toBe(true);
+        expect(status).not.toHaveBeenCalled();
+    });
+
+    test('a departed Seek worker cannot replace the next panel results', async () => {
+        const runner = await import('./all-zones-runner.js');
+        let resolveOld;
+        const worker = vi
+            .spyOn(runner, 'runAllZonesSimulation')
+            .mockImplementationOnce(() => new Promise((resolve) => (resolveOld = resolve)));
+        await configureSeek();
+        const oldRun = ui._onSeek();
+        releaseProfiles(profileResult());
+        await vi.waitFor(() => expect(worker).toHaveBeenCalledOnce());
+
+        ui.destroy();
+        ui.buildPanel();
+        const currentRows = [{ zone: { name: 'Current result' } }];
+        ui._seekResults = currentRows;
+        ui.isRunning = true;
+        const status = vi.spyOn(ui, '_setStatus');
+        resolveOld([]);
+        await oldRun;
+
+        expect(ui._seekResults).toBe(currentRows);
+        expect(ui.isRunning).toBe(true);
+        expect(status).not.toHaveBeenCalled();
+    });
 });
 
 describe('the remembered upgrade analysis across a character switch', () => {

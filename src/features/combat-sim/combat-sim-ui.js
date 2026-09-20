@@ -3012,6 +3012,8 @@ class CombatSimUI {
     async _displayAllZonesResults(zoneResults, hours, gameData) {
         const container = this.panel?.querySelector('#mwi-csim-results');
         if (!container) return;
+        const ownerId = dataManager.getCurrentCharacterId();
+        const runToken = this._runStartToken;
 
         this._allZonesResults = zoneResults;
         container.style.display = 'block';
@@ -3176,7 +3178,9 @@ class CombatSimUI {
         // What the route planner works from: the zones (in run order — ties in
         // the plan go to the earlier one), the counts, and how many zones had
         // no result to plan with
-        this._bestiaryPlanZones = await this._buildBestiaryPlanZones(rows);
+        const planZones = await this._buildBestiaryPlanZones(rows);
+        if (!this._isCurrentRun(ownerId, runToken)) return;
+        this._bestiaryPlanZones = planZones;
         this._bestiaryPlanCounts = bestiaryCounts;
         this._bestiaryPlanSkipped = zoneResults.filter((r) => !r || !r.simResult).length;
         this._bestiaryPlanGameData = gameData;
@@ -4187,6 +4191,10 @@ class CombatSimUI {
         // Local timer handle — a shared instance field could be overwritten by a
         // concurrent run, leaking the interval permanently
         const elapsedTimer = setInterval(() => {
+            if (!this._isCurrentRun(ownerId, startToken)) {
+                clearInterval(elapsedTimer);
+                return;
+            }
             const elapsed = (Date.now() - simStartTime) / 1000;
             this._setStatus(`Seeking ${itemName} in ${zoneCount} zone/tiers... ${formatElapsed(elapsed)}`);
         }, 100);
@@ -4197,6 +4205,7 @@ class CombatSimUI {
             const simResults = await runAllZonesSimulation(
                 { gameData, playerDTOs, zones: simZones, hours, communityBuffs, useEarlyExit: false },
                 (percent) => {
+                    if (!this._isCurrentRun(ownerId, startToken)) return;
                     const { text: remaining } = eta.update(percent / 100);
                     progressFill.style.width = `${percent}%`;
                     progressText.textContent = remaining ? `${percent}% · ${remaining}` : `${percent}%`;
@@ -4204,6 +4213,7 @@ class CombatSimUI {
             );
 
             clearInterval(elapsedTimer);
+            if (!this._isCurrentRun(ownerId, startToken)) return;
             const totalElapsed = formatElapsed((Date.now() - simStartTime) / 1000);
 
             const playerHrid = this._activePlayerTab || 'player1';
@@ -4241,6 +4251,7 @@ class CombatSimUI {
             this._displaySeekResults(seekRows, itemName);
             this._setStatus(`Seek complete in ${totalElapsed}: ${seekRows.length} sources found for ${itemName}`);
         } catch (error) {
+            if (!this._isCurrentRun(ownerId, startToken)) return;
             if (error.message === 'Cancelled') {
                 this._setStatus('Seek cancelled.');
             } else {
@@ -4249,12 +4260,14 @@ class CombatSimUI {
             }
         } finally {
             clearInterval(elapsedTimer);
-            this.isRunning = false;
-            runBtn.disabled = false;
-            runBtn.style.opacity = '1';
-            runBtn.style.cursor = 'pointer';
-            stopBtn.style.display = 'none';
-            progressEl.style.display = 'none';
+            if (this._isCurrentRun(ownerId, startToken)) {
+                this.isRunning = false;
+                runBtn.disabled = false;
+                runBtn.style.opacity = '1';
+                runBtn.style.cursor = 'pointer';
+                stopBtn.style.display = 'none';
+                progressEl.style.display = 'none';
+            }
         }
     }
 
@@ -4640,6 +4653,10 @@ class CombatSimUI {
         // Local timer handle — a shared instance field could be overwritten by a
         // concurrent run, leaking the interval permanently
         const elapsedTimer = setInterval(() => {
+            if (!this._isCurrentRun(ownerId, startToken)) {
+                clearInterval(elapsedTimer);
+                return;
+            }
             const elapsed = (Date.now() - simStartTime) / 1000;
             this._setStatus(`Simulating (${partyInfo})... ${formatElapsed(elapsed)}`);
         }, 100);
@@ -4656,6 +4673,7 @@ class CombatSimUI {
                     taskDamageMode: this._taskDamageMode(),
                 },
                 (percent) => {
+                    if (!this._isCurrentRun(ownerId, startToken)) return;
                     const { text: remaining } = eta.update(percent / 100);
                     progressFill.style.width = `${percent}%`;
                     progressText.textContent = remaining ? `${percent}% · ${remaining}` : `${percent}%`;
@@ -4663,6 +4681,7 @@ class CombatSimUI {
             );
 
             clearInterval(elapsedTimer);
+            if (!this._isCurrentRun(ownerId, startToken)) return;
             const totalElapsed = formatElapsed((Date.now() - simStartTime) / 1000);
 
             this._lastSimResult = simResult;
@@ -4721,6 +4740,7 @@ class CombatSimUI {
                 `Simulation complete in ${totalElapsed}: ${formatWithSeparator(hours)} hours · ${partyInfo} · Pricing: ${modeLabel}${missingNote}`
             );
         } catch (error) {
+            if (!this._isCurrentRun(ownerId, startToken)) return;
             if (error.message === 'Cancelled') {
                 this._setStatus('Simulation cancelled.');
             } else {
@@ -4729,9 +4749,11 @@ class CombatSimUI {
             }
         } finally {
             clearInterval(elapsedTimer);
-            this.isRunning = false;
-            this._resetRunButton(runBtn);
-            progressContainer.style.display = 'none';
+            if (this._isCurrentRun(ownerId, startToken)) {
+                this.isRunning = false;
+                this._resetRunButton(runBtn);
+                progressContainer.style.display = 'none';
+            }
         }
     }
 
@@ -4853,6 +4875,10 @@ class CombatSimUI {
         // Local timer handle — a shared instance field could be overwritten by a
         // concurrent run, leaking the interval permanently
         const elapsedTimer = setInterval(() => {
+            if (!this._isCurrentRun(ownerId, startToken)) {
+                clearInterval(elapsedTimer);
+                return;
+            }
             const elapsed = (Date.now() - simStartTime) / 1000;
             this._setStatus(`Simulating ${zoneCount} zones... ${formatElapsed(elapsed)}`);
         }, 100);
@@ -4873,6 +4899,7 @@ class CombatSimUI {
                     playerHrid: this._activePlayerTab || 'player1',
                 },
                 (percent) => {
+                    if (!this._isCurrentRun(ownerId, startToken)) return;
                     const { text: remaining } = eta.update(percent / 100);
                     progressFill.style.width = `${percent}%`;
                     progressText.textContent = remaining ? `${percent}% · ${remaining}` : `${percent}%`;
@@ -4880,6 +4907,7 @@ class CombatSimUI {
             );
 
             clearInterval(elapsedTimer);
+            if (!this._isCurrentRun(ownerId, startToken)) return;
             const totalElapsed = formatElapsed((Date.now() - simStartTime) / 1000);
 
             // The worker pool is done, but the results are not: revenue and
@@ -4914,6 +4942,7 @@ class CombatSimUI {
             this._allZonesSortCol = 'score';
             this._allZonesSortAsc = false;
             await this._displayAllZonesResults(zoneResults, hours, gameData);
+            if (!this._isCurrentRun(ownerId, startToken)) return;
 
             // Outlives the panel: the ranked action list reads this to put combat
             // zones next to skilling actions long after the results pane is gone.
@@ -4945,12 +4974,14 @@ class CombatSimUI {
                 );
             }
 
+            if (!this._isCurrentRun(ownerId, startToken)) return;
             this._switchTab('results');
             this._setStatus(
                 `All zones complete in ${totalElapsed}: ${zoneCount} zones · ${formatWithSeparator(hours)} hours each` +
                     (useMaxTierFood ? ' · max-tier food' : '')
             );
         } catch (error) {
+            if (!this._isCurrentRun(ownerId, startToken)) return;
             if (error.message === 'Cancelled') {
                 this._setStatus('Simulation cancelled.');
             } else {
@@ -4959,9 +4990,11 @@ class CombatSimUI {
             }
         } finally {
             clearInterval(elapsedTimer);
-            this.isRunning = false;
-            this._resetRunButton(runBtn);
-            progressContainer.style.display = 'none';
+            if (this._isCurrentRun(ownerId, startToken)) {
+                this.isRunning = false;
+                this._resetRunButton(runBtn);
+                progressContainer.style.display = 'none';
+            }
         }
     }
 
@@ -4994,6 +5027,19 @@ class CombatSimUI {
      */
     _stillSameCharacter(ownerId) {
         return dataManager.getCurrentCharacterId() === ownerId;
+    }
+
+    /**
+     * Whether an async run still owns this panel. Character identity alone does
+     * not cover a destroyed/rebuilt panel for the same character: its old
+     * rejection/finally can arrive after a new run has already started.
+     * @param {string|null|undefined} ownerId - Character captured at run start
+     * @param {number} token - Generation captured before loading player profiles
+     * @returns {boolean}
+     * @private
+     */
+    _isCurrentRun(ownerId, token) {
+        return token === this._runStartToken && this._stillSameCharacter(ownerId);
     }
 
     /**
