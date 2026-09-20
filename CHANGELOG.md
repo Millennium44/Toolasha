@@ -8,7 +8,7 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ### Guild trial trace exports keep a consistent snapshot and report missing chunks
 
-- Live ticks no longer change a trace file beneath its header, and clearing or flushing waits for an export's chunk reads. Exports now state how many retained events were actually written and identify missing or unreadable chunks.
+- Live ticks no longer change a trace file beneath its header, and clearing or flushing waits for an export's chunk reads. Exports identify missing or unreadable chunks, and recording during a clear no longer lets the old cleanup delete the new trace's manifest.
 
 ### The simulator reads the levels you have now, not the ones you logged in with
 

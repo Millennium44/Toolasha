@@ -880,16 +880,22 @@ class GuildTrialTrace {
             this._manifestUnknown = false;
             this._restored = true;
         }
-        try {
-            for (const seq of seqs) await storage.delete(charKey(chunkBase(seq), owner), TRACE_STORE);
-            await storage.delete(charKey(MANIFEST_BASE, owner), TRACE_STORE);
-        } catch (error) {
-            console.error('[GuildTrialTrace] Clearing the persisted trace failed:', error);
-        }
-        // "Throw the trace away" has to mean the bytes too, or a clear run to
-        // free space leaves the orphans behind — the very records nothing else
-        // reclaims
-        await this._sweepOrphanChunks(owner);
+        const clearing = (async () => {
+            try {
+                for (const seq of seqs) await storage.delete(charKey(chunkBase(seq), owner), TRACE_STORE);
+                await storage.delete(charKey(MANIFEST_BASE, owner), TRACE_STORE);
+            } catch (error) {
+                console.error('[GuildTrialTrace] Clearing the persisted trace failed:', error);
+            }
+            // "Throw the trace away" has to mean the bytes too, or a clear run
+            // to free space leaves the orphans behind.
+            await this._sweepOrphanChunks(owner);
+        })();
+        // New events may start the next trace during the deletes. Its chunk
+        // numbers reuse the old keys, so its writes must wait until this clear
+        // has finished deleting the old chunks and manifest.
+        this._flushChain = clearing;
+        await clearing;
     }
 
     /**
