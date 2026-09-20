@@ -482,6 +482,50 @@ describe('persistence', () => {
         }
     });
 
+    test('a fresh trace recorded during clear keeps its own persisted manifest', async () => {
+        const instance = new GuildTrialTrace();
+        instance.initialize();
+        await instance.whenReady();
+        emit('new_guild_battle', { battleId: 1 });
+        instance._scheduleFlush();
+        await instance._settle();
+        let release;
+        let entered;
+        const gate = new Promise((resolve) => {
+            release = resolve;
+        });
+        const deleting = new Promise((resolve) => {
+            entered = resolve;
+        });
+        const realDelete = storage.delete.bind(storage);
+        const remove = vi.spyOn(storage, 'delete').mockImplementation(async (...args) => {
+            if (args[0] === 'trialTraceChunk_0_c1') {
+                entered();
+                await gate;
+            }
+            return realDelete(...args);
+        });
+        try {
+            const clearing = instance.clear();
+            await deleting;
+            emit('new_guild_battle', { battleId: 2 });
+            emit('end_guild_battle', { battleId: 2 });
+            const freshId = instance.activeTraceId();
+            // Let a write that escaped the clear's chain reach storage first.
+            await new Promise((resolve) => setTimeout(resolve, 0));
+            release();
+            await clearing;
+            await instance._settle();
+
+            expect(store.get('trialTraceManifest_c1')?.traceId).toBe(freshId);
+            expect((await tracedEvents(instance)).map((event) => event.payload.battleId)).toEqual([2, 2]);
+        } finally {
+            release();
+            remove.mockRestore();
+            instance.cleanup();
+        }
+    });
+
     test('clear() removes the manifest and every stored chunk', async () => {
         const instance = new GuildTrialTrace({ flushEvents: 1 });
         instance.initialize();
