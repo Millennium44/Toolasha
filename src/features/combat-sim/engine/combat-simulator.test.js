@@ -19,6 +19,7 @@ import { describe, test, expect, afterEach } from 'vitest';
 
 import CombatSimulator, { getCapturedPlayerDetails, setPlayerDetailsCapture } from './combat-simulator.js';
 import CombatUtilities from './combat-utilities.js';
+import AbilityCastEndEvent from './events/ability-cast-end-event.js';
 import AutoAttackEvent from './events/auto-attack-event.js';
 import BlindExpirationEvent from './events/blind-expiration-event.js';
 import CombatStartEvent from './events/combat-start-event.js';
@@ -1804,5 +1805,142 @@ describe('crowd control does not survive a dungeon-clear revive', () => {
         expect(victim.isStunned).toBe(false);
         expect(victim.combatBuffs['/buff_uniques/curse']).toBeDefined();
         expect(victim.combatDetails.combatStats.damageTaken).toBeCloseTo(0.25, 10);
+    });
+});
+
+/**
+ * `isOutOfMana` is the fork's own bookkeeping for a unit parked waiting on
+ * mana. Three mana-restoration paths read it to decide whether to wake the
+ * unit, and the exhaustion window it opens is what `timeOutOfManaSeconds` and
+ * `manaExhaustionFraction` report to the food optimizer. So it has to mean
+ * exactly one thing, and blindness is not that thing.
+ */
+describe('out-of-mana is a mana state and nothing else', () => {
+    /**
+     * A solo fight standing one second in, with the player's own events swept
+     * so `addNextAttackEvent` is reached rather than short-circuited by the
+     * swing already queued for them.
+     * @returns {{sim: CombatSimulator, player: Object}} The simulator and its player
+     */
+    function soloFight() {
+        installGameData();
+        seedSimRng(11);
+        const zone = new Zone(ZONE_HRID, 0);
+        const player = fixturePlayer();
+        player.zoneBuffs = zone.buffs;
+        player.extraBuffs = [];
+        const sim = new CombatSimulator([player], zone);
+        sim.reset();
+        sim.simulationTime = ONE_SECOND;
+        player.reset(sim.simulationTime);
+        sim.startNewEncounter();
+        sim.eventQueue.clearEventsForUnit(player);
+        return { sim, player };
+    }
+
+    /**
+     * The least an ability has to be for `addNextAttackEvent` to consider it:
+     * it triggers, it costs, and it takes no time to cast.
+     * @param {number} manaCost - What the cast costs
+     * @returns {Object} A stand-in ability
+     */
+    function alwaysTriggers(manaCost) {
+        return {
+            hrid: '/abilities/fixture',
+            manaCost,
+            castDuration: 0,
+            lastUsed: 0,
+            shouldTrigger: () => true,
+        };
+    }
+
+    /**
+     * Events of one type standing for one unit.
+     * @param {CombatSimulator} sim - The simulator to read
+     * @param {string} type - The event type
+     * @param {Object} unit - The unit the events must name
+     * @returns {Object[]} The matching events
+     */
+    function queued(sim, type, unit) {
+        return sim.eventQueue.minHeap.data.filter((event) => event.type === type && event.source === unit);
+    }
+
+    test('blindness does not mark a unit out of mana', () => {
+        // Deliberately NOT asserted here: whether a blinded unit queues a swing
+        // at all. The engine currently queues nothing, that is inherited and
+        // unmeasured (claim 6 in docs/sim-claim-verification.md), and pinning
+        // it would make the eventual correction look like a regression. The
+        // flag is what this change is about and the flag is all this checks.
+        const { sim, player } = soloFight();
+        player.isBlinded = true;
+        player.combatDetails.currentManapoints = player.combatDetails.maxManapoints;
+
+        sim.addNextAttackEvent(player);
+
+        expect(player.isOutOfMana).toBe(false);
+    });
+
+    test('blindness does not mark a unit out of mana when its ability was also unaffordable', () => {
+        // The two states at once, which is where the old code was worst: a
+        // blinded unit that also could not afford its ability. Giving it mana
+        // to spare instead would not test this at all — the cast would succeed
+        // and return before the blind branch is ever reached.
+        const { sim, player } = soloFight();
+        player.abilities = [alwaysTriggers(10)];
+        player.combatDetails.currentManapoints = 4;
+        player.isBlinded = true;
+
+        sim.addNextAttackEvent(player);
+
+        // The unit flag stays down. What the ability actually cost this unit is
+        // `simResult`'s business, and `canUseAbility` records that honestly on
+        // its own — the flag is the wake gate, not the ledger.
+        expect(player.isOutOfMana).toBe(false);
+    });
+
+    test('a unit that cannot afford its triggered ability still swings', () => {
+        // Measured on the live game, and the reason this is a test rather than
+        // a detail: a character whose cheapest ability costs 10 mana was driven
+        // down to exhaustion and its `atkCounter` kept rising at 34, 24, 14 and
+        // 4 mana — below every ability it owned — with an unbroken cadence. A
+        // unit idling for mana would have produced no attacks there. Anyone
+        // making the unaffordable case pause instead breaks this.
+        const { sim, player } = soloFight();
+        player.abilities = [alwaysTriggers(10)];
+        player.combatDetails.currentManapoints = 4;
+
+        sim.addNextAttackEvent(player);
+
+        expect(queued(sim, AutoAttackEvent.type, player).length).toBe(1);
+        expect(queued(sim, AbilityCastEndEvent.type, player)).toEqual([]);
+    });
+
+    test('an affordable cast clears a stale out-of-mana flag', () => {
+        const { sim, player } = soloFight();
+        player.abilities = [alwaysTriggers(10)];
+        player.combatDetails.currentManapoints = 500;
+        player.isOutOfMana = true;
+
+        sim.addNextAttackEvent(player);
+
+        expect(queued(sim, AbilityCastEndEvent.type, player).length).toBe(1);
+        expect(player.isOutOfMana).toBe(false);
+    });
+
+    test('the fallback swing does not clear the flag, because it is the starved case', () => {
+        // The commonest way to reach the auto attack with the flag already up
+        // is that the ability was unaffordable — which is precisely what the
+        // flag means. Clearing it here would suppress the wake that mana
+        // restoration owes this unit, so the flag is lowered only by the one
+        // event that proves the unit is no longer blocked: an affordable cast.
+        const { sim, player } = soloFight();
+        player.abilities = [alwaysTriggers(10)];
+        player.combatDetails.currentManapoints = 4;
+        player.isOutOfMana = true;
+
+        sim.addNextAttackEvent(player);
+
+        expect(queued(sim, AutoAttackEvent.type, player).length).toBe(1);
+        expect(player.isOutOfMana).toBe(true);
     });
 });

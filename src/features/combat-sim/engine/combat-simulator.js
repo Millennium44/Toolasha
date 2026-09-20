@@ -1322,15 +1322,30 @@ class CombatSimulator {
             return;
         }
 
-        if (!source.isBlinded) {
-            const autoAttackEvent = new AutoAttackEvent(
-                this.simulationTime + source.combatDetails.combatStats.attackInterval,
-                source
-            );
-            this.eventQueue.addEvent(autoAttackEvent);
-        } else {
-            source.isOutOfMana = true;
+        if (source.isBlinded) {
+            // Blind is not a mana state. It has its own flag and its own
+            // expiration event, so it must not raise `isOutOfMana` — that flag
+            // gates the mana-restoration wakes and feeds the reported
+            // exhaustion time, and raising it here made a merely blinded unit
+            // read as mana-starved.
+            //
+            // OPEN QUESTION, do not read this branch as confirmed: scheduling
+            // nothing for a blinded unit is inherited and unmeasured. Nobody
+            // has checked whether the game stops a blinded unit's swings or
+            // lets them continue and miss. See claim 6 in
+            // docs/sim-claim-verification.md.
+            return;
         }
+
+        // Measured on the live game, not an accidental fallback: a unit whose
+        // highest-priority triggered ability is unaffordable still auto attacks.
+        // A character whose cheapest ability costs 10 mana kept swinging at 34,
+        // 24, 14 and 4 mana, cadence unbroken. Do not make this pause instead.
+        const autoAttackEvent = new AutoAttackEvent(
+            this.simulationTime + source.combatDetails.combatStats.attackInterval,
+            source
+        );
+        this.eventQueue.addEvent(autoAttackEvent);
     }
 
     processConsumableTickEvent(event) {

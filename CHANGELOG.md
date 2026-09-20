@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Combat Sim: a blinded fighter no longer reads as out of mana
+
+- Blindness set the same flag the simulator uses for a fighter waiting on mana, so a blinded run reported mana exhaustion it never had and the food optimizer planned around it. Blind and mana are now separate, and a fighter whose ability is too expensive still auto attacks, as the game does.
+
 ### Combat Sim: one piercing monster swing no longer hits the same player twice
 
 - A monster's piercing auto attack rerolled threat across the whole surviving party after every hit, so a tank who survived the first hit could be picked again by the same swing while a teammate was skipped. Each hit in a swing now lands on a different target.

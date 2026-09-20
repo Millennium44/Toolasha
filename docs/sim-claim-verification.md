@@ -172,3 +172,34 @@ with the setting on.
 
 **Enrage ramp, 60 s — instrumented, not yet sampled.** One observation a minute at best, off a monster's
 enrage entry restating a larger boost in its `combatBuffMap`.
+
+## 6. A blinded unit stops attacking entirely
+
+Where: the blind branch at the tail of `addNextAttackEvent`,
+`src/features/combat-sim/engine/combat-simulator.js`. A blinded unit falls out of the function with no
+`AutoAttackEvent` queued, so it swings again only when `processBlindExpirationEvent` lifts the flag.
+
+**Status: unverified.** This arrived with the engine and has never been checked against the game. The two
+candidate behaviors are "a blinded unit does not swing" and "a blinded unit swings and misses", and they
+differ by the whole of that unit's damage for the blind's duration — a much larger error than any
+bookkeeping around it. Reading the branch again does not settle it, and nothing in the fork should quote
+it as settled.
+
+What was fixed here is a separate and smaller thing: the branch used to also set `isOutOfMana`, which is
+the fork's own bookkeeping for a unit parked waiting on mana. That flag gates the three
+mana-restoration wakes and feeds `timeOutOfManaSeconds` / `manaExhaustionFraction`, which the food
+optimizer reads, so a merely blinded unit reported as mana-starved. Blindness no longer touches it. That
+correction stands whichever way the attack question resolves, and the tests assert only the flag — never
+that the blinded unit queues nothing.
+
+Measurable from the live stream: plausibly, and it is the only blind in the game to measure.
+
+- Source: Nature's Veil, 0.5 chance, 5 s, carried by Dryad, Enchanted Bishop, Jackalope, Luna Empress,
+  Squawker, Trial Hedgehog and Zombie.
+- Fields: the victim's `atkCounter` across the blind window. The payload carries no blind flag (see the
+  limits under claim 1), so the window has to be pinned from the caster's side — the tick the ability
+  lands — rather than read off the victim.
+- Discriminator: `atkCounter` rising during the window means the game keeps swinging and the engine
+  understates blinded damage. A flat counter for the full 5 s, on a unit whose attack interval is
+  comfortably shorter than that, means the engine is right.
+- Falsifier for the engine's current behavior: any `atkCounter` move inside a confirmed window.
