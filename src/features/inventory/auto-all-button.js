@@ -11,7 +11,7 @@ class AutoAllButton {
     constructor() {
         this.processedContainers = new WeakSet();
         this.itemNameToHridCache = null;
-        this.pendingTimers = new Set();
+        this.pendingTimers = new Map();
     }
 
     /**
@@ -24,9 +24,10 @@ class AutoAllButton {
 
         // Subscribe to tooltip appearances
         tooltipObserver.subscribe('auto-all-button', (element, eventType) => {
-            // Only process when tooltip opens
             if (eventType === 'opened') {
                 this.handleContainer(element);
+            } else if (eventType === 'closed') {
+                this.releaseContainer(element);
             }
         });
     }
@@ -46,14 +47,29 @@ class AutoAllButton {
 
         // Small delay to let content fully render
         const timer = setTimeout(() => {
-            this.pendingTimers.delete(timer);
+            this.pendingTimers.delete(container);
+            // The removal observer can report closure after this timer runs.
+            if (!container.isConnected) {
+                this.processedContainers.delete(container);
+                return;
+            }
             try {
                 this.processContainer(container);
             } catch (error) {
                 console.error('[AutoAllButton] Error processing container:', error);
             }
         }, 50);
-        this.pendingTimers.add(timer);
+        this.pendingTimers.set(container, timer);
+    }
+
+    /**
+     * Cancel work for a closed menu and allow the same node to open again.
+     * @param {Element} container - Closed tooltip/popper element
+     */
+    releaseContainer(container) {
+        clearTimeout(this.pendingTimers.get(container));
+        this.pendingTimers.delete(container);
+        this.processedContainers.delete(container);
     }
 
     /**
@@ -151,7 +167,7 @@ class AutoAllButton {
      */
     disable() {
         tooltipObserver.unsubscribe('auto-all-button');
-        for (const timer of this.pendingTimers) {
+        for (const timer of this.pendingTimers.values()) {
             clearTimeout(timer);
         }
         this.pendingTimers.clear();

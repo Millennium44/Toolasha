@@ -45,6 +45,7 @@ function openableContainer() {
     const all = document.createElement('button');
     all.textContent = 'All';
     container.append(name, all);
+    document.body.appendChild(container);
     return { container, all };
 }
 
@@ -56,6 +57,7 @@ beforeEach(() => {
 
 afterEach(() => {
     autoAllButton.cleanup();
+    document.body.replaceChildren();
     vi.useRealTimers();
 });
 
@@ -79,5 +81,74 @@ describe('delayed All-button click', () => {
         vi.advanceTimersByTime(50);
 
         expect(click).not.toHaveBeenCalled();
+    });
+
+    test('does not click a menu that closes before the render delay expires', () => {
+        const { container, all } = openableContainer();
+        const click = vi.spyOn(all, 'click');
+
+        state.callback(container, 'opened');
+        state.callback(container, 'closed');
+        vi.advanceTimersByTime(50);
+
+        expect(click).not.toHaveBeenCalled();
+    });
+
+    test('does not click a detached menu before its closed event is delivered', () => {
+        const { container, all } = openableContainer();
+        const click = vi.spyOn(all, 'click');
+
+        state.callback(container, 'opened');
+        container.remove();
+        vi.advanceTimersByTime(50);
+
+        expect(click).not.toHaveBeenCalled();
+    });
+
+    test('clicks once per opening when the game reuses a menu node', () => {
+        const { container, all } = openableContainer();
+        const click = vi.spyOn(all, 'click');
+
+        state.callback(container, 'opened');
+        state.callback(container, 'opened');
+        vi.advanceTimersByTime(50);
+        expect(click).toHaveBeenCalledOnce();
+
+        state.callback(container, 'closed');
+        state.callback(container, 'opened');
+        state.callback(container, 'opened');
+        vi.advanceTimersByTime(50);
+
+        expect(click).toHaveBeenCalledTimes(2);
+    });
+
+    test('a reopened menu gets its own full render delay', () => {
+        const { container, all } = openableContainer();
+        const click = vi.spyOn(all, 'click');
+
+        state.callback(container, 'opened');
+        vi.advanceTimersByTime(25);
+        state.callback(container, 'closed');
+        state.callback(container, 'opened');
+        vi.advanceTimersByTime(25);
+        expect(click).not.toHaveBeenCalled();
+
+        vi.advanceTimersByTime(25);
+        expect(click).toHaveBeenCalledOnce();
+    });
+
+    test('closing one menu leaves another menu pending', () => {
+        const first = openableContainer();
+        const second = openableContainer();
+        const firstClick = vi.spyOn(first.all, 'click');
+        const secondClick = vi.spyOn(second.all, 'click');
+
+        state.callback(first.container, 'opened');
+        state.callback(second.container, 'opened');
+        state.callback(first.container, 'closed');
+        vi.advanceTimersByTime(50);
+
+        expect(firstClick).not.toHaveBeenCalled();
+        expect(secondClick).toHaveBeenCalledOnce();
     });
 });
