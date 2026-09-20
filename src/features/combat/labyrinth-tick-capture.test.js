@@ -23,6 +23,7 @@ vi.mock('../../core/websocket.js', () => ({
 }));
 
 import capture from './labyrinth-tick-capture.js';
+import dataManager from '../../core/data-manager.js';
 
 function emit(type, payload) {
     for (const fn of bus.get(type) || []) fn(payload);
@@ -47,6 +48,47 @@ beforeEach(() => {
 });
 
 describe('labyrinth tick capture', () => {
+    test('room swaps retain ordered equipment evidence and detached fight-opening client builds', () => {
+        const item = { itemHrid: '/items/sword', enhancementLevel: 3, id: 123 };
+        const gear = vi.spyOn(dataManager, 'getEquipment').mockReturnValue(new Map([['main_hand', item]]));
+        const ability = { abilityHrid: '/abilities/smash', level: 4, slotNumber: 1, characterId: 456 };
+        const kit = vi.spyOn(dataManager, 'getEquippedAbilities').mockReturnValue([ability]);
+        try {
+            capture.startCapture(null, { stopOnLeave: false });
+            item.itemHrid = '/items/staff';
+            emit('items_updated', {
+                endCharacterItems: [
+                    { ...item, itemLocationHrid: '/item_locations/main_hand', count: 1 },
+                    { id: 789, itemHrid: '/items/coin', itemLocationHrid: '/item_locations/inventory', count: 999 },
+                ],
+            });
+            ability.abilityHrid = '/abilities/fireball';
+            emit('abilities_updated', { characterId: 456 });
+            emit('new_battle', { monsters: [{ hrid: '/monsters/fly' }] });
+            item.itemHrid = '/items/sword';
+            ability.level = 99;
+            const file = capture.captureFile();
+            expect(file.initialClientBuild.equipment[0].itemHrid).toBe('/items/sword');
+            expect(file.ticks.map((tick) => tick.type)).toEqual(['items_updated', 'abilities_updated', 'new_battle']);
+            expect(file.ticks[2].clientBuild.equipment[0].itemHrid).toBe('/items/staff');
+            expect(file.ticks[2].clientBuild.abilities[0]).toEqual({
+                abilityHrid: '/abilities/fireball',
+                level: 4,
+                slotNumber: 1,
+            });
+            expect(file.ticks[0].payload.equipment).toHaveLength(1);
+            expect(JSON.stringify(file)).not.toContain('characterId');
+            expect(JSON.stringify(file)).not.toContain('"id":');
+            capture.stopCapture();
+            emit('items_updated', { endCharacterItems: [{ ...item, count: 1 }] });
+            emit('abilities_updated', {});
+            expect(capture.captureFile().ticks).toHaveLength(3);
+        } finally {
+            gear.mockRestore();
+            kit.mockRestore();
+        }
+    });
+
     test('a disarmed capture hears nothing', () => {
         emit('battle_updated', battle);
         expect(capture.captureStatus().ticks).toBe(0);
