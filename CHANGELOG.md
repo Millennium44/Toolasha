@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Lab Sim: its runs get the same guards as the combat simulator's
+
+- Labyrinth Single Sim, Upgrade Analysis and Skilling Analysis can no longer preempt one another or start twice from a quick double click, and a character switch or a closed panel abandons a start still waiting on profiles instead of resuming into a rebuilt panel.
+
 ### Combat Sim: a fast second click no longer starts a duplicate run
 
 - Single Sim, All Zones and Seek now latch before their profile load, so two quick clicks cannot put two runs on the workers. A character switch or a closed panel abandons a start still waiting on profiles, and a failed profile load reports an error instead of leaving the button stuck.
