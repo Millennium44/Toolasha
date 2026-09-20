@@ -40,6 +40,9 @@ class CharacterActivityCollector {
         this.recomputeHandler = () => this.recomputeAndPersist(generation);
         dataManager.on('actions_updated', this.recomputeHandler);
         dataManager.on('character_info_updated', this.recomputeHandler);
+        // Same-character reconnects replace the queue without restarting the feature or
+        // emitting actions_updated. Read the refreshed live data once initialization finishes.
+        dataManager.on('character_initialized', this.recomputeHandler);
 
         // Registered once and never removed, for the same reason queue-snapshot does it: the
         // feature registry disables every feature *during* character_switching, so a listener
@@ -91,6 +94,7 @@ class CharacterActivityCollector {
     async recomputeAndPersist(generation, immediate = false) {
         if (generation !== this.lifecycleGeneration) return;
         if (!this.characterId) return;
+        if (this.characterId !== dataManager.getCurrentCharacterId()) return;
 
         try {
             await saveCharacterActivity(
@@ -149,6 +153,7 @@ class CharacterActivityCollector {
         if (this.recomputeHandler) {
             dataManager.off('actions_updated', this.recomputeHandler);
             dataManager.off('character_info_updated', this.recomputeHandler);
+            dataManager.off('character_initialized', this.recomputeHandler);
             this.recomputeHandler = null;
         }
         // The character_switching listener stays registered on purpose — see initialize().
