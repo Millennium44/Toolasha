@@ -86,6 +86,17 @@ All rows below remain unverified in this audit. A local regression test does not
 | A10 — damage measurement   | Tick-summed HP drops and observed healing approximate gross damage well enough for accuracy comparisons. Damage and healing within one update can conceal each other.                                                               | Compare raw hit/counter evidence with HP deltas and reconciliation fields, with and without healing/reflect. The current 3% damage-taken adjustment and 2% simulation noise floor are analysis assumptions, not game laws.                                                            |
 | A11 — room-level pooling   | A 10-level room bucket simulated at its median is sufficiently comparable to its constituent fights.                                                                                                                                | Compare exact-level groups before pooling, especially near clear/death/timeout thresholds. Five fights is an application minimum, not proof of adequate statistical power.                                                                                                            |
 
+Additional analysis assumptions:
+
+- **A12 — uncertainty estimates:** consecutive fights are sufficiently comparable and independent
+  for the panel's per-fight variance estimate and square-root sample-size projection. Check
+  cooldown/HP/MP carryover, changing buffs and correlation between adjacent fight durations.
+  The displayed ±5% is the panel's estimate, not a guarantee of total model error below 5%.
+- **A13 — dungeon rewards:** current main applies the party level-gap multiplier to dungeon reward
+  chests as well as monster drops. Its magnitude is explicitly unverified in
+  `dungeon-chest-luck.js`. Compare level-gapped and ungapped controlled dungeon completions,
+  including completions that pay no chest; a loot increase alone cannot count zero-payout runs.
+
 ## Code audit notes
 
 - `labyrinth-room-logs.js` opens captures synchronously from `new_battle` and passes the detached
@@ -151,3 +162,17 @@ hashes while retaining the item HRID, count, enhancement level and availability 
 The longer sample should retain the same build and zone. Recheck its measured uncertainty rather
 than treating a fixed fight count as sufficient, and keep its results separate from this first
 smoke test. Export the whole session and verify `ticksComplete` again.
+
+## Recorder follow-up PRs
+
+- [PR #143](https://github.com/Millennium44/Toolasha/pull/143) removes character IDs from sanitized
+  consumable hashes. One focused regression reproduced the live export defect.
+- [PR #144](https://github.com/Millennium44/Toolasha/pull/144) freezes recording duration at Stop.
+  The first export reports 139.797 seconds, although its last tick is at 109.812 seconds and the
+  completion observation was saved about 110.097 seconds after start. A focused regression shows
+  that a stopped 10-second recording previously became a 70-second recording when exported one
+  minute later. Completed-fight timing is separate and is not changed by this fix.
+- Both fixes passed their focused suites, full pre-commit test runs and development builds.
+  Their production builds hit current main's duplicated `dungeon-chest-luck.js` module in combat
+  and sim. Neither fix changes imports or bundle configuration. The blocker is recorded in each
+  PR and must be resolved before release. No merges were performed.
