@@ -112,6 +112,7 @@
  */
 
 import config from '../../core/config.js';
+import dataManager from '../../core/data-manager.js';
 import webSocketHook from '../../core/websocket.js';
 import { describeMonsterPanel } from '../../utils/battle-panel-monsters.js';
 import { webSocketHook as sharedWebSocketHook } from '../../utils/bundle-bridge.js';
@@ -170,6 +171,9 @@ let recordingStoppedAt = null;
 let recordingId = null;
 let onNewBattle = null;
 let onBattleUpdated = null;
+let onCharacterInit = null;
+let onSocketClose = null;
+let stoppedReason = null;
 let lostFight = false;
 let sawNewBattle = false;
 let panelSnapshots = 0;
@@ -496,24 +500,12 @@ export function recordingStatus() {
         targetMet,
         // Null unless a band was asked for, since nothing measures it otherwise
         marginPct,
+        stoppedReason,
     };
 }
 
-/**
- * Start keeping the combat feed.
- *
- * Anything previously captured is dropped: a recording is one sitting, and
- * appending a second run to the first would produce a file that replays as a
- * fight that never happened.
- */
-export function startRecording({ seconds = 0, thenDownload = false, target: wanted } = {}) {
-    stopRecording();
-
-    // Undefined leaves whatever was set standing: the target is a preference the
-    // panels persist, not a property of one sitting, so a recording started from
-    // the button inherits it without every caller having to pass it along
-    if (wanted !== undefined) setRecordTarget(wanted);
-
+/** Clear a discarded session, leaving the user's recording target preference intact. */
+function clearSession() {
     ticks = [];
     segments = [];
     lostFight = false;
@@ -524,6 +516,29 @@ export function startRecording({ seconds = 0, thenDownload = false, target: want
     segmentFights = 0;
     targetMet = false;
     marginPct = null;
+    startedAt = 0;
+    recordingStartedAt = 0;
+    recordingStoppedAt = null;
+    stoppedReason = null;
+    loadout = null;
+}
+
+/**
+ * Start keeping the combat feed.
+ *
+ * Anything previously captured is dropped: a recording is one sitting, and
+ * appending a second run to the first would produce a file that replays as a
+ * fight that never happened.
+ */
+export function startRecording({ seconds = 0, thenDownload = false, target: wanted } = {}) {
+    stopRecording('new_recording');
+
+    // Undefined leaves whatever was set standing: the target is a preference the
+    // panels persist, not a property of one sitting, so a recording started from
+    // the button inherits it without every caller having to pass it along
+    if (wanted !== undefined) setRecordTarget(wanted);
+
+    clearSession();
     startedAt = Date.now();
     recordingStartedAt = startedAt;
     recordingStoppedAt = null;
@@ -534,15 +549,35 @@ export function startRecording({ seconds = 0, thenDownload = false, target: want
     // `capture` is what notes the wave as known, because it is also what counts
     // the fight the message closes, and the two have to agree about which
     // `new_battle` was the first one
-    onNewBattle = (data) => capture('new_battle', data);
-    onBattleUpdated = (data) => capture('battle_updated', { pMap: data?.pMap, mMap: data?.mMap });
+    onNewBattle = (data, context) => {
+        if (dataManager.isFromActiveSocket?.(context) === false) return;
+        capture('new_battle', data);
+    };
+    onBattleUpdated = (data, context) => {
+        if (dataManager.isFromActiveSocket?.(context) === false) return;
+        capture('battle_updated', { pMap: data?.pMap, mMap: data?.mMap });
+    };
+    // Stop synchronously, before the queued character teardown can let the new
+    // connection's first battle close a fight from the departing session.
+    onCharacterInit = (data, context) => {
+        if (dataManager.isFromActiveSocket?.(context) === false || !data?.character?.id) return;
+        stopRecording('character_initialized');
+    };
+    // A reconnect cannot fill the gap in the feed. Keep completed fights and
+    // the raw prefix; replay will discard the unclosed final fight as usual.
+    onSocketClose = (_event, socket) => {
+        if (dataManager.isFromActiveSocket?.({ socket }) === false) return;
+        stopRecording('socket_closed');
+    };
 
     hook().on('new_battle', onNewBattle);
     hook().on('battle_updated', onBattleUpdated);
+    hook().on('init_character_data', onCharacterInit);
+    hook().onSocketEvent('close', onSocketClose);
 
     if (seconds > 0) {
         stopTimer = setTimeout(() => {
-            stopRecording();
+            stopRecording('timer_elapsed');
             // Unattended by definition: nobody is watching a recording that
             // started itself, so it has to hand over the file on its own — and
             // then put the switch back, so the next load is an ordinary one
@@ -644,7 +679,7 @@ function capture(type, payload) {
     // would lose the fight the last minute was spent on.
     if (closesFight && targetReached()) {
         targetMet = true;
-        stopRecording();
+        stopRecording('target_reached');
         return;
     }
 
@@ -675,14 +710,21 @@ function capture(type, payload) {
     notify(checkpointListeners, recordingFile());
 }
 
-/** Stop keeping it. What has been captured stays captured. */
-export function stopRecording() {
+/**
+ * Stop keeping it. What has been captured stays captured.
+ * @param {string} [reason='manual'] - Why this capture stopped, retained in the session export
+ */
+export function stopRecording(reason = 'manual') {
     clearTimeout(stopTimer);
     stopTimer = null;
     if (onNewBattle) hook().off('new_battle', onNewBattle);
     if (onBattleUpdated) hook().off('battle_updated', onBattleUpdated);
+    if (onCharacterInit) hook().off('init_character_data', onCharacterInit);
+    if (onSocketClose) hook().offSocketEvent('close', onSocketClose);
     onNewBattle = null;
     onBattleUpdated = null;
+    onCharacterInit = null;
+    onSocketClose = null;
 
     // Only a recording that was running and caught something has finished; a
     // second `stopRecording` on an idle module has not ended anything, and
@@ -691,7 +733,10 @@ export function stopRecording() {
     const finished = recording && ticks.length > 0;
     // Exports may happen long after stopping. Their duration describes capture,
     // while exportedAt describes the later download. Repeated stops keep the first time.
-    if (wasRecording) recordingStoppedAt = Date.now();
+    if (wasRecording) {
+        recordingStoppedAt = Date.now();
+        stoppedReason = reason;
+    }
     recording = false;
     if (finished) notify(completionListeners, recordingFile());
 
@@ -756,6 +801,7 @@ export function sessionFile() {
         seconds: recordingStartedAt ? ((recordingStoppedAt ?? Date.now()) - recordingStartedAt) / 1000 : 0,
         fights: completedFights,
         live: recording,
+        stoppedReason,
         truncated: all.some((entry) => entry.truncated),
         // Said once at the top as well as per segment, since "is this the whole
         // thing" is the first question anybody opening the file has
@@ -828,9 +874,8 @@ export default {
         console.log(`[CombatRecorder] Auto-recording the first ${seconds}s of this session`);
     },
     cleanup: () => {
-        stopRecording();
-        ticks = [];
-        segments = [];
+        stopRecording('feature_cleanup');
+        clearSession();
     },
     isRecording,
     recordingStatus,
