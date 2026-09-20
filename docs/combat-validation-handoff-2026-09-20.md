@@ -203,6 +203,10 @@ test. Do not mark a mechanic confirmed from a simulator-only test or a bundled a
 - Combined combat integration `bbcf1f6b` on main `9db5a9db`, including #142 and #146–#155,
   passed 4,860 tests across 144 files, ESLint, bundle-sharing and both builds. Final integration
   `016417f9` adds only PR #155's test-comment clarification. This combined build was not deployed.
+- Integration `05685b2c` adds PR #162's simulator generation/character-ownership guards. Its five
+  affected UI/recorder/replay/cache suites passed 761 tests, and both builds/bundle-sharing passed.
+  The independent PR reproduced seven stale-completion regressions and passed 537 focused tests
+  plus normal checks. This build also was not deployed.
 
 ## Live recorder evidence
 
@@ -271,6 +275,11 @@ context transitions and refuses mixed-build verdicts. #155 excludes fights split
 hard cap from recording targets. Their changes apply together cleanly and passed the combined
 check above. Source regressions demonstrate these fixes; their live boundary/performance checks
 remain in the post-reset plan.
+
+[PR #162](https://github.com/Millennium44/Toolasha/pull/162) prevents superseded Combat Sim, Seek,
+All Zones and Lab Sim completions from overwriting a newer panel or saving a departed character's
+comparison. Its generation/ownership regressions establish application lifecycle behavior, not
+combat mechanics. Stop/restart and character-switch UI checks remain for after reset.
 
 - [PR #143](https://github.com/Millennium44/Toolasha/pull/143) removes character IDs from sanitized
   consumable hashes. One focused regression reproduced the live export defect.
