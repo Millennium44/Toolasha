@@ -93,6 +93,10 @@ Run separate stable-build, current-engine sessions. For Zombie, the earlier pane
 to the measured band and preserve all segments. Use several independent runs and more than one
 zone/monster before making broad parity claims. Inspect autocorrelation, spawn mix and transient
 buff uptime; do not assume the confidence formula's independence/stationarity assumptions hold.
+For A16, compare the normal recorder's saved loadout fields with the actual replay DTO before
+running a verdict. Test a known community-buff/pass/eligible-scroll change separately and record
+which inputs came from the recording versus current state. A current-state difference must be
+explained as an input mismatch before it is attributed to engine mechanics.
 
 Compare exact-level labyrinth cohorts with the current ten-level/median grouping, especially near
 death and timeout thresholds. Report differences and uncertainty, including the simulator's own

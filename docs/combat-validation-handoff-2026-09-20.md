@@ -155,6 +155,12 @@ Additional analysis assumptions:
   targets and remaining counts do not affect its effective build. Whether the live game applies
   task bonuses in labyrinth still needs a controlled matching-target versus nonmatching-target
   comparison. If that mechanic changes the model, saved input equality must change with it.
+- **A16 — normal replay's current world inputs:** normal-combat loadout snapshots preserve
+  character equipment, combat levels, abilities, consumables and selected house/guild/achievement
+  inputs, while the check rebuilds other inputs from current state. The code assumes world buffs
+  and Moo Pass are sufficiently comparable between recording and replay. Verify buff/pass changes
+  and scroll eligibility explicitly; a preserved weapon alone does not establish identical inputs
+  or justify pooling across a balance/engine change.
 
 ## Code audit notes
 
