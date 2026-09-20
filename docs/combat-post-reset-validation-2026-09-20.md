@@ -25,6 +25,9 @@ wait-without-autoattacking model as though it were established game behavior.
   not establish ±5% precision or broad engine parity. The first five-fight discrepancy did not persist.
 - A 30-minute party session retained all 7,381 ticks across two segments (`ticksComplete: true`).
   Offline replay exposed one omitted opening-counter baseline, fixed in PR #148.
+- Two equal-damage five-fight sessions retained distinct identities and raised the accuracy pool
+  105 → 110 → 115 on PR #147. Both stopped exports retained all raw ticks. Longer sync/reconnect
+  and retention scenarios remain deferred.
 
 ## Planned experiments
 
@@ -104,11 +107,17 @@ its completed counterpart.
 
 During recording, exercise reconnect and character switching. No fight may bridge disconnected
 time or be labeled with another character's loadout. Preserve the stopped reason. Separately test
-zone/loadout changes inside a session; this remains a distinct audit concern from socket guards.
+zone/loadout changes inside a session using PR #154: the original zone/build must remain with
+each segment, raw transition payloads must survive, and incomplete transition fights must not
+enter an accuracy verdict. A known mixture of builds must refuse a pooled verdict. Measure the
+per-payload snapshot overhead during the longer run; source tests cannot establish browser cost.
 
 For retention, collect enough banked segments to exceed the current raw retention limit (inspect
 the code first), export the whole session, and verify expired segments are explicitly marked while
 their summaries remain. Test deterministic limits locally instead of waiting hours when possible.
+PR #155's deterministic hard-cap regression verifies a split fight cannot satisfy a complete-fight
+recording target. `ticksComplete: true` still means all captured ticks remain, not that every fight
+has a complete opening and end; inspect `truncated` and per-fight completeness separately.
 
 ### P6 — Guild trace persistence (30–120 minutes; lifecycle tests first)
 

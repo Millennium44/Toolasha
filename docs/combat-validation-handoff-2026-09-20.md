@@ -41,6 +41,13 @@ All verdicts remained insufficient. Pool: `toolasha-labyrinth-2026-09-20-21-12-1
 comparison: `toolasha-labyrinth-2026-09-20-21-12-19.json`. This checks persistence for these two
 records; it does not settle first-fight capture during a post-refresh automatic swap.
 
+**Equal-damage ingestion:** two subsequent five-fight Zombie sessions on that build each dealt
+exactly 20,625 damage and had distinct recording UUIDs. PR #147 retained both, raising the pool
+105 → 110 → 115. The stopped exports contain 152 and 142 raw ticks, `ticksComplete: true`, and
+`truncated: false`. Artifacts: `toolasha-sim-accuracy-sanitized-2026-09-20-21-16-22.json` and
+`toolasha-sim-accuracy-sanitized-2026-09-20-21-21-04.json`. This verifies recorder ingestion,
+not parity of a pooled sample spanning engine builds; no new parity verdict was run.
+
 ## Handoff to the test-server reviewer
 
 Please validate [PR #142](https://github.com/Millennium44/Toolasha/pull/142), including its follow-up
@@ -187,6 +194,9 @@ test. Do not mark a mechanic confirmed from a simulator-only test or a bundled a
   tests across 37 relevant suites and the production build. This checkout did not merge any PR.
 - Later integration `60178ba5` on main `9db5a9db` passed 1,372 tests across 28 relevant files,
   development/production builds and bundle-sharing checks before the short refresh/ingest checks.
+- Combined combat integration `bbcf1f6b` on main `9db5a9db`, including #142 and #146–#155,
+  passed 4,860 tests across 144 files, ESLint, bundle-sharing and both builds. Final integration
+  `016417f9` adds only PR #155's test-comment clarification. This combined build was not deployed.
 
 ## Live recorder evidence
 
@@ -249,6 +259,12 @@ PRs #143–#145 are now closed with their fixes on main. The build failure descr
 historical and resolved. Newer recorder work is under review in PRs #146–#153; none was merged
 by this agent. PR #152 now stacks on #147 and resets its recording ID during cleanup; PR #153
 stacks on #151 and preserves character ownership during slow restores.
+
+PR #154 and #155 both stack on #152. #154 saves recorded zone/build context, cuts detected
+context transitions and refuses mixed-build verdicts. #155 excludes fights split by a raw-buffer
+hard cap from recording targets. Their changes apply together cleanly and passed the combined
+check above. Source regressions demonstrate these fixes; their live boundary/performance checks
+remain in the post-reset plan.
 
 - [PR #143](https://github.com/Millennium44/Toolasha/pull/143) removes character IDs from sanitized
   consumable hashes. One focused regression reproduced the live export defect.
