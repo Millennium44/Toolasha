@@ -14,6 +14,8 @@ docs/*
 !docs/GREASYFORK.md
 # Exception: a design the maintainer approves section by section belongs in review, not in a scratch file
 !docs/overlay-rework-design.md
+# Exception: a record of what each claim's verification rests on only works if it outlives the session
+!docs/sim-claim-verification.md
 
 # Agent worktrees and session files
 .claude/

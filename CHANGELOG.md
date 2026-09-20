@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Written verification status for four inherited simulator claims
+
+- `docs/sim-claim-verification.md` records, for each of the four engine behaviors that were once scored correct by code reading alone, what its verification actually rests on and exactly how the live stream could decide it — including one, the dungeon-clear revival, where a second reading disputes the original score.
+
 ### Tick Period: measure how often the repeating combat effects actually fire
 
 - A new off-by-default combat diagnostic times the interval between successive regeneration, food and drink recovery, damage-over-time and enrage ticks on the same unit, reporting each against the constant the simulator inherited and saying outright when an effect cannot be told apart from an ordinary hit or heal — replayed over the recorded fights, regeneration comes out at 10.000 s, which is what the engine assumed.
