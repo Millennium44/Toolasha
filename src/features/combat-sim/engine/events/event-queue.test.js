@@ -77,13 +77,7 @@ describe('EventQueue ordering', () => {
             queue.addEvent(event);
         }
 
-        expect(events.map(() => queue.getNextEvent().type)).toEqual([
-            'first',
-            'second',
-            'third',
-            'fourth',
-            'fifth',
-        ]);
+        expect(events.map(() => queue.getNextEvent().type)).toEqual(['first', 'second', 'third', 'fourth', 'fifth']);
     });
 
     test('keeps stable equal-time ordering after an earlier event is removed', () => {
