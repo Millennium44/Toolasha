@@ -185,6 +185,11 @@ class EnhancementTracker {
         return this.sessions[this.currentSessionId] || null;
     }
 
+    /** Whether an asynchronous continuation still belongs to this session list. */
+    _ownsSessions(sessions, owner) {
+        return this.sessions === sessions && dataManager.getCurrentCharacterId() === owner;
+    }
+
     /**
      * Finalize current session (mark as completed)
      * @returns {Promise<void>}
@@ -195,12 +200,21 @@ class EnhancementTracker {
             return;
         }
 
+        const sessions = this.sessions;
+        const owner = dataManager.getCurrentCharacterId();
         finalizeSession(session);
-        await saveSessions(this.sessions);
+        await saveSessions(sessions);
 
-        // Clear current session
-        this.currentSessionId = null;
-        await saveCurrentSessionId(null);
+        // A new session (or an extension of this one) may have started while
+        // saving. Only clear the finished session that this call captured.
+        if (
+            this._ownsSessions(sessions, owner) &&
+            this.getCurrentSession() === session &&
+            session.state === SessionState.COMPLETED
+        ) {
+            this.currentSessionId = null;
+            await saveCurrentSessionId(null);
+        }
     }
 
     /**
@@ -216,20 +230,28 @@ class EnhancementTracker {
             return;
         }
 
+        const sessions = this.sessions;
+        const owner = dataManager.getCurrentCharacterId();
         recordSuccess(session, previousLevel, newLevel, wasBlessed);
-        await saveSessions(this.sessions);
+        // An extension mutates this same object and its prediction. Preserve
+        // the completed leg before yielding so calibration sees that draw.
+        const completed = session.state === SessionState.COMPLETED ? structuredClone(session) : null;
+        await saveSessions(sessions);
 
         // Check if target reached
-        if (session.state === SessionState.COMPLETED) {
-            this.currentSessionId = null;
-            await saveCurrentSessionId(null);
+        if (completed && this._ownsSessions(sessions, owner)) {
+            if (this.getCurrentSession() === session && session.state === SessionState.COMPLETED) {
+                this.currentSessionId = null;
+                await saveCurrentSessionId(null);
+            }
+            if (!this._ownsSessions(sessions, owner)) return;
 
             // The run just became one finished draw from the distribution its
             // prediction quoted; the recorder declines anything that is not
             // (no distribution stored, target not actually reached). Errors
             // stay its problem — a calibration ledger must never break a run.
             try {
-                await enhancementCalibration.recordCompletion(session);
+                await enhancementCalibration.recordCompletion(completed);
             } catch (error) {
                 console.error('[EnhancementTracker] Recording the calibration observation failed:', error);
             }
