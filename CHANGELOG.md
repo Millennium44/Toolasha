@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Tick Period: measure how often the repeating combat effects actually fire
+
+- A new off-by-default combat diagnostic times the interval between successive regeneration, food and drink recovery, damage-over-time and enrage ticks on the same unit, reporting each against the constant the simulator inherited and saying outright when an effect cannot be told apart from an ordinary hit or heal — replayed over the recorded fights, regeneration comes out at 10.000 s, which is what the engine assumed.
+
 ### Combat Sim: task damage now applies to the monster that actually is your task
 
 - The bonus from task badges and trinkets was a whole-run switch, so a mixed zone was simulated wrong either way — credited against every spawn or against none, including the one that really is your task; it is now decided per monster from your own combat tasks, in a party from each player's own board, and the Task Fight checkbox stays only as an override that forces every fight to count.

@@ -1282,6 +1282,13 @@ function registerFeatures() {
             async: true,
         },
         {
+            key: 'tickPeriodWatch',
+            name: 'Tick Period',
+            category: 'Combat',
+            module: Combat.tickPeriod,
+            async: true,
+        },
+        {
             key: 'combatRecorder_autoStart',
             name: 'Combat Recorder',
             category: 'Combat',

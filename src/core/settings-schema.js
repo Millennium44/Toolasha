@@ -2245,6 +2245,17 @@ export const settingsGroups = {
                 requiresRefresh: true,
                 help: 'Times the last monster of a wave dying to the next wave starting, keeping open-zone respawns, dungeon wave transitions and dungeon run boundaries apart, and calibrating its own timing noise against the interval the server states for each action. The simulator uses one constant for all of these; this is our own measurement of whether it should. The tally survives a reload and builds up over sessions. Feeds the Wave Gap overlay row and the panel behind it',
             },
+            tickPeriodWatch: {
+                id: 'tickPeriodWatch',
+                label: 'Tick Period: Measure how often the repeating combat effects actually fire',
+                type: 'checkbox',
+                default: false,
+                // The hooks are attached in initialize(), which runs at start-up
+                // and on a character switch only, so neither direction of the
+                // switch takes effect until the page is reloaded
+                requiresRefresh: true,
+                help: 'Times the interval between successive regeneration, food and drink recovery, damage-over-time and enrage ticks on the same unit, keeping only the ones the battle stream can tell apart from an ordinary hit or heal, and calibrating its own timing noise against the interval the server states for each action. The simulator advances all four on constants it inherited and nobody here has ever checked. The tally survives a reload and builds up over sessions. Feeds the Tick Period overlay row and the panel behind it',
+            },
             combatScore: {
                 id: 'combatScore',
                 label: 'Profile panel: Show gear score',

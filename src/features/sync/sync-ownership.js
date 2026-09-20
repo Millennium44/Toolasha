@@ -175,6 +175,7 @@ export const OWNED_KEY_PREFIXES = [
     // ours, and device-local, see LOCAL_ONLY_KEY_PREFIXES
     'stunPersistenceTally',
     'waveGapTally',
+    'tickPeriodTally',
     'combatProfitView',
     'combatIncomeNetSalesTax',
     'combatLevelSelection',

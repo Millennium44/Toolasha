@@ -41,6 +41,8 @@ import replayCheck, { dungeonWaveTiming } from '../features/combat/combat-replay
 import stunPersistence from '../features/combat/stun-persistence-observer.js';
 // Registers the Wave Gap overlay row and its panel
 import waveGap from '../features/combat/wave-gap-observer.js';
+// Registers the Tick Period overlay row and its panel
+import tickPeriod from '../features/combat/tick-period-observer.js';
 import {
     waveHridsOf,
     nonDamagingByHrid,
@@ -168,6 +170,7 @@ toolashaRoot.Combat = {
     combatRecordControl,
     stunPersistence,
     waveGap,
+    tickPeriod,
     abilityBookCalculator,
     abilityTooltipTiming,
     manaTracker,

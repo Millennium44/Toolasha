@@ -137,6 +137,9 @@ export const LOCAL_ONLY_KEY_PREFIXES = [
     // arrival times are not this one's, so pulling or summing them would blend
     // two rulers into one figure that belongs to neither
     'waveGapTally',
+    // Periods this machine timed off its own network, on the same reasoning:
+    // another device's arrival times are not this one's
+    'tickPeriodTally',
 ];
 
 /**

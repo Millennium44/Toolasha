@@ -451,6 +451,54 @@ function verdictFor(categories, jitter) {
 }
 
 /**
+ * The ruler, on its own so more than one measurement can be read against it.
+ *
+ * Every player delta carries `int`, the server's own nanosecond delay from that
+ * action to that player's next one. Pair two consecutive actions by the same
+ * player and the residual — arrival delta minus the stated interval — is a
+ * direct sample of the two-timestamp noise any arrival-timed measurement here
+ * carries. It says nothing about respawns or tick periods; it calibrates the
+ * ruler they are all measured with, which is why it lives apart from the wave
+ * gap's own state machine rather than inside it.
+ *
+ * @returns {{residualsFor: Function, reset: Function}} A calibration
+ */
+export function createArrivalCalibration() {
+    /** Last recorded action per player slot */
+    const actions = new Map();
+
+    return {
+        /**
+         * Residuals this tick supplies, if any.
+         * @param {Object} pMap - A tick's `pMap`
+         * @param {number} at - Arrival time
+         * @returns {Array<number>} Residuals in milliseconds
+         */
+        residualsFor(pMap, at) {
+            const out = [];
+            for (const [slot, unit] of Object.entries(pMap || {})) {
+                const interval = Number(unit?.int);
+                const counter = Number(unit?.atkCounter);
+                if (!Number.isFinite(interval) || !Number.isFinite(counter)) continue;
+                const last = actions.get(slot);
+                if (last && counter <= last.counter) continue;
+                // Only a pair of the same player's own consecutive actions says
+                // anything: the server's stated delay runs from one to the next,
+                // and a delta sent for some other reason is not the next one
+                if (last) out.push(at - last.at - last.interval / 1e6);
+                actions.set(slot, { at, counter, interval });
+            }
+            return out;
+        },
+
+        /** Forget the pairing state — a new fight is a new set of schedules. @returns {void} */
+        reset() {
+            actions.clear();
+        },
+    };
+}
+
+/**
  * The live half's state machine, kept here so it can be driven by a synthetic
  * tick sequence in a test rather than by playing the game.
  *
@@ -461,8 +509,7 @@ export function createWaveGapWatch() {
     let previous = null;
     const out = [];
     const discards = [];
-    /** Last recorded action per player slot, for the `int` calibration */
-    const actions = new Map();
+    const calibration = createArrivalCalibration();
 
     /**
      * Close the wave that just ended against the wave that just started.
@@ -510,7 +557,7 @@ export function createWaveGapWatch() {
          */
         newBattle(data, at, context = {}) {
             close(at, context);
-            actions.clear();
+            calibration.reset();
 
             const monsters = data?.monsters;
             const slots = Array.isArray(monsters)
@@ -541,21 +588,9 @@ export function createWaveGapWatch() {
             if (!current) return;
             if (context.hidden === true) current.hidden = true;
 
-            for (const [slot, unit] of Object.entries(data?.pMap || {})) {
-                const interval = Number(unit?.int);
-                const counter = Number(unit?.atkCounter);
-                if (!Number.isFinite(interval) || !Number.isFinite(counter)) continue;
-                const last = actions.get(slot);
-                if (last && counter <= last.counter) continue;
-                // Only a pair of the same player's own consecutive actions says
-                // anything: the server's stated delay runs from one to the next,
-                // and a delta sent for some other reason is not the next one
-                if (last) {
-                    const residual = at - last.at - last.interval / 1e6;
-                    foldPair(out, residual);
-                    current.maxResidual = Math.max(current.maxResidual, Math.abs(residual));
-                }
-                actions.set(slot, { at, counter, interval });
+            for (const residual of calibration.residualsFor(data?.pMap, at)) {
+                foldPair(out, residual);
+                current.maxResidual = Math.max(current.maxResidual, Math.abs(residual));
             }
 
             for (const [slot, unit] of Object.entries(data?.mMap || {})) {
