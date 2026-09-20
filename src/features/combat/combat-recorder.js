@@ -181,6 +181,9 @@ let stopTimer = null;
 let segmentIndex = 0;
 let completedFights = 0;
 let loadout = null;
+let combatZone = null;
+let contextSignature = null;
+let contextChanged = false;
 
 /** Fights closed inside the current segment, so each banked one carries its own count */
 let segmentFights = 0;
@@ -338,14 +341,24 @@ const sessionListeners = new Set();
  * snapshot supplies the means of taking one.
  */
 let loadoutProvider = null;
+let combatZoneProvider = null;
 
 /**
- * Say how to snapshot the loadout at the start of every segment.
+ * Say how to snapshot the loadout. Sampled at start and before each combat
+ * payload so a detected build change cannot silently span one segment.
  *
  * @param {Function|null} provider - Returns the snapshot, or null when it cannot
  */
 export function setLoadoutProvider(provider) {
     loadoutProvider = typeof provider === 'function' ? provider : null;
+}
+
+/**
+ * Say how to identify the zone while combat is being recorded.
+ * @param {Function|null} provider - Returns `{ zoneHrid, difficultyTier }` or null
+ */
+export function setCombatZoneProvider(provider) {
+    combatZoneProvider = typeof provider === 'function' ? provider : null;
 }
 
 /**
@@ -385,11 +398,38 @@ function summarizeSegment(file) {
 function captureLoadout() {
     if (!loadoutProvider) return null;
     try {
-        return loadoutProvider() ?? null;
+        return structuredClone(loadoutProvider() ?? null);
     } catch (error) {
         console.error('[CombatRecorder] Snapshotting the loadout failed:', error);
         return null;
     }
+}
+
+/** @returns {Object} Detached client context for the next combat payload. */
+function captureContext() {
+    const nextLoadout = captureLoadout();
+    let nextZone = null;
+    try {
+        const zone = combatZoneProvider?.();
+        if (zone) nextZone = { zoneHrid: zone.zoneHrid ?? null, difficultyTier: zone.difficultyTier ?? 0 };
+    } catch (error) {
+        console.error('[CombatRecorder] Snapshotting the combat zone failed:', error);
+    }
+    // Sampling times do not change the character. Every other snapshot field
+    // does: a level-up, ability/trigger edit or equipment swap needs a boundary.
+    const { capturedAt: _capturedAt, ...build } = nextLoadout || {};
+    return {
+        loadout: nextLoadout,
+        combatZone: nextZone,
+        signature: JSON.stringify([nextZone, nextLoadout ? build : null]),
+    };
+}
+
+/** @param {Object} next - From captureContext(). */
+function useContext(next) {
+    loadout = next.loadout;
+    combatZone = next.combatZone;
+    contextSignature = next.signature;
 }
 
 /**
@@ -522,6 +562,9 @@ function clearSession() {
     recordingId = null;
     stoppedReason = null;
     loadout = null;
+    combatZone = null;
+    contextSignature = null;
+    contextChanged = false;
 }
 
 /**
@@ -545,7 +588,7 @@ export function startRecording({ seconds = 0, thenDownload = false, target: want
     recordingStoppedAt = null;
     recordingId = crypto.randomUUID();
     recording = true;
-    loadout = captureLoadout();
+    useContext(captureContext());
 
     // `capture` is what notes the wave as known, because it is also what counts
     // the fight the message closes, and the two have to agree about which
@@ -615,7 +658,7 @@ function push(type, payload) {
  * every segment's `at` values begin near zero and a replay of one does not have
  * to know it was the fortieth.
  */
-function rotateSegment() {
+function rotateSegment(nextContext = captureContext()) {
     const file = recordingFile();
 
     bankSegment(file);
@@ -625,7 +668,8 @@ function rotateSegment() {
     segmentFights = 0;
     startedAt = Date.now();
     lostFight = false;
-    loadout = captureLoadout();
+    contextChanged = false;
+    useContext(nextContext);
 
     notify(completionListeners, file);
 }
@@ -661,6 +705,23 @@ function bankSegment(file) {
  */
 function capture(type, payload) {
     if (!recording) return;
+
+    const nextContext = captureContext();
+    if (nextContext.signature !== contextSignature) {
+        if (ticks.length) {
+            // Client updates do not establish the precise server instant of a
+            // swap. Keep every raw payload, but leave the transition fight
+            // unclosed so it cannot be measured under either build or zone.
+            contextChanged = true;
+            lostFight ||= sawNewBattle;
+            rotateSegment(nextContext);
+            sawNewBattle = false;
+            panelSnapshots = 0;
+            notify(checkpointListeners, recordingFile());
+        } else {
+            useContext(nextContext);
+        }
+    }
 
     // A `new_battle` closes the battle before it. The first one closes nothing —
     // whatever was being fought when the recording began has no beginning here
@@ -765,6 +826,8 @@ export function recordingFile() {
         truncated: lostFight,
         segment: segmentIndex,
         loadout,
+        combatZone,
+        contextChanged,
         // A copy, because a checkpoint listener is handed this mid-recording and
         // the buffer it was read from goes on filling up behind it
         ticks: [...ticks],
@@ -825,6 +888,8 @@ function segmentEntry(entry) {
         truncated: Boolean(entry.truncated),
         fights: entry.fights ?? 0,
         loadout: entry.loadout ?? null,
+        combatZone: entry.combatZone ?? null,
+        contextChanged: Boolean(entry.contextChanged),
         tickCount: entry.tickCount ?? entry.ticks?.length ?? 0,
         // The one thing a reader cannot work out for itself: an absent `ticks`
         // is a segment whose payloads aged out, not a segment that caught nothing
@@ -890,6 +955,7 @@ export default {
     onRecordingStopped,
     onSessionStart,
     setLoadoutProvider,
+    setCombatZoneProvider,
     setSegmentSummarizer,
     setNoiseProvider,
     setRecordTarget,

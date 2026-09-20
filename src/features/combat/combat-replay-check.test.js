@@ -961,6 +961,35 @@ describe('the line the tile carries', () => {
 });
 
 describe('the loadout the fight was actually fought in', () => {
+    test('late ingestion uses the recorded zone and tier, including an explicitly unknown zone', () => {
+        game.zone = { zoneHrid: '/actions/combat/bee', difficultyTier: 2 };
+        const file = { ...recording, combatZone: { zoneHrid: '/actions/combat/fly', difficultyTier: 1 } };
+        expect(replayCheck.observationFrom(file)).toMatchObject({
+            zoneHrid: '/actions/combat/fly',
+            difficultyTier: 1,
+        });
+        expect(replayCheck.observationFrom({ ...file, combatZone: null }).zoneHrid).toBe(null);
+        expect(replayCheck.observationFrom(recording).zoneHrid).toBe('/actions/combat/bee');
+    });
+
+    test('mixed recorded builds cannot produce a single-build accuracy verdict', async () => {
+        replayCheck.observations = [
+            evenObservation({ fights: 3, recordedAt: 1_000, loadout: captureLoadoutSnapshot(loadout()) }),
+            evenObservation({
+                fights: 3,
+                recordedAt: 2_000,
+                loadout: captureLoadoutSnapshot(loadout({ weapon: '/items/spear' })),
+            }),
+        ];
+        replayCheck.comparison = { old: true };
+        await replayCheck.check();
+        expect(game.lastRun).toBe(null);
+        expect(replayCheck.comparison).toBe(null);
+        expect(replayCheck.error).toMatch(/more than one loadout/);
+        expect(replayCheck.observations).toHaveLength(2);
+        expect(replayCheck.liveMarginPct(null)).toBe(null);
+    });
+
     test('the snapshot keeps what describes the character', () => {
         const snapshot = captureLoadoutSnapshot(loadout());
 

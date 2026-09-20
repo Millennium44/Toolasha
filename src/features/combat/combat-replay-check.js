@@ -76,8 +76,11 @@
  * then check — and the deviation was the weapon. The panel said so, which is
  * honest and useless: the caveat covered the whole result.
  *
- * So the loadout is captured when the recording starts, and again at every
- * segment rotation, and kept on the observation. What is captured is exactly
+ * So the loadout is captured when the recording starts, checked before each
+ * combat payload, and kept on the observation. A detected build or zone change
+ * starts a fresh segment, leaving the unfinished transition fight out of the
+ * accuracy sample while retaining its raw payloads. This detects client state
+ * changes, not the exact server instant they take effect. What is captured is
  * what the simulator reads: {@link captureLoadoutSnapshot} takes the adapter's
  * player DTO — the same one the check would otherwise have built fresh — and
  * keeps the parts that describe the character rather than the world. The check
@@ -183,6 +186,7 @@ import combatRecorder, {
     onRecordingStopped,
     onSessionStart,
     setLoadoutProvider,
+    setCombatZoneProvider,
     setNoiseProvider,
     setSegmentSummarizer,
 } from './combat-recorder.js';
@@ -777,6 +781,7 @@ export function observeRecording(recording, context = {}) {
         zoneHrid: context.zoneHrid ?? null,
         difficultyTier: context.difficultyTier ?? 0,
         truncated: Boolean(recording?.truncated),
+        contextChanged: Boolean(recording?.contextChanged),
         // What was worn while these fights happened, so the check can simulate
         // that character rather than whoever is logged in when it runs
         loadout: context.loadout ?? recording?.loadout ?? null,
@@ -885,6 +890,7 @@ export function aggregateObservations(observations) {
         difficultyTier: newest.difficultyTier,
         partySize: Math.max(...matching.map((entry) => entry.partySize || 1)),
         truncated: matching.some((entry) => entry.truncated),
+        contextChanged: matching.some((entry) => entry.contextChanged),
         loadout,
         mixedLoadouts: signatures.size > 1,
         recordings: matching.length,
@@ -1842,7 +1848,9 @@ class ReplayCheck {
     observationFrom(file) {
         if (!file?.ticks?.length) return null;
 
-        const zone = getCurrentCombatZone();
+        // An explicit null means the recorder could not identify the zone.
+        // Only legacy files without this field fall back to today's action.
+        const zone = Object.hasOwn(file, 'combatZone') ? file.combatZone : getCurrentCombatZone();
         return observeRecording(file, {
             zoneHrid: zone?.zoneHrid ?? null,
             difficultyTier: zone?.difficultyTier ?? 0,
@@ -2035,6 +2043,7 @@ class ReplayCheck {
     liveMarginPct(file) {
         const live = this.observationFrom(file);
         const observed = aggregateObservations(live ? [...this.observations, live] : this.observations);
+        if (observed?.mixedLoadouts) return null;
         return noiseMargin(observed?.samples?.dps);
     }
 
@@ -2155,6 +2164,15 @@ class ReplayCheck {
         }
         if (!observed.zoneHrid) {
             this.error = 'The recording is not stamped with a zone, so there is nothing to simulate against it.';
+            return null;
+        }
+        if (observed.mixedLoadouts) {
+            this.comparison = null;
+            this.lastSimResult = null;
+            this.uptime = null;
+            this.error =
+                'These recordings contain more than one loadout. Save the recording, then Forget and record one build ' +
+                'before running an accuracy check.';
             return null;
         }
 
@@ -2333,6 +2351,7 @@ const replayCheck = new ReplayCheck();
 // recording can start from the auto-record setting before any panel is drawn,
 // and a segment recorded without a snapshot is one that can never gain one.
 setLoadoutProvider(() => captureLoadoutSnapshot());
+setCombatZoneProvider(() => getCurrentCombatZone());
 
 // The same arrangement for the other two things the recorder cannot do itself:
 // reduce a segment to per-fight numbers for the file it hands over, and say how
@@ -2448,7 +2467,15 @@ function drawProvenance(body, observed) {
     card.appendChild(panelLine('Kills', String(observed.kills)));
     if (observed.deaths) card.appendChild(panelLine('Deaths', String(observed.deaths), ROW_COLORS.bad));
     if (observed.truncated) {
-        card.appendChild(panelLine('Truncated', 'a fight outran the tick limit and was dropped', ROW_COLORS.dim));
+        card.appendChild(
+            panelLine(
+                'Truncated',
+                observed.contextChanged
+                    ? 'an unfinished fight was excluded at a recorded build or zone change'
+                    : 'a fight outran the tick limit and was dropped',
+                ROW_COLORS.dim
+            )
+        );
     }
     // Data quality, not an error: how much of the waves' endpoint HP loss the
     // tick attribution actually credited. The gap folds designed exclusions
@@ -2997,9 +3024,8 @@ function drawCaveats(body, observed) {
         if (observed.mixedLoadouts) {
             body.appendChild(
                 panelNote(
-                    'These recordings were not all made with the same loadout. The newest snapshot is the one ' +
-                        'simulated, so the older fights in this sample are being compared against kit they were ' +
-                        'not fought in.'
+                    'These recordings were not all made with the same loadout. An accuracy check cannot compare ' +
+                        'this mixed sample to one build. Save the recording before using Forget to start a clean sample.'
                 )
             );
         }
