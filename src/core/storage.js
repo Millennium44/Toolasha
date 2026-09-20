@@ -177,6 +177,43 @@ const WRITE_TIMEOUT_MS = 15_000;
  */
 const WRITE_WEDGED = Symbol('storage-write-wedged');
 
+/**
+ * Upper edges of the per-store duration histogram, in milliseconds.
+ *
+ * Powers of four rather than of two: the interesting span is from "a key read,
+ * which is sub-millisecond" to "the watchdog fired", and eight buckets cross it
+ * without making the panel a wall of numbers. Anything slower than the last
+ * edge lands in the overflow bucket, which is the one worth reading.
+ */
+const OP_DURATION_BUCKETS_MS = [1, 4, 16, 64, 256, 1024, 4096, 16_384];
+
+/**
+ * How often the lost-tick heartbeat stamps the clock.
+ *
+ * One second is frequent enough to place a lost window against a timeout to
+ * within a second, and rare enough that the cost is a timestamp subtraction per
+ * second for the life of the page.
+ */
+const HEARTBEAT_INTERVAL_MS = 1000;
+
+/**
+ * How overdue a heartbeat must be before the page is called "not running".
+ *
+ * A timer on a busy main thread is routinely a few tens of milliseconds late,
+ * and recording that as lost time would bury the signal. A quarter of a second
+ * late is not scheduling jitter — it is the page failing to run.
+ */
+const HEARTBEAT_LOST_THRESHOLD_MS = 250;
+
+/** How many timeouts, with their context, are kept for `diagnostics()` */
+const TIMEOUT_EVENTS_KEPT = 20;
+
+/** How many lost-time windows are kept for `diagnostics()` */
+const LOST_WINDOWS_KEPT = 20;
+
+/** How many distinct keys the write-rate census will track before it stops adding */
+const WRITE_RATE_KEYS_TRACKED = 400;
+
 class Storage {
     constructor() {
         this.db = null;
@@ -315,6 +352,57 @@ class Storage {
         this._lastEstimate = null; // Cached navigator.storage.estimate() result
 
         /**
+         * Everything needed to say *why* an operation did not come back.
+         *
+         * The counters this sits beside can say that four stores timed out
+         * within a second of each other; they cannot say whether IndexedDB was
+         * slow or whether the page was not running, and those have different
+         * fixes. Two independent signals separate them, and neither is
+         * sufficient alone:
+         *
+         * - `visibilityState` and the time since the last visibility change. A
+         *   backgrounded tab is throttled and, once frozen, runs nothing at
+         *   all — neither the IndexedDB success event nor the watchdog's own
+         *   timeout. On resume the expired timeout is among the first tasks to
+         *   run and beats a perfectly healthy transaction to the finish.
+         * - The lost-tick heartbeat. A *foreground* tab on a machine whose
+         *   cores are saturated loses wall-clock time in exactly the same way
+         *   while reporting `visible` throughout, so a "visible" reading
+         *   exonerates nothing on its own. `lostMs` is how much wall time the
+         *   page failed to account for while the operation was outstanding.
+         *
+         * Both are recorded against every timeout, so a future report is
+         * readable off the panel without anyone having to remember whether the
+         * tab was in front or what else the machine was doing. Timeouts inside
+         * a lost-time window mean the page was not running; timeouts with the
+         * page demonstrably running, clustered on one store, mean real
+         * contention on that store.
+         */
+        this._timeoutEvents = [];
+        /** What `document.visibilityState` last read, sampled on change */
+        this._visibilityState = null;
+        /** When the last `visibilitychange` fired, or null if none has this session */
+        this._lastVisibilityChangeAt = null;
+        /** How many `visibilitychange` events this session has seen */
+        this._visibilityChanges = 0;
+        /** The heartbeat's last stamp, on the monotonic clock */
+        this._heartbeatAt = 0;
+        this._heartbeatTimer = null;
+        /** Windows the page failed to account for: `{at, perfAt, lostMs, visibilityState}` */
+        this._lostWindows = [];
+        /** Total wall time the page has failed to account for this session */
+        this._lostMsTotal = 0;
+        /** store → `{reads, writes, readCounts, writeCounts, readMaxMs, writeMaxMs}` */
+        this._durations = new Map();
+        /** Operations started and not yet settled, keyed by an id: the census */
+        this._outstanding = new Map();
+        this._nextOpId = 1;
+        /** `store:key` → how many transactions that key has cost, for write amplification */
+        this._writeCounts = new Map();
+        /** The quota reading taken the first time an operation timed out */
+        this._estimateAtFirstTimeout = null;
+
+        /**
          * Resolves once `initialize` has run, either way.
          *
          * Anything reading at module scope needs this. Features are initialized
@@ -334,6 +422,7 @@ class Storage {
      */
     async initialize() {
         try {
+            this.startInstrumentation();
             await this.openDatabase();
             this.available = true;
             this._markReady(true);
@@ -617,11 +706,35 @@ class Storage {
         // may only ever close *this* connection — see `_recoverWedgedConnection`.
         const generation = this._connectionGeneration;
         const started = Boolean(this.db);
+        const opId = this._beginOp('read', op, target, storeName);
+        try {
+            return await this._guardedReadBody(op, target, storeName, unreadable, run, generation, started);
+        } finally {
+            this._endOp(opId);
+        }
+    }
+
+    /**
+     * `_guardedRead`'s two attempts, with the census entry held open around them.
+     * @param {string} op - Which read
+     * @param {string} target - The key, or the store for a whole-store read
+     * @param {string} storeName - Object store the read was against
+     * @param {*} unreadable - What this read returns when it could not be made
+     * @param {Function} run - Starts the read; called again for the retry
+     * @param {number} generation - `_connectionGeneration` when the read began
+     * @param {boolean} started - Whether there was a connection to start on
+     * @returns {Promise<*>} The read's value, or `unreadable`
+     * @private
+     */
+    async _guardedReadBody(op, target, storeName, unreadable, run, generation, started) {
+        const firstStart = this._now();
         const first = started ? await this._raceReadTimeout(run()) : READ_WEDGED;
+        if (started) this._recordDuration('read', storeName, this._now() - firstStart);
         if (first !== READ_WEDGED) return first;
 
         this._readTimeouts += 1;
         this._lastReadTimeout = { op, target, storeName, at: Date.now() };
+        await this._recordTimeout({ kind: 'read', op, target, storeName, startedPerf: firstStart, started });
         console.error(
             started
                 ? `[Storage] ${op}(${target}) on store ${storeName} did not complete within ${this.readTimeoutMs} ms — ` +
@@ -631,9 +744,20 @@ class Storage {
         );
 
         if (await this._recoverWedgedConnection(generation)) {
-            const second = this.db ? await this._raceReadTimeout(run()) : READ_WEDGED;
+            const secondStart = this._now();
+            const retried = Boolean(this.db);
+            const second = retried ? await this._raceReadTimeout(run()) : READ_WEDGED;
+            if (retried) this._recordDuration('read', storeName, this._now() - secondStart);
             if (second !== READ_WEDGED) return second;
             this._readTimeouts += 1;
+            await this._recordTimeout({
+                kind: 'read',
+                op,
+                target,
+                storeName,
+                startedPerf: secondStart,
+                started: retried,
+            });
         }
 
         console.error(
@@ -696,17 +820,269 @@ class Storage {
      * @private
      */
     async _guardedWrite(op, target, storeName, unwritten, run) {
-        const result = await this._raceWriteTimeout(run());
+        this._countWrite(storeName, target);
+        const opId = this._beginOp('write', op, target, storeName);
+        const startedPerf = this._now();
+        let result;
+        try {
+            result = await this._raceWriteTimeout(run());
+        } finally {
+            this._recordDuration('write', storeName, this._now() - startedPerf);
+            this._endOp(opId);
+        }
         if (result !== WRITE_WEDGED) return result;
 
         this._writeTimeouts += 1;
         this._lastWriteTimeout = { op, target, storeName, at: Date.now() };
+        await this._recordTimeout({ kind: 'write', op, target, storeName, startedPerf });
         console.error(
             `[Storage] ${op}(${target}) on store ${storeName} did not complete within ${this.writeTimeoutMs} ms — ` +
                 'the transaction is still outstanding and is holding that store against every tab. ' +
                 'Reporting the write as failed; its value stays queued for the next flush.'
         );
         return unwritten;
+    }
+
+    /**
+     * The monotonic clock, where there is one.
+     *
+     * `performance.now()` because the measurement is of elapsed time and
+     * `Date.now()` moves when the system clock does; the wall clock is still
+     * recorded alongside, because "when" is what a person reads.
+     * @returns {number} Milliseconds on a clock that only goes forward
+     * @private
+     */
+    _now() {
+        return typeof performance !== 'undefined' && performance.now ? performance.now() : Date.now();
+    }
+
+    /**
+     * Start the two signals that say whether the page was running.
+     *
+     * Called from `initialize()`. Idempotent, and safe with no `document` —
+     * tests and any non-DOM consumer get the heartbeat and nothing else.
+     *
+     * The heartbeat is a one-second interval that stamps the clock and notices
+     * when it comes back late. A page that is frozen, throttled or starved of
+     * CPU runs no tasks, so the stamp does not happen on time and the shortfall
+     * is wall time the page cannot account for. That is the only measurement
+     * here that distinguishes "IndexedDB was slow" from "nothing was running" —
+     * `pformance-panel.js` cannot see it, because it measures main-thread work
+     * and an IndexedDB wait is off-thread.
+     * @returns {void}
+     */
+    startInstrumentation() {
+        if (this._heartbeatTimer) return;
+
+        if (typeof document !== 'undefined' && typeof document.addEventListener === 'function') {
+            this._visibilityState = document.visibilityState ?? null;
+            this._onVisibilityChange = () => {
+                this._visibilityState = document.visibilityState;
+                this._lastVisibilityChangeAt = Date.now();
+                this._visibilityChanges += 1;
+            };
+            document.addEventListener('visibilitychange', this._onVisibilityChange);
+        }
+
+        this._heartbeatAt = this._now();
+        this._heartbeatTimer = setInterval(() => this._beat(), HEARTBEAT_INTERVAL_MS);
+        // Under Node a bare interval holds the process open; in a browser this
+        // is not a function and the timer is a number.
+        this._heartbeatTimer?.unref?.();
+    }
+
+    /**
+     * Stop the heartbeat and the visibility listener.
+     *
+     * Not part of the page's lifecycle — a page that is ending takes its timers
+     * with it, and a page frozen into the bfcache *wants* the heartbeat to come
+     * back and report the freeze as lost time. This exists so a test can leave
+     * no timer behind.
+     * @returns {void}
+     */
+    stopInstrumentation() {
+        if (this._heartbeatTimer) clearInterval(this._heartbeatTimer);
+        this._heartbeatTimer = null;
+        if (this._onVisibilityChange && typeof document !== 'undefined') {
+            document.removeEventListener('visibilitychange', this._onVisibilityChange);
+        }
+        this._onVisibilityChange = null;
+    }
+
+    /**
+     * One heartbeat: stamp the clock, and record whatever the page lost.
+     * @private
+     */
+    _beat() {
+        const now = this._now();
+        const lost = now - this._heartbeatAt - HEARTBEAT_INTERVAL_MS;
+        this._heartbeatAt = now;
+        if (lost < HEARTBEAT_LOST_THRESHOLD_MS) return;
+
+        this._lostMsTotal += lost;
+        this._lostWindows.push({
+            at: Date.now(),
+            perfAt: now,
+            lostMs: Math.round(lost),
+            visibilityState: this._visibilityState,
+        });
+        if (this._lostWindows.length > LOST_WINDOWS_KEPT) this._lostWindows.shift();
+    }
+
+    /**
+     * How much wall time the page failed to account for since a moment.
+     *
+     * Two parts, and the second is the one that matters on the path this was
+     * built for. Recorded windows only exist once a heartbeat has run again; a
+     * page that has just resumed from a stall runs the *expired* timeout first
+     * as often as not, so at the instant a timeout is recorded the stall it sat
+     * through may still be unreported. The overdue part of the current interval
+     * is therefore measured directly rather than waited for.
+     * @param {number} sincePerf - A `_now()` stamp to measure from
+     * @returns {{lostMs: number, windows: number, overdueMs: number}} What was lost
+     * @private
+     */
+    _lostSince(sincePerf) {
+        let lostMs = 0;
+        let windows = 0;
+        for (const window of this._lostWindows) {
+            if (window.perfAt > sincePerf) {
+                lostMs += window.lostMs;
+                windows += 1;
+            }
+        }
+        const overdue = this._heartbeatTimer ? Math.max(0, this._now() - this._heartbeatAt - HEARTBEAT_INTERVAL_MS) : 0;
+        const overdueMs = overdue >= HEARTBEAT_LOST_THRESHOLD_MS ? Math.round(overdue) : 0;
+        return { lostMs: Math.round(lostMs) + overdueMs, windows, overdueMs };
+    }
+
+    /**
+     * Note that an operation is outstanding, for the census.
+     * @param {string} kind - 'read' or 'write'
+     * @param {string} op - Which operation, e.g. `get`
+     * @param {string} target - The key, or a description
+     * @param {string} storeName - Object store
+     * @returns {number} An id for `_endOp`
+     * @private
+     */
+    _beginOp(kind, op, target, storeName) {
+        const id = this._nextOpId;
+        this._nextOpId += 1;
+        this._outstanding.set(id, { kind, op, target, storeName, startedAt: Date.now(), startedPerf: this._now() });
+        return id;
+    }
+
+    /**
+     * Note that an operation settled.
+     * @param {number} id - From `_beginOp`
+     * @private
+     */
+    _endOp(id) {
+        this._outstanding.delete(id);
+    }
+
+    /**
+     * Add one operation's duration to its store's histogram.
+     *
+     * Per store because that is the shape of the hypothesis it has to answer: a
+     * big periodic writer starving small reads is one store's story — the chat
+     * history's up-to-256 KB record and every settings read live in `settings`
+     * together — and a whole-database average hides it completely.
+     * @param {string} kind - 'read' or 'write'
+     * @param {string} storeName - Object store
+     * @param {number} durationMs - How long it took
+     * @private
+     */
+    _recordDuration(kind, storeName, durationMs) {
+        let entry = this._durations.get(storeName);
+        if (!entry) {
+            entry = {
+                reads: 0,
+                writes: 0,
+                readCounts: new Array(OP_DURATION_BUCKETS_MS.length + 1).fill(0),
+                writeCounts: new Array(OP_DURATION_BUCKETS_MS.length + 1).fill(0),
+                readMaxMs: 0,
+                writeMaxMs: 0,
+            };
+            this._durations.set(storeName, entry);
+        }
+        let bucket = OP_DURATION_BUCKETS_MS.length;
+        for (let index = 0; index < OP_DURATION_BUCKETS_MS.length; index += 1) {
+            if (durationMs < OP_DURATION_BUCKETS_MS[index]) {
+                bucket = index;
+                break;
+            }
+        }
+        if (kind === 'write') {
+            entry.writes += 1;
+            entry.writeCounts[bucket] += 1;
+            if (durationMs > entry.writeMaxMs) entry.writeMaxMs = durationMs;
+        } else {
+            entry.reads += 1;
+            entry.readCounts[bucket] += 1;
+            if (durationMs > entry.readMaxMs) entry.readMaxMs = durationMs;
+        }
+    }
+
+    /**
+     * Count one transaction against its key.
+     *
+     * Transactions, not `set()` calls, because write amplification is about
+     * what reaches IndexedDB: debouncing is meant to collapse many calls into
+     * one write, and a key that shows up here hundreds of times is one where it
+     * did not. The map stops growing at `WRITE_RATE_KEYS_TRACKED` so a caller
+     * writing unbounded key names cannot turn diagnostics into a leak.
+     * @param {string} storeName - Object store
+     * @param {string} target - The key, or a description for a bulk write
+     * @private
+     */
+    _countWrite(storeName, target) {
+        const id = `${storeName}:${target}`;
+        const seen = this._writeCounts.get(id);
+        if (seen === undefined && this._writeCounts.size >= WRITE_RATE_KEYS_TRACKED) return;
+        this._writeCounts.set(id, (seen || 0) + 1);
+    }
+
+    /**
+     * Record a timeout together with everything needed to explain it.
+     * @param {Object} event - The timeout
+     * @param {string} event.kind - 'read' or 'write'
+     * @param {string} event.op - Which operation
+     * @param {string} event.target - The key, or a description
+     * @param {string} event.storeName - Object store
+     * @param {number} event.startedPerf - `_now()` when this attempt began
+     * @param {boolean} [event.started] - False when the read never got a transaction
+     * @returns {Promise<void>}
+     * @private
+     */
+    async _recordTimeout({ kind, op, target, storeName, startedPerf, started = true }) {
+        const at = Date.now();
+        const lost = this._lostSince(startedPerf);
+        const record = {
+            kind,
+            op,
+            target,
+            storeName,
+            at,
+            started,
+            waitedMs: Math.round(this._now() - startedPerf),
+            visibilityState: this._visibilityState,
+            msSinceVisibilityChange: this._lastVisibilityChangeAt ? at - this._lastVisibilityChangeAt : null,
+            lostMs: lost.lostMs,
+            lostWindows: lost.windows,
+            heartbeatOverdueMs: lost.overdueMs,
+            outstanding: this._outstanding.size,
+        };
+        this._timeoutEvents.push(record);
+        if (this._timeoutEvents.length > TIMEOUT_EVENTS_KEPT) this._timeoutEvents.shift();
+
+        // Once per session: a quota that is nearly full is its own explanation
+        // for slow writes, and taking it on every timeout would be one more
+        // await on a path that is already in trouble.
+        if (!this._estimateAtFirstTimeout) {
+            this._estimateAtFirstTimeout = (await this.estimate()) || { unavailable: true, at };
+        }
+        record.estimate = this._estimateAtFirstTimeout;
     }
 
     /**
@@ -2394,10 +2770,43 @@ class Storage {
     }
 
     /**
+     * The per-store duration histograms, as something printable.
+     * @returns {Array<Object>} One row per store, busiest first
+     * @private
+     */
+    _durationRows() {
+        const rows = [];
+        for (const [storeName, entry] of this._durations) {
+            rows.push({
+                storeName,
+                reads: entry.reads,
+                writes: entry.writes,
+                readCounts: entry.readCounts.slice(),
+                writeCounts: entry.writeCounts.slice(),
+                readMaxMs: Math.round(entry.readMaxMs),
+                writeMaxMs: Math.round(entry.writeMaxMs),
+            });
+        }
+        rows.sort((a, b) => b.reads + b.writes - (a.reads + a.writes));
+        return rows;
+    }
+
+    /**
      * Return diagnostic info about current storage state.
+     *
+     * The second half of this — the timeout records, the lost-time windows, the
+     * per-store histograms, the census and the write-rate top ten — exists to
+     * settle one question from data rather than from anyone's memory of what
+     * they were doing at the time: was the page running when an operation
+     * failed to come back? See `_timeoutEvents` in the constructor.
      * @returns {Object}
      */
     diagnostics() {
+        const now = Date.now();
+        const writeRates = Array.from(this._writeCounts.entries())
+            .map(([key, count]) => ({ key, count }))
+            .sort((a, b) => b.count - a.count)
+            .slice(0, 10);
         return {
             dbExists: this.db !== null,
             available: this.available,
@@ -2418,6 +2827,28 @@ class Storage {
             quotaFailures: this._quotaFailures,
             lastQuotaTarget: this._lastQuotaTarget,
             estimate: this._lastEstimate,
+            visibility: {
+                state: this._visibilityState,
+                lastChangeAt: this._lastVisibilityChangeAt,
+                msSinceChange: this._lastVisibilityChangeAt ? now - this._lastVisibilityChangeAt : null,
+                changes: this._visibilityChanges,
+            },
+            lostTime: {
+                running: Boolean(this._heartbeatTimer),
+                totalMs: Math.round(this._lostMsTotal),
+                windows: this._lostWindows.map((window) => ({ ...window })),
+            },
+            recentTimeouts: this._timeoutEvents.map((event) => ({ ...event })),
+            durationBuckets: OP_DURATION_BUCKETS_MS.slice(),
+            durations: this._durationRows(),
+            outstanding: Array.from(this._outstanding.values()).map((entry) => ({
+                kind: entry.kind,
+                op: entry.op,
+                target: entry.target,
+                storeName: entry.storeName,
+                ageMs: now - entry.startedAt,
+            })),
+            writeRates,
         };
     }
 }

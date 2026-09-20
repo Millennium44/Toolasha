@@ -265,6 +265,117 @@ describe('what the report says about storage', () => {
     });
 });
 
+describe('whether the page was running when a read did not come back', () => {
+    /**
+     * The state the panel has to be able to explain without anyone
+     * remembering what they were doing.
+     * @param {Object} overrides - Fields to change
+     * @returns {Object} A `diagnostics()` shape
+     */
+    function withTiming(overrides = {}) {
+        return {
+            ...storageMock.diag,
+            readTimeouts: 2,
+            writeTimeouts: 0,
+            visibility: { state: 'visible', lastChangeAt: Date.now() - 4000, msSinceChange: 4000, changes: 3 },
+            lostTime: { running: true, totalMs: 7400, windows: [{ at: 0, lostMs: 7400, visibilityState: 'visible' }] },
+            durationBuckets: [1, 4, 16, 64, 256, 1024, 4096, 16_384],
+            durations: [
+                {
+                    storeName: 'settings',
+                    reads: 30,
+                    writes: 9,
+                    readCounts: [20, 8, 1, 0, 0, 0, 0, 0, 1],
+                    writeCounts: [0, 0, 1, 2, 3, 2, 1, 0, 0],
+                    readMaxMs: 10_004,
+                    writeMaxMs: 2100,
+                },
+            ],
+            outstanding: [{ kind: 'read', op: 'get', target: 'k', storeName: 'settings', ageMs: 1200 }],
+            writeRates: [{ key: 'settings:chatHistory', count: 88 }],
+            recentTimeouts: [
+                {
+                    kind: 'read',
+                    op: 'get',
+                    target: 'script_settingsMap_1',
+                    storeName: 'settings',
+                    at: 0,
+                    started: true,
+                    waitedMs: 10_001,
+                    visibilityState: 'visible',
+                    msSinceVisibilityChange: 4000,
+                    lostMs: 7400,
+                    lostWindows: 1,
+                    heartbeatOverdueMs: 0,
+                    outstanding: 4,
+                },
+            ],
+            ...overrides,
+        };
+    }
+
+    test('each timeout is printed with its visibility and its lost wall time', async () => {
+        storageMock.diag = withTiming();
+        await refreshStorageFacts();
+
+        const report = buildDiagnosticReport([]);
+        expect(report).toContain('IndexedDB timing');
+        expect(report).toContain('page visible');
+        expect(report).toContain('LOST 7400 ms of wall time');
+        // The verdict, in words, so nobody has to interpret the numbers.
+        expect(report).toContain('the page was not running');
+    });
+
+    test('a timeout with the page demonstrably running is called contention', async () => {
+        storageMock.diag = withTiming({
+            lostTime: { running: true, totalMs: 0, windows: [] },
+            recentTimeouts: [
+                {
+                    kind: 'read',
+                    op: 'get',
+                    target: 'script_settingsMap_1',
+                    storeName: 'settings',
+                    at: 0,
+                    started: true,
+                    waitedMs: 10_001,
+                    visibilityState: 'visible',
+                    msSinceVisibilityChange: null,
+                    lostMs: 0,
+                    lostWindows: 0,
+                    heartbeatOverdueMs: 0,
+                    outstanding: 4,
+                },
+            ],
+        });
+        await refreshStorageFacts();
+
+        const report = buildDiagnosticReport([]);
+        expect(report).toContain('no lost wall time — the page was running');
+        expect(report).toContain('no visibility change');
+        expect(report).toContain('this is contention');
+    });
+
+    // A big periodic writer on the same store small reads use is the leading
+    // contention candidate, and the panel has to make it obvious.
+    test('the per-store histogram and the busiest keys are both printed', async () => {
+        storageMock.diag = withTiming();
+        await refreshStorageFacts();
+
+        const report = buildDiagnosticReport([]);
+        expect(report).toContain('settings writes 9');
+        expect(report).toContain('settings:chatHistory=88');
+        expect(report).toContain('outstanding right now (1)');
+    });
+
+    test('a session with none of it recorded still reports cleanly', async () => {
+        await refreshStorageFacts();
+
+        const report = buildDiagnosticReport([]);
+        expect(report).toContain('operations that did not come back: 0 read, 0 write');
+        expect(report).toContain('outstanding right now: none');
+    });
+});
+
 describe('a full database reaching the player', () => {
     test('one toast, which leads to what it means', async () => {
         expect(typeof storageMock.listener).toBe('function');

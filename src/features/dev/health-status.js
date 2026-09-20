@@ -186,6 +186,123 @@ function storageLines() {
         lines.push(`largest stores by key count: ${biggest.join(', ')}`);
     }
 
+    lines.push(...timingLines(diag));
+
+    return lines;
+}
+
+/**
+ * Was the page running when an operation failed to come back?
+ *
+ * The question these lines exist to answer, and it cannot be answered from the
+ * counters above or from `pformance-panel.js` — that one measures main-thread
+ * stalls, and an IndexedDB wait is off-thread and invisible to it. Two readings
+ * sit beside every timeout, and both are needed:
+ *
+ * - `visible/hidden` and how long ago the tab changed. A backgrounded tab is
+ *   throttled and eventually runs nothing at all, so neither IndexedDB's event
+ *   nor the watchdog's own timeout can be delivered; on resume the expired
+ *   timeout runs first and beats a healthy transaction.
+ * - `lost`: wall time the page failed to account for, from a one-second
+ *   heartbeat. A foreground tab on a saturated machine loses time in exactly
+ *   the same way while reading `visible` throughout — which is why a `visible`
+ *   reading here is not an alibi.
+ *
+ * So: timeouts with lost time against them, or within a second of a visibility
+ * change, are a page that was not running. Timeouts with neither, clustered on
+ * one store, are real contention on that store — and the per-store histogram
+ * and the write-rate list below say which writer is doing it.
+ * @param {Object} diag - `storage.diagnostics()`
+ * @returns {Array<string>} Report lines
+ */
+function timingLines(diag) {
+    const lines = [];
+    const lost = diag.lostTime;
+    const visibility = diag.visibility;
+
+    lines.push('');
+    lines.push('IndexedDB timing');
+    lines.push('-'.repeat(60));
+
+    if (visibility) {
+        const since =
+            visibility.msSinceChange == null
+                ? 'no visibility change this session'
+                : `last change ${Math.round(visibility.msSinceChange / 1000)}s ago (${visibility.changes} total)`;
+        lines.push(`page: ${visibility.state || 'unknown'}, ${since}`);
+    }
+    if (lost) {
+        lines.push(
+            lost.running
+                ? `lost wall time: ${Math.round(lost.totalMs)} ms total in ${lost.windows.length} recorded window(s)`
+                : 'lost wall time: heartbeat not running (nothing measured)'
+        );
+        for (const window of lost.windows.slice(-3)) {
+            lines.push(
+                `- ${new Date(window.at).toISOString()}: lost ${window.lostMs} ms while ${window.visibilityState || 'unknown'}`
+            );
+        }
+    }
+
+    const timeouts = diag.recentTimeouts || [];
+    lines.push(`operations that did not come back: ${diag.readTimeouts ?? 0} read, ${diag.writeTimeouts ?? 0} write`);
+    if (timeouts.length) {
+        lines.push(`most recent (${Math.min(timeouts.length, 5)} of ${timeouts.length} kept), newest last:`);
+        for (const event of timeouts.slice(-5)) {
+            const sinceChange =
+                event.msSinceVisibilityChange == null
+                    ? 'no visibility change'
+                    : `${Math.round(event.msSinceVisibilityChange / 1000)}s since visibility change`;
+            const lostPart =
+                event.lostMs > 0
+                    ? `LOST ${event.lostMs} ms of wall time while it waited` +
+                      (event.heartbeatOverdueMs ? ` (${event.heartbeatOverdueMs} ms of it still unfolding)` : '')
+                    : 'no lost wall time — the page was running';
+            lines.push(`- ${new Date(event.at).toISOString()} ${event.kind} ${event.op}(${event.target})`);
+            lines.push(`  store ${event.storeName}, waited ${event.waitedMs} ms, ${event.outstanding} op(s) in flight`);
+            lines.push(`  page ${event.visibilityState || 'unknown'}, ${sinceChange}; ${lostPart}`);
+            if (!event.started) lines.push('  (the operation never got a transaction — the connection was reopening)');
+        }
+        const withLoss = timeouts.filter((event) => event.lostMs > 0).length;
+        lines.push(
+            withLoss === timeouts.length
+                ? 'Every recorded timeout sat through lost wall time: the page was not running, not IndexedDB being slow.'
+                : withLoss === 0
+                  ? 'No recorded timeout sat through lost wall time: the page was running, so this is contention.'
+                  : `${withLoss} of ${timeouts.length} sat through lost wall time; the rest are contention.`
+        );
+    }
+
+    const buckets = diag.durationBuckets || [];
+    const durations = diag.durations || [];
+    if (durations.length) {
+        lines.push(`op durations by store, buckets <${buckets.join('ms <')}ms and over:`);
+        for (const row of durations.slice(0, 6)) {
+            lines.push(`- ${row.storeName} reads ${row.reads} [${row.readCounts.join(' ')}] max ${row.readMaxMs} ms`);
+            lines.push(
+                `  ${row.storeName} writes ${row.writes} [${row.writeCounts.join(' ')}] max ${row.writeMaxMs} ms`
+            );
+        }
+    }
+
+    const outstanding = diag.outstanding || [];
+    if (outstanding.length) {
+        lines.push(`outstanding right now (${outstanding.length}):`);
+        for (const entry of outstanding.slice(0, 8)) {
+            lines.push(`- ${entry.kind} ${entry.op}(${entry.target}) on ${entry.storeName}, ${entry.ageMs} ms old`);
+        }
+    } else {
+        lines.push('outstanding right now: none');
+    }
+
+    const writeRates = diag.writeRates || [];
+    if (writeRates.length) {
+        // Transactions per key, not `set()` calls: debouncing is supposed to
+        // collapse the latter into the former, and a key near the top of this
+        // list is one where it did not.
+        lines.push(`busiest keys by transactions: ${writeRates.map((row) => `${row.key}=${row.count}`).join(', ')}`);
+    }
+
     return lines;
 }
 
