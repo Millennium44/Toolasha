@@ -219,6 +219,50 @@ test('replay exports a distinct named build reference for each historical build'
     }
 });
 
+test('task progress does not fragment a replay build or consume its three-group limit', async () => {
+    simRuns.result = { simulatedTime: 20e9, labyAttemptCount: 1, encounters: 1 };
+    const attempts = [5, 4, 3, 2, 1, 0].map((remaining, index) => ({
+        monsterHrid: '/monsters/fly',
+        seconds: 20,
+        roomLevel: 10,
+        outcome: 'clear',
+        complete: true,
+        cleared: true,
+        playerMaxHp: 100,
+        playerHpStart: 100,
+        replayInputs: {
+            version: 1,
+            playerDTO: {
+                hrid: 'player1',
+                attackLevel: index === 5 ? 11 : 10,
+                taskMonsterHrids: remaining ? ['/monsters/fly'] : [],
+                taskMonsterRemaining: remaining ? { '/monsters/fly': remaining } : {},
+            },
+            crates: [],
+            communityBuffs: {},
+            labyrinthCombatBuffs: [],
+            fullAbilities: true,
+        },
+    }));
+    const spy = vi.spyOn(labFightRecorder, 'recordedAttempts').mockReturnValue(attempts);
+    try {
+        const result = await simCacheMethods.replayRecordedFights.call({
+            _snapshotContentFingerprint: () => 'new',
+            getSimHours: () => 1,
+            getSimStopRule: () => ({ maxTrials: 10 }),
+        });
+        expect(result.diagnostics).toMatchObject({ eligibleGroups: 2, deferredGroups: 0, failedGroups: 0 });
+        expect(result.groups.map((group) => group.fights)).toEqual([5, 1]);
+        expect(simRuns.list).toHaveLength(2);
+        // The replay runner defaults task damage off; retain the original saved
+        // inputs for export while ignoring that inactive metadata in equality.
+        expect(simRuns.list.every((run) => run.taskDamageMode === undefined)).toBe(true);
+        expect(simRuns.list[0].playerDTOs[0].taskMonsterRemaining).toEqual({ '/monsters/fly': 5 });
+    } finally {
+        spy.mockRestore();
+    }
+});
+
 afterEach(() => {
     settings.map.clear();
     storageWrites.list = [];

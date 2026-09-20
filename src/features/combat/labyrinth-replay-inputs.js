@@ -45,6 +45,10 @@ function buildKey(inputs) {
     delete playerDTO.tokenUpgrades;
     delete playerDTO.communityBuffLevels;
     delete playerDTO.guildShrineLevels;
+    // Recorded labyrinth replays leave task damage off. Normal combat between
+    // room visits can change task progress without changing the replayed build.
+    delete playerDTO.taskMonsterHrids;
+    delete playerDTO.taskMonsterRemaining;
     // Player.createFromDTO reads only the seven combat levels.
     for (const skill of [
         'woodcutting',
