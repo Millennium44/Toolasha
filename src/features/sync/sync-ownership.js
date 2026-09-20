@@ -177,6 +177,7 @@ export const OWNED_KEY_PREFIXES = [
     // The same: this machine's own readings of its own stat snapshots, and
     // device-local for the same reason, see LOCAL_ONLY_KEY_PREFIXES
     'furyStackingTally',
+    'waveGapTally',
     'combatProfitView',
     'combatIncomeNetSalesTax',
     'combatLevelSelection',

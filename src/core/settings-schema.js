@@ -2245,6 +2245,17 @@ export const settingsGroups = {
                 requiresRefresh: true,
                 help: 'Checks each snapshot of your own resolved combat stats against both candidate formulas — Fury as its own factor on top of the other buffs, or Fury pooled with them — using the game’s own levels and gear ratios as the base. Only readings where Fury and another buff of the same type are both up can tell the two apart, and only those are counted. The tally survives a reload. Feeds the Fury Stacking overlay row and the panel behind it',
             },
+            waveGapWatch: {
+                id: 'waveGapWatch',
+                label: 'Wave Gap: Measure the real gap between a wave clearing and the next one starting',
+                type: 'checkbox',
+                default: false,
+                // The hooks are attached in initialize(), which runs at start-up
+                // and on a character switch only, so neither direction of the
+                // switch takes effect until the page is reloaded
+                requiresRefresh: true,
+                help: 'Times the last monster of a wave dying to the next wave starting, keeping open-zone respawns, dungeon wave transitions and dungeon run boundaries apart, and calibrating its own timing noise against the interval the server states for each action. The simulator uses one constant for all of these; this is our own measurement of whether it should. The tally survives a reload and builds up over sessions. Feeds the Wave Gap overlay row and the panel behind it',
+            },
             combatScore: {
                 id: 'combatScore',
                 label: 'Profile panel: Show gear score',

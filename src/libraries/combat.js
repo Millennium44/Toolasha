@@ -41,6 +41,8 @@ import replayCheck, { dungeonWaveTiming } from '../features/combat/combat-replay
 import stunPersistence from '../features/combat/stun-persistence-observer.js';
 // Registers the Fury Stacking overlay row and its panel
 import furyStacking from '../features/combat/fury-stacking-observer.js';
+// Registers the Wave Gap overlay row and its panel
+import waveGap from '../features/combat/wave-gap-observer.js';
 import {
     waveHridsOf,
     nonDamagingByHrid,
@@ -168,6 +170,7 @@ toolashaRoot.Combat = {
     combatRecordControl,
     stunPersistence,
     furyStacking,
+    waveGap,
     abilityBookCalculator,
     abilityTooltipTiming,
     manaTracker,

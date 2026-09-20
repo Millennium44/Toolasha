@@ -1282,6 +1282,13 @@ function registerFeatures() {
             async: true,
         },
         {
+            key: 'waveGapWatch',
+            name: 'Wave Gap',
+            category: 'Combat',
+            module: Combat.waveGap,
+            async: true,
+        },
+        {
             key: 'combatRecorder_autoStart',
             name: 'Combat Recorder',
             category: 'Combat',

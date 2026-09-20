@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Wave Gap: measure the real gap between a wave clearing and the next one starting
+
+- A new off-by-default combat diagnostic times the last monster of a wave dying to the next wave starting, keeping open-zone respawns, dungeon wave transitions and dungeon run boundaries apart, and reports the distribution, the cycle-position bins and the arrival-time noise it measured in its own ruler — so the simulator's single respawn constant can be checked against our own data instead of taken on trust.
+
 ### Fury Stacking: measure whether Fury multiplies the other buffs or pools with them
 
 - A new off-by-default combat diagnostic checks every snapshot of your own resolved stats against both candidate formulas, counting only readings where Fury and another buff of the same type are both up — the two formulas are identical otherwise — and reports separate verdicts for accuracy and max damage.

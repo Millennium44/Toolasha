@@ -137,6 +137,10 @@ export const LOCAL_ONLY_KEY_PREFIXES = [
     // however many this one had counted, and a sum would double-count every
     // reading that had already travelled — so it stays put
     'furyStackingTally',
+    // Intervals this machine timed off its own network. Another device's
+    // arrival times are not this one's, so pulling or summing them would blend
+    // two rulers into one figure that belongs to neither
+    'waveGapTally',
 ];
 
 /**
