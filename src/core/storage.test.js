@@ -1281,6 +1281,48 @@ describe('Storage restore quiescing', () => {
         expect(storage.restorePendingStores()).toEqual(['settings']);
     });
 
+    test.each([
+        ['immediate set', () => storage.set('watchlist', 'old', 'settings', true), false],
+        ['debounced set', () => storage.set('watchlist', 'old', 'settings'), false],
+        ['delete', () => storage.delete('watchlist', 'settings'), false],
+        ['bulk write', () => storage.putAll('settings', { watchlist: 'old' }), 0],
+        ['timer save', () => storage._saveToIndexedDB('watchlist', 'old', 'settings'), false],
+    ])('%s waiting for a connection cannot undo a completed restore', async (_name, start, refused) => {
+        storage.db = null;
+        let resumeConnection;
+        vi.spyOn(storage, '_awaitConnection').mockImplementation(
+            () => new Promise((resolve) => (resumeConnection = resolve))
+        );
+        const staleWrite = start();
+
+        const { db, dataByStore } = createFakeDb(['settings']);
+        storage.db = db;
+        await storage.putAll('settings', { watchlist: 'restored' }, { bypassRestoreLatch: true });
+        storage.finishRestore(['settings']);
+        resumeConnection(true);
+        await vi.advanceTimersByTimeAsync(storage.SAVE_DEBOUNCE_DELAY + 1);
+
+        expect(await staleWrite).toBe(refused);
+        expect(dataByStore.get('settings').get('watchlist')).toBe('restored');
+        expect(storage.pendingWrites.size).toBe(0);
+    });
+
+    test('restore bookkeeping waiting for a connection retains its explicit bypass', async () => {
+        storage.db = null;
+        let resumeConnection;
+        vi.spyOn(storage, '_awaitConnection').mockImplementation(
+            () => new Promise((resolve) => (resumeConnection = resolve))
+        );
+        const write = storage.putAll('settings', { syncedAt: 'new' }, { bypassRestoreLatch: true });
+        const { db, dataByStore } = createFakeDb(['settings']);
+        storage.db = db;
+        storage.finishRestore(['settings']);
+        resumeConnection(true);
+
+        expect(await write).toBe(1);
+        expect(dataByStore.get('settings').get('syncedAt')).toBe('new');
+    });
+
     test('the restore itself and its bookkeeping can still write, when they say so', async () => {
         const { db, dataByStore } = createFakeDb(['settings']);
         storage.db = db;
