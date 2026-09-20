@@ -163,6 +163,7 @@ function beTracking({
     restored = false,
     joinedMidRun = false,
     joinedAtWave = null,
+    partyNames = null,
 } = {}) {
     tracker.isTracking = true;
     // A run picked back up from storage never saw its own start message; one started
@@ -185,6 +186,8 @@ function beTracking({
         keyCountsMap,
         joinedMidRun,
         joinedAtWave: joinedMidRun ? (joinedAtWave ?? currentWave) : null,
+        // Null means the fight never said; a one-name roster is a solo run
+        partyNames,
     };
     if (anchoredAt !== null) {
         // What the post-start chat scan leaves behind: the run's own start
@@ -218,6 +221,7 @@ function resetTracker() {
     tracker._lastCompletionTime = 0;
     tracker._emptyRestore = null;
     tracker.hibernationDetected = false;
+    tracker._lostTimeBeat = null;
     tracker.timerRegistry.clearAll();
     if (tracker.visibilityHandler) {
         document.removeEventListener('visibilitychange', tracker.visibilityHandler);
@@ -968,7 +972,11 @@ describe('routing chat messages', () => {
 
     test('the first key count anchors the run at the server’s clock', async () => {
         // The live path: the run-start message is captured by the post-start
-        // scan, which is what leaves firstKeyCountTimestamp set.
+        // scan, which is what leaves firstKeyCountTimestamp set. The clock sits
+        // a minute past the message: a chat anchor older than a plausible run
+        // is refused, so a fixture's stamp has to be one the run could own.
+        vi.useFakeTimers();
+        vi.setSystemTime(Date.parse('2026-08-04T10:01:00.000Z'));
         beTracking();
         tracker.recentChatMessages = [
             {
@@ -1593,15 +1601,181 @@ describe('what the panel is shown', () => {
     });
 });
 
+describe('a run the fight says was solo', () => {
+    /**
+     * A solo run posts no "Key counts" party messages, so anything in the party
+     * chat log belongs to something else — another member's dungeon, an older
+     * run, or, in the reported case, the player's own party join an hour and a
+     * half earlier and a Pirate Cove from two days before. The reported panel
+     * read "Chat: 92:39" for a run whose real length averages about twelve
+     * minutes.
+     */
+    const SOLO = ['Marketcow'];
+    const PARTY = ['Alice', 'Marketcow'];
+
+    test('the elapsed figure is the run’s own clock, never a chat timestamp', () => {
+        vi.useFakeTimers();
+        const start = Date.parse('2026-08-04T10:00:00.000Z');
+        vi.setSystemTime(start + 11 * 60_000);
+        beTracking({ startTime: start, partyNames: SOLO });
+        // Something in the party log left an anchor 92 minutes back
+        tracker.firstKeyCountTimestamp = start - 81 * 60_000;
+
+        const run = tracker.getCurrentRun();
+        expect(run.totalElapsed).toBe(11 * 60_000);
+        expect(run.elapsedFromPartyChat).toBe(false);
+    });
+
+    test('a party run still takes the server timestamp, exactly as before', () => {
+        vi.useFakeTimers();
+        const start = Date.parse('2026-08-04T10:00:00.000Z');
+        vi.setSystemTime(start + 60_000);
+        beTracking({ startTime: start, partyNames: PARTY });
+        tracker.firstKeyCountTimestamp = start - 30_000;
+
+        const run = tracker.getCurrentRun();
+        expect(run.totalElapsed).toBe(90_000);
+        expect(run.elapsedFromPartyChat).toBe(true);
+    });
+
+    test('a roster the fight never stated is treated as a party run, as it always was', () => {
+        vi.useFakeTimers();
+        const start = Date.parse('2026-08-04T10:00:00.000Z');
+        vi.setSystemTime(start + 60_000);
+        beTracking({ startTime: start, partyNames: null });
+        tracker.firstKeyCountTimestamp = start - 30_000;
+
+        expect(tracker.getCurrentRun().totalElapsed).toBe(90_000);
+    });
+
+    test('a party member’s key count neither anchors nor completes it', async () => {
+        beTracking({ partyNames: SOLO, wavesCompleted: 2 });
+
+        tracker.onChatMessage(keyCountsData('2026-08-04T10:05:00.000Z', 'Key counts: [Alice - 3], [Bob - 3]'));
+        await flush();
+
+        expect(tracker.firstKeyCountTimestamp).toBeNull();
+        expect(tracker.isTracking).toBe(true);
+        expect(game.savedRuns).toHaveLength(0);
+    });
+
+    test('the chat scan does not run for it at all', () => {
+        beTracking({ partyNames: SOLO });
+        tracker.recentChatMessages = [
+            {
+                m: 'systemChatMessage.partyKeyCount',
+                t: '2026-08-04T09:59:00.000Z',
+                systemMetadata: JSON.stringify({ keyCountString: 'Key counts: [Alice - 3]' }),
+            },
+        ];
+
+        tracker.scanExistingChatMessages();
+
+        expect(tracker.firstKeyCountTimestamp).toBeNull();
+        expect(tracker.currentRun.keyCountsMap).toEqual({});
+    });
+
+    test('joined part-way, it is still honestly labelled as watched', () => {
+        vi.useFakeTimers();
+        const start = Date.parse('2026-08-04T10:00:00.000Z');
+        vi.setSystemTime(start + 90_000);
+        beTracking({ startTime: start, partyNames: SOLO, joinedMidRun: true, joinedAtWave: 8 });
+        // Even a recovery somehow written onto it may not turn it into a whole run
+        tracker.currentRun.startRecovered = true;
+        tracker.currentRun.recoveredStartTime = start - 40 * 60_000;
+
+        const run = tracker.getCurrentRun();
+        expect(run.elapsedIsSinceNoticed).toBe(true);
+        expect(run.startRecovered).toBe(false);
+        expect(run.totalElapsed).toBe(90_000);
+    });
+
+    test('a party run’s stale chat anchor is refused: no run takes two days', () => {
+        vi.useFakeTimers();
+        const now = Date.parse('2026-08-04T10:00:00.000Z');
+        vi.setSystemTime(now);
+        beTracking({ startTime: now - 60_000, partyNames: PARTY });
+        // A different dungeon's key counts, still in the party log from two days ago
+        tracker.recentChatMessages = [
+            {
+                m: 'systemChatMessage.partyKeyCount',
+                t: '2026-08-02T11:30:00.000Z',
+                systemMetadata: JSON.stringify({ keyCountString: 'Key counts: [Alice - 9], [Marketcow - 9]' }),
+            },
+        ];
+
+        tracker.scanExistingChatMessages();
+
+        expect(tracker.firstKeyCountTimestamp).toBeNull();
+        expect(tracker.currentRun.keyCountsMap).toEqual({});
+    });
+
+    test('a party run’s fresh chat anchor is still adopted', () => {
+        vi.useFakeTimers();
+        const now = Date.parse('2026-08-04T10:00:00.000Z');
+        vi.setSystemTime(now);
+        beTracking({ startTime: now - 60_000, partyNames: PARTY });
+        tracker.recentChatMessages = [
+            {
+                m: 'systemChatMessage.partyKeyCount',
+                t: '2026-08-04T09:58:00.000Z',
+                systemMetadata: JSON.stringify({ keyCountString: 'Key counts: [Alice - 9], [Marketcow - 9]' }),
+            },
+        ];
+
+        tracker.scanExistingChatMessages();
+
+        expect(tracker.firstKeyCountTimestamp).toBe(Date.parse('2026-08-04T09:58:00.000Z'));
+        expect(tracker.currentRun.keyCountsMap).toEqual({ Alice: 9, Marketcow: 9 });
+    });
+});
+
 describe('waking the computer back up', () => {
-    test('a run that spanned a hidden tab is flagged as possibly wrong', async () => {
+    /** Hide the tab and show it again, with `gapMs` of wall clock passing in between. */
+    function tabCycle(gapMs) {
+        Object.defineProperty(document, 'hidden', { configurable: true, get: () => true });
+        document.dispatchEvent(new Event('visibilitychange'));
+        vi.setSystemTime(Date.now() + gapMs);
+        Object.defineProperty(document, 'hidden', { configurable: true, get: () => false });
+        document.dispatchEvent(new Event('visibilitychange'));
+    }
+
+    test('an ordinary tab switch is not a hibernation', async () => {
+        vi.useFakeTimers();
+        vi.setSystemTime(Date.parse('2026-08-04T10:00:00.000Z'));
         tracker.setupHibernationDetection();
         beTracking();
 
-        Object.defineProperty(document, 'hidden', { configurable: true, get: () => true });
-        document.dispatchEvent(new Event('visibilitychange'));
-        Object.defineProperty(document, 'hidden', { configurable: true, get: () => false });
-        document.dispatchEvent(new Event('visibilitychange'));
+        // A second and a half away from the tab: the page ran the whole time
+        tabCycle(1500);
+        await flush();
+
+        expect(tracker.hibernationDetected).toBe(false);
+        expect(tracker.currentRun.hibernationDetected).toBeFalsy();
+    });
+
+    test('a minute in a throttled background tab is not a hibernation either', async () => {
+        vi.useFakeTimers();
+        vi.setSystemTime(Date.parse('2026-08-04T10:00:00.000Z'));
+        tracker.setupHibernationDetection();
+        beTracking();
+
+        // Chrome wakes a hidden page's timers about once a minute; that is
+        // throttling, not a machine that stopped running
+        tabCycle(60_000);
+        await flush();
+
+        expect(tracker.hibernationDetected).toBe(false);
+    });
+
+    test('wall time the page never executed is', async () => {
+        vi.useFakeTimers();
+        vi.setSystemTime(Date.parse('2026-08-04T10:00:00.000Z'));
+        tracker.setupHibernationDetection();
+        beTracking();
+
+        // Ten minutes of wall clock with no heartbeat in between: the machine slept
+        tabCycle(10 * 60_000);
         await flush();
 
         expect(tracker.hibernationDetected).toBe(true);
@@ -1609,13 +1783,26 @@ describe('waking the computer back up', () => {
         expect(stored().hibernationDetected).toBe(true);
     });
 
-    test('a hidden tab outside a run flags nothing', () => {
+    test('a sleep with the tab in front is caught by the heartbeat alone', async () => {
+        vi.useFakeTimers();
+        vi.setSystemTime(Date.parse('2026-08-04T10:00:00.000Z'));
+        tracker.setupHibernationDetection();
+        beTracking();
+
+        // No visibilitychange at all — the beat comes back an hour late
+        vi.setSystemTime(Date.now() + 60 * 60_000);
+        vi.advanceTimersByTime(1000);
+        await flush();
+
+        expect(tracker.hibernationDetected).toBe(true);
+    });
+
+    test('a sleep outside a run flags nothing', () => {
+        vi.useFakeTimers();
+        vi.setSystemTime(Date.parse('2026-08-04T10:00:00.000Z'));
         tracker.setupHibernationDetection();
 
-        Object.defineProperty(document, 'hidden', { configurable: true, get: () => true });
-        document.dispatchEvent(new Event('visibilitychange'));
-        Object.defineProperty(document, 'hidden', { configurable: true, get: () => false });
-        document.dispatchEvent(new Event('visibilitychange'));
+        tabCycle(10 * 60_000);
 
         expect(tracker.hibernationDetected).toBe(false);
     });
@@ -1909,6 +2096,8 @@ describe('picking the run back up on page load', () => {
 
 describe('scanning chat already on screen', () => {
     test('the newest key counts in memory become the run’s counts', async () => {
+        vi.useFakeTimers();
+        vi.setSystemTime(Date.parse('2026-08-04T10:01:00.000Z'));
         beTracking();
         tracker.recentChatMessages = [
             {
@@ -1933,6 +2122,8 @@ describe('scanning chat already on screen', () => {
     });
 
     test('an anchor already carried forward is not overwritten by the scan', async () => {
+        vi.useFakeTimers();
+        vi.setSystemTime(Date.parse('2026-08-04T10:01:00.000Z'));
         beTracking();
         tracker.firstKeyCountTimestamp = 1234;
         tracker.lastKeyCountTimestamp = 1234;
@@ -3263,6 +3454,7 @@ describe('reading a DOM chat stamp on a day-first client', () => {
 
     describe('the key-counts scan', () => {
         test('a run over midnight anchors minutes before the completion, not a month', async () => {
+            vi.setSystemTime(new Date(2028, 2, 4, 23, 58, 0));
             beTracking();
             tracker.recentChatMessages = [];
             chatLog(['[04/03 23:52:47] Key counts: [Alice - 12], [Bob - 8]']);
@@ -3299,6 +3491,7 @@ describe('reading a DOM chat stamp on a day-first client', () => {
 
         test('a month-first client reads the same stamp as it always did', async () => {
             clientOrder(false);
+            vi.setSystemTime(new Date(2028, 3, 3, 23, 58, 0));
             beTracking();
             tracker.recentChatMessages = [];
             chatLog(['[04/03 23:52:47] Key counts: [Alice - 12], [Bob - 8]']);
@@ -3311,6 +3504,7 @@ describe('reading a DOM chat stamp on a day-first client', () => {
 
         test('the dot format stays day-first whatever the language says', async () => {
             clientOrder(false);
+            vi.setSystemTime(new Date(2028, 2, 4, 23, 58, 0));
             beTracking();
             tracker.recentChatMessages = [];
             chatLog(['[4.3. 23:52:47] Key counts: [Alice - 12]']);

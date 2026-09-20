@@ -16,7 +16,7 @@ import {
 import { createTimerRegistry } from '../../utils/timer-registry.js';
 import { characterKey, readScopedFrom, writeScoped } from '../../utils/character-key.js';
 import { runningCombatAction } from '../../utils/combat-actions.js';
-import { assessRecoveredStart } from './dungeon-pace.js';
+import { assessRecoveredStart, RECOVERY_FALLBACK_MAX_MS } from './dungeon-pace.js';
 import { parseGameNumber, gameDigitsSource } from '../../utils/number-parser.js';
 import { chatStampToDate } from '../../utils/locale-date-order.js';
 
@@ -76,6 +76,37 @@ export function battlePartyNames(data) {
  */
 const IN_PROGRESS_KEY = 'dungeonTracker_inProgressRun';
 const DISCARD_LEGACY = { migrate: 'discard' };
+
+/**
+ * How often the tracker stamps the wall clock to notice time the page did not run.
+ *
+ * One second is the same cadence the storage module's lost-tick heartbeat uses,
+ * and it costs a subtraction per second. It is deliberately a separate, tiny
+ * timer rather than a reach into `storage`'s instrumentation: that machinery is
+ * private, keeps only its last twenty lost windows (a twelve-minute run outruns
+ * that), and measures on the monotonic clock, whereas what matters here is how
+ * much *wall* time the run's elapsed figure has quietly absorbed.
+ */
+const LOST_TIME_BEAT_MS = 1000;
+
+/**
+ * How much wall time the page must fail to account for before the gap is called
+ * a sleep rather than an ordinary backgrounded tab.
+ *
+ * The old test was "was the tab ever hidden", which every alt-tab satisfied —
+ * this machine logged over a thousand hidden/visible transitions in one session
+ * — so every run the user looked away from was declared a hibernation. A tab
+ * being hidden is not the signal; wall time the page never got to execute is.
+ *
+ * Two minutes because a hidden tab legitimately loses time too: Chrome's
+ * intensive throttling wakes a background page's timers about once a minute, so
+ * a perfectly healthy backgrounded run produces gaps of ~60s plus jitter.
+ * Doubling that leaves no chance of throttling tripping the flag. A sleep
+ * shorter than two minutes is not worth flagging anyway — the elapsed figure is
+ * wall-clock arithmetic and stays correct across it; the flag exists for gaps
+ * long enough that waves ran, or a whole run finished, unobserved.
+ */
+const LOST_TIME_SLEEP_MS = 120_000;
 
 /**
  * Who the in-progress record belongs to.
@@ -138,6 +169,9 @@ class DungeonTracker {
 
         // Hibernation detection (for UI time label switching)
         this.hibernationDetected = false;
+        // When the lost-time heartbeat last stamped the wall clock
+        this._lastBeatAt = 0;
+        this._lostTimeBeat = null;
         this.timerRegistry = createTimerRegistry();
         this.visibilityHandler = null;
 
@@ -204,6 +238,48 @@ class DungeonTracker {
      */
     isNonDungeonBattle(running) {
         return Boolean(running) && !this.isDungeonAction(running.actionHrid);
+    }
+
+    /**
+     * Whether this run is one the character is running alone.
+     *
+     * Decided from the fight itself — `new_battle`'s `players` array, kept on
+     * the run as `partyNames` — and never from chat, because chat is exactly
+     * what this answer gates. A solo run posts no "Key counts" party messages,
+     * so any such message in the log belongs to something else: another run,
+     * another dungeon, another day. Believing one gave a Chimerical Den run
+     * whose real length was about twelve minutes a displayed "Chat: 92:39",
+     * measured from the moment the player had joined the party an hour and a
+     * half earlier.
+     *
+     * Null `partyNames` is not solo. A run restored from a record that predates
+     * the field, or started before any roster arrived, cannot say — and the
+     * party behaviour is what it has always been, so that is what it keeps.
+     *
+     * @returns {boolean} True only when the fight said one player was in it
+     */
+    isSoloRun() {
+        const names = this.currentRun?.partyNames;
+        return Array.isArray(names) && names.length === 1;
+    }
+
+    /**
+     * Whether a chat timestamp is recent enough to be this run's.
+     *
+     * The party chat log outlives the party: the reported case still held a
+     * different dungeon's "Key counts" messages from two days before, and
+     * nothing stopped the newest of them being adopted as this run's start.
+     * `RECOVERY_FALLBACK_MAX_MS` is the bound the recovery path already uses for
+     * the same judgement — no run of any dungeon in the game takes 45 minutes —
+     * so a message older than that cannot belong to the run in front of us.
+     *
+     * @param {number|null} timestamp - Epoch milliseconds from a chat message
+     * @returns {boolean} True when the stamp could be this run's
+     */
+    isFreshChatAnchor(timestamp) {
+        if (!Number.isFinite(timestamp)) return false;
+        const age = Date.now() - timestamp;
+        return age >= 0 && age <= RECOVERY_FALLBACK_MAX_MS;
     }
 
     /**
@@ -458,30 +534,50 @@ class DungeonTracker {
     }
 
     /**
-     * Setup hibernation detection using Visibility API
-     * Detects when computer sleeps/wakes to flag elapsed time as potentially inaccurate
+     * Watch for wall time the page failed to execute — a sleep, not a tab switch.
+     *
+     * A one-second heartbeat stamps the clock. A beat that comes back more than
+     * {@link LOST_TIME_SLEEP_MS} late is time the page was not running at all,
+     * which is what a suspended machine looks like from inside a script. The
+     * `visibilitychange` listener only asks the same question a beat early, so
+     * the panel says so the moment the user comes back rather than up to a
+     * second later; being hidden is no longer evidence of anything by itself.
+     *
+     * Idempotent: a second call replaces the listener and leaves one heartbeat.
+     * @returns {void}
      */
     setupHibernationDetection() {
-        let wasHidden = false;
+        this._lastBeatAt = Date.now();
 
-        this.visibilityHandler = () => {
-            if (document.hidden) {
-                // Tab hidden or computer going to sleep
-                wasHidden = true;
-            } else if (wasHidden && this.isTracking) {
-                // Tab visible again after being hidden during active run
-                // Mark hibernation detected (elapsed time may be wrong)
-                this.hibernationDetected = true;
-                if (this.currentRun) {
-                    this.currentRun.hibernationDetected = true;
-                }
-                this.notifyUpdate();
-                this.saveInProgressRun(); // Persist flag to IndexedDB
-                wasHidden = false;
+        const checkLostTime = () => {
+            const now = Date.now();
+            const lostMs = now - this._lastBeatAt - LOST_TIME_BEAT_MS;
+            this._lastBeatAt = now;
+
+            if (lostMs < LOST_TIME_SLEEP_MS || !this.isTracking) {
+                return;
             }
+
+            this.hibernationDetected = true;
+            if (this.currentRun) {
+                this.currentRun.hibernationDetected = true;
+            }
+            this.notifyUpdate();
+            this.saveInProgressRun(); // Persist flag to IndexedDB
         };
 
+        if (this.visibilityHandler) {
+            document.removeEventListener('visibilitychange', this.visibilityHandler);
+        }
+        this.visibilityHandler = () => {
+            if (!document.hidden) checkLostTime();
+        };
         document.addEventListener('visibilitychange', this.visibilityHandler);
+
+        if (!this._lostTimeBeat) {
+            this._lostTimeBeat = setInterval(checkLostTime, LOST_TIME_BEAT_MS);
+            this.timerRegistry.registerInterval(this._lostTimeBeat, 'dungeon-tracker-lost-time');
+        }
     }
 
     /**
@@ -540,6 +636,13 @@ class DungeonTracker {
      */
     scanExistingChatMessages() {
         if (!this.isTracking) {
+            return;
+        }
+
+        // A solo run posts no party messages, so nothing in the log is its own —
+        // see `isSoloRun`. Scanning would hand it another run's key counts and,
+        // worse, another run's start timestamp.
+        if (this.isSoloRun()) {
             return;
         }
 
@@ -646,6 +749,14 @@ class DungeonTracker {
                 }
             }
 
+            // A stamp older than a plausible run belongs to an earlier one — or,
+            // in the reported case, to a different dungeon two days ago. Drop the
+            // counts with it: they were that run's roster, not this one's.
+            if (Number.isFinite(latestTimestamp) && !this.isFreshChatAnchor(latestTimestamp)) {
+                latestKeyCountsMap = null;
+                latestTimestamp = null;
+            }
+
             // Update current run with the most recent key counts found
             if (latestKeyCountsMap && this.currentRun) {
                 this.currentRun.keyCountsMap = latestKeyCountsMap;
@@ -722,8 +833,14 @@ class DungeonTracker {
             return false;
         }
 
+        // Recovery is a party-chat mechanism; a solo run has no party timestamps
+        // to recover from, only somebody else's.
+        if (this.isSoloRun()) {
+            return false;
+        }
+
         const anchor = this.firstKeyCountTimestamp;
-        if (!anchor) {
+        if (!anchor || !this.isFreshChatAnchor(anchor)) {
             return false;
         }
 
@@ -1006,6 +1123,15 @@ class DungeonTracker {
 
         // If not tracking, ignore (probably from someone else's dungeon)
         if (!this.isTracking) {
+            return;
+        }
+
+        // The fight says one player is in it, so this message is not about it —
+        // a party member's own dungeon, posted to the same channel. Timing this
+        // run between somebody else's key counts, or completing it on one, is
+        // how a solo run came to report a duration measured from the moment the
+        // player joined the party.
+        if (this.isSoloRun()) {
             return;
         }
 
@@ -1820,12 +1946,18 @@ class DungeonTracker {
         // Unless the party's chat handed us the run's real start and it survived
         // both checks in `assessRecoveredStart` — then the anchor is better
         // evidence than our own clock ever was, and the run is a whole one.
+        //
+        // And never for a run the fight says was solo. A solo run produces no
+        // party messages, so a chat anchor it somehow acquired is another run's
+        // — the reported "Chat: 92:39" on an eleven-minute Chimerical Den was
+        // the moment the player had joined the party. Such a run is timed on its
+        // own clock, or labelled "Watched:" when even that is only the tail.
+        const solo = this.isSoloRun();
         const joinedMidRun = this.currentRun.joinedMidRun === true;
-        const startRecovered = this.currentRun.startRecovered === true;
+        const startRecovered = this.currentRun.startRecovered === true && !solo;
+        const chatStart = solo ? null : (this.currentRun.recoveredStartTime ?? this.firstKeyCountTimestamp ?? null);
         const runStartTime =
-            joinedMidRun && !startRecovered
-                ? this.currentRun.startTime
-                : this.currentRun.recoveredStartTime || this.firstKeyCountTimestamp || this.currentRun.startTime;
+            joinedMidRun && !startRecovered ? this.currentRun.startTime : (chatStart ?? this.currentRun.startTime);
         const totalElapsed = now - runStartTime;
         const currentWaveElapsed = this.waveStartTime ? now - this.waveStartTime.getTime() : 0;
 
@@ -1859,6 +1991,11 @@ class DungeonTracker {
             estimatedTimeRemaining,
             keyCountsMap: this.currentRun.keyCountsMap || {}, // Party member key counts
             hibernationDetected: this.hibernationDetected || this.currentRun.hibernationDetected || false,
+            // Whether the figure above really is measured from a party chat
+            // timestamp. The "Chat:" label may only be shown when it is — a
+            // sleep during a run that is being timed on its own clock says
+            // nothing about where the clock came from.
+            elapsedFromPartyChat: runStartTime !== this.currentRun.startTime,
             // The run was already under way when tracking began
             joinedMidRun,
             joinedAtWave: this.currentRun.joinedAtWave ?? null,
@@ -1997,6 +2134,7 @@ class DungeonTracker {
 
             // Reset hibernation detection
             this.hibernationDetected = false;
+            this._lostTimeBeat = null;
 
             // The five-second veto `canRestoreRecord` applies after a run
             // completes, guarding against a record whose IndexedDB clear is

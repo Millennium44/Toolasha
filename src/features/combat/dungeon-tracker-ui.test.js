@@ -121,6 +121,7 @@ function run(overrides = {}) {
         estimatedTimeRemaining: 0,
         keyCountsMap: {},
         hibernationDetected: false,
+        elapsedFromPartyChat: false,
         joinedMidRun: false,
         joinedAtWave: null,
         elapsedIsSinceNoticed: false,
@@ -192,6 +193,22 @@ describe('a run joined part-way through', () => {
         expect(text('#mwi-dt-dungeon-name')).toBe('Pirate Cove (T1)');
         expect(text('#mwi-dt-time-label')).toBe('Elapsed:');
         expect(titleOf('#mwi-dt-time-label')).toBe('Time since dungeon started');
+    });
+
+    test('a sleep during a run timed on its own clock is not labelled as chat', async () => {
+        // A solo run has no party chat timestamps to be using; saying otherwise
+        // is how an eleven-minute run came to read "Chat: 92:39"
+        await ui.update(run({ hibernationDetected: true, elapsedFromPartyChat: false }), false);
+
+        expect(text('#mwi-dt-time-label')).toBe('Elapsed:');
+        expect(titleOf('#mwi-dt-time-label')).toBe('Time since dungeon started');
+    });
+
+    test('a sleep during a run that really is chat-timed still says so', async () => {
+        await ui.update(run({ hibernationDetected: true, elapsedFromPartyChat: true }), false);
+
+        expect(text('#mwi-dt-time-label')).toBe('Chat:');
+        expect(titleOf('#mwi-dt-time-label')).toContain('computer sleep detected');
     });
 
     test('a recovered start is presented as an ordinary run, with the source in the tooltip', async () => {

@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Dungeon Tracker: an ordinary tab switch no longer makes the run timer wildly wrong
+
+- Switching away from the game for a moment used to count as a computer sleep, which let the panel time a run from an unrelated party chat message — one reported run showed 92:39 for a dungeon that takes about twelve minutes — so a sleep is now detected from wall time the page actually failed to run, and a run the fight says you are doing alone is timed on its own clock instead of from party chat it can never have produced.
+
 ### Tick Period: recovery is timed per effect, and damage over time is settled as unmeasurable
 
 - Food and drink recovery intervals now count only while the same heal-over-time effect stays on the unit, so gaps between separate meals are discarded with a reason instead of being averaged into the period, and the damage-over-time row states the settled finding that the stream cannot distinguish a tick from a hit.

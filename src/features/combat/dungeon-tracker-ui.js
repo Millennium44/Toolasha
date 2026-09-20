@@ -655,7 +655,10 @@ class DungeonTrackerUI {
                 timeLabel.title = run.joinedAtWave
                     ? `Time since this run started — start recovered from the party chat log after joining at wave ${run.joinedAtWave}`
                     : 'Time since this run started — start recovered from the party chat log';
-            } else if (run.hibernationDetected) {
+            } else if (run.hibernationDetected && run.elapsedFromPartyChat) {
+                // Only when the figure really is a party chat timestamp's. A solo
+                // run has no such timestamps, and saying otherwise is how an
+                // eleven-minute run came to read "Chat: 92:39".
                 timeLabel.textContent = 'Chat: ';
                 timeLabel.title = 'Using party chat timestamps (computer sleep detected)';
             } else {
