@@ -54,7 +54,12 @@ vi.mock('../../utils/adoption-consent.js', () => ({
     requestAdoptionConsent: () => Promise.resolve(null),
 }));
 
-import recorder, { attemptIdentity, mergeAttempts, MAX_ATTEMPTS } from './labyrinth-fight-recorder.js';
+import recorder, {
+    attemptIdentity,
+    mergeAttempts,
+    MAX_ATTEMPTS,
+    MAX_REPLAY_BUILDS,
+} from './labyrinth-fight-recorder.js';
 import { FINGERPRINT_VERSION } from './labyrinth-fingerprint.js';
 
 /**
@@ -479,6 +484,93 @@ describe('the pool survives a failed read and a second tab', () => {
         expect(attemptIdentity(legacy)).toBe(attemptIdentity({ ...legacy }));
         expect(attemptIdentity(legacy)).not.toBe(attemptIdentity({ ...legacy, seconds: 11 }));
         expect(attemptIdentity({ ...legacy, recordId: 'x' })).toBe('x');
+    });
+});
+
+describe('saved room builds are interned, not copied onto every fight', () => {
+    /** Saved replay inputs for one build, distinguished by attack level */
+    const build = (attackLevel) => ({
+        version: 1,
+        playerDTO: { hrid: 'player1', attackLevel, abilities: [] },
+        crates: [],
+        communityBuffs: {},
+        labyrinthCombatBuffs: [],
+        fullAbilities: true,
+    });
+    /** A stored attempt, identified, dated and carrying a saved build */
+    const withBuild = (recordId, resolvedAt, attackLevel) => ({
+        ...attempt(),
+        recordId,
+        resolvedAt,
+        replayInputs: build(attackLevel),
+    });
+
+    test('consecutive fights on one build store that build once', async () => {
+        for (let i = 0; i < 5; i++) recorder.noteAttempt(attempt({ replayInputs: build(10) }));
+        await settle();
+        const entries = stored();
+        expect(entries).toHaveLength(5);
+        // Exactly one record carries the build; the rest reference it
+        expect(entries.filter((entry) => entry.replayInputs).length).toBe(1);
+        expect(new Set(entries.map((entry) => entry.replayBuildId)).size).toBe(1);
+        // And every fight still reads back with its build
+        recorder.forget();
+        await recorder.load();
+        const read = recorder.recordedAttempts();
+        expect(read).toHaveLength(5);
+        expect(read.every((a) => a.replayInputs?.playerDTO?.attackLevel === 10)).toBe(true);
+    });
+
+    test('two builds stay two builds, and a fight never reads back the wrong one', async () => {
+        recorder.noteAttempt(attempt({ replayInputs: build(10) }));
+        recorder.noteAttempt(attempt({ replayInputs: build(10) }));
+        recorder.noteAttempt(attempt({ replayInputs: build(11) }));
+        await settle();
+        expect(stored().filter((entry) => entry.replayInputs).length).toBe(2);
+        recorder.forget();
+        await recorder.load();
+        expect(recorder.recordedAttempts().map((a) => a.replayInputs.playerDTO.attackLevel)).toEqual([10, 10, 11]);
+    });
+
+    test('a sync of two devices holding different builds keeps both', () => {
+        const mine = [withBuild('mine-a', 1_000, 10), withBuild('mine-b', 2_000, 10)];
+        const theirs = [withBuild('theirs-a', 3_000, 11), withBuild('theirs-b', 4_000, 11)];
+        const entries = mergeAttempts(mine, theirs).entries;
+        expect(entries.map((entry) => entry.recordId)).toEqual(['mine-a', 'mine-b', 'theirs-a', 'theirs-b']);
+        expect(entries.filter((entry) => entry.replayInputs).length).toBe(2);
+        // Every id resolves inside the merged record, and to the right build
+        const byId = new Map(entries.filter((e) => e.replayInputs).map((e) => [e.replayBuildId, e.replayInputs]));
+        expect(entries.map((entry) => byId.get(entry.replayBuildId)?.playerDTO.attackLevel)).toEqual([10, 10, 11, 11]);
+    });
+
+    test('eviction never leaves a fight pointing at a build that was dropped', () => {
+        // The build's carrier is the OLDEST fight using it, which is exactly
+        // what the ring cap drops first
+        const older = Array.from({ length: MAX_ATTEMPTS }, (_, i) => withBuild(`old-${i}`, 1_000 + i, 10));
+        const newer = [withBuild('new', 9_000_000, 10)];
+        const entries = mergeAttempts(older, newer).entries;
+        expect(entries).toHaveLength(MAX_ATTEMPTS);
+        const carriers = new Set(entries.filter((entry) => entry.replayInputs).map((entry) => entry.replayBuildId));
+        expect(carriers.size).toBe(1);
+        for (const entry of entries) expect(carriers.has(entry.replayBuildId)).toBe(true);
+    });
+
+    test('a clear epoch dropping the oldest fights does not orphan the survivors', () => {
+        const mine = [withBuild('before', 1_000, 10), withBuild('after', 5_000, 10)];
+        const entries = mergeAttempts(mine, { clearedAt: 2_000, entries: [] }).entries;
+        expect(entries.map((entry) => entry.recordId)).toEqual(['after']);
+        expect(entries[0].replayInputs.playerDTO.attackLevel).toBe(10);
+    });
+
+    test('the build table is capped, and a fight past it reverts to the legacy path', () => {
+        const many = Array.from({ length: MAX_REPLAY_BUILDS + 5 }, (_, i) => withBuild(`f-${i}`, 1_000 + i, i));
+        const entries = mergeAttempts(many, []).entries;
+        expect(entries.filter((entry) => entry.replayInputs).length).toBe(MAX_REPLAY_BUILDS);
+        // The oldest five lost their inputs AND their id together, so nothing
+        // dangles; they still carry every measurement and their fingerprint
+        const dropped = entries.slice(0, 5);
+        expect(dropped.every((entry) => entry.replayInputs === null && entry.replayBuildId === null)).toBe(true);
+        expect(dropped.every((entry) => entry.fingerprint === 'gearA' && entry.monsterDamage === 700)).toBe(true);
     });
 });
 

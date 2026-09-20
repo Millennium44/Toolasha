@@ -32,6 +32,22 @@ function stable(value) {
     );
 }
 
+/**
+ * Ignore fields the labyrinth engine does not use when comparing saved builds.
+ *
+ * Exported because the recorder interns saved inputs by this key: consecutive
+ * fights in a run share a build exactly, and storing the whole build on each of
+ * them multiplied the pool's size by fifteen. The key is the full canonical
+ * string, never a hash — two builds that compare equal here are the same build
+ * to the simulator, and nothing downstream can mistake one for another.
+ *
+ * @param {Object} inputs - Saved replay inputs, as {@link copyReplayInputs} returns
+ * @returns {string} A canonical string equal for builds the engine cannot tell apart
+ */
+export function replayBuildKey(inputs) {
+    return buildKey(inputs);
+}
+
 /** Ignore fields the labyrinth engine does not use when comparing saved builds. */
 function buildKey(inputs) {
     const playerDTO = { ...inputs.playerDTO };
