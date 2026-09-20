@@ -1,9 +1,47 @@
 # Combat replay validation and assumptions — 2026-09-20
 
+## Latest short live checks
+
+The user deferred longer experiments until after reset. The concrete setups, durations and
+pass/fail evidence are saved in [the post-reset test plan](combat-post-reset-validation-2026-09-20.md).
+
+**Opening equipment evidence:** at 20:56:54.653 UTC the client applied the Siren room's automatic
+swap from Blooming Trident +10 / Bishop's Codex +10 to Arcane Bow +0. `new_battle` arrived at
+20:56:57.596 UTC, 2.943 seconds later. Both its captured client equipment and the saved fight DTO
+contain the bow in the two-hand slot, with no old main-hand/off-hand. This supports PR #142 for
+one observed transition; it does not establish all room, retry, trigger or refresh paths.
+
+This was test-server build `3.56.0.20260920203142`, integration commit `9f6a97d0` (main `9db5a9db`
+plus PR #142 at `57bd95a5` and the initial PR #146 capture). The 337-event raw capture has no
+dropped entries and is saved locally as `toolasha-labyrinth-ticks-2026-09-20-20-58-09.json`
+(SHA-256 `e3b2b58cf6e80061ec8f4901c4f42252414f83014f38357452fd1f661e7e9180`).
+Paired pool: `toolasha-labyrinth-2026-09-20-20-58-10.json`. The Siren Lv.35 fight was complete,
+started at full HP, and lasted 21.475 measured seconds. The raw files remain outside Git.
+
+The earlier Pyre Hunter Lv.34 fight was also complete and retained its trident DTO. After a new
+unrelated saved loadout was created, both fights replayed from recorded inputs with zero
+exclusions/failures. Both had one observation and correctly received insufficient-evidence verdicts.
+Same-monster/different-build cohorts still need repeated live tests. A preliminary Low Mana
+loadout test produced no equipment update and was inconclusive for swap timing.
+
+PR #142 also now ignores unused DTO metadata when grouping and labels historical builds.
+PR #146's follow-up makes all battle consumers ignore equipment/ability diagnostic markers;
+focused regressions caught marker-induced hit loss and hidden gaps before that follow-up.
+Those follow-ups were tested locally and are separate from the opening-capture build named above.
+
+**Refresh persistence:** after two reloads onto build `3.56.0.20260920210120` (integration
+`60178ba5`: PR #142 `3f929182`, PR #146 including `d096a4b7`, and PR #147), both persisted
+`replayInputs` objects were deeply equal to their pre-refresh exports. Both replayed again with
+zero exclusions/failures: `Build 64e2a1be · Blooming Trident ★ +10` and `Build 5ef07346 · Arcane Bow`.
+All verdicts remained insufficient. Pool: `toolasha-labyrinth-2026-09-20-21-12-10.json`;
+comparison: `toolasha-labyrinth-2026-09-20-21-12-19.json`. This checks persistence for these two
+records; it does not settle first-fight capture during a post-refresh automatic swap.
+
 ## Handoff to the test-server reviewer
 
 Please validate [PR #142](https://github.com/Millennium44/Toolasha/pull/142), including its follow-up
-fixes for capturing the equipped build and reading current skill levels. Fetch the latest PR head
+fix for capturing the equipped build. The current-skill-level fix and opening fingerprint capture
+are already on main. Fetch the latest PR head
 and main before testing; record the exact commit and userscript version tested.
 
 The original PR captured inputs at fight opening but reapplied the room's configured loadout.
@@ -70,7 +108,8 @@ tracing is later useful, integrate it with existing diagnostics instead of addin
 
 This is the working checklist for the current combat/recorder audit, not an exhaustive inventory
 of every simulator formula. See also [the existing claim-verification notes](sim-claim-verification.md).
-All rows below remain unverified in this audit. A local regression test does not change that status.
+A1 has the limited live equipment evidence above; its other paths remain open. Other rows remain
+unverified in this audit. A local regression test does not establish a game mechanic.
 
 | ID                         | Assumption or unresolved question                                                                                                                                                                                                   | Evidence to collect / decision                                                                                                                                                                                                                                                        |
 | -------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -118,13 +157,13 @@ Additional analysis assumptions:
 
 ## Evidence log
 
-| Check                                    | Status                                                                                                                                                  |
-| ---------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Equipped versus configured build capture | Reproduced by targeted test before fix; passes after fix.                                                                                               |
-| Capture during loadout-snapshot loading  | Reproduced by targeted test before fix; passes after fix.                                                                                               |
-| DTO levels after `skills_updated`        | Reproduced by targeted test before fix; passes after fix.                                                                                               |
-| Live test-server parity                  | 100 additional normal-combat fights captured; pooled 105-fight comparison is within its estimated bands. PR #142 still needs live labyrinth validation. |
-| Browser storage/performance              | Pending reviewer measurements.                                                                                                                          |
+| Check                                    | Status                                                                                                                                                                                                             |
+| ---------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Equipped versus configured build capture | Reproduced by targeted test before fix; passes after fix.                                                                                                                                                          |
+| Capture during loadout-snapshot loading  | Reproduced by targeted test before fix; passes after fix.                                                                                                                                                          |
+| DTO levels after `skills_updated`        | Reproduced by targeted test before fix; passes after fix.                                                                                                                                                          |
+| Live test-server parity                  | Pooled 105-fight normal comparison is within its estimated bands. One actual labyrinth equipment swap and two persisted replay inputs passed the limited checks above; repeated mechanics validation remains open. |
+| Browser storage/performance              | Pending reviewer measurements.                                                                                                                                                                                     |
 
 Update this log with commit, artifact, observed result and remaining ambiguity after each live
 test. Do not mark a mechanic confirmed from a simulator-only test or a bundled arrival timestamp.
@@ -138,6 +177,8 @@ test. Do not mark a mechanic confirmed from a simulator-only test or a bundled a
   34 relevant suites passed, including the newly changed expected-drop calculations.
 - Final compatibility checkout: main `cf5aadf3` with PRs #142–#145 applied together passes 1,490
   tests across 37 relevant suites and the production build. This checkout did not merge any PR.
+- Later integration `60178ba5` on main `9db5a9db` passed 1,372 tests across 28 relevant files,
+  development/production builds and bundle-sharing checks before the short refresh/ingest checks.
 
 ## Live recorder evidence
 
@@ -164,7 +205,7 @@ hashes while retaining the item HRID, count, enhancement level and availability 
 - The recording target initially appeared unchanged immediately after interaction, but a later
   observation showed `15 fights — ±13% of ±5%`. The noise target did take effect; the immediate
   post-click display was not sufficient evidence of a target-control defect. The longer capture
-  is running toward the measured ±5% target.
+  was subsequently bounded at 100 additional fights and is complete below.
 
 ### Completed extended baseline
 
@@ -190,10 +231,16 @@ A fresh 12-hour check pools both recordings (105 fights total):
 All displayed metrics are inside the panel's estimated bands. The original five-fight DPS gap
 did not persist. The sample did **not** reach ±5%, and it does not establish broad game parity or
 validate the newer PR build. The export is kept locally; its old sanitizer still leaves inventory
-hashes, so a scrubbed copy is required before public sharing. The dungeon/party capture and
-controlled tests are continuing under the user's two-hour test window.
+hashes, so a scrubbed copy is required before public sharing. A separate 30-minute Pirate Cove
+party capture completed with 245 fights, 7,381 raw ticks across two segments and `ticksComplete: true`.
+The new short stopped-recording export verified frozen duration and zero consumable hash leaks.
 
 ## Recorder follow-up PRs
+
+PRs #143–#145 are now closed with their fixes on main. The build failure described below is
+historical and resolved. Newer recorder work is under review in PRs #146–#153; none was merged
+by this agent. PR #152 now stacks on #147 and resets its recording ID during cleanup; PR #153
+stacks on #151 and preserves character ownership during slow restores.
 
 - [PR #143](https://github.com/Millennium44/Toolasha/pull/143) removes character IDs from sanitized
   consumable hashes. One focused regression reproduced the live export defect.
