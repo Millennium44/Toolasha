@@ -1275,13 +1275,6 @@ function registerFeatures() {
             async: true,
         },
         {
-            key: 'furyStackingWatch',
-            name: 'Fury Stacking',
-            category: 'Combat',
-            module: Combat.furyStacking,
-            async: true,
-        },
-        {
             key: 'waveGapWatch',
             name: 'Wave Gap',
             category: 'Combat',

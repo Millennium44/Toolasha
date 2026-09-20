@@ -6,21 +6,17 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Fury Stacking: the measurement is removed
+
+- The check answered its question — Fury pools with your other buffs rather than multiplying them — and the engine now does that, so the diagnostic, its setting and its panel are gone.
+
 ### Combat Sim: Fury was simulated too strong
 
 - Measured against the game, Fury adds into the same pool as your other damage and accuracy buffs rather than multiplying on top of them, so every past simulation of a build running Fury was optimistic about its damage and accuracy; the fix also makes the simulator's internal buff shape match the game's, so the sim-built and live-folded stats can no longer disagree.
 
-### Fury Stacking: the check was not finding Fury at all
-
-- It looked the buff up under a type only the simulator produces, so every reading was filed as "no Fury up" and the panel showed a confident zero; it now recognises Fury by the name the game uses, and says loudly when a run of readings never finds Fury rather than looking merely patient.
-
 ### Wave Gap: measure the real gap between a wave clearing and the next one starting
 
 - A new off-by-default combat diagnostic times the last monster of a wave dying to the next wave starting, keeping open-zone respawns, dungeon wave transitions and dungeon run boundaries apart, and reports the distribution, the cycle-position bins and the arrival-time noise it measured in its own ruler — so the simulator's single respawn constant can be checked against our own data instead of taken on trust.
-
-### Fury Stacking: measure whether Fury multiplies the other buffs or pools with them
-
-- A new off-by-default combat diagnostic checks every snapshot of your own resolved stats against both candidate formulas, counting only readings where Fury and another buff of the same type are both up — the two formulas are identical otherwise — and reports separate verdicts for accuracy and max damage.
 
 ### Stun Persistence: measure whether a stun outlives the monster that cast it
 
