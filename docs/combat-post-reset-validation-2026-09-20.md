@@ -76,6 +76,9 @@ starts. Prefer one changed variable per setup.
   lethal thresholds, and compare survival/death plus damage/healing evidence across repeats.
 - **Stun expiry/wake-up:** capture overlapping statuses and mana recovery around expiry. First
   establish what each counter counts; an advancing counter need not mean a damaging hit.
+- **Labyrinth task bonuses (A15):** compare otherwise identical matching-task and nonmatching-task
+  opponents/builds. Current recorded replay leaves task damage off; establish whether live server
+  damage follows that assumption before changing the model or its build grouping.
 
 Exact same-time server ordering may remain unobservable. FIFO tests and the Ripple guard describe
 implementation conventions/hardening, not measured game behavior.

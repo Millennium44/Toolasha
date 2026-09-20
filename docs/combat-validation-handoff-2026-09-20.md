@@ -25,6 +25,10 @@ Same-monster/different-build cohorts still need repeated live tests. A prelimina
 loadout test produced no equipment update and was inconclusive for swap timing.
 
 PR #142 also now ignores unused DTO metadata when grouping and labels historical builds.
+Task progress is also excluded from equality because recorded replay currently leaves task
+damage off. A focused regression previously produced six groups and deferred three solely
+because task counters changed; it now pools five otherwise identical builds while retaining
+one genuinely changed combat-level build as a second group. The original saved DTOs stay intact.
 PR #146's follow-up makes all battle consumers ignore equipment/ability diagnostic markers;
 focused regressions caught marker-induced hit loss and hidden gaps before that follow-up.
 Those follow-ups were tested locally and are separate from the opening-capture build named above.
@@ -140,6 +144,10 @@ Additional analysis assumptions:
   two monster updates at offsets 151 ms and 1,450 ms both have `isStunned: true` while the counter
   changes from 2 to 3. This alone does not establish damage during stun or exact event order.
   Require action, victim HP/damage-counter and status evidence together.
+- **A15 — task damage in labyrinth:** recorded replay currently leaves task damage off, so task
+  targets and remaining counts do not affect its effective build. Whether the live game applies
+  task bonuses in labyrinth still needs a controlled matching-target versus nonmatching-target
+  comparison. If that mechanic changes the model, saved input equality must change with it.
 
 ## Code audit notes
 
