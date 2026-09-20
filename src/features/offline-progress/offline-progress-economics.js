@@ -45,6 +45,7 @@ class OfflineProgressEconomics {
         this.processedModals = new WeakSet();
         this.currentOfflineData = null;
         this.currentBlock = null;
+        this.currentBlockData = null;
         this.pricingModeChangeHandler = null;
         this.modalCleanupUnwatch = null;
     }
@@ -155,6 +156,9 @@ class OfflineProgressEconomics {
             const block = buildBlock(economics);
             wrapper.after(block);
             this.currentBlock = block;
+            // A reconnect can cache the next offline payload while this native modal
+            // still shows the previous one. Pricing changes must retain its snapshot.
+            this.currentBlockData = this.currentOfflineData;
         } catch (error) {
             console.error('[Offline Progress Economics] Could not build the summary block:', error);
             return;
@@ -173,8 +177,8 @@ class OfflineProgressEconomics {
      * Recompute and redraw the block in place (e.g. after a pricing mode change).
      */
     recompute() {
-        if (!this.currentOfflineData || !this.currentBlock) return;
-        const economics = calculateOfflineEconomics(this.currentOfflineData);
+        if (!this.currentBlockData || !this.currentBlock) return;
+        const economics = calculateOfflineEconomics(this.currentBlockData);
         const newBlock = buildBlock(economics);
         this.currentBlock.replaceWith(newBlock);
         this.currentBlock = newBlock;
@@ -234,6 +238,7 @@ class OfflineProgressEconomics {
             this.currentBlock.remove();
             this.currentBlock = null;
         }
+        this.currentBlockData = null;
     }
 
     /**
