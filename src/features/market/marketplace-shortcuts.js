@@ -29,6 +29,7 @@ class MarketplaceShortcuts {
         this.closeHandler = null;
         this.pendingQuantity = null;
         this.addMode = false;
+        this.lifecycleGeneration = 0;
     }
 
     /**
@@ -263,6 +264,8 @@ class MarketplaceShortcuts {
      * @param {number} enhancementLevel - Enhancement level (0 for base items)
      */
     async executeAction(actionType, itemHrid, enhancementLevel = 0) {
+        const generation = this.lifecycleGeneration;
+
         // Read quantity from item submenu input before navigating away
         const amountInput = document.querySelector('[class*="Item_amountInputContainer"] input');
         if (amountInput) {
@@ -291,6 +294,7 @@ class MarketplaceShortcuts {
 
         // Wait for the marketplace panel to render
         await new Promise((r) => setTimeout(r, 300));
+        if (generation !== this.lifecycleGeneration) return;
 
         try {
             switch (actionType) {
@@ -410,7 +414,7 @@ class MarketplaceShortcuts {
         const qty = this.pendingQuantity;
         this.pendingQuantity = null;
 
-        setTimeout(() => {
+        const timeout = setTimeout(() => {
             // Nothing is written when the field cannot be identified: the
             // alternative was the old positional guess, which in a woken sell
             // modal is the price field. An unfilled quantity costs the player a
@@ -421,6 +425,7 @@ class MarketplaceShortcuts {
             nativeInputValueSetter.call(quantityInput, qty.toString());
             quantityInput.dispatchEvent(new Event('input', { bubbles: true }));
         }, 100);
+        this.timerRegistry.registerTimeout(timeout);
     }
 
     /**
@@ -443,13 +448,14 @@ class MarketplaceShortcuts {
         }
 
         // Delay to run after autofill (100ms) and quick input injection
-        setTimeout(() => {
+        const timeout = setTimeout(() => {
             const quantityInput = this.findQuantityInput(modal);
             if (quantityInput) {
                 quantityInput.focus();
                 quantityInput.select();
             }
         }, 150);
+        this.timerRegistry.registerTimeout(timeout);
     }
 
     /**
@@ -473,7 +479,7 @@ class MarketplaceShortcuts {
         if (!isMarketplaceModal) return;
 
         // Delay to let the modal fully render
-        setTimeout(() => {
+        const timeout = setTimeout(() => {
             // Skip if already injected
             if (modal.querySelector('.mwi-mp-quick-input')) return;
 
@@ -572,6 +578,7 @@ class MarketplaceShortcuts {
                 inputRow.insertAdjacentElement('afterend', row);
             }
         }, 150);
+        this.timerRegistry.registerTimeout(timeout);
     }
 
     /**
@@ -587,7 +594,7 @@ class MarketplaceShortcuts {
         const headerText = header.textContent.trim();
         if (!headerText.includes('Buy Now') && !headerText.includes('Buy Listing')) return;
 
-        setTimeout(() => {
+        const timeout = setTimeout(() => {
             if (modal.querySelector('.mwi-owned-count')) return;
 
             // Extract item HRID from the SVG icon in the modal
@@ -638,6 +645,7 @@ class MarketplaceShortcuts {
             ownedEl.innerHTML = `Owned: <span style="color: ${config.COLOR_ACCENT}; font-weight: 600;">${formatWithSeparator(count)}</span>`;
             quantityRow.insertAdjacentElement('beforebegin', ownedEl);
         }, 100);
+        this.timerRegistry.registerTimeout(timeout);
     }
 
     /**
@@ -751,7 +759,7 @@ class MarketplaceShortcuts {
             headerText.includes('Sell Listing');
         if (!isMarketplaceModal) return;
 
-        setTimeout(() => {
+        const timeout = setTimeout(() => {
             if (modal.querySelector('.mwi-mp-multiplier')) return;
 
             const priceRow = modal.querySelector('div[class*="MarketplacePanel_priceInputs"]');
@@ -827,12 +835,14 @@ class MarketplaceShortcuts {
                 lastContainer.insertAdjacentElement('afterend', multiplyWrapper);
             }
         }, 100);
+        this.timerRegistry.registerTimeout(timeout);
     }
 
     /**
      * Disable and cleanup
      */
     disable() {
+        this.lifecycleGeneration += 1;
         this.unregisterHandlers.forEach((unregister) => unregister());
         this.unregisterHandlers = [];
 
@@ -848,6 +858,8 @@ class MarketplaceShortcuts {
         document.querySelectorAll('.mwi-mp-multiplier').forEach((el) => el.remove());
 
         this.itemNameToHridCache = null;
+        this.pendingQuantity = null;
+        this.addMode = false;
         this.isInitialized = false;
     }
 }
