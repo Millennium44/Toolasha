@@ -143,10 +143,10 @@ hashes while retaining the item HRID, count, enhancement level and availability 
 - Boundary payloads retain consumable counts and coffee buff maps, offering more evidence about
   consumable availability than equipped slots alone. A boundary snapshot still does not prove
   uninterrupted uptime throughout the recording.
-- Setting a count target and pressing Record, and pressing Record to ±5%, both left the running
-  recorder displaying an unlimited target in this installed build. A longer recording was
-  started and will be stopped manually; the target-control issue needs reproduction on a
-  current complete bundle set before assigning a cause.
+- The recording target initially appeared unchanged immediately after interaction, but a later
+  observation showed `15 fights — ±13% of ±5%`. The noise target did take effect; the immediate
+  post-click display was not sufficient evidence of a target-control defect. The longer capture
+  is running toward the measured ±5% target.
 
 The longer sample should retain the same build and zone. Recheck its measured uncertainty rather
 than treating a fixed fight count as sufficient, and keep its results separate from this first
