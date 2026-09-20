@@ -2223,6 +2223,17 @@ export const settingsGroups = {
                 default: true,
                 help: 'Derives damage dealt, damage taken and fight length from a recorded fight, runs the simulator for the same zone, and reports the deviation with a sampling-noise margin. Feeds the Sim Accuracy overlay row and the panel behind it',
             },
+            stunPersistenceWatch: {
+                id: 'stunPersistenceWatch',
+                label: 'Stun Persistence: Measure whether a stun outlives the monster that cast it',
+                type: 'checkbox',
+                default: false,
+                // The hooks are attached in initialize(), which runs at start-up
+                // and on a character switch only, so neither direction of the
+                // switch takes effect until the page is reloaded
+                requiresRefresh: true,
+                help: 'Watches the battle stream for a stun that was still being reported after its caster died, keeping only the waves where exactly one thing could have cast it. The tally survives a reload and builds up over sessions. The payload carries one crowd-control flag, so this covers stun only — not blind and not silence. Feeds the Stun Persistence overlay row and the panel behind it',
+            },
             combatScore: {
                 id: 'combatScore',
                 label: 'Profile panel: Show gear score',

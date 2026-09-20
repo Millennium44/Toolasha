@@ -129,6 +129,10 @@ export const LOCAL_ONLY_KEY_PREFIXES = [
     'updateCheckState',
     'sessionBriefingLastAlive_',
     'Toolasha_marketAPI_',
+    // Episodes this machine watched go by. Pulling another device's copy over
+    // it would drop however many this one had counted, and a sum would
+    // double-count every episode that had already travelled — so it stays put
+    'stunPersistenceTally',
 ];
 
 /**

@@ -171,6 +171,9 @@ export const OWNED_KEY_PREFIXES = [
     'philoCalculatorSettings',
 
     // Combat, its panels and its recorders
+    // A measurement of this machine's own observations of the battle stream —
+    // ours, and device-local, see LOCAL_ONLY_KEY_PREFIXES
+    'stunPersistenceTally',
     'combatProfitView',
     'combatIncomeNetSalesTax',
     'combatLevelSelection',

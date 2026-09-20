@@ -1268,6 +1268,13 @@ function registerFeatures() {
             async: false,
         },
         {
+            key: 'stunPersistenceWatch',
+            name: 'Stun Persistence',
+            category: 'Combat',
+            module: Combat.stunPersistence,
+            async: true,
+        },
+        {
             key: 'combatRecorder_autoStart',
             name: 'Combat Recorder',
             category: 'Combat',

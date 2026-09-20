@@ -37,6 +37,8 @@ import '../features/profile/build-score-row.js';
 // Registers the Sim Accuracy overlay row and its panel; the instance is read
 // by the zone uptime harness for the sim result the check retained
 import replayCheck, { dungeonWaveTiming } from '../features/combat/combat-replay-check.js';
+// Registers the Stun Persistence overlay row and its panel
+import stunPersistence from '../features/combat/stun-persistence-observer.js';
 import {
     waveHridsOf,
     nonDamagingByHrid,
@@ -162,6 +164,7 @@ toolashaRoot.Combat = {
     combatStatsCalculator,
     salesTaxView,
     combatRecordControl,
+    stunPersistence,
     abilityBookCalculator,
     abilityTooltipTiming,
     manaTracker,

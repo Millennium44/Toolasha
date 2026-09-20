@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Stun Persistence: measure whether a stun outlives the monster that cast it
+
+- A new off-by-default combat diagnostic watches the battle stream for stuns whose caster died mid-stun, keeping only waves where exactly one thing could have cast it, and reports how often the stun kept being flagged afterwards — with the end-bracket widths and the discard reasons beside it, because both are how you tell whether the number means anything. Stun only: the payload carries no blind or silence flag.
+
 ### The health report says whether the page was running when storage stalled
 
 - Every IndexedDB timeout is now recorded with the tab's visibility and how much wall time a one-second heartbeat found missing, next to a per-store latency histogram, the operations still in flight, and the keys costing the most transactions — so a stalled-storage report can be diagnosed off the panel instead of from memory.
