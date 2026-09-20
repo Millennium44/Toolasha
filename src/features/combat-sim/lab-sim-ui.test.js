@@ -3472,6 +3472,33 @@ describe('a skilling analysis left running by a character switch', () => {
         ui.destroy();
     });
 
+    test('a queued second click does not start a concurrent skilling analysis', async () => {
+        ui.buildPanel();
+        await settle();
+        ui._switchTab('skilling');
+
+        let finish;
+        const spy = vi.spyOn(upgradeAdvisor, 'runSkillingUpgradeAnalysis').mockImplementation(
+            () =>
+                new Promise((resolve) => {
+                    finish = () => resolve({ baseline: { clearRate: 0.5, xpPerRoom: 10 }, results: [] });
+                })
+        );
+
+        const first = ui._onSkillingUpgradeAnalyze();
+        const second = ui._onSkillingUpgradeAnalyze();
+        await settle();
+
+        expect(spy).toHaveBeenCalledTimes(1);
+        expect(ui._skillingRunning).toBe(true);
+
+        finish();
+        await Promise.all([first, second]);
+        expect(ui._skillingRunning).toBe(false);
+
+        spy.mockRestore();
+    });
+
     test('is stopped by the teardown, and does not draw into the arriving character’s panel', async () => {
         ui.buildPanel();
         await settle();

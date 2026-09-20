@@ -647,6 +647,7 @@ class LabSimUI {
         // its results vanish under the winner's.
         this._upgradeRunning = false;
         this._skillingAborted = false;
+        this._skillingRunning = false;
         this._skillLoadouts = {};
         /**
          * The scoped key `_skillLoadouts` was read from, i.e. whose loadout
@@ -2416,7 +2417,7 @@ class LabSimUI {
             this._setStatus('Labyrinth simulation cancelled.');
             return;
         }
-        if (this._upgradeRunning) return;
+        if (this._upgradeRunning || this._skillingRunning) return;
 
         // Captured before the first await — see `_stillSameCharacter`
         const ownerId = dataManager.getCurrentCharacterId();
@@ -2865,7 +2866,7 @@ class LabSimUI {
         // function, so a second click landing in that window would otherwise
         // start a concurrent run sharing this._upgradeAborted and clobbering
         // the first run's results.
-        if (this._upgradeRunning || this._runStarting || this.isRunning) return;
+        if (this._upgradeRunning || this._skillingRunning || this._runStarting || this.isRunning) return;
         this._upgradeRunning = true;
         const startToken = ++this._runStartToken;
 
@@ -5424,6 +5425,7 @@ class LabSimUI {
     }
 
     _onSkillingCalculate() {
+        if (this._skillingRunning) return;
         const roomLevel = this._getSkillingRoomLevels();
         const gameData = buildGameDataPayload();
         if (!gameData) {
@@ -5604,6 +5606,8 @@ class LabSimUI {
 
     /** @private */
     async _onSkillingUpgradeAnalyze() {
+        if (this._skillingRunning || this._upgradeRunning || this._runStarting || this.isRunning) return;
+
         const roomLevel = this._getSkillingRoomLevels();
         const gameData = buildGameDataPayload();
         if (!gameData) {
@@ -5644,6 +5648,7 @@ class LabSimUI {
         upgradeBtn.style.display = 'none';
         stopBtn.style.display = 'inline-block';
         this._skillingAborted = false;
+        this._skillingRunning = true;
         const eta = createEtaTracker();
 
         try {
@@ -5701,6 +5706,7 @@ class LabSimUI {
             console.error('[LabSimUI] Skilling upgrade analysis failed:', error);
             this._setStatus('Skilling upgrade analysis failed: ' + error.message);
         } finally {
+            this._skillingRunning = false;
             progressEl.style.display = 'none';
             calcBtn.style.display = '';
             upgradeBtn.style.display = '';
@@ -6401,6 +6407,7 @@ class LabSimUI {
         this._runStarting = false;
         this._upgradeRunning = false;
         this._upgradeAborted = true;
+        this._skillingRunning = false;
         if (this._editor) this._editor.reset();
         if (this._skillingEditor) this._skillingEditor.reset();
         this._maxLevel = null;
