@@ -150,7 +150,7 @@ class Config {
         this._reloadWatchdog = null;
 
         /**
-         * Bumped by every `loadSettings()` entry. A load whose generation has
+         * Bumped by every `loadSettings()` entry and cache clear. A load whose generation has
          * moved by the time its read settles is stale and must not adopt its
          * result — see loadSettings().
          */
@@ -650,6 +650,11 @@ class Config {
      * Clear settings cache (for character switching)
      */
     clearSettingsCache() {
+        // Teardown is awaited before data-manager moves the character id. A
+        // read started before this clear can therefore finish while its owner
+        // is still current; invalidate it now so it cannot refill the cache
+        // with the departing character's map during that gap.
+        this._loadGeneration++;
         this.settingsMap = {};
         // The keys named a map that no longer exists. Keeping them would aim the
         // next save at the ARRIVING character's store (this fires on
