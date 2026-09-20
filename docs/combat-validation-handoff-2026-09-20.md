@@ -96,6 +96,11 @@ Additional analysis assumptions:
   chests as well as monster drops. Its magnitude is explicitly unverified in
   `dungeon-chest-luck.js`. Compare level-gapped and ungapped controlled dungeon completions,
   including completions that pay no chest; a loot increase alone cannot count zero-payout runs.
+- **A14 — action counters:** an increment in `attackAttemptCounter`/`atkCounter` identifies an
+  attempt or scheduling transition, not necessarily a landed attack. In the initial capture,
+  two monster updates at offsets 151 ms and 1,450 ms both have `isStunned: true` while the counter
+  changes from 2 to 3. This alone does not establish damage during stun or exact event order.
+  Require action, victim HP/damage-counter and status evidence together.
 
 ## Code audit notes
 
@@ -113,13 +118,13 @@ Additional analysis assumptions:
 
 ## Evidence log
 
-| Check                                    | Status                                                                                                                      |
-| ---------------------------------------- | --------------------------------------------------------------------------------------------------------------------------- |
-| Equipped versus configured build capture | Reproduced by targeted test before fix; passes after fix.                                                                   |
-| Capture during loadout-snapshot loading  | Reproduced by targeted test before fix; passes after fix.                                                                   |
-| DTO levels after `skills_updated`        | Reproduced by targeted test before fix; passes after fix.                                                                   |
-| Live test-server parity                  | Five-fight normal-combat smoke test collected; a longer capture is underway. PR #142 still needs live labyrinth validation. |
-| Browser storage/performance              | Pending reviewer measurements.                                                                                              |
+| Check                                    | Status                                                                                                                                                  |
+| ---------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Equipped versus configured build capture | Reproduced by targeted test before fix; passes after fix.                                                                                               |
+| Capture during loadout-snapshot loading  | Reproduced by targeted test before fix; passes after fix.                                                                                               |
+| DTO levels after `skills_updated`        | Reproduced by targeted test before fix; passes after fix.                                                                                               |
+| Live test-server parity                  | 100 additional normal-combat fights captured; pooled 105-fight comparison is within its estimated bands. PR #142 still needs live labyrinth validation. |
+| Browser storage/performance              | Pending reviewer measurements.                                                                                                                          |
 
 Update this log with commit, artifact, observed result and remaining ambiguity after each live
 test. Do not mark a mechanic confirmed from a simulator-only test or a bundled arrival timestamp.
@@ -131,6 +136,8 @@ test. Do not mark a mechanic confirmed from a simulator-only test or a bundled a
   Prettier, Markdown lint, development build and production build.
 - Compatibility checked by applying the PR and fixes to main `745b0f1c`; 1,210 tests across
   34 relevant suites passed, including the newly changed expected-drop calculations.
+- Final compatibility checkout: main `cf5aadf3` with PRs #142–#145 applied together passes 1,490
+  tests across 37 relevant suites and the production build. This checkout did not merge any PR.
 
 ## Live recorder evidence
 
@@ -159,9 +166,32 @@ hashes while retaining the item HRID, count, enhancement level and availability 
   post-click display was not sufficient evidence of a target-control defect. The longer capture
   is running toward the measured ±5% target.
 
-The longer sample should retain the same build and zone. Recheck its measured uncertainty rather
-than treating a fixed fight count as sufficient, and keep its results separate from this first
-smoke test. Export the whole session and verify `ticksComplete` again.
+### Completed extended baseline
+
+The same Zombie T3 build was recorded for 100 additional complete fights, auto-stopping at the
+fight boundary at 20:10:38 UTC. Export: `toolasha-sim-accuracy-sanitized-2026-09-20-20-11-36.json`.
+The full session retains 2,385 raw ticks and 101 `new_battle` messages in one segment:
+`ticksComplete: true`, `live: false`, no truncation. Its loadout matches the original observation
+except for capture time. The 100 new fights cover 1,948.444 measured seconds with 211.71 DPS,
+100 kills, no deaths and zero endpoint damage residual.
+
+A fresh 12-hour check pools both recordings (105 fights total):
+
+| Metric              | Observed | Predicted | Difference and panel margin |
+| ------------------- | -------- | --------- | --------------------------- |
+| DPS                 | 213.50   | 209.19    | +2.06% ±7.21%               |
+| Damage taken/second | 16.25    | 17.83     | -8.83% ±13.26%              |
+| Seconds/fight       | 19.32    | 19.73     | -2.05% ±6.41%               |
+| Combat XP/second    | 63.86    | 62.69     | +1.86% ±6.63%               |
+| Swings/second       | 0.4210   | 0.4241    | -0.73% ±2.36%               |
+| Hit share           | 84.07%   | 83.49%    | +0.70% ±3.25%               |
+| Damage/landed hit   | 603.24   | 590.86    | +2.10% ±7.53%               |
+
+All displayed metrics are inside the panel's estimated bands. The original five-fight DPS gap
+did not persist. The sample did **not** reach ±5%, and it does not establish broad game parity or
+validate the newer PR build. The export is kept locally; its old sanitizer still leaves inventory
+hashes, so a scrubbed copy is required before public sharing. The dungeon/party capture and
+controlled tests are continuing under the user's two-hour test window.
 
 ## Recorder follow-up PRs
 
@@ -175,4 +205,7 @@ smoke test. Export the whole session and verify `ticksComplete` again.
 - Both fixes passed their focused suites, full pre-commit test runs and development builds.
   Their production builds hit current main's duplicated `dungeon-chest-luck.js` module in combat
   and sim. Neither fix changes imports or bundle configuration. The blocker is recorded in each
-  PR and must be resolved before release. No merges were performed.
+  PR. [PR #145](https://github.com/Millennium44/Toolasha/pull/145) fixes it by exporting the helper
+  from the existing Utils bundle; three lines change bundle ownership without changing chest
+  calculations. It passes the full normal checks, and the combined compatibility checkout's
+  production build passes. No merges were performed.
