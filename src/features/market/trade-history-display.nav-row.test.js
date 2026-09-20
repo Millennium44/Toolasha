@@ -26,7 +26,7 @@ vi.mock('./trade-history.js', () => ({
     default: { getHistory: () => null },
 }));
 
-const tradeHistoryDisplay = (await import('./trade-history-display.js')).default;
+const { default: tradeHistoryDisplay, tradePriceTitle } = await import('./trade-history-display.js');
 
 /** Draw the marketplace nav row the way the game does. */
 function drawNavRow() {
@@ -54,5 +54,11 @@ describe('Last: buy/sell chip', () => {
         expect(chip).not.toBeNull();
         expect(chip.style.flexShrink).toBe('0');
         expect(chip.style.whiteSpace).toBe('nowrap');
+    });
+
+    test('the tooltip says how old each recorded price is', () => {
+        const now = 1_800_000_000_000;
+        expect(tradePriceTitle('buy', now - 5 * 60_000, now)).toBe('Your last buy price — recorded 5m ago');
+        expect(tradePriceTitle('sell', null, now)).toBe('Your last sell price');
     });
 });

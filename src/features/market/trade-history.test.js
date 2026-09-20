@@ -5,7 +5,7 @@
  * another tab recorded, and a save that cannot read first must not write.
  */
 
-import { describe, test, expect, beforeEach, vi } from 'vitest';
+import { describe, test, expect, beforeEach, afterEach, vi } from 'vitest';
 
 const storageMock = vi.hoisted(() => {
     const stores = new Map();
@@ -84,6 +84,7 @@ vi.mock('../../core/config.js', () => ({
 const { default: tradeHistory, mergeHistory, pruneHistory } = await import('./trade-history.js');
 
 const KEY = 'tradeHistory_market123';
+const NOW = 1_800_000_000_000;
 const stored = () => storageMock.storeFor('settings').get(KEY);
 
 /**
@@ -96,6 +97,7 @@ const stored = () => storageMock.storeFor('settings').get(KEY);
 const order = (itemHrid, isSell, price) => ({ itemHrid, enhancementLevel: 0, isSell, price, filledQuantity: 1 });
 
 beforeEach(() => {
+    vi.spyOn(Date, 'now').mockReturnValue(NOW);
     storageMock.reset();
     storageMock.unavailable = false;
     dataManagerMock.characterId = 'market123';
@@ -109,6 +111,10 @@ beforeEach(() => {
     for (const fn of [storageMock.getJSON, storageMock.setJSON, storageMock.tryGet]) fn.mockClear();
 });
 
+afterEach(() => {
+    vi.restoreAllMocks();
+});
+
 describe('mergeHistory', () => {
     test('folds per item and per side, the fresh side winning', () => {
         expect(
@@ -118,6 +124,24 @@ describe('mergeHistory', () => {
             )
         ).toEqual({ '/items/a:0': { buy: 3, sell: 2 }, '/items/b:0': { sell: 5 }, '/items/c:0': { buy: 7 } });
         expect(mergeHistory(null, [])).toEqual({});
+    });
+
+    test('keeps the newest observation per side across devices', () => {
+        expect(
+            mergeHistory(
+                { '/items/a:0': { buy: 100, buyAt: 300, sell: 200, sellAt: 100 } },
+                { '/items/a:0': { buy: 90, buyAt: 200, sell: 220, sellAt: 400 } }
+            )
+        ).toEqual({ '/items/a:0': { buy: 100, buyAt: 300, sell: 220, sellAt: 400 } });
+    });
+
+    test('timestamped observations beat legacy values whose age is unknowable', () => {
+        expect(
+            mergeHistory(
+                { '/items/a:0': { buy: 100, buyAt: 300, sell: 200 } },
+                { '/items/a:0': { buy: 90, sell: 220, sellAt: 400 } }
+            )
+        ).toEqual({ '/items/a:0': { buy: 100, buyAt: 300, sell: 220, sellAt: 400 } });
     });
 });
 
@@ -140,6 +164,17 @@ describe('pruneHistory', () => {
         expect(pruned['/items/i100:0']).toEqual({ buy: 100 });
         expect(pruned['/items/i4099:0']).toEqual({ buy: 4099 });
     });
+
+    test('keeps recently updated old keys instead of relying on insertion order', () => {
+        const big = {};
+        for (let i = 0; i < 4001; i++) big[`item-${i}`] = { buy: i, buyAt: i + 1 };
+        big['item-0'].buyAt = 10_000;
+
+        const pruned = pruneHistory(big);
+
+        expect(pruned['item-0']).toBeDefined();
+        expect(pruned['item-1']).toBeUndefined();
+    });
 });
 
 describe('saves are gathered rather than made per fill', () => {
@@ -154,9 +189,9 @@ describe('saves are gathered rather than made per fill', () => {
         expect(storageMock.setJSON).toHaveBeenCalledTimes(1);
         expect(storageMock.tryGet).toHaveBeenCalledTimes(1);
         expect(stored()).toEqual({
-            '/items/a:0': { sell: 1 },
-            '/items/b:0': { sell: 2 },
-            '/items/c:0': { buy: 3 },
+            '/items/a:0': { sell: 1, sellAt: NOW },
+            '/items/b:0': { sell: 2, sellAt: NOW },
+            '/items/c:0': { buy: 3, buyAt: NOW },
         });
     });
 
@@ -167,8 +202,8 @@ describe('saves are gathered rather than made per fill', () => {
             endMarketListings: [{ itemHrid: '/items/a', isSell: true, price: 5, filledQuantity: 1 }],
         });
 
-        expect(tradeHistory.getHistory('/items/a', 0)).toEqual({ sell: 5 });
-        expect(tradeHistory.getHistory('/items/a')).toEqual({ sell: 5 });
+        expect(tradeHistory.getHistory('/items/a', 0)).toEqual({ sell: 5, sellAt: NOW });
+        expect(tradeHistory.getHistory('/items/a')).toEqual({ sell: 5, sellAt: NOW });
     });
 });
 
@@ -205,7 +240,7 @@ describe('the history cannot be wiped by a failed read or a stale copy', () => {
 
         expect(stored()).toEqual({ '/items/a:0': { buy: 1 }, '/items/b:0': { sell: 2 } });
         expect(storageMock.setJSON).not.toHaveBeenCalled();
-        expect(tradeHistory.getHistory('/items/c')).toEqual({ sell: 9 });
+        expect(tradeHistory.getHistory('/items/c')).toEqual({ sell: 9, sellAt: NOW });
     });
 
     test('a save merges what is stored under what is in memory, so rows from another writer survive', async () => {
@@ -218,7 +253,7 @@ describe('the history cannot be wiped by a failed read or a stale copy', () => {
         expect(stored()).toEqual({
             '/items/a:0': { buy: 3, sell: 2 },
             '/items/b:0': { sell: 5 },
-            '/items/c:0': { buy: 7 },
+            '/items/c:0': { buy: 7, buyAt: NOW },
         });
         expect(tradeHistory.history).toEqual(stored());
     });
@@ -234,7 +269,11 @@ describe('the history cannot be wiped by a failed read or a stale copy', () => {
         tradeHistory.handleMarketUpdate({ endMarketListings: [order('/items/c', false, 3)] });
         await tradeHistory.flushSave();
 
-        expect(stored()).toEqual({ '/items/a:0': { buy: 1 }, '/items/b:0': { sell: 2 }, '/items/c:0': { buy: 3 } });
+        expect(stored()).toEqual({
+            '/items/a:0': { buy: 1 },
+            '/items/b:0': { sell: 2, sellAt: NOW },
+            '/items/c:0': { buy: 3, buyAt: NOW },
+        });
     });
 });
 
