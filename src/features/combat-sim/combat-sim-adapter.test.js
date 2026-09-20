@@ -20,6 +20,7 @@ const mocks = vi.hoisted(() => ({
     shrineCapturedAt: null,
     shrineHydrated: false,
     personalActionTypeBuffsMap: null,
+    taskMonsters: [],
 }));
 
 vi.mock('../../core/data-manager.js', () => ({
@@ -32,6 +33,7 @@ vi.mock('../../core/data-manager.js', () => ({
         getEquippedAbilities: () => mocks.equippedAbilities.map((entry) => ({ ...entry })),
         getCommunityBuffLevel: () => 0,
         getAchievementBuffs: () => [],
+        getActiveTaskMonsterHrids: () => mocks.taskMonsters,
         get characterData() {
             return mocks.characterData;
         },
@@ -426,6 +428,30 @@ describe('the scrolls a player DTO starts from', () => {
     test('are empty when the game never sent a scroll map', () => {
         mocks.personalActionTypeBuffsMap = null;
         expect(buildPlayerDTO().scrollBuffs).toEqual([]);
+    });
+});
+
+/**
+ * The sim worker cannot ask the game which monster is your task, so the DTO
+ * has to carry it. The engine then pays `taskDamage` per encounter instead of
+ * crediting it against a whole zone or against none of it.
+ */
+describe('the combat tasks a player DTO carries', () => {
+    beforeEach(() => {
+        mocks.characterData = { characterSkills: [] };
+        mocks.personalActionTypeBuffsMap = null;
+    });
+
+    test('are the monsters the character is currently tasked with', () => {
+        mocks.taskMonsters = ['/monsters/jungle_sprite', '/monsters/myconid'];
+
+        expect(buildPlayerDTO().taskMonsterHrids).toEqual(['/monsters/jungle_sprite', '/monsters/myconid']);
+    });
+
+    test('are empty when nothing on the board is a combat task', () => {
+        mocks.taskMonsters = [];
+
+        expect(buildPlayerDTO().taskMonsterHrids).toEqual([]);
     });
 });
 

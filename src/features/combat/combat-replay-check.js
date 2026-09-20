@@ -2124,7 +2124,12 @@ class ReplayCheck {
             // The character as it was when the fights happened, where anything
             // says so. An observation from before snapshots existed carries
             // none, and falls through to the current character exactly as before
-            const dto = applyLoadoutSnapshot(current, observed.loadout);
+            // ...with its combat tasks stripped. The DTO builder fills in the
+            // character's tasks as they are NOW, and the engine would then pay
+            // taskDamage against whichever recorded monster happens to match —
+            // a fact about today's task board, not about the run being
+            // replayed. See the isTaskFight note below: the feed never said.
+            const dto = { ...applyLoadoutSnapshot(current, observed.loadout), taskMonsterHrids: [] };
 
             const simResult = await runSimulation(
                 {
@@ -2142,7 +2147,8 @@ class ReplayCheck {
                     // entitled to, and blame the difference on the engine.
                     // Relying on the runner's default would leave that decision
                     // somewhere else, where changing it would silently change
-                    // what this measures.
+                    // what this measures. The override off and the DTO's tasks
+                    // emptied above are the two halves of the same decision.
                     isTaskFight: false,
                 },
                 (percent) => {

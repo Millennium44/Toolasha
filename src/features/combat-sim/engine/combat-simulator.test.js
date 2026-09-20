@@ -173,6 +173,52 @@ afterEach(() => {
     setGameData(null);
 });
 
+/**
+ * The wire between the adapter and the per-encounter task rule. The sim runs
+ * headless, so a player's combat tasks arrive as plain hrids on the DTO and
+ * become the set the engine consults on every swing.
+ */
+describe('a player DTO carries its own combat tasks', () => {
+    /**
+     * @param {Array<string>|undefined} taskMonsterHrids - Tasks on the DTO
+     * @returns {Player} The built player
+     */
+    function playerWithTasks(taskMonsterHrids) {
+        installGameData();
+        return Player.createFromDTO({
+            hrid: 'player1',
+            staminaLevel: 70,
+            intelligenceLevel: 40,
+            attackLevel: 70,
+            meleeLevel: 70,
+            defenseLevel: 60,
+            rangedLevel: 1,
+            magicLevel: 1,
+            equipment: {},
+            food: [null, null, null],
+            drinks: [null, null, null],
+            abilities: [null, null, null, null],
+            houseRooms: {},
+            debuffOnLevelGap: 0,
+            taskMonsterHrids,
+        });
+    }
+
+    test('the tasks become a lookup the engine can consult per swing', () => {
+        const player = playerWithTasks(['/monsters/jungle_sprite', '/monsters/myconid']);
+
+        expect(player.taskMonsterHrids.has('/monsters/jungle_sprite')).toBe(true);
+        expect(player.taskMonsterHrids.has('/monsters/centaur')).toBe(false);
+    });
+
+    test('a DTO with no tasks — an import, or a party member — carries none', () => {
+        // Null rather than an empty set, and deliberately so: nobody else's
+        // taskDamage may stand in for a task board we cannot see.
+        expect(playerWithTasks(undefined).taskMonsterHrids).toBeNull();
+        expect(playerWithTasks([]).taskMonsterHrids).toBeNull();
+    });
+});
+
 describe('golden run: one seeded hour, pinned exactly', () => {
     test('the totals are what they were when this was pinned', () => {
         const result = goldenRun(20260806);

@@ -100,8 +100,9 @@ onmessage = function (event) {
                 });
             },
             labyrinth,
-            // Absent (every caller that has not opted in) this is false, and
-            // taskDamage sits out the run
+            // The override. Absent (every caller that has not opted in) this is
+            // false, and the engine decides taskDamage per encounter from each
+            // player DTO's own taskMonsterHrids instead.
             Boolean(isTaskFight)
         );
 

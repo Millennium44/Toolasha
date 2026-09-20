@@ -124,6 +124,15 @@ class Player extends CombatUnit {
 
         player.hrid = dto.hrid;
 
+        // This player's own combat tasks, resolved live by the adapter and
+        // marshalled as plain hrids. Absent for an imported profile or a party
+        // member whose task board we cannot see, and absent means nobody's
+        // taskDamage pays for them — never the whole party's.
+        player.taskMonsterHrids =
+            Array.isArray(dto.taskMonsterHrids) && dto.taskMonsterHrids.length > 0
+                ? new Set(dto.taskMonsterHrids)
+                : null;
+
         for (const [key, value] of Object.entries(dto.equipment)) {
             player.equipment[key] = value ? Equipment.createFromDTO(value) : null;
         }

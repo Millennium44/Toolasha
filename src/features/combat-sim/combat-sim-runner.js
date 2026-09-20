@@ -567,10 +567,11 @@ function mergeSimResults(results) {
  * @param {number} [params.seed] - RNG seed. Two runs sharing a seed draw the same
  *   random numbers, so comparing them measures the change instead of sampling
  *   noise. Omit for an independent random sample (the default).
- * @param {boolean} [params.isTaskFight] - Set only when this run stands in for
- *   fighting an active combat task's monster. It is what switches `taskDamage`
- *   on in the engine; left off (the default) task gear measures as inert, which
- *   is the truth for a generic zone sim.
+ * @param {boolean} [params.isTaskFight] - Override: treat every fight in the run
+ *   as the attacker's task fight. Leave it off (the default) unless the spawn
+ *   table has already been narrowed to one task monster — the engine otherwise
+ *   pays `taskDamage` per encounter, against whichever monsters each player
+ *   DTO's `taskMonsterHrids` names.
  * @param {Function} [onProgress] - Called with (percent: 0-100)
  * @returns {Promise<Object>} Merged SimResult
  */
@@ -700,9 +701,10 @@ export function buildCrateBuffs(crateHrids, gameData) {
  * @param {Object} params.communityBuffs - { mooPass, comExp, comDrop }
  * @param {number} [params.seed] - RNG seed shared by runs being compared; omit for
  *   an independent random sample (the default).
- * @param {boolean} [params.isTaskFight] - Whether taskDamage applies. Off by
- *   default, and normally correct off here: a labyrinth monster is not a task
- *   monster. Exposed so the lab panel can say otherwise.
+ * @param {boolean} [params.isTaskFight] - Override that treats every fight as a
+ *   task fight. Off by default, and normally correct off here: a labyrinth
+ *   monster is not a task monster, so the per-encounter rule pays nothing
+ *   either. Exposed so the lab panel can say otherwise.
  * @param {boolean} [params.fullAbilities] - Build the monster with its full
  *   ability kit. ON by default: a tier-0 subset monster drops its stun/shred/
  *   self-buff kit and the sim over-predicts clears. Pass false only for a

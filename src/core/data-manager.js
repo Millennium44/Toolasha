@@ -2688,6 +2688,30 @@ class DataManager {
     }
 
     /**
+     * Get the monster HRIDs named by the character's active combat tasks.
+     *
+     * `taskDamage` from task badges and trinkets pays only while the monster
+     * being fought is one of these, so the combat simulator needs the list to
+     * decide the bonus per encounter rather than per run.
+     *
+     * @returns {Array<string>} Monster HRIDs of in-progress combat tasks, possibly empty
+     */
+    getActiveTaskMonsterHrids() {
+        if (!this.characterQuests || this.characterQuests.length === 0) {
+            return [];
+        }
+
+        return this.characterQuests
+            .filter(
+                (quest) =>
+                    quest.category === '/quest_category/random_task' &&
+                    quest.status === '/quest_status/in_progress' &&
+                    quest.monsterHrid
+            )
+            .map((quest) => quest.monsterHrid);
+    }
+
+    /**
      * Check if an action is currently an active task
      * @param {string} actionHrid - Action HRID to check
      * @returns {boolean} True if action is an active task

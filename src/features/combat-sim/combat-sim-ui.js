@@ -610,9 +610,10 @@ const ROW_NOTE_STYLE = 'font-size:9px; margin-left:4px; padding:0 3px; border-ra
  *   purchase. That term is the largest in the cost, and it lived only in the
  *   Ability Swaps checkbox tooltip, where a row quoting 900M gave no hint of
  *   which of the three it meant — and a row quoting 0 gave none either.
- * - **on task** — the row's ranked gain was simulated off task, where taskDamage
- *   pays nothing, so a task trinket's headline stat is deliberately not in the
- *   number. The chip's tooltip names what it would add on task instead.
+ * - **on task** — the row's ranked gain was simulated against a zone where none
+ *   of the spawns is one of your combat tasks, so taskDamage pays nothing and a
+ *   task trinket's headline stat is not in the number. The chip's tooltip names
+ *   what it would add on task instead.
  *
  * @param {Object} result - An upgrade result row
  * @returns {string} HTML, empty when the row needs no qualifier
@@ -2011,7 +2012,7 @@ class CombatSimUI {
                 <input type="checkbox" id="mwi-csim-maxfood" style="${checkboxStyle}" disabled>
                 Max-tier Food
             </label>
-            <label style="${labelStyle}" title="Treat every fight in this run as your combat task's monster, so taskDamage from trinkets and task badges applies. Off by default: a zone is a mix of monsters and only one of them is your task, so counting the bonus everywhere overstates the run.">
+            <label style="${labelStyle}" title="Override. Leave this off and taskDamage from trinkets and task badges is already paid correctly &mdash; on whichever monsters in the zone your active combat tasks actually name, and on no others. Tick it to force every fight in the run to count as a task fight, which overstates a mixed zone but is what you want when you are comparing task gear head to head.">
                 <input type="checkbox" id="mwi-csim-taskfight" style="${checkboxStyle}">
                 Task Fight
             </label>

@@ -3,13 +3,16 @@
  * The damage roll, and what happens when the engine meets a mechanic it does
  * not know.
  *
- * Both groups here are about numbers the engine used to get wrong in opposite
- * directions: taskDamage was first left out of the attacker's roll entirely and
- * then applied to every fight regardless of whether one was on task, and an
- * unrecognized combat style took the whole simulation down rather than one
- * attack. Seeding the RNG is what makes the first measurable — two attacks with
- * the same seed draw the same numbers, so the only difference left between them
- * is the stat under test.
+ * The taskDamage groups here are about a number the engine got wrong in three
+ * directions in turn: left out of the attacker's roll entirely, then applied to
+ * every fight regardless, then made a whole-run flag that was wrong in both
+ * positions once a zone held more than one kind of monster. It is now decided
+ * per encounter, against the monster actually being hit, and the flag survives
+ * only as an override. The last group is about an unrecognized combat style
+ * taking the whole simulation down rather than one attack. Seeding the RNG is
+ * what makes the damage comparisons measurable — two attacks with the same seed
+ * draw the same numbers, so the only difference left between them is the stat
+ * under test.
  */
 
 import { describe, test, expect, beforeEach, afterEach, vi } from 'vitest';
@@ -60,10 +63,32 @@ function unit(statOverrides = {}) {
     };
 }
 
+/**
+ * A monster, for the per-encounter task rule. Carries enough defensive damage
+ * for the thorns and retaliation paths to have something to work with.
+ */
+function monster(hrid, statOverrides = {}) {
+    const enemy = unit(statOverrides);
+    enemy.hrid = hrid;
+    enemy.isPlayer = false;
+    enemy.combatDetails.defensiveMaxDamage = 300;
+    // Without this the retaliation hit roll is NaN and never lands
+    enemy.combatDetails.smashEvasionRating = 1;
+    return enemy;
+}
+
 /** One attack from a freshly reseeded stream, so draws repeat exactly. */
-function attackWith(statOverrides, isTaskFight = false) {
+function attackWith(statOverrides, forceTaskFight = false) {
     seedSimRng(SEED);
-    return CombatUtilities.processAttack(unit(statOverrides), unit(), null, isTaskFight);
+    return CombatUtilities.processAttack(unit(statOverrides), unit(), null, forceTaskFight);
+}
+
+/** One attack from a freshly reseeded stream, against a named monster. */
+function attackMonster(statOverrides, tasks, monsterHrid, forceTaskFight = false) {
+    seedSimRng(SEED);
+    const source = unit(statOverrides);
+    source.taskMonsterHrids = tasks ? new Set(tasks) : null;
+    return CombatUtilities.processAttack(source, monster(monsterHrid), null, forceTaskFight);
 }
 
 afterEach(() => {
@@ -90,11 +115,10 @@ describe('taskDamage in the damage roll', () => {
         expect(large.damageDone).toBeGreaterThan(small.damageDone);
     });
 
-    test('but off task the same trinket does nothing at all', () => {
-        // The other branch, and the reason the flag exists: the game pays
-        // taskDamage only while the monster is your task, so a generic zone sim
-        // — and every upgrade ranking built on one — must measure a task badge
-        // as inert rather than rank it on damage it would never deal
+    test('but with no override and no task list the same trinket does nothing', () => {
+        // The other branch: the game pays taskDamage only while the monster is
+        // your task, so an attacker with no task to its name must measure a
+        // task badge as inert rather than rank it on damage it would never deal
         const plain = attackWith({});
         const withTask = attackWith({ taskDamage: 0.5 });
 
@@ -102,7 +126,7 @@ describe('taskDamage in the damage roll', () => {
         expect(withTask.damageDone).toBe(plain.damageDone);
     });
 
-    test('and the flag defaults off, so a caller who says nothing gets no bonus', () => {
+    test('and the override defaults off, so a caller who says nothing gets no bonus', () => {
         seedSimRng(SEED);
         const defaulted = CombatUtilities.processAttack(unit({ taskDamage: 0.5 }), unit());
 
@@ -114,6 +138,138 @@ describe('taskDamage in the damage roll', () => {
         const absent = attackWith({}, true);
 
         expect(explicitZero.damageDone).toBe(absent.damageDone);
+    });
+});
+
+const TASK_MONSTER = '/monsters/jungle_sprite';
+const OTHER_MONSTER = '/monsters/myconid';
+
+describe('taskDamage is decided per encounter, not per run', () => {
+    test('a task trinket pays against the monster the task names', () => {
+        const plain = attackMonster({}, [TASK_MONSTER], TASK_MONSTER);
+        const withTask = attackMonster({ taskDamage: 0.5 }, [TASK_MONSTER], TASK_MONSTER);
+
+        expect(plain.didHit).toBe(true);
+        expect(plain.damageDone).toBeGreaterThan(0);
+        expect(withTask.damageDone).toBeGreaterThan(plain.damageDone);
+    });
+
+    test('and pays nothing against a different monster in the same wave', () => {
+        // The whole point. A zone, and a dungeon wave, is a mix; crediting the
+        // bonus on every spawn overstates the run by however many of them are
+        // not yours, and crediting it on none understates the one that is.
+        const plain = attackMonster({}, [TASK_MONSTER], OTHER_MONSTER);
+        const withTask = attackMonster({ taskDamage: 0.5 }, [TASK_MONSTER], OTHER_MONSTER);
+
+        expect(plain.damageDone).toBeGreaterThan(0);
+        expect(withTask.damageDone).toBe(plain.damageDone);
+    });
+
+    test('a mixed wave pays on the task spawns and on no others', () => {
+        const thirdMonster = '/monsters/centaur';
+        const tasks = [TASK_MONSTER, thirdMonster];
+        const taskBaseline = attackMonster({}, tasks, TASK_MONSTER).damageDone;
+        const otherBaseline = attackMonster({}, tasks, OTHER_MONSTER).damageDone;
+        const thirdBaseline = attackMonster({}, tasks, thirdMonster).damageDone;
+
+        expect(attackMonster({ taskDamage: 0.5 }, tasks, TASK_MONSTER).damageDone).toBeGreaterThan(taskBaseline);
+        expect(attackMonster({ taskDamage: 0.5 }, tasks, thirdMonster).damageDone).toBeGreaterThan(thirdBaseline);
+        expect(attackMonster({ taskDamage: 0.5 }, tasks, OTHER_MONSTER).damageDone).toBe(otherBaseline);
+    });
+
+    test('with no combat task at all, nobody gets it', () => {
+        const plain = attackMonster({}, null, TASK_MONSTER);
+
+        expect(plain.damageDone).toBeGreaterThan(0);
+        expect(attackMonster({ taskDamage: 0.5 }, null, TASK_MONSTER).damageDone).toBe(plain.damageDone);
+        // An empty list is the same answer as no list
+        expect(attackMonster({ taskDamage: 0.5 }, [], TASK_MONSTER).damageDone).toBe(plain.damageDone);
+    });
+
+    test("one party member's task does not leak onto another's swings", () => {
+        // Each player carries their own task board on their own unit, so the
+        // attacker's set is the only one ever consulted.
+        const mine = unit({ taskDamage: 0.5 });
+        mine.taskMonsterHrids = new Set([TASK_MONSTER]);
+        const theirs = unit({ taskDamage: 0.5 });
+        theirs.taskMonsterHrids = new Set([OTHER_MONSTER]);
+
+        expect(CombatUtilities.appliesTaskDamage(mine, monster(TASK_MONSTER))).toBe(true);
+        expect(CombatUtilities.appliesTaskDamage(theirs, monster(TASK_MONSTER))).toBe(false);
+    });
+
+    test("a player is never anyone's task monster", () => {
+        const attacker = monster(TASK_MONSTER, { taskDamage: 0.5 });
+        attacker.taskMonsterHrids = new Set(['player1']);
+
+        expect(CombatUtilities.appliesTaskDamage(attacker, unit())).toBe(false);
+    });
+
+    test('the Task Fight override still forces it on every fight', () => {
+        const plain = attackMonster({}, null, OTHER_MONSTER, true);
+        const withTask = attackMonster({ taskDamage: 0.5 }, null, OTHER_MONSTER, true);
+
+        expect(withTask.damageDone).toBeGreaterThan(plain.damageDone);
+    });
+});
+
+describe('taskDamage on the thorns and retaliation paths', () => {
+    /**
+     * A monster swinging at a player who thorns and retaliates back. The player
+     * is the DEFENDER here, so it is the player's own task list — checked
+     * against the attacking monster — that decides their bonus.
+     *
+     * @param {Object} playerStats - Combat stat overrides for the defender
+     * @param {Array<string>|null} playerTasks - The defender's task monsters
+     * @param {string} attackingMonsterHrid - Who is swinging at them
+     * @returns {Object} Attack result
+     */
+    function monsterAttacksPlayer(playerStats, playerTasks, attackingMonsterHrid) {
+        seedSimRng(SEED);
+        const attacker = monster(attackingMonsterHrid);
+        const defender = unit({ physicalThorns: 0.5, retaliation: 0.5, ...playerStats });
+        defender.combatDetails.defensiveMaxDamage = 300;
+        defender.combatDetails.smashAccuracyRating = 1_000_000;
+        defender.taskMonsterHrids = playerTasks ? new Set(playerTasks) : null;
+        return CombatUtilities.processAttack(attacker, defender, null, false);
+    }
+
+    test("the defender's thorns and retaliation pay when the attacker is their task", () => {
+        const plain = monsterAttacksPlayer({}, [TASK_MONSTER], TASK_MONSTER);
+        const withTask = monsterAttacksPlayer({ taskDamage: 0.5 }, [TASK_MONSTER], TASK_MONSTER);
+
+        expect(plain.thornDamageDone).toBeGreaterThan(0);
+        expect(withTask.thornDamageDone).toBeGreaterThan(plain.thornDamageDone);
+        expect(plain.retaliationDamageDone).toBeGreaterThan(0);
+        expect(withTask.retaliationDamageDone).toBeGreaterThan(plain.retaliationDamageDone);
+    });
+
+    test('and pay nothing when the attacker is some other monster in the wave', () => {
+        const plain = monsterAttacksPlayer({}, [TASK_MONSTER], OTHER_MONSTER);
+        const withTask = monsterAttacksPlayer({ taskDamage: 0.5 }, [TASK_MONSTER], OTHER_MONSTER);
+
+        expect(plain.thornDamageDone).toBeGreaterThan(0);
+        expect(withTask.thornDamageDone).toBe(plain.thornDamageDone);
+        expect(withTask.retaliationDamageDone).toBe(plain.retaliationDamageDone);
+    });
+
+    test("the roles are the right way round: the attacking monster's own list is ignored", () => {
+        // Reversed, this would read the swinging unit's task list against the
+        // unit it is hitting — which is how the same stat ends up paying on the
+        // wrong side of the exchange.
+        seedSimRng(SEED);
+        const attacker = monster(TASK_MONSTER, { taskDamage: 0.5 });
+        attacker.taskMonsterHrids = new Set(['player1']);
+        const defender = unit({ physicalThorns: 0.5, retaliation: 0.5 });
+        defender.combatDetails.defensiveMaxDamage = 300;
+        defender.combatDetails.smashAccuracyRating = 1_000_000;
+        defender.taskMonsterHrids = null;
+
+        const result = CombatUtilities.processAttack(attacker, defender, null, false);
+        const plain = monsterAttacksPlayer({}, null, TASK_MONSTER);
+
+        expect(result.thornDamageDone).toBe(plain.thornDamageDone);
+        expect(result.retaliationDamageDone).toBe(plain.retaliationDamageDone);
     });
 });
 

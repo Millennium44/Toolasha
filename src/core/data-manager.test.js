@@ -1439,3 +1439,64 @@ describe('live buff state mirroring', () => {
         expect(dataManager.characterData.guildActionTypeBuffsMap).toBe(before);
     });
 });
+
+/**
+ * `taskDamage` pays only against the monster your combat task names, and the
+ * combat sim runs headless in a worker — so the monsters have to be read here
+ * and marshalled in as data. A combat task names a monster where a skilling
+ * task names an action, which is why this is a sibling of
+ * `getActiveTaskActionHrids` rather than the same list.
+ */
+describe('the monsters the active combat tasks name', () => {
+    let taskManager;
+
+    beforeEach(async () => {
+        taskManager = (await import('./data-manager.js')).default;
+        taskManager.characterQuests = [];
+    });
+
+    test('are the in-progress random tasks that carry a monster', () => {
+        taskManager.characterQuests = [
+            {
+                category: '/quest_category/random_task',
+                status: '/quest_status/in_progress',
+                monsterHrid: '/monsters/jungle_sprite',
+            },
+            {
+                category: '/quest_category/random_task',
+                status: '/quest_status/in_progress',
+                monsterHrid: '/monsters/myconid',
+            },
+            // A skilling task names an action, not a monster
+            {
+                category: '/quest_category/random_task',
+                status: '/quest_status/in_progress',
+                actionHrid: '/actions/milking/cow',
+            },
+        ];
+
+        expect(taskManager.getActiveTaskMonsterHrids()).toEqual(['/monsters/jungle_sprite', '/monsters/myconid']);
+    });
+
+    test('leave out tasks that are claimed, and quests that are not tasks', () => {
+        taskManager.characterQuests = [
+            {
+                category: '/quest_category/random_task',
+                status: '/quest_status/claimed',
+                monsterHrid: '/monsters/jungle_sprite',
+            },
+            {
+                category: '/quest_category/community',
+                status: '/quest_status/in_progress',
+                monsterHrid: '/monsters/myconid',
+            },
+        ];
+
+        expect(taskManager.getActiveTaskMonsterHrids()).toEqual([]);
+    });
+
+    test('are empty before the quest list has arrived', () => {
+        taskManager.characterQuests = null;
+        expect(taskManager.getActiveTaskMonsterHrids()).toEqual([]);
+    });
+});

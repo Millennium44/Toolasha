@@ -71,20 +71,49 @@ class CombatUtilities {
     }
 
     /**
+     * Does the attacker's `taskDamage` pay against this defender?
+     *
+     * `taskDamage` is a conditional stat: the live game applies it only while
+     * the monster you are swinging at is one your own combat tasks name. That
+     * is a fact about the encounter, not about the run — a zone, and a dungeon
+     * wave, is a mix of monsters and usually only one of them is your task —
+     * so the decision is made per blow, against the unit actually being hit.
+     *
+     * The attacker is whoever the bonus belongs to. On the thorns and
+     * retaliation paths that is the defending unit striking back, so those
+     * callers pass the roles reversed.
+     *
+     * @param {Object} attacker - The unit whose `taskDamage` is in question
+     * @param {Object} defender - The unit being struck by that attacker
+     * @param {boolean} [forceTaskFight] - Override that answers yes regardless
+     * @returns {boolean} True when the attacker's taskDamage applies
+     */
+    static appliesTaskDamage(attacker, defender, forceTaskFight = false) {
+        if (forceTaskFight) return true;
+        if (!attacker || !defender) return false;
+        // Monsters have no task board, and a player is never anyone's task
+        if (defender.isPlayer) return false;
+        const tasks = attacker.taskMonsterHrids;
+        if (!tasks || typeof tasks.has !== 'function') return false;
+        return tasks.has(defender.hrid);
+    }
+
+    /**
      * Resolve one attack.
      *
      * @param {Object} source - Attacking unit
      * @param {Object} target - Defending unit
      * @param {Object} [abilityEffect] - Ability effect, or null for an auto attack
-     * @param {boolean} [isTaskFight] - Whether this fight is the player's active
-     *   combat task. `taskDamage` is a conditional stat in the live game: it pays
-     *   only while the monster in front of you is your task monster. A simulation
-     *   has no way to know that on its own, so the caller says. Left false — the
-     *   default — a task trinket or task badge contributes nothing, which is what
-     *   a generic zone sim or a gear ranking should measure.
+     * @param {boolean} [forceTaskFight] - Override: treat every unit as fighting
+     *   its own task monster, whatever it is actually swinging at. Off by
+     *   default, and normally left off — the engine works the condition out per
+     *   encounter from each attacker's own `taskMonsterHrids` (see
+     *   `appliesTaskDamage`). The override exists for a run that has already
+     *   narrowed its spawn table down to one task monster, where saying so is
+     *   cheaper than resolving the task again.
      * @returns {Object} Attack result
      */
-    static processAttack(source, target, abilityEffect = null, isTaskFight = false) {
+    static processAttack(source, target, abilityEffect = null, forceTaskFight = false) {
         const combatStyle = abilityEffect
             ? abilityEffect.combatStyleHrid
             : source.combatDetails.combatStats.combatStyleHrid;
@@ -223,17 +252,14 @@ class CombatUtilities {
         }
 
         let damageRoll = CombatUtilities.randomInt(sourceMinDamage, sourceMaxDamage);
-        // A deliberate divergence from the reference sims, which leave taskDamage
-        // out of the attacker's roll. The stat is real — the game applies it, and
-        // this engine already applies it to the same unit's thorns and
-        // retaliation. Omitting it here understated anyone wearing a task
-        // trinket, and made the two paths disagree about the same number.
-        //
-        // But the game only applies it while the monster is your task, so this
-        // is gated on the caller having said so. Applied unconditionally it
-        // inflated every generic sim and let task badges rank in the upgrade
-        // advisor on damage they would never deal off task.
-        if (isTaskFight) {
+        // The stat is real — the game applies it, and this engine applies it to
+        // the same unit's thorns and retaliation too. It is conditional, though,
+        // so it is decided per encounter against the monster actually in front
+        // of this attacker. Credited everywhere it inflated every mixed-zone
+        // run and let task badges rank in the upgrade advisor on damage they
+        // would never deal; credited nowhere it skipped the one fight in the
+        // zone where the bonus is genuinely paid.
+        if (CombatUtilities.appliesTaskDamage(source, target, forceTaskFight)) {
             damageRoll *= 1 + source.combatDetails.combatStats.taskDamage;
         }
         damageRoll *= 1 + target.combatDetails.combatStats.damageTaken;
@@ -277,9 +303,12 @@ class CombatUtilities {
                 sourceDamageTakenRatio = (100 - penetratedSourceResistance) / 100;
             }
 
-            // Same conditional stat, same gate: off task the defender's task
-            // bonus does nothing to their thorns either
-            const targetTaskDamageMultiplier = isTaskFight ? 1.0 + target.combatDetails.combatStats.taskDamage : 1.0;
+            // Same conditional stat, same rule — with the roles swapped, since
+            // here it is the defender hitting back and the original attacker
+            // being struck.
+            const targetTaskDamageMultiplier = CombatUtilities.appliesTaskDamage(target, source, forceTaskFight)
+                ? 1.0 + target.combatDetails.combatStats.taskDamage
+                : 1.0;
             const sourceDamageTakenMultiplier = 1.0 + source.combatDetails.combatStats.damageTaken;
             const targetDamageMultiplier = targetTaskDamageMultiplier * sourceDamageTakenMultiplier;
 
@@ -316,7 +345,8 @@ class CombatUtilities {
                     sourceDamageTakenRatio = (100.0 - sourceEffectiveArmor) / 100.0;
                 }
 
-                const targetTaskDamageMultiplier = isTaskFight
+                // Roles swapped again: the defender is the one retaliating.
+                const targetTaskDamageMultiplier = CombatUtilities.appliesTaskDamage(target, source, forceTaskFight)
                     ? 1.0 + target.combatDetails.combatStats.taskDamage
                     : 1.0;
                 const sourceDamageTakenMultiplier = 1.0 + source.combatDetails.combatStats.damageTaken;

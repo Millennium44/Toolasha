@@ -25,6 +25,15 @@ export function getCapturedMonsterBuffs() {
 
 class CombatUnit {
     isPlayer;
+    /**
+     * The monster hrids this unit's own combat tasks name, or null when it has
+     * none (every monster, and any player whose tasks the caller could not
+     * resolve). `taskDamage` pays only against a monster in this set, so it is
+     * per unit rather than per run: in a party each player carries their own
+     * tasks, and one member's task must not pay for another's swings.
+     * @type {Set<string>|null}
+     */
+    taskMonsterHrids = null;
     isStunned = false;
     stunExpireTime = null;
     isBlinded = false;

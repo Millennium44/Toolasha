@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Combat Sim: task damage now applies to the monster that actually is your task
+
+- The bonus from task badges and trinkets was a whole-run switch, so a mixed zone was simulated wrong either way — credited against every spawn or against none, including the one that really is your task; it is now decided per monster from your own combat tasks, in a party from each player's own board, and the Task Fight checkbox stays only as an override that forces every fight to count.
+
 ### Saved sim consumable rates no longer outlive the engine that produced them
 
 - A per-hour food rate is now stamped with the build that simulated it, and a rate from an older build is ignored rather than served as current — so an engine fix like this release's Fury change no longer leaves the Consumables panel and the combat burn line rating today's fight against yesterday's simulator.

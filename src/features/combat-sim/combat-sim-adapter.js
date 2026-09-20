@@ -243,7 +243,7 @@ export function buildGuildBuffsFromLevels(levelMap) {
  *   { staminaLevel, ..., equipment: { '/equipment_types/head': {hrid, enhancementLevel}, ... },
  *     food: [{hrid, triggers}], drinks: [{hrid, triggers}],
  *     abilities: [{hrid, level, triggers}], houseRooms: {'/house_rooms/x': level},
- *     hrid: 'player1', debuffOnLevelGap: 0 }
+ *     hrid: 'player1', debuffOnLevelGap: 0, taskMonsterHrids: ['/monsters/fly'] }
  * @returns {Object|null} Player DTO in sim engine format, or null if data unavailable
  */
 export function buildPlayerDTO() {
@@ -463,6 +463,13 @@ export function buildPlayerDTO() {
     for (const house of Object.values(characterData.characterHouseRoomMap || {})) {
         dto.houseRooms[house.houseRoomHrid] = house.level;
     }
+
+    // The monsters this character's own combat tasks name. `taskDamage` pays
+    // only against those, so the engine needs them as data: the sim runs in a
+    // worker and cannot ask the game. Only ever this character's — a party
+    // member's DTO is built elsewhere and carries none, because their task
+    // board is not something we can see and their tasks are not ours.
+    dto.taskMonsterHrids = dataManager.getActiveTaskMonsterHrids?.() || [];
 
     return dto;
 }
