@@ -12,6 +12,16 @@ import storage from '../core/storage.js';
 const FORMAT_VERSION = 1;
 
 /**
+ * Whether a parsed backup value can contain a map of stores or record keys.
+ * Values inside a record remain unrestricted, including arrays of history.
+ * @param {*} value
+ * @returns {boolean}
+ */
+function isRecordMap(value) {
+    return value !== null && typeof value === 'object' && !Array.isArray(value);
+}
+
+/**
  * Key prefixes that are device-local in EVERY store, not just the one that
  * happens to use them today.
  *
@@ -164,11 +174,28 @@ export async function importEverything(payload, options = {}) {
         throw new Error(`[FullBackup] Unsupported or missing formatVersion (expected ${FORMAT_VERSION})`);
     }
 
-    const payloadStores = payload.stores || {};
+    const payloadStores = payload.stores;
+    if (!isRecordMap(payloadStores)) {
+        throw new Error('[FullBackup] Invalid stores: expected an object mapping store names to records');
+    }
     const targetStoreNames = options.storeNames ?? Object.keys(payloadStores);
 
     const availableStores = await listBackupStores();
     const availableStoreSet = new Set(availableStores);
+
+    // Validate the entire selection before writing its first store. A broken
+    // later store must not leave the earlier ones overwritten, and strings or
+    // arrays must not be mistaken for maps of numeric record keys. Unknown and
+    // unselected stores are not imported, so their contents do not block this
+    // device's restore.
+    for (const storeName of targetStoreNames) {
+        if (!Object.prototype.hasOwnProperty.call(payloadStores, storeName) || !availableStoreSet.has(storeName)) {
+            continue;
+        }
+        if (!isRecordMap(payloadStores[storeName])) {
+            throw new Error(`[FullBackup] Invalid records for store ${storeName}: expected an object`);
+        }
+    }
 
     const restored = {};
     const expected = {};
@@ -181,9 +208,9 @@ export async function importEverything(payload, options = {}) {
     // timers that fire hold their write instead — the latch below only goes up
     // after every store is written, and a 3-second debounce can fire inside a
     // multi-store restore.
-    await storage.beginRestore?.();
-
     try {
+        await storage.beginRestore?.();
+
         for (const storeName of targetStoreNames) {
             if (!Object.prototype.hasOwnProperty.call(payloadStores, storeName)) {
                 continue;
@@ -199,7 +226,7 @@ export async function importEverything(payload, options = {}) {
             // exclusion list, can still carry one of these, and writing it here
             // would plant it on this device exactly as if it had been recorded
             // locally.
-            const entries = stripExcludedKeys(storeName, payloadStores[storeName] || {});
+            const entries = stripExcludedKeys(storeName, payloadStores[storeName]);
             const want = Object.keys(entries).length;
             // The restore is the one writer the latch is not protecting against
             // — it is what the latch is protecting. A second pull in the same
@@ -221,15 +248,16 @@ export async function importEverything(payload, options = {}) {
                 written.add(storeName);
             }
         }
-
-        // Only stores that wrote their full count are latched: a store that
-        // wrote nothing has not been restored, and refusing its writes would
-        // break a feature for nothing.
-        if (written.size > 0) storage.finishRestore?.(written);
     } finally {
-        // Always, even on a throw: leaving the hold up would keep every
-        // debounced write in the script queued until the unload flush
-        await storage.endRestore?.();
+        try {
+            // Protect completed stores even if a later store threw. Otherwise
+            // endRestore flushes queued pre-restore values straight over them.
+            // A store that wrote nothing has nothing restored to protect.
+            if (written.size > 0) storage.finishRestore?.(written);
+        } finally {
+            // Always release the hold, including a failed beginRestore flush.
+            await storage.endRestore?.();
+        }
     }
 
     return { restored, expected, failed, complete: failed.length === 0 };
