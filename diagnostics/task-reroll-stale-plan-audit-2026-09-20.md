@@ -45,17 +45,10 @@ did not verify whether the live task progress line uses grouped quantities.
 
 ## Publication status
 
-No PR was created. Automatic approval review rejected pushing
-`codex/task-progress-forecast-audit` to the configured
-`https://github.com/Millennium44/Toolasha.git` remote. Read-only checks confirmed
-the authenticated account is Millennium44, the repository is public, and the
-account has ADMIN permission. A retry with that evidence was also rejected:
-the reviewer requires direct user authorization for this branch's publication
-and did not accept the delegated task request as trusted authorization.
-
-The local commit is complete and reviewable. Publication requires the user to
-approve pushing this audit branch and opening its PR. Do not route the blocked
-push through another agent or tool. No merge or deployment is authorized here.
+[PR #170](https://github.com/Millennium44/Toolasha/pull/170) is open against main
+from `codex/task-progress-forecast-audit`. Publication completed after direct
+user approval. The source fix is in commit `19f05ea6`; the follow-up documentation
+records this final handoff. No merge or deployment was performed.
 
 ## Post-reset live checks
 
