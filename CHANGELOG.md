@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Combat Sim: a rare-find build is no longer credited rare drops the game cannot pay
+
+- The simulator multiplied a rare drop's chance by Combat Rare Find with no ceiling, so enough rare find pushed a drop past certainty and the run was priced for more than one of them a kill. Rare rates now stop at certainty, as the common-drop path and the live drop model already did.
+
 ### Combat Sim: a level-gapped player's dungeon chests match what the chest-luck panel says
 
 - The simulator credited a player far below the top of their party a full share of a dungeon's reward chests, while the live chest-luck reading gave them as little as a tenth of one — the same run described two ways. Both now use one figure. Whether the level gap touches dungeon chests at all is still an assumption rather than a measured rule, and the panel's observed rate stays beside the modelled one to show it up.

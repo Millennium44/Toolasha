@@ -98,3 +98,51 @@ describe('dungeon chests per completion', () => {
         expect(drops.get(CHEST)).toBeCloseTo(10 * 0.1, 10);
     });
 });
+
+const MONSTER = '/monsters/jackalope';
+const COMMON = '/items/hide';
+const RARE = '/items/jackalope_antler';
+
+/** One monster, one common drop and one rare, both at half a chance. */
+const zoneGameData = {
+    actionDetailMap: {},
+    combatMonsterDetailMap: {
+        [MONSTER]: {
+            dropTable: [{ itemHrid: COMMON, dropRate: 0.5, minCount: 1, maxCount: 1 }],
+            rareDropTable: [{ itemHrid: RARE, dropRate: 0.5, minCount: 1, maxCount: 1 }],
+        },
+    },
+};
+
+function zoneResult(overrides = {}) {
+    return {
+        isDungeon: false,
+        numberOfPlayers: 1,
+        difficultyTier: 0,
+        dropRateMultiplier: { player1: 1 },
+        rareFindMultiplier: { player1: 1 },
+        combatDropQuantity: { player1: 0 },
+        debuffOnLevelGap: { player1: 0 },
+        deaths: { [MONSTER]: 100 },
+        ...overrides,
+    };
+}
+
+describe('a drop rate cannot pass certainty', () => {
+    test('rare find raises the rate, up to but not past one drop a kill', () => {
+        // A rate is the chance of one roll landing, so 0.5 x 4 is certainty and
+        // not two antlers a kill. The regular-drop path has always capped; the
+        // rare path multiplied and never did, so a heavy rare-find build was
+        // credited drops the game cannot pay.
+        const doubled = calculateExpectedDrops(zoneResult({ rareFindMultiplier: { player1: 1.5 } }), zoneGameData);
+        expect(doubled.get(RARE)).toBeCloseTo(100 * 0.75);
+
+        const overshot = calculateExpectedDrops(zoneResult({ rareFindMultiplier: { player1: 4 } }), zoneGameData);
+        expect(overshot.get(RARE)).toBeCloseTo(100);
+    });
+
+    test('the regular path caps the same way, which is the convention being matched', () => {
+        const overshot = calculateExpectedDrops(zoneResult({ dropRateMultiplier: { player1: 4 } }), zoneGameData);
+        expect(overshot.get(COMMON)).toBeCloseTo(100);
+    });
+});

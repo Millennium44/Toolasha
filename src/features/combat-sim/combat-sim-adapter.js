@@ -1344,7 +1344,24 @@ export function calculateExpectedDrops(simResult, gameData, playerHrid = 'player
                 for (const drop of monsterData.rareDropTable) {
                     if (drop.minDifficultyTier > difficultyTier) continue;
 
-                    const adjustedRate = drop.dropRate * rareFindMultiplier;
+                    // Capped at certainty, the same way the regular-drop path
+                    // above and `effectiveDropRate` in combat-drop-model.js
+                    // both cap. A drop rate is the chance of one Bernoulli
+                    // roll landing, so a rate past 1 does not mean "more than
+                    // one drop" — it means the arithmetic ran off the end, and
+                    // an uncapped rare-find build was credited drops the game
+                    // cannot pay.
+                    //
+                    // The Guide is ambiguous about what its ceiling is on:
+                    // "Combat Drop Rate: Increases the drop rate of regular
+                    // items. This cannot go above 100%" could be a cap on the
+                    // *stat* or on the resulting *rate*, and it says nothing at
+                    // all about Combat Rare Find ("Increases rare item drop
+                    // rate"). Capping the resulting rate is the convention
+                    // already in force on both of the other two paths, and it
+                    // is the one reading that holds whichever way the guide is
+                    // meant: a probability cannot exceed certainty either way.
+                    const adjustedRate = Math.min(1.0, drop.dropRate * rareFindMultiplier);
                     const avgCount = (drop.minCount + (drop.maxCount ?? drop.minCount)) / 2;
                     const expected =
                         (killCount * adjustedRate * avgCount * (1 + debuffOnLevelGap) * (1 + combatDropQuantity)) /
