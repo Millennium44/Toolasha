@@ -1,4 +1,4 @@
-import { describe, test, expect, vi } from 'vitest';
+import { describe, test, expect, vi, beforeEach, afterEach } from 'vitest';
 
 const memory = vi.hoisted(() => new Map());
 
@@ -13,7 +13,8 @@ vi.mock('../core/storage.js', () => ({
 }));
 vi.mock('./character-key.js', () => ({
     characterKey: (key) => `${key}_char1`,
-    readScoped: async () => null,
+    readScoped: async (key, _store, fallback) =>
+        memory.has(`${key}_char1`) ? structuredClone(memory.get(`${key}_char1`)) : fallback,
 }));
 
 import {
@@ -25,10 +26,20 @@ import {
     zoneSimRateKey,
     zoneSimRateFor,
     loadoutSignature,
+    saveAllZonesSnapshot,
+    loadAllZonesSnapshot,
     saveZoneSimRate,
     loadZoneSimRates,
     ZONE_SIM_RATES_LIMIT,
 } from './all-zones-snapshot.js';
+
+beforeEach(() => {
+    globalThis.GM_info = { script: { version: '9.9.9' } };
+});
+
+afterEach(() => {
+    delete globalThis.GM_info;
+});
 
 const snapshot = {
     savedAt: 1_754_000_000_000,
@@ -217,7 +228,7 @@ describe('single-zone rates', () => {
         expect(zoneSimRateFor({ [key]: entry({ encountersPerHour: null }) }, FLY, 2, 41704)).toBeNull();
     });
 
-    test('a loadout signature changes with the gear, not with order or levels', () => {
+    test('a loadout signature changes with gear or enhancement level, not order', () => {
         const base = {
             equipment: [
                 { itemHrid: '/items/a', enhancementLevel: 1 },
@@ -229,12 +240,26 @@ describe('single-zone rates', () => {
         };
         const reordered = {
             ...base,
-            equipment: [...base.equipment].reverse().map((e) => ({ ...e, enhancementLevel: 9 })),
+            equipment: [...base.equipment].reverse(),
+        };
+        const upgraded = {
+            ...base,
+            equipment: base.equipment.map((entry, index) =>
+                index === 0 ? { ...entry, enhancementLevel: entry.enhancementLevel + 1 } : entry
+            ),
         };
         const swapped = { ...base, equipment: [{ itemHrid: '/items/a' }, { itemHrid: '/items/c' }] };
         expect(loadoutSignature(reordered)).toBe(loadoutSignature(base));
+        expect(loadoutSignature(upgraded)).not.toBe(loadoutSignature(base));
         expect(loadoutSignature(swapped)).not.toBe(loadoutSignature(base));
         expect(loadoutSignature(null)).toBeNull();
+    });
+
+    test('uses resolved enhancement levels when the caller supplies them', () => {
+        const stored = { equipment: [{ itemHrid: '/items/a', enhancementLevel: 0 }], abilities: [] };
+        const resolved = [{ itemHrid: '/items/a', enhancementLevel: 12 }];
+        expect(loadoutSignature(stored, resolved)).toContain('/items/a@12');
+        expect(loadoutSignature(stored, resolved)).not.toBe(loadoutSignature(stored));
     });
 
     test('saving one writes its own key and leaves the all-zones snapshot untouched', async () => {
@@ -248,6 +273,7 @@ describe('single-zone rates', () => {
         expect(memory.get('allZonesSnapshot_char1')).toBe(allZones);
         expect(allZones).toEqual(snapshot);
         expect(Object.keys(await loadZoneSimRates())).toEqual(['/actions/combat/fly|2|41705']);
+        expect((await loadZoneSimRates())['/actions/combat/fly|2|41705'].scriptVersion).toBe('9.9.9');
     });
 
     test('saving replaces the same key, and drops the oldest past the limit', async () => {
@@ -266,6 +292,37 @@ describe('single-zone rates', () => {
         memory.clear();
         expect(await saveZoneSimRate(null, entry())).toBe(false);
         expect(memory.size).toBe(0);
+    });
+
+    test('does not load rates produced by another build or before version stamps', async () => {
+        memory.clear();
+        const key = zoneSimRateKey(FLY, 2, 41704);
+        memory.set('zoneSimRates_char1', {
+            rates: {
+                current: entry({ scriptVersion: '9.9.9' }),
+                previous: entry({ scriptVersion: '9.9.8' }),
+                [key]: entry(),
+            },
+        });
+
+        expect(await loadZoneSimRates()).toEqual({ current: expect.objectContaining({ scriptVersion: '9.9.9' }) });
+    });
+});
+
+describe('all-zones persistence', () => {
+    test('stamps a snapshot and only loads it in the build that produced it', async () => {
+        memory.clear();
+        expect(await saveAllZonesSnapshot(snapshot)).toBe(true);
+        expect((await loadAllZonesSnapshot()).scriptVersion).toBe('9.9.9');
+
+        globalThis.GM_info = { script: { version: '9.9.10' } };
+        expect(await loadAllZonesSnapshot()).toBeNull();
+    });
+
+    test('does not load an unstamped snapshot', async () => {
+        memory.clear();
+        memory.set('allZonesSnapshot_char1', snapshot);
+        expect(await loadAllZonesSnapshot()).toBeNull();
     });
 });
 

@@ -766,7 +766,16 @@ class ActionTimeDisplay {
             const stored = store?.snapshots?.[String(id)] || null;
             const name = stored?.name || dataManager.characterData?.characterLoadoutMap?.[String(id)]?.name || null;
             return name
-                ? { known: true, name, signature: loadoutSignature(stored) }
+                ? {
+                      known: true,
+                      name,
+                      signature: loadoutSignature(
+                          stored,
+                          typeof store?.resolveEquipment === 'function'
+                              ? store.resolveEquipment(stored)
+                              : stored?.equipment
+                      ),
+                  }
                 : { known: false, name: null, signature: null };
         } catch (error) {
             console.error('[ActionTimeDisplay] Resolving a queued action loadout failed:', error);

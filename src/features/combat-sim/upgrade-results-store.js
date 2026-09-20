@@ -16,6 +16,7 @@
 import config from '../../core/config.js';
 import storage from '../../core/storage.js';
 import { characterKey, readScoped, writeScoped } from '../../utils/character-key.js';
+import { fromCurrentBuild, scriptVersion } from '../../utils/script-version.js';
 
 const STORE = 'combatExport';
 const SETTING = 'combatSim_rememberUpgradeResults';
@@ -36,7 +37,12 @@ export async function saveUpgradeResults(key, results, meta = {}) {
     if (!rememberUpgradeResultsEnabled()) return;
     if (!results?.results?.length) return;
     try {
-        await writeScoped(key, { data: results, savedAt: Date.now(), ...meta }, STORE, true);
+        await writeScoped(
+            key,
+            { data: results, savedAt: Date.now(), ...meta, scriptVersion: scriptVersion() },
+            STORE,
+            true
+        );
     } catch (error) {
         console.error('[UpgradeResultsStore] Persisting upgrade results failed:', error);
     }
@@ -53,7 +59,7 @@ export async function loadUpgradeResults(key) {
     if (!rememberUpgradeResultsEnabled()) return null;
     try {
         const payload = await readScoped(key, STORE, null, { migrate: 'discard' });
-        if (!payload?.data?.results?.length) return null;
+        if (!fromCurrentBuild(payload) || !payload?.data?.results?.length) return null;
         return payload;
     } catch (error) {
         console.error('[UpgradeResultsStore] Loading upgrade results failed:', error);

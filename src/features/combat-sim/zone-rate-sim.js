@@ -95,7 +95,10 @@ export async function prepareZoneRateRun(
             id: String(id),
             source: 'loadout',
             name: snapshot.name || null,
-            signature: loadoutSignature(snapshot),
+            signature: loadoutSignature(
+                snapshot,
+                typeof store?.resolveEquipment === 'function' ? store.resolveEquipment(snapshot) : snapshot.equipment
+            ),
         };
     }
 
