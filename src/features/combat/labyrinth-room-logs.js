@@ -1628,6 +1628,14 @@ class LabyrinthRoomLogs {
         this.captureButton = document.createElement('button');
         this.captureButton.addEventListener('click', () => this.onCaptureClicked());
 
+        const captureAllLabel = document.createElement('label');
+        captureAllLabel.style.cssText = 'font-size:10px; white-space:nowrap;';
+        captureAllLabel.title =
+            'Keep capturing across room changes to inspect automatic loadout swaps. Stops after one hour.';
+        this.captureAllRooms = document.createElement('input');
+        this.captureAllRooms.type = 'checkbox';
+        captureAllLabel.append(this.captureAllRooms, 'All rooms');
+
         // Shown only while an unsaved auto-stopped capture is held, so the held
         // fight can be thrown away deliberately instead of silently by the next
         // Capture press
@@ -1641,6 +1649,7 @@ class LabyrinthRoomLogs {
 
         actions.appendChild(this.replayButton);
         actions.appendChild(this.captureButton);
+        actions.appendChild(captureAllLabel);
         actions.appendChild(this.captureDiscardButton);
         actions.appendChild(this.uncappedButton);
         actions.appendChild(this.recomputeButton);
@@ -1868,11 +1877,14 @@ class LabyrinthRoomLogs {
                 this.activeSession?.roomLevel ||
                 Math.floor(Number(room?.recommendedLevel) || 0) ||
                 0;
-            labTickCapture.startCapture({
-                monsterHrid,
-                roomLevel,
-                fingerprint: this.simSource?.fingerprint?.() || null,
-            });
+            labTickCapture.startCapture(
+                {
+                    monsterHrid,
+                    roomLevel,
+                    fingerprint: this.simSource?.fingerprint?.() || null,
+                },
+                { stopOnLeave: !this.captureAllRooms?.checked }
+            );
         }
         this.paintCapture();
     }

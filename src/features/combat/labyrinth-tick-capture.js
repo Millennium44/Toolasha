@@ -22,6 +22,7 @@
  */
 
 import webSocketHook from '../../core/websocket.js';
+import dataManager from '../../core/data-manager.js';
 import { FINGERPRINT_SPEC } from './labyrinth-recommendation.js';
 import { scriptVersion } from '../../utils/script-version.js';
 
@@ -74,6 +75,23 @@ let stoppedReason = null;
 let captureSeq = 0;
 /** The last capture written out as a file, for exports to pair against; survives clear/start */
 let lastSavedRef = null;
+let initialClientBuild = null;
+
+/** A detached, identity-free view of the build the client currently knows. */
+function clientBuild() {
+    return {
+        equipment: Array.from(dataManager.getEquipment(), ([slot, item]) => ({
+            slot,
+            itemHrid: item.itemHrid,
+            enhancementLevel: item.enhancementLevel || 0,
+        })),
+        abilities: (dataManager.getEquippedAbilities?.() || []).map((ability) => ({
+            abilityHrid: ability.abilityHrid,
+            level: ability.level,
+            slotNumber: ability.slotNumber,
+        })),
+    };
+}
 
 /** The first monster's hrid in a `new_battle` payload, or null. */
 function firstMonsterHrid(payload) {
@@ -107,7 +125,7 @@ function labelFromBattle(payload) {
  * @param {string} type - Which message
  * @param {Object} payload - What it carried, trimmed to what a fight needs
  */
-function push(type, payload) {
+function push(type, payload, build = null) {
     if (!capturing) return;
     if (type === 'new_battle') {
         // End the capture when the fight moves off the monster it is for. Clearing
@@ -144,7 +162,7 @@ function push(type, payload) {
         }
         if (key !== null) lastBattleKey = key;
     }
-    ticks.push({ at: Date.now() - startedAt, type, payload });
+    ticks.push({ at: Date.now() - startedAt, type, payload, ...(build ? { clientBuild: build } : {}) });
     // Keep the newest: a long capture that overflows should hold the recent
     // fight, not the one it opened on. Counted, so an overflowed capture's file
     // says it is a window, not the whole feed.
@@ -181,16 +199,34 @@ export function startCapture(ctx = null, { stopOnLeave = true } = {}) {
     stoppedReason = null;
     context = ctx || null;
     targetMonster = stopOnLeave ? ctx?.monsterHrid || null : null;
+    initialClientBuild = clientBuild();
 
     // Both sides' health/mana/counters, and the message that names the units and
     // their abilities. `battle_updated` is trimmed to what a fight reads; the
     // rest (chat, ids) is noise a capture does not need.
     const onBattle = (data) => push('battle_updated', { pMap: data?.pMap, mMap: data?.mMap, battleId: data?.battleId });
-    const onNew = (data) => push('new_battle', data);
+    // These snapshots answer whether the client applied a room's automatic
+    // loadout swap before the fight opened. Array order is client receipt order,
+    // not a claim about simultaneous events inside a server tick.
+    const onNew = (data) => push('new_battle', data, clientBuild());
+    const onItems = (data) => {
+        const equipment = (data?.endCharacterItems || [])
+            .filter((item) => item.itemLocationHrid !== '/item_locations/inventory')
+            .map((item) => ({
+                itemHrid: item.itemHrid,
+                itemLocationHrid: item.itemLocationHrid,
+                enhancementLevel: item.enhancementLevel || 0,
+                count: item.count,
+            }));
+        if (equipment.length) push('items_updated', { equipment }, clientBuild());
+    };
+    const onAbilities = () => push('abilities_updated', {}, clientBuild());
 
     webSocketHook.on('battle_updated', onBattle);
     webSocketHook.on('new_battle', onNew);
-    handlers = { onBattle, onNew };
+    webSocketHook.on('items_updated', onItems);
+    webSocketHook.on('abilities_updated', onAbilities);
+    handlers = { onBattle, onNew, onItems, onAbilities };
 
     autoStopTimer = setTimeout(() => endCapture('auto_max_duration'), MAX_CAPTURE_MS);
 }
@@ -208,6 +244,8 @@ function endCapture(reason) {
     if (handlers) {
         webSocketHook.off('battle_updated', handlers.onBattle);
         webSocketHook.off('new_battle', handlers.onNew);
+        webSocketHook.off('items_updated', handlers.onItems);
+        webSocketHook.off('abilities_updated', handlers.onAbilities);
         handlers = null;
     }
     if (capturing) stoppedReason = reason;
@@ -232,6 +270,7 @@ export function clearCapture() {
     captureId = null;
     ticksDropped = 0;
     stoppedReason = null;
+    initialClientBuild = null;
 }
 
 /**
@@ -275,7 +314,7 @@ export function captureFile() {
     }
     return {
         format: 'toolasha-labyrinth-tick-capture',
-        version: 2,
+        version: 3,
         toolashaVersion: scriptVersion(),
         host,
         isTestServer: host ? host.includes('test.') : null,
@@ -284,6 +323,7 @@ export function captureFile() {
         savedAt,
         captureId,
         context: context || null,
+        initialClientBuild,
         fingerprintSpec: FINGERPRINT_SPEC,
         duplicatesDiscarded,
         ticksDropped,
