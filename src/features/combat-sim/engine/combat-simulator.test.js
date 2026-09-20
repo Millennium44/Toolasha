@@ -19,6 +19,7 @@ import { describe, test, expect, afterEach } from 'vitest';
 
 import CombatSimulator, { getCapturedPlayerDetails, setPlayerDetailsCapture } from './combat-simulator.js';
 import CombatUtilities from './combat-utilities.js';
+import AbilityCastEndEvent from './events/ability-cast-end-event.js';
 import AutoAttackEvent from './events/auto-attack-event.js';
 import BlindExpirationEvent from './events/blind-expiration-event.js';
 import CombatStartEvent from './events/combat-start-event.js';
@@ -175,6 +176,89 @@ function goldenRun(seed) {
 afterEach(() => {
     clearSimRng();
     setGameData(null);
+});
+
+/**
+ * Waiting for mana and waiting for blindness to expire are separate states.
+ *
+ * The former needs `isOutOfMana` so a mana-restoration tick can wake the unit
+ * and retry its ability. Blindness has its own expiration event, and must not
+ * leak into the OOM duration that the result and food optimizer report.
+ */
+describe('attack scheduling distinguishes out of mana from blindness', () => {
+    function schedulingHarness({ mana = 0, blinded = false, outOfMana = false, abilities = [] } = {}) {
+        const source = {
+            hrid: 'player1',
+            isPlayer: true,
+            isBlinded: blinded,
+            isOutOfMana: outOfMana,
+            abilities,
+            combatDetails: {
+                currentHitpoints: 100,
+                currentManapoints: mana,
+                combatStats: { castSpeed: 0, attackInterval: 3 * ONE_SECOND },
+            },
+        };
+        const target = {
+            hrid: '/monsters/target',
+            isPlayer: false,
+            combatDetails: { currentHitpoints: 100 },
+        };
+        const simulator = new CombatSimulator([source], {
+            hrid: '/actions/combat/test',
+            difficultyTier: 0,
+            isDungeon: false,
+        });
+        simulator.enemies = [target];
+        simulator.simulationTime = 0;
+        return { simulator, source };
+    }
+
+    const unaffordableAbility = () => ({
+        hrid: '/abilities/too_expensive',
+        manaCost: 10,
+        castDuration: ONE_SECOND,
+        shouldTrigger: () => true,
+    });
+
+    test('a triggered ability the unit cannot afford waits for mana instead of auto-attacking', () => {
+        const { simulator, source } = schedulingHarness({ abilities: [unaffordableAbility()] });
+
+        simulator.addNextAttackEvent(source);
+
+        expect(source.isOutOfMana).toBe(true);
+        expect(simulator.eventQueue.containsEventOfType(AutoAttackEvent.type)).toBe(false);
+    });
+
+    test('a merely blinded unit is not labelled out of mana', () => {
+        const { simulator, source } = schedulingHarness({ blinded: true });
+
+        simulator.addNextAttackEvent(source);
+
+        expect(source.isOutOfMana).toBe(false);
+        expect(simulator.eventQueue.containsEventOfType(AutoAttackEvent.type)).toBe(false);
+    });
+
+    test('an affordable auto attack clears a stale mana wait', () => {
+        const { simulator, source } = schedulingHarness({ outOfMana: true });
+
+        simulator.addNextAttackEvent(source);
+
+        expect(source.isOutOfMana).toBe(false);
+        expect(simulator.eventQueue.containsEventOfType(AutoAttackEvent.type)).toBe(true);
+    });
+
+    test('restored mana clears the wait and schedules the cast', () => {
+        const ability = unaffordableAbility();
+        const { simulator, source } = schedulingHarness({ abilities: [ability] });
+        simulator.addNextAttackEvent(source);
+        source.combatDetails.currentManapoints = ability.manaCost;
+
+        simulator.addNextAttackEvent(source);
+
+        expect(source.isOutOfMana).toBe(false);
+        expect(simulator.eventQueue.containsEventOfType(AbilityCastEndEvent.type)).toBe(true);
+    });
 });
 
 /**

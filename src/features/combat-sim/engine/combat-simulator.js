@@ -1314,6 +1314,21 @@ class CombatSimulator {
             return;
         }
 
+        // A triggered ability that cannot be paid for deliberately leaves the
+        // unit idle until mana restoration queues an AwaitCooldownEvent. This
+        // is the state `isOutOfMana` exists to remember; letting an auto attack
+        // through here both inflates damage while OOM and leaves the regen/MP
+        // restore wake-up path with nothing to wake.
+        if (skipNextAbility) {
+            source.isOutOfMana = true;
+            return;
+        }
+
+        // Nothing affordable is blocking the unit now. This also clears a wait
+        // carried through a mana restore or respawn when no ability happens to
+        // trigger on the first scheduling pass.
+        source.isOutOfMana = false;
+
         if (!enemies) {
             return;
         }
@@ -1324,8 +1339,6 @@ class CombatSimulator {
                 source
             );
             this.eventQueue.addEvent(autoAttackEvent);
-        } else {
-            source.isOutOfMana = true;
         }
     }
 
