@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### The Philosopher's Stone table is wide enough for its last two columns, and opens on Profit/Hr
+
+- Fifteen columns were squeezed into a fixed 1,200px dialog, so Time/Philo and Profit/Hr fell off the right edge on a wide screen while the rest of the window sat empty. The table now grows to the space available, and sorts by profit per hour rather than cost when it opens.
+
 ### Combat Sim: a blinded fighter no longer reads as out of mana
 
 - Blindness set the same flag the simulator uses for a fighter waiting on mana, so a blinded run reported mana exhaustion it never had and the food optimizer planned around it. Blind and mana are now separate, and a fighter whose ability is too expensive still auto attacks, as the game does.

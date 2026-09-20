@@ -177,10 +177,16 @@ describe('the real CHANGELOG.md across release states', () => {
 
     test.each(Object.entries(states))('%s: ships within the documented bounds', (_label, changelog) => {
         const result = sliceForkChangelog(changelog);
-        // No marker: nothing to slice on, so the floor answers exactly
-        // (`entriesToCover` returns 0). Any marker, even a lone one, asks for the
-        // entries above it, which the floor and ceiling then clamp.
-        if (result.markerVersions.length === 0) {
+        // Branch on the markers in the SOURCE, not on the ones that survive into
+        // the slice. `entriesToCover` aims at a marker in the whole section, so a
+        // section with markers asks for entries above one however few of them the
+        // window happens to keep — and which markers land inside it moves on its
+        // own as entries are added above them. Keying this on `result.markerVersions`
+        // went red the day the unreleased section grew past the entry ceiling and
+        // pushed the newest marker out of the window, with nothing about the
+        // slicing changed.
+        const sourceHasMarker = /^<!--\s*shipped in\s+[\d.]+\s*-->/m.test(changelog);
+        if (!sourceHasMarker) {
             expect(result.shownEntries).toBe(DEFAULT_MIN_ENTRIES);
         } else {
             expect(result.shownEntries).toBeGreaterThanOrEqual(DEFAULT_MIN_ENTRIES);

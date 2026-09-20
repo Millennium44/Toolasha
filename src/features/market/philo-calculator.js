@@ -177,7 +177,9 @@ class PhiloCalculator {
     constructor() {
         this.isInitialized = false;
         this.modal = null;
-        this.sortColumn = 'cost';
+        // Profit per hour is what the table is read for; cost was only ever a
+        // stable default, not a useful one.
+        this.sortColumn = 'profitPerHour';
         this.sortDirection = 'desc';
 
         // User-editable inputs
@@ -1078,7 +1080,12 @@ class PhiloCalculator {
             color: #ffffff;
             border-radius: 8px;
             width: 95%;
-            max-width: 1200px;
+            /* The table carries fifteen columns; 1200px clipped the last two
+               (Time/Philo and Profit/Hr) on a wide screen while leaving the
+               viewport unused. Grow to whatever the table needs up to the
+               viewport, and keep the 95% floor so a narrow window still gets
+               its margins. */
+            max-width: min(1900px, 95vw);
             max-height: 90vh;
             display: flex;
             flex-direction: column;

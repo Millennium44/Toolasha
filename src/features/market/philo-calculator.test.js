@@ -794,3 +794,15 @@ describe('copy table as text', () => {
         expect(rowsToTsv(columns, [])).toBe('Item\tPhilo %\tProfit/Philo (instant | patient)\tItems/Act');
     });
 });
+
+describe('the table opens on the column it is read for', () => {
+    test('the default sort is profit per hour, descending', async () => {
+        const { PhiloCalculator } = await import('./philo-calculator.js');
+        const calc = new PhiloCalculator();
+
+        // Cost was a stable default, not a useful one: the table exists to rank
+        // what earns most per hour, and the Profit/Hr column is the last one.
+        expect(calc.sortColumn).toBe('profitPerHour');
+        expect(calc.sortDirection).toBe('desc');
+    });
+});
