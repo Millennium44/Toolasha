@@ -64,6 +64,7 @@ beforeEach(() => {
     // Both injected, both module state, both would otherwise leak
     recorder.setNoiseProvider(null);
     recorder.setSegmentSummarizer(null);
+    recorder.setCombatZoneProvider(null);
 });
 
 afterEach(() => recorder.stopRecording());
@@ -113,6 +114,7 @@ describe('recording the combat feed', () => {
     });
 
     test('cleanup clears the discarded session metadata along with its raw ticks', () => {
+        recorder.setCombatZoneProvider(() => ({ zoneHrid: '/actions/combat/fly', difficultyTier: 1 }));
         recorder.startRecording();
         send('new_battle', { monsters: {} });
         send('new_battle', { monsters: {} });
@@ -120,7 +122,14 @@ describe('recording the combat feed', () => {
         recorder.default.cleanup();
         expect(recorder.recordingStatus()).toMatchObject({ fights: 0, ticks: 0, seconds: 0 });
         expect(recorder.sessionFile()).toMatchObject({ recordingId: null, recordedAt: null, fights: 0, seconds: 0 });
-        expect(recorder.recordingFile()).toMatchObject({ recordingId: null, ticks: [], loadout: null, segment: 0 });
+        expect(recorder.recordingFile()).toMatchObject({
+            recordingId: null,
+            ticks: [],
+            loadout: null,
+            combatZone: null,
+            contextChanged: false,
+            segment: 0,
+        });
     });
 
     test('it keeps what attribution reads and nothing else', () => {
@@ -778,6 +787,37 @@ describe('handing the whole session over', () => {
 describe('what was worn while it was recorded', () => {
     afterEach(() => recorder.setLoadoutProvider(null));
 
+    test('a mid-fight build change banks clean fights and leaves the transition partial', () => {
+        const worn = { equipment: { main_hand: { hrid: '/items/sword' } } };
+        recorder.setLoadoutProvider(() => worn);
+        recorder.startRecording();
+        send('new_battle', { players: {}, monsters: {} });
+        send('battle_updated', { pMap: {}, mMap: {} });
+        send('new_battle', { players: {}, monsters: {} });
+        send('battle_updated', { pMap: {}, mMap: {} });
+
+        worn.equipment.main_hand.hrid = '/items/spear';
+        send('battle_updated', { pMap: {}, mMap: {} });
+        send('new_battle', { players: {}, monsters: {} });
+        send('battle_updated', { pMap: {}, mMap: {} });
+        send('new_battle', { players: {}, monsters: {} });
+
+        const file = recorder.sessionFile();
+        expect(file.segments).toHaveLength(2);
+        expect(file.segments[0]).toMatchObject({
+            fights: 1,
+            truncated: true,
+            contextChanged: true,
+            loadout: { equipment: { main_hand: { hrid: '/items/sword' } } },
+        });
+        expect(file.segments[1]).toMatchObject({
+            fights: 1,
+            loadout: { equipment: { main_hand: { hrid: '/items/spear' } } },
+        });
+        expect(file.fights).toBe(2);
+        expect(file.segments.flatMap((entry) => entry.ticks)).toHaveLength(8);
+    });
+
     test('the loadout is snapshotted when the recording starts', () => {
         // Otherwise the check that reads this can only sim whoever is logged in
         // when it runs, and enhancing a weapon in between reads as a deviation
@@ -787,7 +827,7 @@ describe('what was worn while it was recorded', () => {
         expect(recorder.recordingFile().loadout).toEqual({ weapon: 'sword', level: 5 });
     });
 
-    test('and again on every banked segment, since a session outlasts a loadout', () => {
+    test('a build changed before the first payload owns the first segment', () => {
         let worn = 'sword';
         recorder.setLoadoutProvider(() => ({ weapon: worn }));
 
@@ -801,9 +841,31 @@ describe('what was worn while it was recorded', () => {
             for (let tick = 0; tick < 100; tick += 1) send('battle_updated', { pMap: {}, mMap: {} });
         }
 
-        expect(banked[0].loadout).toEqual({ weapon: 'sword' });
+        expect(banked[0].loadout).toEqual({ weapon: 'spear' });
         expect(recorder.recordingFile().loadout).toEqual({ weapon: 'spear' });
         detach();
+    });
+
+    test('a zone or tier transition does not close the old fight under the new context', () => {
+        const zone = { zoneHrid: '/actions/combat/fly', difficultyTier: 1 };
+        let capturedAt = 0;
+        recorder.setLoadoutProvider(() => ({ capturedAt: ++capturedAt, abilities: ['poke'] }));
+        recorder.setCombatZoneProvider(() => zone);
+        recorder.startRecording();
+        send('new_battle', { players: {}, monsters: {} });
+        send('battle_updated', { pMap: {}, mMap: {} });
+        expect(recorder.sessionFile().segments).toHaveLength(1);
+
+        zone.difficultyTier = 2;
+        send('new_battle', { players: {}, monsters: {} });
+        send('battle_updated', { pMap: {}, mMap: {} });
+        send('new_battle', { players: {}, monsters: {} });
+
+        const file = recorder.sessionFile();
+        expect(file.segments.map((entry) => entry.combatZone.difficultyTier)).toEqual([1, 2]);
+        expect(file.segments.map((entry) => entry.fights)).toEqual([0, 1]);
+        expect(file.segments[0].contextChanged).toBe(true);
+        expect(file.fights).toBe(1);
     });
 
     test('nothing able to take one is a recording without one, not a broken one', () => {
