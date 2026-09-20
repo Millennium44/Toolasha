@@ -7,7 +7,21 @@ import config from '../../core/config.js';
 import dataManager from '../../core/data-manager.js';
 import domObserver from '../../core/dom-observer.js';
 import tradeHistory from './trade-history.js';
-import { formatKMB3Digits } from '../../utils/formatters.js';
+import { formatKMB3Digits, formatRelativeTime } from '../../utils/formatters.js';
+
+/**
+ * Explain when a personal price was observed, while keeping legacy histories useful.
+ * @param {'buy'|'sell'} side - Trade side
+ * @param {number|null|undefined} observedAt - Observation timestamp
+ * @param {number} [now] - Clock for deterministic callers/tests
+ * @returns {string} Tooltip text
+ */
+export function tradePriceTitle(side, observedAt, now = Date.now()) {
+    const label = side === 'sell' ? 'sell' : 'buy';
+    const at = Number(observedAt);
+    if (!(Number.isFinite(at) && at > 0)) return `Your last ${label} price`;
+    return `Your last ${label} price — recorded ${formatRelativeTime(Math.max(0, now - at)).toLowerCase()} ago`;
+}
 
 class TradeHistoryDisplay {
     constructor() {
@@ -148,7 +162,7 @@ class TradeHistoryDisplay {
     /**
      * Update trade history display
      * @param {HTMLElement} panel - Current item panel (unused, kept for signature compatibility)
-     * @param {Object|null} history - Trade history { buy, sell } or null
+     * @param {Object|null} history - Trade history { buy, buyAt, sell, sellAt } or null
      */
     updateDisplay(panel, history) {
         // Remove existing display
@@ -207,7 +221,7 @@ class TradeHistoryDisplay {
         if (history.buy) {
             const buyColor = this.getBuyColor(history.buy, currentPrices, comparisonMode);
             parts.push(
-                `<span style="color: ${buyColor}; font-weight: 600;" title="Your last buy price">Buy ${formatKMB3Digits(history.buy)}</span>`
+                `<span style="color: ${buyColor}; font-weight: 600;" title="${tradePriceTitle('buy', history.buyAt)}">Buy ${formatKMB3Digits(history.buy)}</span>`
             );
         }
 
@@ -218,7 +232,7 @@ class TradeHistoryDisplay {
         if (history.sell) {
             const sellColor = this.getSellColor(history.sell, currentPrices, comparisonMode);
             parts.push(
-                `<span style="color: ${sellColor}; font-weight: 600;" title="Your last sell price">Sell ${formatKMB3Digits(history.sell)}</span>`
+                `<span style="color: ${sellColor}; font-weight: 600;" title="${tradePriceTitle('sell', history.sellAt)}">Sell ${formatKMB3Digits(history.sell)}</span>`
             );
         }
 

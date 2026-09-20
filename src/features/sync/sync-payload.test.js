@@ -707,6 +707,25 @@ describe('applyPayload merges additive records', () => {
         expect(history['/items/remote_only:0']).toEqual({ buy: 9 });
     });
 
+    test('personal trade price conflicts keep the newest observation instead of the pulling device', async () => {
+        storeState.stores.settings.tradeHistory_char = {
+            '/items/coin:0': { buy: 100, buyAt: 300, sell: 200, sellAt: 100 },
+        };
+
+        await applyPayload(
+            payloadWith('settings', 'tradeHistory_char', {
+                '/items/coin:0': { buy: 90, buyAt: 200, sell: 220, sellAt: 400 },
+            })
+        );
+
+        expect(importedPayloads[0].stores.settings.tradeHistory_char['/items/coin:0']).toEqual({
+            buy: 100,
+            buyAt: 300,
+            sell: 220,
+            sellAt: 400,
+        });
+    });
+
     test('curated and settings keys are never merged — a union would resurrect deletions', async () => {
         storeState.stores.settings.watchlist = ['kept', 'deliberately removed'];
         storeState.stores.settings.script_settingsMap_abc = { a: 1 };

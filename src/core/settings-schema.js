@@ -1536,7 +1536,7 @@ export const settingsGroups = {
                 label: 'Market: Show personal trade history',
                 type: 'checkbox',
                 default: true,
-                help: 'Displays your last buy/sell prices for items in marketplace',
+                help: 'Displays your last buy/sell prices in the marketplace, including how long ago each price was recorded.',
             },
             market_tradeHistoryComparisonMode: {
                 id: 'market_tradeHistoryComparisonMode',

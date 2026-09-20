@@ -10,8 +10,8 @@ import config from '../../core/config.js';
 import { captureOwner, stillOurs, noteTeardown } from '../../utils/init-ownership.js';
 
 /**
- * Two history maps folded into one, per item key and per side, the second
- * winning on a clash.
+ * Two history maps folded into one, per item key and per side, with the newest
+ * timestamp winning a clash.
  *
  * Per side rather than per item: a stored `{sell}` and an in-memory `{buy}` for
  * the same item are two halves of one record, not two versions of it.
@@ -21,12 +21,41 @@ import { captureOwner, stillOurs, noteTeardown } from '../../utils/init-ownershi
  */
 export function mergeHistory(base, fresh) {
     const safe = (map) => (map && typeof map === 'object' && !Array.isArray(map) ? map : {});
+    const has = (entry, side) => entry && Object.prototype.hasOwnProperty.call(entry, side);
+    const timestamp = (entry, side) => {
+        const value = Number(entry?.[`${side}At`]);
+        return Number.isFinite(value) && value > 0 ? value : null;
+    };
+    const mergeEntry = (older, newer) => {
+        const merged = { ...(older || {}), ...(newer || {}) };
+        for (const side of ['buy', 'sell']) {
+            const oldHas = has(older, side);
+            const newHas = has(newer, side);
+            if (!oldHas && !newHas) continue;
+
+            const oldAt = timestamp(older, side);
+            const newAt = timestamp(newer, side);
+            // Timestamped data beats legacy data. When both sides are legacy,
+            // preserve the historical incoming-wins behavior.
+            const takeNew =
+                newHas &&
+                (!oldHas ||
+                    (newAt !== null && oldAt === null) ||
+                    (newAt !== null && oldAt !== null && newAt >= oldAt) ||
+                    (newAt === null && oldAt === null));
+            const chosen = takeNew ? newer : older;
+            merged[side] = chosen[side];
+            if (timestamp(chosen, side) !== null) merged[`${side}At`] = timestamp(chosen, side);
+            else delete merged[`${side}At`];
+        }
+        return merged;
+    };
     const merged = {};
     for (const [key, entry] of Object.entries(safe(base))) {
         if (entry && typeof entry === 'object') merged[key] = { ...entry };
     }
     for (const [key, entry] of Object.entries(safe(fresh))) {
-        if (entry && typeof entry === 'object') merged[key] = { ...(merged[key] || {}), ...entry };
+        if (entry && typeof entry === 'object') merged[key] = mergeEntry(merged[key], entry);
     }
     return merged;
 }
@@ -53,8 +82,8 @@ const SAVE_COALESCE_MS = 1500;
  *
  * It only ever grew, and a record written on every fill forever is one that
  * eventually costs more to read and merge than the oldest prices in it are worth.
- * Object key order is insertion order, so the entries dropped are the ones
- * recorded longest ago.
+ * Timestamped entries are ordered by their newest side; legacy entries retain
+ * insertion order and are treated as older than timestamped observations.
  */
 const MAX_ENTRIES = 4000;
 
@@ -66,6 +95,11 @@ const MAX_ENTRIES = 4000;
 export function pruneHistory(history) {
     const keys = Object.keys(history || {});
     if (keys.length <= MAX_ENTRIES) return history;
+
+    keys.sort((a, b) => {
+        const newest = (entry) => Math.max(Number(entry?.buyAt) || 0, Number(entry?.sellAt) || 0);
+        return newest(history[a]) - newest(history[b]);
+    });
 
     const kept = {};
     for (const key of keys.slice(keys.length - MAX_ENTRIES)) kept[key] = history[key];
@@ -307,6 +341,7 @@ class TradeHistory {
         let hasChanges = false;
 
         // Process each completed order
+        const observedAt = Date.now();
         data.endMarketListings.forEach((order) => {
             // Only track orders that actually filled
             if (order.filledQuantity === 0) return;
@@ -319,8 +354,10 @@ class TradeHistory {
             // Update buy or sell price
             if (order.isSell) {
                 itemHistory.sell = order.price;
+                itemHistory.sellAt = observedAt;
             } else {
                 itemHistory.buy = order.price;
+                itemHistory.buyAt = observedAt;
             }
 
             this.history[key] = itemHistory;
@@ -337,7 +374,7 @@ class TradeHistory {
      * Get trade history for a specific item
      * @param {string} itemHrid - Item HRID
      * @param {number} enhancementLevel - Enhancement level (default 0)
-     * @returns {Object|null} { buy, sell } or null if no history
+     * @returns {Object|null} { buy, buyAt, sell, sellAt } or null if no history
      */
     getHistory(itemHrid, enhancementLevel = 0) {
         const key = `${itemHrid}:${enhancementLevel}`;
