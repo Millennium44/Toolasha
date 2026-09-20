@@ -93,7 +93,9 @@ vi.mock('../../core/data-manager.js', () => ({
         },
     },
 }));
-vi.mock('../../core/websocket.js', () => ({ default: { on: () => {}, off: () => {} } }));
+vi.mock('../../core/websocket.js', () => ({
+    default: { on: () => {}, off: () => {}, onSocketEvent: () => {}, offSocketEvent: () => {} },
+}));
 vi.mock('../combat-sim/combat-sim-adapter.js', () => ({
     buildGameDataPayload: () => ({}),
     // A fresh copy each time, as the real one builds: a test that mutated the

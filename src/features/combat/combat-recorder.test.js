@@ -11,7 +11,7 @@
 
 import { describe, test, expect, beforeEach, afterEach, vi } from 'vitest';
 
-const bus = vi.hoisted(() => ({ handlers: {} }));
+const bus = vi.hoisted(() => ({ handlers: {}, socketHandlers: {}, activeSocket: null }));
 const settings = vi.hoisted(() => ({ autoStart: false, seconds: 60 }));
 
 vi.mock('../../core/config.js', () => ({
@@ -22,6 +22,9 @@ vi.mock('../../core/config.js', () => ({
             if (key === 'combatRecorder_autoStart') settings.autoStart = value;
         },
     },
+}));
+vi.mock('../../core/data-manager.js', () => ({
+    default: { isFromActiveSocket: (context) => !bus.activeSocket || context?.socket === bus.activeSocket },
 }));
 vi.mock('../../utils/battle-panel-monsters.js', () => ({
     describeMonsterPanel: () => ({ area: true, grid: true, tiles: [['Eyes', '2215/2215']] }),
@@ -35,15 +38,23 @@ vi.mock('../../core/websocket.js', () => ({
         off: (event) => {
             delete bus.handlers[event];
         },
+        onSocketEvent: (event, fn) => {
+            bus.socketHandlers[event] = fn;
+        },
+        offSocketEvent: (event) => {
+            delete bus.socketHandlers[event];
+        },
     },
 }));
 
 const recorder = await import('./combat-recorder.js');
 
-const send = (event, payload) => bus.handlers[event]?.(payload);
+const send = (event, payload, context) => bus.handlers[event]?.(payload, context);
 
 beforeEach(() => {
     bus.handlers = {};
+    bus.socketHandlers = {};
+    bus.activeSocket = null;
     settings.autoStart = false;
     settings.seconds = 60;
     recorder.stopRecording();
@@ -58,6 +69,60 @@ beforeEach(() => {
 afterEach(() => recorder.stopRecording());
 
 describe('recording the combat feed', () => {
+    test('stale sockets cannot add ticks or fight boundaries to the active recording', () => {
+        const active = {};
+        const stale = {};
+        bus.activeSocket = active;
+        recorder.startRecording();
+        send('new_battle', { monsters: {} }, { socket: active });
+        send('new_battle', { monsters: {} }, { socket: stale });
+        send('battle_updated', { mMap: { 0: { cHP: 0 } } }, { socket: stale });
+        expect(recorder.recordingStatus()).toMatchObject({ fights: 0, ticks: 1 });
+    });
+
+    test('closing the active socket ends capture before a reconnect can close an old fight', () => {
+        const active = {};
+        bus.activeSocket = active;
+        recorder.startRecording();
+        send('new_battle', { monsters: {} }, { socket: active });
+        send('battle_updated', { pMap: {}, mMap: {} }, { socket: active });
+        bus.socketHandlers.close?.({}, {});
+        expect(recorder.isRecording()).toBe(true);
+        bus.socketHandlers.close?.({}, active);
+        const kept = recorder.sessionFile();
+        bus.activeSocket = {};
+        send('new_battle', { monsters: {} }, { socket: bus.activeSocket });
+        expect(recorder.isRecording()).toBe(false);
+        expect(recorder.sessionFile()).toMatchObject({
+            fights: 0,
+            stoppedReason: 'socket_closed',
+            ticksComplete: true,
+        });
+        expect(recorder.recordingFile().ticks).toEqual(kept.segments[0].ticks);
+        expect(bus.socketHandlers.close).toBeUndefined();
+    });
+
+    test('a new character snapshot stops capture before deferred character teardown', () => {
+        recorder.startRecording();
+        send('new_battle', { monsters: {} });
+        send('init_character_data', { character: { id: 'next-character' } });
+        send('new_battle', { monsters: {} });
+        expect(recorder.isRecording()).toBe(false);
+        expect(recorder.sessionFile()).toMatchObject({ fights: 0, stoppedReason: 'character_initialized' });
+        expect(recorder.recordingFile().ticks).toHaveLength(1);
+    });
+
+    test('cleanup clears the discarded session metadata along with its raw ticks', () => {
+        recorder.startRecording();
+        send('new_battle', { monsters: {} });
+        send('new_battle', { monsters: {} });
+        expect(recorder.sessionFile().fights).toBe(1);
+        recorder.default.cleanup();
+        expect(recorder.recordingStatus()).toMatchObject({ fights: 0, ticks: 0, seconds: 0 });
+        expect(recorder.sessionFile()).toMatchObject({ recordedAt: null, fights: 0, seconds: 0 });
+        expect(recorder.recordingFile()).toMatchObject({ ticks: [], loadout: null, segment: 0 });
+    });
+
     test('it keeps what attribution reads and nothing else', () => {
         // A recording is meant to be handed to somebody. Anything beyond pMap
         // and mMap is neither needed nor theirs to pass on.
