@@ -123,6 +123,9 @@ function push(type, payload) {
             }
         }
         labelFromBattle(payload);
+        // A new fight breaks adjacency, even when battleId is absent and its
+        // first update happens to match the previous fight's last update.
+        lastBattleKey = null;
     }
     if (type === 'battle_updated') {
         // Drop an exact repeat of the tick before it. Only battle_updated:
@@ -216,8 +219,9 @@ export function stopCapture() {
     endCapture('manual');
 }
 
-/** Throw away the captured ticks. The ref to the last saved file survives. */
+/** Stop and throw away the captured ticks. The ref to the last saved file survives. */
 export function clearCapture() {
+    stopCapture();
     ticks = [];
     startedAt = 0;
     context = null;
