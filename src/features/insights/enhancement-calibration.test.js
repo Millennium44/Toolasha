@@ -14,6 +14,7 @@ const game = vi.hoisted(() => ({
     calibrationOn: true,
     stored: {},
     unavailable: false,
+    beforeRead: null,
 }));
 
 vi.mock('../../core/config.js', () => ({ default: { getSetting: () => game.calibrationOn } }));
@@ -23,6 +24,7 @@ vi.mock('../../core/storage.js', () => ({
         tryGet: async (key, store) => {
             if (game.unavailable) return null;
             const value = game.stored[`${store}:${key}`];
+            if (game.beforeRead) await game.beforeRead(key);
             return value == null ? { found: false, value: null } : { found: true, value: structuredClone(value) };
         },
         set: async (key, value, store) => {
@@ -99,6 +101,7 @@ beforeEach(() => {
     game.calibrationOn = true;
     game.unavailable = false;
     game.characterId = 'char-1';
+    game.beforeRead = null;
     calibration = new EnhancementCalibration();
 });
 
@@ -266,6 +269,66 @@ describe('the observations survive a failed read and a second tab', () => {
         calibration.disable();
 
         expect(calibration.getCachedRecords()).toBeNull();
+    });
+});
+
+describe('queued work keeps its original lifecycle', () => {
+    test('a completion queued before a character switch cannot enter the arriving ledger', async () => {
+        let release;
+        calibration.queue = new Promise((resolve) => {
+            release = resolve;
+        });
+        const pending = calibration.recordCompletion(completedSession());
+
+        game.characterId = 'char-2';
+        calibration.disable();
+        release();
+
+        const written = await pending;
+        expect(await calibration.getRecords()).toEqual([]);
+        expect(storedEntries('lootLogHistory:calibrationEnhancing_char-2')).toEqual([]);
+        expect(written).toBe(false);
+    });
+
+    test('a completion waiting on storage cannot enter a new character cache or ledger', async () => {
+        game.stored['lootLogHistory:calibrationEnhancing_char-1'] = [{ id: 'old', t: 1 }];
+        game.stored['lootLogHistory:calibrationEnhancing_char-2'] = [{ id: 'new', t: 2 }];
+        let release;
+        const gate = new Promise((resolve) => {
+            release = resolve;
+        });
+        game.beforeRead = (key) => (key.endsWith('char-1') ? gate : undefined);
+        const pending = calibration.recordCompletion(completedSession());
+        // Let the feature queue enter its first storage read before switching.
+        await Promise.resolve();
+
+        calibration.disable();
+        game.characterId = 'char-2';
+        expect(await calibration.getRecords()).toEqual([{ id: 'new', t: 2 }]);
+        release();
+        const written = await pending;
+
+        expect(calibration.getCachedRecords()).toEqual([{ id: 'new', t: 2 }]);
+        expect(storedEntries('lootLogHistory:calibrationEnhancing_char-2')).toEqual([{ id: 'new', t: 2 }]);
+        expect(storedEntries('lootLogHistory:calibrationEnhancing_char-1')).toEqual([{ id: 'old', t: 1 }]);
+        expect(written).toBe(false);
+    });
+
+    test('clear cancels completions already queued, while later completions still record', async () => {
+        let release;
+        calibration.queue = new Promise((resolve) => {
+            release = resolve;
+        });
+        const pending = calibration.recordCompletion(completedSession());
+        await calibration.clear();
+        release();
+
+        expect(await pending).toBe(false);
+        expect(await calibration.getRecords()).toEqual([]);
+        expect(await calibration.recordCompletion(completedSession({ id: 'later', endTime: Date.now() + 1 }))).toBe(
+            true
+        );
+        expect((await calibration.getRecords()).map((record) => record.id)).toEqual(['later:5']);
     });
 });
 

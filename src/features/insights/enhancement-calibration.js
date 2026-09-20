@@ -84,6 +84,18 @@ registerSyncMerge({
     label: 'Enhancement calibration',
 });
 
+/** Keep a pending storage operation bound to the character that requested it. */
+function createCalibrationStore(owner) {
+    return createPersistedRecord({
+        base: `calibrationEnhancing_${owner || 'default'}`,
+        scoped: false,
+        store: STORE_NAME,
+        empty: () => clearedRecord(),
+        merge: mergeEnhancementRecords,
+        label: 'EnhancementCalibration',
+    });
+}
+
 class EnhancementCalibration {
     constructor() {
         this.records = null;
@@ -93,16 +105,13 @@ class EnhancementCalibration {
         // discipline: a read that could not be made keeps memory rather than
         // blanking it, and a save folds in what another tab wrote. Scoped
         // under `calibrationEnhancing_<id>`.
-        this.store = createPersistedRecord({
-            base: 'calibrationEnhancing',
-            store: STORE_NAME,
-            empty: () => clearedRecord(),
-            merge: mergeEnhancementRecords,
-            migrate: 'discard',
-            label: 'EnhancementCalibration',
-        });
+        // The key is fixed for this handle: a save queued inside the shared
+        // helper must not resolve a different character when it starts running.
+        // Legacy unscoped records were already discarded by this recorder.
+        this.store = createCalibrationStore(null);
         /** Whose observations the record in memory holds; a change means forget them first */
         this.owner = null;
+        this.generation = 0;
     }
 
     /**
@@ -113,12 +122,19 @@ class EnhancementCalibration {
      */
     _store() {
         const owner = dataManager.getCurrentCharacterId() || null;
-        if (this.owner !== null && owner !== this.owner) {
+        if (owner !== this.owner) {
             this.store.reset();
-            this.records = null;
+            this.store = createCalibrationStore(owner);
+            if (this.owner !== null) this.records = null;
+            this.generation += 1;
         }
         this.owner = owner;
         return this.store;
+    }
+
+    /** Whether asynchronous work still belongs to the current recorder lifecycle. */
+    _isCurrent(owner, generation) {
+        return this.generation === generation && (dataManager.getCurrentCharacterId() || null) === owner;
     }
 
     /**
@@ -141,10 +157,12 @@ class EnhancementCalibration {
             return this.records;
         }
         const store = this._store();
+        const { owner, generation } = this;
         if (this.records && store.isLoaded()) return this.records;
         try {
             store.set(clearedRecord(this.records || []));
             await store.load();
+            if (!this._isCurrent(owner, generation)) return [];
             this.records = entriesOf(store.get());
         } catch (error) {
             console.error('[EnhancementCalibration] Could not read history:', error);
@@ -164,8 +182,10 @@ class EnhancementCalibration {
         if (!key) return false;
         try {
             const store = this._store();
+            const { owner, generation } = this;
             store.set(clearedRecord(this.records || []));
             const landed = await store.save();
+            if (!this._isCurrent(owner, generation)) return false;
             this.records = entriesOf(store.get());
             return landed;
         } catch (error) {
@@ -200,6 +220,10 @@ class EnhancementCalibration {
         // or one predicted without character stats
         if (tail === null) return false;
 
+        this._store();
+        const { owner, generation } = this;
+        if (!owner) return false;
+
         const record = {
             // One observation per session and target: an extended session is a
             // new prediction and may become a second observation
@@ -218,16 +242,17 @@ class EnhancementCalibration {
         let written = false;
         this.queue = this.queue
             .then(async () => {
-                // Notice a character switch before touching the list
-                this._store();
+                // The completion belongs to the character and lifecycle at
+                // submission, not whoever happens to be active after a wait.
+                if (!this._isCurrent(owner, generation)) return;
                 await this._load();
+                if (!this._isCurrent(owner, generation)) return;
                 if (this.records.some((held) => held.id === record.id)) return;
                 this.records.push(record);
                 if (this.records.length > MAX_RECORDS) {
                     this.records.splice(0, this.records.length - MAX_RECORDS);
                 }
-                await this._save();
-                written = true;
+                written = await this._save();
             })
             .catch((error) => {
                 console.error('[EnhancementCalibration] Recording failed:', error);
@@ -243,6 +268,7 @@ class EnhancementCalibration {
      * @returns {Array<Object>|null} Records, or null before the first load lands
      */
     getCachedRecords() {
+        this._store();
         return this.records;
     }
 
@@ -256,29 +282,29 @@ class EnhancementCalibration {
 
     /** Forget every observation. */
     async clear() {
-        this.records = [];
         // Notice a character switch before writing, same as `_save()`
-        this._store();
+        const store = this._store();
+        this.generation += 1;
+        const { owner, generation } = this;
+        store.reset();
+        this.records = [];
         // Stamped, so the clear also survives the next sync pull instead of
         // being restored by a peer whose copy still holds what was forgotten
         // (utils/cleared-record.js)
-        await clearRecord(this.store);
-        this.records = entriesOf(this.store.get());
+        await clearRecord(store);
+        if (this._isCurrent(owner, generation)) this.records = entriesOf(store.get());
     }
 
     /**
      * Forget the current character's observations without touching storage.
      *
-     * This recorder is passive — nothing calls initialize()/disable() around
-     * a character switch the way the other two calibrations do, since it has
-     * no subscription to bring up. But getCachedRecords() (unlike getRecords())
-     * returns `this.records` straight from memory without going through the
-     * owner check in _store(), so without this the panel keeps showing the
-     * departing character's observations under the arriving one's name until
-     * an enhancement session happens to complete and call _store() itself.
-     * Called from insights/index.js's cleanup() alongside the other two.
+     * Called from insights/index.js's cleanup() alongside the other two
+     * calibrations. Invalidate work immediately, including when the same
+     * character later enables the feature again: owner equality alone cannot
+     * distinguish that fresh lifecycle from a completion queued before disable.
      */
     disable() {
+        this.generation += 1;
         this.store.reset();
         this.records = null;
         this.owner = null;
