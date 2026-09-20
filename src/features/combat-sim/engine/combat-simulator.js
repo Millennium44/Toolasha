@@ -1256,7 +1256,9 @@ class CombatSimulator {
     }
 
     addNextAttackEvent(source) {
-        if (source.combatDetails.currentHitpoints <= 0) {
+        // Blind expiration, mana recovery, and wave starts can all wake a unit
+        // while a longer stun is still active. Only stun expiration may rearm it.
+        if (source.combatDetails.currentHitpoints <= 0 || source.isStunned) {
             return;
         }
         // Check both event types via indexed lookups instead of O(n) getMatching
