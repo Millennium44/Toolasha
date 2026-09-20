@@ -468,6 +468,10 @@ class SyncManager {
         // Both sides moved: the remote is ahead of what we last exchanged, and so
         // are we. Newest-wins would throw away whichever is older without saying
         // so, which is not a thing to do to a year of history.
+        // Fingerprinting reads IndexedDB, not the debounce queue. Land recent
+        // edits first so a pull cannot mistake an edited list for the last
+        // synced copy and replace it without the conflict decision.
+        await storage.flushAll?.();
         const localHash = contentHash(await buildPayloadJSON(config.getSetting('sync_scope', 'settings')));
         const lastHash = await storage.get(KEY_LAST_HASH, STORE, null);
         const localChanged = Boolean(lastHash) && localHash !== lastHash;
