@@ -167,6 +167,7 @@ let recording = false;
 let startedAt = 0;
 let recordingStartedAt = 0;
 let recordingStoppedAt = null;
+let recordingId = null;
 let onNewBattle = null;
 let onBattleUpdated = null;
 let lostFight = false;
@@ -526,6 +527,7 @@ export function startRecording({ seconds = 0, thenDownload = false, target: want
     startedAt = Date.now();
     recordingStartedAt = startedAt;
     recordingStoppedAt = null;
+    recordingId = crypto.randomUUID();
     recording = true;
     loadout = captureLoadout();
 
@@ -712,6 +714,7 @@ export function recordingFile() {
     return {
         format: 'toolasha-combat-recording',
         version: 1,
+        recordingId,
         seconds: startedAt ? ((recordingStoppedAt ?? Date.now()) - startedAt) / 1000 : 0,
         truncated: lostFight,
         segment: segmentIndex,
@@ -748,6 +751,7 @@ export function sessionFile() {
         host,
         isTestServer: host ? host.includes('test.') : null,
         recordedAt: recordingStartedAt || null,
+        recordingId,
         exportedAt: Date.now(),
         seconds: recordingStartedAt ? ((recordingStoppedAt ?? Date.now()) - recordingStartedAt) / 1000 : 0,
         fights: completedFights,
@@ -768,6 +772,7 @@ export function sessionFile() {
  */
 function segmentEntry(entry) {
     return {
+        recordingId: entry.recordingId ?? null,
         segment: entry.segment,
         seconds: entry.seconds,
         truncated: Boolean(entry.truncated),

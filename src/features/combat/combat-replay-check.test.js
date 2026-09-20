@@ -1107,6 +1107,51 @@ describe('what the check simulates', () => {
 });
 
 describe('surviving a refresh', () => {
+    test('equal-damage recordings are separate samples, while repeated ingestion stays idempotent', async () => {
+        // Two five-Zombie recordings each deal 5 × 4,125 damage. Damage totals
+        // cannot distinguish the runs, even when their timings and hits differ.
+        const first = { ...runWithGains({ count: 5 }), recordingId: 'first-run', segment: 0 };
+        const second = { ...first, recordingId: 'second-run' };
+        await replayCheck.ingest(first);
+        await replayCheck.ingest(second);
+        await replayCheck.ingest(second);
+
+        expect(replayCheck.observations).toHaveLength(2);
+        expect(storedList(OBSERVATIONS_KEY)).toHaveLength(2);
+        expect(aggregateObservations(replayCheck.observations).fights).toBe(10);
+
+        await replayCheck.ingest({ ...second, segment: 1 });
+        expect(replayCheck.observations).toHaveLength(3);
+    });
+
+    test('a completed segment replaces an early summary without counting its prefix twice', async () => {
+        const partial = { ...runWithGains({ count: 3 }), recordingId: 'growing-run', segment: 0 };
+        const complete = { ...runWithGains({ count: 5 }), recordingId: 'growing-run', segment: 0 };
+        await replayCheck.ingest(partial);
+        await replayCheck.ingest(complete);
+        await replayCheck.ingest(partial);
+
+        expect(replayCheck.observations).toHaveLength(1);
+        expect(replayCheck.observations[0].fights).toHaveLength(5);
+        expect(storedList(OBSERVATIONS_KEY)[0].fights).toHaveLength(5);
+
+        // A stale peer's checkpoint must not shrink the completed copy on disk.
+        replayCheck.observations = [replayCheck.observationFrom(partial)];
+        await replayCheck.saveObservations();
+        expect(replayCheck.observations[0].fights).toHaveLength(5);
+    });
+
+    test('legacy observations with equal damage but different fights survive a sync pull', async () => {
+        const { mergeForKey } = await import('../../utils/sync-merge-registry.js');
+        const merge = mergeForKey('settings', OBSERVATIONS_KEY).merge;
+        const first = evenObservation({ recordedAt: 1_000, seconds: 10, damageDealt: 4_125 });
+        const second = evenObservation({ recordedAt: 2_000, seconds: 20, damageDealt: 4_125 });
+
+        const merged = merge([first], [second, { ...first, recordedAt: 3_000 }]);
+        expect(merged.entries).toHaveLength(2);
+        expect(merged.entries.map((entry) => entry.fights[0].seconds).sort()).toEqual([10, 20]);
+    });
+
     test('the fights so far are written at a fight boundary, summarised and not raw', () => {
         // Raw ticks are megabytes and arrive several times a second; the summary
         // is a few hundred bytes and is what the check reads anyway

@@ -757,6 +757,8 @@ export function observeRecording(recording, context = {}) {
 
     return {
         recordedAt: context.recordedAt ?? Date.now(),
+        recordingId: recording?.recordingId ?? null,
+        segment: recording?.segment ?? null,
         zoneHrid: context.zoneHrid ?? null,
         difficultyTier: context.difficultyTier ?? 0,
         truncated: Boolean(recording?.truncated),
@@ -1616,19 +1618,27 @@ function zoneName(zoneHrid) {
 }
 
 /**
- * What identifies an observation, closely enough to notice it twice.
+ * The recording segment an observation describes.
  *
- * The fight count and the first fight's damage would collide across the segments
- * of one long recording sooner or later; the total is what makes two segments of
- * the same length distinguishable.
+ * Damage totals cannot identify a run: every clean five-Zombie run deals the
+ * same total damage. New recordings carry an identity created at start, shared
+ * by their checkpoints, completion callbacks and exports. Older observations
+ * have only their saved snapshot and derived fights; compare those in full,
+ * excluding ingestion time so a recovered copy is still recognized.
  *
  * @param {Object} observation - From `observeRecording`
  * @returns {string}
  */
 function observationSignature(observation) {
-    const fights = observation?.fights || [];
-    const total = fights.reduce((sum, fight) => sum + (fight.damageDealt || 0), 0);
-    return `${fights.length}:${fights[0]?.damageDealt}:${total}`;
+    if (observation?.recordingId && Number.isInteger(observation.segment)) {
+        return `segment:${observation.recordingId}:${observation.segment}`;
+    }
+    return JSON.stringify([
+        observation?.zoneHrid ?? null,
+        observation?.difficultyTier ?? 0,
+        observation?.loadout?.capturedAt ?? null,
+        observation?.fights ?? [],
+    ]);
 }
 
 /** Oldest first, the order both lists are kept in */
@@ -1648,8 +1658,19 @@ const oldestFirst = (field) => (a, b) => (Number(a?.[field]) || 0) - (Number(b?.
  * @param {Array<Object>} memory - The copy folded on top
  * @returns {Array<Object>} Union, oldest first
  */
-const unionObservations = (stored, memory) =>
-    mergeById(observationSignature, oldestFirst('recordedAt'))(stored, memory).slice(-MAX_OBSERVATIONS);
+const unionObservations = (stored, memory) => {
+    // A panel opened during a run can ingest a prefix. Completion, recovery and
+    // sync must keep the most complete copy of that segment, not count both or
+    // let a stale checkpoint replace the completed copy.
+    const byId = new Map();
+    for (const entry of [...stored, ...memory]) {
+        if (!entry) continue;
+        const id = observationSignature(entry);
+        const previous = byId.get(id);
+        if (!previous || (entry.fights?.length ?? 0) >= (previous.fights?.length ?? 0)) byId.set(id, entry);
+    }
+    return [...byId.values()].sort(oldestFirst('recordedAt')).slice(-MAX_OBSERVATIONS);
+};
 
 /**
  * The fold as stored and synced: the union above, with Forget's epoch applied.
@@ -1815,18 +1836,19 @@ class ReplayCheck {
     }
 
     /**
-     * Keep an observation, unless it is one already kept.
+     * Keep a new observation or a more complete copy of a known segment.
      *
      * @param {Object} observation - From `observeRecording`
-     * @returns {boolean} Whether it was new
+     * @returns {boolean} Whether the saved sample grew
      */
     remember(observation) {
         // An observation ingested twice would double every fight in it, and with
         // segments banked as they fill there are far more chances to do it
         const signature = observationSignature(observation);
-        if (this.observations.some((entry) => observationSignature(entry) === signature)) return false;
+        const previous = this.observations.find((entry) => observationSignature(entry) === signature);
+        if (previous && (previous.fights?.length ?? 0) >= (observation.fights?.length ?? 0)) return false;
 
-        this.observations = [...this.observations, observation].slice(-MAX_OBSERVATIONS);
+        this.observations = unionObservations(this.observations, [observation]);
         return true;
     }
 
