@@ -93,6 +93,36 @@ describe('recording the combat feed', () => {
         expect(recorder.isRecording()).toBe(false);
         expect(recorder.recordingStatus().ticks).toBe(1);
     });
+
+    test('delayed exports retain the stopped duration instead of adding idle time', () => {
+        vi.useFakeTimers();
+        vi.setSystemTime(new Date('2026-09-20T19:30:00Z'));
+        try {
+            recorder.startRecording();
+            send('new_battle', { players: {}, monsters: {} });
+            vi.advanceTimersByTime(10_000);
+            send('battle_updated', { pMap: {}, mMap: {} });
+            recorder.stopRecording();
+            const stopped = recorder.sessionFile();
+
+            vi.advanceTimersByTime(60_000);
+            recorder.stopRecording();
+            const exported = recorder.sessionFile();
+            expect(exported.seconds).toBe(10);
+            expect(exported.segments[0].seconds).toBe(10);
+            expect(recorder.recordingFile().seconds).toBe(10);
+            expect(recorder.recordingStatus().seconds).toBe(10);
+            expect(exported.exportedAt - stopped.exportedAt).toBe(60_000);
+            expect(exported.segments[0].ticks).toEqual(stopped.segments[0].ticks);
+
+            recorder.startRecording();
+            vi.advanceTimersByTime(5_000);
+            expect(recorder.sessionFile().seconds).toBe(5);
+        } finally {
+            recorder.stopRecording();
+            vi.useRealTimers();
+        }
+    });
 });
 
 describe('recording for longer than the buffer holds', () => {
