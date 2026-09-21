@@ -28,6 +28,7 @@ import webSocketHook from '../../core/websocket.js';
 import { classifyFight, fightTally, failureShape, isFreshLabyrinthFight } from './labyrinth-fight-log.js';
 import { summarizePool, poolHygiene, nearMissRemainder } from './labyrinth-replay-check.js';
 import { isCurrentFingerprintVersion } from './labyrinth-fingerprint.js';
+import { MIN_REPLAY_FIGHTS } from './labyrinth-replay-inputs.js';
 import labFightRecorder from './labyrinth-fight-recorder.js';
 import { newAttributionState, noteActions, attributeTick, foldEvents } from '../../utils/damage-attribution.js';
 import labTickCapture from './labyrinth-tick-capture.js';
@@ -279,6 +280,14 @@ class LabyrinthRoomLogs {
         // Whether the accuracy view is showing everything or only what has
         // happened since the baseline was marked
         this.sinceBaseline = false;
+        // Cohort picker: whether it is open, and the cohorts last read for it.
+        // The choice itself lives per character in storage, not here — the
+        // panel only ever holds what it is drawing.
+        this.cohortPickerOpen = false;
+        this.cohortChoices = null;
+        // Said when a tick was refused for taking the selection over the cap,
+        // so the refusal is visible rather than a checkbox that will not stick
+        this.cohortNotice = '';
     }
 
     /** How many rooms of history to keep */
@@ -524,6 +533,9 @@ class LabyrinthRoomLogs {
         // the accuracy view until something replaces it.
         this.lastAccuracy = null;
         this.replayResult = null;
+        // The cohorts belong to the departing character's recorded fights
+        this.cohortPickerOpen = false;
+        this.cohortChoices = null;
         this.isInitialized = false;
     }
 
@@ -1625,6 +1637,18 @@ class LabyrinthRoomLogs {
             'height:18px; border:0; border-radius:4px; background:rgba(255,255,255,0.12); color:#fff; font-size:10px; cursor:pointer; padding:0 6px; white-space:nowrap; flex-shrink:0;';
         this.replayButton.addEventListener('click', () => this.onReplayClicked());
 
+        // Which cohorts that press spends its simulations on. Left alone, the
+        // replay runs the best-sampled ones, which is never the build put on
+        // this morning — the one with the fewest fights and the most doubt.
+        this.cohortsButton = document.createElement('button');
+        this.cohortsButton.textContent = 'Cohorts';
+        this.cohortsButton.title =
+            'Choose which recorded builds and rooms the next Replay compares. Left alone it picks the ones ' +
+            'with the most fights.';
+        this.cohortsButton.style.cssText =
+            'height:18px; border:0; border-radius:4px; background:rgba(255,255,255,0.12); color:#9ec4ff; font-size:10px; cursor:pointer; padding:0 6px; white-space:nowrap; flex-shrink:0;';
+        this.cohortsButton.addEventListener('click', () => this.onCohortsClicked());
+
         // Raw tick capture: the moment-to-moment feed behind a rate mismatch —
         // stun gaps, ability cadence, damage per hit — as a file to hand over
         this.captureButton = document.createElement('button');
@@ -1650,6 +1674,7 @@ class LabyrinthRoomLogs {
         });
 
         actions.appendChild(this.replayButton);
+        actions.appendChild(this.cohortsButton);
         actions.appendChild(this.captureButton);
         actions.appendChild(captureAllLabel);
         actions.appendChild(this.captureDiscardButton);
@@ -1707,6 +1732,13 @@ class LabyrinthRoomLogs {
         // Only the accuracy tab has a record worth exporting; the room log is
         // one run and is on screen already
         if (this.exportButton) this.exportButton.style.display = accuracy ? '' : 'none';
+        // The picker only means anything beside the replay it configures
+        if (this.cohortsButton) {
+            this.cohortsButton.style.display = accuracy ? '' : 'none';
+            this.cohortsButton.style.background = this.cohortPickerOpen
+                ? 'rgba(77,151,255,0.55)'
+                : 'rgba(255,255,255,0.12)';
+        }
         if (this.sanitizedButton) this.sanitizedButton.style.display = accuracy ? '' : 'none';
         // The pool is read-only browsing; it is cleared from Accuracy's own
         // two-click Reset, and a second destructive path would be a footgun
@@ -1849,6 +1881,167 @@ class LabyrinthRoomLogs {
         this.view = 'accuracy';
         this.paintChrome();
         this.render(false);
+    }
+
+    /**
+     * Open or close the cohort picker, reading the cohorts when it opens.
+     *
+     * The list is read fresh on every opening rather than cached across one:
+     * cohorts are derived from the recorded pool and regroup as fights land,
+     * so a list held from an earlier opening would offer picks the next Replay
+     * press would treat as stale.
+     */
+    async onCohortsClicked() {
+        if (this.cohortPickerOpen) {
+            this.cohortPickerOpen = false;
+            this.cohortChoices = null;
+            this.cohortNotice = '';
+            this.paintChrome();
+            this.render(false);
+            return;
+        }
+
+        this.cohortNotice = '';
+        const token = this.renderToken;
+        let choices = null;
+        try {
+            choices = (await this.simSource?.replayCohorts?.()) || null;
+        } catch (error) {
+            console.error('[LabyrinthRoomLogs] Reading the replay cohorts failed:', error);
+        }
+        // A read that lands after the panel moved on — a character switch, or
+        // another view — describes a pool this panel is no longer showing
+        if (token !== this.renderToken) return;
+
+        this.cohortChoices = choices;
+        this.cohortPickerOpen = true;
+        this.view = 'accuracy';
+        this.paintChrome();
+        this.render(false);
+    }
+
+    /**
+     * Store a changed cohort choice and redraw the picker around it.
+     *
+     * A tick that would take the selection past the cap is refused here rather
+     * than accepted and trimmed later: the run would then be something the
+     * player did not pick, and the cap exists because each cohort costs a whole
+     * simulation.
+     *
+     * @param {string} key - The cohort toggled
+     * @param {boolean} checked - Whether it was ticked or unticked
+     * @returns {Promise<void>}
+     */
+    async onCohortToggled(key, checked) {
+        if (!this.cohortChoices) return;
+        const max = this.cohortChoices.max || 1;
+        const selected = new Set(this.cohortChoices.selected || []);
+
+        if (checked && !selected.has(key) && selected.size >= max) {
+            this.cohortNotice =
+                `A replay runs at most ${max} cohorts, because each one costs its own full simulation. ` +
+                'Untick one before picking another.';
+            // Redrawn from the stored selection, so the refused tick comes back off
+            this.render(false);
+            return;
+        }
+
+        if (checked) selected.add(key);
+        else selected.delete(key);
+        this.cohortNotice = '';
+        this.cohortChoices.selected = [...selected];
+
+        const token = this.renderToken;
+        await this.simSource?.setReplayCohorts?.(this.cohortChoices.selected);
+        if (token !== this.renderToken) return;
+        this.render(false);
+    }
+
+    /**
+     * The cohort picker: every eligible cohort, and which the next Replay runs.
+     *
+     * Nothing ticked is the default — the best-sampled cohorts, exactly as
+     * before this control existed — and the box says so, because an empty list
+     * of ticks otherwise reads as "nothing will run".
+     *
+     * @returns {HTMLElement}
+     */
+    renderCohortPicker() {
+        const box = document.createElement('div');
+        box.style.cssText =
+            'border:1px solid rgba(146,182,255,0.35); border-radius:6px; background:rgba(18,26,40,0.95); ' +
+            'padding:7px 8px; margin-bottom:8px; font-size:11px; line-height:1.35;';
+
+        const title = document.createElement('div');
+        title.style.cssText = 'font-weight:700; color:#cfe0ff; margin-bottom:4px;';
+        title.textContent = 'Replay cohorts';
+        box.appendChild(title);
+
+        const choices = this.cohortChoices;
+        if (!choices) {
+            box.appendChild(this.makeNote('The cohorts could not be read.'));
+            return box;
+        }
+        if (!choices.cohorts?.length) {
+            box.appendChild(
+                this.makeNote(
+                    `No cohort has the ${MIN_REPLAY_FIGHTS} fights a replay needs yet. They accumulate as you ` +
+                        'fight combat rooms.'
+                )
+            );
+            return box;
+        }
+
+        const selected = new Set(choices.selected || []);
+        box.appendChild(
+            this.makeNote(
+                selected.size
+                    ? `Replaying the ${selected.size} cohort${selected.size === 1 ? '' : 's'} ticked below. ` +
+                          'Untick them all to go back to the best-sampled ones.'
+                    : `Nothing ticked: the ${choices.max} best-sampled cohorts are replayed, as usual. Tick one ` +
+                          'to replay it instead.'
+            )
+        );
+        if (this.cohortNotice) {
+            const warn = this.makeNote(this.cohortNotice);
+            warn.style.color = '#ffb3b3';
+            box.appendChild(warn);
+        }
+
+        for (const cohort of choices.cohorts) {
+            const row = document.createElement('label');
+            row.style.cssText =
+                'display:flex; align-items:flex-start; gap:6px; padding:3px 2px; cursor:pointer; color:#dbe7ff;';
+
+            const tick = document.createElement('input');
+            tick.type = 'checkbox';
+            tick.checked = selected.has(cohort.key);
+            tick.style.cssText = 'margin-top:2px; flex-shrink:0;';
+            // The row is rebuilt on every draw, so the listener goes with it
+            tick.addEventListener('change', () => this.onCohortToggled(cohort.key, tick.checked));
+            row.appendChild(tick);
+
+            const text = document.createElement('div');
+            const name = cohort.monsterName || this.prettyMonsterName(cohort.monsterHrid);
+            const lvl =
+                Number.isFinite(cohort.levelLow) && cohort.levelHigh > cohort.levelLow
+                    ? `lvl ${cohort.levelLow}–${cohort.levelHigh}`
+                    : `lvl ${cohort.roomLevel}`;
+            const head = document.createElement('div');
+            head.style.cssText = 'font-weight:700; color:#f2f7ff;';
+            head.textContent = `${name} · ${lvl} · ${cohort.fights} fight${cohort.fights === 1 ? '' : 's'}`;
+            text.appendChild(head);
+
+            const sub = document.createElement('div');
+            sub.style.cssText = 'color:#9ab0d8;';
+            sub.textContent = cohort.exploratory ? `${cohort.buildLabel} · exploratory only` : cohort.buildLabel;
+            text.appendChild(sub);
+
+            row.appendChild(text);
+            box.appendChild(row);
+        }
+
+        return box;
     }
 
     /**
@@ -2354,7 +2547,24 @@ class LabyrinthRoomLogs {
 
         const diagnostics = result?.diagnostics;
         if (diagnostics) {
-            const { excluded, failedGroups, deferredGroups, minFights } = diagnostics;
+            const { excluded, failedGroups, deferredGroups, minFights, selection } = diagnostics;
+            // Why these cohorts: the cap, a choice that ran, or a choice that
+            // was dropped. A dropped one has to say so — the alternative is a
+            // player who ticked a cohort reading a report about three others
+            // and never learning their pick was not what ran.
+            const chosen = selection?.applied
+                ? 'eligible groups were not run (you chose which cohorts to replay)'
+                : 'eligible groups were not run (three groups per replay)';
+            if (selection && !selection.applied && selection.requested > 0)
+                box.appendChild(
+                    this.makeNote(
+                        selection.reason === 'overCap'
+                            ? `Your cohort choice named ${selection.requested} cohorts, more than a replay can ` +
+                                  'run, so the best-sampled ones were replayed instead.'
+                            : 'Your cohort choice no longer matches the recorded fights — they have regrouped ' +
+                                  'since — so the best-sampled cohorts were replayed instead. Pick again under Cohorts.'
+                    )
+                );
             const reasons = [
                 [excluded.build, 'older fights without saved inputs do not match the current build'],
                 [excluded.invalidSnapshot, 'fights have unreadable saved inputs'],
@@ -2364,7 +2574,7 @@ class LabyrinthRoomLogs {
                 [excluded.legacy, 'fights use an older build fingerprint'],
                 [excluded.tooFew, `fights are in rooms with fewer than ${minFights} attempts so far`],
                 [failedGroups, 'comparisons could not run because inputs or simulation results were unavailable'],
-                [deferredGroups, 'eligible groups were not run (three groups per replay)'],
+                [deferredGroups, chosen],
             ].filter(([count]) => count > 0);
             for (const [count, reason] of reasons) box.appendChild(this.makeNote(`${count} ${reason}.`));
             box.appendChild(this.makeNote('Saved builds use the current game data and simulator.'));
@@ -2752,6 +2962,7 @@ class LabyrinthRoomLogs {
 
         // The calibration replay, when one has been run, sits above the record —
         // it answers "why is the rate wrong" that the record only flags
+        if (this.cohortPickerOpen) list.appendChild(this.renderCohortPicker());
         if (this.replayResult) list.appendChild(this.renderReplayResult(this.replayResult));
 
         const { rows, summary } = snapshot;

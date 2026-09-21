@@ -22,6 +22,16 @@ import { FINGERPRINT_VERSION } from './labyrinth-fingerprint.js';
  */
 export const MIN_REPLAY_FIGHTS = 3;
 
+/**
+ * How many cohorts one Replay press may simulate.
+ *
+ * Each cohort is a full simulation, so this is what bounds a press. It caps
+ * how many run, never which: with a selection in force the cap still holds and
+ * the choice only decides which cohorts spend it — see
+ * `labyrinth-replay-selection.js`.
+ */
+export const MAX_REPLAY_GROUPS = 3;
+
 /** Copy plain simulation inputs at the fight boundary; never retain live references. */
 export function copyReplayInputs(value) {
     if (

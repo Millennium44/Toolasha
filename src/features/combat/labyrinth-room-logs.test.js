@@ -198,6 +198,164 @@ describe('combatMeta reconciles the watched tally against the server count', () 
     });
 });
 
+/**
+ * The cohort picker, which decides where a Replay press spends its three
+ * simulations. Its whole point is the cohort the default cannot reach — the
+ * newest build, fewest fights, sorted last — so what is pinned here is that
+ * nothing ticked still reads as the old default, and that a tick past the cap
+ * is refused where the player can see it rather than trimmed later.
+ */
+describe('the replay cohort picker', () => {
+    const cohorts = [
+        {
+            key: 'aaaaaaaa|/monsters/fly|10',
+            buildLabel: 'Build aaaaaaaa · Steel Sword +7',
+            monsterHrid: '/monsters/fly',
+            monsterName: 'Fly',
+            roomLevel: 10,
+            levelLow: 10,
+            levelHigh: 10,
+            fights: 9,
+            exploratory: false,
+        },
+        {
+            key: 'bbbbbbbb|/monsters/fly|10',
+            buildLabel: 'Build bbbbbbbb · Steel Sword +9',
+            monsterHrid: '/monsters/fly',
+            monsterName: 'Fly',
+            roomLevel: 10,
+            levelLow: 10,
+            levelHigh: 10,
+            fights: 3,
+            exploratory: true,
+        },
+    ];
+
+    const text = () => document.querySelector('.mwi-lab-logs-list').textContent;
+    let stored;
+
+    beforeEach(async () => {
+        document.body.innerHTML = '';
+        labyrinthRoomLogs.panel = null;
+        labyrinthRoomLogs.view = 'accuracy';
+        labyrinthRoomLogs.replayResult = null;
+        labyrinthRoomLogs.cohortPickerOpen = false;
+        labyrinthRoomLogs.cohortChoices = null;
+        labyrinthRoomLogs.cohortNotice = '';
+        stored = [];
+        labFightRecorder.clearRecording();
+        labyrinthRoomLogs.simSource = {
+            accuracy: async () => ({ rows: [], summary: {}, bySubject: [] }),
+            replayCohorts: async () => ({ cohorts, selected: [...stored], max: 3 }),
+            setReplayCohorts: async (keys) => {
+                stored = [...keys];
+                return true;
+            },
+        };
+    });
+
+    afterEach(() => {
+        labyrinthRoomLogs.simSource = null;
+        labyrinthRoomLogs.cohortPickerOpen = false;
+        labyrinthRoomLogs.cohortChoices = null;
+        labyrinthRoomLogs.cohortNotice = '';
+    });
+
+    const open = async () => {
+        await labyrinthRoomLogs.onCohortsClicked();
+        await labyrinthRoomLogs.renderAccuracy();
+    };
+
+    const ticks = () => [...document.querySelectorAll('.mwi-lab-logs-list input[type="checkbox"]')];
+
+    test('lists each cohort by build and fight count, and says nothing ticked is the default', async () => {
+        await open();
+
+        expect(text()).toContain('Replay cohorts');
+        expect(text()).toContain('Build aaaaaaaa · Steel Sword +7');
+        expect(text()).toContain('Build bbbbbbbb · Steel Sword +9');
+        expect(text()).toContain('Fly · lvl 10 · 9 fights');
+        expect(text()).toContain('Fly · lvl 10 · 3 fights');
+        // A cohort between the bars says so here too, before it is picked
+        expect(text()).toContain('exploratory only');
+        expect(text()).toContain('the 3 best-sampled cohorts are replayed, as usual');
+        expect(ticks().every((tick) => !tick.checked)).toBe(true);
+    });
+
+    test('ticking a cohort stores it and says that choice is what will run', async () => {
+        await open();
+        ticks()[1].checked = true;
+        ticks()[1].dispatchEvent(new Event('change'));
+        await labyrinthRoomLogs.renderAccuracy();
+
+        expect(stored).toEqual(['bbbbbbbb|/monsters/fly|10']);
+        expect(text()).toContain('Replaying the 1 cohort ticked below');
+        expect(ticks()[1].checked).toBe(true);
+    });
+
+    test('a tick past the cap is refused out loud, not stored and trimmed later', async () => {
+        const many = Array.from({ length: 4 }, (_, index) => ({ ...cohorts[0], key: `k${index}`, fights: 9 - index }));
+        labyrinthRoomLogs.simSource.replayCohorts = async () => ({ cohorts: many, selected: [...stored], max: 3 });
+        await open();
+
+        for (const index of [0, 1, 2]) {
+            ticks()[index].checked = true;
+            ticks()[index].dispatchEvent(new Event('change'));
+            await labyrinthRoomLogs.renderAccuracy();
+        }
+        expect(stored).toEqual(['k0', 'k1', 'k2']);
+
+        ticks()[3].checked = true;
+        ticks()[3].dispatchEvent(new Event('change'));
+        await labyrinthRoomLogs.renderAccuracy();
+
+        expect(stored).toEqual(['k0', 'k1', 'k2']);
+        expect(text()).toContain('A replay runs at most 3 cohorts');
+        // The refused box is drawn back off rather than left ticked
+        expect(ticks()[3].checked).toBe(false);
+    });
+
+    test('closing the picker puts it away', async () => {
+        await open();
+        await labyrinthRoomLogs.onCohortsClicked();
+        await labyrinthRoomLogs.renderAccuracy();
+
+        expect(text()).not.toContain('Replay cohorts');
+    });
+
+    test('a replay report says when a choice ran, and when a stale one was dropped', () => {
+        const report = (selection) =>
+            labyrinthRoomLogs.renderReplayResult({
+                groups: [],
+                pool: { attempts: 40, monsters: 2 },
+                diagnostics: {
+                    excluded: {},
+                    failedGroups: 0,
+                    deferredGroups: 3,
+                    minFights: 3,
+                    verdictMinFights: 5,
+                    selection,
+                },
+            }).textContent;
+
+        expect(report({ applied: true, requested: 1, reason: null })).toContain(
+            '3 eligible groups were not run (you chose which cohorts to replay)'
+        );
+        // A dropped choice has to be said, or the report reads as the pick that ran
+        const stale = report({ applied: false, requested: 1, reason: 'stale' });
+        expect(stale).toContain('no longer matches the recorded fights');
+        expect(stale).toContain('3 eligible groups were not run (three groups per replay)');
+        expect(report({ applied: false, requested: 4, reason: 'overCap' })).toContain(
+            'named 4 cohorts, more than a replay can run'
+        );
+        // The untouched default still words it the way it always did
+        expect(report({ applied: false, requested: 0, reason: 'empty' })).toContain(
+            '3 eligible groups were not run (three groups per replay)'
+        );
+        expect(report({ applied: false, requested: 0, reason: 'empty' })).not.toContain('cohort choice');
+    });
+});
+
 describe('the sim accuracy list opens a room type at a time', () => {
     const row = (level, over = {}) => ({
         subjectHrid: '/skills/milking',

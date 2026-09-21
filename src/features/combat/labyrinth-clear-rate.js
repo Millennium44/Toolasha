@@ -243,6 +243,10 @@ class LabyrinthClearRate {
             clearBaseline: () => this.clearOutcomeBaseline(),
             recompute: (uncapped) => this.recomputeCombatSims(uncapped),
             replay: () => this.replayRecordedFights(),
+            // Which recorded cohorts a Replay press spends its simulations on.
+            // The cap on how many run is the cache's; this only picks which.
+            replayCohorts: () => this.replayCohortOptions(),
+            setReplayCohorts: (keys) => this.setReplayCohortSelection(keys),
             replayInputs: () => this.captureReplayInputs(),
             // The gear a recorded fight was fought in, so the pool keeps fights on
             // different gear apart and the replay compares like with like

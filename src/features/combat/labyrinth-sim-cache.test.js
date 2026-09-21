@@ -4,12 +4,14 @@
  * module wires them into the accuracy export.
  */
 
-import { describe, test, expect, afterEach, vi } from 'vitest';
+import { describe, test, expect, beforeEach, afterEach, vi } from 'vitest';
 
 /** Backing store for the mocked config's settings */
 const settings = vi.hoisted(() => ({ map: new Map() }));
 /** Every write the mocked storage was handed, as `[key, value]` */
 const storageWrites = vi.hoisted(() => ({ list: [] }));
+/** What the mocked storage holds, so a scoped read can find a stored value */
+const storageRecords = vi.hoisted(() => ({ map: new Map() }));
 
 vi.mock('../../core/config.js', () => ({
     default: {
@@ -28,13 +30,18 @@ vi.mock('../../core/data-manager.js', () => ({
 vi.mock('../../core/websocket.js', () => ({ default: { on: () => {}, off: () => {}, onSocketEvent: () => {} } }));
 vi.mock('../../core/storage.js', () => ({
     default: {
-        get: async () => null,
+        get: async (key) => (storageRecords.map.has(key) ? storageRecords.map.get(key) : null),
         getJSON: async () => null,
         set: async (key, value) => {
             storageWrites.list.push([key, value]);
+            storageRecords.map.set(key, value);
             return true;
         },
         setJSON: async () => true,
+        delete: async (key) => {
+            storageRecords.map.delete(key);
+            return true;
+        },
     },
 }));
 /** What the mocked adapter hands back as the game data payload — null before the
@@ -269,11 +276,170 @@ test('task progress does not fragment a replay build or consume its three-group 
 
 afterEach(() => {
     settings.map.clear();
+    storageRecords.map.clear();
     storageWrites.list = [];
     simRuns.list = [];
     simRuns.result = {};
     adapter.gameData = {};
     adapter.playerDTO = { hrid: 'player1' };
+});
+
+/**
+ * Which cohorts a Replay press spends its three simulations on.
+ *
+ * The bar these are pinned against: with nothing chosen the behaviour must be
+ * bit-for-bit the pre-picker one — the best-sampled cohorts run and the rest
+ * are reported deferred — and a choice may only redirect those simulations,
+ * never raise the cap, cross either fight-count bar, or run a partial version
+ * of a choice that no longer fits the pool.
+ */
+describe('choosing which recorded cohorts a replay runs', () => {
+    /** Four cohorts on one room, told apart by attack level, with 9/7/5/3 fights */
+    const FIGHT_COUNTS = [9, 7, 5, 3];
+
+    const attemptsForCohorts = () =>
+        FIGHT_COUNTS.flatMap((fights, cohort) =>
+            Array.from({ length: fights }, () => ({
+                monsterHrid: '/monsters/fly',
+                seconds: 20,
+                roomLevel: 10,
+                outcome: 'clear',
+                complete: true,
+                cleared: true,
+                playerMaxHp: 100,
+                playerHpStart: 100,
+                replayInputs: {
+                    version: 1,
+                    playerDTO: { hrid: 'player1', attackLevel: 10 + cohort },
+                    crates: [],
+                    communityBuffs: {},
+                    labyrinthCombatBuffs: [],
+                    fullAbilities: true,
+                },
+            }))
+        );
+
+    const context = () => ({
+        _snapshotContentFingerprint: () => 'new',
+        getSimHours: () => 1,
+        getSimStopRule: () => ({ maxTrials: 10 }),
+        ...simCacheMethods,
+    });
+
+    /** The attack level identifies the cohort each simulation actually ran */
+    const simmedLevels = () => simRuns.list.map((run) => run.playerDTOs[0].attackLevel);
+
+    let spy;
+    beforeEach(() => {
+        simRuns.result = { simulatedTime: 20e9, labyAttemptCount: 1, encounters: 1 };
+        spy = vi.spyOn(labFightRecorder, 'recordedAttempts').mockReturnValue(attemptsForCohorts());
+    });
+    afterEach(() => spy?.mockRestore());
+
+    test('with nothing chosen, the three best-sampled cohorts run exactly as before', async () => {
+        const result = await context().replayRecordedFights();
+
+        expect(simmedLevels()).toEqual([10, 11, 12]);
+        expect(result.diagnostics).toMatchObject({ eligibleGroups: 4, deferredGroups: 1, failedGroups: 0 });
+        expect(result.diagnostics.selection).toMatchObject({ applied: false, reason: 'empty', requested: 0 });
+        expect(result.groups.map((group) => group.fights)).toEqual([9, 7, 5]);
+    });
+
+    test('the cohorts on offer carry the build label and fight count, and stop at the lower bar', async () => {
+        const options = await context().replayCohortOptions();
+
+        expect(options.max).toBe(3);
+        expect(options.selected).toEqual([]);
+        expect(options.cohorts.map((cohort) => cohort.fights)).toEqual([9, 7, 5, 3]);
+        expect(new Set(options.cohorts.map((cohort) => cohort.key)).size).toBe(4);
+        for (const cohort of options.cohorts) expect(cohort.buildLabel).toMatch(/^Build [0-9a-f]{8} /);
+        // The three-fight cohort is offered and flagged; nothing below the bar is
+        expect(options.cohorts.map((cohort) => cohort.exploratory)).toEqual([false, false, false, true]);
+    });
+
+    test('a chosen cohort is the one replayed, however few fights it has', async () => {
+        const ctx = context();
+        const options = await ctx.replayCohortOptions();
+        const newest = options.cohorts.find((cohort) => cohort.fights === 3);
+        expect(await ctx.setReplayCohortSelection([newest.key])).toBe(true);
+
+        const result = await ctx.replayRecordedFights();
+
+        // The cohort that sorts last is the only one simulated
+        expect(simmedLevels()).toEqual([13]);
+        expect(result.groups).toHaveLength(1);
+        expect(result.diagnostics.selection).toMatchObject({ applied: true, reason: null, requested: 1 });
+        // Diagnostics still describe what happened: three eligible cohorts did not run
+        expect(result.diagnostics).toMatchObject({ eligibleGroups: 4, deferredGroups: 3, failedGroups: 0 });
+    });
+
+    test('a chosen cohort still obeys both fight-count bars', async () => {
+        const ctx = context();
+        const options = await ctx.replayCohortOptions();
+        const newest = options.cohorts.find((cohort) => cohort.fights === 3);
+        await ctx.setReplayCohortSelection([newest.key]);
+
+        const result = await ctx.replayRecordedFights();
+
+        // Above MIN_REPLAY_FIGHTS and below the verdict bar: run, but flagged
+        expect(result.groups[0]).toMatchObject({ fights: 3, exploratory: true });
+        expect(result.diagnostics).toMatchObject({ minFights: 3, verdictMinFights: 5 });
+
+        // A two-fight cohort is not on offer at all, so it cannot be chosen
+        spy.mockReturnValue(attemptsForCohorts().slice(0, 2));
+        expect(await ctx.replayCohortOptions()).toMatchObject({ cohorts: [] });
+        simRuns.list = [];
+        const tooFew = await ctx.replayRecordedFights();
+        expect(simRuns.list).toHaveLength(0);
+        expect(tooFew.diagnostics.excluded.tooFew).toBe(2);
+    });
+
+    test('choosing more cohorts than a replay can run is refused, not truncated', async () => {
+        const ctx = context();
+        const options = await ctx.replayCohortOptions();
+        const all = options.cohorts.map((cohort) => cohort.key);
+
+        // The write itself refuses, so an over-cap choice never becomes the state
+        expect(await ctx.setReplayCohortSelection(all)).toBe(false);
+
+        // And a stored one — written before the cap, or by an older version —
+        // falls back to the default rather than running its first three
+        storageRecords.map.set('labyrinthReplayCohorts_me', all);
+        const result = await ctx.replayRecordedFights();
+        expect(simmedLevels()).toEqual([10, 11, 12]);
+        expect(result.diagnostics.selection).toMatchObject({ applied: false, reason: 'overCap', requested: 4 });
+    });
+
+    test('a selection that no longer matches the pool falls back to the default', async () => {
+        const ctx = context();
+        const options = await ctx.replayCohortOptions();
+        const newest = options.cohorts.find((cohort) => cohort.fights === 3);
+        await ctx.setReplayCohortSelection([newest.key]);
+
+        // The build is evicted from the pool: its cohort no longer exists
+        spy.mockReturnValue(attemptsForCohorts().filter((attempt) => attempt.replayInputs.playerDTO.attackLevel < 13));
+
+        // The picker reports no choice in force, because none is
+        expect((await ctx.replayCohortOptions()).selected).toEqual([]);
+
+        const result = await ctx.replayRecordedFights();
+        expect(simmedLevels()).toEqual([10, 11, 12]);
+        expect(result.groups).toHaveLength(3);
+        expect(result.diagnostics.selection).toMatchObject({ applied: false, reason: 'stale', requested: 1 });
+    });
+
+    test('the choice is stored per character', async () => {
+        const ctx = context();
+        const options = await ctx.replayCohortOptions();
+        await ctx.setReplayCohortSelection([options.cohorts[0].key]);
+
+        expect(storageWrites.list.map(([key]) => key)).toContain('labyrinthReplayCohorts_me');
+        expect((await ctx.replayCohortOptions()).selected).toEqual([options.cohorts[0].key]);
+
+        // Clearing it puts the default back
+        await ctx.setReplayCohortSelection([]);
+        expect((await ctx.replayCohortOptions()).selected).toEqual([]);
+    });
 });
 
 describe('the persisted combat cache mirror', () => {

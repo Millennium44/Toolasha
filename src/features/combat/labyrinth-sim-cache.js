@@ -39,7 +39,14 @@ import {
     replayCandidates,
     replayBuildSummary,
     MIN_REPLAY_FIGHTS,
+    MAX_REPLAY_GROUPS,
 } from './labyrinth-replay-inputs.js';
+import {
+    applyReplayCohortSelection,
+    describeReplayCohorts,
+    readReplayCohortSelection,
+    writeReplayCohortSelection,
+} from './labyrinth-replay-selection.js';
 
 /**
  * The zone a probe fight nominally happens in when the real one is not a zone.
@@ -201,9 +208,6 @@ const DECISION_MAX_TRIALS = 4000;
  */
 const MAX_BADGE_SIM_RETRIES = 3;
 const BADGE_SIM_RETRY_MS = 2500;
-/** At most this many rooms are replayed at once, so a Replay press is bounded */
-const MAX_REPLAY_GROUPS = 3;
-
 /**
  * How tightly a room's clear chance has to be pinned down before its sim
  * stops, in percentage points either side.
@@ -731,12 +735,50 @@ export const simCacheMethods = {
     },
 
     /**
+     * The cohorts a Replay press could run, and the choice standing over them.
+     *
+     * Read by the panel's cohort picker. Deliberately runs no simulation: it
+     * regroups the pool the same way a replay would and reports what that
+     * found, so the list offered is the list a press would draw from.
+     *
+     * A stored selection that no longer applies — stale or over the cap — is
+     * reported as no selection at all, because that is what the next press
+     * would do with it. Showing its surviving cohorts ticked would promise a
+     * run that is not the run that happens.
+     *
+     * @returns {Promise<{cohorts: Array<Object>, selected: Array<string>, max: number}>}
+     */
+    async replayCohortOptions() {
+        const fingerprint = this._snapshotContentFingerprint();
+        const { candidates } = replayCandidates(labFightRecorder.recordedAttempts(), fingerprint);
+        const itemDetailMap = buildGameDataPayload()?.itemDetailMap;
+        const stored = await readReplayCohortSelection();
+        const { selection } = applyReplayCohortSelection(candidates, stored, itemDetailMap);
+        return {
+            cohorts: describeReplayCohorts(candidates, itemDetailMap),
+            selected: selection.applied ? stored : [],
+            max: MAX_REPLAY_GROUPS,
+        };
+    },
+
+    /**
+     * Choose which cohorts the next Replay press runs, or clear back to default.
+     * @param {Array<string>} keys - Cohort keys, or an empty array for the default
+     * @returns {Promise<boolean>} Whether the choice was stored
+     */
+    async setReplayCohortSelection(keys) {
+        return writeReplayCohortSelection(keys);
+    },
+
+    /**
      * Replay each recorded build separately; legacy records require a current-build match.
      *
      * A cohort under `MIN_REPLAY_FIGHTS` is never simulated — see the constant
      * for why — and one under `MIN_LAB_FIGHTS` is simulated but returned flagged
      * `exploratory`, so the panel can show the comparison without letting it read
-     * as an accuracy verdict.
+     * as an accuracy verdict. A cohort chosen in the picker obeys both bars
+     * exactly as an unchosen one does: choosing decides which of the eligible
+     * cohorts spend the run's simulations, never what counts as eligible.
      *
      * @returns {Promise<{groups: Array<Object>, pool: Object, diagnostics: Object,
      *   config: {stopRule: Object, hours: number, seedPolicy: string}}>}
@@ -745,12 +787,22 @@ export const simCacheMethods = {
         const fingerprint = this._snapshotContentFingerprint();
         const attempts = labFightRecorder.recordedAttempts();
         const { candidates, excluded } = replayCandidates(attempts, fingerprint);
-        const worth = candidates.slice(0, MAX_REPLAY_GROUPS);
+        // One payload for the whole replay: every cohort is then simulated and
+        // labelled against the same game data, and the cohort keys the stored
+        // selection is matched against are built from that same map.
+        const gameData = buildGameDataPayload();
+        const stored = await readReplayCohortSelection();
+        const { chosen: worth, selection } = applyReplayCohortSelection(candidates, stored, gameData?.itemDetailMap);
         const diagnostics = {
             excluded,
             eligibleGroups: candidates.length,
             failedGroups: 0,
+            // Honest either way: with a selection in force this is every
+            // eligible cohort the choice left out, not only the ones the cap did
             deferredGroups: Math.max(0, candidates.length - worth.length),
+            // Why the cohorts below are the cohorts below, so the panel can say
+            // that a choice ran — or that a stored one was dropped and why
+            selection,
             // The two bars, quoted so the panel and the export state the rule
             // rather than restating a constant that can drift away from it
             minFights: MIN_REPLAY_FIGHTS,
@@ -766,7 +818,6 @@ export const simCacheMethods = {
                     continue;
                 }
                 const dto = saved.playerDTO;
-                const gameData = buildGameDataPayload();
 
                 const simResult = await runLabyrinthSimulation({
                     gameData,
