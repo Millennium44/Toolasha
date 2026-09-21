@@ -1440,6 +1440,15 @@ export const settingsGroups = {
                     'Listings with something to collect are moved to the top so you can see what "Collect All" ' +
                     'grabbed without scrolling. Manually sorting a column takes over until sort is cleared',
             },
+            market_listingDragOrder: {
+                id: 'market_listingDragOrder',
+                label: 'Market: Drag to arrange My Listings',
+                type: 'checkbox',
+                default: true,
+                help:
+                    'Adds a drag handle beside each My Listings status and remembers your visual order per ' +
+                    'character. Clear any active column sort before dragging. This does not change server order.',
+            },
             market_bulkSellAssistant: {
                 id: 'market_bulkSellAssistant',
                 label: 'Market: Bulk Sell Assistant',

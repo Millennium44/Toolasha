@@ -215,6 +215,13 @@ class Config {
                 description: 'Moves listings with something to collect to the top of My Listings',
                 settingKey: 'market_collectableListingsToTop',
             },
+            market_listingDragOrder: {
+                enabled: true,
+                name: 'Listing Drag Order',
+                category: 'Market',
+                description: 'Adds drag handles for arranging My Listings per character',
+                settingKey: 'market_listingDragOrder',
+            },
             market_listingAge: {
                 enabled: true,
                 name: 'Estimated Listing Age',

@@ -812,6 +812,13 @@ function registerFeatures() {
             async: false,
         },
         {
+            key: 'market_listingDragOrder',
+            name: 'Listing Drag Order',
+            category: 'Market',
+            module: Market.listingDragOrder,
+            async: true,
+        },
+        {
             key: 'collectableListingsSort',
             name: 'Collectable Listings Sort',
             category: 'Market',

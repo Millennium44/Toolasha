@@ -81,7 +81,10 @@ class CollectableListingsSort {
      */
     _hasManualSortActive(tableNode) {
         const thead = tableNode.querySelector('thead');
-        return !!thead && SORT_INDICATOR_PATTERN.test(thead.textContent);
+        return (
+            tableNode.dataset.mwiManualListingOrder === 'true' ||
+            (!!thead && SORT_INDICATOR_PATTERN.test(thead.textContent))
+        );
     }
 
     /**

@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Arrange My Listings by dragging
+
+- Each market listing now has a drag handle, with keyboard Up/Down support, so players can keep their listings in a useful personal order. The visual order is remembered per character, yields while a column sort is active, and never changes the market's server-side order.
+
 ### Metz combat simulator import and profile export
 
 - The sidebar now links to Metz Combat Simulator, where Toolasha imports the current character, cached party profiles, saved loadouts, spare gear and abilities, and the enhancing and alchemy setup. Opening it from a game tab refreshes the character snapshot it imports, so the import matches that tab's character and today's inventory rather than login's.

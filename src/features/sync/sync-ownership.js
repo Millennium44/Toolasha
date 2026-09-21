@@ -164,6 +164,7 @@ export const OWNED_KEY_PREFIXES = [
     'tradeHistory',
     'tradeLedger',
     'marketListingTimestamps',
+    'marketListingDragOrder_',
     'inventoryReservationLedger',
     'inventorySort',
     'equipmentSavings',

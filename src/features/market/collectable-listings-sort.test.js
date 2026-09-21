@@ -157,6 +157,18 @@ describe('collectableListingsSort._reorder()', () => {
 
         expect(Array.from(table.querySelectorAll('tbody tr'))[0].children[0].textContent).toBe('Filled');
     });
+
+    test('yields to a saved drag order', () => {
+        const table = buildTable([
+            { status: 'Active', hasCollect: false },
+            { status: 'Filled', hasCollect: true },
+        ]);
+        table.dataset.mwiManualListingOrder = 'true';
+
+        collectableListingsSort._reorder(table);
+
+        expect(Array.from(table.querySelectorAll('tbody tr'))[0].children[0].textContent).toBe('Active');
+    });
 });
 
 describe('collectableListingsSort.initialize()', () => {
