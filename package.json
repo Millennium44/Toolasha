@@ -51,10 +51,10 @@
         "markdown-link-check": "^3.14.2",
         "markdownlint-cli": "^0.49.1",
         "mathjs": "12.4.2",
-        "prettier": "^3.8.1",
+        "prettier": "^3.9.8",
         "rollup": "^4.9.5",
         "rollup-plugin-banner2": "^1.2.2",
-        "vitest": "^5.0.0"
+        "vitest": "^5.0.1"
     },
     "engines": {
         "node": ">=22.12"
