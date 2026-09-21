@@ -42,10 +42,12 @@ class OfflineProgressEconomics {
         this.characterInitializedHandler = null;
         this.characterSwitchingHandler = null;
         this.domObserverUnregister = null;
-        this.processedModals = new WeakSet();
+        this.processedModals = new WeakMap();
         this.currentOfflineData = null;
         this.currentBlock = null;
         this.currentBlockData = null;
+        this.currentModalNode = null;
+        this.currentModalSignature = null;
         this.pricingModeChangeHandler = null;
         this.modalCleanupUnwatch = null;
     }
@@ -108,15 +110,18 @@ class OfflineProgressEconomics {
         const offlineItems = data?.offlineItems || [];
         if (offlineItems.length === 0) {
             this.currentOfflineData = null;
-            return;
+        } else {
+            this.currentOfflineData = {
+                offlineItems,
+                currentTimestamp: data.currentTimestamp,
+                lastOfflineTime: data.character?.lastOfflineTime,
+                offlineHourCap: dataManager.getOfflineHourCap(),
+            };
         }
 
-        this.currentOfflineData = {
-            offlineItems,
-            currentTimestamp: data.currentTimestamp,
-            lastOfflineTime: data.character?.lastOfflineTime,
-            offlineHourCap: dataManager.getOfflineHourCap(),
-        };
+        // The payload may arrive either before or after the game re-renders an already-open
+        // modal with it, so both arrival orders have to check for the pairing going stale.
+        this.reconcileRenderedBlock();
     }
 
     /**
@@ -133,10 +138,13 @@ class OfflineProgressEconomics {
      * @param {Element} node - The matched modal content element
      */
     processModalNode(node) {
-        if (this.processedModals.has(node)) return;
         if (!this.currentOfflineData) return;
+        // Keyed on the payload the node was last rendered from, not on the node alone: the game
+        // reuses the same modal element across a reconnect, and a node-only guard would refuse
+        // to rebuild the block while every native field around it switched to the new payload.
+        if (this.processedModals.get(node) === this.currentOfflineData) return;
 
-        this.processedModals.add(node);
+        this.processedModals.set(node, this.currentOfflineData);
         this.renderBlock(node);
     }
 
@@ -159,6 +167,8 @@ class OfflineProgressEconomics {
             // A reconnect can cache the next offline payload while this native modal
             // still shows the previous one. Pricing changes must retain its snapshot.
             this.currentBlockData = this.currentOfflineData;
+            this.currentModalNode = modalContentNode;
+            this.currentModalSignature = readNativeSignature(modalContentNode);
         } catch (error) {
             console.error('[Offline Progress Economics] Could not build the summary block:', error);
             return;
@@ -182,6 +192,43 @@ class OfflineProgressEconomics {
         const newBlock = buildBlock(economics);
         this.currentBlock.replaceWith(newBlock);
         this.currentBlock = newBlock;
+    }
+
+    /**
+     * Keep the injected block describing the same offline payload the native modal is showing.
+     *
+     * A reconnect hands the client a fresh `character_initialized` while the native
+     * "Welcome Back!" modal is open, and the game re-renders that *same* modal element with
+     * the new payload — new duration, new items, new experience. The block beside them must
+     * not go on describing the previous session's haul.
+     *
+     * Two observable signals have to agree before anything is touched, which is what keeps this
+     * apart from a plain "a newer payload exists" guess:
+     *  - the cached payload is no longer the object the block was built from (identity compare
+     *    against the snapshot captured at render), and
+     *  - the modal's own native text has changed since the block was injected.
+     * Either alone is not evidence: a reconnect can cache a payload the modal never adopts
+     * (the modal keeps showing the old session, and a pricing change must reprice *that*),
+     * and the native markup settles with harmless mutations of its own after mount.
+     *
+     * When both changed, the native fields have already switched, so the block adopts the new
+     * payload. When the payload it would have to adopt is gone (an empty reconnect snapshot) or
+     * the modal has left the DOM, the block is removed instead: a missing block is recoverable,
+     * a headline figure contradicting the rest of the modal is not.
+     */
+    reconcileRenderedBlock() {
+        const modal = this.currentModalNode;
+        if (!this.currentBlock || !modal) return;
+        if (this.currentOfflineData === this.currentBlockData) return;
+        if (readNativeSignature(modal) === this.currentModalSignature) return;
+
+        if (!this.currentOfflineData || !document.body?.contains(modal)) {
+            this.teardownBlock();
+            return;
+        }
+
+        this.processedModals.set(modal, this.currentOfflineData);
+        this.renderBlock(modal);
     }
 
     /**
@@ -212,9 +259,14 @@ class OfflineProgressEconomics {
             () => {
                 if (!document.body.contains(modal)) {
                     this.teardownBlock();
+                    return;
                 }
+                // Same watch, not a second one: a re-render of the open modal has to be noticed
+                // as promptly as its removal, and a second observer on document.body is exactly
+                // the duplicate this watch was consolidated to avoid.
+                this.reconcileRenderedBlock();
             },
-            { childList: true, subtree: true }
+            { childList: true, subtree: true, characterData: true }
         );
     }
 
@@ -239,6 +291,8 @@ class OfflineProgressEconomics {
             this.currentBlock = null;
         }
         this.currentBlockData = null;
+        this.currentModalNode = null;
+        this.currentModalSignature = null;
     }
 
     /**
@@ -260,11 +314,34 @@ class OfflineProgressEconomics {
 
         this.teardownBlock();
         this.currentOfflineData = null;
-        this.processedModals = new WeakSet();
+        this.processedModals = new WeakMap();
 
         this.isActive = false;
         this.isInitialized = false;
     }
+}
+
+/**
+ * Read the native modal's own text, excluding this script's injected block, as a signature of
+ * which offline session the game is currently rendering. Walking the tree and skipping the block
+ * subtree keeps the signature about the native fields only, so injecting, replacing or removing
+ * the block never looks like a re-render.
+ * @param {Element} root - OfflineProgressModal_modalContent element
+ * @returns {string} Whitespace-normalized text of the native modal content
+ */
+export function readNativeSignature(root) {
+    let text = '';
+    const walk = (node) => {
+        if (node.nodeType === Node.TEXT_NODE) {
+            text += node.nodeValue;
+            return;
+        }
+        if (node.nodeType !== Node.ELEMENT_NODE) return;
+        if (node.id === UI_ID) return;
+        for (const child of node.childNodes) walk(child);
+    };
+    walk(root);
+    return text.replace(/\s+/g, ' ').trim();
 }
 
 /**

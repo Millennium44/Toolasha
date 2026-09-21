@@ -308,6 +308,63 @@ describe('offline-progress-economics', () => {
         expect(document.querySelector('#mwi-offline-economics').textContent).toContain('999');
     });
 
+    test('a reused modal node re-rendered with the next snapshot stops describing the previous one', () => {
+        // The live defect: a reconnect while the native "Welcome Back!" modal is open. The game
+        // keeps the same modal element and re-renders it with the 3-second reconnect gap, so the
+        // duration, items and experience beside the block all switch - the block must switch too.
+        offlineProgressEconomics.initialize();
+        triggerCharacterInitialized();
+        const modalNode = buildModalNode();
+        mockOnClass.mock.calls[0][2](modalNode);
+
+        // The native fields re-render first, then the new payload lands.
+        modalNode.querySelector('.OfflineProgressModal_offlineProgress__3P0VR').lastElementChild.textContent = '3s';
+        const nextItems = [{ itemHrid: '/items/log', enhancementLevel: 0, offlineCount: 6 }];
+        mockCalculateOfflineEconomics.mockReturnValue({ ...SAMPLE_ECONOMICS, revenue: 777 });
+        triggerCharacterInitialized({ offlineItems: nextItems, currentTimestamp: '2026-08-19T13:00:00.000Z' });
+
+        expect(mockCalculateOfflineEconomics).toHaveBeenLastCalledWith(
+            expect.objectContaining({ offlineItems: nextItems })
+        );
+        expect(document.querySelectorAll('#mwi-offline-economics')).toHaveLength(1);
+        expect(document.querySelector('#mwi-offline-economics').textContent).toContain('777');
+    });
+
+    test('a reused modal node adopts the new snapshot when the payload lands before the re-render', () => {
+        offlineProgressEconomics.initialize();
+        triggerCharacterInitialized();
+        const modalNode = buildModalNode();
+        mockOnClass.mock.calls[0][2](modalNode);
+
+        // Payload first: nothing changes yet, because the modal is still showing the old session.
+        const nextItems = [{ itemHrid: '/items/log', enhancementLevel: 0, offlineCount: 6 }];
+        triggerCharacterInitialized({ offlineItems: nextItems, currentTimestamp: '2026-08-19T13:00:00.000Z' });
+        expect(mockCalculateOfflineEconomics).toHaveBeenCalledTimes(1);
+
+        // Then the native fields re-render and the modal watch fires.
+        modalNode.querySelector('.OfflineProgressModal_offlineProgress__3P0VR').lastElementChild.textContent = '3s';
+        mockCalculateOfflineEconomics.mockReturnValue({ ...SAMPLE_ECONOMICS, revenue: 777 });
+        capturedCleanupCallback();
+
+        expect(mockCalculateOfflineEconomics).toHaveBeenLastCalledWith(
+            expect.objectContaining({ offlineItems: nextItems })
+        );
+        expect(document.querySelector('#mwi-offline-economics').textContent).toContain('777');
+    });
+
+    test('a reused modal re-rendered with a snapshot we do not have removes the block rather than contradicting it', () => {
+        offlineProgressEconomics.initialize();
+        triggerCharacterInitialized();
+        const modalNode = buildModalNode();
+        mockOnClass.mock.calls[0][2](modalNode);
+        expect(document.querySelector('#mwi-offline-economics')).not.toBeNull();
+
+        modalNode.querySelector('.OfflineProgressModal_offlineProgress__3P0VR').lastElementChild.textContent = '3s';
+        triggerCharacterInitialized({ offlineItems: [] });
+
+        expect(document.querySelector('#mwi-offline-economics')).toBeNull();
+    });
+
     test('a stale watch from a leftover previous modal cannot tear down the current character’s block', () => {
         // Character A's modal appears and gets a block.
         offlineProgressEconomics.initialize();
