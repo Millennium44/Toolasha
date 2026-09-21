@@ -6,6 +6,18 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### The Welcome Back summary keeps its own numbers when you reconnect behind it
+
+- A same-character reconnect swapped the cached offline items underneath a summary you still had open, so changing pricing mode recomputed it from the new session's items — and an empty reconnect payload stopped it repricing at all. A rendered summary now stays bound to the snapshot it was drawn from until you close it, and the next one picks up the newer snapshot.
+
+### Saved character activity refreshes after a reconnect instead of waiting for the next update
+
+- A same-character reconnect replaces the live queue but leaves running features alone, and Character Activity only listened for action and character-info updates — so its saved projection could sit stale until something else happened to change. It now refreshes on reconnect, and refuses to recompute when the live character is not the one it belongs to.
+
+### Notice history and read markers stay with the character that owns them
+
+- Switching characters could carry the departing character's read marker into the arriving notice log, drop a notice that arrived before that log finished loading, or let a delayed read refill the wrong view. Clearing the log while a read was still in flight could also bring the cleared entries back. Pending reads and writes are now bound to their character's record, and a rapid switch back reuses the work already in flight rather than racing it. A notice that lands in the moment between leaving one character and arriving at the next is now filed under the one you left, which is who the game still reports at that instant — the reverse of what the old code aimed at.
+
 ### Historical labyrinth fights replay against the build they were actually fought in
 
 - Replay demanded a match against your _current_ loadout, so an unrelated gear or ability edit quietly disqualified every recording you had. Each fight now saves its own equipped build, crates, buffs and ability mode at the opening and replays under that, with different builds compared separately rather than pooled. Grouping ignores inputs the replay does not use, so a task-progress change alone no longer splits one build into six cohorts. Fights that share a build store it once between them, so keeping that much more detail costs the history about a megabyte rather than ten.
