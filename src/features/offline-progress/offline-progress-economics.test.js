@@ -365,6 +365,36 @@ describe('offline-progress-economics', () => {
         expect(document.querySelector('#mwi-offline-economics')).toBeNull();
     });
 
+    test('repricing the block is not mistaken for the modal re-rendering', () => {
+        // The reconcile treats a change in the modal's text as proof the native
+        // fields switched to the newer payload. Our own block lives inside that
+        // modal and is replaced whole on every pricing change, so if the
+        // signature counted it, a pricing change made while a reconnect had
+        // cached a payload the modal never adopted would flip the block onto
+        // that payload - the bug this reconcile exists to prevent, caused by
+        // the reconcile. `readNativeSignature` skipping the injected subtree is
+        // what stops it, and nothing else does.
+        offlineProgressEconomics.initialize();
+        triggerCharacterInitialized();
+        const modalNode = buildModalNode();
+        mockOnClass.mock.calls[0][2](modalNode);
+        const firstSnapshot = mockCalculateOfflineEconomics.mock.calls[0][0];
+
+        // A reconnect caches the next session while this modal goes on showing
+        // the previous one - its native fields never change.
+        const nextItems = [{ itemHrid: '/items/log', enhancementLevel: 0, offlineCount: 25 }];
+        triggerCharacterInitialized({ offlineItems: nextItems, currentTimestamp: '2026-08-19T13:00:00.000Z' });
+
+        // A pricing change redraws the block in place, mutating the modal.
+        mockCalculateOfflineEconomics.mockReturnValue({ ...SAMPLE_ECONOMICS, revenue: 999 });
+        for (const cb of settingChangeCallbacks.get('profitCalc_pricingMode')) cb('optimistic');
+        capturedCleanupCallback();
+
+        expect(mockCalculateOfflineEconomics).toHaveBeenLastCalledWith(firstSnapshot);
+        expect(document.querySelectorAll('#mwi-offline-economics')).toHaveLength(1);
+        expect(document.querySelector('#mwi-offline-economics').textContent).toContain('999');
+    });
+
     test('a stale watch from a leftover previous modal cannot tear down the current character’s block', () => {
         // Character A's modal appears and gets a block.
         offlineProgressEconomics.initialize();
