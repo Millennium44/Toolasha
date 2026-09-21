@@ -2723,8 +2723,8 @@ function drawComparison(body, comparison) {
     if (comparison.exploratory) {
         body.appendChild(
             panelNote(
-                `Exploratory only: fewer than ${MIN_VERDICT_FIGHTS} clean fights, so nothing below states a ` +
-                    'verdict — the rates are shown so you can look, not so you can conclude.'
+                `Exploratory only: fewer than ${MIN_VERDICT_FIGHTS} clean fights, so the rates below do not ` +
+                    'state a verdict — they are shown so you can look, not so you can conclude.'
             )
         );
     }
