@@ -1495,7 +1495,15 @@ export function sampleSizeFor(observed, targetPct = NOISE_QUIET_PCT, floorPct = 
     // Never fewer than the verdict bar: a projection that stops short of it
     // would name a sample size at which the check still says nothing.
     const requiredFights = Math.max(MIN_VERDICT_FIGHTS, Math.ceil(((Z95 * variation * 100) / Math.sqrt(room)) ** 2));
-    const needed = Math.max(0, requiredFights - cohort);
+    // Counted against the *rate-bearing* fights, not the cohort. A fight that
+    // took no time has no rate, so it is in `observed.fights` and not in
+    // `values` — and it does nothing to narrow the band. Counting it here said
+    // "≈0 more fights" on a sample still outside the band, and hid the button
+    // that would have recorded them. `requiredFights` already carries the
+    // verdict bar, and it is never below `values.length` in this branch (the
+    // band is over target precisely when the sampling term does not fit), so
+    // the bar needs no second term.
+    const needed = Math.max(0, requiredFights - values.length);
     return {
         ...shared,
         requiredFights,

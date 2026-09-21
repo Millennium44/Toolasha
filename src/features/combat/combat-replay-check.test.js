@@ -2638,6 +2638,31 @@ describe('saying how many more fights would settle it', () => {
         expect(suggestion.text).toContain('before the check states a verdict');
     });
 
+    test('a fight that produced no rate is not counted towards the fights the projection asks for', () => {
+        // The verdict bar is counted over the whole cohort, but the projection
+        // is not: a fight that took no time has no rate, so it sits in
+        // `observed.fights` and not in `samples.dps`, and it does nothing to
+        // narrow the band. Counting the cohort against a requirement projected
+        // off the rate-bearing fights read as "≈0 more fights" on a sample
+        // still well outside the band, and hid the button that would record
+        // them.
+        const rated = spread([90, 100, 100, 100, 110]);
+        const timeless = { ...rated.fights[0], seconds: 0 };
+        const observed = aggregateObservations([
+            { ...rated, fights: [...rated.fights, ...Array.from({ length: 8 }, () => ({ ...timeless }))] },
+        ]);
+
+        expect(observed.fights).toBe(13);
+        expect(observed.samples.dps.filter((value) => Number.isFinite(value))).toHaveLength(5);
+
+        const suggestion = sampleSizeFor(observed);
+
+        expect(suggestion.marginPct).toBeGreaterThan(NOISE_QUIET_PCT);
+        expect(suggestion.needed).toBeGreaterThan(0);
+        // The same invariant the wide-sample case above rests on
+        expect(suggestion.requiredFights).toBe(suggestion.needed + suggestion.fights);
+    });
+
     test('a band inside the simulator’s own allowance is refused rather than promised', () => {
         // The floor is added in quadrature and never shrinks, so no sample size
         // reaches a band at or under it
