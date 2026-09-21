@@ -225,6 +225,34 @@ import { hashPlayerName } from './labyrinth-accuracy-export.js';
 /** Below this many fights the spread of the sample says nothing about the mean */
 export const MIN_SAMPLE_FIGHTS = 3;
 
+/**
+ * The lower of the two bars: below this many fights the cohort is not simulated.
+ *
+ * Deliberately the same number as {@link MIN_SAMPLE_FIGHTS} and defined in terms
+ * of it rather than beside it, because it is the same bar for the same reason: a
+ * sample whose spread cannot be measured has no band, every metric comes back
+ * `insufficient`, and running a sim to its stop rule to learn that is a cost with
+ * no answer at the end of it. `noiseMargin` already refuses below this; this
+ * stops the run before it is paid for.
+ *
+ * The labyrinth replay has the same pair of bars — `MIN_REPLAY_FIGHTS` (3) and
+ * `MIN_LAB_FIGHTS` (5) in `labyrinth-replay-inputs.js` / `labyrinth-replay-check.js`.
+ * They are restated here rather than imported: the two features live in different
+ * bundles and a shared import would trip `scripts/check-bundle-sharing.mjs`.
+ */
+export const MIN_CHECK_FIGHTS = MIN_SAMPLE_FIGHTS;
+
+/**
+ * The upper bar: below this many fights the comparison runs but states no verdict.
+ *
+ * Between the two bars the check is *exploration* — the numbers are shown so the
+ * reader can look, not so they can conclude. Five clean fights is what this repo's
+ * combat validation treats as the threshold for an accuracy verdict, and matching
+ * the labyrinth's `MIN_LAB_FIGHTS` is the point: two panels answering the same
+ * question should not each invent their own bar.
+ */
+export const MIN_VERDICT_FIGHTS = 5;
+
 /** Two-sided 95% normal quantile */
 const Z95 = 1.96;
 
@@ -1623,6 +1651,10 @@ export function compareRun(observed, predicted) {
 
     return {
         fights: observed.fights,
+        // Between the two bars: every metric here reads `insufficient` and the
+        // panel has to say so outright rather than leave the reader to infer it
+        // from four dashes. See MIN_VERDICT_FIGHTS.
+        exploratory: observed.fights < MIN_VERDICT_FIGHTS,
         recordedAt: observed.recordedAt,
         oldestRecordedAt: observed.oldestRecordedAt,
         recordings: observed.recordings,
@@ -2439,6 +2471,18 @@ class ReplayCheck {
             this.error = 'The recording is not stamped with a zone, so there is nothing to simulate against it.';
             return null;
         }
+        // The lower bar. A cohort this small has no band to judge against, so a
+        // full simulation would run to its stop rule and come back with every
+        // metric `insufficient`. The fights are not discarded — they keep
+        // accumulating and the check runs itself once they clear the bar.
+        if (observed.fights < MIN_CHECK_FIGHTS) {
+            const plural = observed.fights === 1 ? '' : 's';
+            this.error =
+                `${observed.fights} fight${plural} in the largest build — this zone needs ${MIN_CHECK_FIGHTS} ` +
+                `before it is simulated at all, and ${MIN_VERDICT_FIGHTS} clean ones before the comparison ` +
+                'states a verdict. Fights accumulate as you play — keep going and check back.';
+            return null;
+        }
         this.running = true;
         try {
             const current = buildPlayerDTO();
@@ -2647,6 +2691,17 @@ dataManager.on?.('character_switching', () => replayCheck.disable());
  * @param {Object} comparison - From `compareRun`
  */
 function drawComparison(body, comparison) {
+    // Above the numbers, not below them: a reader who stops at the first row
+    // has to have been told already. Same wording as the labyrinth replay's
+    // exploratory note, because it is the same bar answering the same question.
+    if (comparison.exploratory) {
+        body.appendChild(
+            panelNote(
+                `Exploratory only: fewer than ${MIN_VERDICT_FIGHTS} clean fights, so nothing below states a ` +
+                    'verdict — the rates are shown so you can look, not so you can conclude.'
+            )
+        );
+    }
     const card = panelCard(body, 'Observed vs predicted', ACCENT);
     const rows = [...comparison.metrics, ...(comparison.experience ? [comparison.experience] : [])];
 

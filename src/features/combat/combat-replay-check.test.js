@@ -159,6 +159,8 @@ import replayCheck, {
     pruneHistory,
     dropRates,
     MIN_SAMPLE_FIGHTS,
+    MIN_CHECK_FIGHTS,
+    MIN_VERDICT_FIGHTS,
     SIM_HOURS,
     SIM_NOISE_FLOOR_PCT,
     NOISE_QUIET_PCT,
@@ -1178,6 +1180,49 @@ describe('the loadout the fight was actually fought in', () => {
         expect(describeLoadoutDifference(null, base)).toBe(null);
     });
 
+    test('a cohort under the simulation bar is not simulated at all', async () => {
+        game.simResult = cohortSimResult;
+        game.lastRun = null;
+        replayCheck.observations = [
+            evenObservation({ fights: 2, recordedAt: 2_000, loadout: captureLoadoutSnapshot(realLoadout()) }),
+        ];
+
+        expect(await replayCheck.check()).toBe(null);
+        // No worker was run to come back with four `insufficient` rows
+        expect(game.lastRun).toBe(null);
+        expect(replayCheck.error).toContain(`needs ${MIN_CHECK_FIGHTS}`);
+        expect(replayCheck.error).toContain(`${MIN_VERDICT_FIGHTS} clean ones`);
+    });
+
+    test('between the bars the comparison runs but is not a verdict', async () => {
+        game.simResult = cohortSimResult;
+        replayCheck.observations = [
+            evenObservation({
+                fights: MIN_VERDICT_FIGHTS - 1,
+                recordedAt: 2_000,
+                loadout: captureLoadoutSnapshot(realLoadout()),
+            }),
+        ];
+
+        const comparison = await replayCheck.check();
+        expect(replayCheck.error).toBe(null);
+        expect(comparison.exploratory).toBe(true);
+    });
+
+    test('at the upper bar it is a verdict again', async () => {
+        game.simResult = cohortSimResult;
+        replayCheck.observations = [
+            evenObservation({
+                fights: MIN_VERDICT_FIGHTS,
+                recordedAt: 2_000,
+                loadout: captureLoadoutSnapshot(realLoadout()),
+            }),
+        ];
+
+        const comparison = await replayCheck.check();
+        expect(comparison.exploratory).toBe(false);
+    });
+
     test('the snapshot keeps what describes the character', () => {
         const snapshot = captureLoadoutSnapshot(loadout());
 
@@ -1739,6 +1784,18 @@ describe('drawing a deviation the sample cannot see', () => {
 });
 
 describe('what the panel admits it does not know', () => {
+    /** The least a comparison can be and still be drawn */
+    const BARE_COMPARISON = {
+        fights: 4,
+        metrics: [],
+        decomposition: [],
+        experience: null,
+        experienceBySkill: [],
+        deathCheck: null,
+        drops: [],
+        warnings: [],
+    };
+
     afterEach(() => {
         replayCheckPanel.hide({ remember: false });
         delete window.Toolasha;
@@ -1779,6 +1836,25 @@ describe('what the panel admits it does not know', () => {
         const text = replayCheckPanel.panel.textContent;
         expect(text).toContain('not all fought in the same kit');
         expect(text).toContain('4 fights, with 3 set aside');
+    });
+
+    test('an exploratory comparison says on the panel that it is not a verdict', () => {
+        replayCheck.observations = [evenObservation({ fights: MIN_VERDICT_FIGHTS - 1 })];
+        replayCheck.comparison = { ...BARE_COMPARISON, exploratory: true };
+        replayCheckPanel.show({ remember: false });
+
+        const text = replayCheckPanel.panel.textContent;
+        expect(text).toContain('Exploratory only');
+        expect(text).toContain('so you can look, not so you can conclude');
+        expect(text).not.toContain('could not be drawn');
+    });
+
+    test('a comparison at the upper bar carries no such note', () => {
+        replayCheck.observations = [evenObservation({ fights: MIN_VERDICT_FIGHTS })];
+        replayCheck.comparison = { ...BARE_COMPARISON, exploratory: false };
+        replayCheckPanel.show({ remember: false });
+
+        expect(replayCheckPanel.panel.textContent).not.toContain('Exploratory only');
     });
 });
 
