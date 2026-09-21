@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Build tooling moved up a version
+
+- Prettier, Vitest, lint-staged and commitlint were updated. Nothing a player sees changes; this is the machinery that formats, tests and checks a commit before it lands.
+
 ### The charts are drawn by a current Chart.js
 
 - The userscript pulled Chart.js 3.7.0 from the CDN, a version pinned in the script headers and nearly four years behind. It now loads 4.5.1. The chart options this fork writes were already in the shape version 3 and 4 both expect, so nothing needed rewriting; the Net Worth History chart was checked in the client afterwards and draws its series, both axes and the full legend as before. The package manifest had been left claiming a different version from the one the headers actually ship, and now agrees with them.
