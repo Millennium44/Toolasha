@@ -6,6 +6,12 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Audit round: a respawn could hand you hitpoints your build does not have
+
+- Dying while a stamina drink was up brought you back holding the buffed hitpoint total against the unbuffed maximum — 1,200 against a cap of 800 on the measured build — because the pools were filled before the buffs were cleared and nothing in the simulator ever clamps a pool back down. The surplus lasted until damage ate through it, and a debuff produced the mirror image: standing up short of full.
+- A browser notification that throws rather than refusing no longer takes the tab-title flash down with it. The flash is there precisely for the case where a browser will not show a notification, and it was being skipped on the one path that needed it, leaving the notice recorded as delivered through no channel at all.
+- The "record this many more fights" projection counts only the fights that actually produced a rate. A fight too short to measure one still counted towards the total, so a sample well outside the band could report needing no more fights and hide the button offering to record them.
+
 ### Audit round: a saved recording could export builds it had quietly dropped, and a three-fight sample argued with itself
 
 - An exported labyrinth recording reused the stored pool's forty-build cap, so anyone with more distinct builds than that exported the older fights as though they had never carried a build, with nothing in the file to say otherwise. An export now carries every build it references; only what is kept on disk is capped.
