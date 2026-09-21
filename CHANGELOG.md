@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### The offline summary's economics follow the snapshot the modal is showing
+
+- When the game reused an already-open Welcome Back modal for a reconnect, its duration, items and experience switched to the new stretch while the Offline Economics block above them kept the previous session's figures — a three-second gap headlined with half a billion in revenue, contradicting Toolasha's own net line directly beneath it. The block now adopts the new snapshot when the modal re-renders under it, and removes itself rather than sit there contradicting the numbers beside it when there is no snapshot to adopt.
+
 ### The Welcome Back summary keeps its own numbers when you reconnect behind it
 
 - A same-character reconnect swapped the cached offline items underneath a summary you still had open, so changing pricing mode recomputed it from the new session's items — and an empty reconnect payload stopped it repricing at all. A rendered summary now stays bound to the snapshot it was drawn from until you close it, and the next one picks up the newer snapshot.
