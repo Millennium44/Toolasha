@@ -6,6 +6,106 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Historical labyrinth fights replay against the build they were actually fought in
+
+- Replay demanded a match against your _current_ loadout, so an unrelated gear or ability edit quietly disqualified every recording you had. Each fight now saves its own equipped build, crates, buffs and ability mode at the opening and replays under that, with different builds compared separately rather than pooled. Grouping ignores inputs the replay does not use, so a task-progress change alone no longer splits one build into six cohorts. Fights that share a build store it once between them, so keeping that much more detail costs the history about a megabyte rather than ten.
+
+### A rate is not called a verdict until enough fights stand behind it
+
+- Both the labyrinth replay and the combat accuracy check now hold to the same two bars: under three clean fights a build is not simulated at all and says so, three or four runs and is shown but marked exploratory, and five or more is a verdict. Before, a single fight could render a full verdict in the labyrinth, and the accuracy check had no floor at all.
+
+### A labyrinth room's auto-swapped loadout is recorded in the order the game applies it
+
+- A room that swaps your weapon on entry updated equipment and abilities in an order the capture did not preserve, so the saved build could describe neither the old kit nor the new one.
+
+### Two identical-damage fights count as two accuracy samples, not one
+
+- The recorder keyed completed fights by their damage total, so a second fight that happened to deal exactly the same damage was read as a duplicate of the first and discarded. Equal-damage recordings now keep separate identities and both feed the accuracy pool.
+
+### Party replay accounts for every point of damage in the first fight
+
+- A 245-fight Pirate Cove export left 3,029 monster HP with no owner, because replay treated each member's first attack delta as a baseline instead of counting it. Counters are now seeded from the battle-opening snapshot, so the first fight attributes like every later one.
+
+### A rejected accuracy check no longer shows the previous run's comparison
+
+- Retrying after a failure, or running a party check that gets rejected, left the earlier solo comparison and its damage breakdown on screen and in the export beside the rejection message. Superseded results are now cleared before a new attempt starts, and exports carry the rejection reason.
+
+### Saved zone rates are flagged for a rerun after you reorder abilities or change a trigger
+
+- The loadout signature sorted ability names and ignored trigger conditions, so reordering a rotation or retuning a trigger left a queued fight's saved 24-hour simulation marked as still matching. Order and trigger conditions are now part of the signature.
+
+### Combat recordings stop at a disconnect or a character switch instead of spanning one
+
+- The recorder listened to raw battle messages with no active-socket guard, so a stale socket could keep adding fights and a reconnect's first battle could close a fight across the missing time. Character cleanup also left the old fight count and loadout in an otherwise emptied export. Recordings now end at the boundary and say why they stopped.
+
+### A recording that spans a build change is measured against one build, and says which
+
+- Segments are now labelled with the zone and tier they were actually fought in, and an equipment or ability change banks the segment rather than folding the new build into the old one. Because levelling up counts as a change, a long session splits itself: the check now measures the largest single build in the sample and names what separated it from the rest — "they differ by attack 90 to 91" — along with how many fights it set aside, rather than refusing the whole recording. Re-equipping the same item is no longer mistaken for a change at all.
+
+### Hitting the recorder's tick cap mid-fight no longer counts that fight as finished
+
+- A fight split across the 8,000-tick hard cap was counted complete at the next battle opening, so a two-fight target could stop with only one replayable fight and export an inflated count. Recording now continues until the requested number of whole fights exists.
+
+### A restored backup is no longer overwritten by a write that was waiting on storage
+
+- A save, delete or bulk write parked behind an IndexedDB reconnect could resume after a restore finished and put the old value straight back over the restored one. The restore guard is now rechecked after every connection wait.
+
+### Settings from the character you just left cannot repopulate the one you switched to
+
+- Teardown clears the settings cache before the active character ID changes; a load already in flight could land in that gap and republish the departing character's settings, drain their queued writes and notify listeners. Clearing the cache now invalidates loads already in progress.
+
+### A malformed backup is rejected before it writes anything
+
+- A bad full backup could be partly applied before a later store's invalid records were noticed, and a write that threw released the restore hold without protecting the stores already restored, letting queued old values overwrite them. Every selected store is now validated before the first write.
+
+### Sync sees edits that are still queued rather than treating them as absent
+
+- A pull could fingerprint your data before a queued curated-list edit had landed and apply the download as conflict-free, and applying a payload preserved local settings before a queued settings save, then wrote the older values back over it. Queued writes are now flushed before conflict detection and before local settings are read.
+
+### A container inside a container is taxed once, not twice
+
+- Opening a tradable container nested in another taxed its already-net value a second time: a chest holding a crate with a single 1,000-gold drop valued at 902.5 instead of 950. Ordinary market drops are still taxed once; already-net nested values and special currencies are not taxed again.
+
+### A newer price is no longer replaced by an older one that arrived later
+
+- A pooled-history response could overwrite a fresher live order-book quote purely by arriving second, and reloading persisted patches erased prices observed while the read was pending, when it failed, or during a format migration. Observation timestamps are now compared before a quote is replaced.
+
+### An official market-value push survives the next refresh
+
+- The 30-second refresh could replace a freshly pushed value map with an older copy from localStorage, a pushed value of 1,000 reverting to 100 and moving both valuations and the tradable band. A stored map now replaces a known version only when its version advances.
+
+### Simulator results from a closed panel cannot overwrite the one you have open
+
+- A character switch or panel rebuild while a worker or history read was pending let the old completion, cancellation or cleanup land in the new panel, and a delayed Lab comparison could save the departed character's result under the arriving one. Generation and character checks now cover Single Sim, Seek, All Zones and Lab Sim through completion, progress, errors and cleanup.
+
+### Market alerts stop working for a character you have left
+
+- Switching characters or disabling alerts while a price request was in flight let the old refresh repopulate cleared observations, keep running queued lookups, and release a newer refresh's busy flag. Only the current refresh can now release its own lock.
+
+### Queue Time Left stops at the first unlimited action instead of counting past it
+
+- An unlimited action followed by a counted batch made the tile show the trailing batch's duration, and saved character snapshots recorded that time as the queue total. Both now stop at the first unlimited action in execution order, and the tooltip says how long until that action starts rather than claiming the queue will empty.
+
+### A closed item menu no longer receives its Auto All click
+
+- A menu that closed inside Auto All's 50 ms render delay still got clicked, and reopening the same menu node was skipped because it stayed permanently marked as processed. The pending click is now cancelled with the menu, and a reopened menu is treated as new.
+
+### An enhancement run that finishes during a character switch stays with the character that ran it
+
+- A completed run waiting in the calibration queue or on a storage read could be added to the next character's ledger after a switch, and a new session starting while the previous completion was still saving could be cleared by that older save. Ownership is captured before the wait and rechecked after it, and each completed leg keeps its own snapshot so extending a session during a save does not lose the finished target.
+
+### The Goal Planner ignores work belonging to a panel you have closed
+
+- A delayed snapshot or add/remove response could overwrite the arriving character's panel, and an add could price and save the departing character's list under the new one. Disabling mid-pricing also left Refresh stuck busy. Operations are now pinned to both their character and their panel generation.
+
+### "Every goal is done" is no longer shown for goals that were never planned
+
+- The Next Goal Step tile reported completion whenever it found no next step, including goals with no priced snapshot, a snapshot missing a newer goal, or a plan with no usable steps. It now requires an explicitly satisfied plan for every current goal, and otherwise says goals need planning.
+
+### A task reroll revalidates its price at the moment you press it
+
+- The guided walk could pay a stale cost if the game reused a button while changing what it displayed, or turned a free offer into a paid one, and could act under protection limits that changed before the widget observer caught up. Currency, amount and limits are rechecked at the press, and a stale plan refreshes instead of clicking.
+
 ### Guild trial events held during loading stay with their character
 
 - Switching characters while a trace manifest loads now finishes restoring and flushing the departing capture under its original owner. Queued opening events preserve both characters' stored traces instead of replacing either manifest with a fresh recording.
