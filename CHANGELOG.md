@@ -6,6 +6,14 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Choose which recorded builds the labyrinth replay compares
+
+- The replay always simulated the three best-sampled cohorts and quietly deferred the rest, so a fourth build was unreachable — which bit hardest for whatever you had just started using, since the newest build has the fewest fights and sorted last. A Cohorts button on the Accuracy tab now lets you pick which of the eligible builds run, still three at a time because each one is its own simulation. Leaving it alone changes nothing: the same three run as before. A choice is remembered per character, and is dropped for the default if the pool regroups underneath it rather than replaying something you did not pick.
+
+### A saved labyrinth recording is a tenth the size to export
+
+- Every fight in an exported recording carried its own full copy of the build it was fought in, so a thousand-fight export ran to about 11.6 MB of mostly repeated text. Builds shared between fights are now written once and referenced, bringing the same export to about 0.8 MB. The file says which scheme it uses, and a reader that does not know it stops rather than quietly reporting the fights as having no build.
+
 ### The offline summary's economics follow the snapshot the modal is showing
 
 - When the game reused an already-open Welcome Back modal for a reconnect, its duration, items and experience switched to the new stretch while the Offline Economics block above them kept the previous session's figures — a three-second gap headlined with half a billion in revenue, contradicting Toolasha's own net line directly beneath it. The block now adopts the new snapshot when the modal re-renders under it, and removes itself rather than sit there contradicting the numbers beside it when there is no snapshot to adopt.
