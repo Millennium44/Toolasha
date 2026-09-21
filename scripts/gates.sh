@@ -42,4 +42,7 @@ for file in dist/Toolasha.user.js dist/libraries/*.js; do
     echo "ok   $file ($size bytes)"
 done
 
+step '@require URLs (classic scripts, not ES modules)'
+node scripts/check-require-urls.mjs
+
 printf '\nAll gates passed.\n'
