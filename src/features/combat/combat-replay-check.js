@@ -1444,6 +1444,27 @@ export function sampleSizeFor(observed, targetPct = NOISE_QUIET_PCT, floorPct = 
     const marginPct = Math.hypot(((Z95 * Math.sqrt(variance / values.length)) / mean) * 100, floorPct);
     const band = marginPct >= 10 ? marginPct.toFixed(0) : marginPct.toFixed(1);
     const shared = { fights: values.length, marginPct, targetPct };
+    // The cohort the verdict bar is counted over, which is the whole sample and
+    // not only the fights that produced a finite rate — the same number
+    // `compareRun` gates on.
+    const cohort = Number(observed?.fights) || values.length;
+
+    // Under the bar the band is not the binding constraint, whatever it reads:
+    // the check states no verdict at all below MIN_VERDICT_FIGHTS, so "already
+    // under ±5%" would answer a question the panel is not going to ask yet.
+    if (cohort < MIN_VERDICT_FIGHTS && marginPct <= targetPct) {
+        const needed = MIN_VERDICT_FIGHTS - cohort;
+        return {
+            ...shared,
+            requiredFights: MIN_VERDICT_FIGHTS,
+            needed,
+            reachable: true,
+            quiet: false,
+            text:
+                `±${band}% at ${values.length} fights — already under ±${targetPct}%, but ${needed} more ` +
+                'before the check states a verdict',
+        };
+    }
 
     if (marginPct <= targetPct) {
         return {
@@ -1471,8 +1492,10 @@ export function sampleSizeFor(observed, targetPct = NOISE_QUIET_PCT, floorPct = 
         };
     }
 
-    const requiredFights = Math.ceil(((Z95 * variation * 100) / Math.sqrt(room)) ** 2);
-    const needed = Math.max(0, requiredFights - values.length);
+    // Never fewer than the verdict bar: a projection that stops short of it
+    // would name a sample size at which the check still says nothing.
+    const requiredFights = Math.max(MIN_VERDICT_FIGHTS, Math.ceil(((Z95 * variation * 100) / Math.sqrt(room)) ** 2));
+    const needed = Math.max(0, requiredFights - cohort);
     return {
         ...shared,
         requiredFights,
@@ -1517,16 +1540,26 @@ export function noiseSummary(observed) {
     }
 
     const band = marginPct >= 10 ? marginPct.toFixed(0) : marginPct.toFixed(1);
-    const quiet = marginPct < NOISE_QUIET_PCT;
-    return {
-        fights,
-        marginPct,
-        quiet,
-        text: quiet
-            ? `${fights} fight${plural} — ±${band}% noise on this sample; large enough to argue with`
-            : `${fights} fight${plural} — ±${band}% noise on this sample; ` +
-              'differences inside that band are not findings',
-    };
+    // The fight count decides this as much as the band does. Three fights that
+    // happened to agree measure a ±2% band — the floor — and calling that
+    // "large enough to argue with", in green, directly above a note saying the
+    // rates below state no verdict is the panel contradicting itself. See
+    // MIN_VERDICT_FIGHTS.
+    const exploratory = fights < MIN_VERDICT_FIGHTS;
+    const quiet = marginPct < NOISE_QUIET_PCT && !exploratory;
+    let text;
+    if (quiet) {
+        text = `${fights} fight${plural} — ±${band}% noise on this sample; large enough to argue with`;
+    } else if (exploratory) {
+        text =
+            `${fights} fight${plural} — ±${band}% noise on this sample, but fewer than ` +
+            `${MIN_VERDICT_FIGHTS} clean fights, so it is exploratory and states no verdict`;
+    } else {
+        text =
+            `${fights} fight${plural} — ±${band}% noise on this sample; ` +
+            'differences inside that band are not findings';
+    }
+    return { fights, marginPct, quiet, text };
 }
 
 /**
@@ -1852,6 +1885,25 @@ export function historyEntry(comparison, at = Date.now()) {
         // cannot say which rows those are.
         v: scriptVersion(),
     };
+}
+
+/**
+ * Whether a stored check was run below the verdict bar.
+ *
+ * Read from the fight count when the flag is absent rather than trusting the
+ * flag alone. Rows written before the bar existed carry a real `beyond-noise`
+ * verdict on three or four fights and no `exploratory` field at all, and they
+ * survive in the synced history — and in the table — for {@link
+ * HISTORY_MAX_AGE_MS}. Taking the flag at face value would draw those rows red
+ * and unlabelled beside the very rows the bar was added to distinguish them
+ * from.
+ *
+ * @param {Object} entry - One row from `pruneHistory`
+ * @returns {boolean}
+ */
+export function isExploratoryEntry(entry) {
+    if (typeof entry?.exploratory === 'boolean') return entry.exploratory;
+    return Number.isFinite(entry?.fights) && entry.fights < MIN_VERDICT_FIGHTS;
 }
 
 /**
@@ -2375,6 +2427,15 @@ class ReplayCheck {
         // refusing to measure a split one would leave a percent-band target
         // that no amount of further recording could ever reach.
         const observed = aggregateObservations(live ? [...this.observations, live] : this.observations);
+        // The same upper bar the comparison states its verdict at. `noiseMargin`
+        // needs only MIN_SAMPLE_FIGHTS, and three fights that happened to agree
+        // measure a ±2% band — so a ±5% target was met at three fights, the
+        // recording stopped, and the check it was recorded for then refused to
+        // state a verdict on the sample it had just been told was finished.
+        // Null is already how this provider says "not enough fights to say"
+        // (see `measureNoise` in combat-recorder.js), and the button reads it
+        // as "measuring".
+        if ((Number(observed?.fights) || 0) < MIN_VERDICT_FIGHTS) return null;
         return noiseMargin(observed?.samples?.dps);
     }
 
@@ -2865,6 +2926,22 @@ function drawSuggestion(card, observed) {
     const suggestion = sampleSizeFor(observed);
     if (!suggestion || suggestion.quiet) return;
 
+    // Already inside the band and held back only by the fight count: the number
+    // is exact rather than projected, and the reason for it is the bar.
+    if (suggestion.marginPct <= suggestion.targetPct) {
+        card.appendChild(
+            panelLine(
+                'To a verdict',
+                `${suggestion.needed} more fight${suggestion.needed === 1 ? '' : 's'}`,
+                ROW_COLORS.dim,
+                `The band is already under ±${NOISE_QUIET_PCT}%, but the comparison states no verdict below ` +
+                    `${MIN_VERDICT_FIGHTS} clean fights — a band measured off three or four of them is the ` +
+                    "simulator's own allowance and not a measurement of this sample."
+            )
+        );
+        return;
+    }
+
     card.appendChild(
         panelLine(
             'To ±' + NOISE_QUIET_PCT + '%',
@@ -3340,12 +3417,16 @@ function drawHistory(body, history) {
         const cohort = (entry.v ?? null) === currentV ? '' : ` · ${entry.v ? `v${entry.v}` : 'older script'}`;
         // An exploratory row sits in the same table as thirty-fight ones and its
         // deviation reads the same; without this it is a verdict by adjacency.
-        const exploratory = entry.exploratory ? ' · exploratory' : '';
+        // Its color goes with it: a row written before the bar existed carries
+        // `beyond-noise` on four fights, and a red row labelled "exploratory"
+        // is still a red row.
+        const exploring = isExploratoryEntry(entry);
+        const exploratory = exploring ? ' · exploratory' : '';
         card.appendChild(
             panelLine(
                 formatRelativeTime(Date.now() - entry.at) + ' ago',
                 `${magnitude}${band} on ${entry.fights} fights — ${zoneName(entry.zoneHrid)}${cohort}${exploratory}`,
-                verdictColor(entry.verdict),
+                verdictColor(exploring ? 'insufficient' : entry.verdict),
                 'Damage per second against the prediction, as it stood when the check was run. Rows in the same ' +
                     'zone drifting one way over weeks is the one finding a single check cannot make; rows from ' +
                     'different zones are not a trend.'

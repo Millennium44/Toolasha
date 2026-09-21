@@ -1069,6 +1069,22 @@ describe('the loadout the fight was actually fought in', () => {
         expect(Number.isFinite(replayCheck.liveMarginPct(null))).toBe(true);
     });
 
+    test('a percent-band target cannot be met before the check would state a verdict', () => {
+        // `noiseMargin` needs only MIN_SAMPLE_FIGHTS, and three fights that
+        // agreed measure the simulator's own ±2% floor — so a ±5% target was
+        // met at three fights, the recorder stopped, and the check the
+        // recording was made for then refused to judge the sample it had just
+        // been told was complete. Null is the provider's "not yet", which the
+        // button reads as "measuring".
+        replayCheck.observations = [evenObservation({ fights: MIN_VERDICT_FIGHTS - 1 })];
+        expect(replayCheck.liveMarginPct(null)).toBe(null);
+
+        replayCheck.observations = [evenObservation({ fights: MIN_VERDICT_FIGHTS })];
+        const measured = replayCheck.liveMarginPct(null);
+        expect(Number.isFinite(measured)).toBe(true);
+        expect(measured).toBeLessThan(NOISE_QUIET_PCT);
+    });
+
     test('a level-up mid-recording still leaves a usable check over the bigger cohort', async () => {
         // The regression this exists for: combat XP raises a level during the
         // recording, the recorder rotates the segment, and the two halves carry
@@ -1747,6 +1763,26 @@ describe('how much of this sample is noise', () => {
     test('nothing observed is nothing claimed', () => {
         expect(noiseSummary(null)).toMatchObject({ fights: 0, marginPct: null, quiet: false });
     });
+
+    test('a tight sample below the verdict bar is not quiet, however narrow its band', () => {
+        // The band is real — identical fights leave only the simulator's own
+        // ±2% — but the comparison states no verdict at four fights, so calling
+        // the sample large enough to argue with is the panel arguing with
+        // itself.
+        const noise = noiseSummary(aggregateObservations([evenObservation({ fights: MIN_VERDICT_FIGHTS - 1 })]));
+
+        expect(noise.marginPct).toBeLessThan(NOISE_QUIET_PCT);
+        expect(noise.quiet).toBe(false);
+        expect(noise.text).not.toContain('large enough to argue with');
+        expect(noise.text).toContain(`fewer than ${MIN_VERDICT_FIGHTS} clean fights`);
+    });
+
+    test('and goes quiet the moment the bar is cleared', () => {
+        const noise = noiseSummary(aggregateObservations([evenObservation({ fights: MIN_VERDICT_FIGHTS })]));
+
+        expect(noise.quiet).toBe(true);
+        expect(noise.text).toContain('large enough to argue with');
+    });
 });
 
 describe('drawing a deviation the sample cannot see', () => {
@@ -1849,6 +1885,20 @@ describe('drawing a deviation the sample cannot see', () => {
         expect(line.title).not.toContain('can explain by chance');
         expect(line.title).toContain(`Fewer than ${MIN_VERDICT_FIGHTS} clean fights`);
         expect(replayCheckPanel.panel.textContent).toContain('Exploratory only');
+    });
+
+    test('the sample line does not call an exploratory cohort large enough to argue with', () => {
+        // Three fights that agreed measure the simulator's own ±2% floor and
+        // nothing else. Drawn green and captioned "large enough to argue with",
+        // it contradicted the exploratory note a few pixels below it.
+        draw({ fights: MIN_VERDICT_FIGHTS - 1 });
+
+        expect(row('Sample').color).toBe(ROW_COLORS.dim);
+        expect(row('Sample').text).not.toContain('large enough to argue with');
+        expect(row('Sample').text).toContain(`fewer than ${MIN_VERDICT_FIGHTS} clean fights`);
+        // And the way out is a fight count, not a narrower band
+        expect(row('To a verdict').text).toContain('1 more fight');
+        expect(replayCheckPanel.panel.textContent).not.toContain(`already under ±${NOISE_QUIET_PCT}%`);
     });
 
     test('at the upper bar the same gap is drawn as a finding again', () => {
@@ -2575,6 +2625,19 @@ describe('saying how many more fights would settle it', () => {
         expect(suggestion.text).toContain(`already under ±${NOISE_QUIET_PCT}%`);
     });
 
+    test('a sample under the threshold but under the verdict bar is told to keep going', () => {
+        // "Already under ±5%" at three fights answered a question the panel was
+        // not going to ask: the comparison states no verdict until five, so the
+        // binding constraint is the fight count and the answer has to say so.
+        const suggestion = sampleSizeFor(aggregateObservations([evenObservation({ fights: MIN_VERDICT_FIGHTS - 2 })]));
+
+        expect(suggestion.marginPct).toBeLessThan(NOISE_QUIET_PCT);
+        expect(suggestion.quiet).toBe(false);
+        expect(suggestion.requiredFights).toBe(MIN_VERDICT_FIGHTS);
+        expect(suggestion.needed).toBe(2);
+        expect(suggestion.text).toContain('before the check states a verdict');
+    });
+
     test('a band inside the simulator’s own allowance is refused rather than promised', () => {
         // The floor is added in quadrature and never shrinks, so no sample size
         // reaches a band at or under it
@@ -3218,6 +3281,52 @@ describe('the panel, on everything it now says', () => {
 
         expect(text()).toContain('Past checks');
         expect(text()).toContain('-8.0% ± 2.0% on 30 fights');
+    });
+
+    test('a row stored before the bar existed is still drawn as exploratory', () => {
+        // Rows written by the version before MIN_VERDICT_FIGHTS carry a real
+        // `beyond-noise` verdict on three or four fights and no `exploratory`
+        // field at all, and they live in the synced history for thirty days.
+        // Trusting the absent flag drew them red and unlabelled beside the
+        // thirty-fight rows the bar exists to tell them apart from.
+        replayCheck.observations = [evenObservation({ fights: 6 })];
+        const at = Date.now();
+        replayCheck.history = [
+            {
+                at: at - 200_000,
+                zoneHrid: '/actions/combat/fly',
+                fights: MIN_VERDICT_FIGHTS - 1,
+                deviationPct: -12,
+                marginPct: 2,
+                verdict: 'beyond-noise',
+            },
+            {
+                at: at - 100_000,
+                zoneHrid: '/actions/combat/fly',
+                fights: 30,
+                deviationPct: -8,
+                marginPct: 2,
+                verdict: 'beyond-noise',
+                exploratory: false,
+            },
+        ];
+        replayCheckPanel.show({ remember: false });
+
+        // A drawn line is the label and its figure and nothing else; its
+        // ancestors carry the same text and must not be matched.
+        const historyRow = (fights) =>
+            [...replayCheckPanel.panel.querySelectorAll('div')].find(
+                (element) =>
+                    element.childElementCount === 2 && element.lastElementChild.textContent.includes(`on ${fights} `)
+            );
+
+        const exploratoryRow = historyRow(MIN_VERDICT_FIGHTS - 1);
+        expect(exploratoryRow.textContent).toContain('exploratory');
+        expect(exploratoryRow.lastChild.style.color).toBe(ROW_COLORS.dim);
+
+        const verdictRow = historyRow(30);
+        expect(verdictRow.textContent).not.toContain('exploratory');
+        expect(verdictRow.lastChild.style.color).toBe(ROW_COLORS.bad);
     });
 
     test('one check is not a trend, so no table', () => {
