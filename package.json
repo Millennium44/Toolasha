@@ -35,7 +35,7 @@
     "author": "bot7420",
     "license": "CC-BY-NC-SA-4.0",
     "devDependencies": {
-        "@commitlint/cli": "^19.8.0",
+        "@commitlint/cli": "^21.2.2",
         "@commitlint/config-conventional": "^19.8.0",
         "@rollup/plugin-commonjs": "^29.0.3",
         "@rollup/plugin-node-resolve": "^16.0.3",
