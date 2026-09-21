@@ -57,8 +57,10 @@ vi.mock('../../utils/adoption-consent.js', () => ({
 import recorder, {
     attemptIdentity,
     mergeAttempts,
+    replayBuildIdFor,
     MAX_ATTEMPTS,
     MAX_REPLAY_BUILDS,
+    REPLAY_BUILD_FORMAT,
 } from './labyrinth-fight-recorder.js';
 import { FINGERPRINT_VERSION } from './labyrinth-fingerprint.js';
 
@@ -572,6 +574,128 @@ describe('saved room builds are interned, not copied onto every fight', () => {
         expect(dropped.every((entry) => entry.replayInputs === null && entry.replayBuildId === null)).toBe(true);
         expect(dropped.every((entry) => entry.fingerprint === 'gearA' && entry.monsterDamage === 700)).toBe(true);
     });
+
+    test('an id is the build’s own content, so two internings of it agree', () => {
+        const a = mergeAttempts([withBuild('a', 1_000, 10)], []).entries[0].replayBuildId;
+        const b = mergeAttempts([withBuild('b', 2_000, 10)], []).entries[0].replayBuildId;
+        const other = mergeAttempts([withBuild('c', 3_000, 11)], []).entries[0].replayBuildId;
+        expect(a).toBe(b);
+        expect(a).not.toBe(other);
+        expect(replayBuildIdFor('some key')).toBe(replayBuildIdFor('some key'));
+        expect(replayBuildIdFor('some key')).not.toBe(replayBuildIdFor('some other key'));
+    });
+
+    test('two independently interned pools, folded without expansion, never cross-bind', () => {
+        // The mixed-fleet hazard: a client whose `mergeAttempts` does not expand
+        // before unioning pulls one interned pool, then another from a second
+        // device, and stores the two arrays concatenated. With positional ids
+        // both carriers called themselves `b0`, the expansion kept whichever it
+        // saw last, and a fight fought at attack 10 replayed as attack 99.
+        const poolA = mergeAttempts([withBuild('a-1', 1_000, 10), withBuild('a-2', 2_000, 10)], []).entries;
+        const poolB = mergeAttempts([withBuild('b-1', 3_000, 99), withBuild('b-2', 4_000, 99)], []).entries;
+        const asAnOldClientLeftIt = [...poolA, ...poolB];
+
+        const entries = mergeAttempts(asAnOldClientLeftIt, []).entries;
+        const byId = new Map(entries.filter((e) => e.replayInputs).map((e) => [e.replayBuildId, e.replayInputs]));
+        const resolved = entries.map((entry) => [
+            entry.recordId,
+            byId.get(entry.replayBuildId)?.playerDTO.attackLevel ?? null,
+        ]);
+        expect(resolved).toEqual([
+            ['a-1', 10],
+            ['a-2', 10],
+            ['b-1', 99],
+            ['b-2', 99],
+        ]);
+    });
+
+    test('an id two different builds claim is refused, not guessed', () => {
+        // What a pre-fix pool can already hold on disk. Losing the build costs
+        // a fight its recorded inputs; guessing costs it a confident wrong
+        // verdict, so the fight falls back rather than binding to build 99.
+        const entries = mergeAttempts(
+            [
+                { ...withBuild('a-1', 1_000, 10), replayBuildId: 'b0' },
+                { ...attempt(), recordId: 'a-2', resolvedAt: 1_500, replayBuildId: 'b0', replayInputs: null },
+                { ...withBuild('b-1', 3_000, 99), replayBuildId: 'b0' },
+            ],
+            []
+        ).entries;
+        const orphan = entries.find((entry) => entry.recordId === 'a-2');
+        expect(orphan.replayInputs).toBeNull();
+        expect(orphan.replayBuildId).toBeNull();
+        expect(orphan.monsterDamage).toBe(700);
+        // The two real builds are both still there, each on its own id
+        const ids = new Set(entries.filter((entry) => entry.replayInputs).map((entry) => entry.replayBuildId));
+        expect(ids.size).toBe(2);
+    });
+});
+
+describe('the stored pool says which interning scheme it was written under', () => {
+    const build = (attackLevel) => ({
+        version: 1,
+        playerDTO: { hrid: 'player1', attackLevel, abilities: [] },
+        crates: [],
+        communityBuffs: {},
+        labyrinthCombatBuffs: [],
+        fullAbilities: true,
+    });
+
+    test('what is written out carries the marker', async () => {
+        recorder.noteAttempt(attempt({ replayInputs: build(10) }));
+        await settle();
+        expect(raw().replayBuildFormat).toBe(REPLAY_BUILD_FORMAT);
+        expect(mergeAttempts([], []).replayBuildFormat).toBe(REPLAY_BUILD_FORMAT);
+    });
+
+    test('a legacy pool with no marker still loads, inputs or not', async () => {
+        // The shape on real disks: a bare array of verbatim records, most of
+        // them carrying a fingerprint and no replayInputs at all
+        seedStored([
+            { ...attempt(), recordId: 'legacy-bare', resolvedAt: 1_000 },
+            { ...attempt(), recordId: 'legacy-with-build', resolvedAt: 2_000, replayInputs: build(10) },
+        ]);
+        recorder.forget();
+        await recorder.load();
+
+        const read = recorder.recordedAttempts();
+        expect(read.map((entry) => entry.recordId)).toEqual(['legacy-bare', 'legacy-with-build']);
+        expect(read[0].fingerprint).toBe('gearA');
+        expect(read[0].replayInputs ?? null).toBeNull();
+        expect(read[1].replayInputs.playerDTO.attackLevel).toBe(10);
+    });
+
+    test('a pool written under a newer scheme is left unresolved rather than guessed at', async () => {
+        const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+        try {
+            seedStored({
+                clearedAt: 0,
+                replayBuildFormat: REPLAY_BUILD_FORMAT + 1,
+                entries: [
+                    {
+                        ...attempt(),
+                        recordId: 'carrier',
+                        resolvedAt: 1_000,
+                        replayBuildId: 'x',
+                        replayInputs: build(7),
+                    },
+                    { ...attempt(), recordId: 'reference', resolvedAt: 2_000, replayBuildId: 'x', replayInputs: null },
+                ],
+            });
+            recorder.forget();
+            await recorder.load();
+
+            const read = recorder.recordedAttempts();
+            expect(read.map((entry) => entry.recordId)).toEqual(['carrier', 'reference']);
+            // The referencing fight keeps every measurement it had; what it
+            // does not get is a build this build cannot prove is its own
+            expect(read.find((entry) => entry.recordId === 'reference').replayInputs ?? null).toBeNull();
+            expect(read.find((entry) => entry.recordId === 'reference').monsterDamage).toBe(700);
+            expect(warn).toHaveBeenCalled();
+        } finally {
+            warn.mockRestore();
+        }
+    });
 });
 
 describe('the ring cap drops the oldest fight, not the one that arrived last', () => {
@@ -619,7 +743,10 @@ describe('the ring cap drops the oldest fight, not the one that arrived last', (
 describe('the Accuracy tab’s Reset survives a sync pull', () => {
     /** A stored attempt, identified and dated */
     const dated = (recordId, resolvedAt) => ({ ...attempt(), recordId, resolvedAt });
-    const pool = (entries, clearedAt = 0) => ({ clearedAt, entries });
+    // The stored shape gained `replayBuildFormat` when the pool started saying
+    // which interning scheme it was written under; these tests are about the
+    // clear epoch and compare whole records, so the helper carries it too
+    const pool = (entries, clearedAt = 0) => ({ clearedAt, entries, replayBuildFormat: REPLAY_BUILD_FORMAT });
 
     test('the emptied pool wins the round trip a fuller peer would otherwise win', () => {
         // A clears and pushes; B pulls. The union has no way to say a fight was

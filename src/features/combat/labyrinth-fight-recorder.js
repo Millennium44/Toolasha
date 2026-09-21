@@ -34,18 +34,18 @@
  *
  * ## Bounded
  *
- * A thousand fights, oldest dropped, at about 737 bytes a record: ~720 KB per
- * character. Saved replay inputs are referenced, not copied — forty distinct
- * builds at ~10.4 KB each, about 417 KB — so the whole pool is bounded at
- * roughly 1.17 MB however many builds are cycled through. See MAX_ATTEMPTS and
- * MAX_REPLAY_BUILDS for the arithmetic.
+ * A thousand fights, oldest dropped, at a measured 837 bytes a record: ~798 KB
+ * per character. Saved replay inputs are referenced, not copied — forty
+ * distinct builds at ~10.4 KB each, about 406 KB — so the whole pool is bounded
+ * at roughly 1.20 MB however many builds are cycled through. See MAX_ATTEMPTS
+ * and MAX_REPLAY_BUILDS for the arithmetic.
  * The number is doubled transiently by
  * `mergeAttempts`, which unions both devices' pools before slicing, so a
  * cross-device sync peaks at up to twice the cap in memory; that is the figure
- * to check against before raising it again. The upload is not the constraint:
- * the gist payload is gzipped and split into 900 KB chunks under a 9 MB
- * ceiling, and a pool of near-identical records is about the most compressible
- * text there is.
+ * to check against before raising it again. The constraint this is sized
+ * against is local IndexedDB, not the upload: the gist payload is gzipped
+ * before its size is checked, and a pool of near-identical records is about the
+ * most compressible text there is.
  *
  * The cap is age-ordered and version-blind, which is what keeps a migration
  * from starving the new cohort: a pre-migration attempt is by construction
@@ -73,8 +73,9 @@ const KEY = 'labyrinthFightRecorder';
 /**
  * Fights kept before the oldest fall off — many runs of history, still small.
  *
- * 1000 × ~737 bytes is about 720 KB per character for the fights themselves,
- * which is the figure this cap was chosen against. `mergeAttempts` unions both
+ * 1000 × ~837 bytes is about 798 KB per character for the fights themselves
+ * (798 bytes of measurements and 39 of interned build id), which is the figure
+ * this cap was chosen against. `mergeAttempts` unions both
  * devices' pools before slicing to the cap, so a cross-device sync holds up to
  * twice this many records at once; raise it only against that figure, not
  * against the steady-state one.
@@ -93,8 +94,17 @@ export const MAX_ATTEMPTS = 1000;
  * buffs, seventeen levels — plus crates, community buffs and the labyrinth
  * buffs: about **10.4 KB** of JSON, measured against a fully-kitted character.
  * Stored on every fight that was opened with a caught start, that is 1000 ×
- * 10.4 KB ≈ **10.9 MB** per character, doubled to ~21.8 MB at the sync union's
- * peak — past the sync's own 9 MB ceiling, against a pool that was 720 KB.
+ * 10.4 KB ≈ **10.2 MB** of builds on top of ~0.76 MB of fights: about
+ * **10.9 MB** per character, against a pool that was ~0.76 MB before.
+ *
+ * What that cost is, and is not: it is **local IndexedDB**, fifteen times the
+ * record for data almost all of which is the same build written again. It is
+ * not an upload problem — the sync payload is gzipped before the MAX_GIST_BYTES
+ * check (`sync-manager.js` compresses; `gist-client.js` sums the *compressed*
+ * chunks), and near-identical DTOs are about the most compressible text there
+ * is: a thousand copies of a stand-in 11 KB build gzip from 10.7 MB to 72 KB,
+ * 152×. The uncompressed peak was never what the 9 MB ceiling measured, so
+ * citing that ceiling here was wrong; the arithmetic below is about disk.
  *
  * Consecutive fights within a run share one build exactly, so the inputs are
  * interned: one copy per distinct build, each fight carrying a short
@@ -104,11 +114,11 @@ export const MAX_ATTEMPTS = 1000;
  * and simply reverts to the legacy path — replayable when its `fingerprint`
  * matches the current build. No fight history is ever lost to this cap.
  *
- * 40 × 10.4 KB ≈ **417 KB**, plus ~20 bytes of id on each of 1000 records, so
- * the pool lands at about **1.17 MB** per character and cannot exceed it no
- * matter how many builds are cycled through. The sync union's peak is twice
- * both caps, ~2.3 MB, comfortably inside the 9 MB ceiling — and the payload is
- * gzipped, where forty near-identical builds compress to very little.
+ * 40 × 10.4 KB ≈ **406 KB** of builds, plus 1000 records at 837 bytes each
+ * (798 bare, 39 for the id — both measured by stringifying a full record with
+ * every optional field present) ≈ **798 KB**: the pool lands at about
+ * **1.20 MB** per character and cannot exceed it however many builds are cycled
+ * through. The sync union holds twice both caps transiently, ~2.4 MB in memory.
  *
  * That is why MAX_ATTEMPTS stays at 1000: the fight history is the expensive
  * thing to rebuild (it accumulates passively over many runs and cannot be
@@ -199,6 +209,39 @@ function buildKeyOf(inputs) {
 }
 
 /**
+ * The id a build interns under: derived from its own content, never its position.
+ *
+ * Positional ids (`b0`, `b1`, …) are only meaningful inside the one array that
+ * minted them, and the pool is not one array — it is folded with a peer's copy,
+ * and a client that folds without expanding first (every build before this one
+ * did) leaves two different builds both calling themselves `b0`. The expansion
+ * then binds fights to whichever carrier it saw last, and a fight fought at
+ * attack 10 replays as attack 99 with nothing to show for it. A content-derived
+ * id removes that whole class: two internings of the same build agree, two
+ * internings of different builds do not, and no fold can make them collide.
+ *
+ * The input is the FULL canonical key — never the 8-hex display hash, which is
+ * a label and short enough to collide. Two independent 32-bit rolls plus the
+ * key's own length make a ~62-bit id over inputs that are ~10 KB of JSON, and
+ * {@link expandReplayBuilds} still refuses an id claimed by two different keys,
+ * so even a collision loses a build rather than mis-attributing a fight.
+ *
+ * @param {string} key - A full canonical build key from `replayBuildKey`
+ * @returns {string} A stable id, about 20 bytes
+ */
+export function replayBuildIdFor(key) {
+    const text = String(key);
+    let h1 = 5381;
+    let h2 = 0x811c9dc5;
+    for (let i = 0; i < text.length; i++) {
+        const c = text.charCodeAt(i);
+        h1 = (Math.imul(h1, 33) ^ c) >>> 0;
+        h2 = Math.imul(h2 ^ c, 0x01000193) >>> 0;
+    }
+    return `b${h1.toString(36)}-${h2.toString(36)}-${text.length.toString(36)}`;
+}
+
+/**
  * Give every record back the saved build it references.
  *
  * The stored form keeps one copy of each build, on the first record that uses
@@ -208,14 +251,40 @@ function buildKeyOf(inputs) {
  * never had them) is left as it is: it keeps its measurements and falls back to
  * the fingerprint path in the replay.
  *
+ * Two carriers claiming one id with genuinely different builds cannot be
+ * resolved, so that id is refused rather than guessed: every record referencing
+ * it keeps its measurements and falls back to the fingerprint path. Losing a
+ * build is recoverable; binding a fight to the wrong one produces a confident
+ * wrong deviation and nothing says so. Content-derived ids make the case
+ * unreachable between current clients; it survives here for pools an older,
+ * non-expanding client folded before this fix shipped.
+ *
  * @param {Array<Object>} entries - Records in the stored, interned form
  * @returns {Array<Object>} The same records with `replayInputs` filled in
  */
 function expandReplayBuilds(entries) {
     const list = Array.isArray(entries) ? entries : [];
     const byId = new Map();
+    const conflicted = new Set();
     for (const entry of list) {
-        if (entry?.replayBuildId && entry.replayInputs) byId.set(String(entry.replayBuildId), entry.replayInputs);
+        if (!entry?.replayBuildId || !entry.replayInputs) continue;
+        const id = String(entry.replayBuildId);
+        const held = byId.get(id);
+        if (held === undefined) {
+            byId.set(id, entry.replayInputs);
+            continue;
+        }
+        // Same object, or the same build stored twice, is not a conflict
+        if (held === entry.replayInputs) continue;
+        if (buildKeyOf(held) === buildKeyOf(entry.replayInputs)) continue;
+        conflicted.add(id);
+    }
+    if (conflicted.size) {
+        console.warn(
+            `[LabyrinthFightRecorder] ${conflicted.size} saved build id(s) are claimed by different builds; ` +
+                'the fights referencing them keep their measurements and fall back to the current-build path.'
+        );
+        for (const id of conflicted) byId.delete(id);
     }
     if (!byId.size) return list;
     return list.map((entry) => {
@@ -228,11 +297,11 @@ function expandReplayBuilds(entries) {
 /**
  * Store each distinct build once, and cap how many are kept.
  *
- * Ids are assigned within the list being interned and mean nothing outside it,
- * which is why {@link expandReplayBuilds} always runs before a fold: two devices
- * would otherwise each be numbering their own builds from zero. Grouping is by
+ * Ids come from the build's own content — see {@link replayBuildIdFor} — so
+ * they mean the same thing in every pool that ever holds them. Grouping is by
  * the full canonical key, never a hash, so two builds can never be collapsed
- * into one.
+ * into one, and the id is derived from that same full key rather than from a
+ * position in this list.
  *
  * The carrier — the record that keeps the actual inputs — is chosen *after* the
  * ring cap has been applied, so eviction cannot leave a record pointing at a
@@ -270,12 +339,75 @@ function internReplayBuilds(entries) {
             if (!entry || (entry.replayInputs == null && entry.replayBuildId == null)) return entry;
             return { ...entry, replayInputs: null, replayBuildId: null };
         }
-        if (!ids.has(key)) ids.set(key, `b${ids.size}`);
+        if (!ids.has(key)) ids.set(key, replayBuildIdFor(key));
         const id = ids.get(key);
         if (carried.has(id)) return { ...entry, replayBuildId: id, replayInputs: null };
         carried.add(id);
         return { ...entry, replayBuildId: id };
     });
+}
+
+/**
+ * The interning scheme the stored pool is written under.
+ *
+ * A record without this marker is the legacy **verbatim** form: every fight
+ * carries its own `replayInputs` and nothing is shared, which is how the pool
+ * was stored for its whole life before interning and is what the real user data
+ * on disk looks like (a test character holds 183 such records, most with a
+ * `fingerprint` and no `replayInputs` at all). Those read exactly as they did.
+ *
+ * 1 is the interned form: one copy of each build, carried on one record, with
+ * every other fight of that build referencing it by a content-derived id.
+ *
+ * The marker exists so a reader can *refuse* a pool it cannot interpret. A pool
+ * written under a scheme this build does not know is left unexpanded rather
+ * than expanded by guesswork — the fights keep every measurement they have and
+ * fall back to the fingerprint path, which is the same cost as a build falling
+ * off the cap, and no fight is bound to a build that is not its own.
+ */
+export const REPLAY_BUILD_FORMAT = 1;
+
+/**
+ * The interning scheme a stored value was written under.
+ * @param {*} value - A stored record, or the bare array it used to be
+ * @returns {number} 0 for the legacy verbatim form
+ */
+function replayBuildFormatOf(value) {
+    if (Array.isArray(value)) return 0;
+    return Number(value?.replayBuildFormat) || 0;
+}
+
+/**
+ * The stored shape this module writes: a cleared record plus the interning marker.
+ * @param {Array<Object>} entries - Records in the interned form
+ * @param {number} [clearedAt] - The clear epoch to carry
+ * @returns {{clearedAt: number, entries: Array<Object>, replayBuildFormat: number}}
+ */
+function storedRecord(entries, clearedAt = 0) {
+    return { ...clearedRecord(entries, clearedAt), replayBuildFormat: REPLAY_BUILD_FORMAT };
+}
+
+/**
+ * Read a stored pool into the expanded, in-memory form its marker allows.
+ *
+ * Both the legacy verbatim form and format 1 expand the same way: expansion is
+ * a no-op on records that carry no `replayBuildId`, so the legacy pool passes
+ * through untouched. A newer format is not expanded at all.
+ *
+ * @param {*} value - A stored record, or the bare array it used to be
+ * @returns {{clearedAt: number, entries: Array<Object>}} Ready to fold
+ */
+function readStored(value) {
+    const entries = entriesOf(value);
+    const format = replayBuildFormatOf(value);
+    if (format > REPLAY_BUILD_FORMAT) {
+        console.warn(
+            `[LabyrinthFightRecorder] A stored fight pool uses build format ${format}, newer than ${REPLAY_BUILD_FORMAT}; ` +
+                'its saved builds are left unresolved rather than guessed at.'
+        );
+        return clearedRecord(entries, clearedAtOf(value));
+    }
+    return clearedRecord(expandReplayBuilds(entries), clearedAtOf(value));
 }
 
 /**
@@ -289,9 +421,12 @@ function internReplayBuilds(entries) {
  * for a week contributes fights that are older than everything stored here but
  * arrive on the new side, so the untimed cap kept them and evicted genuinely
  * newer fights instead.
+ *
+ * Both sides arrive already expanded — {@link readStored} does that in
+ * `mergeAttempts`, which is the only place that knows the marker saying whether
+ * expansion is even interpretable. Expanding again here would undo a refusal.
  */
-const unionAttempts = (base, fresh) =>
-    mergeById(attemptIdentity, oldestFirst)(expandReplayBuilds(base), expandReplayBuilds(fresh)).slice(-MAX_ATTEMPTS);
+const unionAttempts = (base, fresh) => mergeById(attemptIdentity, oldestFirst)(base, fresh).slice(-MAX_ATTEMPTS);
 
 /**
  * The fold as stored and synced: the union above, with the clear's epoch applied.
@@ -316,14 +451,14 @@ const foldAttempts = mergeClearable(unionAttempts, attemptAge, { label: 'labyrin
  * record resolves within that record, whatever the fold dropped.
  */
 export const mergeAttempts = (base, fresh) => {
-    const folded = foldAttempts(base, fresh);
-    return clearedRecord(internReplayBuilds(entriesOf(folded)), clearedAtOf(folded));
+    const folded = foldAttempts(readStored(base), readStored(fresh));
+    return storedRecord(internReplayBuilds(entriesOf(folded)), clearedAtOf(folded));
 };
 
 const record = createPersistedRecord({
     base: KEY,
     store: STORE,
-    empty: () => clearedRecord(),
+    empty: () => storedRecord([]),
     merge: mergeAttempts,
     label: 'LabyrinthFightRecorder',
 });
@@ -339,7 +474,7 @@ registerSyncMerge({ store: STORE, base: KEY, merge: mergeAttempts, label: 'Labyr
 // Memory keeps the pool EXPANDED: every record holds its saved build, shared
 // by reference so one object serves every fight of that build. The stored form
 // is interned; the two are converted at each boundary below.
-let attempts = expandReplayBuilds(entriesOf(record.get()));
+let attempts = entriesOf(readStored(record.get()));
 let loading = null;
 
 /**
@@ -369,9 +504,9 @@ export async function load() {
     if (loading) return loading;
     loading = (async () => {
         try {
-            record.set(clearedRecord(internReplayBuilds(attempts)));
+            record.set(storedRecord(internReplayBuilds(attempts)));
             await record.load();
-            attempts = expandReplayBuilds(entriesOf(record.get()));
+            attempts = entriesOf(readStored(record.get()));
         } catch (error) {
             console.error('[LabyrinthFightRecorder] Reading the fight pool failed:', error);
         }
@@ -388,7 +523,7 @@ export async function load() {
  */
 export function forget() {
     record.reset();
-    attempts = expandReplayBuilds(entriesOf(record.get()));
+    attempts = entriesOf(readStored(record.get()));
     loading = null;
 }
 
@@ -403,11 +538,11 @@ function persist() {
     // own and the fold takes the newer of the two
     // A save with nothing stored yet writes memory as-is, so the interned form
     // has to be what memory holds by the time save() reads it
-    record.set(clearedRecord(internReplayBuilds(attempts)));
+    record.set(storedRecord(internReplayBuilds(attempts)));
     return record
         .save()
         .then((landed) => {
-            attempts = expandReplayBuilds(entriesOf(record.get()));
+            attempts = entriesOf(readStored(record.get()));
             return landed;
         })
         .catch((error) => {
