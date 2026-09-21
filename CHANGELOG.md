@@ -3532,6 +3532,179 @@ The marketplace layout change gave the price row its own "Max" button and put it
 
 The simulator valued every drop at its gross market price, so profit ignored the sale tax entirely — which is why the rise to 5% never moved it. Every drop-revenue path now nets the tax off each non-coin drop, cowbell bags at their own 18%: the Results summary, the Drops table's Gold columns, and the comparison and upgrade rows. Coin drops stay whole.
 
+## [3.57.0](https://github.com/Millennium44/Toolasha/compare/v3.56.0...v3.57.0) (2026-09-21)
+
+
+### Features
+
+* capture labyrinth room loadout update order ([aa57526](https://github.com/Millennium44/Toolasha/commit/aa575264edc7538f1f2ac06973a3c0ce87dc0e0d))
+* choose which recorded cohorts the lab calibration replay runs ([fe6edd3](https://github.com/Millennium44/Toolasha/commit/fe6edd3657a2c687ac36e7d0957c1323a1d95bb3))
+* combat sim export carries guild shrine levels ([3427584](https://github.com/Millennium44/Toolasha/commit/3427584ab132017c53bb61d388f332916173ed66))
+* combat sim models a task running out mid-run ([0e13121](https://github.com/Millennium44/Toolasha/commit/0e1312181850528e0c6db30a80bbeaae56d256b2))
+* combat sim task damage is a three-way setting, off by default ([fad8774](https://github.com/Millennium44/Toolasha/commit/fad8774fef0022cc1370752f794f3ebee632672e))
+* identify historical replay builds in comparisons ([3f92918](https://github.com/Millennium44/Toolasha/commit/3f929182313a979c2ae906cded423fee581a1fa6))
+* measure in game the real gap between a wave clearing and the next starting ([fcd91a6](https://github.com/Millennium44/Toolasha/commit/fcd91a6772c9cfd651ecc90a1b9f3c34a1570913))
+* measure in game whether a stun outlives the monster that cast it ([9e422c4](https://github.com/Millennium44/Toolasha/commit/9e422c427a9ca4dd3a43219515e7d7aa1b5cce1e))
+* measure in game whether Fury multiplies the other damage and accuracy buffs ([825803d](https://github.com/Millennium44/Toolasha/commit/825803d0235528f3ff9ae9557c1d1897f0c951f0))
+* measure the game's periodic tick intervals off the live battle stream ([51e26a1](https://github.com/Millennium44/Toolasha/commit/51e26a1eb3a149c554b60022c80e38a249c63b18))
+* philosopher's stone table uses the width it has, and opens on Profit/Hr ([45b4ef6](https://github.com/Millennium44/Toolasha/commit/45b4ef692e343295efe876c1a94bf965f2e39179))
+* queued actions panel shows XP per row and a queue total ([86249d9](https://github.com/Millennium44/Toolasha/commit/86249d9aeb94d24916296a225a27a093cf02f14c))
+* remove the Fury Stacking measurement ([49e4657](https://github.com/Millennium44/Toolasha/commit/49e46576a0b3afafe119211ac7e95492eb2e1ac3))
+* show queue snapshot freshness ([dac9b74](https://github.com/Millennium44/Toolasha/commit/dac9b749784a13b12f42ecc744736c330e8aea52))
+* storage records why an operation did not come back, not just that it did not ([9fc705b](https://github.com/Millennium44/Toolasha/commit/9fc705b6995bf0fe0d6dc79cb8d560ac28160875))
+* timestamp personal trade prices ([7ebd548](https://github.com/Millennium44/Toolasha/commit/7ebd548e5718fdfe25a20823aae15641453fbbf1))
+
+
+### Bug Fixes
+
+* adopt the new offline payload when a reconnect re-renders the open modal ([33a0064](https://github.com/Millennium44/Toolasha/commit/33a006423d4f504579df0c957cb2c6036ad0b187))
+* apply Ripple at combat start ([369ccfd](https://github.com/Millennium44/Toolasha/commit/369ccfd93395de6d81505b304e66fe83cbb9d40b))
+* avoid double tax on nested container values ([abe99bf](https://github.com/Millennium44/Toolasha/commit/abe99bff5ff398f2e00d15270ca41251cd1d3a7c))
+* bind a labyrinth replay fight to the build it was actually fought on ([525c2be](https://github.com/Millennium44/Toolasha/commit/525c2beb7b4c806e9eb5d3fd28db60051660eb2c))
+* browser notification throw no longer skips the title fallback ([bac901b](https://github.com/Millennium44/Toolasha/commit/bac901bca668cc674f784b9d29e8157de76ec93a))
+* cached sim consumable rates outlived the engine that produced them ([5c946bb](https://github.com/Millennium44/Toolasha/commit/5c946bbb5c878d6f8fb7d3dc2681e2a76fbc1310))
+* cancel delayed auto-all clicks ([ccd7ca0](https://github.com/Millennium44/Toolasha/commit/ccd7ca0b5930631f6e9e39aa46e43338dd857b28))
+* cancel queued inventory total redraws ([1048c33](https://github.com/Millennium44/Toolasha/commit/1048c33e72f841c759e24cd67385b3c13fa97f04))
+* cancel stale marketplace shortcut work ([262e4ef](https://github.com/Millennium44/Toolasha/commit/262e4efe2a7306f8ec33a3bb7642391a6c3b446e))
+* cap a simulated rare drop's rate at certainty ([745b0f1](https://github.com/Millennium44/Toolasha/commit/745b0f1c9566de8153ffe743ef8061133063ac0f))
+* capture equipped labyrinth builds and current levels ([d86f88e](https://github.com/Millennium44/Toolasha/commit/d86f88ea309a452a0a68079019c931f21f0906b5))
+* carry the interning marker on the labyrinth pool's clear write too ([f3dc15e](https://github.com/Millennium44/Toolasha/commit/f3dc15e6f2b57c018337e9aa71361ac55a7a3d0d))
+* check sim accuracy against the largest recorded build ([45fb1a8](https://github.com/Millennium44/Toolasha/commit/45fb1a857c3fa59c8d4b1a7ee88cfa4f22ada768))
+* clear discarded combat recording identity ([306776c](https://github.com/Millennium44/Toolasha/commit/306776ca49ca258674a8de84ed3965b366a09e5a))
+* clear superseded combat accuracy results before retrying ([c5ce87b](https://github.com/Millennium44/Toolasha/commit/c5ce87b0b798a3b2157fb06d384abb9394b04c14))
+* combat sim applied Fury as its own multiplicative factor ([4404bdc](https://github.com/Millennium44/Toolasha/commit/4404bdc303fffe36d3ff5734e99b054dd865e5ba))
+* combat sim keeps player attack rhythm across a wave transition ([5f53aca](https://github.com/Millennium44/Toolasha/commit/5f53aca062f5c04f343c94048b81db3066d99bc6))
+* combat sim offered the party the page loaded with, not the one you are in ([b489879](https://github.com/Millennium44/Toolasha/commit/b489879e0d2c63715c8113996bafbab121f162a7))
+* combat sim paid task damage per run instead of per monster ([7a28e6f](https://github.com/Millennium44/Toolasha/commit/7a28e6faf04594c28ef178ed84d7fc56e3155e90))
+* combat sim re-arms an auto-attack killing blow before the wave ends ([930e292](https://github.com/Millennium44/Toolasha/commit/930e292de2fe1c1f9d118ce5e1c90f1280e90c02))
+* combat sim rounds a Life Drain heal up, as the game does ([3072be2](https://github.com/Millennium44/Toolasha/commit/3072be23fd9a609e13637b9bf5fce7e624c627ee))
+* combat zone open clicked a zone tile hidden inside an unselected group ([89f000d](https://github.com/Millennium44/Toolasha/commit/89f000d8ace940f8f59cabfa2a1be483b2ec49c3))
+* combat zone open sat out a five-second timeout before switching the page tab ([a3e037c](https://github.com/Millennium44/Toolasha/commit/a3e037c656eae7b66ff8dc1842a08d4b746b78ed))
+* count only rate-bearing fights towards the sample-size projection ([842b652](https://github.com/Millennium44/Toolasha/commit/842b652bf22e6a4f9cac1e1db957b0a8d64931ab))
+* discard abandoned goal planner operations ([c603b42](https://github.com/Millennium44/Toolasha/commit/c603b4206ca0743b2210ac8efbcb7ae4e29a9d48))
+* discard stale market alert refreshes after cleanup ([b8f60af](https://github.com/Millennium44/Toolasha/commit/b8f60afadfbb2b0f29d267aa37083d296e3fcd23))
+* discard superseded combat simulator completions ([05685b2](https://github.com/Millennium44/Toolasha/commit/05685b2c275d6f39aefccc7ac4d3fba8ab6e1614))
+* distinguish unplanned goals from completed goals ([41f9b4f](https://github.com/Millennium44/Toolasha/commit/41f9b4fcf097390aab07280faa463ba22a48e579))
+* dungeon clear revived a player still stunned, blinded or silenced ([9f27e6f](https://github.com/Millennium44/Toolasha/commit/9f27e6f317d2b21f60575d0b743f6d0622abd1cc))
+* dungeon ROI board charges an entry key per reward chest ([0521a22](https://github.com/Millennium44/Toolasha/commit/0521a22721b403b07552b709e6e370645fe3b44d))
+* dungeon timer called a tab switch a computer sleep and timed a solo run from party chat ([bf7ed1b](https://github.com/Millennium44/Toolasha/commit/bf7ed1b84044a3536e548e65aa83ef748d424c46))
+* enforce the combat simulation time cap ([47fa574](https://github.com/Millennium44/Toolasha/commit/47fa574ea42de34fda5c0434e40ade3afa99a69f))
+* enforce the sim-accuracy verdict bar everywhere the panel judges a sample ([a7d63b4](https://github.com/Millennium44/Toolasha/commit/a7d63b401ee5f986e9acf2e570765c69a07c6a95))
+* exclude split battles from recording targets ([bbcf1f6](https://github.com/Millennium44/Toolasha/commit/bbcf1f6b37654e8c3bfdd9fbcb41414e8e0f825a))
+* fail closed when validating sync payloads ([5c053b6](https://github.com/Millennium44/Toolasha/commit/5c053b6c79e490cb4a0c28c3cb758a5c19963cbb))
+* finish guild trace clearing before writing the next trace ([545d70a](https://github.com/Millennium44/Toolasha/commit/545d70a88da7c36f6ec64b052954ccdb1506ad12))
+* freeze combat recording duration when stopped ([8710bee](https://github.com/Millennium44/Toolasha/commit/8710bee1500b9df158f0c95ca2ad000eb352d098))
+* fury stacking check was not finding Fury at all ([2d6bd25](https://github.com/Millennium44/Toolasha/commit/2d6bd25ba1c297a1bf554be8298997d5fb8f83fb))
+* gate the sim accuracy verdict on the fight count, not just the label ([457783a](https://github.com/Millennium44/Toolasha/commit/457783acaa2dd412eba244db44d1902c1353ad08))
+* group replay builds by combat inputs ([146f67b](https://github.com/Millennium44/Toolasha/commit/146f67b85b88cfadaf153f41f89afa692e044a7b))
+* guard combat sim profile load starts ([1ae6ca2](https://github.com/Millennium44/Toolasha/commit/1ae6ca2b3a510dd2475668fa7d5a733217a9cdb0))
+* guard labyrinth profile load starts ([812c50d](https://github.com/Millennium44/Toolasha/commit/812c50d63918a4ccf719812e4679aac2db09778f))
+* ignore inactive task progress in labyrinth replay cohorts ([76cbc56](https://github.com/Millennium44/Toolasha/commit/76cbc56dc0e3ae98543b8b26ba0b3782b9b56b74))
+* invalidate settings loads when character teardown starts ([1638995](https://github.com/Millennium44/Toolasha/commit/16389958893150b9d4365d55218e3a458823dc55))
+* invalidate stale combat simulation caches ([cf5aadf](https://github.com/Millennium44/Toolasha/commit/cf5aadf366a004a7fd2245ab879fa5188d843902))
+* isolate external tabs from the game page ([2f3299f](https://github.com/Millennium44/Toolasha/commit/2f3299fbe72455e52068f166a853424e6ba2ec76))
+* isolate notice logs across character switches ([47abfca](https://github.com/Millennium44/Toolasha/commit/47abfca369e63f5dc003fac32538751e71ac2ff1))
+* keep enhancement calibration within its lifecycle ([8075fa9](https://github.com/Millennium44/Toolasha/commit/8075fa938ac9daf0c70b5e5f44e45a737411c4d3))
+* keep equal-damage combat recordings as separate samples ([17c44a4](https://github.com/Millennium44/Toolasha/commit/17c44a4a47af882df28df8b4431cf4fbbbc7733c))
+* keep loadout markers out of battle measurements ([5db9788](https://github.com/Millennium44/Toolasha/commit/5db978892a6015f54193d9ff8592e5c1c87e7108))
+* keep piercing attacks on distinct targets ([39bd427](https://github.com/Millennium44/Toolasha/commit/39bd427a722c9046f26a94845eee172607eff7b8))
+* key the replay cohort choice by build content, and open the picker mid-fight ([3d542bf](https://github.com/Millennium44/Toolasha/commit/3d542bf7fc5a0017498c287a319b1d80160891fb))
+* labyrinth fight export no longer drops builds past the storage cap ([5146006](https://github.com/Millennium44/Toolasha/commit/5146006e2cf452d5f9af980f9eb2aa1c00e4864b))
+* make combat upgrade analysis cancellable ([c66e52e](https://github.com/Millennium44/Toolasha/commit/c66e52e8be2d73c4941560987ccd7d28b52d14ee))
+* make guild trace exports consistent and explicit about loss ([6cf4930](https://github.com/Millennium44/Toolasha/commit/6cf4930fc88ae09db1195bead1d17c5933a306e4))
+* mark zone rates stale after rotation edits ([b692d82](https://github.com/Millennium44/Toolasha/commit/b692d82293af9dd105e2e7cb425d1a9c2fdc9bff))
+* **market:** retain freshest observed price patches ([852525d](https://github.com/Millennium44/Toolasha/commit/852525dbd82c19f88e3f871b437092cc576aeaf1))
+* name what actually split a mixed-build sim accuracy sample ([d745122](https://github.com/Millennium44/Toolasha/commit/d745122456c79987fe4b2b553ff3f3b3265fe2d8))
+* **offline:** retain the rendered progress snapshot on reconnect ([1b2d70e](https://github.com/Millennium44/Toolasha/commit/1b2d70e10c87ee8f10c681e9f2e3f1c8c96c4b26))
+* preserve combat recording context across build changes ([959c784](https://github.com/Millennium44/Toolasha/commit/959c784a21c7b8533be4500fa6d5fcb742b3ffd9))
+* preserve enhancement completion ownership across saves ([e76a815](https://github.com/Millennium44/Toolasha/commit/e76a815f854216a290bb36766ebfa3091ee96cec))
+* preserve guild trace ownership through pending restores ([d418236](https://github.com/Millennium44/Toolasha/commit/d418236c5b69eb20777c2ef514e930ec24f1ec05))
+* preserve labyrinth capture boundaries and stop on clear ([144196e](https://github.com/Millennium44/Toolasha/commit/144196e27728af02067dae22037d0e1c117c5fa8))
+* preserve restore guards across storage reconnects ([ab0d5ce](https://github.com/Millennium44/Toolasha/commit/ab0d5ce6ac47c6d57b0afec4a342b5331f4f2a73))
+* queued actions stacked a new XP line on every redraw ([b50396e](https://github.com/Millennium44/Toolasha/commit/b50396efc82460c3c8c026809089c96dd86c010b))
+* refresh character activity after reconnect ([c6b23e8](https://github.com/Millennium44/Toolasha/commit/c6b23e8788f6ef118fccdd247257a262d62dd440))
+* reject corrupt combat bridge ownership stamps ([61164c9](https://github.com/Millennium44/Toolasha/commit/61164c90d7c40ff019601ce3b2f5c43a35c9b677))
+* remove character IDs from sanitized consumables ([57101bd](https://github.com/Millennium44/Toolasha/commit/57101bde6671e34831dbdc6d5f3718362da01d22))
+* replay labyrinth fights using recorded room builds ([f4c7c9b](https://github.com/Millennium44/Toolasha/commit/f4c7c9ba18576512ab3aa2664ec20e799397ab6d))
+* require a minimum of fights before a sim accuracy verdict ([3734d9d](https://github.com/Millennium44/Toolasha/commit/3734d9da414df94eba039de926c2ad41f0d44b15))
+* reset guild trace deduplication at battle boundaries ([ff50fa4](https://github.com/Millennium44/Toolasha/commit/ff50fa46db97ae07e76957e7f9eb96d970809005))
+* retain newer official market values ([8dd64d9](https://github.com/Millennium44/Toolasha/commit/8dd64d9b85ade83f23482eb3f7cd84e5f4ea7cfd))
+* revalidate task reroll quotes and limits before acting ([7143a62](https://github.com/Millennium44/Toolasha/commit/7143a6208d1d74a9b87897299fab6197299792a9))
+* scope auto all clicks to the open menu lifetime ([e96f5f3](https://github.com/Millennium44/Toolasha/commit/e96f5f38875652828a8fe4b18ac5c141f6bd2d41))
+* seed party replay counters from battle openings ([2fdebef](https://github.com/Millennium44/Toolasha/commit/2fdebef4cc7c4cbd48531ce19c015ad4972b6025))
+* serialize labyrinth analysis modes ([6eb2958](https://github.com/Millennium44/Toolasha/commit/6eb29589e3e5f3f935184b43d509aadb485a9252))
+* share the dungeon chest maths instead of bundling two copies ([f4002b2](https://github.com/Millennium44/Toolasha/commit/f4002b2e65a538d69ec7b41c1875b01c725d5b4d))
+* sim and chest-luck agree on a level-gapped dungeon payout ([5a0c73d](https://github.com/Millennium44/Toolasha/commit/5a0c73d0408a332ad765275723cdd2257621e6d9))
+* sim respawn no longer hands a player hitpoints the build does not have ([07ab67e](https://github.com/Millennium44/Toolasha/commit/07ab67e45f302de721ac1a2d60d457a64110bc16))
+* simulate with current skill levels, not the ones from login ([01cfe88](https://github.com/Millennium44/Toolasha/commit/01cfe880173529042bd11eabd3195d8846176663))
+* stabilize simultaneous combat events ([b620288](https://github.com/Millennium44/Toolasha/commit/b62028859ae4e3aefd45cbea31c743c6c9edc7fd))
+* stop an older client destroying a newer labyrinth fight pool on write-back ([2afbf79](https://github.com/Millennium44/Toolasha/commit/2afbf79b53f1678316ea6e9e483a5a7a237aefda))
+* stop combat recorder splitting on equipment key order ([c6572e9](https://github.com/Millennium44/Toolasha/commit/c6572e9a2c4ac92d6f953652d22e9e5f23bf1ce3))
+* stop combat recording at connection and character boundaries ([626ceea](https://github.com/Millennium44/Toolasha/commit/626ceea76c2ea6e883fcf4a908aa41a7dc58749f))
+* stop combat sim attacking through a stun ([ce0206c](https://github.com/Millennium44/Toolasha/commit/ce0206c01b674201f7fd2c906a7ef215beae5563))
+* stop combat sim counting a blinded unit as out of mana ([c905581](https://github.com/Millennium44/Toolasha/commit/c90558132a1bf0e79f5c4ee055cb2b92eace0961))
+* stop queue estimates at the first unlimited action ([fcca550](https://github.com/Millennium44/Toolasha/commit/fcca550004847ea463a6e4f2209bb325f2b11d40))
+* stop the labyrinth replay blaming too few fights for a failed comparison ([bd04e15](https://github.com/Millennium44/Toolasha/commit/bd04e1525ace215be9dc8c1eafb9f9befa8f640d))
+* storage recovery no longer closes a connection a retry is using ([ca03f77](https://github.com/Millennium44/Toolasha/commit/ca03f7755983162f4e34e54b82ffc087280fd600))
+* **sync:** flush local writes before pull comparisons and restore reads ([c93c6c3](https://github.com/Millennium44/Toolasha/commit/c93c6c3346e4c80ec7e7efd435dd5f0837830dee))
+* tick period kept pre-gate recovery rows and left a party's empty row unexplained ([1c2c32a](https://github.com/Millennium44/Toolasha/commit/1c2c32a0c80b894c829d9c77de67c1b35c932693))
+* tick period timed gaps between meals instead of one recovery's ticks ([7dbc1b6](https://github.com/Millennium44/Toolasha/commit/7dbc1b65c69c8a7d67c0bda4f697180f5e3ec26d))
+* validate backups before restoring and protect completed stores ([c69eaa7](https://github.com/Millennium44/Toolasha/commit/c69eaa79d099cdbbb257f64963b5dbead7b932db))
+* word the exploratory note for the rates it actually gates ([a7d17cc](https://github.com/Millennium44/Toolasha/commit/a7d17ccab0ef7b5a01940e8a0866c8c796dd8830))
+
+
+### Performance Improvements
+
+* dungeon tracker stops re-reading storage on every ordinary battle ([865c41b](https://github.com/Millennium44/Toolasha/commit/865c41bedd510390281a1d318215e3d6ad916f07))
+* intern labyrinth replay builds instead of copying one per fight ([ec3a424](https://github.com/Millennium44/Toolasha/commit/ec3a4247a9684789b331c7c304ddc629dfc4c8ec))
+* intern saved builds in the labyrinth fight export ([4d85854](https://github.com/Millennium44/Toolasha/commit/4d858543e685cd48bca2e59fd9663da392fadba2))
+
+
+### Documentation
+
+* add recorder follow-ups and sampling assumptions ([70a0937](https://github.com/Millennium44/Toolasha/commit/70a093773abfcad3088cda89b90fb881b2693687))
+* correct recording target observation ([138304e](https://github.com/Millennium44/Toolasha/commit/138304ee5cbf427418136d59aff26ad4ae145933))
+* correct two false histories in the labyrinth fight recorder ([7ca38e2](https://github.com/Millennium44/Toolasha/commit/7ca38e23349363eba2ed74b73463ad6232829210))
+* distinguish recorded and current replay buff inputs ([801961e](https://github.com/Millennium44/Toolasha/commit/801961ed31877d79da93dd1abf4e7dc7123c5b9a))
+* preserve live evidence and post-reset combat checks ([1062986](https://github.com/Millennium44/Toolasha/commit/106298692f612fa8548ec0e9f39c15a3a496a2d7))
+* record extended combat baseline and integration checks ([57bd95a](https://github.com/Millennium44/Toolasha/commit/57bd95a5a530ebfd6937c72f57c0e6a956427555))
+* record labyrinth task-damage assumption ([e73d152](https://github.com/Millennium44/Toolasha/commit/e73d152dcd16c614003ae30a7906523077c5d9d1))
+* record live capture evidence and validation handoff ([5bca431](https://github.com/Millennium44/Toolasha/commit/5bca431272b2f76a3f43342011f19b6e367506ec))
+* record published task reroll audit handoff ([2293110](https://github.com/Millennium44/Toolasha/commit/2293110021f2df1b03e1d7f8a40e096b603accbb))
+* record simulator cancellation integration checks ([4f86324](https://github.com/Millennium44/Toolasha/commit/4f863240a0c36a6bb5da75e3ac870c670f3fd89b))
+* record that the event tie-break and the Ripple guard are not measured ([9db5a9d](https://github.com/Millennium44/Toolasha/commit/9db5a9db403d18b9a2e2c648d94a3d0aed198250))
+* record the audit integration batch in the fork changelog ([ae1d9d7](https://github.com/Millennium44/Toolasha/commit/ae1d9d7df43822a951562339b0e7f1e8befcbff6))
+* record the fifth audit round in the fork changelog ([68526ae](https://github.com/Millennium44/Toolasha/commit/68526aefaba8ab218f55a8954b0cb7f53cd6ab73))
+* record the offline economics snapshot fix ([643c490](https://github.com/Millennium44/Toolasha/commit/643c4900d18a9f0fa1d26363bde7dc87a231a49f))
+* record the offline, activity and notice fixes in the fork changelog ([0616e57](https://github.com/Millennium44/Toolasha/commit/0616e57e189e9b17f830b69e3e5cafd72041a80c))
+* record the replay cohort picker and the smaller export ([9548bfb](https://github.com/Millennium44/Toolasha/commit/9548bfb5186ad3aaf0c124fb552ad0e3a05d05e5))
+* record this audit round in the fork changelog ([1d51280](https://github.com/Millennium44/Toolasha/commit/1d5128060e0910e5cf3855f46c9e0013d514aa91))
+* record what each inherited simulator claim's verification rests on ([1156f9b](https://github.com/Millennium44/Toolasha/commit/1156f9b67add70690c585e3f46c4f62c17682f21))
+* save completed recorder checks and integration results ([9e79cdf](https://github.com/Millennium44/Toolasha/commit/9e79cdf630bc75cc944bda33c897dd545ff7350d))
+
+
+### Styles
+
+* format event queue tests ([e6014c7](https://github.com/Millennium44/Toolasha/commit/e6014c71db4904b498f1dcff14c22d924bf1e9e8))
+
+
+### Tests
+
+* clarify hard-cap fixture boundary ([016417f](https://github.com/Millennium44/Toolasha/commit/016417f94de41500d12bc294aef982384d092577))
+* pin the one invariant the offline reconcile rests on ([15c3111](https://github.com/Millennium44/Toolasha/commit/15c3111e5be754ef0400f0529cb585a089d5b24e))
+* pin the two replay checks' fight-count bars to each other ([18d9d0f](https://github.com/Millennium44/Toolasha/commit/18d9d0fbdd387323618d424c75338463cef4b823))
+
+
+### Build System
+
+* load Chart.js 4.5.1 instead of 3.7.0 ([a0e115a](https://github.com/Millennium44/Toolasha/commit/a0e115a055e4e2112751120dc84cab859f849596))
+* update prettier, vitest, lint-staged and commitlint ([281a2c7](https://github.com/Millennium44/Toolasha/commit/281a2c72e97a23bbd7d0e838a2e46828f2a5f3b0))
+
+
+### Miscellaneous Chores
+
+* run related tests before commits ([0ade3a3](https://github.com/Millennium44/Toolasha/commit/0ade3a303217fa76e3811b1ad53f2a4ef318b6cc))
+
 ## [3.56.0](https://github.com/Millennium44/Toolasha/compare/v3.55.0...v3.56.0) (2026-09-19)
 
 ### Features
