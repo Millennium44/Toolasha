@@ -212,11 +212,13 @@ function buildKeyOf(inputs) {
  * The id a build interns under: derived from its own content, never its position.
  *
  * Positional ids (`b0`, `b1`, …) are only meaningful inside the one array that
- * minted them, and the pool is not one array — it is folded with a peer's copy,
- * and a client that folds without expanding first (every build before this one
- * did) leaves two different builds both calling themselves `b0`. The expansion
- * then binds fights to whichever carrier it saw last, and a fight fought at
- * attack 10 replays as attack 99 with nothing to show for it. A content-derived
+ * minted them, and the pool is not one array — it is folded with a peer's copy.
+ * A fold that does not expand both sides first leaves two different builds both
+ * calling themselves `b0`; the expansion then binds fights to whichever carrier
+ * it saw last, and a fight fought at attack 10 replays as attack 99 with
+ * nothing to show for it. The fold here has always expanded both sides, so this
+ * is a hazard closed rather than a bug lived through — but it is closed by
+ * construction now instead of by the fold remembering to. A content-derived
  * id removes that whole class: two internings of the same build agree, two
  * internings of different builds do not, and no fold can make them collide.
  *
@@ -350,11 +352,16 @@ function internReplayBuilds(entries) {
 /**
  * The interning scheme the stored pool is written under.
  *
- * A record without this marker is the legacy **verbatim** form: every fight
- * carries its own `replayInputs` and nothing is shared, which is how the pool
- * was stored for its whole life before interning and is what the real user data
- * on disk looks like (a test character holds 183 such records, most with a
- * `fingerprint` and no `replayInputs` at all). Those read exactly as they did.
+ * A record without this marker is format 0, which is not one shape but two.
+ * Mostly it is the legacy **verbatim** form: every fight carries its own
+ * `replayInputs` and nothing is shared, which is how the pool was stored for
+ * its whole life before interning and is what the real user data on disk looks
+ * like (a test character holds 183 such records, most with a `fingerprint` and
+ * no `replayInputs` at all). It can also be a pool the immediately preceding
+ * build interned with POSITIONAL ids (`b0`, `b1`, …) and wrote out before the
+ * marker existed — those do share. Both read correctly through
+ * `expandReplayBuilds`, which resolves whatever ids a record carries and is a
+ * no-op on records carrying none; the marker is not what makes them readable.
  *
  * 1 is the interned form: one copy of each build, carried on one record, with
  * every other fight of that build referencing it by a content-derived id.

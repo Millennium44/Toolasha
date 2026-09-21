@@ -2680,7 +2680,13 @@ ${labUnpriced} item(s) could not be priced and are not in this total.`
             const stored = await readScoped('labyrinthFightRecorder', 'labyrinth', []);
             if (currentCharacterId() !== owner) return;
             // `{ clearedAt, entries }` since the pool's Reset had to survive a
-            // sync pull; still a bare array on anything written before that
+            // sync pull; still a bare array on anything written before that.
+            //
+            // These entries are RAW: this bypasses the recorder's `readStored`,
+            // so `replayBuildId` is unresolved and `replayInputs` is absent on
+            // every fight that shares a build. Safe only because nothing here
+            // reads past `fingerprint`. Anything that needs a fight's build
+            // must go through the recorder instead of widening this read.
             this._labFightAttempts = entriesOf(stored);
             this._labFightAttemptsOwner = owner;
         } catch (error) {
