@@ -61,6 +61,9 @@ import recorder, {
     MAX_ATTEMPTS,
     MAX_REPLAY_BUILDS,
     REPLAY_BUILD_FORMAT,
+    RECORDING_FORMAT,
+    RECORDING_VERSION,
+    attemptsFromRecordingFile,
 } from './labyrinth-fight-recorder.js';
 import { FINGERPRINT_VERSION } from './labyrinth-fingerprint.js';
 
@@ -347,7 +350,10 @@ describe('labyrinth fight recorder', () => {
     test('the recording file says which script, server and sim model produced it', () => {
         recorder.noteAttempt(attempt());
         const file = recorder.recordingFile();
-        expect(file.version).toBe(4);
+        // 5 since the attempts are interned; the shape changed, so the version
+        // a reader checks had to change with it
+        expect(file.version).toBe(RECORDING_VERSION);
+        expect(file.version).toBe(5);
         expect(file.fullKit).toBe(true);
         expect(file.fingerprintVersion).toBe(FINGERPRINT_VERSION);
         expect(file).toHaveProperty('fingerprintSpec');
@@ -870,5 +876,97 @@ describe('the Accuracy tab’s Reset survives a sync pull', () => {
         // until some later save happened to re-stamp it.
         expect(raw().replayBuildFormat).toBe(REPLAY_BUILD_FORMAT);
         expect(recorder.recordingStatus().total).toBe(0);
+    });
+});
+
+/**
+ * The export used to serialize `recordedAttempts()`, which is the EXPANDED
+ * in-memory form: every fight carrying its own full copy of the ~10 KB player
+ * DTO it was fought under. A full pool of fights that mostly share a handful of
+ * builds therefore wrote about ten megabytes of JSON where the stored pool is
+ * about one — the same build repeated verbatim once per fight.
+ */
+describe('the exported file interns saved builds the way the stored pool does', () => {
+    /** Saved replay inputs for one build, distinguished by attack level */
+    const build = (attackLevel) => ({
+        version: 1,
+        playerDTO: { hrid: 'player1', attackLevel, abilities: [] },
+        crates: [],
+        communityBuffs: {},
+        labyrinthCombatBuffs: [],
+        fullAbilities: true,
+    });
+
+    test('fights sharing a build do not each carry a copy of it', () => {
+        for (let i = 0; i < 6; i++) recorder.noteAttempt(attempt({ replayInputs: build(10) }));
+        recorder.noteAttempt(attempt({ replayInputs: build(11) }));
+
+        const file = recorder.recordingFile();
+        expect(file.attempts).toHaveLength(7);
+        // Two distinct builds, two copies written — not seven
+        expect(file.attempts.filter((entry) => entry.replayInputs).length).toBe(2);
+        expect(new Set(file.attempts.map((entry) => entry.replayBuildId)).size).toBe(2);
+    });
+
+    test('the file says which interning scheme it was written under', () => {
+        recorder.noteAttempt(attempt({ replayInputs: build(10) }));
+        const file = recorder.recordingFile();
+        expect(file.format).toBe(RECORDING_FORMAT);
+        expect(file.version).toBe(RECORDING_VERSION);
+        expect(file.replayBuildFormat).toBe(REPLAY_BUILD_FORMAT);
+    });
+
+    test('an interned export round-trips to the same per-fight builds', () => {
+        recorder.noteAttempt(attempt({ replayInputs: build(10) }));
+        recorder.noteAttempt(attempt({ replayInputs: build(10) }));
+        recorder.noteAttempt(attempt({ replayInputs: build(11) }));
+        recorder.noteAttempt(attempt({ fingerprint: 'gearB' }));
+        const expected = recorder.recordedAttempts();
+
+        // Through JSON, as a reader of the downloaded file would see it
+        const file = JSON.parse(JSON.stringify(recorder.recordingFile()));
+        const read = attemptsFromRecordingFile(file);
+
+        expect(read.map((entry) => entry.recordId)).toEqual(expected.map((entry) => entry.recordId));
+        expect(read.map((entry) => entry.replayInputs?.playerDTO?.attackLevel ?? null)).toEqual([10, 10, 11, null]);
+        expect(read.map((entry) => entry.replayInputs ?? null)).toEqual(
+            expected.map((entry) => entry.replayInputs ?? null)
+        );
+    });
+
+    test('a legacy verbatim export reads back unchanged', () => {
+        // Version 4 and below: no marker, every fight carrying its own build
+        const legacy = {
+            format: RECORDING_FORMAT,
+            version: 4,
+            attempts: [
+                { ...attempt(), recordId: 'a', replayInputs: build(10) },
+                { ...attempt(), recordId: 'b', replayInputs: build(10) },
+                { ...attempt(), recordId: 'c' },
+            ],
+        };
+        const read = attemptsFromRecordingFile(legacy);
+        expect(read.map((entry) => entry.recordId)).toEqual(['a', 'b', 'c']);
+        expect(read.map((entry) => entry.replayInputs?.playerDTO?.attackLevel ?? null)).toEqual([10, 10, null]);
+    });
+
+    test('a file interned under a newer scheme is refused, not read as buildless', () => {
+        // The whole point of the marker: a reader that cannot bind the fights
+        // to their builds has to say so, not hand back a pool of fights that
+        // look like they never had one
+        const future = {
+            format: RECORDING_FORMAT,
+            version: RECORDING_VERSION + 1,
+            replayBuildFormat: REPLAY_BUILD_FORMAT + 1,
+            attempts: [{ ...attempt(), recordId: 'a', replayBuildId: 'x', replayInputs: null }],
+        };
+        expect(() => attemptsFromRecordingFile(future)).toThrow(/newer than/);
+    });
+
+    test('something that is not a recording is refused', () => {
+        expect(() => attemptsFromRecordingFile({ format: 'toolasha-combat-recording', attempts: [] })).toThrow(
+            /Not a toolasha-labyrinth-recording/
+        );
+        expect(() => attemptsFromRecordingFile(null)).toThrow();
     });
 });

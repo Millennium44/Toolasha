@@ -768,8 +768,74 @@ export function clearRecording() {
     );
 }
 
+/** What every exported file calls itself, so a reader can refuse a foreign one */
+export const RECORDING_FORMAT = 'toolasha-labyrinth-recording';
+
+/**
+ * The export shape this build writes.
+ *
+ * 4 and below: every fight carries its own verbatim `replayInputs`, and there
+ * is no `replayBuildFormat` field at all. 5: the attempts are interned exactly
+ * as the stored pool is — one copy of each distinct build, carried on one
+ * fight, every other fight of that build referencing it by a content-derived
+ * `replayBuildId` — and the file says so with a top-level `replayBuildFormat`.
+ *
+ * The version had to move with the shape. A fight that references a build
+ * carries `replayInputs: null`, which to a reader that only knows version 4 is
+ * indistinguishable from a fight that never had a build — it would read a whole
+ * pool as buildless and say nothing. Bumping the version is what makes that
+ * reader stop instead: {@link attemptsFromRecordingFile} refuses a file whose
+ * `replayBuildFormat` it does not know rather than handing back unresolved
+ * fights, and any external reader pinned to 4 fails on the version instead of
+ * silently mis-reading the attempts.
+ */
+export const RECORDING_VERSION = 5;
+
+/**
+ * The attempts of an exported file, with each fight's saved build resolved.
+ *
+ * This is the reader half of the export's interning: the same
+ * `expandReplayBuilds` the stored pool is read through, so an export and a
+ * stored record resolve under one scheme rather than two. A legacy file
+ * (version 4 and below, no `replayBuildFormat`) passes through untouched —
+ * expansion is a no-op on records carrying no `replayBuildId`.
+ *
+ * It throws rather than degrades. Unlike the stored pool — which has to keep
+ * working for the player whatever is on disk — an export is read by a person
+ * or a script investigating a discrepancy, and a pool of fights quietly
+ * stripped of their builds is exactly the kind of wrong answer that costs an
+ * afternoon.
+ *
+ * @param {Object} file - A parsed export, as {@link recordingFile} wrote it
+ * @returns {Array<Object>} The attempts, each carrying its own `replayInputs`
+ * @throws {Error} If the file is not a recording, or was written under a build
+ *   interning scheme newer than {@link REPLAY_BUILD_FORMAT}
+ */
+export function attemptsFromRecordingFile(file) {
+    if (!file || typeof file !== 'object' || file.format !== RECORDING_FORMAT) {
+        throw new Error(`[LabyrinthFightRecorder] Not a ${RECORDING_FORMAT} file`);
+    }
+    const buildFormat = Number(file.replayBuildFormat) || 0;
+    if (buildFormat > REPLAY_BUILD_FORMAT) {
+        throw new Error(
+            `[LabyrinthFightRecorder] This recording interns saved builds under format ${buildFormat}, newer than ` +
+                `${REPLAY_BUILD_FORMAT}; its fights cannot be bound to their builds by this build of the script.`
+        );
+    }
+    const entries = Array.isArray(file.attempts) ? file.attempts : [];
+    return expandReplayBuilds(entries).map((entry) => ({ ...entry }));
+}
+
 /**
  * The pool in a shape safe to write out and read back.
+ *
+ * The attempts are interned, not expanded. `recordedAttempts()` hands back the
+ * in-memory form, where every fight of a build carries its own copy of that
+ * build — around 10.4 KB of player DTO apiece — so serializing it wrote the
+ * same build out verbatim once per fight and turned a ~1.2 MB stored pool into
+ * roughly 10 MB of JSON. Interning here is the same one applied to the stored
+ * pool, so the file carries each distinct build once and
+ * {@link attemptsFromRecordingFile} resolves it back.
  *
  * `extra` is folded in first, so a caller can embed the replay comparison
  * alongside the raw attempts without clobbering the format tag or the attempts.
@@ -783,10 +849,10 @@ export function recordingFile(extra = {}) {
     const host = typeof location !== 'undefined' ? location.hostname || null : null;
     return {
         ...extra,
-        format: 'toolasha-labyrinth-recording',
+        format: RECORDING_FORMAT,
         // 4: attempts carry fingerprintVersion, and the file names the
-        // definition it was written under
-        version: 4,
+        // definition it was written under. 5: the attempts are interned.
+        version: RECORDING_VERSION,
         exportedAt: Date.now(),
         toolashaVersion: scriptVersion(),
         host,
@@ -797,7 +863,11 @@ export function recordingFile(extra = {}) {
         // their own `fingerprintVersion`, and an attempt without one is v1.
         fingerprintVersion: FINGERPRINT_VERSION,
         fingerprintSpec: FINGERPRINT_SPEC,
-        attempts: recordedAttempts(),
+        // Which interning scheme `attempts` below is written under — the same
+        // marker and the same scheme as the stored pool's. Read the attempts
+        // back with `attemptsFromRecordingFile`.
+        replayBuildFormat: REPLAY_BUILD_FORMAT,
+        attempts: internReplayBuilds(recordedAttempts()),
     };
 }
 
@@ -830,5 +900,6 @@ export default {
     recordingStatus,
     clearRecording,
     recordingFile,
+    attemptsFromRecordingFile,
     downloadRecording,
 };
