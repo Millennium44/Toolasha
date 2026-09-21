@@ -60,7 +60,7 @@
  */
 
 import { createPersistedRecord, mergeById } from '../../utils/persisted-record.js';
-import { copyReplayInputs, replayBuildKey } from './labyrinth-replay-inputs.js';
+import { copyReplayInputs, replayBuildKey, replayBuildIdFor } from './labyrinth-replay-inputs.js';
 import { registerSyncMerge } from '../../utils/sync-merge-registry.js';
 import { clearRecord, clearedAtOf, clearedRecord, entriesOf, mergeClearable } from '../../utils/cleared-record.js';
 import { scriptVersion } from '../../utils/script-version.js';
@@ -206,41 +206,6 @@ function buildKeyOf(inputs) {
     }
     buildKeyCache.set(inputs, key);
     return key;
-}
-
-/**
- * The id a build interns under: derived from its own content, never its position.
- *
- * Positional ids (`b0`, `b1`, …) are only meaningful inside the one array that
- * minted them, and the pool is not one array — it is folded with a peer's copy.
- * A fold that does not expand both sides first leaves two different builds both
- * calling themselves `b0`; the expansion then binds fights to whichever carrier
- * it saw last, and a fight fought at attack 10 replays as attack 99 with
- * nothing to show for it. The fold here has always expanded both sides, so this
- * is a hazard closed rather than a bug lived through — but it is closed by
- * construction now instead of by the fold remembering to. A content-derived
- * id removes that whole class: two internings of the same build agree, two
- * internings of different builds do not, and no fold can make them collide.
- *
- * The input is the FULL canonical key — never the 8-hex display hash, which is
- * a label and short enough to collide. Two independent 32-bit rolls plus the
- * key's own length make a ~62-bit id over inputs that are ~10 KB of JSON, and
- * {@link expandReplayBuilds} still refuses an id claimed by two different keys,
- * so even a collision loses a build rather than mis-attributing a fight.
- *
- * @param {string} key - A full canonical build key from `replayBuildKey`
- * @returns {string} A stable id, about 20 bytes
- */
-export function replayBuildIdFor(key) {
-    const text = String(key);
-    let h1 = 5381;
-    let h2 = 0x811c9dc5;
-    for (let i = 0; i < text.length; i++) {
-        const c = text.charCodeAt(i);
-        h1 = (Math.imul(h1, 33) ^ c) >>> 0;
-        h2 = Math.imul(h2 ^ c, 0x01000193) >>> 0;
-    }
-    return `b${h1.toString(36)}-${h2.toString(36)}-${text.length.toString(36)}`;
 }
 
 /**

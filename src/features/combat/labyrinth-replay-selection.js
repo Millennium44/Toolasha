@@ -15,7 +15,7 @@
  * per-character storage it survives in.
  */
 
-import { replayBuildSummary, MAX_REPLAY_GROUPS } from './labyrinth-replay-inputs.js';
+import { replayBuildSummary, replayBuildKey, replayBuildIdFor, MAX_REPLAY_GROUPS } from './labyrinth-replay-inputs.js';
 import { readScoped, writeScoped } from '../../utils/character-key.js';
 import { DISCARD_LEGACY } from './labyrinth-outcomes.js';
 
@@ -37,19 +37,24 @@ const LEGACY_BUILD_ID = 'current';
  * and shifts with every new fight — a key built on it would go stale on its
  * own, for a cohort that never changed.
  *
- * The build half is the short hash `replayBuildSummary` already shows beside
- * every comparison, rather than the full canonical build string, so a stored
- * selection stays small. The hash is a display label elsewhere for a reason:
- * two builds that collided here would be offered as one pick. That costs a
- * replay of the wrong cohort of two and never mixes their fights — cohorts
- * themselves are still keyed by the full build string.
+ * The build half is `replayBuildIdFor` over the full canonical build string,
+ * not the 8-hex hash `replayBuildSummary` shows beside every comparison. That
+ * hash is a display label and is short enough to collide — two realistic
+ * builds differing only in a few levels do, and the test beside this pins a
+ * pair that does — and here the id is identity, not decoration. A collision
+ * either loses the pick to the stale fallback (both cohorts match one key, so
+ * the count check refuses it) or, once one of the two colliding cohorts leaves
+ * the pool, silently replays the other in its place.
+ *
+ * No `itemDetailMap` is taken: the display hash never depended on one either —
+ * game data only ever supplied the weapon's *name* — so passing it here was
+ * always a promise the key could not keep.
  *
  * @param {{group: Object, inputs: Object|null}} candidate - One `replayCandidates` entry
- * @param {Object} [itemDetailMap] - Game item details, for the build's label
  * @returns {string} A key equal across replays for the same cohort
  */
-export function replayCohortKey(candidate, itemDetailMap = {}) {
-    const buildId = candidate?.inputs ? replayBuildSummary(candidate.inputs, itemDetailMap).id : LEGACY_BUILD_ID;
+export function replayCohortKey(candidate) {
+    const buildId = candidate?.inputs ? replayBuildIdFor(replayBuildKey(candidate.inputs)) : LEGACY_BUILD_ID;
     const group = candidate?.group || {};
     const bucket = Number.isFinite(group.bucket) ? group.bucket : group.roomLevel;
     return `${buildId}|${group.monsterHrid}|${bucket}`;
@@ -73,7 +78,7 @@ export function describeReplayCohorts(candidates, itemDetailMap = {}) {
     return (candidates || []).map((candidate) => {
         const group = candidate.group || {};
         return {
-            key: replayCohortKey(candidate, itemDetailMap),
+            key: replayCohortKey(candidate),
             buildLabel: candidate.inputs
                 ? replayBuildSummary(candidate.inputs, itemDetailMap).label
                 : 'Current build (no saved inputs)',
@@ -111,11 +116,10 @@ export function describeReplayCohorts(candidates, itemDetailMap = {}) {
  *
  * @param {Array<Object>} candidates - From `replayCandidates`
  * @param {Array<string>|null} selection - Stored cohort keys, if any
- * @param {Object} [itemDetailMap] - Game item details, for build labels
  * @returns {{chosen: Array<Object>, selection: {applied: boolean, requested: number,
  *   reason: 'empty'|'overCap'|'stale'|null}}}
  */
-export function applyReplayCohortSelection(candidates, selection, itemDetailMap = {}) {
+export function applyReplayCohortSelection(candidates, selection) {
     const list = Array.isArray(candidates) ? candidates : [];
     const wanted = [...new Set((Array.isArray(selection) ? selection : []).filter((key) => typeof key === 'string'))];
     const fallback = (reason) => ({
@@ -127,7 +131,7 @@ export function applyReplayCohortSelection(candidates, selection, itemDetailMap 
     if (wanted.length > MAX_REPLAY_GROUPS) return fallback('overCap');
 
     const keys = new Set(wanted);
-    const chosen = list.filter((candidate) => keys.has(replayCohortKey(candidate, itemDetailMap)));
+    const chosen = list.filter((candidate) => keys.has(replayCohortKey(candidate)));
     if (chosen.length !== wanted.length) return fallback('stale');
 
     return { chosen, selection: { applied: true, requested: wanted.length, reason: null } };

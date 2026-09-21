@@ -57,7 +57,6 @@ vi.mock('../../utils/adoption-consent.js', () => ({
 import recorder, {
     attemptIdentity,
     mergeAttempts,
-    replayBuildIdFor,
     MAX_ATTEMPTS,
     MAX_REPLAY_BUILDS,
     REPLAY_BUILD_FORMAT,
@@ -66,6 +65,7 @@ import recorder, {
     attemptsFromRecordingFile,
 } from './labyrinth-fight-recorder.js';
 import { FINGERPRINT_VERSION } from './labyrinth-fingerprint.js';
+import { replayBuildIdFor } from './labyrinth-replay-inputs.js';
 
 /**
  * The fights as stored under this character's key.

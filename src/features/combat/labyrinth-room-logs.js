@@ -536,6 +536,7 @@ class LabyrinthRoomLogs {
         // The cohorts belong to the departing character's recorded fights
         this.cohortPickerOpen = false;
         this.cohortChoices = null;
+        this.cohortNotice = '';
         this.isInitialized = false;
     }
 
@@ -1902,16 +1903,21 @@ class LabyrinthRoomLogs {
         }
 
         this.cohortNotice = '';
-        const token = this.renderToken;
+        // Whose pool this list describes. NOT `renderToken`: that counts
+        // redraws, and a battle tick redraws the open panel several times a
+        // second, so guarding the open on it meant the press was swallowed
+        // every time and the picker never opened during a fight — which is
+        // exactly when a player reaches for it.
+        const charId = dataManager.getCurrentCharacterId?.() || null;
         let choices = null;
         try {
             choices = (await this.simSource?.replayCohorts?.()) || null;
         } catch (error) {
             console.error('[LabyrinthRoomLogs] Reading the replay cohorts failed:', error);
         }
-        // A read that lands after the panel moved on — a character switch, or
-        // another view — describes a pool this panel is no longer showing
-        if (token !== this.renderToken) return;
+        // A read that lands after a character switch describes a pool that is
+        // not this panel's any more
+        if ((dataManager.getCurrentCharacterId?.() || null) !== charId) return;
 
         this.cohortChoices = choices;
         this.cohortPickerOpen = true;
@@ -1946,14 +1952,23 @@ class LabyrinthRoomLogs {
             return;
         }
 
+        const before = [...selected];
         if (checked) selected.add(key);
         else selected.delete(key);
         this.cohortNotice = '';
         this.cohortChoices.selected = [...selected];
 
-        const token = this.renderToken;
-        await this.simSource?.setReplayCohorts?.(this.cohortChoices.selected);
-        if (token !== this.renderToken) return;
+        // Same identity guard as the open, for the same reason
+        const charId = dataManager.getCurrentCharacterId?.() || null;
+        const stored = await this.simSource?.setReplayCohorts?.(this.cohortChoices.selected);
+        if ((dataManager.getCurrentCharacterId?.() || null) !== charId) return;
+        // A change the store refused is a change the next Replay will not
+        // honour. Left alone the box would show a choice that is not the one
+        // standing, which is the one thing this picker exists to prevent.
+        if (stored === false) {
+            this.cohortChoices.selected = before;
+            this.cohortNotice = 'That change could not be saved, so the choice is still what it was.';
+        }
         this.render(false);
     }
 

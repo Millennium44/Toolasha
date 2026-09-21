@@ -315,6 +315,34 @@ describe('the replay cohort picker', () => {
         expect(ticks()[3].checked).toBe(false);
     });
 
+    test('opens even when a fight redraws the panel while the cohorts are being read', async () => {
+        // `renderIfOpen` runs on every battle tick and each redraw bumps
+        // `renderToken`, so guarding the open on that token dropped the press
+        // whenever the player was actually fighting — which is when they reach
+        // for the picker. The guard is the character, not the redraw count.
+        labyrinthRoomLogs.simSource.replayCohorts = async () => {
+            await labyrinthRoomLogs.renderAccuracy();
+            return { cohorts, selected: [...stored], max: 3 };
+        };
+        await open();
+
+        expect(labyrinthRoomLogs.cohortPickerOpen).toBe(true);
+        expect(text()).toContain('Replay cohorts');
+    });
+
+    test('a change the store refuses is put back rather than left looking chosen', async () => {
+        await open();
+        labyrinthRoomLogs.simSource.setReplayCohorts = async () => false;
+
+        ticks()[1].checked = true;
+        ticks()[1].dispatchEvent(new Event('change'));
+        await labyrinthRoomLogs.renderAccuracy();
+
+        expect(stored).toEqual([]);
+        expect(ticks()[1].checked).toBe(false);
+        expect(text()).toContain('could not be saved');
+    });
+
     test('closing the picker puts it away', async () => {
         await open();
         await labyrinthRoomLogs.onCohortsClicked();

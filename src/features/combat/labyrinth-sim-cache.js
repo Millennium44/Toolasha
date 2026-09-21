@@ -753,7 +753,7 @@ export const simCacheMethods = {
         const { candidates } = replayCandidates(labFightRecorder.recordedAttempts(), fingerprint);
         const itemDetailMap = buildGameDataPayload()?.itemDetailMap;
         const stored = await readReplayCohortSelection();
-        const { selection } = applyReplayCohortSelection(candidates, stored, itemDetailMap);
+        const { selection } = applyReplayCohortSelection(candidates, stored);
         return {
             cohorts: describeReplayCohorts(candidates, itemDetailMap),
             selected: selection.applied ? stored : [],
@@ -788,11 +788,13 @@ export const simCacheMethods = {
         const attempts = labFightRecorder.recordedAttempts();
         const { candidates, excluded } = replayCandidates(attempts, fingerprint);
         // One payload for the whole replay: every cohort is then simulated and
-        // labelled against the same game data, and the cohort keys the stored
-        // selection is matched against are built from that same map.
+        // labelled against the same game data. It is a fresh wrapper over the
+        // same shared `initClientData` maps on every call and the worker only
+        // reads it, so hoisting it out of the loop changes nothing but the
+        // number of wrappers made.
         const gameData = buildGameDataPayload();
         const stored = await readReplayCohortSelection();
-        const { chosen: worth, selection } = applyReplayCohortSelection(candidates, stored, gameData?.itemDetailMap);
+        const { chosen: worth, selection } = applyReplayCohortSelection(candidates, stored);
         const diagnostics = {
             excluded,
             eligibleGroups: candidates.length,

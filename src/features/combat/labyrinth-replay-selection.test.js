@@ -13,6 +13,33 @@ vi.mock('../../core/data-manager.js', () => ({ default: { getCurrentCharacterId:
 
 const { replayCohortKey, describeReplayCohorts, applyReplayCohortSelection } =
     await import('./labyrinth-replay-selection.js');
+const { replayBuildSummary } = await import('./labyrinth-replay-inputs.js');
+
+/**
+ * Two builds whose 8-hex display hash — `replayBuildSummary`'s id — is the
+ * same value, found by searching combat levels 1-200. Hard-coded because the
+ * collision is the point: that id is a label, and a stored cohort choice keyed
+ * by it would either lose the pick to the stale fallback or, once one of the
+ * two left the pool, silently replay the other in its place.
+ */
+const COLLIDING_LEVELS = [
+    { attackLevel: 4, intelligenceLevel: 91, powerLevel: 192 },
+    { attackLevel: 6, intelligenceLevel: 32, powerLevel: 100 },
+];
+
+/** One `replayCandidates` entry on a given set of combat levels */
+const levelled = (levels) => ({
+    group: { monsterHrid: '/monsters/fly', bucket: 10, roomLevel: 10, levelLow: 10, levelHigh: 10, fights: 5 },
+    inputs: {
+        version: 1,
+        playerDTO: { hrid: 'player1', ...levels },
+        crates: [],
+        communityBuffs: {},
+        labyrinthCombatBuffs: [],
+        fullAbilities: true,
+    },
+    exploratory: false,
+});
 
 /** One `replayCandidates` entry, keyed apart by its attack level */
 const candidate = (attackLevel, over = {}) => ({
@@ -40,6 +67,13 @@ describe('replayCohortKey', () => {
 
     test('tells two builds on the same room apart', () => {
         expect(replayCohortKey(candidate(10))).not.toBe(replayCohortKey(candidate(11)));
+    });
+
+    test('tells apart two builds whose display hash is the same value', () => {
+        const [a, b] = COLLIDING_LEVELS.map(levelled);
+        // The premise: these two really do share the label the picker shows
+        expect(replayBuildSummary(a.inputs).id).toBe(replayBuildSummary(b.inputs).id);
+        expect(replayCohortKey(a)).not.toBe(replayCohortKey(b));
     });
 
     test('keys a legacy cohort with no saved inputs under the current build', () => {
@@ -94,6 +128,13 @@ describe('applyReplayCohortSelection', () => {
         const { chosen, selection } = applyReplayCohortSelection(candidates, [keys[0], 'evicted|/monsters/fly|10']);
         expect(chosen).toEqual(candidates.slice(0, 3));
         expect(selection).toMatchObject({ applied: false, reason: 'stale', requested: 2 });
+    });
+
+    test('runs the chosen one of two builds that share a display hash', () => {
+        const pair = COLLIDING_LEVELS.map(levelled);
+        const { chosen, selection } = applyReplayCohortSelection(pair, [replayCohortKey(pair[1])]);
+        expect(chosen).toEqual([pair[1]]);
+        expect(selection).toMatchObject({ applied: true, requested: 1 });
     });
 
     test('duplicates in a stored selection do not count against the cap', () => {

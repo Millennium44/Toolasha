@@ -113,9 +113,39 @@ function buildKey(inputs) {
 }
 
 /**
+ * A short, stable id for a build: derived from its own content, never its position.
+ *
+ * Lives beside {@link replayBuildKey} because that is its only input. Two
+ * unrelated callers need it — the recorder interns saved builds under it, and
+ * the replay cohort picker stores a choice against it — and both need the same
+ * property: two internings of the same build agree, two different builds do
+ * not, whichever side of the fold or the day they were taken on.
+ *
+ * The input is the FULL canonical key — never the 8-hex display hash from
+ * {@link replayBuildSummary}, which is a label and short enough to collide.
+ * Two independent 32-bit rolls plus the key's own length make a ~62-bit id over
+ * inputs that are ~10 KB of JSON.
+ *
+ * @param {string} key - A full canonical build key from {@link replayBuildKey}
+ * @returns {string} A stable id, about 20 bytes
+ */
+export function replayBuildIdFor(key) {
+    const text = String(key);
+    let h1 = 5381;
+    let h2 = 0x811c9dc5;
+    for (let i = 0; i < text.length; i++) {
+        const c = text.charCodeAt(i);
+        h1 = (Math.imul(h1, 33) ^ c) >>> 0;
+        h2 = Math.imul(h2 ^ c, 0x01000193) >>> 0;
+    }
+    return `b${h1.toString(36)}-${h2.toString(36)}-${text.length.toString(36)}`;
+}
+
+/**
  * A concise reference for matching a comparison to its saved build. The short
- * hash is only a display label; cohorts still use the full key, so a hash
- * collision cannot combine fights. Names come from the current game data.
+ * hash is only a display label; cohorts are keyed by the full key and a stored
+ * replay-cohort choice by {@link replayBuildIdFor}, so a collision here costs a
+ * mislabelled row and nothing more. Names come from the current game data.
  */
 export function replayBuildSummary(inputs, itemDetailMap = {}) {
     const key = buildKey(inputs);
