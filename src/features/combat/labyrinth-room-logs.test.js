@@ -291,7 +291,7 @@ describe('the sim accuracy list opens a room type at a time', () => {
         expect(text()).not.toContain('Milking Lv.173');
     });
 
-    test('replay explains exclusions and still says when nothing has enough fights yet', () => {
+    test('replay explains exclusions and sim failures rather than claiming too few fights', () => {
         const card = labyrinthRoomLogs.renderReplayResult({
             groups: [],
             pool: { attempts: 40, monsters: 2 },
@@ -308,9 +308,39 @@ describe('the sim accuracy list opens a room type at a time', () => {
         expect(card.textContent).toContain('3 fights started below 90% health');
         expect(card.textContent).toContain('1 comparisons could not run');
         expect(card.textContent).toContain('4 fights are in rooms with fewer than 3 attempts');
-        // The exclusion list explains WHICH fights were dropped; it does not
-        // replace telling the reader that nothing has accumulated enough yet
+        // A simulation failed: the fights ARE there, so naming "not enough
+        // fights yet" as the cause is a false diagnosis
+        expect(card.textContent).toContain('No comparison could be produced');
+        expect(card.textContent).not.toContain('keep going and check back');
+    });
+
+    test('replay still says when too few fights really is the cause', () => {
+        const card = labyrinthRoomLogs.renderReplayResult({
+            groups: [],
+            pool: { attempts: 40, monsters: 2 },
+            diagnostics: {
+                excluded: { tooFew: 40 },
+                failedGroups: 0,
+                deferredGroups: 0,
+                minFights: 3,
+                verdictMinFights: 5,
+            },
+        });
+        // The exclusion note says which fights were set aside; the pool note is
+        // what tells the reader the pool simply has not accumulated yet
+        expect(card.textContent).toContain('40 fights are in rooms with fewer than 3 attempts');
         expect(card.textContent).toContain('keep going and check back');
+        expect(card.textContent).not.toContain('No comparison could be produced');
+    });
+
+    test('a deferred group is not reported as too few fights either', () => {
+        const card = labyrinthRoomLogs.renderReplayResult({
+            groups: [],
+            pool: { attempts: 40, monsters: 2 },
+            diagnostics: { excluded: {}, failedGroups: 0, deferredGroups: 2, minFights: 3, verdictMinFights: 5 },
+        });
+        expect(card.textContent).toContain('2 eligible groups were not run');
+        expect(card.textContent).not.toContain('keep going and check back');
     });
 
     test('replay marks a comparison under the verdict bar as exploratory only', () => {

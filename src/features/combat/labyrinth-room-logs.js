@@ -2371,6 +2371,15 @@ class LabyrinthRoomLogs {
         }
 
         if (!result?.groups?.length) {
+            // Something eligible was found and could not be compared — a failed
+            // simulation, or a group deferred past the per-replay limit. Saying
+            // "keep going and check back" here names a cause that is not the
+            // cause: the fights are there, the comparison is what did not
+            // happen. The exclusion notes above already say which.
+            if (diagnostics?.failedGroups || diagnostics?.deferredGroups) {
+                box.appendChild(this.makeNote('No comparison could be produced from the recorded fights.'));
+                return box;
+            }
             // The bar, restated: fights are recorded passively, so "nothing to
             // show" is the normal early state and has to say what is missing
             const pool = result?.pool;
