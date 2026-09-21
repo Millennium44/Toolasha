@@ -696,6 +696,59 @@ describe('the stored pool says which interning scheme it was written under', () 
             warn.mockRestore();
         }
     });
+
+    test('a pool written under a newer scheme is not destroyed by the next write', async () => {
+        // Refusing to EXPAND made the read safe and left the write destructive:
+        // the unexpanded entries still went through interning and came back
+        // stamped format 1, re-interning the carrier under a content id and
+        // leaving the reference pointing at nothing. One fight recorded here
+        // erased the newer client's builds from disk for good.
+        const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+        try {
+            const newerPool = {
+                clearedAt: 0,
+                replayBuildFormat: REPLAY_BUILD_FORMAT + 1,
+                entries: [
+                    {
+                        ...attempt(),
+                        recordId: 'carrier',
+                        resolvedAt: 1_000,
+                        replayBuildId: 'x',
+                        replayInputs: build(7),
+                    },
+                    { ...attempt(), recordId: 'reference', resolvedAt: 2_000, replayBuildId: 'x', replayInputs: null },
+                ],
+            };
+            seedStored(newerPool);
+            recorder.forget();
+            await recorder.load();
+
+            recorder.noteAttempt(attempt({ recordId: 'ours', replayInputs: build(10) }));
+            await settle();
+
+            const written = raw();
+            expect(written.replayBuildFormat).toBe(REPLAY_BUILD_FORMAT + 1);
+            expect(written.entries.map((entry) => entry.recordId)).toEqual(['carrier', 'reference']);
+            expect(written.entries.find((entry) => entry.recordId === 'carrier').replayBuildId).toBe('x');
+            expect(written.entries.find((entry) => entry.recordId === 'reference').replayBuildId).toBe('x');
+        } finally {
+            warn.mockRestore();
+        }
+    });
+
+    test('a newer pool arriving from a peer is kept as written, not folded down', () => {
+        const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+        try {
+            const theirs = {
+                clearedAt: 0,
+                replayBuildFormat: REPLAY_BUILD_FORMAT + 1,
+                entries: [{ ...attempt(), recordId: 'theirs', resolvedAt: 9_000, replayBuildId: 'x' }],
+            };
+            expect(mergeAttempts([{ ...attempt(), recordId: 'mine', resolvedAt: 1_000 }], theirs)).toEqual(theirs);
+        } finally {
+            warn.mockRestore();
+        }
+    });
 });
 
 describe('the ring cap drops the oldest fight, not the one that arrived last', () => {

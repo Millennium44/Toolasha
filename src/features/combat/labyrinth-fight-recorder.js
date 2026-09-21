@@ -451,6 +451,25 @@ const foldAttempts = mergeClearable(unionAttempts, attemptAge, { label: 'labyrin
  * record resolves within that record, whatever the fold dropped.
  */
 export const mergeAttempts = (base, fresh) => {
+    // The refusal has to be here and not only in `readStored`. Refusing to
+    // EXPAND a newer pool made the read safe and the write destructive: the
+    // unexpanded entries went through `internReplayBuilds` anyway, the result
+    // was stamped format 1, and the newer client's carrier was re-interned
+    // under a content id while every reference to its own scheme resolved to
+    // nothing. One fight recorded on the older client was enough to erase the
+    // newer one's builds from disk permanently — the opposite of what a
+    // forward-compatibility marker is for.
+    const baseFormat = replayBuildFormatOf(base);
+    const freshFormat = replayBuildFormatOf(fresh);
+    if (baseFormat > REPLAY_BUILD_FORMAT || freshFormat > REPLAY_BUILD_FORMAT) {
+        const newer = freshFormat > baseFormat ? fresh : base;
+        console.warn(
+            `[LabyrinthFightRecorder] A stored fight pool uses build format ${Math.max(baseFormat, freshFormat)}, ` +
+                `newer than ${REPLAY_BUILD_FORMAT}; it is kept exactly as written rather than folded and ` +
+                're-stamped. Any fights this client has to add are dropped instead of overwriting it.'
+        );
+        return newer;
+    }
     const folded = foldAttempts(readStored(base), readStored(fresh));
     return storedRecord(internReplayBuilds(entriesOf(folded)), clearedAtOf(folded));
 };
