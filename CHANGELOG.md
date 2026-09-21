@@ -6,6 +6,12 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Audit round: a saved recording could export builds it had quietly dropped, and a three-fight sample argued with itself
+
+- An exported labyrinth recording reused the stored pool's forty-build cap, so anyone with more distinct builds than that exported the older fights as though they had never carried a build, with nothing in the file to say otherwise. An export now carries every build it references; only what is kept on disk is capped.
+- The replay cohort you tick is now identified by the build's own content rather than by the short label shown beside it. Two builds can share that label, and when they did the replay could run the one you did not pick while reporting that it ran your choice. The picker also opens during a fight now, where a redraw used to swallow the press, and a tick that fails to save comes back off instead of sitting there looking chosen.
+- The five-fight bar the accuracy check states its verdicts behind is now kept everywhere the panel judges a sample, not just in the table: a stored check from before the bar existed no longer renders red beside full-sized ones for a month afterwards, the summary above the table stops calling three agreeing fights "large enough to argue with" directly over a note saying they state nothing, and a percent-band recording target no longer announces itself met at three fights and hands the check a sample it then refuses to judge.
+
 ### Choose which recorded builds the labyrinth replay compares
 
 - The replay always simulated the three best-sampled cohorts and quietly deferred the rest, so a fourth build was unreachable — which bit hardest for whatever you had just started using, since the newest build has the fewest fights and sorted last. A Cohorts button on the Accuracy tab now lets you pick which of the eligible builds run, still three at a time because each one is its own simulation. Leaving it alone changes nothing: the same three run as before. A choice is remembered per character, and is dropped for the default if the pool regroups underneath it rather than replaying something you did not pick.
