@@ -6,6 +6,8 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+<!-- shipped in 3.57.1 -->
+
 ### Fix: 3.57.0 did not load at all
 
 - Chart.js 4 renamed its classic build. `dist/chart.min.js`, the path the script had always pulled, became an ES module in version 4, and a `@require` of a module is refused by the browser with a parse error that aborts the entire userscript — so 3.57.0 loaded nothing, and anything depending on it reported the script missing. The pin now points at `dist/chart.umd.js`, which is the classic build under its new name.
@@ -3541,10 +3543,9 @@ The simulator valued every drop at its gross market price, so profit ignored the
 
 ## [3.57.1](https://github.com/Millennium44/Toolasha/compare/v3.57.0...v3.57.1) (2026-09-21)
 
-
 ### Bug Fixes
 
-* require Chart.js 4's classic build, not its ES module ([9749d05](https://github.com/Millennium44/Toolasha/commit/9749d05085bba75ab34801fd48ac4625ce79480b))
+- require Chart.js 4's classic build, not its ES module ([9749d05](https://github.com/Millennium44/Toolasha/commit/9749d05085bba75ab34801fd48ac4625ce79480b))
 
 ## [3.57.0](https://github.com/Millennium44/Toolasha/compare/v3.56.0...v3.57.0) (2026-09-21)
 
