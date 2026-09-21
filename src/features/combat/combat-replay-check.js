@@ -1532,15 +1532,27 @@ export function noiseSummary(observed) {
 /**
  * One metric, observed against predicted.
  *
- * @param {Object} metric - `{key, label, observed, predicted, samples}`
+ * The upper bar is enforced here and nowhere else. `noiseMargin` only needs
+ * {@link MIN_SAMPLE_FIGHTS}, so without this gate a three-fight cohort produced
+ * a real `beyond-noise` verdict — a red row, a tile line and a persisted history
+ * entry — directly underneath a panel note promising no verdict. The shape is
+ * the labyrinth replay's (`MIN_LAB_FIGHTS` in `labyrinth-replay-check.js`):
+ * count the fights first, and let neither the margin nor the deviation speak
+ * below the bar.
+ *
+ * @param {Object} metric - `{key, label, observed, predicted, samples, fights}`
+ *   `fights` is how many fights back the observed side; it defaults to the
+ *   sample count, which is one value per fight, so a caller that forgets it is
+ *   gated rather than waved through.
  * @returns {Object} The same, plus `deviationPct`, `marginPct` and `verdict`
  */
-export function compareMetric({ key, label, observed, predicted, samples }) {
+export function compareMetric({ key, label, observed, predicted, samples, fights }) {
     const deviation = deviationPct(observed, predicted);
     const margin = noiseMargin(samples);
+    const cohort = Number.isFinite(fights) ? fights : (samples?.length ?? 0);
 
     let verdict = 'insufficient';
-    if (deviation !== null && margin !== null) {
+    if (deviation !== null && margin !== null && cohort >= MIN_VERDICT_FIGHTS) {
         verdict = Math.abs(deviation) > margin ? 'beyond-noise' : 'within-noise';
     }
 
@@ -1640,6 +1652,10 @@ export function compareRun(observed, predicted) {
             observed: observed[key],
             predicted: predicted[key],
             samples: observed.samples?.[key],
+            // The cohort, not the sample array's length: a decomposition metric
+            // may have fewer samples than the run had fights, and the bar is
+            // about how much combat was watched.
+            fights: observed.fights,
         });
 
     // Both sides or neither. A recording made before hits and misses were kept
@@ -1672,7 +1688,11 @@ export function compareRun(observed, predicted) {
         experience: comparableXp ? compare({ key: 'xpPerSecond', label: 'Combat XP / sec' }) : null,
         experienceBySkill: comparableXp ? skillSplit(observed, predicted) : [],
         // The survival claim, checked on its own arithmetic (Poisson, not a
-        // percentage band) — see deathCheck
+        // percentage band) — see deathCheck. Deliberately outside the
+        // MIN_VERDICT_FIGHTS bar: that bar is about a rate's sampling spread,
+        // and a death against a prediction of "never" is a finding on one
+        // fight. The exploratory note above the table is worded for the rates
+        // for that reason.
         deathCheck: deathCheck(observed, predicted),
         // Observed only. Kept beside the comparison rather than in it, because
         // nothing here is being compared to anything.
@@ -1821,6 +1841,12 @@ export function historyEntry(comparison, at = Date.now()) {
         deviationPct: dps.deviationPct,
         marginPct: dps.marginPct,
         verdict: dps.verdict,
+        // Kept rather than discarded — the fights happened and the reader may
+        // want to see them — but marked, so no later reading of the synced
+        // history can take an exploratory row for a verdict sitting beside a
+        // thirty-fight one. The verdict itself is already `insufficient`; this
+        // says *why*, which a row whose margin exists cannot otherwise show.
+        exploratory: comparison.exploratory === true,
         // The engine that made the prediction being deviated from. Rows from
         // different engines are not a drift, and without this the history
         // cannot say which rows those are.
@@ -2727,7 +2753,11 @@ function drawComparison(body, comparison) {
                         : metric.verdict === 'within-noise'
                           ? `Inconclusive: inside the ±${metric.marginPct.toFixed(1)}% this sample can explain by ` +
                             'chance. Record more of the same zone to narrow it.'
-                          : `Fewer than ${MIN_SAMPLE_FIGHTS} fights, so the spread says nothing yet.`)
+                          : metric.marginPct === null
+                            ? `Fewer than ${MIN_SAMPLE_FIGHTS} fights, so the spread says nothing yet.`
+                            : `Fewer than ${MIN_VERDICT_FIGHTS} clean fights: the band is ` +
+                              `±${metric.marginPct.toFixed(1)}%, but this sample is exploratory and states ` +
+                              'no verdict either way.')
             )
         );
     }
@@ -3308,10 +3338,13 @@ function drawHistory(body, history) {
         const magnitude = `${entry.deviationPct >= 0 ? '+' : ''}${entry.deviationPct.toFixed(1)}%`;
         const band = Number.isFinite(entry.marginPct) ? ` ± ${entry.marginPct.toFixed(1)}%` : '';
         const cohort = (entry.v ?? null) === currentV ? '' : ` · ${entry.v ? `v${entry.v}` : 'older script'}`;
+        // An exploratory row sits in the same table as thirty-fight ones and its
+        // deviation reads the same; without this it is a verdict by adjacency.
+        const exploratory = entry.exploratory ? ' · exploratory' : '';
         card.appendChild(
             panelLine(
                 formatRelativeTime(Date.now() - entry.at) + ' ago',
-                `${magnitude}${band} on ${entry.fights} fights — ${zoneName(entry.zoneHrid)}${cohort}`,
+                `${magnitude}${band} on ${entry.fights} fights — ${zoneName(entry.zoneHrid)}${cohort}${exploratory}`,
                 verdictColor(entry.verdict),
                 'Damage per second against the prediction, as it stood when the check was run. Rows in the same ' +
                     'zone drifting one way over weeks is the one finding a single check cannot make; rows from ' +

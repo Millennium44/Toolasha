@@ -743,6 +743,48 @@ describe('flagging a deviation', () => {
         expect(metric.verdict).toBe('insufficient');
     });
 
+    test('between the bars the verdict is withheld, not just the label', () => {
+        // Four tight fights clear MIN_SAMPLE_FIGHTS, so the margin exists and
+        // the deviation dwarfs it. Before the gate this returned `beyond-noise`
+        // — a verdict the panel had already promised not to state.
+        const metric = compareMetric({
+            key: 'dps',
+            label: '',
+            observed: 50,
+            predicted: 100,
+            samples: [50, 50, 50, 50],
+            fights: MIN_VERDICT_FIGHTS - 1,
+        });
+        expect(metric.marginPct).not.toBe(null);
+        expect(metric.deviationPct).toBeCloseTo(-50, 10);
+        expect(metric.verdict).toBe('insufficient');
+    });
+
+    test('at the upper bar the same numbers are a verdict', () => {
+        const metric = compareMetric({
+            key: 'dps',
+            label: '',
+            observed: 50,
+            predicted: 100,
+            samples: [50, 50, 50, 50, 50],
+            fights: MIN_VERDICT_FIGHTS,
+        });
+        expect(metric.verdict).toBe('beyond-noise');
+    });
+
+    test('a caller that names no cohort is gated by its samples, not waved through', () => {
+        // One value per fight, so the sample count is the cohort. A default
+        // that let an unnamed cohort through would reopen the hole silently.
+        const metric = compareMetric({
+            key: 'dps',
+            label: '',
+            observed: 50,
+            predicted: 100,
+            samples: [50, 50, 50, 50],
+        });
+        expect(metric.verdict).toBe('insufficient');
+    });
+
     test('a noisy sample can hold a large deviation as unproven', () => {
         const metric = compareMetric({
             key: 'dps',
@@ -957,6 +999,18 @@ describe('the line the tile carries', () => {
             predicted
         );
         expect(summaryLine(comparison)).toContain('too few to judge');
+    });
+
+    test('an exploratory sample is not stated as a finding on the tile', () => {
+        // "Last 4 fights ran 12.3% under predicted DPS" was the unqualified
+        // sentence the tile carried below the bar.
+        const comparison = compareRun(
+            aggregateObservations([evenObservation({ damageDealt: 900, fights: MIN_VERDICT_FIGHTS - 1 })]),
+            predicted
+        );
+        expect(comparison.metrics.every((metric) => metric.verdict === 'insufficient')).toBe(true);
+        expect(summaryLine(comparison)).toContain('too few to judge');
+        expect(summaryLine(comparison)).not.toContain('ran 10.0%');
     });
 
     test('nothing compared yet is not an accuracy claim', () => {
@@ -1780,6 +1834,32 @@ describe('drawing a deviation the sample cannot see', () => {
 
         expect(row('Sample').color).toBe(ROW_COLORS.dim);
         expect(row('Sample').text).toContain('not findings');
+    });
+
+    test('below the upper bar no row is drawn as a finding, whatever the gap', () => {
+        // The blocker: the exploratory note said "nothing below states a
+        // verdict" while the row under it was red and its tooltip read
+        // "Outside the ± this sample can explain by chance".
+        draw({ damageDealt: 500, fights: MIN_VERDICT_FIGHTS - 1 });
+
+        const line = [...replayCheckPanel.panel.querySelectorAll('div')].find(
+            (element) => element.firstChild?.textContent === 'Damage dealt / sec'
+        );
+        expect(line.lastChild.style.color).toBe(ROW_COLORS.dim);
+        expect(line.title).not.toContain('can explain by chance');
+        expect(line.title).toContain(`Fewer than ${MIN_VERDICT_FIGHTS} clean fights`);
+        expect(replayCheckPanel.panel.textContent).toContain('Exploratory only');
+    });
+
+    test('at the upper bar the same gap is drawn as a finding again', () => {
+        draw({ damageDealt: 500, fights: MIN_VERDICT_FIGHTS });
+
+        const line = [...replayCheckPanel.panel.querySelectorAll('div')].find(
+            (element) => element.firstChild?.textContent === 'Damage dealt / sec'
+        );
+        expect(line.lastChild.style.color).toBe(ROW_COLORS.bad);
+        expect(line.title).toContain('can explain by chance');
+        expect(replayCheckPanel.panel.textContent).not.toContain('Exploratory only');
     });
 });
 
@@ -2650,6 +2730,43 @@ describe('whether the accuracy is drifting', () => {
         // The cohort marker: which engine's prediction was deviated from.
         // Null outside the sandbox, but always present.
         expect('v' in remembered).toBe(true);
+    });
+
+    test('an exploratory check is kept, but never as a verdict', () => {
+        // The history is synced and read beside thirty-fight rows. Keeping the
+        // entry is right — the fights happened — but it must not read as one.
+        const comparison = compareRun(
+            aggregateObservations([evenObservation({ fights: MIN_VERDICT_FIGHTS - 1, damageDealt: 500 })]),
+            predictFromSim({
+                simulatedTime: 3600 * 1e9,
+                encounters: 360,
+                deaths: {},
+                totalDamageDealt: { player1: 360_000, '/monsters/fly': 36_000 },
+                warnings: [],
+            })
+        );
+        const remembered = historyEntry(comparison, 5_000);
+
+        expect(remembered).not.toBe(null);
+        expect(remembered.verdict).toBe('insufficient');
+        expect(remembered.exploratory).toBe(true);
+    });
+
+    test('a check at the upper bar is not marked exploratory', () => {
+        const comparison = compareRun(
+            aggregateObservations([evenObservation({ fights: MIN_VERDICT_FIGHTS, damageDealt: 500 })]),
+            predictFromSim({
+                simulatedTime: 3600 * 1e9,
+                encounters: 360,
+                deaths: {},
+                totalDamageDealt: { player1: 360_000, '/monsters/fly': 36_000 },
+                warnings: [],
+            })
+        );
+        const remembered = historyEntry(comparison, 5_000);
+
+        expect(remembered.exploratory).toBe(false);
+        expect(remembered.verdict).toBe('beyond-noise');
     });
 
     test('a check with nothing to say is not remembered as a zero', () => {
