@@ -25,6 +25,7 @@ import BlindExpirationEvent from './events/blind-expiration-event.js';
 import CombatStartEvent from './events/combat-start-event.js';
 import DamageOverTimeEvent from './events/damage-over-time-event.js';
 import EnemyRespawnEvent from './events/enemy-respawn-event.js';
+import PlayerRespawnEvent from './events/player-respawn-event.js';
 import SilenceExpirationEvent from './events/silence-expiration-event.js';
 import StunExpirationEvent from './events/stun-expiration-event.js';
 import { getGameData, setGameData } from './game-data.js';
@@ -2145,5 +2146,94 @@ describe('stun stops every action, blind and silence stop one each', () => {
         sim.addNextAttackEvent(player);
 
         expect(queued(sim, AutoAttackEvent.type, player).length).toBe(1);
+    });
+});
+
+/**
+ * What a respawn puts back.
+ *
+ * A respawn does two things that fight each other: it fills the player's pools
+ * to their maximum, and it clears the combat buffs — and a stamina or
+ * intelligence buff is part of what set that maximum. Filling first leaves the
+ * player holding the buffed number against the unbuffed cap, and nothing in the
+ * engine ever clamps a pool downwards (`addHitpoints` only tops up), so the
+ * surplus survives until damage eats through it. `CombatUnit.reset` has always
+ * cleared first and filled second; this pins the same order at the only other
+ * place a pool is refilled from scratch.
+ */
+describe('a respawn fills the pools the build actually has', () => {
+    /**
+     * A solo player standing in the fixture zone, dead, with one transient buff
+     * of the given type still on the books.
+     * @param {string} typeHrid - The buff type to apply
+     * @param {number} ratioBoost - Its ratio boost
+     * @returns {Object} The simulator and its player
+     */
+    function downedWithBuff(typeHrid, ratioBoost) {
+        installGameData();
+        const zone = new Zone(ZONE_HRID, 0);
+        const player = fixturePlayer();
+        player.zoneBuffs = zone.buffs;
+        player.extraBuffs = [];
+        const sim = new CombatSimulator([player], zone);
+        sim.reset();
+        player.reset(0);
+
+        player.addBuff(
+            {
+                uniqueHrid: '/buff_uniques/fixture_respawn',
+                typeHrid,
+                ratioBoost,
+                ratioBoostLevelBonus: 0,
+                flatBoost: 0,
+                flatBoostLevelBonus: 0,
+                startTime: 0,
+                duration: 600 * ONE_SECOND,
+            },
+            0
+        );
+
+        player.combatDetails.currentHitpoints = 0;
+        player.combatDetails.currentManapoints = 0;
+        sim.simulationTime = 150 * ONE_SECOND;
+        sim.enemies = null;
+        sim.allPlayersDead = false;
+        return { sim, player };
+    }
+
+    test('a stamina buff that dies with the player does not come back as spare hitpoints', () => {
+        // Stamina level is what maxHitpoints is computed from, so a stamina
+        // coffee is the everyday version of this: die with one running and the
+        // old order handed the respawn the coffee's hitpoints without the coffee.
+        const { sim, player } = downedWithBuff('/buff_types/stamina_level', 0.5);
+        const buffedMax = player.combatDetails.maxHitpoints;
+
+        sim.processPlayerRespawnEvent(new PlayerRespawnEvent(sim.simulationTime, player.hrid));
+
+        expect(player.combatDetails.maxHitpoints).toBeLessThan(buffedMax);
+        expect(player.combatDetails.currentHitpoints).toBe(player.combatDetails.maxHitpoints);
+    });
+
+    test('an intelligence buff does not come back as spare manapoints', () => {
+        const { sim, player } = downedWithBuff('/buff_types/intelligence_level', 0.5);
+        const buffedMax = player.combatDetails.maxManapoints;
+
+        sim.processPlayerRespawnEvent(new PlayerRespawnEvent(sim.simulationTime, player.hrid));
+
+        expect(player.combatDetails.maxManapoints).toBeLessThan(buffedMax);
+        expect(player.combatDetails.currentManapoints).toBe(player.combatDetails.maxManapoints);
+    });
+
+    test('a debuff that dies with the player does not leave the respawn short', () => {
+        // The same ordering, the other way round: clearing a stamina DEBUFF
+        // raises the maximum, and filling first left the player standing up at
+        // less than full.
+        const { sim, player } = downedWithBuff('/buff_types/stamina_level', -0.3);
+        const debuffedMax = player.combatDetails.maxHitpoints;
+
+        sim.processPlayerRespawnEvent(new PlayerRespawnEvent(sim.simulationTime, player.hrid));
+
+        expect(player.combatDetails.maxHitpoints).toBeGreaterThan(debuffedMax);
+        expect(player.combatDetails.currentHitpoints).toBe(player.combatDetails.maxHitpoints);
     });
 });

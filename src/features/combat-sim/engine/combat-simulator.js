@@ -611,10 +611,20 @@ class CombatSimulator {
 
     processPlayerRespawnEvent(event) {
         const respawningPlayer = this.players.find((player) => player.hrid === event.hrid);
-        respawningPlayer.combatDetails.currentHitpoints = respawningPlayer.combatDetails.maxHitpoints;
-        respawningPlayer.combatDetails.currentManapoints = respawningPlayer.combatDetails.maxManapoints;
+        // Buffs first, pools second — the order `CombatUnit.reset` already uses,
+        // and the only order that can be right. A player who died carrying a
+        // transient stamina or intelligence buff (a coffee, a shrine tick, an
+        // ally's aura) has a max raised by it; filling the pools before
+        // `clearBuffs` recomputes that max left them holding the BUFFED number
+        // against the unbuffed cap. Nothing clamps a pool downwards — `addHitpoints`
+        // only ever tops up — so the surplus stayed until damage ate through it,
+        // and a respawn quietly handed the build hitpoints and manapoints it does
+        // not have. A debuff that lowered the max inverted it: the player came
+        // back short of full.
         respawningPlayer.clearBuffs();
         respawningPlayer.clearCCs();
+        respawningPlayer.combatDetails.currentHitpoints = respawningPlayer.combatDetails.maxHitpoints;
+        respawningPlayer.combatDetails.currentManapoints = respawningPlayer.combatDetails.maxManapoints;
         if (this.allPlayersDead) {
             this.allPlayersDead = false;
             this.startAttacks();
