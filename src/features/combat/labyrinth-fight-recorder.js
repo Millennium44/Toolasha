@@ -310,10 +310,17 @@ function expandReplayBuilds(entries) {
  * build that is no longer in the list. A build past {@link MAX_REPLAY_BUILDS}
  * loses its inputs *and* its id together, for the same reason.
  *
+ * `capacity` defaults to {@link MAX_REPLAY_BUILDS}, the bound that keeps the
+ * *stored* pool off disk small. An export has no such disk-size reason to drop
+ * anything — deduplication alone already does the size work the export cares
+ * about — so {@link recordingFile} calls this with `Infinity` and every distinct
+ * build in the pool is carried, however many there are.
+ *
  * @param {Array<Object>} entries - Records with their builds expanded, oldest first
+ * @param {number} [capacity] - How many distinct builds to keep inputs for
  * @returns {Array<Object>} The records in the stored form
  */
-function internReplayBuilds(entries) {
+function internReplayBuilds(entries, capacity = MAX_REPLAY_BUILDS) {
     const list = Array.isArray(entries) ? entries : [];
     const keys = new Map();
     // Where each build was last fought, so the cap keeps the most recent ones —
@@ -329,7 +336,7 @@ function internReplayBuilds(entries) {
     const kept = new Set(
         [...lastSeen.entries()]
             .sort((a, b) => b[1] - a[1])
-            .slice(0, MAX_REPLAY_BUILDS)
+            .slice(0, capacity)
             .map(([key]) => key)
     );
 
@@ -835,7 +842,14 @@ export function attemptsFromRecordingFile(file) {
  * same build out verbatim once per fight and turned a ~1.2 MB stored pool into
  * roughly 10 MB of JSON. Interning here is the same one applied to the stored
  * pool, so the file carries each distinct build once and
- * {@link attemptsFromRecordingFile} resolves it back.
+ * {@link attemptsFromRecordingFile} resolves it back — except for the cap.
+ * {@link MAX_REPLAY_BUILDS} exists to bound what the stored pool keeps in
+ * IndexedDB forever; an export is a one-shot file a person reads to
+ * investigate a discrepancy, deduplication alone already does the size work an
+ * export cares about, and dropping a build past the cap here would cost that
+ * reader real data for no space saved on disk. So this interns with no cap at
+ * all — every distinct build the pool references rides along, however many
+ * there are.
  *
  * `extra` is folded in first, so a caller can embed the replay comparison
  * alongside the raw attempts without clobbering the format tag or the attempts.
@@ -867,7 +881,10 @@ export function recordingFile(extra = {}) {
         // marker and the same scheme as the stored pool's. Read the attempts
         // back with `attemptsFromRecordingFile`.
         replayBuildFormat: REPLAY_BUILD_FORMAT,
-        attempts: internReplayBuilds(recordedAttempts()),
+        // Infinity: an export carries every build the pool references, unlike
+        // the stored pool's write path which caps at MAX_REPLAY_BUILDS — see
+        // the note above.
+        attempts: internReplayBuilds(recordedAttempts(), Infinity),
     };
 }
 

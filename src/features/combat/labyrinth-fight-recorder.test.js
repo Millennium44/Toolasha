@@ -908,6 +908,27 @@ describe('the exported file interns saved builds the way the stored pool does', 
         expect(new Set(file.attempts.map((entry) => entry.replayBuildId)).size).toBe(2);
     });
 
+    test('the export carries every build, even past MAX_REPLAY_BUILDS', () => {
+        // MAX_REPLAY_BUILDS bounds what the STORED pool keeps in IndexedDB
+        // forever. An export is a one-shot diagnostic file; applying the same
+        // cap there would silently strip replayInputs from real fights with
+        // nothing in the file to say so — exactly the kind of wrong answer the
+        // export's own throw-on-unknown-format behavior exists to prevent.
+        const many = MAX_REPLAY_BUILDS + 5;
+        for (let i = 0; i < many; i++) {
+            recorder.noteAttempt(attempt({ recordId: `f-${i}`, replayInputs: build(i) }));
+        }
+
+        const file = recorder.recordingFile();
+        expect(file.attempts).toHaveLength(many);
+        expect(file.attempts.filter((entry) => entry.replayInputs).length).toBe(many);
+        expect(file.attempts.every((entry) => entry.replayBuildId)).toBe(true);
+
+        // And it reads back whole, not partially buildless
+        const read = attemptsFromRecordingFile(JSON.parse(JSON.stringify(file)));
+        expect(read.every((entry) => entry.replayInputs != null)).toBe(true);
+    });
+
     test('the file says which interning scheme it was written under', () => {
         recorder.noteAttempt(attempt({ replayInputs: build(10) }));
         const file = recorder.recordingFile();
