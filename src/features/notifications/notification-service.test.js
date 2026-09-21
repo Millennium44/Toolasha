@@ -145,6 +145,28 @@ describe('channel selection', () => {
 
         expect(sent).toHaveLength(0);
     });
+
+    test('a browser channel that throws still leaves the title fallback in place', () => {
+        // Some browsers (mobile Chrome among them) throw synchronously out of
+        // `new Notification()` rather than merely refusing to grant permission.
+        // The title flash is the documented fallback for exactly that case, so
+        // the throw must not take it down too.
+        settings.values.notifications_browserEnabled = true;
+        class ThrowingNotification {
+            constructor() {
+                throw new Error('Illegal constructor');
+            }
+            static permission = 'granted';
+        }
+        globalThis.Notification = ThrowingNotification;
+        setHidden(true);
+
+        const result = notificationService.notify('empty-queue', 'Your action queue is empty!');
+
+        expect(result.channels).toEqual(['title']);
+        expect(result.fired).toBe(true);
+        expect(document.title.startsWith(TITLE_FLASH_PREFIX)).toBe(true);
+    });
 });
 
 describe('de-duplication', () => {

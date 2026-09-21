@@ -292,18 +292,37 @@ class NotificationService {
         const channels = [];
         const quiet = !critical && this.inQuietHours();
 
-        try {
-            if (isPageHidden()) {
-                if (!quiet && this.sendBrowserNotification(message, title)) channels.push('browser');
-                if (this.flashTitle()) channels.push('title');
-            } else if (this.showInPage(message)) {
-                channels.push('toast');
+        if (isPageHidden()) {
+            // Each channel is attempted in isolation. The title flash exists
+            // *as* the fallback for the moment the browser channel misbehaves —
+            // some browsers (mobile Chrome among them) throw synchronously out
+            // of `new Notification()` rather than merely refusing — and a
+            // shared try/catch around both attempts let that throw skip the
+            // fallback it was supposed to trigger, silently.
+            if (!quiet && this._tryChannel(() => this.sendBrowserNotification(message, title))) {
+                channels.push('browser');
             }
-        } catch (error) {
-            console.error('[NotificationService] Failed to deliver notification:', error);
+            if (this._tryChannel(() => this.flashTitle())) channels.push('title');
+        } else if (this._tryChannel(() => this.showInPage(message))) {
+            channels.push('toast');
         }
 
         return channels;
+    }
+
+    /**
+     * Run one channel attempt on its own, so a throw from it cannot take a
+     * later channel's attempt down with it.
+     * @param {Function} attempt - Tries the channel; returns whether it fired
+     * @returns {boolean} Whether the channel actually delivered
+     */
+    _tryChannel(attempt) {
+        try {
+            return !!attempt();
+        } catch (error) {
+            console.error('[NotificationService] Failed to deliver notification:', error);
+            return false;
+        }
     }
 
     /**
