@@ -452,8 +452,13 @@ function loadoutSignature(snapshot) {
  * the one thing it must never do is produce a single-build verdict over a
  * sample that was not one.
  *
- * Ties go to the group holding the newest fights: with nothing to choose on
- * size, the build nearest to now is the one the reader is still playing.
+ * Ties on size go to the group holding the newest fights: with nothing to choose
+ * on size, the build nearest to now is the one the reader is still playing. When
+ * even that ties — same fight count and the same newest timestamp — the first
+ * group seen keeps it, which is insertion order and so the order the observations
+ * arrived in, the oldest build. That is arbitrary but fixed: the comparison below
+ * is strict, so nothing later can displace an equal, and the pick does not depend
+ * on which way the Map happened to be walked.
  *
  * @param {Array<Object>} observations - From `observeRecording`, one zone and tier
  * @returns {Array<Object>} The winning group, in the order it came in
@@ -497,14 +502,186 @@ export function describeCohort(observed) {
     const builds = observed?.loadoutCohorts || 2;
     const kept = observed?.fights || 0;
     const setAside = observed?.setAsideFights || 0;
-    const weapon = observed?.loadout?.equipment?.main_hand?.hrid;
-    const kit = weapon ? ` (${itemName(weapon)} build)` : '';
+    const difference = describeLoadoutDifference(observed?.setAsideLoadout, observed?.loadout);
+    // Naming what differs beats naming the kit, because the common cause is a
+    // level-up and both cohorts then wear the same weapon. The kit is the honest
+    // fallback: it never claims to be the difference, and it is all there is when
+    // the set-aside side predates loadout snapshots.
+    const clause = difference
+        ? ` (they differ by ${difference})`
+        : weaponName(observed?.loadout)
+          ? ` (${weaponName(observed.loadout)} build; what differs could not be read)`
+          : '';
     return (
         `Mixed builds — these fights were not all fought in the same kit, and a level-up counts as a change. ` +
-        `The sample holds ${builds} builds; the check ran against the largest${kit}: ` +
+        `The sample holds ${builds} builds; the check ran against the largest${clause}: ` +
         `${kept} ${kept === 1 ? 'fight' : 'fights'}, with ${setAside} set aside. ` +
         `Record the zone in one build for a reading over all of it.`
     );
+}
+
+/**
+ * The weapon a snapshot is holding, as a name.
+ *
+ * The DTO keys equipment by the full equipment-type hrid — `/equipment_types/main_hand`,
+ * never the bare `main_hand`; see `combat-sim-adapter`, which writes
+ * `dto.equipment[itemDetail.equipmentDetail.type]`. Reading the short key here
+ * silently produced no weapon on every real character. A two-handed weapon sits
+ * in its own slot and some characters have no such key at all, so both are tried
+ * and neither is assumed.
+ *
+ * @param {Object} [snapshot] - From `captureLoadoutSnapshot`
+ * @returns {string|null}
+ */
+function weaponName(snapshot) {
+    for (const slot of WEAPON_SLOTS) {
+        const hrid = snapshot?.equipment?.[slot]?.hrid;
+        if (hrid) return itemName(hrid);
+    }
+    return null;
+}
+
+/** The two slots a weapon can occupy; a character holds one or the other, never both */
+const WEAPON_SLOTS = ['/equipment_types/two_hand', '/equipment_types/main_hand'];
+
+/** The combat levels, as the panel says them */
+const LEVEL_LABELS = {
+    attackLevel: 'attack',
+    meleeLevel: 'melee',
+    defenseLevel: 'defense',
+    rangedLevel: 'ranged',
+    magicLevel: 'magic',
+    staminaLevel: 'stamina',
+    intelligenceLevel: 'intelligence',
+};
+
+/** The snapshot fields with no per-entry reading, and what to call each */
+const FIELD_LABELS = {
+    food: 'the food slots',
+    drinks: 'the drink slots',
+    houseRooms: 'a house room',
+    guildCombatBuffs: 'a guild buff',
+    guildShrineLevels: 'a guild shrine',
+    achievementCombatBuffs: 'an achievement buff',
+};
+
+/** An equipment-type hrid as a slot name: `/equipment_types/main_hand` → `main hand` */
+function slotName(slot) {
+    return String(slot || '')
+        .split('/')
+        .pop()
+        .replace(/_/g, ' ');
+}
+
+/**
+ * An ability hrid as its name, or as itself when the client has not said.
+ * @param {string} abilityHrid - e.g. `/abilities/quick_shot`
+ * @returns {string}
+ */
+function abilityName(abilityHrid) {
+    const detail = dataManager.getInitClientData?.()?.abilityDetailMap?.[abilityHrid];
+    if (detail?.name) return detail.name;
+    return String(abilityHrid || '')
+        .split('/')
+        .pop()
+        .replace(/_/g, ' ');
+}
+
+/**
+ * What changed between two builds, as one short clause.
+ *
+ * The cohort note exists because the sample split, and the only useful thing it
+ * can say is what split it. The first difference found wins, in the order these
+ * actually happen: a combat level ticks over mid-session far more often than a
+ * ring is swapped, and an ability is re-levelled more often than a house room is
+ * built. One clause, not a diff — this is a panel note.
+ *
+ * Both sides are snapshots from `captureLoadoutSnapshot`, so a field absent from
+ * one and present in the other is a real difference and is reported as one.
+ *
+ * @param {Object} [before] - The build that was set aside
+ * @param {Object} [after] - The build that was measured
+ * @returns {string|null} Null when there is nothing to compare, or nothing named
+ */
+export function describeLoadoutDifference(before, after) {
+    if (!before || !after) return null;
+
+    for (const [key, label] of Object.entries(LEVEL_LABELS)) {
+        const from = before.levels?.[key];
+        const to = after.levels?.[key];
+        if (Number.isFinite(from) && Number.isFinite(to) && from !== to) return `${label} ${from} to ${to}`;
+    }
+
+    const equipment = describeEquipmentDifference(before.equipment, after.equipment);
+    if (equipment) return equipment;
+
+    const abilities = describeAbilityDifference(before.abilities, after.abilities);
+    if (abilities) return abilities;
+
+    for (const [key, label] of Object.entries(FIELD_LABELS)) {
+        if (stableStringify(before[key] ?? null) !== stableStringify(after[key] ?? null)) return `${label} changing`;
+    }
+
+    // Levels the label map does not cover, or a field added to SNAPSHOT_FIELDS
+    // since this was written: say that it changed rather than inventing a name
+    for (const key of SNAPSHOT_LEVELS) {
+        if (before.levels?.[key] !== after.levels?.[key]) return 'a combat level';
+    }
+    for (const key of SNAPSHOT_FIELDS) {
+        if (stableStringify(before[key] ?? null) !== stableStringify(after[key] ?? null)) return 'part of the kit';
+    }
+    return null;
+}
+
+/**
+ * The first equipment slot that is not the same in both builds.
+ *
+ * @param {Object} [before] - Slot hrid to `{hrid, enhancementLevel}`
+ * @param {Object} [after] - The same, as measured
+ * @returns {string|null}
+ */
+function describeEquipmentDifference(before = {}, after = {}) {
+    for (const slot of [...new Set([...Object.keys(before || {}), ...Object.keys(after || {})])].sort()) {
+        const was = (before || {})[slot];
+        const now = (after || {})[slot];
+        if (!was && !now) continue;
+        if (!was) return `${slotName(slot)} (${itemName(now.hrid)} equipped)`;
+        if (!now) return `${slotName(slot)} (${itemName(was.hrid)} removed)`;
+        if (was.hrid !== now.hrid) return `${slotName(slot)} (${itemName(was.hrid)} to ${itemName(now.hrid)})`;
+        if ((was.enhancementLevel || 0) !== (now.enhancementLevel || 0))
+            return `${slotName(slot)} (+${was.enhancementLevel || 0} to +${now.enhancementLevel || 0})`;
+    }
+    return null;
+}
+
+/**
+ * The first ability slot that is not the same in both builds.
+ *
+ * The slots are a rotation, so position matters and a slot is compared against
+ * the same slot — an ability moved one place down is a real change to the order
+ * the engine casts in.
+ *
+ * @param {Array} [before] - Ability slots, `{hrid, level, triggers}` or null
+ * @param {Array} [after] - The same, as measured
+ * @returns {string|null}
+ */
+function describeAbilityDifference(before, after) {
+    if (!Array.isArray(before) && !Array.isArray(after)) return null;
+    const left = Array.isArray(before) ? before : [];
+    const right = Array.isArray(after) ? after : [];
+    for (let index = 0; index < Math.max(left.length, right.length); index += 1) {
+        const was = left[index];
+        const now = right[index];
+        if (!was && !now) continue;
+        if (!was) return `${abilityName(now.hrid)} added to the rotation`;
+        if (!now) return `${abilityName(was.hrid)} dropped from the rotation`;
+        if (was.hrid !== now.hrid) return `${abilityName(was.hrid)} swapped for ${abilityName(now.hrid)}`;
+        if ((was.level || 0) !== (now.level || 0))
+            return `${abilityName(now.hrid)} level ${was.level || 0} to ${now.level || 0}`;
+        if (stableStringify(was.triggers ?? null) !== stableStringify(now.triggers ?? null))
+            return `${abilityName(now.hrid)}’s triggers`;
+    }
+    return null;
 }
 
 /**
@@ -962,6 +1139,17 @@ export function aggregateObservations(observations) {
     const byNewest = [...cohort].sort((left, right) => right.recordedAt - left.recordedAt);
     const loadout = byNewest.find((entry) => entry.loadout)?.loadout ?? null;
 
+    // The newest build that was *not* measured. Kept so the note can say what
+    // actually split the sample rather than naming the winning kit twice: a
+    // level-up leaves the weapon alone, so "spear build" against "spear build"
+    // tells the reader nothing about why there were two cohorts at all.
+    const inCohort = new Set(cohort);
+    const setAsideLoadout =
+        matching
+            .filter((entry) => !inCohort.has(entry))
+            .sort((left, right) => right.recordedAt - left.recordedAt)
+            .find((entry) => entry.loadout)?.loadout ?? null;
+
     return {
         zoneHrid: newest.zoneHrid,
         difficultyTier: newest.difficultyTier,
@@ -969,6 +1157,7 @@ export function aggregateObservations(observations) {
         truncated: cohort.some((entry) => entry.truncated),
         contextChanged: cohort.some((entry) => entry.contextChanged),
         loadout,
+        setAsideLoadout,
         mixedLoadouts: signatures.size > 1,
         // How many builds the whole sample held, and what measuring one of
         // them cost. A reader checking only `mixedLoadouts` still learns the

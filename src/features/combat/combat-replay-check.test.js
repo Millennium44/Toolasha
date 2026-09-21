@@ -139,6 +139,7 @@ import replayCheck, {
     dungeonWaveTiming,
     aggregateObservations,
     describeCohort,
+    describeLoadoutDifference,
     largestLoadoutCohort,
     predictFromSim,
     deviationPct,
@@ -1062,6 +1063,119 @@ describe('the loadout the fight was actually fought in', () => {
         expect(note).toContain('2 builds');
         expect(note).toContain('7 fights');
         expect(note).toContain('2 set aside');
+    });
+
+    /**
+     * A character in the shape the *game* hands over.
+     *
+     * `loadout()` above keys equipment by the bare slot name, which nothing in
+     * the client ever produces: `buildPlayerDTO` writes
+     * `dto.equipment[itemDetail.equipmentDetail.type]`, so the keys are full
+     * equipment-type hrids. The simplified shape is what let a read of
+     * `equipment.main_hand` pass its test and name nothing in the running game.
+     */
+    function realLoadout({
+        weapon = '/items/blazing_trident_refined',
+        weaponSlot = '/equipment_types/main_hand',
+        enhancement = 20,
+        attack = 90,
+        ability = '/abilities/poke',
+        abilityLevel = 3,
+    } = {}) {
+        const built = {
+            ...loadout({ attack, ability }),
+            equipment: {
+                [weaponSlot]: { hrid: weapon, enhancementLevel: enhancement },
+                '/equipment_types/off_hand': { hrid: '/items/buckler', enhancementLevel: 0 },
+                '/equipment_types/ring': { hrid: '/items/ring', enhancementLevel: 1 },
+            },
+            abilities: [null, { hrid: ability, level: abilityLevel, triggers: null }, null, null, null],
+        };
+        if (!weapon) delete built.equipment[weaponSlot];
+        return built;
+    }
+
+    test('the note names the build off the equipment key the game actually uses', () => {
+        // The set-aside half predates snapshots, so there is nothing to diff
+        // against and the note falls back to naming the measured kit — which is
+        // the clause that read `equipment.main_hand` and so named nothing at all
+        // on every real character.
+        const observed = aggregateObservations([
+            evenObservation({ fights: 3, recordedAt: 1_000 }),
+            evenObservation({ fights: 7, recordedAt: 2_000, loadout: captureLoadoutSnapshot(realLoadout()) }),
+        ]);
+
+        expect(observed.setAsideLoadout).toBe(null);
+        expect(describeCohort(observed)).toContain('blazing_trident_refined build');
+    });
+
+    test('a two-handed weapon is named too, and a character holding neither is not guessed at', () => {
+        const twoHanded = aggregateObservations([
+            evenObservation({ fights: 3, recordedAt: 1_000 }),
+            evenObservation({
+                fights: 7,
+                recordedAt: 2_000,
+                loadout: captureLoadoutSnapshot(
+                    realLoadout({ weapon: '/items/cheese_bulwark', weaponSlot: '/equipment_types/two_hand' })
+                ),
+            }),
+        ]);
+        expect(describeCohort(twoHanded)).toContain('cheese_bulwark build');
+
+        // The live character had no `/equipment_types/two_hand` key at all, so
+        // an absent weapon slot has to degrade rather than read `undefined`
+        const bareHanded = aggregateObservations([
+            evenObservation({ fights: 3, recordedAt: 1_000 }),
+            evenObservation({
+                fights: 7,
+                recordedAt: 2_000,
+                loadout: captureLoadoutSnapshot(realLoadout({ weapon: null })),
+            }),
+        ]);
+        const note = describeCohort(bareHanded);
+        expect(note).toContain('2 builds');
+        expect(note).not.toContain('undefined');
+        expect(note).not.toContain('build)');
+    });
+
+    test('the note names what actually split the sample, not the weapon both halves wore', () => {
+        // The case the whole cohort note exists for: combat XP ticks a level
+        // over mid-recording. The weapon never changed, so naming it twice told
+        // the reader nothing about why there were two cohorts.
+        const observed = aggregateObservations([
+            evenObservation({
+                fights: 3,
+                recordedAt: 1_000,
+                loadout: captureLoadoutSnapshot(realLoadout({ attack: 90 })),
+            }),
+            evenObservation({
+                fights: 7,
+                recordedAt: 2_000,
+                loadout: captureLoadoutSnapshot(realLoadout({ attack: 91 })),
+            }),
+        ]);
+
+        const note = describeCohort(observed);
+        expect(note).toContain('they differ by attack 90 to 91');
+        expect(note).not.toContain('blazing_trident_refined');
+    });
+
+    test('a swapped slot, an enhancement and an ability each name themselves', () => {
+        const base = captureLoadoutSnapshot(realLoadout());
+        expect(describeLoadoutDifference(base, captureLoadoutSnapshot(realLoadout({ weapon: '/items/spear' })))).toBe(
+            'main hand (blazing_trident_refined to spear)'
+        );
+        expect(describeLoadoutDifference(base, captureLoadoutSnapshot(realLoadout({ enhancement: 19 })))).toBe(
+            'main hand (+20 to +19)'
+        );
+        expect(describeLoadoutDifference(base, captureLoadoutSnapshot(realLoadout({ abilityLevel: 4 })))).toBe(
+            'poke level 3 to 4'
+        );
+        expect(
+            describeLoadoutDifference(base, captureLoadoutSnapshot(realLoadout({ ability: '/abilities/smack' })))
+        ).toBe('poke swapped for smack');
+        // Nothing to compare against is not a difference invented
+        expect(describeLoadoutDifference(null, base)).toBe(null);
     });
 
     test('the snapshot keeps what describes the character', () => {
