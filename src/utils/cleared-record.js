@@ -122,9 +122,13 @@ export function mergeClearable(merge, timeOf, { limit = CLEAR_FOLD_LIMIT, label 
  *
  * @param {Object} record - From `createPersistedRecord`
  * @param {number} [clearedAt] - The moment to stamp; injectable for tests
+ * @param {Function} [shape=clearedRecord] - How the owner shapes its stored
+ *   value, `(entries, clearedAt) => value`. A store that stamps a format marker
+ *   on every write has to stamp this one too, or a Reset leaves the pool
+ *   unmarked until the next ordinary save.
  * @returns {Promise<boolean>} Whether the write landed
  */
-export function clearRecord(record, clearedAt = Date.now()) {
-    record.set(clearedRecord([], clearedAt));
+export function clearRecord(record, clearedAt = Date.now(), shape = clearedRecord) {
+    record.set(shape([], clearedAt));
     return record.save({ overwrite: true });
 }

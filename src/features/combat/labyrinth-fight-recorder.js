@@ -754,7 +754,9 @@ export function recordingStatus(fingerprint) {
 /** Throw away every accumulated fight, stamped so a pull cannot bring them back. */
 export function clearRecording() {
     attempts = [];
-    clearRecord(record).catch((error) =>
+    // Shaped, not bare: REPLAY_BUILD_FORMAT promises every write this module
+    // makes carries the marker, and the clear is a write like any other.
+    clearRecord(record, undefined, storedRecord).catch((error) =>
         console.error('[LabyrinthFightRecorder] Clearing the fight pool failed:', error)
     );
 }

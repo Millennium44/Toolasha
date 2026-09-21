@@ -865,6 +865,10 @@ describe('the Accuracy tab’s Reset survives a sync pull', () => {
 
         expect(stored()).toEqual([]);
         expect(raw().clearedAt).toBeGreaterThan(0);
+        // The marker too: REPLAY_BUILD_FORMAT says every write this module
+        // makes carries it, and the clear used to leave the pool at format 0
+        // until some later save happened to re-stamp it.
+        expect(raw().replayBuildFormat).toBe(REPLAY_BUILD_FORMAT);
         expect(recorder.recordingStatus().total).toBe(0);
     });
 });
