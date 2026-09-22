@@ -182,9 +182,15 @@ export const settingsGroups = {
             },
             actionBar_showTimeRemaining: {
                 id: 'actionBar_showTimeRemaining',
-                label: 'Action bar: Time remaining and completion ETA',
-                type: 'checkbox',
-                default: true,
+                label: 'Action bar: Time remaining display',
+                type: 'select',
+                default: 'both',
+                options: [
+                    { value: 'both', label: 'Time remaining and completion ETA' },
+                    { value: 'relative', label: 'Time remaining only' },
+                    { value: 'absolute', label: 'Completion ETA only' },
+                    { value: 'none', label: 'Neither' },
+                ],
             },
             actionBar_showRecycleTime: {
                 id: 'actionBar_showRecycleTime',
@@ -419,6 +425,18 @@ export const settingsGroups = {
                 type: 'checkbox',
                 default: false,
                 help: 'Adds an XP line to each queued row — the experience the row is expected to give and the rate it rests on — and a Total XP to the footer. A fight reads its XP from the last combat simulation, the same reading that times it; every other action works it out from game data, with wisdom, Charm Experience and efficiency repeats included. A row with no figure marks the total "+ [?]" rather than counting as zero.',
+            },
+            actionQueue_completionTimeStyle: {
+                id: 'actionQueue_completionTimeStyle',
+                label: 'Queued actions: Completion display',
+                type: 'select',
+                default: 'absolute',
+                options: [
+                    { value: 'absolute', label: 'Clock time only' },
+                    { value: 'relative', label: 'Cumulative duration only' },
+                    { value: 'both', label: 'Cumulative duration and clock time' },
+                ],
+                help: 'Chooses whether each reachable queue row shows when it finishes, how long it takes to reach, or both.',
             },
         },
     },

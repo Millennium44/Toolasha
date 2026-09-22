@@ -78,6 +78,44 @@ function formatCompletionTime(completionTime, includeDate) {
     return formatDateTime(completionTime, { includeDate, includeTime: true, includeSeconds: true });
 }
 
+/**
+ * Format a reachable queue row's cumulative completion suffix.
+ * @param {number} accumulatedTime - Seconds from now until this row finishes
+ * @param {boolean} [estimated=false] - Whether any preceding duration is estimated
+ * @param {string} [style] - absolute, relative or both
+ * @returns {string} A leading-space-prefixed suffix
+ */
+export function buildQueueCompletionText(
+    accumulatedTime,
+    estimated = false,
+    style = config.getSettingValue('actionQueue_completionTimeStyle', 'absolute')
+) {
+    const parts = [];
+    if (style === 'relative' || style === 'both') parts.push(`in ${timeReadable(accumulatedTime)}`);
+    if (style === 'absolute' || style === 'both') {
+        const completionDate = new Date();
+        completionDate.setSeconds(completionDate.getSeconds() + accumulatedTime);
+        const isToday = completionDate.toDateString() === new Date().toDateString();
+        parts.push(formatCompletionTime(completionDate, !isToday));
+    }
+    if (parts.length === 0) return '';
+    return ` ${estimated ? '~' : ''}${parts.join(' · ')}`;
+}
+
+/**
+ * Format the action bar's relative and absolute estimates independently.
+ * @param {string} mode - both, relative, absolute or none
+ * @param {string} relativeText
+ * @param {string} absoluteText
+ * @returns {string}
+ */
+export function buildActionTimeText(mode, relativeText, absoluteText) {
+    if (mode === 'relative') return relativeText;
+    if (mode === 'absolute') return absoluteText;
+    if (mode === 'none') return '';
+    return `${relativeText} → ${absoluteText}`;
+}
+
 // Marks a native QueuedActions edit-menu once Toolasha has enhanced it, so the width contract
 // below and the row-wrapping rules only ever apply to that specific popup - never to unrelated
 // MUI tooltips/poppers elsewhere in the game.
@@ -1608,6 +1646,7 @@ class ActionTimeDisplay {
                 'actionBar_showActionDuration',
                 'actionBar_showActionsPerHour',
                 'actionBar_showTimeRemaining',
+                'actionQueue_completionTimeStyle',
                 'profitCalc_pricingMode',
                 ...PATIENT_TICK_SETTING_KEYS,
                 IRONCOW_VALUATION_SETTING,
@@ -1624,7 +1663,8 @@ class ActionTimeDisplay {
                         }
                         return;
                     }
-                    this.updateDisplay();
+                    if (key === 'actionQueue_completionTimeStyle') this.redrawQueueMenu();
+                    else this.updateDisplay();
                 });
             }
         }
@@ -1894,10 +1934,7 @@ class ActionTimeDisplay {
                         accumulatedTime += combat.seconds;
                         hasEstimate = true;
                         if (!hasInfinite && !hasUnknown) {
-                            const completionDate = new Date();
-                            completionDate.setSeconds(completionDate.getSeconds() + accumulatedTime);
-                            const isToday = completionDate.toDateString() === new Date().toDateString();
-                            combatText += ` ~${formatCompletionTime(completionDate, !isToday)}`;
+                            combatText += buildQueueCompletionText(accumulatedTime, true);
                         }
                     } else {
                         hasUnknown = true;
@@ -1938,11 +1975,7 @@ class ActionTimeDisplay {
 
                 // Add completion time
                 if (!hasInfinite && !hasUnknown && !result.isTrulyInfinite) {
-                    const completionDate = new Date();
-                    completionDate.setSeconds(completionDate.getSeconds() + accumulatedTime);
-                    const isToday = completionDate.toDateString() === new Date().toDateString();
-                    const mark = hasEstimate ? '~' : '';
-                    timeText += ` ${mark}${formatCompletionTime(completionDate, !isToday)}`;
+                    timeText += buildQueueCompletionText(accumulatedTime, hasEstimate);
                 }
 
                 this.appendTimeToActionDiv(actionDiv, timeText);
@@ -2868,8 +2901,9 @@ class ActionTimeDisplay {
         this.appendStatsToActionName(actionNameElement, statsToAppend.join(' · '));
 
         // Line 2: Time estimates in our div
+        const timeRemainingMode = config.getSettingValue('actionBar_showTimeRemaining', 'both');
         if (
-            config.getSetting('actionBar_showTimeRemaining') &&
+            timeRemainingMode !== 'none' &&
             remainingQueuedActions !== Infinity &&
             !isNaN(remainingQueuedActions) &&
             remainingQueuedActions > 0
@@ -2883,10 +2917,12 @@ class ActionTimeDisplay {
                 const recycleTimeStr = timeReadable(recycleTimeSeconds);
                 const recycleIsToday = recycleCompletion.toDateString() === new Date().toDateString();
                 const recycleClockTime = formatCompletionTime(recycleCompletion, !recycleIsToday);
-                recycleHtml = `<span style="color:#4dd0a0; margin-left:12px; font-size:11px;">Est. w/ recycle: ${recycleTimeStr} → ${recycleClockTime}</span>`;
+                const recycleText = buildActionTimeText(timeRemainingMode, recycleTimeStr, recycleClockTime);
+                recycleHtml = `<span style="color:#4dd0a0; margin-left:12px; font-size:11px;">Est. w/ recycle: ${recycleText}</span>`;
             }
             const progressNote = partialProgressNote(elapsedInCurrentUnit);
-            this.displayElement.innerHTML = `<span style="display: inline-flex; flex-wrap: nowrap; align-items: baseline; gap: 0.25em;"><span>⏱</span>${matsLabel} ${timeStr} → ${clockTime}${progressNote}</span>${recycleHtml}`;
+            const timeText = buildActionTimeText(timeRemainingMode, timeStr, clockTime);
+            this.displayElement.innerHTML = `<span style="display: inline-flex; flex-wrap: nowrap; align-items: baseline; gap: 0.25em;"><span>⏱</span>${matsLabel} ${timeText}${progressNote}</span>${recycleHtml}`;
         } else {
             this.displayElement.innerHTML = '';
         }
@@ -3065,12 +3101,8 @@ class ActionTimeDisplay {
         this.appendStatsToActionName(actionNameElement, statsToAppend.join(' · '));
 
         // Line 2: Time estimate — always material-based for enhancing
-        if (
-            config.getSetting('actionBar_showTimeRemaining') &&
-            materialTime !== null &&
-            materialTime > 0 &&
-            isFinite(materialTime)
-        ) {
+        const timeRemainingMode = config.getSettingValue('actionBar_showTimeRemaining', 'both');
+        if (timeRemainingMode !== 'none' && materialTime !== null && materialTime > 0 && isFinite(materialTime)) {
             const timeStr = timeReadable(materialTime);
 
             const completionTime = new Date();
@@ -3082,7 +3114,8 @@ class ActionTimeDisplay {
 
             const itemIconHtml = this.getItemIconHtml(limitingItemHrid);
             const matsLabel = itemIconHtml ? `${itemIconHtml}:` : 'Mats:';
-            this.displayElement.innerHTML = `<span style="display: inline-flex; flex-wrap: nowrap; align-items: baseline; gap: 0.25em;"><span>⏱</span>${matsLabel} ${timeStr} → ${clockTime} (${materialLimitIsEstimated ? '~' : ''}${formatWithSeparator(materialLimit)} actions)</span>`;
+            const timeText = buildActionTimeText(timeRemainingMode, timeStr, clockTime);
+            this.displayElement.innerHTML = `<span style="display: inline-flex; flex-wrap: nowrap; align-items: baseline; gap: 0.25em;"><span>⏱</span>${matsLabel} ${timeText} (${materialLimitIsEstimated ? '~' : ''}${formatWithSeparator(materialLimit)} actions)</span>`;
         } else {
             this.displayElement.innerHTML = '';
         }
@@ -4616,10 +4649,7 @@ class ActionTimeDisplay {
                         hasEstimate = true;
                         usesSimRate = true;
                         if (!hasInfinite && !hasUnknown) {
-                            const completionDate = new Date();
-                            completionDate.setSeconds(completionDate.getSeconds() + accumulatedTime);
-                            const isToday = completionDate.toDateString() === new Date().toDateString();
-                            combatText += ` ~${formatCompletionTime(completionDate, !isToday)}`;
+                            combatText += buildQueueCompletionText(accumulatedTime, true);
                         }
                     } else {
                         hasUnknown = true;
@@ -4787,12 +4817,7 @@ class ActionTimeDisplay {
                 // Format completion time
                 let completionText = '';
                 if (!hasInfinite && !hasUnknown && !isTrulyInfinite) {
-                    const completionDate = new Date();
-                    completionDate.setSeconds(completionDate.getSeconds() + accumulatedTime);
-                    const isToday = completionDate.toDateString() === new Date().toDateString();
-                    const mark = hasEstimate ? '~' : '';
-
-                    completionText = ` ${mark}${formatCompletionTime(completionDate, !isToday)}`;
+                    completionText = buildQueueCompletionText(accumulatedTime, hasEstimate);
                 }
 
                 // Create time display element

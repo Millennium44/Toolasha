@@ -144,6 +144,31 @@ const DEFAULT_REWRITE_FLAG_KEY = 'settings_default_rewrites';
  * the user may since have re-picked by hand. See {@link applyKeyMigrations}.
  */
 const KEY_MIGRATIONS = [
+    // This action-bar choice used to be one checkbox controlling both figures.
+    // Replace the stored entry itself so a later save never carries the old
+    // `.isTrue` field alongside the select's value.
+    {
+        once: 'actionBarTimeDisplay',
+        reconcile: (saved) => {
+            const old = saved.actionBar_showTimeRemaining;
+            if (!old || Object.hasOwn(old, 'value') || !Object.hasOwn(old, 'isTrue')) return {};
+            return {
+                actionBar_showTimeRemaining: {
+                    id: 'actionBar_showTimeRemaining',
+                    type: 'select',
+                    value: old.isTrue ? 'both' : 'none',
+                },
+            };
+        },
+    },
+    // A short-lived upstream build placed the queue choice in Action Bar before
+    // moving it to Action Queue. Preserve that choice if such a map is imported.
+    {
+        once: 'queueCompletionTimeStyleRename',
+        from: ['actionBar_completionTimeStyle'],
+        to: 'actionQueue_completionTimeStyle',
+        derive: ([value]) => (['absolute', 'relative', 'both'].includes(value) ? value : undefined),
+    },
     // The patient tick became one switch per side; the old one moved both
     {
         once: 'patientTickSides',

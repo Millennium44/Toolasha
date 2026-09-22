@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Action and queue completion times can be shown independently
+
+- The action bar can now show time remaining, completion ETA, both or neither. Queued-action rows can independently show their cumulative duration, completion clock or both, while existing on/off and clock-only choices are preserved.
+
 ### Combat Sim can skip skilling house rooms
 
 - Upgrade Advisor can now omit house rooms whose only combat benefit is their shared Wisdom and Rare Find bonuses, reducing House Rooms analysis time when their small EXP and Profit changes are not needed. The option is off by default so existing analyses keep considering every real effect.

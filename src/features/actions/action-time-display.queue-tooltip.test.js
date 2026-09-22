@@ -45,6 +45,7 @@ vi.mock('../../core/dom-observer.js', () => ({
 const game = vi.hoisted(() => ({
     currentActions: [],
     actionDetails: {},
+    completionStyle: 'absolute',
 }));
 
 vi.mock('../../core/data-manager.js', () => ({
@@ -66,7 +67,8 @@ vi.mock('../../core/data-manager.js', () => ({
 vi.mock('../../core/config.js', () => ({
     default: {
         getSetting: (key) => key === 'actionQueue',
-        getSettingValue: (_key, fallback) => fallback,
+        getSettingValue: (key, fallback) =>
+            key === 'actionQueue_completionTimeStyle' ? game.completionStyle : fallback,
         COLOR_TOOLTIP_INFO: '#abc',
     },
 }));
@@ -136,6 +138,7 @@ beforeEach(async () => {
     document.body.innerHTML = '';
     game.actionDetails = { [ACTION_HRID]: { type: '/action_types/enhancing', hrid: ACTION_HRID } };
     game.currentActions = [enhancingAction(0)];
+    game.completionStyle = 'absolute';
     actionTimeDisplay.initializeQueueTooltipObserver();
 });
 
@@ -182,5 +185,14 @@ describe('queue tooltip content-keyed guard', () => {
         // because `.mwi-queue-action-time` from the first open is still in the
         // (reused) DOM subtree — it never even attempts to recompute.
         expect(totalText(el)).toBe('Total: 8s');
+    });
+
+    test('the relative completion style wires cumulative duration into the rendered row', () => {
+        game.completionStyle = 'relative';
+        const el = queueTooltipPopper();
+
+        observerState.handler(el);
+
+        expect(el.querySelector('.mwi-queue-action-time').textContent).toBe('[20s] in 20s');
     });
 });
