@@ -28,13 +28,20 @@
 
 const REQUIRED_LIBRARIES = ['Core', 'Utils', 'Sim', 'Market', 'Actions', 'Combat', 'UI'];
 
-/** Which required bundle and external-library globals did not load. */
-function missingDependencies(ns, externals) {
-    const missing = REQUIRED_LIBRARIES.filter((lib) => !ns || !ns[lib]);
-    for (const [name, loaded] of Object.entries(externals)) {
-        if (!loaded) missing.push(name);
-    }
-    return missing;
+/** Which required Toolasha bundle globals did not load. */
+function missingLibraries(ns) {
+    return REQUIRED_LIBRARIES.filter((lib) => !ns || !ns[lib]);
+}
+
+/**
+ * The console notice for a Chart.js that did not load, or null when it did.
+ * Charts are optional: every chart site already skips drawing without it, so a
+ * missing Chart.js must not stop startup. (On the simulator pages a UMD build
+ * can also register through the page's AMD loader instead of the global.)
+ */
+function chartUnavailableNotice(chartGlobal) {
+    if (chartGlobal) return null;
+    return '[Toolasha] Chart.js did not load — charts are unavailable, everything else still works. Refresh to retry.';
 }
 
 /** GM's cross-origin request, whichever grant this manager exposes, or null. */
@@ -96,7 +103,7 @@ function reportLibraryLoadFailure(missing) {
     const link = '<a href="https://www.githubstatus.com" target="_blank" style="color:#ffb3b3;">githubstatus.com</a>';
     showLoadErrorBanner(
         heading +
-            `<div>Required dependencies (${missing.join(', ')}) did not finish loading. A network/CDN failure or ` +
+            `<div>Its code bundles (${missing.join(', ')}) did not finish loading. A network/CDN failure or ` +
             `an incompatible response can cause this. See ${link} for current incidents.</div>`
     );
     const request = gmRequest();
@@ -130,17 +137,16 @@ const toolashaNamespace =
     (typeof unsafeWindow !== 'undefined' && unsafeWindow.Toolasha) ||
     null;
 
-const externalDependencies = {
-    'Chart.js': typeof Chart !== 'undefined' && Chart,
-    'Chart.js data labels': typeof ChartDataLabels !== 'undefined' && ChartDataLabels,
-};
-const missingDeps = missingDependencies(toolashaNamespace, externalDependencies);
-if (missingDeps.length) {
-    reportLibraryLoadFailure(missingDeps);
+const missingLibs = missingLibraries(toolashaNamespace);
+if (missingLibs.length) {
+    reportLibraryLoadFailure(missingLibs);
     throw new Error(
-        `Toolasha dependencies failed to load (${missingDeps.join(', ')}). See the on-page notice and refresh shortly.`
+        `Toolasha libraries failed to load (${missingLibs.join(', ')}). See the on-page notice and refresh shortly.`
     );
 }
+
+const chartNotice = chartUnavailableNotice(typeof Chart !== 'undefined' ? Chart : null);
+if (chartNotice) console.warn(chartNotice);
 
 const Core = toolashaNamespace.Core;
 const Utils = toolashaNamespace.Utils;
@@ -2880,6 +2886,7 @@ if (isCombatSimulatorPage()) {
  */
 export {
     checkMwiToolsWithRetries as _checkMwiToolsWithRetries,
+    chartUnavailableNotice as _chartUnavailableNotice,
     githubOutageLine as _githubOutageLine,
-    missingDependencies as _missingDependencies,
+    missingLibraries as _missingLibraries,
 };

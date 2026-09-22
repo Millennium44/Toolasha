@@ -160,9 +160,14 @@ function makeStub() {
     });
 }
 
+// Boot warnings, captured while the entrypoint is imported. Chart.js is left
+// undefined on purpose: charts are optional, so booting without it must warn
+// and carry on rather than abort the whole script.
+const bootWarnings = [];
+
 beforeAll(async () => {
-    globalThis.Chart = class {};
-    globalThis.ChartDataLabels = {};
+    delete globalThis.Chart;
+    delete globalThis.ChartDataLabels;
     window.Toolasha = {
         Core: {
             storage: {
@@ -264,12 +269,18 @@ beforeAll(async () => {
         }),
     };
 
-    entrypointModule = await import('./entrypoint.js');
+    const originalWarn = console.warn;
+    console.warn = (...args) => bootWarnings.push(args.join(' '));
+    try {
+        entrypointModule = await import('./entrypoint.js');
+    } finally {
+        console.warn = originalWarn;
+    }
 });
 
 describe('startup dependency diagnostics', () => {
-    test('enumerates every production bundle and both external chart dependencies', () => {
-        expect(entrypointModule._missingDependencies({}, { 'Chart.js': null, 'Chart.js data labels': null })).toEqual([
+    test('enumerates every production bundle and nothing else as fatal', () => {
+        expect(entrypointModule._missingLibraries({})).toEqual([
             'Core',
             'Utils',
             'Sim',
@@ -277,22 +288,19 @@ describe('startup dependency diagnostics', () => {
             'Actions',
             'Combat',
             'UI',
-            'Chart.js',
-            'Chart.js data labels',
         ]);
 
-        const namespace = {
-            Core: {},
-            Utils: {},
-            Market: {},
-            Actions: {},
-            Combat: {},
-            UI: {},
-        };
+        const namespace = { Core: {}, Utils: {}, Market: {}, Actions: {}, Combat: {}, UI: {} };
+        expect(entrypointModule._missingLibraries(namespace)).toEqual(['Sim']);
+    });
 
-        expect(
-            entrypointModule._missingDependencies(namespace, { 'Chart.js': {}, 'Chart.js data labels': null })
-        ).toEqual(['Sim', 'Chart.js data labels']);
+    test('a missing Chart.js warns that charts are unavailable but does not stop startup', () => {
+        // The entrypoint was imported above with no Chart global — reaching the
+        // registry at all means startup went on past the dependency guard.
+        expect(entrypointModule).toBeDefined();
+        expect(registered.length).toBeGreaterThan(0);
+        expect(bootWarnings.some((w) => w.includes('charts are unavailable'))).toBe(true);
+        expect(entrypointModule._chartUnavailableNotice(class {})).toBeNull();
     });
 
     test('does not claim a simultaneous GitHub incident caused the failed dependency', () => {

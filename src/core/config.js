@@ -713,21 +713,29 @@ class Config {
      * and refuses when the store still cannot be read.
      * @returns {Promise<void|boolean>} Resolves when the write completes
      */
-    saveSettings() {
+    async saveSettings() {
         if (!this.characterSettingsLoaded) return settingsStorage.saveSettingsKeepingStored(this.settingsMap);
 
         // Swapped for an empty set BEFORE the first await, not cleared after the
         // write lands: a setter running while this save is in flight marks its
         // key on the NEW set, so the landing save cannot clear a key it never
         // carried, and that write is picked up by the save the setter makes for
-        // itself. On a failed write the keys are folded back in, since they are
-        // still unwritten and the next save should carry them.
+        // itself. On a failed write — thrown, or refused with `false` — the keys
+        // are folded back in, since they are still unwritten and the next save
+        // should carry them.
         const dirty = this._dirtyKeys;
         this._dirtyKeys = new Set();
-        return settingsStorage.saveSettings(this.settingsMap, dirty).catch((error) => {
+        const restoreDirty = () => {
             for (const key of dirty) this._dirtyKeys.add(key);
+        };
+        try {
+            const saved = await settingsStorage.saveSettings(this.settingsMap, dirty);
+            if (saved === false) restoreDirty();
+            return saved;
+        } catch (error) {
+            restoreDirty();
             throw error;
-        });
+        }
     }
 
     /**

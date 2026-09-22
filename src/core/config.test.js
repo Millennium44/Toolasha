@@ -1140,6 +1140,17 @@ describe('a save carries the keys this client changed', () => {
         expect([...config._dirtyKeys]).toContain('checkboxOn');
     });
 
+    test('a refused write leaves its keys dirty for the next save to carry', async () => {
+        config._markDirty('checkboxOn');
+        settingsStorageMock.saveSettings.mockImplementationOnce(() => Promise.resolve(false));
+
+        expect(await config.saveSettings()).toBe(false);
+        expect([...config._dirtyKeys]).toEqual(['checkboxOn']);
+
+        await config.saveSettings();
+        expect([...settingsStorageMock.saveSettings.mock.calls.at(-1)[1]]).toEqual(['checkboxOn']);
+    });
+
     test('a character switch drops the dirty keys with the map they named', () => {
         config.setSetting('checkboxOn', false);
         config._markDirty('pricingMode');

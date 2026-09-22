@@ -8,25 +8,22 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ### Storage restores and settings copies report what actually landed
 
-- Nested restore operations now keep live writers paused until the outer restore finishes, so a sync pull cannot release held writes in the middle of applying its payload.
-- Settings imports, character copies, and unreadable-store recovery no longer report success when IndexedDB refused a write. Failed destinations stay out of copied/imported counts, and migration state is not cleared for a map that never landed.
-- Sync waits for persisted records to finish their read-and-merge step before draining IndexedDB and fingerprinting it, so a push cannot omit an event that was still preparing its write.
+- Settings imports, character copies and unreadable-store recovery no longer report success when IndexedDB refused a write, and a refused settings save keeps its changes queued for the next one. Nested restores also hold live writes until the outermost one ends.
+- Sync now waits for tracked histories to hand their newest entry to storage before it snapshots, so a push cannot leave out an event that was still being saved.
 
 ### Audit round: labyrinth replays stay with the panel and character that started them
 
-- Switching characters or reconnecting while a recorded-fight replay or cohort read was still running could let the old work finish into the new panel. Those jobs now stop or discard their result when their owner changes, and a cohort choice whose save is refused rolls back in the picker instead of looking selected only until the next reload.
-- Imported recording files now reject missing, malformed, dangling or mismatched shared-build entries. A damaged file can no longer make its fights look buildless or silently attach them to different replay inputs.
+- A recorded-fight replay or cohort read still running across a character switch or reconnect is now stopped or discarded instead of finishing into the new panel, and a cohort choice whose save is refused rolls back in the picker.
+- Imported recording files with missing, malformed or mismatched shared-build entries are rejected instead of showing fights as buildless or attaching them to the wrong replay inputs.
 
 ### Welcome Back values now follow the modal through every mount and reconnect
 
-- The compact market-value line now catches a Welcome Back modal that was already open when the feature started, and refreshes when a same-character reconnect reuses that modal node with different loot instead of leaving the previous return's total beside it.
-- Offline Economics no longer permanently gives up on a modal observed before React has mounted its native duration anchor; it retries once the completed modal is observed and draws the summary normally.
+- The market-value line now catches a Welcome Back modal already open at startup and redraws when a reconnect reuses the modal with different loot, even when only the items changed. Offline Economics likewise retries a modal seen before its duration had rendered.
 
 ### Dependency failures are caught before release and explained accurately
 
-- The release gate now parses each complete `@require` response as a classic script and rejects partial, empty, HTML, JSON, truncated and module responses, and CI actually runs that gate before a change can land.
-- If a dependency still fails in the client, the startup notice names every missing Toolasha bundle and chart dependency without claiming that a simultaneous GitHub incident must be the cause.
-- The production userscript keeps the same game icon as the standalone build, and an automated parity check prevents their shared metadata and external dependency URLs from drifting apart again.
+- The release gate now rejects any `@require` response that is not a complete classic script, and CI runs it; the production and standalone headers are checked to stay in step.
+- A missing Toolasha bundle shows a notice naming it without blaming a GitHub incident, and a missing Chart.js now only turns charts off instead of stopping the script.
 
 ### Sim every dungeon from one Combat Simulator run
 
