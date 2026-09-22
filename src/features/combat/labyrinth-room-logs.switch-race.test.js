@@ -182,4 +182,56 @@ describe('a character switch landing inside the room log read', () => {
         expect(observers.registered - observers.unregistered).toBe(0);
         expect(labyrinthRoomLogs.captureRefreshTimer).toBeFalsy();
     });
+
+    test("a replay that resolves after teardown cannot become the arriving character's result", async () => {
+        let release;
+        const replay = new Promise((resolve) => {
+            release = resolve;
+        });
+        labyrinthRoomLogs.replayButton = document.createElement('button');
+        labyrinthRoomLogs.replayButton.textContent = 'Replay';
+        labyrinthRoomLogs.useSimSource({ replay: () => replay });
+
+        const pending = labyrinthRoomLogs.onReplayClicked();
+        await labyrinthRoomLogs.disable();
+        world.characterId = 'char2';
+        release({ groups: [{ monsterHrid: '/monsters/fly' }] });
+        await pending;
+
+        expect(labyrinthRoomLogs.replayResult).toBeNull();
+        expect(labyrinthRoomLogs.view).not.toBe('accuracy');
+    });
+
+    test('a cohort read that resolves after same-character teardown cannot reopen the picker', async () => {
+        let release;
+        const choices = new Promise((resolve) => {
+            release = resolve;
+        });
+        labyrinthRoomLogs.useSimSource({ replayCohorts: () => choices });
+
+        const pending = labyrinthRoomLogs.onCohortsClicked();
+        await labyrinthRoomLogs.disable();
+        release({ cohorts: [{ key: 'old' }], selected: ['old'], max: 3 });
+        await pending;
+
+        expect(labyrinthRoomLogs.cohortPickerOpen).toBe(false);
+        expect(labyrinthRoomLogs.cohortChoices).toBeNull();
+    });
+
+    test('a refused cohort write resolving after same-character teardown touches no cleared picker state', async () => {
+        let release;
+        const write = new Promise((resolve) => {
+            release = resolve;
+        });
+        labyrinthRoomLogs.cohortChoices = { cohorts: [{ key: 'old' }], selected: [], max: 3 };
+        labyrinthRoomLogs.useSimSource({ setReplayCohorts: () => write });
+
+        const pending = labyrinthRoomLogs.onCohortToggled('old', true);
+        await labyrinthRoomLogs.disable();
+        release(false);
+        await expect(pending).resolves.toBeUndefined();
+
+        expect(labyrinthRoomLogs.cohortChoices).toBeNull();
+        expect(labyrinthRoomLogs.cohortNotice).toBe('');
+    });
 });

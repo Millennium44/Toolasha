@@ -48,7 +48,7 @@ vi.mock('../../core/storage.js', () => ({
  *  client's data sheet has arrived, which is a state the sim must not run in */
 const adapter = vi.hoisted(() => ({ gameData: {}, playerDTO: { hrid: 'player1' } }));
 /** Every call the mocked runner received, so "never asked the worker" is testable */
-const simRuns = vi.hoisted(() => ({ list: [], result: {} }));
+const simRuns = vi.hoisted(() => ({ list: [], result: {}, implementation: null }));
 
 vi.mock('../combat-sim/combat-sim-adapter.js', () => ({
     buildGameDataPayload: () => adapter.gameData,
@@ -58,6 +58,7 @@ vi.mock('../combat-sim/combat-sim-adapter.js', () => ({
 vi.mock('../combat-sim/combat-sim-runner.js', () => ({
     runLabyrinthSimulation: async (options) => {
         simRuns.list.push(options);
+        if (simRuns.implementation) return simRuns.implementation(options);
         return simRuns.result;
     },
     runBlindBuffProbe: async () => [],
@@ -280,6 +281,7 @@ afterEach(() => {
     storageWrites.list = [];
     simRuns.list = [];
     simRuns.result = {};
+    simRuns.implementation = null;
     adapter.gameData = {};
     adapter.playerDTO = { hrid: 'player1' };
 });
@@ -439,6 +441,25 @@ describe('choosing which recorded cohorts a replay runs', () => {
         // Clearing it puts the default back
         await ctx.setReplayCohortSelection([]);
         expect((await ctx.replayCohortOptions()).selected).toEqual([]);
+    });
+
+    test('a character-switch teardown stops the remaining cohort simulations', async () => {
+        let release;
+        simRuns.implementation = () =>
+            new Promise((resolve) => {
+                release = resolve;
+            });
+        const ctx = context();
+        const pending = ctx.replayRecordedFights();
+        await vi.waitFor(() => expect(simRuns.list).toHaveLength(1));
+
+        ctx.endSimEpoch();
+        release({ simulatedTime: 20e9, labyAttemptCount: 1, encounters: 1 });
+        const result = await pending;
+
+        expect(simRuns.list).toHaveLength(1);
+        expect(result.groups).toEqual([]);
+        expect(result.diagnostics.cancelled).toBe(true);
     });
 });
 

@@ -784,6 +784,8 @@ export const simCacheMethods = {
      *   config: {stopRule: Object, hours: number, seedPolicy: string}}>}
      */
     async replayRecordedFights() {
+        const epoch = this.simEpoch?.() ?? 0;
+        const stillCurrent = () => (this.simEpoch?.() ?? epoch) === epoch;
         const fingerprint = this._snapshotContentFingerprint();
         const attempts = labFightRecorder.recordedAttempts();
         const { candidates, excluded } = replayCandidates(attempts, fingerprint);
@@ -809,10 +811,16 @@ export const simCacheMethods = {
             // rather than restating a constant that can drift away from it
             minFights: MIN_REPLAY_FIGHTS,
             verdictMinFights: MIN_LAB_FIGHTS,
+            cancelled: false,
         };
 
         const groups = [];
+        if (!stillCurrent()) diagnostics.cancelled = true;
         for (const { group, inputs, exploratory } of worth) {
+            if (!stillCurrent()) {
+                diagnostics.cancelled = true;
+                break;
+            }
             try {
                 const saved = inputs || this.captureReplayInputs(group.monsterHrid);
                 if (!saved) {
@@ -834,6 +842,10 @@ export const simCacheMethods = {
                     labyrinthCombatBuffs: saved.labyrinthCombatBuffs,
                     fullAbilities: saved.fullAbilities,
                 });
+                if (!stillCurrent()) {
+                    diagnostics.cancelled = true;
+                    break;
+                }
 
                 const predicted = predictedFromSim(simResult, {
                     playerHrid: dto.hrid || 'player1',
@@ -853,6 +865,10 @@ export const simCacheMethods = {
                     build: replayBuildSummary(saved, gameData?.itemDetailMap),
                 });
             } catch (error) {
+                if (!stillCurrent()) {
+                    diagnostics.cancelled = true;
+                    break;
+                }
                 diagnostics.failedGroups++;
                 console.error('[LabyrinthSimCache] Replaying a recorded room failed:', error);
             }

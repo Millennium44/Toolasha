@@ -1864,21 +1864,31 @@ class LabyrinthRoomLogs {
         if (!button || button.disabled) return;
         if (!this.simSource?.replay) return;
 
+        const ticket = captureOwner(this);
         const label = button.textContent;
         button.disabled = true;
         button.textContent = 'Replaying…';
         button.style.opacity = '0.6';
+        let result;
         try {
-            this.replayResult = await this.simSource.replay();
+            result = await this.simSource.replay();
         } catch (error) {
             console.error('[LabyrinthRoomLogs] Replaying recorded fights failed:', error);
-            this.replayResult = { error: true };
+            result = { error: true };
         } finally {
-            button.disabled = false;
-            button.textContent = label;
-            button.style.opacity = '';
+            if (stillOurs(ticket)) {
+                button.disabled = false;
+                button.textContent = label;
+                button.style.opacity = '';
+            }
         }
+        // The replay belongs to the feature generation and character that
+        // started it. A teardown clears the previous result while the worker is
+        // still unwinding; letting this tail resume would put that departed
+        // character's comparison on the arriving character's panel and export.
+        if (!stillOurs(ticket)) return;
 
+        this.replayResult = result;
         this.view = 'accuracy';
         this.paintChrome();
         this.render(false);
@@ -1903,21 +1913,22 @@ class LabyrinthRoomLogs {
         }
 
         this.cohortNotice = '';
-        // Whose pool this list describes. NOT `renderToken`: that counts
+        // Which feature generation and character this list describes. NOT
+        // `renderToken`: that counts
         // redraws, and a battle tick redraws the open panel several times a
         // second, so guarding the open on it meant the press was swallowed
         // every time and the picker never opened during a fight — which is
         // exactly when a player reaches for it.
-        const charId = dataManager.getCurrentCharacterId?.() || null;
+        const ticket = captureOwner(this);
         let choices = null;
         try {
             choices = (await this.simSource?.replayCohorts?.()) || null;
         } catch (error) {
             console.error('[LabyrinthRoomLogs] Reading the replay cohorts failed:', error);
         }
-        // A read that lands after a character switch describes a pool that is
-        // not this panel's any more
-        if ((dataManager.getCurrentCharacterId?.() || null) !== charId) return;
+        // A read that lands after teardown — including a same-character
+        // reconnect — describes a pool that is not this panel's any more.
+        if (!stillOurs(ticket)) return;
 
         this.cohortChoices = choices;
         this.cohortPickerOpen = true;
@@ -1958,10 +1969,10 @@ class LabyrinthRoomLogs {
         this.cohortNotice = '';
         this.cohortChoices.selected = [...selected];
 
-        // Same identity guard as the open, for the same reason
-        const charId = dataManager.getCurrentCharacterId?.() || null;
+        // Same ownership guard as the open, for the same reason
+        const ticket = captureOwner(this);
         const stored = await this.simSource?.setReplayCohorts?.(this.cohortChoices.selected);
-        if ((dataManager.getCurrentCharacterId?.() || null) !== charId) return;
+        if (!stillOurs(ticket)) return;
         // A change the store refused is a change the next Replay will not
         // honour. Left alone the box would show a choice that is not the one
         // standing, which is the one thing this picker exists to prevent.

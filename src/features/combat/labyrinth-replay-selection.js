@@ -175,8 +175,7 @@ export async function writeReplayCohortSelection(keys) {
     const wanted = [...new Set((Array.isArray(keys) ? keys : []).filter((key) => typeof key === 'string' && key))];
     if (wanted.length > MAX_REPLAY_GROUPS) return false;
     try {
-        await writeScoped(REPLAY_SELECTION_KEY, wanted, REPLAY_SELECTION_STORE);
-        return true;
+        return (await writeScoped(REPLAY_SELECTION_KEY, wanted, REPLAY_SELECTION_STORE)) !== false;
     } catch (error) {
         console.error('[LabyrinthReplaySelection] Storing the cohort selection failed:', error);
         return false;

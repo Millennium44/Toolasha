@@ -6,6 +6,11 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Audit round: labyrinth replays stay with the panel and character that started them
+
+- Switching characters or reconnecting while a recorded-fight replay or cohort read was still running could let the old work finish into the new panel. Those jobs now stop or discard their result when their owner changes, and a cohort choice whose save is refused rolls back in the picker instead of looking selected only until the next reload.
+- Imported recording files now reject missing, malformed, dangling or mismatched shared-build entries. A damaged file can no longer make its fights look buildless or silently attach them to different replay inputs.
+
 ### Welcome Back values now follow the modal through every mount and reconnect
 
 - The compact market-value line now catches a Welcome Back modal that was already open when the feature started, and refreshes when a same-character reconnect reuses that modal node with different loot instead of leaving the previous return's total beside it.
