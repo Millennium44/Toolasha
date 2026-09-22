@@ -10,7 +10,15 @@
 
 import { describe, test, expect, beforeEach, vi } from 'vitest';
 
-vi.mock('../../core/dom-observer.js', () => ({ default: { onClass: () => () => {} } }));
+vi.mock('../../core/dom-observer.js', () => ({
+    default: {
+        onClass: () => () => {},
+        onReady: (_name, callback) => {
+            callback();
+            return () => {};
+        },
+    },
+}));
 vi.mock('../../core/data-manager.js', () => ({ default: { characterItems: [] } }));
 vi.mock('../../utils/marketplace-tabs.js', () => ({ navigateToMarketplace: () => {} }));
 
@@ -93,7 +101,7 @@ describe('Marketplace Action dropdown portal', () => {
         marketplaceShortcuts.initialize();
     });
 
-    test('an outside click closes every portaled panel through its wrapper pointer', () => {
+    test('opening a second item menu closes the first portaled panel', () => {
         const firstMenu = actionMenu();
         const first = marketplaceShortcuts.buildDropdown(firstMenu, '/items/cheese', 0);
         firstMenu.appendChild(first);
@@ -102,16 +110,51 @@ describe('Marketplace Action dropdown portal', () => {
         secondMenu.appendChild(second);
         first.querySelector('.mwi-marketplace-dropdown-toggle').click();
         second.querySelector('.mwi-marketplace-dropdown-toggle').click();
-        expect(first._dropdownPanel.style.display).toBe('flex');
+
+        expect(first._dropdownPanel.style.display).toBe('none');
         expect(second._dropdownPanel.style.display).toBe('flex');
+    });
+
+    test('an outside click closes the open portal and it reopens in one click', () => {
+        const menu = actionMenu();
+        const dropdown = marketplaceShortcuts.buildDropdown(menu, '/items/cheese', 0);
+        menu.appendChild(dropdown);
+        const toggle = dropdown.querySelector('.mwi-marketplace-dropdown-toggle');
+        toggle.click();
+        expect(dropdown._dropdownPanel.style.display).toBe('flex');
 
         document.body.dispatchEvent(new MouseEvent('click', { bubbles: true }));
 
-        expect(first._dropdownPanel.style.display).toBe('none');
-        expect(second._dropdownPanel.style.display).toBe('none');
+        expect(dropdown._dropdownPanel.style.display).toBe('none');
 
-        first.querySelector('.mwi-marketplace-dropdown-toggle').click();
-        expect(first._dropdownPanel.style.display).toBe('flex');
+        toggle.click();
+        expect(dropdown._dropdownPanel.style.display).toBe('flex');
+    });
+
+    test('Escape closes the portal and it reopens in one click', () => {
+        const menu = actionMenu();
+        const dropdown = marketplaceShortcuts.buildDropdown(menu, '/items/cheese', 0);
+        menu.appendChild(dropdown);
+        const toggle = dropdown.querySelector('.mwi-marketplace-dropdown-toggle');
+        toggle.click();
+
+        document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+
+        expect(dropdown._dropdownPanel.style.display).toBe('none');
+        toggle.click();
+        expect(dropdown._dropdownPanel.style.display).toBe('flex');
+    });
+
+    test("removing the game's item menu removes its portaled panel", async () => {
+        const menu = actionMenu();
+        const dropdown = marketplaceShortcuts.buildDropdown(menu, '/items/cheese', 0);
+        menu.appendChild(dropdown);
+        dropdown.querySelector('.mwi-marketplace-dropdown-toggle').click();
+
+        menu.remove();
+        await new Promise((resolve) => setTimeout(resolve, 0));
+
+        expect(dropdown._dropdownPanel.isConnected).toBe(false);
     });
 });
 

@@ -44,11 +44,11 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ### Market prices refresh throughout long sessions
 
-- The broad market snapshot was loaded at startup but could stay stale for the rest of a long-lived tab unless an optional listing alert happened to be enabled. It is now rechecked on the existing 15-minute cache cadence for every player, without forcing extra requests or duplicating the alert's separate pooled-history refresh.
+- The broad market snapshot was loaded at startup but could stay stale for the rest of a long-lived tab unless an optional listing alert happened to be enabled. It is now rechecked on the existing 15-minute cache cadence for every player, aligned to when the cache was actually written so a slightly later startup fetch cannot postpone the next refresh for another full cycle.
 
 ### Marketplace Action opens outside the game's clipped menu
 
-- The four Marketplace Action choices could be cut off by the inventory item's short, scrollable action menu. The choices now open in a panel positioned below the button but outside that clipped container; outside clicks close every such panel normally, and one click opens it again.
+- The four Marketplace Action choices could be cut off by the inventory item's short, scrollable action menu. The choices now open in a panel positioned below the button but outside that clipped container; outside clicks and Escape close it normally, opening another item closes the previous panel, and removing the game's menu no longer leaves an orphan behind.
 
 ### Can Produce counts the spendable copy of an enhanced item
 

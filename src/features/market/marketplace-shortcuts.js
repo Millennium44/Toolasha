@@ -27,6 +27,9 @@ class MarketplaceShortcuts {
         this.timerRegistry = createTimerRegistry();
         this.itemNameToHridCache = null;
         this.closeHandler = null;
+        this.escapeHandler = null;
+        this.portalObserver = null;
+        this.dropdowns = new Set();
         this.pendingQuantity = null;
         this.addMode = false;
         this.lifecycleGeneration = 0;
@@ -57,14 +60,43 @@ class MarketplaceShortcuts {
             this.focusQuantityInput(modal);
         });
         this.unregisterHandlers.push(unregisterModal);
+
+        this.closeHandler = () => this.closeAllDropdowns();
+        document.addEventListener('click', this.closeHandler);
+
+        this.escapeHandler = (event) => {
+            if (event.key === 'Escape') this.closeAllDropdowns();
+        };
+        document.addEventListener('keydown', this.escapeHandler);
+
+        // The panel is portaled to <body>, so React removing the native item menu
+        // does not remove it automatically. Watch removals and release any portal
+        // whose wrapper left the document.
+        const unregisterPortalObserver = domObserver.onReady('MarketplaceShortcuts_portals', () => {
+            this.portalObserver?.disconnect();
+            this.portalObserver = new MutationObserver(() => this.removeDetachedDropdowns());
+            this.portalObserver.observe(document.body, { childList: true, subtree: true });
+        });
+        this.unregisterHandlers.push(unregisterPortalObserver);
     }
 
     /**
      * Close every marketplace action panel, including panels portaled outside their wrappers.
      */
-    closeAllDropdowns() {
-        document.querySelectorAll('.mwi-marketplace-dropdown').forEach((wrapper) => {
+    closeAllDropdowns(exceptWrapper = null) {
+        this.removeDetachedDropdowns();
+        this.dropdowns.forEach((wrapper) => {
+            if (wrapper === exceptWrapper) return;
             wrapper._closeDropdown?.();
+        });
+    }
+
+    /** Remove portals whose native item menu has been removed by the game. */
+    removeDetachedDropdowns() {
+        this.dropdowns.forEach((wrapper) => {
+            if (wrapper.isConnected) return;
+            wrapper._dropdownPanel?.remove();
+            this.dropdowns.delete(wrapper);
         });
     }
 
@@ -247,7 +279,9 @@ class MarketplaceShortcuts {
         toggle.addEventListener('click', (e) => {
             e.stopPropagation();
             e.preventDefault();
-            open = !open;
+            const nextOpen = !open;
+            if (nextOpen) this.closeAllDropdowns(wrapper);
+            open = nextOpen;
             if (open) {
                 const rect = toggle.getBoundingClientRect();
                 panel.style.top = `${rect.bottom + 4}px`;
@@ -259,17 +293,11 @@ class MarketplaceShortcuts {
             if (chevron) chevron.style.transform = open ? 'rotate(180deg)' : '';
         });
 
-        // Close on outside click (remove the previous menu's handler first — it would leak otherwise)
-        if (this.closeHandler) {
-            document.removeEventListener('click', this.closeHandler);
-        }
-        this.closeHandler = () => this.closeAllDropdowns();
-        document.addEventListener('click', this.closeHandler);
-
         wrapper.appendChild(toggle);
         document.body.appendChild(panel);
         wrapper._dropdownPanel = panel;
         wrapper._closeDropdown = closePanel;
+        this.dropdowns.add(wrapper);
         return wrapper;
     }
 
@@ -866,11 +894,20 @@ class MarketplaceShortcuts {
             document.removeEventListener('click', this.closeHandler);
             this.closeHandler = null;
         }
+        if (this.escapeHandler) {
+            document.removeEventListener('keydown', this.escapeHandler);
+            this.escapeHandler = null;
+        }
+        if (this.portalObserver) {
+            this.portalObserver.disconnect();
+            this.portalObserver = null;
+        }
 
         this.timerRegistry.clearAll();
 
         document.querySelectorAll('.mwi-marketplace-dropdown').forEach((el) => el.remove());
         document.querySelectorAll('.mwi-marketplace-dropdown-panel').forEach((el) => el.remove());
+        this.dropdowns.clear();
         document.querySelectorAll('.mwi-mp-quick-input').forEach((el) => el.remove());
         document.querySelectorAll('.mwi-mp-multiplier').forEach((el) => el.remove());
 

@@ -55,8 +55,12 @@ class MarketAPI {
         /** Whether that fetch was a forced one (a forced result satisfies anyone) */
         this._inFlightForce = false;
 
-        /** Page-lifetime base-snapshot refresh interval, or null while stopped. */
+        /** Page-lifetime base-snapshot refresh timer, or null while stopped. */
         this._autoRefreshInterval = null;
+        /** Local expiry of the cache last accepted or written by this instance. */
+        this._cacheExpiresAt = null;
+        /** Invalidates a refresh callback that settles after stop/restart. */
+        this._autoRefreshGeneration = 0;
     }
 
     /**
@@ -66,17 +70,41 @@ class MarketAPI {
      */
     startAutoRefresh() {
         if (this._autoRefreshInterval !== null) return;
+        const generation = ++this._autoRefreshGeneration;
+        this._scheduleAutoRefresh(this.CACHE_DURATION, generation);
+    }
 
-        this._autoRefreshInterval = setInterval(() => {
-            this.fetch().catch((error) => this.logError('Auto-refresh fetch failed', error));
-        }, this.CACHE_DURATION);
+    /**
+     * Schedule one cache check, then align the next one to the cache that check observed.
+     * @param {number} delay - Milliseconds until the check
+     * @param {number} generation - Auto-refresh lifecycle generation
+     * @private
+     */
+    _scheduleAutoRefresh(delay, generation) {
+        this._autoRefreshInterval = setTimeout(async () => {
+            const knownRemaining = (this._cacheExpiresAt ?? 0) - Date.now();
+            if (knownRemaining > 0) {
+                this._scheduleAutoRefresh(knownRemaining, generation);
+                return;
+            }
+            try {
+                await this.fetch();
+            } catch (error) {
+                this.logError('Auto-refresh fetch failed', error);
+            } finally {
+                if (generation !== this._autoRefreshGeneration || this._autoRefreshInterval === null) return;
+                const remaining = (this._cacheExpiresAt ?? 0) - Date.now();
+                this._scheduleAutoRefresh(remaining > 0 ? remaining : this.CACHE_DURATION, generation);
+            }
+        }, delay);
     }
 
     /** Stop the page-lifetime base-snapshot refresh interval. */
     stopAutoRefresh() {
         if (this._autoRefreshInterval === null) return;
-        clearInterval(this._autoRefreshInterval);
+        clearTimeout(this._autoRefreshInterval);
         this._autoRefreshInterval = null;
+        this._autoRefreshGeneration += 1;
     }
 
     /**
@@ -133,6 +161,7 @@ class MarketAPI {
         if (!forceFetch) {
             const cached = await this.getCachedData();
             if (cached) {
+                this._cacheExpiresAt = cached.cachedAt + this.CACHE_DURATION;
                 this.marketData = cached.data;
                 // API timestamp is in seconds, convert to milliseconds for comparison with Date.now()
                 this.lastFetchTimestamp = cached.timestamp * 1000;
@@ -145,6 +174,8 @@ class MarketAPI {
                 return this.marketData;
             }
         }
+
+        this._cacheExpiresAt = null;
 
         if (!connectionState.isConnected()) {
             const cachedFallback = await storage.getJSON(this.CACHE_KEY_DATA, 'settings', null);
@@ -252,7 +283,7 @@ class MarketAPI {
 
     /**
      * Get cached data if valid
-     * @returns {Promise<Object|null>} { data, timestamp } or null if invalid/expired
+     * @returns {Promise<Object|null>} { data, timestamp, cachedAt } or null if invalid/expired
      */
     async getCachedData() {
         const cachedTimestamp = await storage.get(this.CACHE_KEY_TIMESTAMP, 'settings', null);
@@ -271,13 +302,14 @@ class MarketAPI {
         const now = Date.now();
         const age = now - cachedTimestamp;
 
-        if (!(age >= 0 && age <= this.CACHE_DURATION)) {
+        if (!(age >= 0 && age < this.CACHE_DURATION)) {
             return null;
         }
 
         return {
             data: cachedData.marketData,
             timestamp: cachedData.timestamp,
+            cachedAt: cachedTimestamp,
         };
     }
 
@@ -286,6 +318,7 @@ class MarketAPI {
      * @param {Object} data - API response to cache
      */
     cacheData(data) {
+        this._cacheExpiresAt = Date.now() + this.CACHE_DURATION;
         storage.setJSON(this.CACHE_KEY_DATA, data, 'settings');
         storage.set(this.CACHE_KEY_TIMESTAMP, Date.now(), 'settings');
     }

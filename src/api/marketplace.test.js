@@ -168,6 +168,31 @@ describe('MarketAPI automatic snapshot refresh', () => {
         expect(refresh).toHaveBeenCalledTimes(1);
         marketAPI.stopAutoRefresh();
     });
+
+    test('a timer started before the startup fetch retries when that later cache actually expires', async () => {
+        vi.setSystemTime(1_000_000);
+        const { get, getJSON } = createMocks(true);
+        const cachedAt = Date.now() + 5_000;
+        get.mockImplementation(async (key) => (key === 'Toolasha_marketAPI_timestamp' ? cachedAt : 1));
+        getJSON.mockImplementation(async (key) =>
+            key === 'Toolasha_marketAPI_json'
+                ? { marketData: { '/items/cheese': { 0: { a: 20, b: 19 } } }, timestamp: 1 }
+                : {}
+        );
+        fetch.mockResolvedValue({
+            ok: true,
+            json: async () => ({ marketData: { '/items/cheese': { 0: { a: 21, b: 20 } } }, timestamp: 2 }),
+        });
+        const { default: marketAPI } = await import('./marketplace.js');
+
+        marketAPI.startAutoRefresh();
+        await vi.advanceTimersByTimeAsync(marketAPI.CACHE_DURATION);
+        expect(fetch).not.toHaveBeenCalled();
+
+        await vi.advanceTimersByTimeAsync(5_000);
+        expect(fetch).toHaveBeenCalledTimes(1);
+        marketAPI.stopAutoRefresh();
+    });
 });
 
 describe('MarketAPI fetch in-flight dedup', () => {
