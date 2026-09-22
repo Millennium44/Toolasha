@@ -8,7 +8,7 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ### Sim every dungeon from one Combat Simulator run
 
-- The Combat Simulator now has a dedicated **Sim All Dungeons** mode beside the existing zone sweeps. It lists each dungeon for selection, runs tiers 0–2, and supports a full five-player dungeon party without mixing ordinary combat zones into the results.
+- The Combat Simulator has a new **Sim All Dungeons** mode that runs each selected dungeon at tiers 0–2 with up to a full five-player party, without mixing ordinary zones into the results. Any dungeon run now refuses a party larger than five, and a sweep that includes ordinary zones stays capped at three.
 
 ### Preserve patient marketplace order prices
 

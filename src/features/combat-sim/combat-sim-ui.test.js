@@ -5481,6 +5481,80 @@ describe('dungeons in the all-zones run and in the plan', () => {
         mocks.playerDTOs = [{ hrid: 'player1', equipment: {} }];
     });
 
+    describe('party caps', () => {
+        const party = (size) =>
+            Array.from({ length: size }, (_, index) => ({ hrid: `player${index + 1}`, equipment: {} }));
+        const den = { hrid: '/actions/combat/den', name: 'Den', maxSpawnCount: 1, maxDifficulty: 0, isDungeon: true };
+        const fly = { hrid: '/actions/combat/fly', name: 'Fly', maxSpawnCount: 3, maxDifficulty: 0, isDungeon: false };
+        let warnings;
+
+        beforeEach(() => {
+            mocks.zones = [fly, den];
+            mocks.allZonesRuns = 0;
+            mocks.simRuns = 0;
+            warnings = [];
+            vi.spyOn(ui, '_showWarning').mockImplementation((message) => warnings.push(message));
+        });
+
+        afterEach(() => {
+            mocks.buildPlayerDTOs = null;
+            mocks.playerDTOs = [{ hrid: 'player1', equipment: {} }];
+            // The mode outlives the panel, and a leftover one would route the
+            // next test's Single Sim into a sweep
+            ui._allZonesMode = null;
+        });
+
+        test('a dungeon-only sweep refuses a party larger than five', async () => {
+            mocks.playerDTOs = party(6);
+            ui.panel.querySelector('#mwi-csim-allzones-dungeons').click();
+
+            await ui._onSimulateAllZones();
+
+            expect(mocks.allZonesRuns).toBe(0);
+            expect(warnings).toEqual([expect.stringContaining('max 5 players')]);
+        });
+
+        test('switching to dungeon mode while players load does not lift the cap on the zones already chosen', async () => {
+            let release;
+            mocks.buildPlayerDTOs = () =>
+                new Promise((resolve) => {
+                    release = resolve;
+                });
+            ui.panel.querySelector('#mwi-csim-allzones-group').click();
+
+            const run = ui._onSimulateAllZones();
+            ui._allZonesMode = 'dungeons';
+            release({ players: party(5), playerInfo: [], selfHrid: 'player1', missingMembers: [] });
+            await run;
+
+            expect(mocks.allZonesRuns).toBe(0);
+            expect(warnings).toEqual([expect.stringContaining('max 3 players')]);
+        });
+
+        test('a sweep mixing ordinary zones with planner-added dungeons stays capped at three', async () => {
+            mocks.playerDTOs = party(4);
+            ui.panel.querySelector('#mwi-csim-allzones-group').click();
+            ui._includeDungeons = true;
+
+            await ui._onSimulateAllZones();
+
+            expect(mocks.allZonesRuns).toBe(0);
+            expect(warnings).toEqual([expect.stringContaining('max 3 players')]);
+        });
+
+        test('a single dungeon run refuses a party larger than five', async () => {
+            mocks.playerDTOs = party(6);
+            const zone = ui.panel.querySelector('#mwi-csim-zone');
+            zone.innerHTML = `<option value="${den.hrid}">Den</option>`;
+            zone.value = den.hrid;
+
+            await ui._onSimulate();
+
+            expect(mocks.simRuns).toBe(0);
+            expect(warnings).toEqual([expect.stringContaining('max 5 players')]);
+        });
+    });
+
     test('a dungeon row is marked [D] and planned at the clear time the run history measured', async () => {
         // Twenty minutes a clear is three an hour, half the sim's six — so the
         // sim's 60 goblins an hour become 30
