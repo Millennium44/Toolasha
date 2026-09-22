@@ -6,6 +6,12 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Dependency failures are caught before release and explained accurately
+
+- The release gate now parses each complete `@require` response as a classic script and rejects partial, empty, HTML, JSON, truncated and module responses, and CI actually runs that gate before a change can land.
+- If a dependency still fails in the client, the startup notice names every missing Toolasha bundle and chart dependency without claiming that a simultaneous GitHub incident must be the cause.
+- The production userscript keeps the same game icon as the standalone build, and an automated parity check prevents their shared metadata and external dependency URLs from drifting apart again.
+
 ### Sim every dungeon from one Combat Simulator run
 
 - The Combat Simulator has a new **Sim All Dungeons** mode that runs each selected dungeon at tiers 0–2 with up to a full five-player party, without mixing ordinary zones into the results. Any dungeon run now refuses a party larger than five, and a sweep that includes ordinary zones stays capped at three.

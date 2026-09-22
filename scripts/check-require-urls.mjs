@@ -16,6 +16,9 @@
  */
 
 import fs from 'node:fs';
+import process from 'node:process';
+import vm from 'node:vm';
+import { pathToFileURL } from 'node:url';
 
 /** The files that carry the `@require` lines users actually load. */
 const HEADERS = ['userscript-header.txt', 'library-headers/entrypoint.txt'];
@@ -34,48 +37,74 @@ function requireUrls(path) {
 }
 
 /**
- * Whether a body is an ES module rather than a classic script.
+ * Why a response body cannot be used as a classic script.
  *
- * Deliberately crude: a top-level `import`/`export` at the start of a line is
- * what the engine refuses, and a minified bundle puts its first statement
- * there. Substring matches inside code (`.import(`, `"export"`) are not.
+ * Parse the whole response with the same Script grammar an `@require` uses.
+ * A line regex can mistake prose inside a block comment for module syntax and
+ * can miss an `export` after a long licence header; parsing also catches CDN
+ * error pages and truncated bundles that happen to arrive with HTTP 200.
  *
  * @param {string} body - The fetched file
- * @returns {string|null} The offending line, or null when it is a classic script
+ * @returns {string|null} The parse problem, or null when it is a classic script
  */
-function moduleSyntax(body) {
-    for (const line of body.split('\n', 40)) {
-        if (/^\s*(import[\s{'"*]|export[\s{*])/.test(line)) return line.slice(0, 80);
+export function classicScriptError(body) {
+    if (!body.trim()) return 'response body is empty';
+    try {
+        new vm.Script(body, { filename: '@require response' });
+        return null;
+    } catch (error) {
+        return `does not parse as a classic script: ${error.message}`;
+    }
+}
+
+/**
+ * Why a fetch response is not a complete JavaScript resource.
+ * @param {Response|{status: number, headers: Headers}} response - Fetch response
+ * @returns {string|null} The response problem, or null when its body should be parsed
+ */
+export function responseError(response) {
+    if (response.status !== 200)
+        return `HTTP ${response.status}${response.status === 206 ? ' (partial response)' : ''}`;
+    const contentType = response.headers.get('content-type')?.toLowerCase() || '';
+    if (
+        contentType.includes('text/html') ||
+        contentType.includes('application/xhtml+xml') ||
+        contentType.includes('application/json')
+    ) {
+        return `unexpected content type ${contentType}`;
     }
     return null;
 }
 
-const failures = [];
-for (const header of HEADERS) {
-    for (const url of requireUrls(header)) {
-        let response;
-        try {
-            response = await fetch(url);
-        } catch (error) {
-            failures.push(`${header}: ${url}\n    could not be fetched: ${error.message}`);
-            continue;
-        }
-        if (!response.ok) {
-            failures.push(`${header}: ${url}\n    HTTP ${response.status}`);
-            continue;
-        }
-        const offending = moduleSyntax(await response.text());
-        if (offending) {
-            failures.push(
-                `${header}: ${url}\n    is an ES module, not a classic script — a @require of this aborts the whole userscript` +
-                    `\n    first module statement: ${offending}`
-            );
+async function main() {
+    const failures = [];
+    for (const header of HEADERS) {
+        for (const url of requireUrls(header)) {
+            let response;
+            try {
+                response = await fetch(url);
+            } catch (error) {
+                failures.push(`${header}: ${url}\n    could not be fetched: ${error.message}`);
+                continue;
+            }
+            const fetchedError = responseError(response);
+            if (fetchedError) {
+                failures.push(`${header}: ${url}\n    ${fetchedError}`);
+                continue;
+            }
+            const parseError = classicScriptError(await response.text());
+            if (parseError) failures.push(`${header}: ${url}\n    ${parseError}`);
         }
     }
+
+    if (failures.length) {
+        console.error('[check-require-urls] FAILED:\n' + failures.map((failure) => `  ${failure}`).join('\n'));
+        process.exitCode = 1;
+        return;
+    }
+    console.log('[check-require-urls] OK: every @require resolves and is a complete classic script.');
 }
 
-if (failures.length) {
-    console.error('[check-require-urls] FAILED:\n' + failures.map((f) => `  ${f}`).join('\n'));
-    process.exit(1);
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+    await main();
 }
-console.log('[check-require-urls] OK: every @require resolves and is a classic script.');

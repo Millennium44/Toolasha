@@ -5,6 +5,7 @@
  * Libraries are loaded via @require in userscript header:
  * - Core (core modules, API)
  * - Utils (all utilities)
+ * - Sim (combat simulation engine)
  * - Market (market, inventory, economy)
  * - Actions (production, gathering, alchemy)
  * - Combat (combat, stats, abilities)
@@ -19,17 +20,21 @@
 // unset — and every read below would then throw a cryptic "window.Toolasha is
 // undefined" with no hint why. Catch that here, tell the user what actually
 // happened using nothing from the libraries (they are the thing missing), and —
-// since the usual cause is GitHub itself — confirm it against GitHub's status
-// page, which lives on separate infrastructure and stays up during a GitHub
-// outage. (2026-08-17: a GitHub incident that 50%-errored raw content downloads
+// check GitHub's status page as one useful signal. It lives on separate
+// infrastructure and stays up during a GitHub outage. (2026-08-17: a GitHub
+// incident that 50%-errored raw content downloads
 // broke the @require loads for everyone, presenting only as this cryptic throw.)
 // ---------------------------------------------------------------------------
 
-const REQUIRED_LIBRARIES = ['Core', 'Utils', 'Market', 'Actions', 'Combat', 'UI'];
+const REQUIRED_LIBRARIES = ['Core', 'Utils', 'Sim', 'Market', 'Actions', 'Combat', 'UI'];
 
-/** Which required library globals did not load. */
-function missingLibraries(ns) {
-    return REQUIRED_LIBRARIES.filter((lib) => !ns || !ns[lib]);
+/** Which required bundle and external-library globals did not load. */
+function missingDependencies(ns, externals) {
+    const missing = REQUIRED_LIBRARIES.filter((lib) => !ns || !ns[lib]);
+    for (const [name, loaded] of Object.entries(externals)) {
+        if (!loaded) missing.push(name);
+    }
+    return missing;
 }
 
 /** GM's cross-origin request, whichever grant this manager exposes, or null. */
@@ -62,23 +67,28 @@ function showLoadErrorBanner(html) {
 
 /** The line the banner settles on, given GitHub's status indicator. */
 function githubOutageLine(indicator, description) {
+    if (!indicator) {
+        return (
+            'GitHub’s status could not be confirmed. The failed dependency may be due to your network, the CDN, ' +
+            'or an invalid cached response. Refresh in a minute or two; if it continues, update or reinstall Toolasha.'
+        );
+    }
     if (indicator && indicator !== 'none') {
         return (
-            '<b>GitHub is having an outage right now</b>' +
+            '<b>GitHub is reporting an incident right now</b>' +
             (description ? ` (${description})` : '') +
-            ' — that is why Toolasha could not load its code, not a bug in the script. It will fix ' +
-            'itself; refresh once GitHub is back.'
+            ' — it may be preventing Toolasha’s code bundles from loading. Refresh once services recover.'
         );
     }
     return (
-        'Toolasha could not load its code libraries, but GitHub reports no outage — this may be your ' +
-        'network or the CDN. Refresh in a minute or two.'
+        'GitHub reports no current incident. The failed dependency may be due to your network, the CDN, ' +
+        'or an invalid cached response. Refresh in a minute or two; if it continues, update or reinstall Toolasha.'
     );
 }
 
 /**
- * Explain a failed library load, confirming the usual cause (GitHub) against its
- * status page. Best-effort and self-contained; never throws.
+ * Explain a failed dependency load and check whether GitHub currently reports
+ * an incident. Best-effort and self-contained; never throws.
  * @param {string[]} missing - The library globals that did not load
  */
 function reportLibraryLoadFailure(missing) {
@@ -86,8 +96,8 @@ function reportLibraryLoadFailure(missing) {
     const link = '<a href="https://www.githubstatus.com" target="_blank" style="color:#ffb3b3;">githubstatus.com</a>';
     showLoadErrorBanner(
         heading +
-            `<div>Its code libraries (${missing.join(', ')}) failed to download — almost always a ` +
-            `temporary GitHub or CDN outage, since they load as raw repository content. Checking ${link}…</div>`
+            `<div>Required dependencies (${missing.join(', ')}) did not finish loading. A network/CDN failure or ` +
+            `an incompatible response can cause this. See ${link} for current incidents.</div>`
     );
     const request = gmRequest();
     if (!request) return;
@@ -102,7 +112,7 @@ function reportLibraryLoadFailure(missing) {
                     const line = githubOutageLine(data?.status?.indicator, data?.status?.description);
                     showLoadErrorBanner(`${heading}<div>${line} ${link}</div>`);
                 } catch {
-                    /* the "checking…" message stands */
+                    /* the base message stands */
                 }
             },
             onerror: () => {},
@@ -120,11 +130,15 @@ const toolashaNamespace =
     (typeof unsafeWindow !== 'undefined' && unsafeWindow.Toolasha) ||
     null;
 
-const missingLibs = missingLibraries(toolashaNamespace);
-if (missingLibs.length) {
-    reportLibraryLoadFailure(missingLibs);
+const externalDependencies = {
+    'Chart.js': typeof Chart !== 'undefined' && Chart,
+    'Chart.js data labels': typeof ChartDataLabels !== 'undefined' && ChartDataLabels,
+};
+const missingDeps = missingDependencies(toolashaNamespace, externalDependencies);
+if (missingDeps.length) {
+    reportLibraryLoadFailure(missingDeps);
     throw new Error(
-        `Toolasha libraries failed to load (${missingLibs.join(', ')}) — likely a GitHub/CDN outage. Refresh shortly.`
+        `Toolasha dependencies failed to load (${missingDeps.join(', ')}). See the on-page notice and refresh shortly.`
     );
 }
 
@@ -2858,12 +2872,14 @@ if (isCombatSimulatorPage()) {
 }
 
 /**
- * Test-only. `entrypoint.js` otherwise has no exports — it is a boot script run
- * for its side effects — but `checkMwiToolsWithRetries` schedules real timers
- * from deep inside a one-shot, hard-to-re-trigger startup sequence
- * (`startupBegun` in the `character_initialized` handler below), which makes it
- * impractical to exercise through that path alone. Exported so a test can call
- * it directly against the same module-scoped `dualInstallGuard`/`mwiToolsWarned`
- * state the real call site uses.
+ * Test-only seams. `entrypoint.js` otherwise runs for side effects, but the
+ * dependency guard executes during import and `checkMwiToolsWithRetries`
+ * schedules real timers from inside a one-shot startup sequence. Exporting the
+ * pure decisions lets tests exercise the production paths without duplicating
+ * them or attempting to boot the script twice.
  */
-export { checkMwiToolsWithRetries as _checkMwiToolsWithRetries };
+export {
+    checkMwiToolsWithRetries as _checkMwiToolsWithRetries,
+    githubOutageLine as _githubOutageLine,
+    missingDependencies as _missingDependencies,
+};

@@ -76,3 +76,6 @@ jobs:
                     fi
                     echo "✅ $file is under $human ($size bytes)"
                   done
+
+            - name: Verify @require URLs are complete classic scripts
+              run: npm run check:requires
