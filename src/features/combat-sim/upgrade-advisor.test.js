@@ -224,6 +224,8 @@ const { runSimulation, plannedWorkerCount } = await import('./combat-sim-runner.
 const { buildGameDataPayload, calculateSimRevenue } = await import('./combat-sim-adapter.js');
 const { runLabyrinthSimulation } = await import('./combat-sim-runner.js');
 const { findMaxLabyrinthLevel } = await import('./labyrinth-level-finder.js');
+const { settingsGroups } = await import('../../core/settings-schema.js');
+const config = (await import('../../core/config.js')).default;
 
 // The advisor asks the shared pricing rule what one attempt's materials come to.
 // Most tests here are not about that number, so give it a default they can ignore
@@ -5962,6 +5964,11 @@ describe('house rooms a win rate can feel', () => {
         actionBuffs: [scoped('/buff_types/wisdom', '/action_types/combat')],
     };
 
+    test('skipping skilling rooms is opt-in', () => {
+        expect(settingsGroups.combat.settings.combatSim_upgradeSkipSkillingRooms.default).toBe(false);
+        expect(config.getSetting('combatSim_upgradeSkipSkillingRooms')).toBe(false);
+    });
+
     test('a skilling room is no longer admitted on the global buffs every room grants', () => {
         // The old test still holds — this is the pair that makes the point
         expect(houseRoomAffectsCombat(DAIRY_BARN)).toBe(true);
@@ -6033,9 +6040,29 @@ describe('house rooms a win rate can feel', () => {
         const winRate = generateHouseCandidates({ houseRooms: {} }, houseData, 0, null, { winRateOnly: true }).map(
             (c) => c.roomHrid
         );
+        const skipSkilling = generateHouseCandidates({ houseRooms: {} }, houseData, 0, null, {
+            skipSkillingRooms: true,
+        }).map((c) => c.roomHrid);
+        const passedThroughAdvisor = generateCandidates(
+            { houseRooms: {} },
+            houseData,
+            'house',
+            0,
+            'increment',
+            false,
+            null,
+            null,
+            0,
+            null,
+            null,
+            0,
+            { skipSkillingRooms: true }
+        ).map((c) => c.roomHrid);
 
         expect(all.sort()).toEqual(['/house_rooms/armory', '/house_rooms/dairy_barn']);
         expect(winRate).toEqual(['/house_rooms/armory']);
+        expect(skipSkilling).toEqual(['/house_rooms/armory']);
+        expect(passedThroughAdvisor).toEqual(['/house_rooms/armory']);
     });
 
     test('and the scan counts the same rooms the generator offers', () => {

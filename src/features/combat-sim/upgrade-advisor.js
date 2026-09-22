@@ -1090,10 +1090,11 @@ function addGuideEmptySlotCandidates(playerDTO, gameData, guide, candidates, isS
  * @param {string} [abilityLevelType='increment'] - 'increment' (add N levels) or 'target' (absolute level)
  * @param {Object} [communityBuffs=null] - Configured community buffs, for the 'community_buff' set
  * @param {number} [guildShrineTargetLevel=0] - Absolute shrine buff level to buy up to; 0 means one level up
- * @param {Object} [options] - `{ auraSwapsOnly, houseWinRateOnly, communityBuffTargetLevel,
+ * @param {Object} [options] - `{ auraSwapsOnly, houseWinRateOnly, skipSkillingRooms, communityBuffTargetLevel,
  *   guildShrineTargets, isSelf }`. `houseWinRateOnly` narrows the house set to rooms that can move
- *   a fight's outcome, for an analysis ranked on win rate alone; `communityBuffTargetLevel` buys
- *   several buff levels at once; `guildShrineTargets` is a per-shrine target map that takes
+ *   a fight's outcome, for an analysis ranked on win rate alone; `skipSkillingRooms` applies that
+ *   same narrower set to the ordinary advisor; `communityBuffTargetLevel` buys several buff levels
+ *   at once; `guildShrineTargets` is a per-shrine target map that takes
  *   precedence over `guildShrineTargetLevel`, skipping any shrine it does not name;
  *   `guildShrineCapToGuild` limits shrine targets to the guild's own shrine building levels. `isSelf`
  *   (default true) gates the guide's empty-slot fill level off the live character's own book
@@ -1585,6 +1586,7 @@ export function generateCandidates(
         candidates.push(
             ...generateHouseCandidates(playerDTO, gameData, houseTargetLevel, houseTargets, {
                 winRateOnly: Boolean(options?.houseWinRateOnly),
+                skipSkillingRooms: Boolean(options?.skipSkillingRooms),
             })
         );
     }
@@ -1767,11 +1769,11 @@ export function houseRoomMovesWinRate(roomDetail) {
 
 /**
  * The room test one analysis should use.
- * @param {boolean} winRateOnly - Whether the caller ranks on win rate alone
+ * @param {Object} [options] - Whether to exclude rooms whose only combat effects are XP or loot
  * @returns {Function} A predicate over a `houseRoomDetailMap` entry
  */
-function houseRoomPredicate(winRateOnly) {
-    return winRateOnly ? houseRoomMovesWinRate : houseRoomAffectsCombat;
+function houseRoomPredicate(options = {}) {
+    return options.winRateOnly || options.skipSkillingRooms ? houseRoomMovesWinRate : houseRoomAffectsCombat;
 }
 
 /**
@@ -1813,12 +1815,12 @@ export function candidateAssignmentKey(candidate) {
  * instead of reading as "no upgrades available".
  * @param {Object} playerDTO - Player DTO
  * @param {Object} gameData - Game data payload
- * @param {Object} [options] - `{ winRateOnly }`, the labyrinth's stricter room test
+ * @param {Object} [options] - `{ winRateOnly, skipSkillingRooms }`; either selects the stricter room test
  * @returns {{rooms: number, withBuffs: number, combatRelevant: number, belowCap: number}}
  */
 export function describeHouseScan(playerDTO, gameData, options = {}) {
     const roomMap = gameData?.houseRoomDetailMap || {};
-    const isRelevant = houseRoomPredicate(options?.winRateOnly);
+    const isRelevant = houseRoomPredicate(options);
     let withBuffs = 0;
     let combatRelevant = 0;
     let belowCap = 0;
@@ -1842,7 +1844,7 @@ export function describeHouseScan(playerDTO, gameData, options = {}) {
  * @param {number} [targetLevel] - Level to sim every room at; 0/unset means one level up
  * @param {Object|null} [perRoomTargets] - roomHrid → target level; takes precedence
  *   over targetLevel, and a room absent from it is skipped (blank means skip)
- * @param {Object} [options] - `{ winRateOnly }`; see `houseRoomMovesWinRate`
+ * @param {Object} [options] - `{ winRateOnly, skipSkillingRooms }`; see `houseRoomMovesWinRate`
  * @returns {Array<Object>} Candidates of type 'house'
  */
 export function generateHouseCandidates(playerDTO, gameData, targetLevel = 0, perRoomTargets = null, options = {}) {
@@ -1851,7 +1853,7 @@ export function generateHouseCandidates(playerDTO, gameData, targetLevel = 0, pe
 
     const target = Math.min(MAX_HOUSE_LEVEL, Math.max(0, Math.floor(Number(targetLevel) || 0)));
     const explicit = perRoomTargets && typeof perRoomTargets === 'object' ? perRoomTargets : null;
-    const isRelevant = houseRoomPredicate(options?.winRateOnly);
+    const isRelevant = houseRoomPredicate(options);
 
     const candidates = [];
     for (const [roomHrid, roomDetail] of Object.entries(roomMap)) {
@@ -3264,7 +3266,7 @@ export async function runUpgradeAnalysis(params, onProgress, options = {}) {
             guildShrineTargetLevel,
             // Keep the paired guild-shrine fields together; a source guard enforces this invariant.
             // prettier-ignore
-            { auraSwapsOnly, communityBuffTargetLevel, guildShrineTargets, guildShrineCapToGuild, isSelf, playerCount: playerDTOs.length }
+            { auraSwapsOnly, communityBuffTargetLevel, guildShrineTargets, guildShrineCapToGuild, isSelf, playerCount: playerDTOs.length, skipSkillingRooms: config.getSetting('combatSim_upgradeSkipSkillingRooms') }
         )
     );
     // Candidates the caller asked for by name, alongside whatever the mode

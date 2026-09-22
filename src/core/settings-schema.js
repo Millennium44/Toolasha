@@ -2823,6 +2823,16 @@ export const settingsGroups = {
                     'at once — each one holds its own copy of the game data, and the tab running the game needs a ' +
                     'core too. Turn this on to take the number above literally.',
             },
+            combatSim_upgradeSkipSkillingRooms: {
+                id: 'combatSim_upgradeSkipSkillingRooms',
+                label: 'Combat Simulator: Upgrade Advisor - skip skilling house rooms',
+                type: 'checkbox',
+                default: false,
+                help:
+                    'House Rooms Upgrade mode: skip rooms whose only combat results are the small Wisdom and Rare ' +
+                    'Find bonuses shared by every room. This saves simulation time, but omits their real EXP and ' +
+                    'Profit changes.',
+            },
             labSim_keepReplacedGear: {
                 id: 'labSim_keepReplacedGear',
                 label: 'Lab Simulator: Keep gear the forced armor swaps replace',

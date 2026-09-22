@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Combat Sim can skip skilling house rooms
+
+- Upgrade Advisor can now omit house rooms whose only combat benefit is their shared Wisdom and Rare Find bonuses, reducing House Rooms analysis time when their small EXP and Profit changes are not needed. The option is off by default so existing analyses keep considering every real effect.
+
 ### Skilling Optimizer can sort by fixed percentage-point value
 
 - Equipment Progression can now rank upgrades by gold spent per 0.01% Exp/hr or Profit gain, making similarly sized percentage improvements directly comparable across equipment slots.
