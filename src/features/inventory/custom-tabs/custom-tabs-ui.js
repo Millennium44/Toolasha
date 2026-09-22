@@ -529,10 +529,9 @@ const COLOR_PRESETS = ['#e06060', '#e0a030', '#40c060', '#40a0e0', '#a060e0', '#
  * What the item-count badge on a tab header means, as a hover explanation.
  *
  * The count is how many items the tab is *configured* to hold, not how many
- * tiles are currently drawn — a category collapsed in the game's own
- * Inventory tab hides tiles here too, and the ⚠ beside the tab's name is what
- * says that has happened. Left unstated, the two easily get read as the same
- * number.
+ * tiles are currently drawn. Custom Tabs normally expands a native category
+ * when its collapsed state omits owned tiles; the ⚠ beside the tab's name is
+ * the fallback when the game exposes no usable category toggle.
  *
  * @param {number} count - Configured item count, line breaks excluded
  * @returns {string}
@@ -546,9 +545,8 @@ export function tabItemCountTooltip(count) {
  *
  * States which price it is summed at — ask, bid, or whatever the "badges on
  * none" sort mode is set to — and across how many tiles, since that can run
- * short of the configured item count for the same reason the count badge's
- * own tooltip explains: a collapsed game category hides tiles without
- * un-assigning them.
+ * short of the configured item count when the game has not exposed a usable
+ * tile for an owned item.
  *
  * @param {string} valueKey - Tile dataset key the total was summed from,
  *   e.g. `askValue`; the tooltip names the price by stripping the suffix
@@ -594,6 +592,10 @@ export default class CustomTabsUI {
         this._tileObserver = null; // MutationObserver for instant tile visibility on React swaps
         this._observedContainer = null; // Container currently being observed by _tileObserver
         this._dragBoundTiles = new WeakSet();
+        // Clicking a native collapsed-category toggle schedules a React render. Keep that
+        // exact button latched until its label changes so tile-observer passes fired by the
+        // same render cannot click it a second time and toggle the category closed again.
+        this._nativeCategoryExpandRequests = new WeakSet();
     }
 
     // -----------------------------------------------------------------------
@@ -1075,6 +1077,17 @@ export default class CustomTabsUI {
         // Build tile map from all tiles currently in invContainer
         const tileMap = this._buildTileMap(invContainer);
 
+        // The game removes every tile in a collapsed native category from the DOM. If one of
+        // those omitted tiles is owned, ask the game's own category controls to reveal it and
+        // let React's resulting tile mutation drive the real layout pass. Keep the existing
+        // per-section warning as a fallback when no collapsed control is available.
+        if (this._hasOwnedItemsMissingFromDom(tileMap) && this._expandCollapsedNativeCategories(invContainer) > 0) {
+            requestAnimationFrame(() => {
+                if (this._isActive && this._findInvContainer() === invContainer) this._applyLayout();
+            });
+            return;
+        }
+
         // Reset all tiles: remove visible class, clear inline order, and drag state
         const allTiles = invContainer.querySelectorAll('[class*="Item_itemContainer"]');
         for (const tile of allTiles) {
@@ -1546,6 +1559,48 @@ export default class CustomTabsUI {
             }
         }
         return map;
+    }
+
+    /**
+     * Whether the live inventory says the player owns an item for which the native panel has
+     * rendered no matching tile. Enhanced stacks use the same `base+level` identity as the tile
+     * map, while +0 stacks retain the base hrid.
+     * @param {Map<string, HTMLElement[]>} tileMap
+     * @returns {boolean}
+     */
+    _hasOwnedItemsMissingFromDom(tileMap) {
+        for (const item of dataManager.getInventory() || []) {
+            if (item.itemLocationHrid !== '/item_locations/inventory') continue;
+            const level = item.enhancementLevel || 0;
+            const hrid = level > 0 ? `${item.itemHrid}+${level}` : item.itemHrid;
+            if (!tileMap.has(hrid)) return true;
+        }
+        return false;
+    }
+
+    /**
+     * Click each collapsed native inventory category at most once for its current collapsed
+     * state. The game labels collapsed controls `+ Category (N)` and expanded controls without
+     * the leading plus. A WeakSet latch prevents observer-driven rerenders from clicking the same
+     * still-collapsed DOM node twice; seeing its expanded label clears the latch for a later
+     * player-initiated collapse.
+     * @param {HTMLElement} invContainer
+     * @returns {number} number of expansion requests made
+     */
+    _expandCollapsedNativeCategories(invContainer) {
+        let expanded = 0;
+        for (const button of invContainer.querySelectorAll('[class*="Inventory_categoryButton"]')) {
+            const isCollapsed = button.textContent.trim().startsWith('+');
+            if (!isCollapsed) {
+                this._nativeCategoryExpandRequests.delete(button);
+                continue;
+            }
+            if (this._nativeCategoryExpandRequests.has(button)) continue;
+            this._nativeCategoryExpandRequests.add(button);
+            button.click();
+            expanded++;
+        }
+        return expanded;
     }
 
     /**

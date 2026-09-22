@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Custom Tabs recovers items hidden by collapsed native categories
+
+- A collapsed category in the game's Inventory panel removes its item tiles from the page, so Custom Tabs could omit owned items and show only a warning. Custom Tabs now asks the game's own category controls to reveal those tiles, without repeatedly toggling a category while the inventory rerenders.
+
 ### Enhancement auto-protection survives a late-rendered slot
 
 - Enhancement panels opened from Inventory can add their protection-item slot after the rest of the panel. Toolasha now retries attaching its slot watcher, so automatic “Protect From” updates keep working in those sessions.
