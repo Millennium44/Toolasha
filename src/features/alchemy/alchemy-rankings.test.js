@@ -65,6 +65,7 @@ vi.mock('../../core/data-manager.js', () => ({
 vi.mock('../../utils/tea-parser.js', () => ({ getDrinkConcentration: () => 0 }));
 vi.mock('../../utils/market-data.js', () => ({
     getItemPrice: (hrid) => mocks.itemPrices[hrid] ?? mocks.itemPrice,
+    isPriceEstimated: () => false,
 }));
 vi.mock('../../utils/buff-parser.js', () => ({ getAlchemySuccessBonus: () => 0 }));
 vi.mock('../../utils/equipment-parser.js', () => ({

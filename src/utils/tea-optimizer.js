@@ -553,7 +553,9 @@ function calculateAlchemyGoldPerHour(alchemyContext, buffs, actionContext = null
     if (!profitData) return { profitPerHour: 0, hasMissingPrice: true };
     return {
         profitPerHour: profitData.profitPerHour || 0,
-        hasMissingPrice: Array.isArray(profitData.unpricedOutputs) && profitData.unpricedOutputs.length > 0,
+        hasMissingPrice:
+            (Array.isArray(profitData.unpricedOutputs) && profitData.unpricedOutputs.length > 0) ||
+            (Array.isArray(profitData.estimatedOutputs) && profitData.estimatedOutputs.length > 0),
     };
 }
 

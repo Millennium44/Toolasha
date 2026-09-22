@@ -459,6 +459,42 @@ describe('calculateSkillPerformance — alchemy', () => {
         expect(result.hasMissingPrices).toBe(true);
     });
 
+    test('an Alchemy result valued from an estimated output keeps the price warning', () => {
+        alchemyCalc.decompose = () => ({
+            profitPerHour: 555,
+            unpricedOutputs: [],
+            estimatedOutputs: ['/items/cheese'],
+        });
+
+        const result = calculateSkillPerformance('alchemy', new Map(), [], 10);
+
+        expect(result.goldPerHour).toBe(555);
+        expect(result.hasMissingPrices).toBe(true);
+    });
+
+    test('an Unrefine result with an unpriced shard keeps the missing-price warning', () => {
+        state.gameData.itemDetailMap['/items/refined_plate'] = {
+            alchemyDetail: { unrefineDetail: { baseItemHrid: '/items/base_plate' } },
+            itemLevel: 20,
+        };
+        state.gameData.actionDetailMap['/actions/alchemy/unrefine'] = {
+            type: '/action_types/alchemy',
+            name: 'Unrefine',
+            baseTimeCost: 20e9,
+        };
+        alchemyCalc.unrefine = () => ({
+            profitPerHour: 555,
+            unpricedOutputs: ['/items/refinement_shard'],
+        });
+
+        const result = calculateSkillPerformance('alchemy', new Map(), [], 20, null, {
+            alchemyContext: { actionType: 'unrefine', itemHrid: '/items/refined_plate', enhancementLevel: 7 },
+        });
+
+        expect(result.goldPerHour).toBe(555);
+        expect(result.hasMissingPrices).toBe(true);
+    });
+
     test('uses the running item and the planned skill level for both XP and Gold/hr', () => {
         state.skills = [{ skillHrid: '/skills/alchemy', level: 5 }];
         state.gameData.itemDetailMap['/items/moon_ore'] = { alchemyDetail: { isCoinifiable: true }, itemLevel: 100 };

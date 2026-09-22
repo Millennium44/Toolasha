@@ -6,6 +6,11 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Alchemy estimates honor selected drinks and uncertain prices
+
+- Alchemy recommendations no longer treat a catalyst with no price as free, and Unrefine now warns when an unpriced shard return is left out of the profit estimate. The optimizer also marks Alchemy results that rely on estimated output prices as uncertain.
+- Alchemy tooltips now recalculate action speed and efficiency when a no-tea setup wins, while the live action view charges speed-only teas even without an Alchemy Success bonus.
+
 ### Queue totals and hover details follow the live action order
 
 - Queue XP and value totals stop at an endless action, while later rows retain their own estimates for planning. Duplicate action labels now follow execution order, and a reopened queue tooltip refreshes after inventory or row changes.
