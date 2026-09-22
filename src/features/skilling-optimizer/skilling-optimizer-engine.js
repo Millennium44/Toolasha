@@ -12,11 +12,12 @@ import {
     getSkillActionsForDisplay,
     calculateSkillPerformance,
     skillGoldHasUnpricedMaterials,
+    resolveActiveAlchemyItemContext,
 } from '../../utils/tea-optimizer.js';
 import { resolveItemPrice } from '../../utils/profit-helpers.js';
 import { calculateDirectEnhancementCost } from '../combat-sim/upgrade-advisor.js';
 
-export { getSkillActionsForDisplay, calculateSkillPerformance, findOptimalTeas };
+export { getSkillActionsForDisplay, calculateSkillPerformance, findOptimalTeas, resolveActiveAlchemyItemContext };
 
 // Equipment type → item location mapping (two_hand maps to main_hand slot)
 const EQUIPMENT_TYPE_TO_LOCATION = {
@@ -225,9 +226,18 @@ function getCandidatesForSlot(locationHrid, playerLevels, itemDetailMap) {
  * @param {number} playerLevel
  * @returns {number}
  */
-function scoreCandidate(itemHrid, locationHrid, skillName, goal, enhancementLevel, playerLevel, selectedActionHrids) {
+function scoreCandidate(
+    itemHrid,
+    locationHrid,
+    skillName,
+    goal,
+    enhancementLevel,
+    playerLevel,
+    selectedActionHrids,
+    alchemyContext
+) {
     const equipment = new Map([[locationHrid, { itemHrid, enhancementLevel }]]);
-    return scoreEquipmentSetup(skillName, goal, equipment, playerLevel, selectedActionHrids);
+    return scoreEquipmentSetup(skillName, goal, equipment, playerLevel, selectedActionHrids, [], alchemyContext);
 }
 
 /**
@@ -324,6 +334,41 @@ export function getSkillDrinkItems() {
 }
 
 /**
+ * List real item bases available to the Alchemy optimizer's manual item picker.
+ * Action-specific validity remains the calculator's responsibility.
+ * @returns {Array<{hrid: string, name: string}>}
+ */
+export function getAlchemyItemOptions() {
+    const itemDetailMap = dataManager.getInitClientData()?.itemDetailMap;
+    if (!itemDetailMap) return [];
+    return Object.entries(itemDetailMap)
+        .filter(([, detail]) => detail.alchemyDetail)
+        .map(([hrid, detail]) => ({ hrid, name: detail.name }))
+        .sort((a, b) => a.name.localeCompare(b.name));
+}
+
+/**
+ * Build the equipment a player can actually apply from optimizer results. A recommended item is
+ * usable only when it exists in inventory; other slots retain the selected comparison loadout.
+ * @param {Object} slots
+ * @param {Map<string, number>} enhancementLevels
+ * @param {Map<string, Object>|null} loadoutItemMap
+ * @returns {Map<string, {itemHrid: string, enhancementLevel: number}>}
+ */
+export function buildAchievableEquipment(slots, enhancementLevels, loadoutItemMap = null) {
+    const equipment = new Map(loadoutItemMap || []);
+    for (const [locationHrid, slotData] of Object.entries(slots || {})) {
+        const best = slotData.progression[slotData.progression.length - 1];
+        if (!best?.itemHrid || !enhancementLevels.has(best.itemHrid)) continue;
+        equipment.set(locationHrid, {
+            itemHrid: best.itemHrid,
+            enhancementLevel: enhancementLevels.get(best.itemHrid),
+        });
+    }
+    return equipment;
+}
+
+/**
  * Gold cost of moving into a recommended item, netted against selling whatever currently
  * occupies the slot (the Combat Sim Upgrade Advisor's tier-upgrade convention: buy target -
  * sell current). With no current item the cost is the full buy price.
@@ -377,7 +422,7 @@ export function calculateSlotUpgradeCost(itemHrid, enhancementLevel, currentEqui
  * @param {Set<string>|null} selectedActionHrids - HRIDs of actions to score against, or null for all
  * @returns {Object|null}
  */
-export function optimizeSkill(skillName, playerLevel, selectedActionHrids = null) {
+export function optimizeSkill(skillName, playerLevel, selectedActionHrids = null, alchemyItemOverride = null) {
     // Gathering skills: score for Gold — captures gathering quantity, rare/essence find + speed/efficiency.
     // Production skills: score for XP — more reliable since it doesn't depend on market prices.
     const goal = GATHERING_SKILLS.has(skillName.toLowerCase()) ? 'gold' : 'xp';
@@ -386,9 +431,27 @@ export function optimizeSkill(skillName, playerLevel, selectedActionHrids = null
 
     const { itemDetailMap } = gameData;
     const playerLevels = buildPlayerLevelMap(skillName, playerLevel);
+    const alchemyContext =
+        skillName.toLowerCase() === 'alchemy' ? alchemyItemOverride || resolveActiveAlchemyItemContext() : null;
 
-    const xpBaseline = scoreEquipmentSetup(skillName, 'xp', new Map(), playerLevel, selectedActionHrids);
-    const goldBaseline = scoreEquipmentSetup(skillName, 'gold', new Map(), playerLevel, selectedActionHrids);
+    const xpBaseline = scoreEquipmentSetup(
+        skillName,
+        'xp',
+        new Map(),
+        playerLevel,
+        selectedActionHrids,
+        [],
+        alchemyContext
+    );
+    const goldBaseline = scoreEquipmentSetup(
+        skillName,
+        'gold',
+        new Map(),
+        playerLevel,
+        selectedActionHrids,
+        [],
+        alchemyContext
+    );
     const baseline = goal === 'xp' ? xpBaseline : goldBaseline;
 
     const slots = {};
@@ -427,7 +490,8 @@ export function optimizeSkill(skillName, playerLevel, selectedActionHrids = null
                     goal,
                     effectiveLevel,
                     playerLevel,
-                    selectedActionHrids
+                    selectedActionHrids,
+                    alchemyContext
                 );
 
                 if (score > bestScore) {
@@ -453,7 +517,8 @@ export function optimizeSkill(skillName, playerLevel, selectedActionHrids = null
                         'xp',
                         bestEffectiveLevel,
                         playerLevel,
-                        selectedActionHrids
+                        selectedActionHrids,
+                        alchemyContext
                     );
                 })(),
                 goldScore: (() => {
@@ -466,7 +531,8 @@ export function optimizeSkill(skillName, playerLevel, selectedActionHrids = null
                         'gold',
                         bestEffectiveLevel,
                         playerLevel,
-                        selectedActionHrids
+                        selectedActionHrids,
+                        alchemyContext
                     );
                 })(),
                 isChange: (bestItem?.hrid ?? null) !== lastWinnerHrid,
@@ -498,7 +564,7 @@ export function optimizeSkill(skillName, playerLevel, selectedActionHrids = null
         null,
         null,
         null,
-        null,
+        alchemyContext,
         optimalEquipmentAtMax,
         selectedActionHrids
     );
@@ -508,7 +574,7 @@ export function optimizeSkill(skillName, playerLevel, selectedActionHrids = null
         null,
         null,
         null,
-        null,
+        alchemyContext,
         optimalEquipmentAtMax,
         selectedActionHrids
     );
@@ -528,6 +594,8 @@ export function optimizeSkill(skillName, playerLevel, selectedActionHrids = null
         goldBaseline,
         slots,
         goldHasMissingPrices,
+        alchemyContext,
+        alchemyContextIsManual: skillName.toLowerCase() === 'alchemy' && alchemyItemOverride !== null,
         xpTeaResult: xpTeaResult?.error ? null : xpTeaResult,
         goldTeaResult: goldTeaResult?.error ? null : goldTeaResult,
     };

@@ -24,6 +24,7 @@ const scoring = vi.hoisted(() => ({
     teaResults: { xp: { teas: ['xp-tea'] }, gold: { teas: ['gold-tea'] } },
     teaCalls: [],
     goldHasMissingPrices: false,
+    activeAlchemyContext: null,
 }));
 
 vi.mock('../../core/data-manager.js', () => ({
@@ -34,8 +35,8 @@ vi.mock('../../core/data-manager.js', () => ({
 }));
 
 vi.mock('../../utils/tea-optimizer.js', () => ({
-    scoreEquipmentSetup: (skillName, goal, equipment, playerLevel, selectedActionHrids) => {
-        scoring.calls.push({ skillName, goal, equipment, playerLevel, selectedActionHrids });
+    scoreEquipmentSetup: (skillName, goal, equipment, playerLevel, selectedActionHrids, teaHrids, alchemyContext) => {
+        scoring.calls.push({ skillName, goal, equipment, playerLevel, selectedActionHrids, teaHrids, alchemyContext });
         if (!equipment || equipment.size === 0) return scoring.baseline[goal];
         const [{ itemHrid, enhancementLevel }] = [...equipment.values()];
         return scoring.scores[goal]?.[`${itemHrid}@${enhancementLevel}`] ?? scoring.baseline[goal];
@@ -47,7 +48,7 @@ vi.mock('../../utils/tea-optimizer.js', () => ({
     getSkillActionsForDisplay: () => [],
     calculateSkillPerformance: () => ({}),
     skillGoldHasUnpricedMaterials: () => scoring.goldHasMissingPrices,
-    resolveActiveAlchemyItemContext: () => null,
+    resolveActiveAlchemyItemContext: () => scoring.activeAlchemyContext,
 }));
 
 // calculateSlotUpgradeCost is the only consumer. Each entry is keyed by side so a test can
@@ -73,6 +74,7 @@ vi.mock('../combat-sim/upgrade-advisor.js', () => ({
 
 const {
     calculateSlotUpgradeCost,
+    buildAchievableEquipment,
     getPlayerSkillLevel,
     getItemsForSlot,
     getSkillDrinkItems,
@@ -150,8 +152,48 @@ beforeEach(() => {
     scoring.teaResults = { xp: { teas: ['xp-tea'] }, gold: { teas: ['gold-tea'] } };
     scoring.teaCalls = [];
     scoring.goldHasMissingPrices = false;
+    scoring.activeAlchemyContext = null;
     enhancementPricing.cost = null;
     enhancementPricing.calls = [];
+});
+
+describe('optimizeSkill Alchemy item basis', () => {
+    const context = { actionType: 'coinify', itemHrid: '/items/milk', enhancementLevel: 0 };
+
+    test('passes a manually selected real item through every baseline and equipment score', () => {
+        optimizeSkill('Alchemy', 60, null, context);
+        expect(scoring.calls.length).toBeGreaterThan(0);
+        expect(scoring.calls.every((call) => call.alchemyContext === context)).toBe(true);
+    });
+
+    test('falls back to the action actually running when no manual item is selected', () => {
+        scoring.activeAlchemyContext = context;
+        const result = optimizeSkill('Alchemy', 60);
+        expect(result.alchemyContext).toBe(context);
+        expect(result.alchemyContextIsManual).toBe(false);
+    });
+});
+
+describe('buildAchievableEquipment', () => {
+    test('keeps comparison gear when a recommendation is not owned and applies real owned levels', () => {
+        const slots = {
+            '/item_locations/head': {
+                progression: [{ itemHrid: '/items/unowned_hat' }],
+            },
+            '/item_locations/hands': {
+                progression: [{ itemHrid: '/items/owned_gloves' }],
+            },
+        };
+        const comparison = new Map([['/item_locations/head', { itemHrid: '/items/current_hat', enhancementLevel: 5 }]]);
+        const owned = new Map([['/items/owned_gloves', 12]]);
+
+        expect(buildAchievableEquipment(slots, owned, comparison)).toEqual(
+            new Map([
+                ['/item_locations/head', { itemHrid: '/items/current_hat', enhancementLevel: 5 }],
+                ['/item_locations/hands', { itemHrid: '/items/owned_gloves', enhancementLevel: 12 }],
+            ])
+        );
+    });
 });
 
 describe('getPlayerSkillLevel', () => {

@@ -31,6 +31,7 @@ import { resolveActionContext } from './action-context.js';
  * @param {boolean} options.includeCommunityBuff - Include community buff in efficiency (default: false)
  * @param {boolean} options.includeBreakdown - Include detailed breakdown data (default: false)
  * @param {number} options.levelRequirementOverride - Override base level requirement (e.g., item level for alchemy)
+ * @param {{drinks?: Array}|null} options.actionContext - Exact hypothetical action drinks to score
  * @returns {Object} { actionTime, totalEfficiency, breakdown? }
  */
 export function calculateActionStats(actionDetails, options = {}) {
@@ -42,6 +43,7 @@ export function calculateActionStats(actionDetails, options = {}) {
         includeCommunityBuff = false,
         includeBreakdown = false,
         levelRequirementOverride,
+        actionContext = null,
     } = options;
 
     try {
@@ -90,7 +92,7 @@ export function calculateActionStats(actionDetails, options = {}) {
         const drinkConcentration = getDrinkConcentration(equipment, itemDetailMap);
 
         // Get active drinks for this action type (loadout-snapshot aware)
-        const activeDrinks = resolveActionContext(actionDetails.type).drinks;
+        const activeDrinks = actionContext?.drinks ?? resolveActionContext(actionDetails.type).drinks;
 
         // Calculate Action Level bonus from teas
         const actionLevelBonus = parseActionLevelBonus(activeDrinks, itemDetailMap, drinkConcentration);

@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Alchemy Optimizer uses the item, gear and teas being tested
+
+- Alchemy recommendations now price the running action or a manually selected item, carry hypothetical gear and each tea combination into the calculation, and support Unrefine. Gold estimates stay unavailable when there is no real item basis instead of silently substituting a different item.
+
 ### Combat Sim skips ability swaps that cannot affect the fight
 
 - Solo upgrade searches no longer spend simulations on party-only threat and revive abilities, or on a second zero-cooldown ability that cannot cast.

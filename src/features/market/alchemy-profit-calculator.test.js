@@ -229,6 +229,17 @@ describe('tea speed is applied on every alchemy path', () => {
                 transmuteDropTable: [{ itemHrid: '/items/cheese', dropRate: 1, minCount: 1, maxCount: 1 }],
             },
         },
+        '/items/cheese_hat_refined': {
+            name: 'Cheese Hat (Refined)',
+            itemLevel: 10,
+            alchemyDetail: {
+                unrefineDetail: {
+                    baseItemHrid: '/items/cheese_hat',
+                    shardReturn: { itemHrid: '/items/refinement_shard', count: 2 },
+                },
+            },
+        },
+        '/items/refinement_shard': { name: 'Refinement Shard' },
     };
 
     const alchemyAction = { type: '/action_types/alchemy', baseTimeCost: BASE_TIME_SECONDS * 1e9 };
@@ -238,6 +249,7 @@ describe('tea speed is applied on every alchemy path', () => {
         ['coinify', (calc) => calc.calculateCoinifyProfit('/items/cheese')],
         ['decompose', (calc) => calc.calculateDecomposeProfit('/items/cheese_hat')],
         ['transmute', (calc) => calc.calculateTransmuteProfit('/items/milk')],
+        ['unrefine', (calc) => calc.calculateUnrefineProfit('/items/cheese_hat_refined', 7)],
     ];
 
     beforeEach(() => {
@@ -247,6 +259,7 @@ describe('tea speed is applied on every alchemy path', () => {
                 '/actions/alchemy/coinify': alchemyAction,
                 '/actions/alchemy/decompose': alchemyAction,
                 '/actions/alchemy/transmute': alchemyAction,
+                '/actions/alchemy/unrefine': alchemyAction,
             },
         };
         mocks.equipmentSpeed = 0.25;
@@ -291,6 +304,31 @@ describe('tea speed is applied on every alchemy path', () => {
         const result = alchemyProfitCalculator.calculateCoinifyProfit('/items/cheese');
 
         expect(result.actionTime).toBe(3);
+    });
+
+    test('unrefine exposes the same detailed cost and revenue shape as the other alchemy paths', () => {
+        mocks.itemPrices['/items/cheese_hat_refined'] = 1_000;
+        mocks.itemPrices['/items/cheese_hat'] = 700;
+        mocks.itemPrices['/items/refinement_shard'] = 50;
+
+        const result = alchemyProfitCalculator.calculateUnrefineProfit('/items/cheese_hat_refined', 7);
+
+        expect(result.requirementCosts).toEqual(
+            expect.arrayContaining([
+                expect.objectContaining({
+                    itemHrid: '/items/cheese_hat_refined',
+                    enhancementLevel: 7,
+                    costPerAction: 1_000,
+                }),
+            ])
+        );
+        expect(result.dropRevenues).toEqual(
+            expect.arrayContaining([
+                expect.objectContaining({ itemHrid: '/items/cheese_hat', enhancementLevel: 7 }),
+                expect.objectContaining({ itemHrid: '/items/refinement_shard', count: 2 }),
+            ])
+        );
+        expect(result.catalystCost).toEqual(expect.objectContaining({ itemHrid: null, costPerHour: 0 }));
     });
 });
 

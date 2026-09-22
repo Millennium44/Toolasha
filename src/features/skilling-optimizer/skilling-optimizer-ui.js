@@ -11,11 +11,13 @@ import {
     calculateSkillPerformance,
     getSkillActionsForDisplay,
     getItemsForSlot,
+    getAlchemyItemOptions,
     getSkillDrinkItems,
     getPlayerSkillLevel,
     optimizeSkill,
     findOptimalTeas,
     calculateSlotUpgradeCost,
+    buildAchievableEquipment,
     SKILL_NAMES,
     SKILLING_LOCATIONS,
     SLOT_DISPLAY_NAMES,
@@ -103,6 +105,7 @@ class SkillingSimulatorUI {
         this.optimizerLoadout = null;
         this.optimizerSortMode = 'value';
         this.houseSortMode = 'value';
+        this.alchemyItemOverride = null;
 
         // Simulator state
         this.currentSkill = 'Woodcutting';
@@ -371,6 +374,10 @@ class SkillingSimulatorUI {
             compareRow.appendChild(compareSelect);
             panel.appendChild(compareRow);
 
+            if (this.currentSkill === 'Alchemy') {
+                panel.appendChild(this._buildAlchemyItemOverrideRow());
+            }
+
             const optimizeBtn = document.createElement('button');
             optimizeBtn.type = 'button';
             optimizeBtn.textContent = 'Optimize';
@@ -389,49 +396,13 @@ class SkillingSimulatorUI {
                 optimizeBtn.disabled = true;
                 requestAnimationFrame(() =>
                     setTimeout(() => {
-                        const result = optimizeSkill(this.currentSkill, this.currentLevel, this.selectedActionHrids);
+                        const result = optimizeSkill(
+                            this.currentSkill,
+                            this.currentLevel,
+                            this.selectedActionHrids,
+                            this.alchemyItemOverride
+                        );
                         this.lastOptimizerResult = result;
-
-                        // Build equipment map using player's actual owned enhancement levels
-                        const enhMap = buildEnhancementLevelMap();
-                        const achievableEquipment = new Map();
-                        if (result) {
-                            for (const [locationHrid, slotData] of Object.entries(result.slots)) {
-                                const best = slotData.progression[slotData.progression.length - 1];
-                                if (best?.itemHrid) {
-                                    achievableEquipment.set(locationHrid, {
-                                        itemHrid: best.itemHrid,
-                                        enhancementLevel: enhMap.get(best.itemHrid) ?? 0,
-                                    });
-                                }
-                            }
-                        }
-
-                        // Performance with achievable equipment and optimal teas for each goal
-                        const xpAchievable = result
-                            ? findOptimalTeas(
-                                  this.currentSkill,
-                                  'xp',
-                                  null,
-                                  null,
-                                  null,
-                                  null,
-                                  achievableEquipment,
-                                  this.selectedActionHrids
-                              )
-                            : null;
-                        const goldAchievable = result
-                            ? findOptimalTeas(
-                                  this.currentSkill,
-                                  'gold',
-                                  null,
-                                  null,
-                                  null,
-                                  null,
-                                  achievableEquipment,
-                                  this.selectedActionHrids
-                              )
-                            : null;
 
                         // Build loadout item map for comparison
                         const loadoutItemMap = new Map();
@@ -445,6 +416,38 @@ class SkillingSimulatorUI {
                                     });
                             }
                         }
+
+                        // Only equip recommendations the player actually owns. An
+                        // unavailable recommendation must not replace comparison gear.
+                        const achievableEquipment = result
+                            ? buildAchievableEquipment(result.slots, buildEnhancementLevelMap(), loadoutItemMap)
+                            : new Map(loadoutItemMap);
+
+                        // Performance with achievable equipment and optimal teas for each goal
+                        const xpAchievable = result
+                            ? findOptimalTeas(
+                                  this.currentSkill,
+                                  'xp',
+                                  null,
+                                  null,
+                                  null,
+                                  result.alchemyContext,
+                                  achievableEquipment,
+                                  this.selectedActionHrids
+                              )
+                            : null;
+                        const goldAchievable = result
+                            ? findOptimalTeas(
+                                  this.currentSkill,
+                                  'gold',
+                                  null,
+                                  null,
+                                  null,
+                                  result.alchemyContext,
+                                  achievableEquipment,
+                                  this.selectedActionHrids
+                              )
+                            : null;
 
                         optimizeBtn.textContent = 'Optimize';
                         optimizeBtn.disabled = false;
@@ -469,6 +472,82 @@ class SkillingSimulatorUI {
         }
 
         return panel;
+    }
+
+    _buildAlchemyItemOverrideRow() {
+        const wrap = document.createElement('div');
+        wrap.style.cssText = 'display: flex; flex-direction: column; gap: 4px; margin-bottom: 8px;';
+
+        const row = document.createElement('div');
+        row.style.cssText = 'display: flex; align-items: center; gap: 8px;';
+        const label = document.createElement('span');
+        label.textContent = 'Alchemy Item:';
+        label.style.cssText = 'color: rgba(255,255,255,0.5); font-size: 12px; width: 76px; flex-shrink: 0;';
+        row.appendChild(label);
+
+        const selectCss =
+            'background: #2a2a2a; color: #fff; border: 1px solid rgba(255,255,255,0.2); border-radius: 4px; padding: 4px 8px; font-size: 12px; cursor: pointer;';
+        const itemSelect = document.createElement('select');
+        itemSelect.classList.add('toolasha-select');
+        itemSelect.style.cssText = `${selectCss} flex: 1; min-width: 0;`;
+        const auto = document.createElement('option');
+        auto.value = '';
+        auto.textContent = '— Auto (running action) —';
+        itemSelect.appendChild(auto);
+        for (const item of getAlchemyItemOptions()) {
+            const option = document.createElement('option');
+            option.value = item.hrid;
+            option.textContent = item.name;
+            option.selected = this.alchemyItemOverride?.itemHrid === item.hrid;
+            itemSelect.appendChild(option);
+        }
+        row.appendChild(itemSelect);
+
+        const typeSelect = document.createElement('select');
+        typeSelect.classList.add('toolasha-select');
+        typeSelect.style.cssText = `${selectCss} width: 105px; flex-shrink: 0;`;
+        for (const [value, text] of [
+            ['decompose', 'Decompose'],
+            ['coinify', 'Coinify'],
+            ['transmute', 'Transmute'],
+            ['unrefine', 'Unrefine'],
+        ]) {
+            const option = document.createElement('option');
+            option.value = value;
+            option.textContent = text;
+            option.selected = (this.alchemyItemOverride?.actionType || 'decompose') === value;
+            typeSelect.appendChild(option);
+        }
+        row.appendChild(typeSelect);
+
+        const levelInput = document.createElement('input');
+        levelInput.type = 'number';
+        levelInput.min = '0';
+        levelInput.max = '20';
+        levelInput.value = String(this.alchemyItemOverride?.enhancementLevel || 0);
+        levelInput.title = 'Enhancement level (ignored for Transmute)';
+        levelInput.style.cssText = `${selectCss} width: 44px; flex-shrink: 0; cursor: text;`;
+        row.appendChild(levelInput);
+        wrap.appendChild(row);
+
+        const apply = () => {
+            this.alchemyItemOverride = itemSelect.value
+                ? {
+                      itemHrid: itemSelect.value,
+                      actionType: typeSelect.value,
+                      enhancementLevel: Number.parseInt(levelInput.value, 10) || 0,
+                  }
+                : null;
+        };
+        itemSelect.addEventListener('change', apply);
+        typeSelect.addEventListener('change', apply);
+        levelInput.addEventListener('change', apply);
+
+        const hint = document.createElement('div');
+        hint.style.cssText = 'color: rgba(255,255,255,0.35); font-size: 10px; font-style: italic;';
+        hint.textContent = 'Auto uses the action actually running; select an item to plan a different action.';
+        wrap.appendChild(hint);
+        return wrap;
     }
 
     _buildTopControls() {
@@ -1143,6 +1222,23 @@ class SkillingSimulatorUI {
     _renderOptimizerResults(container, result, achievableStats, loadoutItemMap) {
         const { slots } = result;
         const slotEntries = Object.entries(slots);
+
+        if (result.skill?.toLowerCase() === 'alchemy') {
+            const basis = document.createElement('div');
+            basis.style.cssText = 'font-size: 11px; margin-bottom: 10px; color: rgba(255,255,255,0.5);';
+            if (result.alchemyContext) {
+                const context = result.alchemyContext;
+                const itemName = this._getItemName(context.itemHrid) || context.itemHrid;
+                const typeName = context.actionType.charAt(0).toUpperCase() + context.actionType.slice(1);
+                const level = context.enhancementLevel ? ` +${context.enhancementLevel}` : '';
+                const source = result.alchemyContextIsManual ? 'selected' : 'running action';
+                basis.textContent = `Based on: ${typeName} ${itemName}${level} (${source})`;
+            } else {
+                basis.style.color = '#f0ad4e';
+                basis.textContent = 'No Alchemy item basis: XP uses a representative item; Gold is unavailable.';
+            }
+            container.appendChild(basis);
+        }
 
         if (!slotEntries.length) {
             const empty = document.createElement('div');
@@ -1968,6 +2064,7 @@ class SkillingSimulatorUI {
         // character would silently diff against the old character's gear.
         this.lastOptimizerResult = null;
         this.optimizerLoadout = null;
+        this.alchemyItemOverride = null;
     }
 }
 

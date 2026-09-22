@@ -9,7 +9,7 @@
  */
 import { describe, test, expect, vi, beforeEach } from 'vitest';
 
-const state = vi.hoisted(() => ({ gameData: null, skills: [], houseRooms: new Map() }));
+const state = vi.hoisted(() => ({ gameData: null, skills: [], houseRooms: new Map(), actions: [] }));
 const prices = vi.hoisted(() => ({ byHrid: {}, estimated: new Set() }));
 
 vi.mock('../core/data-manager.js', () => ({
@@ -18,6 +18,7 @@ vi.mock('../core/data-manager.js', () => ({
         getSkills: () => state.skills,
         getEquipment: () => new Map(),
         getHouseRooms: () => state.houseRooms,
+        getCurrentActions: () => state.actions,
         getCommunityBuffLevel: () => 0,
         getAchievementBuffFlatBoost: () => 0,
         getPersonalBuffFlatBoost: () => 0,
@@ -35,12 +36,13 @@ vi.mock('./experience-parser.js', () => ({
     calculateExperienceMultiplier: () => ({ totalWisdom: 0, breakdown: { consumableWisdom: 0 }, charmExperience: 0 }),
 }));
 
-const alchemyCalc = vi.hoisted(() => ({ decompose: null, coinify: null, transmute: null }));
+const alchemyCalc = vi.hoisted(() => ({ decompose: null, coinify: null, transmute: null, unrefine: null }));
 vi.mock('../features/market/alchemy-profit-calculator.js', () => ({
     default: {
         calculateCoinifyProfit: (...args) => alchemyCalc.coinify?.(...args) ?? null,
         calculateDecomposeProfit: (...args) => alchemyCalc.decompose?.(...args) ?? null,
         calculateTransmuteProfit: (...args) => alchemyCalc.transmute?.(...args) ?? null,
+        calculateUnrefineProfit: (...args) => alchemyCalc.unrefine?.(...args) ?? null,
     },
 }));
 
@@ -65,6 +67,7 @@ const {
     calculateSkillPerformance,
     findOptimalTeas,
     getSkillActionsForDisplay,
+    resolveActiveAlchemyItemContext,
 } = await import('./tea-optimizer.js');
 
 const knownItems = [
@@ -84,11 +87,13 @@ beforeEach(() => {
     state.gameData = { itemDetailMap: Object.fromEntries(knownItems.map((hrid) => [hrid, {}])) };
     state.skills = [];
     state.houseRooms = new Map();
+    state.actions = [];
     prices.byHrid = {};
     prices.estimated = new Set();
     alchemyCalc.decompose = null;
     alchemyCalc.coinify = null;
     alchemyCalc.transmute = null;
+    alchemyCalc.unrefine = null;
 });
 
 describe('getRelevantTeas', () => {
@@ -332,12 +337,25 @@ describe('scoreEquipmentSetup — alchemy', () => {
     });
 
     test('a gold-goal score comes from the alchemy profit calculator, not the XP path', () => {
-        alchemyCalc.decompose = () => ({ profitPerHour: 4321 });
+        const calls = [];
+        alchemyCalc.decompose = (...args) => {
+            calls.push(args);
+            return { profitPerHour: 4321 };
+        };
+        const equipment = new Map([
+            ['/item_locations/alchemy_tool', { itemHrid: '/items/alchemists_tool', enhancementLevel: 7 }],
+        ]);
+        const alchemyContext = { actionType: 'decompose', itemHrid: '/items/scrap_trinket', enhancementLevel: 0 };
 
-        const score = scoreEquipmentSetup('alchemy', 'gold', new Map(), 10);
+        const score = scoreEquipmentSetup('alchemy', 'gold', equipment, 10, null, [], alchemyContext);
 
-        expect(alchemyCalc.decompose).toBeTruthy();
         expect(score).toBe(4321);
+        expect(calls[0][4]).toEqual({ equipment, drinks: [] });
+    });
+
+    test('a gold-goal score without a real item basis fails closed instead of pricing a substitute', () => {
+        alchemyCalc.decompose = () => ({ profitPerHour: 4321 });
+        expect(scoreEquipmentSetup('alchemy', 'gold', new Map(), 10)).toBe(0);
     });
 
     test('an xp-goal score is unaffected by the fix', () => {
@@ -350,6 +368,47 @@ describe('scoreEquipmentSetup — alchemy', () => {
 
         expect(score).not.toBe(4321);
         expect(score).toBeGreaterThan(0);
+    });
+});
+
+describe('resolveActiveAlchemyItemContext', () => {
+    test('uses the actual front action in game queue order and parses its compound item hash', () => {
+        state.actions = [
+            {
+                actionHrid: '/actions/alchemy/coinify',
+                primaryItemHash: '123::/item_locations/inventory::/items/sugar::7',
+                ordinal: 5,
+                partyID: 0,
+                isDone: false,
+            },
+            {
+                actionHrid: '/actions/alchemy/decompose',
+                primaryItemHash: '123::/item_locations/inventory::/items/milk::3',
+                ordinal: 1,
+                partyID: 0,
+                isDone: false,
+            },
+        ];
+
+        expect(resolveActiveAlchemyItemContext()).toEqual({
+            actionType: 'decompose',
+            itemHrid: '/items/milk',
+            enhancementLevel: 3,
+        });
+    });
+
+    test('does not select queued Alchemy behind a running non-Alchemy action', () => {
+        state.actions = [
+            {
+                actionHrid: '/actions/alchemy/coinify',
+                primaryItemHash: '123::/item_locations/inventory::/items/sugar::0',
+                ordinal: 2,
+                partyID: 0,
+                isDone: false,
+            },
+            { actionHrid: '/actions/cooking/cheese', ordinal: 1, partyID: 0, isDone: false },
+        ];
+        expect(resolveActiveAlchemyItemContext()).toBeNull();
     });
 });
 
