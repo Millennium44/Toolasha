@@ -97,6 +97,7 @@ class ListingDragOrder {
             observer.observe(tbody, { childList: true, subtree: true });
             this.tbodyObservers.set(tbody, observer);
             this.cleanupRegistry.registerObserver(observer);
+            this._registerTableListeners(table, tbody);
         }
 
         this._decorate(table);
@@ -166,13 +167,59 @@ class ListingDragOrder {
 
         this._assignMissingListingIds(tbody);
         for (const row of tbody.querySelectorAll('tr[data-listing-id]')) {
-            this._addHandle(row, table);
+            this._addHandle(row);
         }
-        this._applySavedOrder(table);
+        // Moving a row wakes the tbody observer. Reapplying the previously
+        // saved order during that gesture would snap the row back before the
+        // next dragover/drop event can persist its new position.
+        if (!this.draggedRow) this._applySavedOrder(table);
     }
 
-    /** @param {HTMLElement} row @param {HTMLElement} table */
-    _addHandle(row, table) {
+    /**
+     * Delegate controls from the stable tbody so React can replace listing
+     * rows without leaving a listener closure attached to every old row.
+     * @param {HTMLElement} table
+     * @param {HTMLElement} tbody
+     */
+    _registerTableListeners(table, tbody) {
+        const handleFor = (event) => event.target?.closest?.('.mwi-listing-drag-handle');
+        const rowFor = (event) => event.target?.closest?.('tr[data-listing-id]');
+
+        this.cleanupRegistry.registerListener(tbody, 'click', (event) => {
+            if (!handleFor(event)) return;
+            event.preventDefault();
+            event.stopPropagation();
+        });
+        this.cleanupRegistry.registerListener(tbody, 'dragstart', (event) => {
+            const handle = handleFor(event);
+            const row = handle?.closest('tr[data-listing-id]');
+            if (row) this._startDrag(event, row, table);
+        });
+        this.cleanupRegistry.registerListener(tbody, 'dragend', (event) => {
+            if (handleFor(event)) this._finishDrag(table);
+        });
+        this.cleanupRegistry.registerListener(tbody, 'keydown', (event) => {
+            const handle = handleFor(event);
+            const row = handle?.closest('tr[data-listing-id]');
+            if (row) this._handleKeydown(event, row, table);
+        });
+        this.cleanupRegistry.registerListener(tbody, 'dragover', (event) => {
+            const row = rowFor(event);
+            if (row) this._dragOver(event, row);
+        });
+        this.cleanupRegistry.registerListener(tbody, 'dragleave', (event) => {
+            rowFor(event)?.classList.remove('mwi-listing-drag-over');
+        });
+        this.cleanupRegistry.registerListener(tbody, 'drop', (event) => {
+            const row = rowFor(event);
+            if (!row) return;
+            event.preventDefault();
+            row.classList.remove('mwi-listing-drag-over');
+        });
+    }
+
+    /** @param {HTMLElement} row */
+    _addHandle(row) {
         if (row.querySelector('.mwi-listing-drag-handle')) return;
         const statusCell = row.children[0];
         if (!statusCell) return;
@@ -185,20 +232,6 @@ class ListingDragOrder {
         handle.setAttribute('aria-label', 'Drag to reorder this listing');
         handle.title = 'Drag to reorder. With the handle focused, use Up/Down to move the listing.';
         statusCell.prepend(handle);
-
-        handle.addEventListener('click', (event) => {
-            event.preventDefault();
-            event.stopPropagation();
-        });
-        handle.addEventListener('dragstart', (event) => this._startDrag(event, row, table));
-        handle.addEventListener('dragend', () => this._finishDrag(table));
-        handle.addEventListener('keydown', (event) => this._handleKeydown(event, row, table));
-        row.addEventListener('dragover', (event) => this._dragOver(event, row));
-        row.addEventListener('dragleave', () => row.classList.remove('mwi-listing-drag-over'));
-        row.addEventListener('drop', (event) => {
-            event.preventDefault();
-            row.classList.remove('mwi-listing-drag-over');
-        });
     }
 
     /** @param {HTMLElement} table @returns {boolean} */
@@ -215,6 +248,10 @@ class ListingDragOrder {
             return;
         }
         handle.title = 'Drag to reorder. With the handle focused, use Up/Down to move the listing.';
+        // Claim the table before the first DOM move. The collectable-first
+        // observer runs on that same move and must yield for the whole gesture,
+        // including a character's first manual arrangement.
+        table.dataset.mwiManualListingOrder = 'true';
         this.draggedRow = row;
         row.classList.add('mwi-listing-dragging');
         if (event.dataTransfer) {

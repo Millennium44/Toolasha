@@ -104,10 +104,36 @@ describe('saved manual order', () => {
 });
 
 describe('reordering controls', () => {
+    test('keeps the moved row in place when decoration runs during an active saved-order drag', () => {
+        const table = buildTable([1, 2, 3]);
+        listingDragOrder.savedOrder = ['1', '2', '3'];
+        listingDragOrder._decorate(table);
+        const first = table.querySelector('tbody tr');
+        const last = table.querySelector('tbody tr:last-child');
+
+        listingDragOrder._startDrag({ dataTransfer: null }, first, table);
+        listingDragOrder._moveRow(first, last, true);
+        listingDragOrder._decorate(table);
+
+        expect(rowIds(table)).toEqual(['2', '3', '1']);
+        listingDragOrder._finishDrag(table);
+    });
+
+    test('claims manual ordering as soon as the first drag starts', () => {
+        const table = buildTable([1, 2, 3]);
+        listingDragOrder._decorate(table);
+        const first = table.querySelector('tbody tr');
+
+        listingDragOrder._startDrag({ dataTransfer: null }, first, table);
+
+        expect(table.dataset.mwiManualListingOrder).toBe('true');
+        listingDragOrder._finishDrag(table);
+    });
+
     test('ArrowDown moves a row and persists the new per-character order', async () => {
         const table = buildTable([1, 2, 3]);
         listingDragOrder.storageKey = 'marketListingDragOrder_30404';
-        listingDragOrder._decorate(table);
+        listingDragOrder._watchTable(table);
         const firstHandle = table.querySelector('.mwi-listing-drag-handle');
 
         firstHandle.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true }));
@@ -148,6 +174,18 @@ describe('reordering controls', () => {
 
         expect(row.dataset.listingId).toBe('88');
         expect(row.querySelector('.mwi-listing-drag-handle')).not.toBeNull();
+    });
+
+    test('cleanup detaches row listeners while the native table remains mounted', () => {
+        const table = buildTable([1, 2]);
+        listingDragOrder._watchTable(table);
+        const first = table.querySelector('tbody tr');
+
+        listingDragOrder.cleanup();
+        const drop = new Event('drop', { bubbles: true, cancelable: true });
+        first.dispatchEvent(drop);
+
+        expect(drop.defaultPrevented).toBe(false);
     });
 });
 
