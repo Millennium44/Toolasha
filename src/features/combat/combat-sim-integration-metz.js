@@ -104,10 +104,18 @@ function setTextareaValue(textarea, value) {
 
 async function importIntoMetz(button) {
     try {
-        const team = await constructMetzTeamExport();
+        const expectedCharacterId = new URL(window.location.href).searchParams.get('toolashaCharacterId');
+        if (!expectedCharacterId) {
+            setButtonStatus(button, 'Open from game tab', '#dc3545');
+            alert('Open Metz from the game page so Toolasha knows which character to import.');
+            return;
+        }
+        const team = await constructMetzTeamExport(expectedCharacterId);
         if (!team) {
-            setButtonStatus(button, 'Error: No character data', '#dc3545');
-            alert('No character data found. Refresh the game page, wait for it to load, and try again.');
+            setButtonStatus(button, 'Character data mismatch', '#dc3545');
+            alert(
+                'The last synced character does not match the game tab that opened Metz. Return to that game tab and open Metz again.'
+            );
             return;
         }
         const json = JSON.stringify(team);

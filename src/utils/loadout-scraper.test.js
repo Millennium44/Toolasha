@@ -32,6 +32,11 @@ describe('buildEnhancementLevelMap', () => {
         expect(map.get('/items/shield')).toBe(2);
     });
 
+    test('keeps an owned item at enhancement level zero', () => {
+        state.inventory = [{ itemHrid: '/items/plain_gloves', enhancementLevel: 0, count: 1 }];
+        expect(buildEnhancementLevelMap()).toEqual(new Map([['/items/plain_gloves', 0]]));
+    });
+
     test('skips items with zero count', () => {
         state.inventory = [{ itemHrid: '/items/sword', enhancementLevel: 5, count: 0 }];
         expect(buildEnhancementLevelMap().has('/items/sword')).toBe(false);

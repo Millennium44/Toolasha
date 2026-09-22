@@ -6,6 +6,11 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Optimizer ownership and Metz imports respect the originating character
+
+- Owned unenhanced (+0) gear now qualifies for the optimizer's achievable loadout instead of being mistaken for unowned gear.
+- The Metz sidebar link carries the active character ID, and its import refuses data last synced by a different game tab. Directly opened Metz pages ask to reopen it from the game sidebar so the intended character is explicit.
+
 ### Alchemy estimates honor selected drinks and uncertain prices
 
 - Alchemy recommendations no longer treat a catalyst with no price as free, and Unrefine now warns when an unpriced shard return is left out of the profit estimate. The optimizer also marks Alchemy results that rely on estimated output prices as uncertain.

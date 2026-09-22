@@ -270,6 +270,11 @@ describe('Metz combat export', () => {
         expect(teammate).not.toHaveProperty('hasMooPass');
     });
 
+    test('refuses a team export when another game tab has replaced the intended character', async () => {
+        mocks.characterData = baseCharacter({ character: { id: 'other-2', name: 'Other' } });
+        expect(await constructMetzTeamExport('self-1')).toBeNull();
+    });
+
     test('normalizes character IDs before excluding self and finding cached party profiles', async () => {
         mocks.characterData = baseCharacter({
             character: { id: 101, name: 'Self' },

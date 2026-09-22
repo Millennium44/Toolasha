@@ -4,6 +4,7 @@
  */
 
 import config from '../../core/config.js';
+import dataManager from '../../core/data-manager.js';
 import domObserver from '../../core/dom-observer.js';
 import { COMBAT_SIM_TARGETS } from '../combat/combat-sim-targets.js';
 
@@ -66,7 +67,7 @@ class ExternalLinks {
     addLinks(container) {
         const links = [
             // Every simulator "Import from Toolasha" supports, so a new target shows up here too
-            ...COMBAT_SIM_TARGETS.map((target) => ({ label: target.label, url: target.url })),
+            ...COMBAT_SIM_TARGETS.map((target) => ({ label: target.label, url: target.url, targetId: target.id })),
             {
                 label: 'Enhancelator',
                 url: 'https://doh-nuts.github.io/Enhancelator/',
@@ -88,7 +89,7 @@ class ExternalLinks {
         // Add each link (in reverse order so they appear in correct order when prepended)
         for (let i = links.length - 1; i >= 0; i--) {
             const link = links[i];
-            this.addLink(container, link.label, link.url);
+            this.addLink(container, link.label, link.url, link.targetId);
         }
     }
 
@@ -97,8 +98,9 @@ class ExternalLinks {
      * @param {HTMLElement} container - Navigation links container
      * @param {string} label - Link label
      * @param {string} url - External URL
+     * @param {string} [targetId] - Simulator ID when the link needs character context
      */
-    addLink(container, label, url) {
+    addLink(container, label, url, targetId = null) {
         const div = document.createElement('div');
         div.setAttribute('class', 'NavigationBar_minorNavigationLink__31K7Y mwi-external-link');
         div.style.color = config.COLOR_ACCENT;
@@ -110,7 +112,16 @@ class ExternalLinks {
         div.title = `Opens ${this.hostnameOf(url)} in a new tab.`;
 
         div.addEventListener('click', () => {
-            window.open(url, '_blank', 'noopener');
+            let destination = url;
+            if (targetId === 'metz') {
+                const characterId = dataManager.getCurrentCharacterId();
+                if (characterId != null) {
+                    const scopedUrl = new URL(url);
+                    scopedUrl.searchParams.set('toolashaCharacterId', String(characterId));
+                    destination = scopedUrl.href;
+                }
+            }
+            window.open(destination, '_blank', 'noopener');
         });
 
         // Insert at the beginning (after Settings if it exists)

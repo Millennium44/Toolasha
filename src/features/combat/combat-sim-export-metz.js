@@ -212,10 +212,11 @@ function buildSelfMetzCharacter(characterObj, clientObj) {
     });
 }
 
-/** Build the current character and every cached party member in Metz's team shape. */
-export async function constructMetzTeamExport() {
+/** Build the intended character and every cached party member in Metz's team shape. */
+export async function constructMetzTeamExport(expectedCharacterId = null) {
     const characterObj = getCharacterData();
     if (!characterObj) return null;
+    if (expectedCharacterId != null && !sameCharacterId(characterObj.character?.id, expectedCharacterId)) return null;
 
     const clientObj = getClientData();
     const battleObj = getBattleData();

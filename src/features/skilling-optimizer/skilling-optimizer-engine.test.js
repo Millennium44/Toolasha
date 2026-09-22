@@ -175,6 +175,17 @@ describe('optimizeSkill Alchemy item basis', () => {
 });
 
 describe('buildAchievableEquipment', () => {
+    test('applies an owned +0 recommendation instead of retaining comparison gear', () => {
+        const slots = { '/item_locations/hands': { progression: [{ itemHrid: '/items/plain_gloves' }] } };
+        const comparison = new Map([['/item_locations/hands', { itemHrid: '/items/old_gloves', enhancementLevel: 3 }]]);
+        const owned = new Map([['/items/plain_gloves', 0]]);
+
+        expect(buildAchievableEquipment(slots, owned, comparison).get('/item_locations/hands')).toEqual({
+            itemHrid: '/items/plain_gloves',
+            enhancementLevel: 0,
+        });
+    });
+
     test('keeps comparison gear when a recommendation is not owned and applies real owned levels', () => {
         const slots = {
             '/item_locations/head': {

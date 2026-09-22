@@ -8,10 +8,16 @@
 
 import { describe, test, expect, beforeEach, vi } from 'vitest';
 
+const state = vi.hoisted(() => ({ characterId: 'self-1' }));
+
 vi.mock('../../core/config.js', () => ({ default: { getSetting: () => true, COLOR_ACCENT: '#fff' } }));
 vi.mock('../../core/dom-observer.js', () => ({ default: { onClass: () => () => {} } }));
+vi.mock('../../core/data-manager.js', () => ({ default: { getCurrentCharacterId: () => state.characterId } }));
 vi.mock('../combat/combat-sim-targets.js', () => ({
-    COMBAT_SIM_TARGETS: [{ id: 'test-sim', label: 'Test Sim', url: 'https://sim.example.com/import' }],
+    COMBAT_SIM_TARGETS: [
+        { id: 'test-sim', label: 'Test Sim', url: 'https://sim.example.com/import' },
+        { id: 'metz', label: 'Combat Sim (Metz)', url: 'https://metzlii.github.io/metz-combat-simulator/' },
+    ],
 }));
 
 const externalLinks = (await import('./external-links.js')).default;
@@ -71,5 +77,21 @@ describe('external link tooltips', () => {
         container.querySelector('.mwi-external-link').click();
 
         expect(openSpy).toHaveBeenCalledWith('https://example.com/tool', '_blank', 'noopener');
+    });
+
+    test('passes the game tab character to Metz when opening its external page', () => {
+        const openSpy = vi.spyOn(window, 'open').mockImplementation(() => {});
+        const container = navContainer();
+        externalLinks.addLinks(container);
+
+        [...container.querySelectorAll('.mwi-external-link')]
+            .find((link) => link.textContent === 'Combat Sim (Metz)')
+            .click();
+
+        expect(openSpy).toHaveBeenCalledWith(
+            'https://metzlii.github.io/metz-combat-simulator/?toolashaCharacterId=self-1',
+            '_blank',
+            'noopener'
+        );
     });
 });
