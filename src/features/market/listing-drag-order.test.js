@@ -112,6 +112,27 @@ describe('saved manual order', () => {
 
         expect(rowIds(table)).toEqual(['3', '1', '2', '4']);
     });
+
+    test('a saved order whose listings are all gone does not claim the table', () => {
+        const table = buildTable([1, 2, 3]);
+        listingDragOrder.savedOrder = ['8', '9'];
+
+        listingDragOrder._applySavedOrder(table);
+
+        expect(rowIds(table)).toEqual(['1', '2', '3']);
+        expect(table.dataset.mwiManualListingOrder).toBeUndefined();
+    });
+
+    test('saving drops IDs the game no longer lists', async () => {
+        const table = buildTable([1, 2]);
+        listingDragOrder.storageKey = 'marketListingDragOrder_30404';
+        listingDragOrder.savedOrder = ['9', '1', '2', '3'];
+        game.listings = [{ id: 1 }, { id: 2 }, { id: 3 }];
+
+        await listingDragOrder._saveOrder(table);
+
+        expect(game.set).toHaveBeenCalledWith('marketListingDragOrder_30404', ['1', '2', '3'], 'settings');
+    });
 });
 
 describe('reordering controls', () => {
@@ -139,6 +160,68 @@ describe('reordering controls', () => {
 
         expect(table.dataset.mwiManualListingOrder).toBe('true');
         listingDragOrder._finishDrag(table);
+    });
+
+    test('a drag cancelled with Escape restores the old order and saves nothing', () => {
+        const table = buildTable([1, 2, 3]);
+        listingDragOrder._decorate(table);
+        const first = table.querySelector('tbody tr');
+        const last = table.querySelector('tbody tr:last-child');
+
+        listingDragOrder._startDrag({ dataTransfer: null }, first, table);
+        listingDragOrder._moveRow(first, last, true);
+        listingDragOrder._finishDrag(table, { dataTransfer: { dropEffect: 'none' } });
+
+        expect(rowIds(table)).toEqual(['1', '2', '3']);
+        expect(game.set).not.toHaveBeenCalled();
+        expect(table.dataset.mwiManualListingOrder).toBeUndefined();
+        expect(listingDragOrder.draggedRow).toBeNull();
+    });
+
+    test('a drop onto the table is saved even if the browser reports no drop effect', () => {
+        const table = buildTable([1, 2, 3]);
+        listingDragOrder.storageKey = 'marketListingDragOrder_30404';
+        listingDragOrder._watchTable(table);
+        const first = table.querySelector('tbody tr');
+        const last = table.querySelector('tbody tr:last-child');
+
+        listingDragOrder._startDrag({ dataTransfer: null }, first, table);
+        listingDragOrder._moveRow(first, last, true);
+        first.dispatchEvent(new Event('drop', { bubbles: true, cancelable: true }));
+        listingDragOrder._finishDrag(table, { dataTransfer: { dropEffect: 'none' } });
+
+        expect(rowIds(table)).toEqual(['2', '3', '1']);
+        expect(game.set).toHaveBeenCalledWith('marketListingDragOrder_30404', ['2', '3', '1'], 'settings');
+    });
+
+    test('releasing over the dragged row itself is an accepted drop, not a cancel', () => {
+        const table = buildTable([1, 2]);
+        listingDragOrder._watchTable(table);
+        const first = table.querySelector('tbody tr');
+
+        listingDragOrder._startDrag({ dataTransfer: null }, first, table);
+        const over = new Event('dragover', { bubbles: true, cancelable: true });
+        first.dispatchEvent(over);
+
+        expect(over.defaultPrevented).toBe(true);
+        listingDragOrder._finishDrag(table);
+    });
+
+    test('a dragged row removed mid-drag does not leave the drag stuck', async () => {
+        const table = buildTable([1, 2, 3]);
+        game.stored = ['3', '2', '1'];
+        await listingDragOrder.initialize();
+        const dragged = table.querySelector('tbody tr:last-child');
+
+        listingDragOrder._startDrag({ dataTransfer: null }, dragged, table);
+        // The listing filled and React dropped its row; its dragend fires on a
+        // detached node and never reaches the tbody listener
+        dragged.remove();
+        table.querySelector('tbody').prepend(table.querySelector('tbody tr:last-child'));
+        await new Promise((resolve) => setTimeout(resolve, 0));
+
+        expect(listingDragOrder.draggedRow).toBeNull();
+        expect(rowIds(table)).toEqual(['3', '2']);
     });
 
     test('ArrowDown moves a row and persists the new per-character order', async () => {
@@ -224,6 +307,17 @@ describe('initialization', () => {
 
         expect(rowIds(table)).toEqual(['2', '3', '1']);
         expect(listingDragOrder.storageKey).toBe('marketListingDragOrder_30404');
+    });
+
+    test('a second initialize while the first is still loading does not register twice', async () => {
+        const { default: domObserver } = await import('../../core/dom-observer.js');
+        domObserver.onClass.mockClear();
+        buildTable([1, 2, 3]);
+
+        await Promise.all([listingDragOrder.initialize(), listingDragOrder.initialize()]);
+
+        expect(domObserver.onClass).toHaveBeenCalledTimes(1);
+        expect(listingDragOrder.isInitialized).toBe(true);
     });
 
     test('the feature checkbox enables and disables the controls without a reload', async () => {

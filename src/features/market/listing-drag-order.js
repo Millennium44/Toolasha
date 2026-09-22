@@ -52,7 +52,9 @@ class ListingDragOrder {
         this.savedOrder = [];
         this.storageKey = null;
         this.draggedRow = null;
+        this.dragState = null;
         this.decorateQueued = new WeakSet();
+        this.initPromise = null;
     }
 
     /** Follow the feature checkbox immediately instead of requiring a reload. */
@@ -68,7 +70,21 @@ class ListingDragOrder {
 
     async initialize() {
         if (this.isInitialized || !config.getSetting('market_listingDragOrder')) return;
+        // isInitialized is only set after the storage read, so a second call
+        // in that window (feature registry plus the settings toggle) would
+        // otherwise register a second set of observers
+        if (this.initPromise) return this.initPromise;
 
+        const pending = this._initialize();
+        this.initPromise = pending;
+        try {
+            await pending;
+        } finally {
+            if (this.initPromise === pending) this.initPromise = null;
+        }
+    }
+
+    async _initialize() {
         const characterId = dataManager.getCurrentCharacterId();
         if (!characterId) return;
 
@@ -127,9 +143,22 @@ class ListingDragOrder {
 
     /** Release observers and handlers owned by tables that left the document. */
     _pruneDetachedTables() {
+        this._dropStaleDrag();
         for (const table of this.tableResources.keys()) {
             if (!table.isConnected) this._disposeTable(table);
         }
+    }
+
+    /**
+     * Forget a drag whose row left the document. Its dragend fires on the
+     * detached node and never bubbles to the tbody listener, so without this
+     * `draggedRow` stays set and every later decorate skips the saved order.
+     */
+    _dropStaleDrag() {
+        if (!this.draggedRow || this.draggedRow.isConnected) return;
+        this.draggedRow.classList.remove('mwi-listing-dragging');
+        this.draggedRow = null;
+        this.dragState = null;
     }
 
     /** @param {HTMLElement} table */
@@ -207,6 +236,7 @@ class ListingDragOrder {
         for (const row of tbody.querySelectorAll('tr[data-listing-id]')) {
             this._addHandle(row);
         }
+        this._dropStaleDrag();
         // Moving a row wakes the tbody observer. Reapplying the previously
         // saved order during that gesture would snap the row back before the
         // next dragover/drop event can persist its new position.
@@ -235,7 +265,7 @@ class ListingDragOrder {
             if (row) this._startDrag(event, row, table);
         });
         resources.registerListener(tbody, 'dragend', (event) => {
-            if (handleFor(event)) this._finishDrag(table);
+            if (handleFor(event)) this._finishDrag(table, event);
         });
         resources.registerListener(tbody, 'keydown', (event) => {
             const handle = handleFor(event);
@@ -254,6 +284,7 @@ class ListingDragOrder {
             if (!row) return;
             event.preventDefault();
             row.classList.remove('mwi-listing-drag-over');
+            if (this.dragState) this.dragState.dropped = true;
         });
     }
 
@@ -287,6 +318,16 @@ class ListingDragOrder {
             return;
         }
         handle.title = 'Drag to reorder. With the handle focused, use Up/Down to move the listing.';
+        // A previous gesture that never delivered its dragend must not leave
+        // its row marked
+        this.draggedRow?.classList.remove('mwi-listing-dragging');
+        // Remembered so a cancelled drag (Escape, or a release outside the
+        // table) can put every row back where it was
+        this.dragState = {
+            rows: Array.from(row.parentElement?.children || []),
+            wasManual: table.dataset.mwiManualListingOrder === 'true',
+            dropped: false,
+        };
         // Claim the table before the first DOM move. The collectable-first
         // observer runs on that same move and must yield for the whole gesture,
         // including a character's first manual arrangement.
@@ -301,8 +342,13 @@ class ListingDragOrder {
 
     /** @param {DragEvent} event @param {HTMLElement} targetRow */
     _dragOver(event, targetRow) {
-        if (!this.draggedRow || targetRow === this.draggedRow) return;
+        if (!this.draggedRow) return;
+        // Accept the drop over the dragged row too — it is usually the row
+        // under the pointer once it has moved, and an unaccepted release there
+        // would report the gesture as cancelled
         event.preventDefault();
+        if (event.dataTransfer) event.dataTransfer.dropEffect = 'move';
+        if (targetRow === this.draggedRow) return;
         const rect = targetRow.getBoundingClientRect();
         const after = event.clientY >= rect.top + rect.height / 2;
         this._moveRow(this.draggedRow, targetRow, after);
@@ -333,14 +379,43 @@ class ListingDragOrder {
         row.querySelector('.mwi-listing-drag-handle')?.focus();
     }
 
-    /** @param {HTMLElement} table */
-    _finishDrag(table) {
+    /**
+     * @param {HTMLElement} table
+     * @param {DragEvent} [event] - the dragend; a `none` drop effect with no
+     *   drop seen means the player cancelled (Escape or released elsewhere)
+     */
+    _finishDrag(table, event) {
         table.querySelectorAll('.mwi-listing-dragging, .mwi-listing-drag-over').forEach((row) => {
             row.classList.remove('mwi-listing-dragging', 'mwi-listing-drag-over');
         });
         const hadDrag = !!this.draggedRow;
+        const state = this.dragState;
         this.draggedRow = null;
-        if (hadDrag) this._saveOrder(table);
+        this.dragState = null;
+        if (!hadDrag) return;
+
+        const cancelled = event?.dataTransfer?.dropEffect === 'none' && !state?.dropped;
+        if (cancelled && state) {
+            this._restoreRows(table, state);
+            return;
+        }
+        this._saveOrder(table);
+    }
+
+    /**
+     * Put the rows back in their pre-drag order and release the manual-order
+     * claim if the drag was what made it.
+     * @param {HTMLElement} table
+     * @param {{rows: Array<HTMLElement>, wasManual: boolean}} state
+     */
+    _restoreRows(table, state) {
+        const tbody = table.querySelector('tbody');
+        if (tbody) {
+            for (const row of state.rows) {
+                if (row.parentElement === tbody) tbody.appendChild(row);
+            }
+        }
+        if (!state.wasManual) delete table.dataset.mwiManualListingOrder;
     }
 
     /** @param {HTMLElement} table */
@@ -354,6 +429,13 @@ class ListingDragOrder {
         if (!tbody) return;
         const rows = Array.from(tbody.querySelectorAll('tr'));
         const rank = new Map(this.savedOrder.map((id, index) => [id, index]));
+        // A saved order whose listings have all filled or been cancelled says
+        // nothing about this table, and claiming it would keep collectable-first
+        // sorting switched off for good
+        if (!rows.some((row) => rank.has(String(row.dataset.listingId)))) {
+            delete table.dataset.mwiManualListingOrder;
+            return;
+        }
         const desired = rows
             .map((row, index) => ({ row, index, rank: rank.get(String(row.dataset.listingId)) ?? Infinity }))
             .sort((a, b) => a.rank - b.rank || a.index - b.index)
@@ -370,7 +452,11 @@ class ListingDragOrder {
         if (ids.length < 2) return;
 
         const visible = new Set(ids);
-        this.savedOrder = [...ids, ...this.savedOrder.filter((id) => !visible.has(id))];
+        // Keep off-screen IDs only while the game still lists them, so filled
+        // and cancelled listings do not pile up in storage forever
+        const listings = dataManager.getMarketListings();
+        const live = Array.isArray(listings) && listings.length ? new Set(listings.map((l) => String(l?.id))) : null;
+        this.savedOrder = [...ids, ...this.savedOrder.filter((id) => !visible.has(id) && (!live || live.has(id)))];
         table.dataset.mwiManualListingOrder = 'true';
         try {
             const saved = await storage.set(this.storageKey, this.savedOrder, 'settings');
@@ -398,6 +484,8 @@ class ListingDragOrder {
         this.savedOrder = [];
         this.storageKey = null;
         this.draggedRow = null;
+        this.dragState = null;
+        this.initPromise = null;
         this.isInitialized = false;
     }
 }
