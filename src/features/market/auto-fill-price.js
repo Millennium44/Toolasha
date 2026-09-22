@@ -151,6 +151,15 @@ class AutoFillPrice {
             return;
         }
 
+        // Clicking an hourglass order deliberately opens a listing at that
+        // out-of-band price. The game marks it with a notice explaining how
+        // long the tradable band must move before the order can fill. Preserve
+        // that patient price instead of replacing it with Best Buy/Sell and
+        // then clamping it back inside the current band.
+        if (modal.querySelector('div[class*="MarketplacePanel_priceFeedback"][class*="MarketplacePanel_notice"]')) {
+            return;
+        }
+
         // Find the "Best Price" button/label
         const bestPriceLabel = modal.querySelector('span[class*="MarketplacePanel_bestPrice"]');
         if (!bestPriceLabel) {

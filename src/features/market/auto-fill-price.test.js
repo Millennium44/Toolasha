@@ -131,6 +131,19 @@ describe('the one-shot is spent on work done, not on a modal being seen', () => 
         autoFillPrice.handleOrderModal(early.modal);
         expect(clicked).toBe(1);
     });
+
+    test('an hourglass listing keeps the patient out-of-band price chosen from the order book', () => {
+        const patient = orderModal(true);
+        const notice = document.createElement('div');
+        notice.className = 'MarketplacePanel_priceFeedback__j1JbB MarketplacePanel_notice__2lMgw';
+        notice.textContent = 'Estimated wait: 6 hours';
+        patient.modal.appendChild(notice);
+
+        autoFillPrice.handleOrderModal(patient.modal);
+
+        expect(patient.clicks).toEqual([]);
+        expect(autoFillPrice.processedModals.has(patient.modal)).toBe(false);
+    });
 });
 
 /**

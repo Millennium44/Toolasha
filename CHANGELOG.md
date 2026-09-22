@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Preserve patient marketplace order prices
+
+- Clicking an hourglass Buy or Sell order now keeps the out-of-band price and estimated wait chosen by the game instead of having Toolasha replace it with the current best listing price.
+
 ### Other coding agents now read the same workflow rules
 
 - Nothing a player sees changes. The repository's rules for how work reaches the script — commit subjects, the changelog, what never to name, how to hand work off — lived only in the instructions one assistant reads, so another agent working on the code followed none of them. They are now in the shared instructions every agent reads.
