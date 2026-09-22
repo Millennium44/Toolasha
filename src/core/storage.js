@@ -270,6 +270,8 @@ class Storage {
          * `endRestore()` flushes whatever survived the latch.
          */
         this._restoreInProgress = false;
+        /** Number of active beginRestore/endRestore pairs; nested sync imports use two. */
+        this._restoreDepth = 0;
         /** Store names whose writes are refused until the page reloads */
         this._restorePendingStores = new Set();
         /** Keys already warned about under the latch, so the console is not flooded */
@@ -2522,8 +2524,17 @@ class Storage {
         // transactions are in flight also holds — the flush below is already
         // writing its value if it was queued in time, and a later write to the
         // same key belongs after the restore's own transaction, not during it.
+        this._restoreDepth += 1;
         this._restoreInProgress = true;
-        await this.flushAll();
+        try {
+            // Only the outermost restore owns the initial drain. A nested
+            // import is already inside the same quiesced window.
+            if (this._restoreDepth === 1) await this.flushAll();
+        } catch (error) {
+            this._restoreDepth -= 1;
+            this._restoreInProgress = this._restoreDepth > 0;
+            throw error;
+        }
     }
 
     /**
@@ -2542,7 +2553,9 @@ class Storage {
      * @returns {Promise<void>}
      */
     async endRestore() {
-        if (!this._restoreInProgress) return;
+        if (this._restoreDepth === 0) return;
+        this._restoreDepth -= 1;
+        if (this._restoreDepth > 0) return;
         this._restoreInProgress = false;
         await this.flushAll();
     }

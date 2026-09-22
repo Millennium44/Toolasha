@@ -143,6 +143,18 @@ describe('SettingsStorage.importSettings known-character matching', () => {
         expect(result.skipped).toBe(1);
         expect(stored.has('json:script_settingsMap_dave')).toBe(false);
     });
+
+    test('reports failure instead of counting a refused write as imported', async () => {
+        outage.on = true;
+
+        const result = await settingsStorage.importSettings(
+            JSON.stringify({ script_settingsMap_alice: { some: 'setting' } })
+        );
+
+        expect(result).toBeNull();
+        expect(stored.has('json:script_settingsMap_alice')).toBe(false);
+        outage.on = false;
+    });
 });
 
 describe('one-time rewrites of superseded schema defaults', () => {
@@ -1095,6 +1107,19 @@ describe('SettingsStorage copy-from-character', () => {
         expect(stored.has('json:taskAutoRerollHrids_bob')).toBe(false);
     });
 
+    test('does not count a character whose settings copy was refused', async () => {
+        stored.set('json:known_character_ids', [
+            { id: 'alice', name: 'Alice' },
+            { id: 'bob', name: 'Bob' },
+        ]);
+        refuseNextMapWrite('script_settingsMap_bob');
+
+        const count = await settingsStorage.syncSettingsToAllCharacters({ featureX: { isTrue: true } });
+
+        expect(count).toBe(0);
+        expect(stored.has('json:script_settingsMap_bob')).toBe(false);
+    });
+
     test('copies a source character map onto the current character', async () => {
         const bobMap = { featureX: { isTrue: true }, mode: { value: 'fast' } };
         stored.set('json:script_settingsMap_bob', bobMap);
@@ -1103,6 +1128,14 @@ describe('SettingsStorage copy-from-character', () => {
 
         expect(ok).toBe(true);
         expect(stored.get('json:script_settingsMap_alice')).toEqual(bobMap);
+    });
+
+    test('does not report a copy whose destination write was refused', async () => {
+        stored.set('json:script_settingsMap_bob', { featureX: { isTrue: true } });
+        refuseNextMapWrite('script_settingsMap_alice');
+
+        expect(await settingsStorage.copySettingsFromCharacter('bob')).toBe(false);
+        expect(stored.has('json:script_settingsMap_alice')).toBe(false);
     });
 
     test('refuses to copy from self, an unknown id, or an empty map', async () => {
@@ -1265,6 +1298,14 @@ describe('a settings store that cannot be read', () => {
             const map = settingsStorage.buildDefaults();
             expect(await settingsStorage.saveSettingsKeepingStored(map)).toBe(true);
             expect(stored.get(`json:${KEY}`)).toEqual(map);
+        });
+
+        test('reports false when the final settings write is refused', async () => {
+            const map = settingsStorage.buildDefaults();
+            refuseNextMapWrite(KEY);
+
+            expect(await settingsStorage.saveSettingsKeepingStored(map)).toBe(false);
+            expect(stored.has(`json:${KEY}`)).toBe(false);
         });
     });
 });

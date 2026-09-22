@@ -6,6 +6,12 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Storage restores and settings copies report what actually landed
+
+- Nested restore operations now keep live writers paused until the outer restore finishes, so a sync pull cannot release held writes in the middle of applying its payload.
+- Settings imports, character copies, and unreadable-store recovery no longer report success when IndexedDB refused a write. Failed destinations stay out of copied/imported counts, and migration state is not cleared for a map that never landed.
+- Sync waits for persisted records to finish their read-and-merge step before draining IndexedDB and fingerprinting it, so a push cannot omit an event that was still preparing its write.
+
 ### Audit round: labyrinth replays stay with the panel and character that started them
 
 - Switching characters or reconnecting while a recorded-fight replay or cohort read was still running could let the old work finish into the new panel. Those jobs now stop or discard their result when their owner changes, and a cohort choice whose save is refused rolls back in the picker instead of looking selected only until the next reload.

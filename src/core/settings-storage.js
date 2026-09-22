@@ -796,16 +796,16 @@ class SettingsStorage {
      *
      * @param {Object} settings - The caller's settings map
      * @param {Iterable<string>} settingIds - Shared ids this save is carrying
-     * @returns {Promise<void>}
+     * @returns {Promise<boolean>} Whether every requested shared entry was written
      * @private
      */
     async _writeSharedEntries(settings, settingIds) {
         const ids = [...settingIds].filter((id) => settings?.[id]);
-        if (ids.length === 0) return;
+        if (ids.length === 0) return true;
         const stored = (await this._loadSharedSettings()) ?? {};
         const next = { ...stored };
         for (const id of ids) next[id] = { ...settings[id] };
-        await storage.setJSON(SHARED_SETTINGS_KEY, next, this.storageArea, true);
+        return (await storage.setJSON(SHARED_SETTINGS_KEY, next, this.storageArea, true)) !== false;
     }
 
     /**
@@ -1117,7 +1117,7 @@ class SettingsStorage {
      * @param {Iterable<string>|symbol|null} [dirtyKeys=null] - The ids this
      *   caller changed, `settingsStorage.SAVE_ALL_KEYS` to write the map whole,
      *   or null for a caller with no dirty tracking (writes whole, as it always did)
-     * @returns {Promise<void>}
+     * @returns {Promise<boolean>} Whether both the character and shared writes landed
      */
     async saveSettings(settings, dirtyKeys = null) {
         const characterKey = this.getCharacterStorageKey();
@@ -1154,7 +1154,8 @@ class SettingsStorage {
             }
         }
 
-        await storage.setJSON(characterKey, toWrite, this.storageArea, true);
+        const written = await storage.setJSON(characterKey, toWrite, this.storageArea, true);
+        if (written === false) return false;
 
         // The account-wide settings go to their own key as well as staying in
         // this character's map. Staying keeps a downgrade working and adds no
@@ -1168,7 +1169,7 @@ class SettingsStorage {
         const sharedToWrite = scopedSave
             ? sharedIds.filter((id) => (dirtyKeys instanceof Set ? dirtyKeys : new Set(dirtyKeys)).has(id))
             : sharedIds;
-        await this._writeSharedEntries(settings, sharedToWrite);
+        return this._writeSharedEntries(settings, sharedToWrite);
     }
 
     /**
@@ -1210,9 +1211,9 @@ class SettingsStorage {
         );
 
         if (!stored || typeof stored !== 'object') {
-            await storage.setJSON(characterKey, settings, this.storageArea, true);
-            await this._writeSharedEntries(settings, touchedShared);
-            return true;
+            const written = await storage.setJSON(characterKey, settings, this.storageArea, true);
+            if (written === false) return false;
+            return this._writeSharedEntries(settings, touchedShared);
         }
 
         const merged = { ...stored };
@@ -1220,9 +1221,9 @@ class SettingsStorage {
             const untouched = settingId in defaults && valueOf(entry) === valueOf(defaults[settingId]);
             if (!(settingId in merged) || !untouched) merged[settingId] = entry;
         }
-        await storage.setJSON(characterKey, merged, this.storageArea, true);
-        await this._writeSharedEntries(settings, touchedShared);
-        return true;
+        const written = await storage.setJSON(characterKey, merged, this.storageArea, true);
+        if (written === false) return false;
+        return this._writeSharedEntries(settings, touchedShared);
     }
 
     /**
@@ -1331,14 +1332,15 @@ class SettingsStorage {
         for (const character of targets) {
             if (character.id === sourceId) continue;
             const characterKey = `${this.storageKey}_${character.id}`;
-            await storage.setJSON(characterKey, settings, this.storageArea, true);
+            let targetWritten = (await storage.setJSON(characterKey, settings, this.storageArea, true)) !== false;
 
             for (let i = 0; i < TASK_CHARACTER_SCOPED_PREFIXES.length; i++) {
                 if (taskScopedValues[i] === null) continue;
                 const targetKey = `${TASK_CHARACTER_SCOPED_PREFIXES[i]}_${character.id}`;
-                await storage.setJSON(targetKey, taskScopedValues[i], this.storageArea, true);
+                const written = await storage.setJSON(targetKey, taskScopedValues[i], this.storageArea, true);
+                if (written === false) targetWritten = false;
             }
-            syncedCount++;
+            if (targetWritten) syncedCount++;
         }
 
         return syncedCount;
@@ -1389,8 +1391,9 @@ class SettingsStorage {
             }
             const merged = { ...stored };
             for (const id of ids) merged[id] = { ...entries[id] };
-            await storage.setJSON(characterKey, merged, this.storageArea, true);
-            copied.push(character);
+            const written = await storage.setJSON(characterKey, merged, this.storageArea, true);
+            if (written === false) skipped.push(character);
+            else copied.push(character);
         }
 
         return { copied, skipped };
@@ -1424,7 +1427,8 @@ class SettingsStorage {
             console.warn('[SettingsStorage] Settings not copied: the character changed while the source map loaded');
             return false;
         }
-        await storage.setJSON(destinationKey, sourceMap, this.storageArea, true);
+        const written = await storage.setJSON(destinationKey, sourceMap, this.storageArea, true);
+        if (written === false) return false;
         // The map is the source character's; the migration record left behind is
         // this character's, and it describes a map that is no longer here. A
         // source last written by a build that predates a merge would otherwise
@@ -1606,7 +1610,12 @@ class SettingsStorage {
                     }
                 }
 
-                await storage.setJSON(key, value, this.storageArea, true);
+                const written = await storage.setJSON(key, value, this.storageArea, true);
+                if (written === false) {
+                    await this.reconcileKeyMigrationState(importedKeys);
+                    console.error(`[Settings Storage] Import stopped: ${key} could not be written`);
+                    return null;
+                }
                 imported++;
                 importedKeys.push(key);
             }

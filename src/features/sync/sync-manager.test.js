@@ -42,6 +42,10 @@ vi.mock('../../core/storage.js', () => ({
     },
 }));
 
+vi.mock('../../utils/persisted-record.js', () => ({
+    flushPersistedRecords: async () => storageCalls.push('flushPersistedRecords'),
+}));
+
 const toasts = vi.hoisted(() => []);
 vi.mock('../../utils/toast.js', () => ({
     showToast: (message, options) => {
@@ -791,6 +795,7 @@ describe('what a push actually carries', () => {
         await syncManager.push();
 
         expect(storageCalls.indexOf('flushAll')).toBeGreaterThanOrEqual(0);
+        expect(storageCalls.indexOf('flushPersistedRecords')).toBeLessThan(storageCalls.indexOf('flushAll'));
         expect(storageCalls.indexOf('flushAll')).toBeLessThan(storageCalls.indexOf('buildPayloadJSON'));
     });
 });

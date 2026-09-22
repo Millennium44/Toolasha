@@ -38,6 +38,28 @@
 import storage from '../core/storage.js';
 import { characterKey, readScoped } from './character-key.js';
 
+/** Record → newest save chain, only while that chain is unsettled. */
+const pendingRecords = new Map();
+
+/**
+ * Wait for every persisted-record save requested so far.
+ *
+ * `storage.flushAll()` can only see a value after a record's read/merge step
+ * has reached `storage.set()`. A sync fingerprint taken while that step is
+ * still reading would omit the newest event entirely. Sync calls this first,
+ * then drains storage's own debounce queue.
+ *
+ * @returns {Promise<void>}
+ */
+export async function flushPersistedRecords() {
+    await Promise.allSettled(Array.from(pendingRecords.values()));
+}
+
+/** @returns {number} Pending record count; test-only diagnostic. */
+export function _pendingRecordCountForTests() {
+    return pendingRecords.size;
+}
+
 /**
  * Merge for arrays of entries that carry an identity: the union, keyed by
  * `idOf`, with memory's copy winning for an id both sides have. Order follows
@@ -289,6 +311,15 @@ export function createPersistedRecord({
             const promise = saveChain.then(run, run);
             if (!overwrite) waitingSave = promise;
             saveChain = promise;
+            // Register at request time, before `run` reaches its first await,
+            // so a sync flush sees a save still waiting to read/merge. A newer
+            // queued save owns the slot immediately; an older chain settling
+            // must not unregister it underneath the flush registry.
+            pendingRecords.set(record, promise);
+            const unregister = () => {
+                if (pendingRecords.get(record) === promise) pendingRecords.delete(record);
+            };
+            promise.then(unregister, unregister);
             return promise;
         },
 
@@ -376,4 +407,12 @@ export function createCuratedRecord({ merge = mergeMaps(), ...options }) {
     return record;
 }
 
-export default { createPersistedRecord, createCuratedRecord, mergeById, mergeMaps, mergeSeriesMaps };
+export default {
+    createPersistedRecord,
+    createCuratedRecord,
+    _pendingRecordCountForTests,
+    flushPersistedRecords,
+    mergeById,
+    mergeMaps,
+    mergeSeriesMaps,
+};
