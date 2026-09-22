@@ -39,6 +39,7 @@ const storageMock = vi.hoisted(() => {
             return true;
         }),
         getAllKeys: vi.fn(async (store = 'settings') => Array.from(storeFor(store).keys())),
+        flushAll: vi.fn(async () => {}),
     };
 });
 
@@ -82,7 +83,9 @@ const byId = () =>
 beforeEach(() => {
     storageMock.reset();
     dataManagerMock.characterId = 'char1';
-    for (const fn of [storageMock.get, storageMock.tryGet, storageMock.set, storageMock.delete]) fn.mockReset();
+    for (const fn of [storageMock.get, storageMock.tryGet, storageMock.set, storageMock.delete, storageMock.flushAll]) {
+        fn.mockReset();
+    }
 });
 
 describe('merges', () => {
@@ -213,6 +216,50 @@ describe('save', () => {
         releaseProbe();
         await flush;
         expect(stored()).toEqual([{ id: 1 }]);
+    });
+
+    test('the global flush does not wait for a debounced write to fire', async () => {
+        // A debounced `set` settles only when its timer fires (or a flush lands
+        // it). The push must not sit that out — the value is already queued.
+        storageMock.set.mockImplementationOnce(() => new Promise(() => {}));
+        const record = byId();
+        record.set([{ id: 1 }]);
+        record.save();
+
+        let flushed = false;
+        const flush = flushPersistedRecords().then(() => {
+            flushed = true;
+        });
+        for (let i = 0; i < 20 && !flushed; i += 1) await Promise.resolve();
+
+        expect(storageMock.set).toHaveBeenCalledTimes(1);
+        expect(flushed).toBe(true);
+        await flush;
+    });
+
+    test('a save queued behind a debounced write is landed and waited for too', async () => {
+        // The first write only settles when storage is flushed, as a debounced one does.
+        let landFirst;
+        storageMock.set.mockImplementationOnce(async (key, value, store = 'settings') => {
+            await new Promise((resolve) => {
+                landFirst = resolve;
+            });
+            storageMock.storeFor(store).set(key, structuredClone(value));
+            return true;
+        });
+        storageMock.flushAll.mockImplementation(async () => landFirst?.());
+        const record = byId();
+        record.set([{ id: 1 }]);
+        record.save();
+        for (let i = 0; i < 20 && !landFirst; i += 1) await Promise.resolve();
+        record.set([{ id: 1 }, { id: 2 }]);
+        record.save();
+
+        await flushPersistedRecords();
+
+        expect(storageMock.flushAll).toHaveBeenCalled();
+        expect(storageMock.set).toHaveBeenCalledTimes(2);
+        expect(storageMock.set.mock.calls[1][1]).toEqual([{ id: 1 }, { id: 2 }]);
     });
 
     test('settled records leave the global flush registry', async () => {

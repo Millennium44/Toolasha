@@ -421,4 +421,21 @@ describe('the feature wiring', () => {
         expect(modal.querySelector(`.${ROW_CLASS}`).textContent).toContain('Net 2,000');
         welcomeBackValue.cleanup();
     });
+
+    test('a same-node reconnect redraws when an item changes but every count and the duration stay the same', async () => {
+        welcomeBackValue.initialize();
+        market.prices['/items/milk'] = { ask: 20, bid: 10 };
+        market.prices['/items/egg'] = { ask: 60, bid: 50 };
+        const modal = welcomeModal(`${tile('milk', '100')}<div>02:00:00</div>`);
+        observer.handlers[0].callback(modal);
+        expect(modal.querySelector(`.${ROW_CLASS}`).textContent).toContain('Net 1,000');
+
+        // Only the sprite reference changes; no text in the modal does.
+        modal.querySelector('use').setAttribute('href', '/static/media/items.svg#egg');
+        await new Promise((resolve) => setTimeout(resolve, 0));
+
+        expect(modal.querySelectorAll(`.${ROW_CLASS}`)).toHaveLength(1);
+        expect(modal.querySelector(`.${ROW_CLASS}`).textContent).toContain('Net 5,000');
+        welcomeBackValue.cleanup();
+    });
 });

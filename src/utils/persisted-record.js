@@ -38,26 +38,43 @@
 import storage from '../core/storage.js';
 import { characterKey, readScoped } from './character-key.js';
 
-/** Record → newest save chain, only while that chain is unsettled. */
-const pendingRecords = new Map();
+/**
+ * Record → handoff of its newest requested save, until that save has handed
+ * its value to `storage.set()` (or given up). A handoff, not the whole save:
+ * a debounced `set` settles only when its 3 s timer fires, and waiting on that
+ * would hold every sync push for it — or indefinitely, while a restore holds
+ * the timer.
+ */
+const pendingHandoffs = new Map();
+/** Record → handoff of the save currently running, which waits on nothing else. */
+const runningHandoffs = new Map();
 
 /**
- * Wait for every persisted-record save requested so far.
+ * Wait until every persisted-record save requested so far has handed its
+ * value to storage, so a following `storage.flushAll()` writes it.
  *
  * `storage.flushAll()` can only see a value after a record's read/merge step
  * has reached `storage.set()`. A sync fingerprint taken while that step is
  * still reading would omit the newest event entirely. Sync calls this first,
  * then drains storage's own debounce queue.
  *
+ * A save queued behind another starts its read only once the one ahead has
+ * written — it must see that write, or a clear followed by an add would read
+ * the cleared rows back. So: wait for the running saves to hand off, land
+ * them, then wait for the queued ones.
+ *
  * @returns {Promise<void>}
  */
 export async function flushPersistedRecords() {
-    await Promise.allSettled(Array.from(pendingRecords.values()));
+    if (pendingHandoffs.size === 0) return;
+    await Promise.allSettled(Array.from(runningHandoffs.values()));
+    await storage.flushAll?.();
+    await Promise.allSettled(Array.from(pendingHandoffs.values()));
 }
 
 /** @returns {number} Pending record count; test-only diagnostic. */
 export function _pendingRecordCountForTests() {
-    return pendingRecords.size;
+    return pendingHandoffs.size;
 }
 
 /**
@@ -279,7 +296,12 @@ export function createPersistedRecord({
              * character's stored one.
              */
             const askedIn = generation;
+            let handOff;
+            const handedOff = new Promise((resolve) => {
+                handOff = resolve;
+            });
             const run = async () => {
+                runningHandoffs.set(record, handedOff);
                 saving = true;
                 if (waitingSave === promise) waitingSave = null;
                 const started = generation;
@@ -300,26 +322,30 @@ export function createPersistedRecord({
                             memoryVersion += 1;
                         }
                     }
+                    // Resolved before the call: `set` queues the value synchronously
+                    // when the database is open, ahead of any flush this wakes.
+                    handOff();
                     return await storage.set(writeKey, memory, store, immediate);
                 } catch (error) {
                     console.error(`[${label}] Saving ${base} failed:`, error);
                     return false;
                 } finally {
+                    handOff();
+                    if (runningHandoffs.get(record) === handedOff) runningHandoffs.delete(record);
                     saving = false;
                 }
             };
             const promise = saveChain.then(run, run);
             if (!overwrite) waitingSave = promise;
             saveChain = promise;
-            // Register at request time, before `run` reaches its first await,
+            // Registered at request time, before `run` reaches its first await,
             // so a sync flush sees a save still waiting to read/merge. A newer
-            // queued save owns the slot immediately; an older chain settling
-            // must not unregister it underneath the flush registry.
-            pendingRecords.set(record, promise);
-            const unregister = () => {
-                if (pendingRecords.get(record) === promise) pendingRecords.delete(record);
-            };
-            promise.then(unregister, unregister);
+            // save owns the slot immediately; an older one handing off must not
+            // unregister it.
+            pendingHandoffs.set(record, handedOff);
+            handedOff.then(() => {
+                if (pendingHandoffs.get(record) === handedOff) pendingHandoffs.delete(record);
+            });
             return promise;
         },
 

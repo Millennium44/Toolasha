@@ -795,6 +795,10 @@ describe('what a push actually carries', () => {
         await syncManager.push();
 
         expect(storageCalls.indexOf('flushAll')).toBeGreaterThanOrEqual(0);
+        // Persisted records hand their pending saves to storage first, or the
+        // flush cannot see them. Checked present, not just "earlier": indexOf's
+        // -1 for a missing call would sort before anything.
+        expect(storageCalls.indexOf('flushPersistedRecords')).toBeGreaterThanOrEqual(0);
         expect(storageCalls.indexOf('flushPersistedRecords')).toBeLessThan(storageCalls.indexOf('flushAll'));
         expect(storageCalls.indexOf('flushAll')).toBeLessThan(storageCalls.indexOf('buildPayloadJSON'));
     });

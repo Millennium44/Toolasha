@@ -318,14 +318,20 @@ let watchedModal = null;
 let nativeSignature = null;
 
 /**
- * Text owned by the game, excluding the row this feature injects.
+ * Text and item sprites owned by the game, excluding the row this feature injects.
+ * The sprites matter: a reused modal can swap one item for another with the same
+ * count and duration, which changes no text at all.
  * @param {HTMLElement} modal - Welcome modal content
  * @returns {string} A stable-enough signature for native content changes
  */
 function readNativeSignature(modal) {
     const copy = modal.cloneNode(true);
     copy.querySelectorAll(`.${ROW_CLASS}`).forEach((row) => row.remove());
-    return (copy.textContent || '').replace(/\s+/g, ' ').trim();
+    const text = (copy.textContent || '').replace(/\s+/g, ' ').trim();
+    const sprites = [...copy.querySelectorAll('use')]
+        .map((use) => use.getAttribute('href') || use.getAttribute('xlink:href') || '')
+        .join(',');
+    return `${text}|${sprites}`;
 }
 
 /** Stop watching the currently open modal. */
@@ -349,7 +355,13 @@ function watchAndEnrichModal(modal) {
         nativeSignature = readNativeSignature(modal);
         enrichModal(modal);
         modalObserver = new MutationObserver(() => watchAndEnrichModal(modal));
-        modalObserver.observe(modal, { childList: true, subtree: true, characterData: true });
+        modalObserver.observe(modal, {
+            childList: true,
+            subtree: true,
+            characterData: true,
+            attributes: true,
+            attributeFilter: ['href', 'xlink:href'],
+        });
         return;
     }
 
