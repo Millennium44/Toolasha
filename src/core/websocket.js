@@ -894,9 +894,16 @@ class WebSocketHook {
      * DataManager calls this only after accepting an update from the active
      * character socket, so an old socket cannot overwrite the new character.
      * @param {Array<Object>} characterItems
+     * @param {string|number|null} characterId - Owner of DataManager's currently cached inventory
      */
-    saveCombatSimInventory(characterItems) {
-        if (typeof GM_setValue === 'undefined' || !this.bridgeCharacterId || !Array.isArray(characterItems)) {
+    saveCombatSimInventory(characterItems, characterId) {
+        if (
+            typeof GM_setValue === 'undefined' ||
+            !this.bridgeCharacterId ||
+            characterId == null ||
+            String(characterId) !== String(this.bridgeCharacterId) ||
+            !Array.isArray(characterItems)
+        ) {
             return;
         }
 

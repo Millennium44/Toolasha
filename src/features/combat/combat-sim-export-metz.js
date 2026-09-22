@@ -78,6 +78,7 @@ function buildSkillingBlock({ skills, equipment, speedGear }) {
 function buildSpeedGear(inventoryItems, itemDetailMap) {
     return (inventoryItems || [])
         .filter((item) => {
+            if (item.itemLocationHrid !== INVENTORY_LOCATION || Number(item.count) <= 0) return false;
             const stats = itemDetailMap?.[item.itemHrid]?.equipmentDetail?.noncombatStats || {};
             return SPEED_GEAR_STATS.some((stat) => (stats[stat] || 0) > 0);
         })

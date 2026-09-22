@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Metz imports follow the current character and inventory
+
+- Live inventory updates no longer label the departing character's items as a newly selected character's inventory during a switch. Metz skilling imports now list speed gear only while that piece is still held in inventory, excluding equipped or depleted rows.
+
 ### Market prices refresh when their saved snapshot expires
 
 - A reopened game tab now refreshes a nearly expired market snapshot at its actual expiry, so prices do not remain stale for another full cache interval.

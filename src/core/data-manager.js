@@ -1384,7 +1384,7 @@ class DataManager {
 
                 // Notify items_updated listeners (e.g. networth) of the inventory change
                 this.emit('items_updated', data);
-                this.webSocketHook.saveCombatSimInventory?.(this.characterItems);
+                this.webSocketHook.saveCombatSimInventory?.(this.characterItems, this.currentCharacterId);
             }
 
             // CRITICAL: Update skill experience from action_completed (this is how XP updates in real-time!)
@@ -1477,7 +1477,7 @@ class DataManager {
                 }
 
                 this.updateEquipmentMap(data.endCharacterItems);
-                this.webSocketHook.saveCombatSimInventory?.(this.characterItems);
+                this.webSocketHook.saveCombatSimInventory?.(this.characterItems, this.currentCharacterId);
             }
 
             this.emit('items_updated', data);

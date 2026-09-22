@@ -550,7 +550,7 @@ describe('saveCombatSimData GM-storage bridge stamping', () => {
         globalThis.GM_setValue.mockClear();
 
         const characterItems = [{ id: 'new-item', itemHrid: '/items/new_sword', count: 2 }];
-        webSocketHook.saveCombatSimInventory(characterItems);
+        webSocketHook.saveCombatSimInventory(characterItems, 'char-live');
         await new Promise((r) => setTimeout(r, 0));
 
         expect(globalThis.GM_setValue).toHaveBeenCalledWith(
@@ -563,7 +563,7 @@ describe('saveCombatSimData GM-storage bridge stamping', () => {
     test('an inventory write keeps the owner captured before a rapid character switch', async () => {
         webSocketHook.bridgeCharacterId = 'char-a';
         webSocketHook.bridgeCharacterName = 'A';
-        webSocketHook.saveCombatSimInventory([{ id: 'a-item', count: 1 }]);
+        webSocketHook.saveCombatSimInventory([{ id: 'a-item', count: 1 }], 'char-a');
 
         webSocketHook.bridgeCharacterId = 'char-b';
         webSocketHook.bridgeCharacterName = 'B';
@@ -573,6 +573,16 @@ describe('saveCombatSimData GM-storage bridge stamping', () => {
             characterId: 'char-a',
             characterName: 'A',
         });
+    });
+
+    test('does not stamp old cached inventory as the newly announced character', async () => {
+        webSocketHook.bridgeCharacterId = 'char-b';
+        webSocketHook.bridgeCharacterName = 'B';
+
+        webSocketHook.saveCombatSimInventory([{ id: 'a-item', itemHrid: '/items/plate_body', count: 1 }], 'char-a');
+        await new Promise((r) => setTimeout(r, 0));
+
+        expect(globalThis.GM_setValue).not.toHaveBeenCalledWith('toolasha_character_items', expect.anything());
     });
 
     test('stamps toolasha_init_client_data and toolasha_new_battle with the last character seen on this tab', async () => {

@@ -220,6 +220,41 @@ describe('Metz combat export', () => {
         expect(character).not.toHaveProperty('owned');
     });
 
+    test('speed gear includes only pieces still held in inventory', async () => {
+        mocks.itemDetailMap = {
+            '/items/enhancers_top': {
+                equipmentDetail: {
+                    type: '/equipment_types/body',
+                    noncombatStats: { enhancingSpeed: 0.04 },
+                },
+            },
+        };
+        mocks.inventory = [
+            {
+                itemHrid: '/items/enhancers_top',
+                enhancementLevel: 8,
+                itemLocationHrid: '/item_locations/inventory',
+                count: 1,
+            },
+            {
+                itemHrid: '/items/enhancers_top',
+                enhancementLevel: 9,
+                itemLocationHrid: '/item_locations/body',
+                count: 1,
+            },
+            {
+                itemHrid: '/items/enhancers_top',
+                enhancementLevel: 10,
+                itemLocationHrid: '/item_locations/inventory',
+                count: 0,
+            },
+        ];
+
+        const character = await constructMetzCharacterExport();
+
+        expect(character.skilling.speedGear).toEqual([{ itemHrid: '/items/enhancers_top', enhancementLevel: 8 }]);
+    });
+
     test('adds cached party members without claiming their inventory or pass state', async () => {
         mocks.characterData = baseCharacter({
             partyInfo: { partySlotMap: { 1: { characterID: 'party-1' } } },

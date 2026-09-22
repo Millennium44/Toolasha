@@ -616,7 +616,10 @@ describe('inventory index', () => {
         expect(dataManager.characterItems.map((i) => i.id)).toEqual(['b', 'c', 'd']);
         expect(dataManager.characterItems.find((i) => i.id === 'b').count).toBe(20);
         expect(dataManager.characterItems.find((i) => i.id === 'd').count).toBe(7);
-        expect(webSocketHook.saveCombatSimInventory).toHaveBeenCalledWith(dataManager.characterItems);
+        expect(webSocketHook.saveCombatSimInventory).toHaveBeenCalledWith(
+            dataManager.characterItems,
+            dataManager.currentCharacterId
+        );
     });
 
     test('the index recovers when characterItems is replaced behind its back', async () => {
@@ -657,7 +660,10 @@ describe('inventory index', () => {
             ['a', 9],
             ['z', 4],
         ]);
-        expect(webSocketHook.saveCombatSimInventory).toHaveBeenCalledWith(dataManager.characterItems);
+        expect(webSocketHook.saveCombatSimInventory).toHaveBeenCalledWith(
+            dataManager.characterItems,
+            dataManager.currentCharacterId
+        );
     });
 });
 
