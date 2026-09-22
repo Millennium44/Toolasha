@@ -20,7 +20,7 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ### Skilling Optimizer can sort by fixed percentage-point value
 
-- Equipment Progression can now rank upgrades by gold spent per 0.01% Exp/hr or Profit gain, making similarly sized percentage improvements directly comparable across equipment slots.
+- Equipment Progression can now rank upgrades by gold spent per 0.01% Exp/hr or Profit gain, making similarly sized percentage improvements directly comparable across equipment slots. A replacement fully paid for by selling the compared item correctly ranks as a zero-cost improvement.
 
 ### Alchemy Optimizer uses the item, gear and teas being tested
 

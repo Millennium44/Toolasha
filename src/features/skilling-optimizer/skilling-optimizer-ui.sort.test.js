@@ -193,6 +193,15 @@ describe('Equipment Progression sort control', () => {
         expect(renderedOrder(SLOTS, 'gold')).toEqual(['rich', 'cheap', 'dud']);
     });
 
+    test('a free net upgrade sorts before paid upgrades in either fixed percentage mode', () => {
+        const slots = [slot('paid', 1000, 1000), slot('free', 100, 100)];
+        engine.costs = { '/items/paid': 1_000_000, '/items/free': 0 };
+        for (const mode of ['xpRatio', 'profitRatio']) {
+            ui.optimizerSortMode = mode;
+            expect(renderedOrder(slots, 'xp'), mode).toEqual(['free', 'paid']);
+        }
+    });
+
     test('Slot Order leaves the engine order untouched', () => {
         ui.optimizerSortMode = 'slot';
         expect(renderedOrder(SLOTS, 'xp')).toEqual(['cheap', 'rich', 'dud']);
@@ -238,10 +247,14 @@ describe('_computeSlotMetrics fixed percentage-point ratios', () => {
         expect(metrics.profitRatio).toBeCloseTo(2_000_000 / 12_000);
     });
 
-    test('leaves a fixed percentage ratio absent when its baseline, gain, or price is unavailable', () => {
+    test('ranks a free improvement at zero gold per fixed percentage point', () => {
         engine.costs['/items/free'] = 0;
-        expect(ui._computeSlotMetrics(slot('free', 100, 100)[1], null, 1000, 1000).xpRatio).toBeNull();
+        const free = ui._computeSlotMetrics(slot('free', 100, 100)[1], null, 1000, 1000);
+        expect(free.xpRatio).toBe(0);
+        expect(free.profitRatio).toBe(0);
+    });
 
+    test('leaves a fixed percentage ratio absent when its baseline, gain, or price is unavailable', () => {
         engine.costs['/items/zero-baseline'] = 1_000_000;
         const zeroBaseline = ui._computeSlotMetrics(slot('zero-baseline', 100, 100)[1], null, 0, 0);
         expect(zeroBaseline.xpRatio).toBeNull();

@@ -1589,14 +1589,14 @@ class SkillingSimulatorUI {
         const xpPerMillion = cost === null || xpDelta <= 0 ? null : cost > 0 ? (xpDelta / cost) * 1_000_000 : Infinity;
         const paybackHours = cost === null || goldDelta <= 0 ? null : cost > 0 ? cost / goldDelta : 0;
         // Cost per 0.01 percentage point of improvement. Unlike the broader value metrics,
-        // these modes require both a positive baseline and a positive cost: there is no useful
-        // fixed-percentage ratio against zero, and a free swap is already covered by Cost/Value.
+        // these modes require a positive baseline, while a zero net cost is the best possible
+        // ratio: selling the compared item can fully pay for a real improvement.
         const xpRatio =
-            cost !== null && cost > 0 && xpDelta > 0 && xpBaseline > 0
+            cost !== null && cost >= 0 && xpDelta > 0 && xpBaseline > 0
                 ? cost / ((xpDelta / xpBaseline) * 100 * 100)
                 : null;
         const profitRatio =
-            cost !== null && cost > 0 && goldDelta > 0 && goldBaseline > 0
+            cost !== null && cost >= 0 && goldDelta > 0 && goldBaseline > 0
                 ? cost / ((goldDelta / goldBaseline) * 100 * 100)
                 : null;
 
