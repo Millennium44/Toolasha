@@ -92,6 +92,24 @@ describe('Marketplace Action dropdown portal', () => {
         expect(document.querySelector('.mwi-marketplace-dropdown-panel')).toBeNull();
         marketplaceShortcuts.initialize();
     });
+
+    test('an outside click closes every portaled panel through its wrapper pointer', () => {
+        const firstMenu = actionMenu();
+        const first = marketplaceShortcuts.buildDropdown(firstMenu, '/items/cheese', 0);
+        firstMenu.appendChild(first);
+        const secondMenu = actionMenu();
+        const second = marketplaceShortcuts.buildDropdown(secondMenu, '/items/milk', 0);
+        secondMenu.appendChild(second);
+        first.querySelector('.mwi-marketplace-dropdown-toggle').click();
+        second.querySelector('.mwi-marketplace-dropdown-toggle').click();
+        expect(first._dropdownPanel.style.display).toBe('flex');
+        expect(second._dropdownPanel.style.display).toBe('flex');
+
+        document.body.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+
+        expect(first._dropdownPanel.style.display).toBe('none');
+        expect(second._dropdownPanel.style.display).toBe('none');
+    });
 });
 
 describe('teardown cancels delayed marketplace work', () => {

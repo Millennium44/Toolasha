@@ -60,6 +60,18 @@ class MarketplaceShortcuts {
     }
 
     /**
+     * Close every marketplace action panel, including panels portaled outside their wrappers.
+     */
+    closeAllDropdowns() {
+        document.querySelectorAll('.mwi-marketplace-dropdown').forEach((wrapper) => {
+            const panel = wrapper._dropdownPanel;
+            if (panel) panel.style.display = 'none';
+            const chevron = wrapper.querySelector('.mwi-mp-chevron');
+            if (chevron) chevron.style.transform = '';
+        });
+    }
+
+    /**
      * Inject marketplace dropdown into the item action menu
      * @param {HTMLElement} actionMenu - The Item_actionMenu element
      */
@@ -254,7 +266,7 @@ class MarketplaceShortcuts {
         if (this.closeHandler) {
             document.removeEventListener('click', this.closeHandler);
         }
-        this.closeHandler = () => closePanel();
+        this.closeHandler = () => this.closeAllDropdowns();
         document.addEventListener('click', this.closeHandler);
 
         wrapper.appendChild(toggle);
