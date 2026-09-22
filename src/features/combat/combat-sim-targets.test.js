@@ -24,8 +24,8 @@ const projectRoot = join(dirname(fileURLToPath(import.meta.url)), '..', '..', '.
 const read = (relativePath) => readFileSync(join(projectRoot, relativePath), 'utf8');
 
 describe('COMBAT_SIM_TARGETS', () => {
-    test('lists both supported simulators', () => {
-        expect(COMBAT_SIM_TARGETS.map((target) => target.id)).toEqual(['shykai', 'szerra']);
+    test('lists every supported simulator', () => {
+        expect(COMBAT_SIM_TARGETS.map((target) => target.id)).toEqual(['shykai', 'szerra', 'metz']);
     });
 
     test('every target is fully specified with a unique id, label and url', () => {
@@ -65,6 +65,7 @@ describe('isCombatSimulatorPage', () => {
     test('recognises deep links inside a simulator', () => {
         expect(isCombatSimulatorPage('https://shykai.github.io/MWICombatSimulatorTest/dist/index.html#sim')).toBe(true);
         expect(isCombatSimulatorPage('https://szerra.github.io/mwi-shrine-combat-simulator/index.html?p=1')).toBe(true);
+        expect(isCombatSimulatorPage('https://metzlii.github.io/metz-combat-simulator/setup')).toBe(true);
     });
 
     test.each([
@@ -73,6 +74,7 @@ describe('isCombatSimulatorPage', () => {
         ['an unrelated github pages site', 'https://doh-nuts.github.io/Enhancelator/'],
         ['the szerra user page without the simulator repo', 'https://szerra.github.io/'],
         ['the shykai user page without the simulator repo', 'https://shykai.github.io/'],
+        ['the metzlii user page without the simulator repo', 'https://metzlii.github.io/'],
         ['an empty url', ''],
     ])('does not recognise %s', (_label, url) => {
         expect(isCombatSimulatorPage(url)).toBe(false);

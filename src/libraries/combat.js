@@ -62,7 +62,13 @@ import labyrinthRoomLogs from '../features/combat/labyrinth-room-logs.js';
 import labyrinthCapture from '../features/combat/labyrinth-capture.js';
 import { captureFile } from '../features/combat/labyrinth-tick-capture.js';
 import * as combatSimIntegration from '../features/combat/combat-sim-integration.js';
+import * as combatSimIntegrationMetz from '../features/combat/combat-sim-integration-metz.js';
 import { constructExportObject } from '../features/combat/combat-sim-export.js';
+import {
+    constructMetzTeamExport,
+    constructMetzCharacterExport,
+    applyLoadoutOverrideToMetzCharacter,
+} from '../features/combat/combat-sim-export-metz.js';
 import { constructMilkonomyExport } from '../features/combat/milkonomy-export.js';
 import combatSim from '../features/combat-sim/combat-sim.js';
 import labSim from '../features/combat-sim/lab-sim.js';
@@ -159,8 +165,12 @@ toolashaRoot.Combat = {
     labyrinthRoomLogs,
     labyrinthCapture,
     combatSimIntegration,
+    combatSimIntegrationMetz,
     combatSimExport: {
         constructExportObject,
+        constructMetzTeamExport,
+        constructMetzCharacterExport,
+        applyLoadoutOverrideToMetzCharacter,
         constructMilkonomyExport,
     },
     combatStats,

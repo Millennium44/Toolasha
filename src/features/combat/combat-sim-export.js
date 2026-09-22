@@ -107,7 +107,7 @@ export function checkBridgeStamp(key, label, { enforceOwner }) {
  * refused rather than silently exporting the wrong gear (see checkBridgeStamp above).
  * @returns {Object|null}
  */
-function getCharacterData() {
+export function getCharacterData() {
     const data = dataManager.characterData;
     if (data) return data;
     // Cross-domain fallback: read from GM storage (saved by game page)
@@ -132,7 +132,7 @@ function getCharacterData() {
  * battle as "not in combat" and fall back to profile-derived data.
  * @returns {Object|null}
  */
-function getBattleData() {
+export function getBattleData() {
     if (dataManager.battleData) return dataManager.battleData;
     if (typeof GM_getValue !== 'undefined') {
         try {
@@ -154,7 +154,7 @@ function getBattleData() {
  * mismatch here is not refused — only staleness is checked.
  * @returns {Object|null}
  */
-function getClientData() {
+export function getClientData() {
     const data = dataManager.getInitClientData();
     if (data) return data;
     if (typeof GM_getValue !== 'undefined') {
@@ -177,7 +177,7 @@ function getClientData() {
  * mismatch is not refused — only staleness is checked.
  * @returns {Promise<Array>}
  */
-async function getProfileList() {
+export async function getProfileList() {
     if (storage.available) {
         try {
             const list = await storage.getJSON('profile_list', 'combatExport', null);
@@ -277,7 +277,7 @@ function buildGuildCombatBuffLevels(levelOf, extraHrids = []) {
  * @param {Object} clientObj - Client data (optional)
  * @returns {Object} Player export object
  */
-function constructSelfPlayer(characterObj, clientObj) {
+export function constructSelfPlayer(characterObj, clientObj) {
     const playerObj = {
         player: {
             attackLevel: 1,
@@ -446,7 +446,7 @@ function constructSelfPlayer(characterObj, clientObj) {
  * @param {Object} battleObj - Battle data (optional, for consumables)
  * @returns {Object} Player export object
  */
-function constructPartyPlayer(profile, clientObj, battleObj) {
+export function constructPartyPlayer(profile, clientObj, battleObj) {
     const playerObj = {
         player: {
             attackLevel: 1,

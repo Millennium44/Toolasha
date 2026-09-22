@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Metz combat simulator import and profile export
+
+- The external-tools menu now links to Metz Combat Simulator, where Toolasha can import the current character and cached party profiles directly from its setup screen. Profile exports include saved combat loadouts, spare gear and abilities, and the available enhancing and alchemy setup for optimizer calculations.
+
 ### Action and queue completion times can be shown independently
 
 - The action bar can now show time remaining, completion ETA, both or neither. Queued-action rows can independently show their cumulative duration, completion clock or both, while existing on/off and clock-only choices are preserved.

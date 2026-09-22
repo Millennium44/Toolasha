@@ -304,10 +304,10 @@ Utils.visualViewport?.initVisualViewportTracking?.();
  */
 function isCombatSimulatorPage() {
     const url = window.location.href;
-    return (
-        url.includes('shykai.github.io/MWICombatSimulatorTest/dist/') ||
-        url.includes('szerra.github.io/mwi-shrine-combat-simulator/')
-    );
+    if (url.includes('shykai.github.io/MWICombatSimulatorTest/dist/')) return 'shykai';
+    if (url.includes('szerra.github.io/mwi-shrine-combat-simulator/')) return 'szerra';
+    if (url.includes('metzlii.github.io/metz-combat-simulator/')) return 'metz';
+    return null;
 }
 
 /* ------------------------------------------------------------------------- *
@@ -2478,7 +2478,13 @@ function registerFeatures() {
     featureRegistry.replaceFeatures(features);
 }
 
-if (isCombatSimulatorPage()) {
+const combatSimulatorSite = isCombatSimulatorPage();
+
+if (combatSimulatorSite === 'metz') {
+    Combat.combatSimIntegrationMetz.initialize();
+
+    // Skip all other initialization
+} else if (combatSimulatorSite) {
     // Initialize combat sim integration only
     Combat.combatSimIntegration.initialize();
 

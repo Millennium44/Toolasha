@@ -40,6 +40,13 @@ export const COMBAT_SIM_TARGETS = [
         urlFragment: 'szerra.github.io/mwi-shrine-combat-simulator/',
         match: 'https://szerra.github.io/mwi-shrine-combat-simulator/*',
     },
+    {
+        id: 'metz',
+        label: 'Combat Sim (Metz)',
+        url: 'https://metzlii.github.io/metz-combat-simulator/',
+        urlFragment: 'metzlii.github.io/metz-combat-simulator/',
+        match: 'https://metzlii.github.io/metz-combat-simulator/*',
+    },
 ];
 
 /**
