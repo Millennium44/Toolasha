@@ -53,6 +53,8 @@ const SORT_MODES = [
     { value: 'cost', label: 'Cost (cheapest)' },
     { value: 'xpGain', label: 'XP Gain %' },
     { value: 'goldGain', label: 'Gold Gain %' },
+    { value: 'xpRatio', label: 'G/0.01% Exp/Hr (cheapest)' },
+    { value: 'profitRatio', label: 'G/0.01% Profit (cheapest)' },
     { value: 'slot', label: 'Slot Order' },
 ];
 
@@ -1556,7 +1558,8 @@ class SkillingSimulatorUI {
      * @param {number} xpBaseline
      * @param {number} goldBaseline
      * @returns {{entry: Object|null, cost: number|null, xpPct: number, goldPct: number, xpDelta: number,
-     *   goldDelta: number, xpPerMillion: number|null, paybackHours: number|null}}
+     *   goldDelta: number, xpPerMillion: number|null, paybackHours: number|null,
+     *   xpRatio: number|null, profitRatio: number|null}}
      */
     _computeSlotMetrics(slotData, loadoutEntry, xpBaseline, goldBaseline) {
         const entry = slotData.progression.find(
@@ -1572,6 +1575,8 @@ class SkillingSimulatorUI {
                 goldDelta: 0,
                 xpPerMillion: null,
                 paybackHours: null,
+                xpRatio: null,
+                profitRatio: null,
             };
         }
 
@@ -1583,6 +1588,17 @@ class SkillingSimulatorUI {
         // not an absent one — only an unpriceable or gainless row has no ratio at all.
         const xpPerMillion = cost === null || xpDelta <= 0 ? null : cost > 0 ? (xpDelta / cost) * 1_000_000 : Infinity;
         const paybackHours = cost === null || goldDelta <= 0 ? null : cost > 0 ? cost / goldDelta : 0;
+        // Cost per 0.01 percentage point of improvement. Unlike the broader value metrics,
+        // these modes require both a positive baseline and a positive cost: there is no useful
+        // fixed-percentage ratio against zero, and a free swap is already covered by Cost/Value.
+        const xpRatio =
+            cost !== null && cost > 0 && xpDelta > 0 && xpBaseline > 0
+                ? cost / ((xpDelta / xpBaseline) * 100 * 100)
+                : null;
+        const profitRatio =
+            cost !== null && cost > 0 && goldDelta > 0 && goldBaseline > 0
+                ? cost / ((goldDelta / goldBaseline) * 100 * 100)
+                : null;
 
         // A zero baseline with a real gain (e.g. every unequipped gathering action scores 0
         // gold/hr because its output is unpriced) has no rate to take a ratio against — that is
@@ -1600,6 +1616,8 @@ class SkillingSimulatorUI {
             goldDelta,
             xpPerMillion,
             paybackHours,
+            xpRatio,
+            profitRatio,
         };
     }
 
@@ -1666,6 +1684,10 @@ class SkillingSimulatorUI {
                 return -metrics.xpPct;
             case 'goldGain':
                 return -metrics.goldPct;
+            case 'xpRatio':
+                return metrics.xpRatio ?? Infinity;
+            case 'profitRatio':
+                return metrics.profitRatio ?? Infinity;
             case 'value':
             default:
                 return goal === 'gold' ? (metrics.paybackHours ?? Infinity) : -(metrics.xpPerMillion ?? -Infinity);

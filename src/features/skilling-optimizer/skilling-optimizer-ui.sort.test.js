@@ -143,6 +143,8 @@ describe('Equipment Progression sort control', () => {
             'cost',
             'xpGain',
             'goldGain',
+            'xpRatio',
+            'profitRatio',
             'slot',
         ]);
         expect(select.value).toBe('value');
@@ -178,6 +180,19 @@ describe('Equipment Progression sort control', () => {
         expect(renderedOrder(SLOTS, 'xp')).toEqual(['rich', 'cheap', 'dud']);
     });
 
+    test('G/0.01% Exp/Hr sorts the cheapest fixed percentage-point gain first', () => {
+        ui.optimizerSortMode = 'xpRatio';
+        // Cost per 0.01 percentage point: rich 500, cheap 1K, dud 90K.
+        expect(renderedOrder(SLOTS, 'xp')).toEqual(['rich', 'cheap', 'dud']);
+    });
+
+    test('G/0.01% Profit sorts the cheapest fixed percentage-point gain first', () => {
+        ui.optimizerSortMode = 'profitRatio';
+        // The same baselines make this order match Exp/Hr here; the metric is independently
+        // derived from each row's Gold/hr gain in _computeSlotMetrics.
+        expect(renderedOrder(SLOTS, 'gold')).toEqual(['rich', 'cheap', 'dud']);
+    });
+
     test('Slot Order leaves the engine order untouched', () => {
         ui.optimizerSortMode = 'slot';
         expect(renderedOrder(SLOTS, 'xp')).toEqual(['cheap', 'rich', 'dud']);
@@ -185,7 +200,7 @@ describe('Equipment Progression sort control', () => {
 
     test('an unpriceable slot sorts last under every cost-denominated mode', () => {
         engine.costs = { '/items/cheap': 1_000_000, '/items/rich': 5_000_000 }; // dud unpriced
-        for (const mode of ['value', 'payback', 'cost']) {
+        for (const mode of ['value', 'payback', 'cost', 'xpRatio', 'profitRatio']) {
             ui.optimizerSortMode = mode;
             expect(renderedOrder(SLOTS, 'xp').at(-1), mode).toBe('dud');
         }
@@ -213,6 +228,31 @@ describe('Equipment Progression sort control', () => {
     });
 });
 
+describe('_computeSlotMetrics fixed percentage-point ratios', () => {
+    test('derives each ratio from the matching baseline and gain', () => {
+        engine.costs['/items/ratio'] = 2_000_000;
+        const metrics = ui._computeSlotMetrics(slot('ratio', 600, 1200)[1], null, 1000, 1000);
+
+        // Exp/hr: 60 percentage points / 0.01 = 6000 increments. Profit: 120 points = 12000.
+        expect(metrics.xpRatio).toBeCloseTo(2_000_000 / 6000);
+        expect(metrics.profitRatio).toBeCloseTo(2_000_000 / 12_000);
+    });
+
+    test('leaves a fixed percentage ratio absent when its baseline, gain, or price is unavailable', () => {
+        engine.costs['/items/free'] = 0;
+        expect(ui._computeSlotMetrics(slot('free', 100, 100)[1], null, 1000, 1000).xpRatio).toBeNull();
+
+        engine.costs['/items/zero-baseline'] = 1_000_000;
+        const zeroBaseline = ui._computeSlotMetrics(slot('zero-baseline', 100, 100)[1], null, 0, 0);
+        expect(zeroBaseline.xpRatio).toBeNull();
+        expect(zeroBaseline.profitRatio).toBeNull();
+
+        const unpriced = ui._computeSlotMetrics(slot('unpriced', 100, 100)[1], null, 1000, 1000);
+        expect(unpriced.xpRatio).toBeNull();
+        expect(unpriced.profitRatio).toBeNull();
+    });
+});
+
 describe('_sortValueFor', () => {
     const metrics = {
         entry: {},
@@ -221,11 +261,13 @@ describe('_sortValueFor', () => {
         goldPct: 4,
         xpPerMillion: 500,
         paybackHours: 40,
+        xpRatio: 1200,
+        profitRatio: 3600,
     };
 
     test('a slot with nothing actionable sorts last in every mode', () => {
         const nothing = { entry: null, cost: null, xpPct: 0, goldPct: 0, xpPerMillion: null, paybackHours: null };
-        for (const mode of ['value', 'payback', 'cost', 'xpGain', 'goldGain']) {
+        for (const mode of ['value', 'payback', 'cost', 'xpGain', 'goldGain', 'xpRatio', 'profitRatio']) {
             expect(ui._sortValueFor(nothing, 'xp', mode), mode).toBe(Infinity);
         }
     });
@@ -238,6 +280,13 @@ describe('_sortValueFor', () => {
     test('Best Value follows the goal: XP-per-gold for xp, payback for gold', () => {
         expect(ui._sortValueFor(metrics, 'xp', 'value')).toBe(-500);
         expect(ui._sortValueFor(metrics, 'gold', 'value')).toBe(40);
+    });
+
+    test('fixed percentage-point ratio modes sort ascending and leave absent ratios last', () => {
+        expect(ui._sortValueFor(metrics, 'xp', 'xpRatio')).toBe(1200);
+        expect(ui._sortValueFor(metrics, 'gold', 'profitRatio')).toBe(3600);
+        expect(ui._sortValueFor({ ...metrics, xpRatio: null }, 'xp', 'xpRatio')).toBe(Infinity);
+        expect(ui._sortValueFor({ ...metrics, profitRatio: null }, 'gold', 'profitRatio')).toBe(Infinity);
     });
 
     test('a missing ratio sorts last rather than reading as the best possible score', () => {
