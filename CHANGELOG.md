@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Market prices refresh when their saved snapshot expires
+
+- A reopened game tab now refreshes a nearly expired market snapshot at its actual expiry, so prices do not remain stale for another full cache interval.
+
 ### Optimizer review follow-ups keep tested setups and ownership honest
 
 - Alchemy tea candidates now keep their full drink cost while the calculator chooses the best catalyst, including speed or efficiency teas with no Alchemy Success bonus. Partial decompose and transmute prices also remain visibly marked as incomplete.
