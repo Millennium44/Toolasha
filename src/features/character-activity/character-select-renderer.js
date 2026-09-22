@@ -18,6 +18,7 @@
 
 import domObserver from '../../core/dom-observer.js';
 import assetManifest from '../../utils/asset-manifest.js';
+import characterActivityCollector from './character-activity-collector.js';
 import { computeSlotDisplayState, COLOR_HEX } from './character-activity-display.js';
 import { loadCharacterActivity, loadAccountPreferences } from './character-activity-storage.js';
 import {
@@ -36,6 +37,7 @@ class CharacterSelectRenderer {
         this.unregisterReady = null;
         this.refreshTimer = null;
         this.trackedSlots = new Map(); // characterId -> {slotElement, character}
+        this.checkpointedRoots = new WeakSet();
     }
 
     /**
@@ -96,6 +98,14 @@ class CharacterSelectRenderer {
         try {
             const { slots } = resolveCharacterSelectSlots(rootElement);
             if (slots.length === 0) return;
+
+            // A native Switch Character navigation does not fire the collector's switching or
+            // unload hooks. Save once per populated Character Select mount before reading the
+            // records used to draw its slots, so the character being left does not look stale.
+            if (!this.checkpointedRoots.has(rootElement)) {
+                this.checkpointedRoots.add(rootElement);
+                await characterActivityCollector.checkpointForCharacterSelect();
+            }
 
             this.trackedSlots.clear();
             for (const { slotElement, character } of slots) {
@@ -243,6 +253,7 @@ class CharacterSelectRenderer {
         this.stopRefreshTimer();
         this.clearAllInjectedBlocks();
         this.trackedSlots.clear();
+        this.checkpointedRoots = new WeakSet();
         this.isWatching = false;
     }
 }

@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Character Select shows the activity snapshot from the moment you left
+
+- Opening native Character Select now immediately checkpoints the active character before its slots read saved activity. Switching through that route no longer leaves the departing character showing an older queue projection until another update or page unload occurs.
+
 ### Notice history survives a temporary storage read failure
 
 - A notice arriving while its saved history cannot be read no longer replaces that history with a one-entry log. The script keeps the new notice in memory and merges it with the saved log when reading succeeds, even across a character switch.
