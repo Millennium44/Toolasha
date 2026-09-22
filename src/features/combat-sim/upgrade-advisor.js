@@ -47,6 +47,10 @@ const BREAKPOINTS_REFINED = [10, 12, 13, 14, 15, 16, 17, 18, 19, 20];
 
 const JEWELRY_SLOTS = new Set(['/equipment_types/earrings', '/equipment_types/ring', '/equipment_types/neck']);
 
+// Threat selection needs another living player, and Revive needs a dead ally. None can affect
+// a solo simulation, so spending workers on those candidates can only reproduce the baseline.
+const NO_SOLO_EFFECT_ABILITY_HRIDS = new Set(['/abilities/provoke', '/abilities/taunt', '/abilities/revive']);
+
 /** Philosopher's accessories are always offered from this enhancement level */
 const PHILO_START_LEVEL = 5;
 const PHILO_HRID_PREFIX = '/items/philosophers_';
@@ -1443,6 +1447,7 @@ export function generateCandidates(
     } else if (mode === 'ability_level' || mode === 'ability_swap') {
         const playerStyle = getPlayerCombatStyle(playerDTO, gameData);
         const equippedAbilityHrids = new Set(playerDTO.abilities.filter((a) => a).map((a) => a.hrid));
+        const playerCount = options.playerCount ?? 1;
         // What the community build guide says this loadout should be casting.
         // Null when the archetype cannot be read off the weapon, or when the
         // guide's abilities are not in this game data at all — either way the
@@ -1498,6 +1503,10 @@ export function generateCandidates(
                 // With a guide, "other" is the archetype's own ability set rather
                 // than every ability in the game — see `guideSwapAllowed`.
                 const offered = guide ? guide.offers : Object.keys(gameData.abilityDetailMap);
+                const otherEquippedHasZeroCooldown = playerDTO.abilities.some((equipped, index) => {
+                    if (index === slotIdx || !equipped) return false;
+                    return gameData.abilityDetailMap[equipped.hrid]?.cooldownDuration === 0;
+                });
                 for (const abHrid of offered) {
                     const abDetail = gameData.abilityDetailMap[abHrid];
                     if (!abDetail) continue;
@@ -1505,6 +1514,8 @@ export function generateCandidates(
                     if (abDetail.isSpecialAbility && slotIdx !== 0) continue;
                     if (!abDetail.isSpecialAbility && slotIdx === 0) continue;
                     if (abHrid === '/abilities/promote') continue;
+                    if (playerCount <= 1 && NO_SOLO_EFFECT_ABILITY_HRIDS.has(abHrid)) continue;
+                    if (abDetail.cooldownDuration === 0 && otherEquippedHasZeroCooldown) continue;
                     // The guide's own set is style-correct by construction — each
                     // archetype lists its own style's abilities plus the universal
                     // Critical Aura — so on the guide path trust guideSwapAllowed and
@@ -3251,7 +3262,9 @@ export async function runUpgradeAnalysis(params, onProgress, options = {}) {
             houseTargets,
             communityBuffs,
             guildShrineTargetLevel,
-            { auraSwapsOnly, communityBuffTargetLevel, guildShrineTargets, guildShrineCapToGuild, isSelf }
+            // Keep the paired guild-shrine fields together; a source guard enforces this invariant.
+            // prettier-ignore
+            { auraSwapsOnly, communityBuffTargetLevel, guildShrineTargets, guildShrineCapToGuild, isSelf, playerCount: playerDTOs.length }
         )
     );
     // Candidates the caller asked for by name, alongside whatever the mode

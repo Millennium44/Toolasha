@@ -70,6 +70,9 @@ const coreExternalGlobals = new Map([
 const utilsExternalGlobals = new Map([
     [normalize(join(__dirname, 'src/utils/formatters.js')), 'Toolasha.Utils.formatters'],
     [normalize(join(__dirname, 'src/utils/liquidity-cap.js')), 'Toolasha.Utils.liquidityCap'],
+    // Combat-scroll definitions are consumed by both the actions and sim
+    // bundles. Keep one shared copy so both surfaces use the same constants.
+    [normalize(join(__dirname, 'src/utils/combat-scroll-buffs.js')), 'Toolasha.Utils.combatScrollBuffs'],
     // The fight-count confidence maths, reached from the sim bundle (the
     // bestiary plan) and the ui bundle (a combat task's Go)
     [normalize(join(__dirname, 'src/utils/fight-confidence.js')), 'Toolasha.Utils.fightConfidence'],

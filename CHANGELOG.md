@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Combat Sim skips ability swaps that cannot affect the fight
+
+- Solo upgrade searches no longer spend simulations on party-only threat and revive abilities, or on a second zero-cooldown ability that cannot cast.
+
 ### Skilling Optimizer respects real equipment requirements and prices cross-tier upgrades
 
 - Equipment locked above the planned skill level is no longer recommended, and an enhanced cross-tier target can now be costed from its +0 price plus the shared enhancement estimate when that exact level has no listing.

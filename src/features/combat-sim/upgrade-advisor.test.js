@@ -242,6 +242,99 @@ beforeEach(() => {
 const MAIN_HAND = '/equipment_types/main_hand';
 const BACK = '/equipment_types/back';
 
+describe('generateCandidates ability-swap pruning', () => {
+    const gameData = {
+        itemDetailMap: {
+            '/items/fire_staff': {
+                equipmentDetail: { type: MAIN_HAND, combatStats: { magicDamage: 1 } },
+            },
+        },
+        abilityDetailMap: {
+            '/abilities/smash': {
+                name: 'Smash',
+                isSpecialAbility: false,
+                cooldownDuration: 5e9,
+                abilityEffects: [{ combatStyleHrid: '/combat_styles/magic' }],
+            },
+            '/abilities/fireball': {
+                name: 'Fireball',
+                isSpecialAbility: false,
+                cooldownDuration: 0,
+                abilityEffects: [{ combatStyleHrid: '/combat_styles/magic' }],
+            },
+            '/abilities/water_strike': {
+                name: 'Water Strike',
+                isSpecialAbility: false,
+                cooldownDuration: 0,
+                abilityEffects: [{ combatStyleHrid: '/combat_styles/magic' }],
+            },
+            '/abilities/provoke': {
+                name: 'Provoke',
+                isSpecialAbility: false,
+                cooldownDuration: 60e9,
+                abilityEffects: [{ effectType: '/ability_effect_types/buff', buffs: [] }],
+            },
+            '/abilities/taunt': {
+                name: 'Taunt',
+                isSpecialAbility: false,
+                cooldownDuration: 60e9,
+                abilityEffects: [{ effectType: '/ability_effect_types/buff', buffs: [] }],
+            },
+            '/abilities/revive': {
+                name: 'Revive',
+                isSpecialAbility: false,
+                cooldownDuration: 300e9,
+                abilityEffects: [{ effectType: '/ability_effect_types/buff', buffs: [] }],
+            },
+        },
+    };
+
+    const candidates = (abilities, playerCount) =>
+        generateCandidates(
+            {
+                equipment: { [MAIN_HAND]: { hrid: '/items/fire_staff' } },
+                abilities,
+            },
+            gameData,
+            'ability_swap',
+            0,
+            'increment',
+            false,
+            null,
+            null,
+            0,
+            null,
+            null,
+            0,
+            { playerCount }
+        );
+
+    test('solo runs omit threat and revive abilities that cannot affect one player', () => {
+        const result = candidates([null, { hrid: '/abilities/smash', level: 10 }, null, null, null], 1);
+        const offered = result.map((candidate) => candidate.upgradeHrid);
+        expect(offered).not.toContain('/abilities/provoke');
+        expect(offered).not.toContain('/abilities/taunt');
+        expect(offered).not.toContain('/abilities/revive');
+    });
+
+    test('party runs retain threat and revive candidates', () => {
+        const result = candidates([null, { hrid: '/abilities/smash', level: 10 }, null, null, null], 2);
+        const offered = result.map((candidate) => candidate.upgradeHrid);
+        expect(offered).toContain('/abilities/provoke');
+        expect(offered).toContain('/abilities/taunt');
+        expect(offered).toContain('/abilities/revive');
+    });
+
+    test('does not suggest adding a second zero-cooldown ability', () => {
+        const result = candidates(
+            [null, { hrid: '/abilities/smash', level: 10 }, { hrid: '/abilities/water_strike', level: 10 }, null, null],
+            1
+        );
+        const slotOne = result.filter((candidate) => candidate.slot === 'ability_1');
+        expect(slotOne.map((candidate) => candidate.upgradeHrid)).not.toContain('/abilities/fireball');
+    });
+});
+
 function buildGameData() {
     return {
         actionDetailMap: {},
