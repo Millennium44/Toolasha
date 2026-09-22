@@ -350,7 +350,11 @@ describe('scoreEquipmentSetup — alchemy', () => {
         const score = scoreEquipmentSetup('alchemy', 'gold', equipment, 10, null, [], alchemyContext);
 
         expect(score).toBe(4321);
-        expect(calls[0][4]).toEqual({ equipment, drinks: [] });
+        expect(calls[0][4]).toEqual({
+            equipment,
+            drinks: [],
+            skills: [{ skillHrid: '/skills/alchemy', level: 10 }],
+        });
     });
 
     test('a gold-goal score without a real item basis fails closed instead of pricing a substitute', () => {
@@ -440,6 +444,79 @@ describe('calculateSkillPerformance — alchemy', () => {
 
         expect(alchemyCalc.decompose).toBeTruthy();
         expect(result.goldPerHour).toBe(555);
+    });
+
+    test('uses the running item and the planned skill level for both XP and Gold/hr', () => {
+        state.skills = [{ skillHrid: '/skills/alchemy', level: 5 }];
+        state.gameData.itemDetailMap['/items/moon_ore'] = { alchemyDetail: { isCoinifiable: true }, itemLevel: 100 };
+        state.gameData.itemDetailMap['/items/catalytic_tea'] = {
+            consumableDetail: { buffs: [{ typeHrid: '/buff_types/alchemy_success', ratioBoost: 0.05 }] },
+        };
+        state.gameData.actionDetailMap['/actions/alchemy/coinify'] = {
+            type: '/action_types/alchemy',
+            name: 'Coinify',
+            baseTimeCost: 20e9,
+            levelRequirement: { level: 1 },
+        };
+        state.actions = [
+            {
+                actionHrid: '/actions/alchemy/coinify',
+                primaryItemHash: 'character::/item_locations/inventory::/items/moon_ore::7',
+                ordinal: 1,
+                partyID: 0,
+                isDone: false,
+            },
+        ];
+        let args;
+        alchemyCalc.coinify = (...received) => {
+            args = received;
+            return { profitPerHour: 777 };
+        };
+
+        const result = calculateSkillPerformance('alchemy', new Map(), ['/items/catalytic_tea'], 10);
+
+        expect(result.goldPerHour).toBe(777);
+        expect(args[0]).toBe('/items/moon_ore');
+        expect(args[1]).toBe(7);
+        expect(args[4].skills.find((skill) => skill.skillHrid === '/skills/alchemy').level).toBe(10);
+        // Coinify at item level 100 and planned level 10 has a -0.81 penalty.
+        // Catalytic Tea is additive: 0.7 * (1 - 0.81 + 0.05) = 0.168 success.
+        const successRate = 0.7 * (1 - 0.81 + 0.05);
+        const xpPerAction = successRate * 110 + (1 - successRate) * 11;
+        expect(result.xpPerHour).toBeCloseTo(180 * xpPerAction, 8);
+    });
+
+    test('an explicit item selection overrides a different running Alchemy action', () => {
+        state.gameData.itemDetailMap['/items/refined_plate'] = {
+            alchemyDetail: { unrefineDetail: { baseItemHrid: '/items/base_plate' } },
+            itemLevel: 20,
+        };
+        state.gameData.actionDetailMap['/actions/alchemy/unrefine'] = {
+            type: '/action_types/alchemy',
+            name: 'Unrefine',
+            baseTimeCost: 20e9,
+        };
+        state.actions = [
+            {
+                actionHrid: '/actions/alchemy/decompose',
+                primaryItemHash: 'character::/item_locations/inventory::/items/scrap_trinket::0',
+                ordinal: 1,
+                partyID: 0,
+                isDone: false,
+            },
+        ];
+        let args;
+        alchemyCalc.unrefine = (...received) => {
+            args = received;
+            return { profitPerHour: 246 };
+        };
+
+        const result = calculateSkillPerformance('alchemy', new Map(), [], 20, null, {
+            alchemyContext: { actionType: 'unrefine', itemHrid: '/items/refined_plate', enhancementLevel: 10 },
+        });
+
+        expect(result.goldPerHour).toBe(246);
+        expect(args.slice(0, 2)).toEqual(['/items/refined_plate', 10]);
     });
 });
 

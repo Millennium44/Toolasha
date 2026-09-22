@@ -339,9 +339,9 @@ class AlchemyProfitCalculator {
      * @param {number} itemLevel - The item's level
      * @returns {number} Penalty term, <= 0, additive into the success-rate bonus sum
      */
-    getUnderLevelPenalty(itemLevel) {
+    getUnderLevelPenalty(itemLevel, skillsOverride = null) {
         const level = itemLevel || 1;
-        const skills = dataManager.getSkills();
+        const skills = skillsOverride ?? dataManager.getSkills();
         const alchemySkill = skills?.find((s) => s.skillHrid === '/skills/alchemy');
         const alchemyLevel = alchemySkill?.level || 1;
         return alchemyLevel < level ? (UNDER_LEVEL_PENALTY_NUMERATOR / level) * (alchemyLevel - level) : 0;
@@ -692,8 +692,9 @@ class AlchemyProfitCalculator {
             // Alchemy uses item level (not action requirement) for efficiency calculation
             const equipment = actionContext?.equipment ?? dataManager.getEquipment();
             const drinkSlots = actionContext?.drinks ?? dataManager.getActionDrinkSlots('/action_types/alchemy');
+            const skills = actionContext?.skills ?? dataManager.getSkills();
             const actionStats = calculateActionStats(actionDetails, {
-                skills: dataManager.getSkills(),
+                skills,
                 equipment,
                 actionContext,
                 itemDetailMap: gameData.itemDetailMap,
@@ -759,7 +760,7 @@ class AlchemyProfitCalculator {
             const combo = _comboFn({
                 actionType: 'coinify',
                 baseSuccessRate: BASE_SUCCESS_RATES.COINIFY,
-                levelPenalty: this.getUnderLevelPenalty(itemLevel),
+                levelPenalty: this.getUnderLevelPenalty(itemLevel, skills),
                 actionsPerHour: actionsPerHourWithEfficiency,
                 efficiencyDecimal,
                 actionTime,
@@ -949,8 +950,9 @@ class AlchemyProfitCalculator {
             // Alchemy uses item level (not action requirement) for efficiency calculation
             const equipment = actionContext?.equipment ?? dataManager.getEquipment();
             const drinkSlots = actionContext?.drinks ?? dataManager.getActionDrinkSlots('/action_types/alchemy');
+            const skills = actionContext?.skills ?? dataManager.getSkills();
             const actionStats = calculateActionStats(actionDetails, {
-                skills: dataManager.getSkills(),
+                skills,
                 equipment,
                 actionContext,
                 itemDetailMap: gameData.itemDetailMap,
@@ -1067,7 +1069,7 @@ class AlchemyProfitCalculator {
             const combo = _comboFn({
                 actionType: 'decompose',
                 baseSuccessRate: BASE_SUCCESS_RATES.DECOMPOSE,
-                levelPenalty: this.getUnderLevelPenalty(itemLevel),
+                levelPenalty: this.getUnderLevelPenalty(itemLevel, skills),
                 actionsPerHour: actionsPerHourWithEfficiency,
                 efficiencyDecimal,
                 actionTime,
@@ -1253,7 +1255,8 @@ class AlchemyProfitCalculator {
             }
 
             const itemLevel = itemDetails.itemLevel || 1;
-            const levelPenalty = this.getUnderLevelPenalty(itemLevel);
+            const skills = actionContext?.skills ?? dataManager.getSkills();
+            const levelPenalty = this.getUnderLevelPenalty(itemLevel, skills);
 
             // Get alchemy action details
             const actionDetails = gameData.actionDetailMap['/actions/alchemy/transmute'];
@@ -1269,7 +1272,7 @@ class AlchemyProfitCalculator {
             const equipment = actionContext?.equipment ?? dataManager.getEquipment();
             const drinkSlots = actionContext?.drinks ?? dataManager.getActionDrinkSlots('/action_types/alchemy');
             const actionStats = calculateActionStats(actionDetails, {
-                skills: dataManager.getSkills(),
+                skills,
                 equipment,
                 actionContext,
                 itemDetailMap: gameData.itemDetailMap,
@@ -1557,7 +1560,7 @@ class AlchemyProfitCalculator {
      * @param {number} enhancementLevel
      * @param {boolean} useLiveSetup
      * @param {number|null} teaBonusOverride
-     * @param {{equipment?: Map, drinks?: Array}|null} actionContext
+     * @param {{equipment?: Map, drinks?: Array, skills?: Array}|null} actionContext
      * @returns {Object|null}
      */
     calculateUnrefineProfit(
@@ -1576,8 +1579,9 @@ class AlchemyProfitCalculator {
 
             const equipment = actionContext?.equipment ?? dataManager.getEquipment();
             const drinkSlots = actionContext?.drinks ?? dataManager.getActionDrinkSlots('/action_types/alchemy');
+            const skills = actionContext?.skills ?? dataManager.getSkills();
             const actionStats = calculateActionStats(actionDetails, {
-                skills: dataManager.getSkills(),
+                skills,
                 equipment,
                 actionContext,
                 itemDetailMap: gameData.itemDetailMap,

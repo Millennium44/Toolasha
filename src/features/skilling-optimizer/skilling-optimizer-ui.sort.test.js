@@ -12,7 +12,7 @@
  */
 import { describe, test, expect, vi, beforeEach } from 'vitest';
 
-const engine = vi.hoisted(() => ({ costs: {} }));
+const engine = vi.hoisted(() => ({ costs: {}, scoreCalls: [] }));
 
 vi.mock('../../core/config.js', () => ({
     default: { COLOR_ACCENT: '#22c55e', COLOR_INFO: '#38bdf8', COLOR_PROFIT: '#22c55e', getSetting: () => true },
@@ -37,7 +37,10 @@ vi.mock('./skilling-optimizer-engine.js', () => ({
     SKILL_TOOL_LOCATION: {},
 }));
 vi.mock('../../utils/tea-optimizer.js', () => ({
-    scoreEquipmentSetup: () => 0,
+    scoreEquipmentSetup: (...args) => {
+        engine.scoreCalls.push(args);
+        return 0;
+    },
 }));
 vi.mock('../../utils/house-roi.js', () => ({
     // The House Rooms board is its own module with its own tests; these files are about the
@@ -54,7 +57,7 @@ vi.mock('../combat/loadout-snapshot.js', () => ({
 }));
 vi.mock('../../utils/bundle-bridge.js', () => ({
     loadoutSnapshot: () => null,
-    dataManager: null,
+    dataManager: () => null,
 }));
 
 const { skillingSimulatorUI: ui } = await import('./skilling-optimizer-ui.js');
@@ -129,6 +132,7 @@ beforeEach(() => {
         '/items/rich': 5_000_000,
         '/items/dud': 9_000_000,
     };
+    engine.scoreCalls = [];
     ui.optimizerSortMode = 'value';
 });
 
@@ -234,6 +238,41 @@ describe('Equipment Progression sort control', () => {
 
         expect(container.querySelector('select').value).toBe('cost');
         expect(ui.optimizerSortMode).toBe('cost');
+    });
+
+    test('loadout baselines keep the selected actions and Alchemy item basis', () => {
+        const selectedActionHrids = new Set(['/actions/alchemy/unrefine']);
+        const alchemyContext = {
+            actionType: 'unrefine',
+            itemHrid: '/items/refined_plate',
+            enhancementLevel: 10,
+        };
+        const loadout = new Map([['/item_locations/cheap', { itemHrid: '/items/current_tool', enhancementLevel: 7 }]]);
+        const container = document.createElement('div');
+
+        ui._renderOptimizerResults(
+            container,
+            {
+                skill: 'Alchemy',
+                playerLevel: 60,
+                goal: 'xp',
+                xpBaseline: XP_BASELINE,
+                goldBaseline: GOLD_BASELINE,
+                slots: Object.fromEntries([slot('cheap', 100, 100)]),
+                goldHasMissingPrices: false,
+                selectedActionHrids,
+                alchemyContext,
+                alchemyContextIsManual: true,
+            },
+            null,
+            loadout
+        );
+
+        expect(engine.scoreCalls).toHaveLength(2);
+        for (const call of engine.scoreCalls) {
+            expect(call[4]).toBe(selectedActionHrids);
+            expect(call[6]).toBe(alchemyContext);
+        }
     });
 });
 

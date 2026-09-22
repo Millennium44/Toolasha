@@ -98,6 +98,16 @@ describe('calculateSuccessRateBreakdown', () => {
     });
 });
 
+describe('getUnderLevelPenalty', () => {
+    test('uses an explicitly planned Alchemy level instead of the live character level', () => {
+        mocks.skills = [{ skillHrid: '/skills/alchemy', level: 90 }];
+        const plannedSkills = [{ skillHrid: '/skills/alchemy', level: 10 }];
+
+        expect(alchemyProfitCalculator.getUnderLevelPenalty(100, plannedSkills)).toBeCloseTo(-0.81, 10);
+        expect(alchemyProfitCalculator.getUnderLevelPenalty(100)).toBeCloseTo(-0.09, 10);
+    });
+});
+
 describe('_bestCatalystCombo', () => {
     // netProfit is highest with a catalyst that costs nothing extra in this
     // fixture (catalystPrice comes from getItemPrice, mocked to 0), so the

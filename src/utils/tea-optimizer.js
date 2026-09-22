@@ -550,6 +550,20 @@ function calculateAlchemyGoldPerHour(alchemyContext, buffs, actionContext = null
 }
 
 /**
+ * Character skills with one planned level substituted without mutating the live DTO.
+ * @param {string} skillHrid
+ * @param {number} level
+ * @returns {Array<Object>}
+ */
+function skillsWithPlannedLevel(skillHrid, level) {
+    const skills = (dataManager.getSkills() || []).map((skill) => ({ ...skill }));
+    const existing = skills.find((skill) => skill.skillHrid === skillHrid);
+    if (existing) existing.level = level;
+    else skills.push({ skillHrid, level });
+    return skills;
+}
+
+/**
  * Calculate XP/hour for an alchemy action with a specific tea combination.
  * Alchemy XP is derived from item level, not from actionDetails.experienceGain.
  * @param {Object} alchemyContext - { actionType, itemHrid, enhancementLevel }
@@ -597,11 +611,15 @@ function calculateAlchemyXpPerHour(alchemyContext, buffs, playerLevel, otherEffi
     else if (actionType === 'unrefine') baseSuccessRate = 1;
     else baseSuccessRate = itemDetails.alchemyDetail?.transmuteSuccessRate || 0;
 
-    // Level penalty (transmute only)
+    // Coinify, Decompose and Transmute all use the item's level for the same
+    // under-level penalty. Catalytic Tea is additive with that penalty inside
+    // the success multiplier, matching calculateSuccessRateBreakdown in the
+    // profit calculator; multiplying the two terms makes the XP and Gold
+    // recommendations disagree about the exact same action.
     const levelPenalty =
-        actionType === 'transmute' && playerLevel < itemLevel ? (0.9 / itemLevel) * (playerLevel - itemLevel) : 0;
+        actionType !== 'unrefine' && playerLevel < itemLevel ? (0.9 / itemLevel) * (playerLevel - itemLevel) : 0;
 
-    const successRate = Math.max(0, Math.min(1.0, baseSuccessRate * (1 + levelPenalty) * (1 + teaBonusOverride)));
+    const successRate = Math.max(0, Math.min(1.0, baseSuccessRate * (1 + levelPenalty + teaBonusOverride)));
 
     // XP per action: success gives full XP, failure gives 10%
     // Wisdom multiplier — replace current tea wisdom with our hypothetical tea wisdom
@@ -1114,6 +1132,7 @@ export function findOptimalTeas(
             const actionContext = {
                 equipment,
                 drinks: combo.filter(Boolean).map((itemHrid) => ({ itemHrid })),
+                skills: skillsWithPlannedLevel('/skills/alchemy', playerLevel),
             };
             if (goal === 'xp') {
                 score = calculateAlchemyXpPerHour(alchemyContext, buffs, playerLevel, otherEfficiency, calcContext);
@@ -1415,6 +1434,7 @@ export function scoreEquipmentSetup(
         const actionContext = {
             equipment,
             drinks: teaHrids.filter(Boolean).map((itemHrid) => ({ itemHrid })),
+            skills: skillsWithPlannedLevel('/skills/alchemy', playerLevel),
         };
         return goal === 'gold'
             ? calculateAlchemyGoldPerHour(context, buffs, actionContext).profitPerHour
@@ -1557,6 +1577,8 @@ function formatBuffWithDC(scaledValue, dcBonus, suffix, isPercent) {
  * @param {Map<string, number>|Object<string, number>|null} [options.houseRoomLevels] - Model
  *   these house room levels instead of the character's own, so an upgrade can be scored
  *   before it is bought. Omitted, nothing about this call changes.
+ * @param {Object|null} [options.alchemyContext] - Exact Alchemy action and item to score;
+ *   otherwise the running action is used before the representative fallback.
  * @returns {{ xpPerHour: number, goldPerHour: number, teaCostPerHour: number }}
  */
 export function calculateSkillPerformance(
@@ -1565,7 +1587,7 @@ export function calculateSkillPerformance(
     teaHrids,
     playerLevel,
     selectedActionHrids = null,
-    { houseRoomLevels = null } = {}
+    { houseRoomLevels = null, alchemyContext = null } = {}
 ) {
     const normalizedSkill = skillName.toLowerCase();
     const isGathering = GATHERING_SKILLS.includes(normalizedSkill);
@@ -1606,14 +1628,18 @@ export function calculateSkillPerformance(
     // as zero and its Gold/hr never reflected a catalytic tea's whole effect.
     if (normalizedSkill === 'alchemy') {
         const repItemHrid = getRepresentativeAlchemyItemHrid(playerLevel, gameData.itemDetailMap);
-        if (!repItemHrid) return empty;
-        const alchemyContext = { actionType: 'decompose', itemHrid: repItemHrid };
-        const xpPerHour = calculateAlchemyXpPerHour(alchemyContext, buffs, playerLevel, otherEfficiency, calcContext);
+        const itemContext =
+            alchemyContext ||
+            resolveActiveAlchemyItemContext() ||
+            (repItemHrid ? { actionType: 'decompose', itemHrid: repItemHrid } : null);
+        if (!itemContext) return empty;
+        const xpPerHour = calculateAlchemyXpPerHour(itemContext, buffs, playerLevel, otherEfficiency, calcContext);
         const actionContext = {
             equipment,
             drinks: filteredTeas.map((itemHrid) => ({ itemHrid })),
+            skills: skillsWithPlannedLevel('/skills/alchemy', playerLevel),
         };
-        const goldResult = calculateAlchemyGoldPerHour(alchemyContext, buffs, actionContext);
+        const goldResult = calculateAlchemyGoldPerHour(itemContext, buffs, actionContext);
         const goldPerHour = goldResult.profitPerHour;
         return {
             xpPerHour: xpPerHour > 0 ? xpPerHour : 0,

@@ -1185,7 +1185,8 @@ class SkillingSimulatorUI {
             this.equipment,
             this.teas,
             this.currentLevel,
-            this.selectedActionHrids
+            this.selectedActionHrids,
+            { alchemyContext: this.currentSkill === 'Alchemy' ? this.alchemyItemOverride : null }
         );
 
         this._resultsArea.innerHTML = '';
@@ -1272,8 +1273,24 @@ class SkillingSimulatorUI {
             let goldBaseline = result.goldBaseline;
             if (loadoutEntry) {
                 const equipment = new Map([[locationHrid, loadoutEntry]]);
-                xpBaseline = scoreEquipmentSetup(result.skill, 'xp', equipment, result.playerLevel);
-                goldBaseline = scoreEquipmentSetup(result.skill, 'gold', equipment, result.playerLevel);
+                xpBaseline = scoreEquipmentSetup(
+                    result.skill,
+                    'xp',
+                    equipment,
+                    result.playerLevel,
+                    result.selectedActionHrids,
+                    [],
+                    result.alchemyContext
+                );
+                goldBaseline = scoreEquipmentSetup(
+                    result.skill,
+                    'gold',
+                    equipment,
+                    result.playerLevel,
+                    result.selectedActionHrids,
+                    [],
+                    result.alchemyContext
+                );
             }
 
             return {

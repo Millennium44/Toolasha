@@ -1504,10 +1504,6 @@ export function generateCandidates(
                 // With a guide, "other" is the archetype's own ability set rather
                 // than every ability in the game — see `guideSwapAllowed`.
                 const offered = guide ? guide.offers : Object.keys(gameData.abilityDetailMap);
-                const otherEquippedHasZeroCooldown = playerDTO.abilities.some((equipped, index) => {
-                    if (index === slotIdx || !equipped) return false;
-                    return gameData.abilityDetailMap[equipped.hrid]?.cooldownDuration === 0;
-                });
                 for (const abHrid of offered) {
                     const abDetail = gameData.abilityDetailMap[abHrid];
                     if (!abDetail) continue;
@@ -1516,7 +1512,6 @@ export function generateCandidates(
                     if (!abDetail.isSpecialAbility && slotIdx === 0) continue;
                     if (abHrid === '/abilities/promote') continue;
                     if (playerCount <= 1 && NO_SOLO_EFFECT_ABILITY_HRIDS.has(abHrid)) continue;
-                    if (abDetail.cooldownDuration === 0 && otherEquippedHasZeroCooldown) continue;
                     // The guide's own set is style-correct by construction — each
                     // archetype lists its own style's abilities plus the universal
                     // Critical Aura — so on the guide path trust guideSwapAllowed and

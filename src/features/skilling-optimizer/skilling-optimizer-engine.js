@@ -595,6 +595,7 @@ export function optimizeSkill(skillName, playerLevel, selectedActionHrids = null
         slots,
         goldHasMissingPrices,
         alchemyContext,
+        selectedActionHrids,
         alchemyContextIsManual: skillName.toLowerCase() === 'alchemy' && alchemyItemOverride !== null,
         xpTeaResult: xpTeaResult?.error ? null : xpTeaResult,
         goldTeaResult: goldTeaResult?.error ? null : goldTeaResult,

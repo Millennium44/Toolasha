@@ -327,13 +327,16 @@ describe('generateCandidates ability-swap pruning', () => {
         expect(offered).toContain('/abilities/revive');
     });
 
-    test('does not suggest adding a second zero-cooldown ability', () => {
+    test('keeps a zero-cooldown replacement before another zero-cooldown ability', () => {
         const result = candidates(
             [null, { hrid: '/abilities/smash', level: 10 }, { hrid: '/abilities/water_strike', level: 10 }, null, null],
             1
         );
         const slotOne = result.filter((candidate) => candidate.slot === 'ability_1');
-        expect(slotOne.map((candidate) => candidate.upgradeHrid)).not.toContain('/abilities/fireball');
+        // Ability evaluation is slot-ordered. Fireball in slot 1 can cast before
+        // Water Strike in slot 2, and their default triggers/effects need not be
+        // the same, so cooldown alone cannot prove this candidate is redundant.
+        expect(slotOne.map((candidate) => candidate.upgradeHrid)).toContain('/abilities/fireball');
     });
 });
 
