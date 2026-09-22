@@ -66,10 +66,8 @@ class MarketUndercutAlerts {
         this.mooketObservations = new Map();
         this.unregisterHandlers = [];
         this.characterSwitchingHandler = null;
-        /** Holds the active-refresh interval so cleanup can clear it */
+        /** Holds the optional pooled-history refresh interval so cleanup can clear it */
         this.timers = createTimerRegistry();
-        /** True while a forced refresh is in flight, so an overlapping tick is skipped */
-        this.refreshInFlight = false;
         /** True while a Mooket refresh is in flight, so an overlapping tick is skipped */
         this.mooketRefreshInFlight = false;
         /** Invalidates pending refreshes when the feature or character is torn down */
@@ -84,7 +82,7 @@ class MarketUndercutAlerts {
      */
     async initialize() {
         // The feature registry retries features that failed to start. A second
-        // run here would add a second handler pair, a second 15-minute refresh
+        // run here would add a second handler pair, a second 15-minute pooled-history refresh
         // timer, and a second stream of third-party Mooket requests — the last
         // of which is somebody else's rate limit being spent twice over.
         if (this.isInitialized) {
@@ -129,30 +127,18 @@ class MarketUndercutAlerts {
     }
 
     /**
-     * Keep the market snapshot from going stale on a timer while alerts are on.
+     * Refresh the optional pooled-history observations on their cache cadence.
      *
-     * Without this, nothing calls `marketAPI.fetch()` after startup, so the bulk
-     * snapshot goes stale and the only fresh per-item price is the order-book
-     * patch that lands when the player opens an item's view. An undercut that
-     * happened hours ago against an item never opened would then read as "still
-     * best" against the stale snapshot.
-     *
-     * The cadence is the market cache's own 15-minute window, and the tick calls
-     * the *cache-respecting* `marketAPI.fetch()` — not the forcing `fetch(true)`.
-     * That is the crucial politeness: `marketplace.json` is rate-limited by the
-     * game (a burst of requests, often several userscripts at once, trips a
-     * temporary CloudFront 403), so this must never pull faster than the cache
-     * would on its own. A tick whose cache is still valid returns the cached copy
-     * with no network hit and simply re-notifies listeners; only a tick that
-     * finds the cache expired makes a real request — at most one per 15 minutes.
-     * There is deliberately no shorter, configurable interval.
+     * The always-on base snapshot refresh belongs to MarketAPI itself. Keeping a
+     * second fetch timer here would make enabling this optional alert duplicate
+     * cache checks and listener notifications. This timer only owns the pooled
+     * history source that the alert conditionally enables.
      */
     startActiveRefresh() {
         const intervalId = setInterval(() => {
-            this.refreshSnapshot();
             this.refreshMooketObservations();
         }, marketAPI.CACHE_DURATION);
-        this.timers.registerInterval(intervalId);
+        this.timers.registerInterval(intervalId, 'marketUndercutAlerts:pooledHistory');
     }
 
     /**
@@ -222,31 +208,6 @@ class MarketUndercutAlerts {
             if (!byKey.has(key)) byKey.set(key, { itemHrid: listing.itemHrid, enhancementLevel });
         }
         return [...byKey.values()];
-    }
-
-    /**
-     * Refresh the snapshot through the cache, skipping the tick if one is in flight.
-     *
-     * Uses the cache-respecting `fetch()`: it only touches the network when the
-     * 15-minute cache has expired, so it can never contribute to rate-limiting
-     * beyond what the cache already permits.
-     */
-    async refreshSnapshot() {
-        if (!config.getSetting(MASTER_SETTING)) return;
-        if (this.refreshInFlight) {
-            // A previous fetch has not settled; do not stack a second one
-            return;
-        }
-
-        const generation = this.refreshGeneration;
-        this.refreshInFlight = true;
-        try {
-            await marketAPI.fetch();
-        } catch (error) {
-            console.error('[MarketUndercutAlerts] Market snapshot refresh failed:', error);
-        } finally {
-            if (generation === this.refreshGeneration) this.refreshInFlight = false;
-        }
     }
 
     /**
@@ -431,7 +392,6 @@ class MarketUndercutAlerts {
         this.listingStates.clear();
         this.mooketObservations.clear();
         this.timers.clearAll();
-        this.refreshInFlight = false;
         this.mooketRefreshInFlight = false;
         this.isInitialized = false;
     }

@@ -54,6 +54,29 @@ class MarketAPI {
         this._inFlightFetch = null;
         /** Whether that fetch was a forced one (a forced result satisfies anyone) */
         this._inFlightForce = false;
+
+        /** Page-lifetime base-snapshot refresh interval, or null while stopped. */
+        this._autoRefreshInterval = null;
+    }
+
+    /**
+     * Re-check the base snapshot on its own cache cadence for the life of the page.
+     * The tick deliberately calls unforced fetch(): the cache decides whether a network
+     * request is due, and the existing in-flight dedup absorbs overlapping callers.
+     */
+    startAutoRefresh() {
+        if (this._autoRefreshInterval !== null) return;
+
+        this._autoRefreshInterval = setInterval(() => {
+            this.fetch().catch((error) => this.logError('Auto-refresh fetch failed', error));
+        }, this.CACHE_DURATION);
+    }
+
+    /** Stop the page-lifetime base-snapshot refresh interval. */
+    stopAutoRefresh() {
+        if (this._autoRefreshInterval === null) return;
+        clearInterval(this._autoRefreshInterval);
+        this._autoRefreshInterval = null;
     }
 
     /**

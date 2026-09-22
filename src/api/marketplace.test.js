@@ -117,6 +117,59 @@ describe('MarketAPI fetch', () => {
     });
 });
 
+describe('MarketAPI automatic snapshot refresh', () => {
+    beforeEach(() => {
+        vi.resetModules();
+        vi.useFakeTimers();
+        vi.stubGlobal('fetch', vi.fn());
+        createMocks(true);
+    });
+
+    afterEach(() => {
+        vi.useRealTimers();
+        vi.unstubAllGlobals();
+    });
+
+    test('rechecks long-lived sessions on the cache cadence without forcing a request', async () => {
+        const { default: marketAPI } = await import('./marketplace.js');
+        const refresh = vi.spyOn(marketAPI, 'fetch').mockResolvedValue(null);
+
+        marketAPI.startAutoRefresh();
+        await vi.advanceTimersByTimeAsync(marketAPI.CACHE_DURATION * 2);
+
+        expect(refresh).toHaveBeenCalledTimes(2);
+        expect(refresh.mock.calls).toEqual([[], []]);
+        marketAPI.stopAutoRefresh();
+    });
+
+    test('starting twice still owns only one interval', async () => {
+        const { default: marketAPI } = await import('./marketplace.js');
+        const refresh = vi.spyOn(marketAPI, 'fetch').mockResolvedValue(null);
+
+        marketAPI.startAutoRefresh();
+        marketAPI.startAutoRefresh();
+        await vi.advanceTimersByTimeAsync(marketAPI.CACHE_DURATION);
+
+        expect(refresh).toHaveBeenCalledTimes(1);
+        marketAPI.stopAutoRefresh();
+    });
+
+    test('stop clears the interval and allows a later restart', async () => {
+        const { default: marketAPI } = await import('./marketplace.js');
+        const refresh = vi.spyOn(marketAPI, 'fetch').mockResolvedValue(null);
+
+        marketAPI.startAutoRefresh();
+        marketAPI.stopAutoRefresh();
+        await vi.advanceTimersByTimeAsync(marketAPI.CACHE_DURATION * 2);
+        expect(refresh).not.toHaveBeenCalled();
+
+        marketAPI.startAutoRefresh();
+        await vi.advanceTimersByTimeAsync(marketAPI.CACHE_DURATION);
+        expect(refresh).toHaveBeenCalledTimes(1);
+        marketAPI.stopAutoRefresh();
+    });
+});
+
 describe('MarketAPI fetch in-flight dedup', () => {
     beforeEach(() => {
         vi.resetModules();

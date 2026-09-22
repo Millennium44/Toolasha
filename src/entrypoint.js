@@ -2508,6 +2508,11 @@ if (isCombatSimulatorPage()) {
     // stats while measuring is on — the stall ledger's attribution net
     Core.installIntervalTracing?.();
 
+    // Long-lived tabs need a caller to re-check the 15-minute snapshot cache even when
+    // no optional market watcher is enabled. The API timer uses unforced fetches and the
+    // shared in-flight dedup, so other refresh callers cannot create a request burst.
+    marketAPI.startAutoRefresh();
+
     performanceMonitor.mark('script:start');
 
     // Register all features from libraries

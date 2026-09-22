@@ -221,7 +221,7 @@ beforeAll(async () => {
                 },
             },
             performanceMonitor: { mark: () => {} },
-            marketAPI: { fetch: async () => null },
+            marketAPI: { fetch: async () => null, startAutoRefresh: vi.fn() },
             settingsMirror: { startMirroring: () => {} },
             // Counted rather than a plain stub: the entrypoint must never call this
             // on its own any more — see the "storage persistence" describe block

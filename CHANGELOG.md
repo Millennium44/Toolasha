@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Market prices refresh throughout long sessions
+
+- The broad market snapshot was loaded at startup but could stay stale for the rest of a long-lived tab unless an optional listing alert happened to be enabled. It is now rechecked on the existing 15-minute cache cadence for every player, without forcing extra requests or duplicating the alert's separate pooled-history refresh.
+
 ### Marketplace Action opens outside the game's clipped menu
 
 - The four Marketplace Action choices could be cut off by the inventory item's short, scrollable action menu. The choices now open in a panel positioned below the button but outside that clipped container; outside clicks close every such panel normally, and one click opens it again.
