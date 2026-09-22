@@ -156,7 +156,17 @@ class AutoFillPrice {
         // long the tradable band must move before the order can fill. Preserve
         // that patient price instead of replacing it with Best Buy/Sell and
         // then clamping it back inside the current band.
+        //
+        // Seeing the notice spends the modal's one shot, the same as a fill
+        // would: the notice goes away as soon as the player edits the price
+        // back inside the band, and a later observer pass must not then fill
+        // over the price they chose. A notice that arrives on a later pass
+        // than the Best Price label is still honoured as long as that label
+        // pass has not happened yet (an early shell fire marks nothing); one
+        // that renders only after the fill is too late, since the Best Price
+        // press has already replaced the hourglass price.
         if (modal.querySelector('div[class*="MarketplacePanel_priceFeedback"][class*="MarketplacePanel_notice"]')) {
+            this.processedModals.add(modal);
             return;
         }
 

@@ -8,7 +8,7 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ### Preserve patient marketplace order prices
 
-- Clicking an hourglass Buy or Sell order now keeps the out-of-band price and estimated wait chosen by the game instead of having Toolasha replace it with the current best listing price.
+- Clicking an hourglass Buy or Sell order now keeps the out-of-band price and estimated wait chosen by the game instead of having Toolasha replace it with the current best listing price, and editing that price afterwards no longer triggers the auto-fill.
 
 ### Other coding agents now read the same workflow rules
 

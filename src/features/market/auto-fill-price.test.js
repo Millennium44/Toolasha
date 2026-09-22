@@ -142,7 +142,80 @@ describe('the one-shot is spent on work done, not on a modal being seen', () => 
         autoFillPrice.handleOrderModal(patient.modal);
 
         expect(patient.clicks).toEqual([]);
+        expect(autoFillPrice.processedModals.has(patient.modal)).toBe(true);
+    });
+
+    test('the hourglass price survives the notice going away once the player edits it', () => {
+        const patient = orderModal(true);
+        const notice = document.createElement('div');
+        notice.className = 'MarketplacePanel_priceFeedback__j1JbB MarketplacePanel_notice__2lMgw';
+        patient.modal.appendChild(notice);
+        autoFillPrice.handleOrderModal(patient.modal);
+
+        // The player nudges the price back inside the band; the game drops the
+        // notice and the observer fires again on the re-render
+        notice.remove();
+        autoFillPrice.handleOrderModal(patient.modal);
+
+        expect(patient.clicks).toEqual([]);
+    });
+
+    test('a notice committed after the shell, with the price controls, is still honoured', () => {
+        const patient = orderModal(false);
+        autoFillPrice.handleOrderModal(patient.modal);
         expect(autoFillPrice.processedModals.has(patient.modal)).toBe(false);
+
+        let clicked = 0;
+        const label = document.createElement('span');
+        label.className = 'MarketplacePanel_bestPrice__1qP2x';
+        label.textContent = 'Best Sell: 994,000';
+        label.addEventListener('click', () => (clicked += 1));
+        const notice = document.createElement('div');
+        notice.className = 'MarketplacePanel_priceFeedback__j1JbB MarketplacePanel_notice__2lMgw';
+        patient.modal.append(label, notice);
+        autoFillPrice.handleOrderModal(patient.modal);
+
+        expect(clicked).toBe(0);
+        expect(autoFillPrice.processedModals.has(patient.modal)).toBe(true);
+    });
+});
+
+describe('a normal listing with some other feedback element is still filled', () => {
+    beforeEach(() => {
+        vi.useFakeTimers();
+        autoFillPrice.processedModals = new WeakSet();
+        autoFillPrice.clampState = new WeakMap();
+    });
+
+    afterEach(() => {
+        autoFillPrice.timerRegistry.clearAll();
+        vi.useRealTimers();
+        document.body.innerHTML = '';
+    });
+
+    test.each([
+        ['a price feedback that is not the notice', 'MarketplacePanel_priceFeedback__j1JbB'],
+        ['a notice that is not price feedback', 'MarketplacePanel_notice__2lMgw'],
+        ['no feedback element at all', null],
+    ])('%s: fills from Best Sell and clamps into the band', (_label, feedbackClass) => {
+        const { modal, clicks } = orderModalWithPriceRow({
+            rangeText: 'Tradable range: 63.8M – 77.8M',
+            price: '100,000,000',
+        });
+        const best = document.createElement('div');
+        best.innerHTML = 'Best Sell: <span class="MarketplacePanel_bestPrice__1qP2x">100,000,000</span>';
+        best.querySelector('span').addEventListener('click', () => clicks.push('best-price'));
+        modal.appendChild(best);
+        if (feedbackClass) {
+            const feedback = document.createElement('div');
+            feedback.className = feedbackClass;
+            modal.appendChild(feedback);
+        }
+
+        autoFillPrice.handleOrderModal(modal);
+        vi.advanceTimersByTime(200);
+
+        expect(clicks).toEqual(['best-price', 'Max']);
     });
 });
 
