@@ -108,6 +108,8 @@ export function resetLiquidityCache() {
  * @param {string} itemHrid - The item
  * @param {number} enhancementLevel - Which variant
  * @param {string} key - The cache key for both maps
+ * @param {{key: string, hasVolume: boolean}} source - The history source current when the lookup
+ *   started (the one `key` is filed under); `hasVolume` decides whether it can be measured at all
  * @returns {Promise<{itemHrid: string, unitsPerDay: number, days: number, known: boolean}>}
  */
 async function measureDailyVolume(itemHrid, enhancementLevel, key, source) {

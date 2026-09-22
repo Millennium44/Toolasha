@@ -224,9 +224,12 @@ class SyncManager {
     cleanup() {
         // Character switches tear this feature down while a GitHub request may
         // still be pending. Invalidate that operation's ownership token so it
-        // cannot apply the old character's pull after the next one opens.
+        // cannot apply its pull after the next character opens. `busy` itself
+        // stays held: an import already under way cannot be stopped, and
+        // without Web Locks this flag is the only thing keeping the next
+        // character's switch push from uploading a half-imported database.
+        // The cancelled operation's own `finally` releases it.
         if (typeof this.busy === 'number') this.lastCancelledToken = this.busy;
-        this.busy = false;
         unregisterCommand('Sync push');
         unregisterCommand('Sync pull');
         unregisterCommand('Sync pull summary');
@@ -277,18 +280,7 @@ class SyncManager {
         // A previous pull could not read a local history and deliberately held
         // its downloaded counterpart back. Uploading this incomplete union
         // would replace that counterpart in the gist before it can be retried.
-        if (await storage.get(KEY_MERGE_HELD, STORE, null)) {
-            if (!silent) {
-                showToast(
-                    'Sync push paused: some downloaded records are still waiting. Pull again after storage recovers.',
-                    {
-                        kind: 'warn',
-                        duration: 0,
-                    }
-                );
-            }
-            return { ok: false, reason: 'held-back' };
-        }
+        if (await storage.get(KEY_MERGE_HELD, STORE, null)) return this._heldBackResult(silent);
         const token = this._token();
         const scope = config.getSetting('sync_scope', 'settings');
 
@@ -407,6 +399,10 @@ class SyncManager {
         // point at.
         if (!this._stillOwns(opToken)) return this._supersededResult(silent, 'push', opToken);
 
+        // Another tab's pull may have held records back while this payload was
+        // being built. The check at the top is too early to cover that.
+        if (await storage.get(KEY_MERGE_HELD, STORE, null)) return this._heldBackResult(silent);
+
         const written = await writeSyncGist(token, gistId, manifest, chunks, previousChunks);
 
         // The upload already landed — that part cannot be undone or is not
@@ -425,6 +421,22 @@ class SyncManager {
             showToast(`Synced to GitHub (${scope === 'everything' ? 'everything' : 'settings only'}).`);
         }
         return { ok: true };
+    }
+
+    /**
+     * What a push returns when a pull's held-back records have not landed yet.
+     * @param {boolean} silent - Whether to say anything about it
+     * @returns {{ok: boolean, reason: string}} Outcome
+     * @private
+     */
+    _heldBackResult(silent) {
+        if (!silent) {
+            showToast(
+                'Sync push paused: some downloaded records are still waiting. Pull again after storage recovers.',
+                { kind: 'warn', duration: 0 }
+            );
+        }
+        return { ok: false, reason: 'held-back' };
     }
 
     /**
@@ -843,17 +855,18 @@ class SyncManager {
      * Record what this device now believes about the gist.
      * @param {{gistId: string, exportedAt: string, hash: string, chunkCount: number,
      *   syncSeq?: number|null, mergeHeld?: Object|null}} state - New state. `syncSeq` is null for an exchange
-     *   with a gist that carries no counter, which must not invent one.
+     *   with a gist that carries no counter, which must not invent one. `mergeHeld` is passed only by a
+     *   pull, which is the one exchange that can land or hold back records; a push leaves the marker alone.
      * @private
      */
-    async _remember({ gistId, exportedAt, hash, chunkCount, syncSeq = null, mergeHeld = null }) {
+    async _remember({ gistId, exportedAt, hash, chunkCount, syncSeq = null, mergeHeld = undefined }) {
         await rememberLocal({
             [KEY_GIST_ID]: gistId,
             [KEY_LAST_SYNCED_AT]: exportedAt,
             [KEY_LAST_HASH]: hash,
             [KEY_CHUNK_COUNT]: chunkCount,
             [KEY_LAST_SYNCED_SEQ]: syncSeq,
-            [KEY_MERGE_HELD]: mergeHeld,
+            ...(mergeHeld === undefined ? {} : { [KEY_MERGE_HELD]: mergeHeld }),
         });
     }
 
@@ -931,11 +944,13 @@ class SyncManager {
      * operation stands down instead of overwriting what the takeover wrote.
      *
      * @param {number} opToken - The token this operation's `_run` call took
-     * @returns {boolean} True while this operation still owns `busy`
+     * @returns {boolean} True while this operation still owns `busy` and was not cancelled by cleanup
      * @private
      */
     _stillOwns(opToken) {
-        return this.busy === opToken;
+        // Cleanup keeps a cancelled operation's lock held (see `cleanup`) but
+        // stops honouring its work, the same way a takeover does.
+        return this.busy === opToken && opToken > (this.lastCancelledToken || 0);
     }
 
     /**
