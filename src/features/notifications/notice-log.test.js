@@ -31,7 +31,12 @@ vi.mock('../../core/data-manager.js', () => ({
 
 vi.mock('../../core/storage.js', () => ({
     default: {
-        getJSON: async (key) => (store.read ? store.read(key) : (store.data.get(key) ?? null)),
+        tryGet: async (key) => {
+            const value = store.read ? await store.read(key) : store.data.get(key);
+            if (value === null) return null;
+            return value === undefined ? { found: false, value: null } : { found: true, value };
+        },
+        parseJSON: (raw) => (typeof raw === 'string' ? JSON.parse(raw) : raw),
         setJSON: async (key, value) => {
             // Cloned on the way in, as IndexedDB would: a store handing back the
             // same object the log is still mutating would hide every bug here
@@ -178,6 +183,25 @@ describe('persistence', () => {
         await expect(loadNoticeLog()).resolves.toBeUndefined();
         expect(noticeCount()).toBe(0);
     });
+
+    test('a failed first read cannot overwrite saved history with a live notice', async () => {
+        const key = noticeLogKey('char-1');
+        store.data.set(key, { seenAt: 0, entries: [notice({ at: 1, subject: 'saved' })] });
+        let reads = 0;
+        store.read = () => {
+            // tryGet uses null for an unreadable transaction, not for an absent key.
+            if (++reads === 1) return null;
+            return store.data.get(key);
+        };
+
+        appendNotice(notice({ at: 2, subject: 'live' }));
+        await settle();
+        expect(store.data.get(key).entries.map((entry) => entry.subject)).toEqual(['saved']);
+
+        await loadNoticeLog();
+        expect(readNotices().map((entry) => entry.subject)).toEqual(['live', 'saved']);
+        expect(store.data.get(key).entries.map((entry) => entry.subject)).toEqual(['saved', 'live']);
+    });
 });
 
 describe('what has been read', () => {
@@ -286,6 +310,33 @@ describe('character_switching', () => {
             'saved char-1',
             'live char-1',
         ]);
+    });
+
+    test('a failed read retains unsaved notices across a switch back to their character', async () => {
+        const key = noticeLogKey('char-1');
+        store.data.set(key, { seenAt: 0, entries: [notice({ at: 1, subject: 'saved char-1' })] });
+        let firstRead = true;
+        store.read = (requestedKey) => {
+            if (requestedKey === key && firstRead) {
+                firstRead = false;
+                throw new Error('IndexedDB temporarily unavailable');
+            }
+            return store.data.get(requestedKey);
+        };
+        const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+        appendNotice(notice({ at: 2, subject: 'live char-1' }));
+        await settle();
+        store.dmHandlers.character_switching();
+        store.character = 'char-2';
+        await loadNoticeLog();
+        expect(readNotices()).toEqual([]);
+
+        store.dmHandlers.character_switching();
+        store.character = 'char-1';
+        await loadNoticeLog();
+        expect(readNotices().map((entry) => entry.subject)).toEqual(['live char-1', 'saved char-1']);
+        errorSpy.mockRestore();
     });
 
     test('rapid A to B to A switches reuse A hydration without mixing or losing notices', async () => {
