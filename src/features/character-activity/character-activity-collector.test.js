@@ -73,6 +73,13 @@ describe('character activity collector session lifecycle', () => {
         expect(state.savePreferences).not.toHaveBeenCalled();
     });
 
+    test('reports an immediate checkpoint that storage could not land', async () => {
+        await collector.initialize();
+        state.saveRecord.mockClear().mockResolvedValue(false);
+
+        await expect(collector.checkpointForCharacterSelect()).resolves.toBe(false);
+    });
+
     test('does not checkpoint after cleanup or after the live character has changed', async () => {
         await collector.initialize();
         state.saveRecord.mockClear();

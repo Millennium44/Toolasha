@@ -104,7 +104,10 @@ class CharacterSelectRenderer {
             // records used to draw its slots, so the character being left does not look stale.
             if (!this.checkpointedRoots.has(rootElement)) {
                 this.checkpointedRoots.add(rootElement);
-                await characterActivityCollector.checkpointForCharacterSelect();
+                const checkpointed = await characterActivityCollector.checkpointForCharacterSelect();
+                // Keep the pre-await marker so simultaneous root/slots observations coalesce,
+                // but let a later native rescan retry after a transient storage failure.
+                if (!checkpointed) this.checkpointedRoots.delete(rootElement);
             }
 
             this.trackedSlots.clear();

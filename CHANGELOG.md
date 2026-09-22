@@ -6,6 +6,11 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Character Select and queue timing stay accurate at failure boundaries
+
+- Character Select now retries its departure checkpoint after a transient storage failure instead of leaving the active character's status stale for the rest of that screen.
+- An endless action now keeps later, unreachable queue rows out of the queue's total duration while still showing each row's own duration for planning.
+
 ### Metz combat simulator import and profile export
 
 - The external-tools menu now links to Metz Combat Simulator, where Toolasha can import the current character and cached party profiles directly from its setup screen. Profile exports include saved combat loadouts, spare gear and abilities, and the available enhancing and alchemy setup for optimizer calculations.

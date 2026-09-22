@@ -133,16 +133,21 @@ class CharacterActivityCollector {
      * Immediately persist the active character before Character Select reads its record.
      * Native Switch Character navigation does not emit character_switching or beforeunload, so
      * the normal departure hooks do not cover this route.
-     * @returns {Promise<void>}
+     * @returns {Promise<boolean>} Whether the checkpoint landed, or no checkpoint was needed
      */
     async checkpointForCharacterSelect() {
-        if (!this.isInitialized || !this.characterId) return;
-        if (this.characterId !== dataManager.getCurrentCharacterId()) return;
+        if (!this.isInitialized || !this.characterId) return true;
+        if (this.characterId !== dataManager.getCurrentCharacterId()) return true;
 
         try {
-            await saveCharacterActivity(this.characterId, this.buildRecord(this.characterId, this.characterName), true);
+            return await saveCharacterActivity(
+                this.characterId,
+                this.buildRecord(this.characterId, this.characterName),
+                true
+            );
         } catch (error) {
             console.error('[CharacterActivity] Failed to checkpoint before Character Select:', error);
+            return false;
         }
     }
 

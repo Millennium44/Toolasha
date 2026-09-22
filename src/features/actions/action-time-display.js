@@ -1902,8 +1902,11 @@ class ActionTimeDisplay {
             // Include current action time in total (same as edit menu)
             const currentActionTime = this.calculateCurrentActionTime(currentActions, inventoryLookup);
             if (currentActionTime) {
-                accumulatedTime += currentActionTime.totalTime;
-                if (currentActionTime.hasInfinite) hasInfinite = true;
+                if (currentActionTime.hasInfinite) {
+                    hasInfinite = true;
+                } else {
+                    accumulatedTime += currentActionTime.totalTime;
+                }
                 if (currentActionTime.hasUnknown) hasUnknown = true;
                 if (currentActionTime.isEstimated) hasEstimate = true;
             }
@@ -1933,8 +1936,13 @@ class ActionTimeDisplay {
                 if (combat) {
                     let combatText = combat.text;
                     if (combat.kind === 'estimate') {
-                        accumulatedTime += combat.seconds;
-                        hasEstimate = true;
+                        // An unbounded predecessor never hands the queue on. Keep this row's
+                        // own duration visible, but do not present it as part of the reachable
+                        // queue total (or as a reason to mark that total estimated).
+                        if (!hasInfinite) {
+                            accumulatedTime += combat.seconds;
+                            hasEstimate = true;
+                        }
                         if (!hasInfinite && !hasUnknown) {
                             combatText += buildQueueCompletionText(accumulatedTime, true);
                         }
@@ -1957,10 +1965,10 @@ class ActionTimeDisplay {
 
                 if (result.isTrulyInfinite) {
                     hasInfinite = true;
-                } else {
+                } else if (!hasInfinite) {
                     accumulatedTime += result.actionTimeSeconds;
                 }
-                if (result.materialLimitIsEstimated) hasEstimate = true;
+                if (!hasInfinite && result.materialLimitIsEstimated) hasEstimate = true;
 
                 // Format time text
                 let timeText;
@@ -4641,15 +4649,18 @@ class ActionTimeDisplay {
                     console.warn('[Action Time Display] Unknown queued action:', actionObj.actionHrid);
                     continue;
                 }
+                const isReachable = !hasInfinite;
 
                 // A counted fight: timed from the last all-zones sim, or read as unknown
                 const combat = this.combatRowEstimate(actionObj, actionDetails);
                 if (combat) {
                     let combatText = combat.text;
                     if (combat.kind === 'estimate') {
-                        accumulatedTime += combat.seconds;
-                        hasEstimate = true;
-                        usesSimRate = true;
+                        if (isReachable) {
+                            accumulatedTime += combat.seconds;
+                            hasEstimate = true;
+                            usesSimRate = true;
+                        }
                         if (!hasInfinite && !hasUnknown) {
                             combatText += buildQueueCompletionText(accumulatedTime, true);
                         }
@@ -4706,7 +4717,7 @@ class ActionTimeDisplay {
                         count = enhancingTime.count;
                         totalTime = enhancingTime.totalTime;
                         actionTimeSeconds = enhancingTime.totalTime;
-                        accumulatedTime += enhancingTime.totalTime;
+                        if (isReachable) accumulatedTime += enhancingTime.totalTime;
                         // Only when the cap bound, as in the non-enhancing branch below
                         if (enhancingTime.limitType) {
                             materialLimit = enhancingTime.count;
@@ -4786,7 +4797,7 @@ class ActionTimeDisplay {
                         const avgActionsPerBaseAction = calculateEfficiencyMultiplier(totalEfficiency);
                         baseActionsNeeded = Math.ceil(count / avgActionsPerBaseAction);
                         totalTime = baseActionsNeeded * actionTime;
-                        accumulatedTime += totalTime;
+                        if (isReachable) accumulatedTime += totalTime;
                         actionTimeSeconds = totalTime;
                     }
                 }
@@ -4811,7 +4822,7 @@ class ActionTimeDisplay {
                     });
                 }
 
-                if (materialLimitIsEstimated) {
+                if (isReachable && materialLimitIsEstimated) {
                     hasEstimate = true;
                     hasMaterialLimitEstimate = true;
                 }

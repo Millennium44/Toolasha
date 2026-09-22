@@ -172,7 +172,7 @@ beforeEach(() => {
     observer.handlers = [];
     observer.readyHandlers = [];
     observer.domReady = true;
-    collector.checkpointForCharacterSelect.mockReset().mockResolvedValue();
+    collector.checkpointForCharacterSelect.mockReset().mockResolvedValue(true);
     document.body.innerHTML = '';
 });
 
@@ -209,6 +209,16 @@ describe('drawing into character select', () => {
 
         const nextRoot = mountCharacterSelect(['1234']);
         await renderer.onCharacterSelectMounted(nextRoot);
+
+        expect(collector.checkpointForCharacterSelect).toHaveBeenCalledTimes(2);
+    });
+
+    test('retries a checkpoint that storage reports did not land', async () => {
+        collector.checkpointForCharacterSelect.mockResolvedValueOnce(false).mockResolvedValueOnce(true);
+        const root = mountCharacterSelect(['1234']);
+
+        await renderer.onCharacterSelectMounted(root);
+        await renderer.onCharacterSelectMounted(root);
 
         expect(collector.checkpointForCharacterSelect).toHaveBeenCalledTimes(2);
     });
