@@ -161,6 +161,8 @@ function makeStub() {
 }
 
 beforeAll(async () => {
+    globalThis.Chart = class {};
+    globalThis.ChartDataLabels = {};
     window.Toolasha = {
         Core: {
             storage: {
@@ -244,6 +246,7 @@ beforeAll(async () => {
             toast: { showToast: (message, options) => toastCalls.push({ message, options }) },
             selectors: { GAME },
         },
+        Sim: makeStub(),
         Market: makeStub(),
         Actions: makeStub(),
         Combat: makeStub(),
@@ -262,6 +265,58 @@ beforeAll(async () => {
     };
 
     entrypointModule = await import('./entrypoint.js');
+});
+
+describe('startup dependency diagnostics', () => {
+    test('enumerates every production bundle and both external chart dependencies', () => {
+        expect(entrypointModule._missingDependencies({}, { 'Chart.js': null, 'Chart.js data labels': null })).toEqual([
+            'Core',
+            'Utils',
+            'Sim',
+            'Market',
+            'Actions',
+            'Combat',
+            'UI',
+            'Chart.js',
+            'Chart.js data labels',
+        ]);
+
+        const namespace = {
+            Core: {},
+            Utils: {},
+            Market: {},
+            Actions: {},
+            Combat: {},
+            UI: {},
+        };
+
+        expect(
+            entrypointModule._missingDependencies(namespace, { 'Chart.js': {}, 'Chart.js data labels': null })
+        ).toEqual(['Sim', 'Chart.js data labels']);
+    });
+
+    test('does not claim a simultaneous GitHub incident caused the failed dependency', () => {
+        const line = entrypointModule._githubOutageLine('minor', 'Partial outage');
+
+        expect(line).toContain('may be preventing');
+        expect(line).not.toContain('that is why');
+        expect(line).not.toContain('not a bug');
+    });
+
+    test('gives next steps when GitHub reports no incident', () => {
+        const line = entrypointModule._githubOutageLine('none', 'All Systems Operational');
+
+        expect(line).toContain('network');
+        expect(line).toContain('CDN');
+        expect(line).toContain('update or reinstall');
+    });
+
+    test('does not report a clean GitHub status when the status response has no indicator', () => {
+        const line = entrypointModule._githubOutageLine(undefined, undefined);
+
+        expect(line).toContain('could not be confirmed');
+        expect(line).not.toContain('reports no current incident');
+    });
 });
 
 /**
