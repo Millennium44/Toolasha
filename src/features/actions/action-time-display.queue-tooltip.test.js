@@ -212,4 +212,26 @@ describe('queue tooltip content-keyed guard', () => {
 
         expect(el.querySelector('.mwi-queue-action-time').textContent).toBe('[20s] in 20s');
     });
+
+    test('a reused popper annotates a replaced row even when the action data is unchanged', async () => {
+        const el = queueTooltipPopper();
+        observerState.handler(el);
+        const actions = el.querySelector('[class*="QueuedActions_actions"]');
+        actions.querySelector('[class*="QueuedActions_action__"]').outerHTML = `
+            <div class="QueuedActions_action__item">
+                <div class="QueuedActions_actionText__y">
+                    <div class="QueuedActions_text__z">#1<svg><use href="#enhancing_icon"></use></svg>Cheese Sword +1</div>
+                </div>
+            </div>`;
+
+        el.remove();
+        await Promise.resolve();
+        await Promise.resolve();
+        document.body.appendChild(el);
+        observerState.handler(el);
+
+        expect(actions.querySelectorAll('.mwi-queue-action-time')).toHaveLength(1);
+        expect(totalText(el)).toBe('Total: 20s');
+        expect(actions.querySelectorAll('.mwi-queue-tooltip-total')).toHaveLength(1);
+    });
 });

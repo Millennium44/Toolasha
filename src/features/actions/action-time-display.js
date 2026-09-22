@@ -1867,23 +1867,9 @@ class ActionTimeDisplay {
             const actionDivs = tooltipContent.querySelectorAll('[class*="QueuedActions_action__"]');
             if (actionDivs.length === 0) return;
 
-            // Content-keyed guard against duplicate/stale injection. tooltip-observer.js
-            // redelivers a popper as freshly "opened" once it has genuinely left and
-            // returned to the document — which is what happens when the game closes this
-            // tooltip and later reuses the same popper element for the next hover of the
-            // same "+N Queued Actions" badge. Between those two hovers the queue keeps
-            // moving (actions complete, get reordered, or are edited), so a guard that only
-            // checks "was anything injected before" — with no key describing which queue
-            // state that was for — would find the previous hover's leftover
-            // `.mwi-queue-action-time` markers and skip re-injection entirely, leaving the
-            // stale time/total on screen under the new queue state. Same guard shape fixed
-            // for tooltip-prices.js (6dc52988) and dungeon-token-tooltips.js (d3101317).
-            const completionStyle = config.getSettingValue('actionQueue_completionTimeStyle', 'absolute');
-            const contentKey = `${completionStyle}|${actionDivs.length}|${currentActions
-                .map((a) => `${a.id}:${a.currentCount}:${a.maxCount ?? ''}:${a.ordinal}`)
-                .join(',')}`;
-            if (tooltipContent.dataset.mwiQueueContentKey === contentKey) return;
-            tooltipContent.dataset.mwiQueueContentKey = contentKey;
+            // A popper can be reused after the queue, inventory, completion style, or even its
+            // row elements change. Recalculate on each opening; the observer already delivers
+            // one opening per mount, and sweeping our previous nodes keeps it idempotent.
             tooltipContent
                 .querySelectorAll('.mwi-queue-action-time, .mwi-queue-tooltip-total')
                 .forEach((el) => el.remove());
@@ -4283,7 +4269,7 @@ class ActionTimeDisplay {
             const itemHrid = '/items/' + itemName.toLowerCase().replace(/\s+/g, '_');
 
             // Find enhancing action matching this item (excluding already-used actions)
-            return cachedActions.find((a) => {
+            return [...cachedActions].sort(compareActionQueueOrder).find((a) => {
                 if (usedActionIds.has(a.id)) {
                     return false; // Skip already-matched actions
                 }
@@ -4310,7 +4296,7 @@ class ActionTimeDisplay {
         }
 
         // Match action from cache (same logic as main display, excluding already-used actions)
-        return cachedActions.find((a) => {
+        return [...cachedActions].sort(compareActionQueueOrder).find((a) => {
             if (usedActionIds.has(a.id)) {
                 return false; // Skip already-matched actions
             }
@@ -4512,6 +4498,7 @@ class ActionTimeDisplay {
                             if (materialLimit === null) {
                                 // Endless and unbounded: no count, so no figure, and the total
                                 // must not print as if this row were worth nothing
+                                hasInfinite = true;
                                 this.markValueUnbounded(valueTally, actionDetails);
                             }
 
@@ -4681,10 +4668,10 @@ class ActionTimeDisplay {
                     (combatTextContainer || actionDiv).appendChild(combatDiv);
                     this.appendZoneSimLine(actionDiv, actionObj, actionDetails);
                     this.appendCombatRowProfit(actionDiv, combat);
-                    this.addCombatValue(valueTally, combat);
+                    if (isReachable) this.addCombatValue(valueTally, combat);
                     const combatXp = this.combatRowXp(combat);
                     this.appendQueueRowXp(actionDiv, combatXp);
-                    this.addQueueXp(xpTally, combatXp);
+                    if (isReachable) this.addQueueXp(xpTally, combatXp);
                     continue;
                 }
 
@@ -4818,6 +4805,7 @@ class ActionTimeDisplay {
                         timeSeconds: actionTimeSeconds,
                         count: count,
                         baseActionsNeeded: baseActionsNeeded,
+                        isReachable,
                         divIndex: divIndex, // Store index to match back to DOM element
                     });
                 }
@@ -4880,13 +4868,13 @@ class ActionTimeDisplay {
                     const infiniteCombat = this.combatRowReading(actionObj, actionDetails);
                     if (infiniteCombat) {
                         this.appendCombatRowProfit(actionDiv, infiniteCombat);
-                        this.addCombatValue(valueTally, infiniteCombat);
+                        if (isReachable) this.addCombatValue(valueTally, infiniteCombat);
                         const infiniteXp = this.combatRowXp(infiniteCombat);
                         this.appendQueueRowXp(actionDiv, infiniteXp);
                         // A rate with no run to apply it to: the row shows the rate, the total
                         // goes short, exactly as it does for the profit figure beside it
-                        this.addQueueXp(xpTally, infiniteXp);
-                    } else {
+                        if (isReachable) this.addQueueXp(xpTally, infiniteXp);
+                    } else if (isReachable) {
                         // Nothing to value this row by, and it never ends: the total says so
                         this.markValueUnbounded(valueTally, actionDetails);
                     }
@@ -4926,7 +4914,7 @@ class ActionTimeDisplay {
                 if (!isCombatRow) {
                     const skillXp = this.skillingRowXp(actionObj.actionHrid, isTrulyInfinite ? 0 : count);
                     this.appendQueueRowXp(actionDiv, skillXp);
-                    this.addQueueXp(xpTally, skillXp);
+                    if (isReachable) this.addQueueXp(xpTally, skillXp);
                 }
             }
 
@@ -5066,11 +5054,12 @@ class ActionTimeDisplay {
                 const actionProfit = result.status === 'fulfilled' && result.value !== null ? result.value : null;
 
                 if (actionProfit !== null) {
-                    totalProfit += actionProfit;
-                    hasProfitData = true;
-
                     // Update individual action's profit display
                     const action = actionsToCalculate[index];
+                    if (action.isReachable !== false) {
+                        totalProfit += actionProfit;
+                        hasProfitData = true;
+                    }
                     if (action.divIndex !== undefined) {
                         const profitDiv = document.querySelector(
                             `.mwi-queue-action-profit[data-div-index="${action.divIndex}"]`

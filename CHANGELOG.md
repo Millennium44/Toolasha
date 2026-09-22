@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Queue totals and hover details follow the live action order
+
+- Queue XP and value totals stop at an endless action, while later rows retain their own estimates for planning. Duplicate action labels now follow execution order, and a reopened queue tooltip refreshes after inventory or row changes.
+
 ### Metz imports follow the current character and inventory
 
 - Live inventory updates no longer label the departing character's items as a newly selected character's inventory during a switch. Metz skilling imports now list speed gear only while that piece is still held in inventory, excluding equipped or depleted rows.

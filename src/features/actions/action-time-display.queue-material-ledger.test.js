@@ -173,6 +173,24 @@ afterEach(() => {
 });
 
 describe('queue tooltip costs each row against what the rows before it leave', () => {
+    test('a reopened popper reads a changed inventory even when the action list is unchanged', async () => {
+        game.inventory = [stack(CHEESE, 5)];
+        game.currentActions = [alchemyAction(1, COINIFY)];
+        const el = queueTooltipPopper(['Coinify: Cheese']);
+        observerState.handler(el);
+        expect(rowLimits(el)).toEqual(['[50s · mat: 5]']);
+
+        el.remove();
+        await Promise.resolve();
+        await Promise.resolve();
+        game.inventory = [stack(CHEESE, 2)];
+        document.body.appendChild(el);
+        observerState.handler(el);
+
+        expect(rowLimits(el)).toEqual(['[20s · mat: 2]']);
+        expect(el.querySelectorAll('.mwi-queue-tooltip-total')).toHaveLength(1);
+    });
+
     test('a second row drawing on a spent stack reports zero, not the full stack', () => {
         game.inventory = [stack(CHEESE, 5)];
         game.currentActions = [alchemyAction(1, COINIFY), alchemyAction(2, COINIFY)];
