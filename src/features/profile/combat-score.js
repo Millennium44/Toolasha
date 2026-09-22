@@ -9,7 +9,7 @@ import storage from '../../core/storage.js';
 import webSocketHook from '../../core/websocket.js';
 import { calculateCombatScore } from './score-calculator.js';
 import { numberFormatter } from '../../utils/formatters.js';
-import { constructExportObject } from '../combat/combat-sim-export.js';
+import { constructMetzCharacterExport, applyLoadoutOverrideToMetzCharacter } from '../combat/combat-sim-export-metz.js';
 import { constructMilkonomyExport } from '../combat/milkonomy-export.js';
 import { handleViewCardClick, handleViewCardFromSnapshot } from './character-card-button.js';
 import { buildScorePanel, setScoreSource } from './build-score-panel.js';
@@ -488,7 +488,7 @@ class CombatScore {
                         font-weight: bold;
                         font-size: 0.85rem;
                         flex: 1;
-                    ">Combat Sim Export</button>
+                    ">Metz Sim Export</button>
                     <button id="mwi-combat-sim-loadout-btn" style="
                         padding: 8px 10px;
                         background: ${config.COLOR_ACCENT};
@@ -1172,9 +1172,8 @@ class CombatScore {
             // Get current profile ID (if viewing someone else's profile)
             const currentProfileId = await storage.get('currentProfileId', 'combatExport', null);
 
-            // Get export data in single-player format (for pasting into "Player 1 import" field)
-            const exportData = await constructExportObject(currentProfileId, true);
-            if (!exportData) {
+            const character = await constructMetzCharacterExport(currentProfileId);
+            if (!character) {
                 button.textContent = '✗ No Data';
                 button.style.background = config.COLOR_LOSS;
                 const resetTimeout = setTimeout(() => {
@@ -1185,7 +1184,7 @@ class CombatScore {
                 return;
             }
 
-            const exportString = JSON.stringify(exportData.exportObj);
+            const exportString = JSON.stringify(character);
             await navigator.clipboard.writeText(exportString);
 
             button.textContent = '✓ Copied';
@@ -1223,9 +1222,8 @@ class CombatScore {
                 return;
             }
 
-            // Get base export (skills, house, achievements, triggers)
-            const exportData = await constructExportObject(null, true);
-            if (!exportData) {
+            const character = await constructMetzCharacterExport(null);
+            if (!character) {
                 button.textContent = '✗ No Data';
                 button.style.background = config.COLOR_LOSS;
                 const resetTimeout = setTimeout(() => {
@@ -1236,70 +1234,36 @@ class CombatScore {
                 return;
             }
 
-            const playerObj = exportData.exportObj;
-            const clientObj = dataManager.getInitClientData();
-
-            // Override equipment from snapshot. The levels come from the
-            // loadout's own rule rather than the wearable hash: a loadout in
-            // "highest owned" mode wears the best copy owned now, and the hash
-            // holds whatever it was when the loadout was last saved — usually 0.
-            playerObj.player.equipment = loadoutSnapshot.resolveEquipment(snapshot);
-
-            // Override abilities from snapshot
-            // Build ability level lookup from all learned abilities (not just currently equipped)
+            // Build the native five slots directly from the saved 1-based slot numbers. The
+            // Metz adapter then emits its compact ability list in that same priority order.
             const characterData = dataManager.characterData;
             const abilityLevelMap = {};
             for (const ab of characterData?.characterAbilities || []) {
                 if (ab.abilityHrid) abilityLevelMap[ab.abilityHrid] = ab.level || 1;
             }
-
-            // Map snapshot abilities to sim format (slot 0 = special, slots 1-4 = normal)
-            playerObj.abilities = [
-                { abilityHrid: '', level: 1 },
-                { abilityHrid: '', level: 1 },
-                { abilityHrid: '', level: 1 },
-                { abilityHrid: '', level: 1 },
-                { abilityHrid: '', level: 1 },
-            ];
-            let normalAbilityIndex = 1;
+            const abilities = Array(5).fill(null);
             for (const ability of snapshot.abilities) {
                 if (!ability.abilityHrid) continue;
-                const isSpecial = clientObj?.abilityDetailMap?.[ability.abilityHrid]?.isSpecialAbility || false;
-                const level = abilityLevelMap[ability.abilityHrid] || 1;
-
-                if (isSpecial) {
-                    playerObj.abilities[0] = { abilityHrid: ability.abilityHrid, level };
-                } else if (normalAbilityIndex < 5) {
-                    playerObj.abilities[normalAbilityIndex++] = {
-                        abilityHrid: ability.abilityHrid,
-                        level,
-                    };
-                }
-            }
-
-            // Override triggers from snapshot (includes all configured triggers regardless of equip state)
-            playerObj.triggerMap = {
-                ...(snapshot.abilityCombatTriggersMap || {}),
-                ...(snapshot.consumableCombatTriggersMap || {}),
-            };
-
-            // Override food from snapshot
-            playerObj.food = { '/action_types/combat': [] };
-            for (let i = 0; i < 3; i++) {
-                playerObj.food['/action_types/combat'][i] = {
-                    itemHrid: snapshot.food?.[i]?.itemHrid || '',
+                const index = Number(ability.slot) - 1;
+                if (index < 0 || index >= abilities.length) continue;
+                abilities[index] = {
+                    abilityHrid: ability.abilityHrid,
+                    level: abilityLevelMap[ability.abilityHrid] || 1,
                 };
             }
 
-            // Override drinks from snapshot
-            playerObj.drinks = { '/action_types/combat': [] };
-            for (let i = 0; i < 3; i++) {
-                playerObj.drinks['/action_types/combat'][i] = {
-                    itemHrid: snapshot.drinks?.[i]?.itemHrid || '',
-                };
-            }
+            const overridden = applyLoadoutOverrideToMetzCharacter(character, {
+                equipment: loadoutSnapshot.resolveEquipment(snapshot),
+                abilities,
+                triggerMap: {
+                    ...(snapshot.abilityCombatTriggersMap || {}),
+                    ...(snapshot.consumableCombatTriggersMap || {}),
+                },
+                food: snapshot.food,
+                drinks: snapshot.drinks,
+            });
 
-            const exportString = JSON.stringify(playerObj);
+            const exportString = JSON.stringify(overridden);
             await navigator.clipboard.writeText(exportString);
 
             button.textContent = '✓ Copied';

@@ -98,6 +98,9 @@ import * as toast from '../utils/toast.js';
 // apply the same bound (see utils/liquidity-cap.js). Needs a matching
 // utilsExternalGlobals entry in rollup.config.js to be deduplicated.
 import * as liquidityCap from '../utils/liquidity-cap.js';
+// Combat-scroll definitions shared by the actions and simulator bundles.
+// Needs a matching utilsExternalGlobals entry in rollup.config.js.
+import * as combatScrollBuffs from '../utils/combat-scroll-buffs.js';
 // The fight-count confidence maths, shared so the bestiary plan (sim) and a
 // combat task's Go (ui) size a pre-fill the same way. Needs a matching
 // utilsExternalGlobals entry in rollup.config.js to be deduplicated.
@@ -278,6 +281,7 @@ toolashaRoot.Utils = {
     scrollBuffValues,
     toast,
     liquidityCap,
+    combatScrollBuffs,
     fightConfidence,
     inventoryReservations,
     calibrationBadge,

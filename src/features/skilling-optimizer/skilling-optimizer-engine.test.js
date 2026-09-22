@@ -24,6 +24,7 @@ const scoring = vi.hoisted(() => ({
     teaResults: { xp: { teas: ['xp-tea'] }, gold: { teas: ['gold-tea'] } },
     teaCalls: [],
     goldHasMissingPrices: false,
+    activeAlchemyContext: null,
 }));
 
 vi.mock('../../core/data-manager.js', () => ({
@@ -34,25 +35,31 @@ vi.mock('../../core/data-manager.js', () => ({
 }));
 
 vi.mock('../../utils/tea-optimizer.js', () => ({
-    scoreEquipmentSetup: (skillName, goal, equipment, playerLevel, selectedActionHrids) => {
-        scoring.calls.push({ skillName, goal, equipment, playerLevel, selectedActionHrids });
+    scoreEquipmentSetup: (skillName, goal, equipment, playerLevel, selectedActionHrids, teaHrids, alchemyContext) => {
+        scoring.calls.push({ skillName, goal, equipment, playerLevel, selectedActionHrids, teaHrids, alchemyContext });
         if (!equipment || equipment.size === 0) return scoring.baseline[goal];
         const [{ itemHrid, enhancementLevel }] = [...equipment.values()];
         return scoring.scores[goal]?.[`${itemHrid}@${enhancementLevel}`] ?? scoring.baseline[goal];
     },
-    findOptimalTeas: (skillName, goal, _a, _b, _c, _d, equipment, selectedActionHrids) => {
-        scoring.teaCalls.push({ skillName, goal, equipment, selectedActionHrids });
+    findOptimalTeas: (skillName, goal, _a, _b, _c, _d, equipment, selectedActionHrids, playerLevel) => {
+        scoring.teaCalls.push({ skillName, goal, equipment, selectedActionHrids, playerLevel });
         return scoring.teaResults[goal];
     },
     getSkillActionsForDisplay: () => [],
     calculateSkillPerformance: () => ({}),
     skillGoldHasUnpricedMaterials: () => scoring.goldHasMissingPrices,
+    resolveActiveAlchemyItemContext: () => scoring.activeAlchemyContext,
+    isAlchemyContextApplicable: (context, itemDetailMap) => {
+        const detail = itemDetailMap?.[context?.itemHrid]?.alchemyDetail;
+        return context?.actionType === 'coinify' ? detail?.isCoinifiable === true : Boolean(detail);
+    },
 }));
 
 // calculateSlotUpgradeCost is the only consumer. Each entry is keyed by side so a test can
 // state, as data, what each leg of a buy/sell comparison resolves to — including a leg that
 // resolves to nothing at all.
 const priceBook = vi.hoisted(() => ({ entries: {}, calls: [] }));
+const enhancementPricing = vi.hoisted(() => ({ cost: null, calls: [] }));
 vi.mock('../../utils/profit-helpers.js', () => ({
     resolveItemPrice: (itemHrid, options = {}) => {
         priceBook.calls.push({ itemHrid, options });
@@ -62,9 +69,16 @@ vi.mock('../../utils/profit-helpers.js', () => ({
         return { price, missing: false, estimated: false, custom: false };
     },
 }));
+vi.mock('../combat-sim/upgrade-advisor.js', () => ({
+    calculateDirectEnhancementCost: (itemHrid, startLevel, targetLevel, gameData) => {
+        enhancementPricing.calls.push({ itemHrid, startLevel, targetLevel, gameData });
+        return enhancementPricing.cost;
+    },
+}));
 
 const {
     calculateSlotUpgradeCost,
+    buildAchievableEquipment,
     getPlayerSkillLevel,
     getItemsForSlot,
     getSkillDrinkItems,
@@ -86,7 +100,7 @@ function itemDetailMap() {
             equipmentDetail: {
                 type: '/equipment_types/cheesesmithing_tool',
                 noncombatStats: { cheesesmithingSpeed: 0.1, cheesesmithingEfficiency: 0.05 },
-                levelRequirements: [{ levelTypeHrid: '/level_types/cheesesmithing', level: 10 }],
+                levelRequirements: [{ skillHrid: '/skills/cheesesmithing', level: 10 }],
             },
         },
         [VERDANT_TOOL]: {
@@ -95,7 +109,7 @@ function itemDetailMap() {
             equipmentDetail: {
                 type: '/equipment_types/cheesesmithing_tool',
                 noncombatStats: { cheesesmithingSpeed: 0.2, skillingEfficiency: 0.05 },
-                levelRequirements: [{ levelTypeHrid: '/level_types/cheesesmithing', level: 50 }],
+                levelRequirements: [{ skillHrid: '/skills/cheesesmithing', level: 50 }],
             },
         },
         [HAT]: {
@@ -104,7 +118,7 @@ function itemDetailMap() {
             equipmentDetail: {
                 type: '/equipment_types/head',
                 noncombatStats: { cookingEfficiency: 0.06 },
-                levelRequirements: [{ levelTypeHrid: '/level_types/cooking', level: 20 }],
+                levelRequirements: [{ skillHrid: '/skills/cooking', level: 20 }],
             },
         },
         '/items/plain_shirt': {
@@ -127,6 +141,8 @@ function itemDetailMap() {
             consumableDetail: { buffs: [{ typeHrid: '/buff_types/combat_drop_quantity', flatBoost: 0.1 }] },
         },
         '/items/plain_coffee': { name: 'Plain Coffee', consumableDetail: { buffs: [] } },
+        '/items/coinifiable_ore': { name: 'Coinifiable Ore', itemLevel: 5, alchemyDetail: { isCoinifiable: true } },
+        '/items/decompose_only': { name: 'Decompose Only', itemLevel: 5, alchemyDetail: { decomposeItems: [] } },
     };
 }
 
@@ -142,6 +158,89 @@ beforeEach(() => {
     scoring.teaResults = { xp: { teas: ['xp-tea'] }, gold: { teas: ['gold-tea'] } };
     scoring.teaCalls = [];
     scoring.goldHasMissingPrices = false;
+    scoring.activeAlchemyContext = null;
+    enhancementPricing.cost = null;
+    enhancementPricing.calls = [];
+});
+
+describe('optimizeSkill Alchemy item basis', () => {
+    const context = { actionType: 'coinify', itemHrid: '/items/coinifiable_ore', enhancementLevel: 0 };
+
+    test('passes a manually selected real item through every baseline and equipment score', () => {
+        optimizeSkill('Alchemy', 60, null, context);
+        expect(scoring.calls.length).toBeGreaterThan(0);
+        expect(scoring.calls.every((call) => call.alchemyContext === context)).toBe(true);
+    });
+
+    test('falls back to the action actually running when no manual item is selected', () => {
+        scoring.activeAlchemyContext = context;
+        const result = optimizeSkill('Alchemy', 60);
+        expect(result.alchemyContext).toBe(context);
+        expect(result.alchemyContextIsManual).toBe(false);
+    });
+
+    test('rejects a manual item that cannot perform the selected action before scoring', () => {
+        const invalid = { actionType: 'coinify', itemHrid: '/items/decompose_only', enhancementLevel: 0 };
+        expect(optimizeSkill('Alchemy', 60, null, invalid)).toBeNull();
+        expect(scoring.calls).toHaveLength(0);
+        expect(scoring.teaCalls).toHaveLength(0);
+    });
+
+    test('skips the Gold tea search when no Alchemy item is running or chosen', () => {
+        const result = optimizeSkill('Alchemy', 60);
+        expect(scoring.teaCalls.map((call) => call.goal)).toEqual(['xp']);
+        expect(result.goldTeaResult).toBeNull();
+    });
+
+    test('still searches Gold teas once an Alchemy item gives it something to price', () => {
+        scoring.activeAlchemyContext = context;
+        optimizeSkill('Alchemy', 60);
+        expect(scoring.teaCalls.map((call) => call.goal)).toEqual(['xp', 'gold']);
+    });
+
+    test('a saved Alchemy item choice does not block optimizing another skill', () => {
+        const stale = { actionType: 'coinify', itemHrid: '/items/decompose_only', enhancementLevel: 0 };
+        expect(optimizeSkill('Cheesesmithing', 60, null, stale)).not.toBeNull();
+    });
+});
+
+test('the tea recommendations use the same planned level as equipment scoring', () => {
+    optimizeSkill('Cheesesmithing', 42);
+    expect(scoring.teaCalls).toHaveLength(2);
+    expect(scoring.teaCalls.every((call) => call.playerLevel === 42)).toBe(true);
+});
+
+describe('buildAchievableEquipment', () => {
+    test('applies an owned +0 recommendation instead of retaining comparison gear', () => {
+        const slots = { '/item_locations/hands': { progression: [{ itemHrid: '/items/plain_gloves' }] } };
+        const comparison = new Map([['/item_locations/hands', { itemHrid: '/items/old_gloves', enhancementLevel: 3 }]]);
+        const owned = new Map([['/items/plain_gloves', 0]]);
+
+        expect(buildAchievableEquipment(slots, owned, comparison).get('/item_locations/hands')).toEqual({
+            itemHrid: '/items/plain_gloves',
+            enhancementLevel: 0,
+        });
+    });
+
+    test('keeps comparison gear when a recommendation is not owned and applies real owned levels', () => {
+        const slots = {
+            '/item_locations/head': {
+                progression: [{ itemHrid: '/items/unowned_hat' }],
+            },
+            '/item_locations/hands': {
+                progression: [{ itemHrid: '/items/owned_gloves' }],
+            },
+        };
+        const comparison = new Map([['/item_locations/head', { itemHrid: '/items/current_hat', enhancementLevel: 5 }]]);
+        const owned = new Map([['/items/owned_gloves', 12]]);
+
+        expect(buildAchievableEquipment(slots, owned, comparison)).toEqual(
+            new Map([
+                ['/item_locations/head', { itemHrid: '/items/current_hat', enhancementLevel: 5 }],
+                ['/item_locations/hands', { itemHrid: '/items/owned_gloves', enhancementLevel: 12 }],
+            ])
+        );
+    });
 });
 
 describe('getPlayerSkillLevel', () => {
@@ -466,6 +565,36 @@ describe('calculateSlotUpgradeCost', () => {
 
     test('an unpriceable upgrade is null, not free', () => {
         expect(calculateSlotUpgradeCost(VERDANT_TOOL, 10, null)).toBeNull();
+    });
+
+    test("a cross-item enhanced upgrade falls back to the target's +0 price plus its enhancement cost", () => {
+        priceBook.entries[`buy:${VERDANT_TOOL}@0`] = 500;
+        priceBook.entries[`sell:${CHEESE_TOOL}@3`] = 200;
+        enhancementPricing.cost = 1000;
+
+        const cost = calculateSlotUpgradeCost(VERDANT_TOOL, 12, {
+            itemHrid: CHEESE_TOOL,
+            enhancementLevel: 3,
+        });
+
+        expect(cost).toBe(1300);
+        expect(enhancementPricing.calls).toEqual([
+            {
+                itemHrid: VERDANT_TOOL,
+                startLevel: 0,
+                targetLevel: 12,
+                gameData: game.initClientData,
+            },
+        ]);
+    });
+
+    test('an enhanced upgrade stays unpriced when its +0 item or enhancement path is unknown', () => {
+        enhancementPricing.cost = 1000;
+        expect(calculateSlotUpgradeCost(VERDANT_TOOL, 12, null)).toBeNull();
+
+        priceBook.entries[`buy:${VERDANT_TOOL}@0`] = 500;
+        enhancementPricing.cost = null;
+        expect(calculateSlotUpgradeCost(VERDANT_TOOL, 12, null)).toBeNull();
     });
 
     test('an unpriceable current item makes the net cost unknown rather than the gross price', () => {

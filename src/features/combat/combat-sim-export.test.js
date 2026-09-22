@@ -29,7 +29,8 @@ vi.mock('../../core/storage.js', () => ({
     },
 }));
 
-const { checkBridgeStamp, getLastBridgeIssue, constructExportObject } = await import('./combat-sim-export.js');
+const { checkBridgeStamp, getLastBridgeIssue, getCharacterData, constructExportObject } =
+    await import('./combat-sim-export.js');
 
 function metaFor(characterId, { characterName = 'Hero', writtenAt = Date.now() } = {}) {
     return JSON.stringify({ characterId, characterName, writtenAt });
@@ -69,6 +70,16 @@ describe('checkBridgeStamp', () => {
     test('matching read (stamp characterId equals the current character) passes through unchanged', () => {
         dataManagerMock.getCurrentCharacterId.mockReturnValue('char-1');
         globalThis.GM_getValue = vi.fn(() => metaFor('char-1'));
+
+        const ok = checkBridgeStamp('toolasha_init_character_data', 'Character data', { enforceOwner: true });
+
+        expect(ok).toBe(true);
+        expect(getLastBridgeIssue()).toBeNull();
+    });
+
+    test('matching numeric and string character IDs are the same bridge owner', () => {
+        dataManagerMock.getCurrentCharacterId.mockReturnValue(30404);
+        globalThis.GM_getValue = vi.fn(() => metaFor('30404'));
 
         const ok = checkBridgeStamp('toolasha_init_character_data', 'Character data', { enforceOwner: true });
 
@@ -136,6 +147,28 @@ describe('checkBridgeStamp', () => {
 });
 
 describe('constructExportObject with the GM-storage fallback', () => {
+    test('reads inventory from the bridged snapshot alone, ignoring a leftover per-action inventory key', () => {
+        // An earlier build rewrote a separate inventory key on every action. The snapshot the game
+        // tab writes when it opens a simulator is now the only inventory source, so a leftover
+        // copy of that key must not overlay it with older items.
+        dataManagerMock.getCurrentCharacterId.mockReturnValue(null);
+        const snapshotItems = [{ id: 'now', count: 3 }];
+        globalThis.GM_getValue = vi.fn((key) => {
+            if (key === 'toolasha_init_character_data') {
+                return JSON.stringify({ character: { id: 'char-mine', name: 'Me' }, characterItems: snapshotItems });
+            }
+            if (key === 'toolasha_init_character_data_meta' || key === 'toolasha_character_items_meta') {
+                return metaFor('char-mine');
+            }
+            if (key === 'toolasha_character_items') {
+                return JSON.stringify({ characterId: 'char-mine', characterItems: [{ id: 'old', count: 1 }] });
+            }
+            return null;
+        });
+
+        expect(getCharacterData().characterItems).toEqual(snapshotItems);
+    });
+
     test('refuses and returns null when the character-data bridge belongs to another character', async () => {
         dataManagerMock.characterData = null; // force the GM fallback
         dataManagerMock.getCurrentCharacterId.mockReturnValue('char-mine');

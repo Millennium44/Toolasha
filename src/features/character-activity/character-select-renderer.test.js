@@ -21,6 +21,7 @@ const store = vi.hoisted(() => ({ records: {}, prefs: { enabled: true, dateForma
 
 /** The class handlers the renderer registers on the shared observer */
 const observer = vi.hoisted(() => ({ handlers: [], readyHandlers: [], domReady: true }));
+const collector = vi.hoisted(() => ({ checkpointForCharacterSelect: vi.fn() }));
 
 vi.mock('../../core/dom-observer.js', () => ({
     default: {
@@ -49,6 +50,10 @@ vi.mock('../../core/dom-observer.js', () => ({
 // The sprite manifest is a network fetch, and the icon is not what this file is about
 vi.mock('../../utils/asset-manifest.js', () => ({
     default: { getSpriteUrl: async () => '/static/media/skills.svg' },
+}));
+
+vi.mock('./character-activity-collector.js', () => ({
+    default: collector,
 }));
 
 vi.mock('./character-activity-storage.js', () => ({
@@ -167,6 +172,7 @@ beforeEach(() => {
     observer.handlers = [];
     observer.readyHandlers = [];
     observer.domReady = true;
+    collector.checkpointForCharacterSelect.mockReset().mockResolvedValue(true);
     document.body.innerHTML = '';
 });
 
@@ -177,6 +183,54 @@ afterEach(() => {
 });
 
 describe('drawing into character select', () => {
+    test('checkpoints before reading the records shown on a populated Character Select mount', async () => {
+        const root = mountCharacterSelect(['1234']);
+        const callOrder = [];
+        collector.checkpointForCharacterSelect.mockImplementationOnce(async () => callOrder.push('checkpoint'));
+        store.records['1234'] = storedRecord('1234', 4 * HOUR);
+        const originalRecord = store.records['1234'];
+        Object.defineProperty(store.records, '1234', {
+            configurable: true,
+            get: () => {
+                callOrder.push('read');
+                return originalRecord;
+            },
+        });
+
+        await renderer.onCharacterSelectMounted(root);
+
+        expect(callOrder).toEqual(['checkpoint', 'read']);
+    });
+
+    test('checkpoints once for repeated observations of one mount and again for a fresh mount', async () => {
+        const firstRoot = mountCharacterSelect(['1234']);
+        await renderer.onCharacterSelectMounted(firstRoot);
+        await renderer.onCharacterSelectMounted(firstRoot);
+
+        const nextRoot = mountCharacterSelect(['1234']);
+        await renderer.onCharacterSelectMounted(nextRoot);
+
+        expect(collector.checkpointForCharacterSelect).toHaveBeenCalledTimes(2);
+    });
+
+    test('retries a checkpoint that storage reports did not land', async () => {
+        collector.checkpointForCharacterSelect.mockResolvedValueOnce(false).mockResolvedValueOnce(true);
+        const root = mountCharacterSelect(['1234']);
+
+        await renderer.onCharacterSelectMounted(root);
+        await renderer.onCharacterSelectMounted(root);
+
+        expect(collector.checkpointForCharacterSelect).toHaveBeenCalledTimes(2);
+    });
+
+    test('does not checkpoint a loading-phase root before populated slots exist', async () => {
+        const root = mountCharacterSelect([], false);
+
+        await renderer.onCharacterSelectMounted(root);
+
+        expect(collector.checkpointForCharacterSelect).not.toHaveBeenCalled();
+    });
+
     test('a populated slot gets a block, and the block says something', async () => {
         store.records['1234'] = storedRecord('1234', 4 * HOUR);
         const root = mountCharacterSelect(['1234']);

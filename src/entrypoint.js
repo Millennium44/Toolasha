@@ -300,14 +300,21 @@ Utils.visualViewport?.initVisualViewportTracking?.();
  * The canonical list lives in `src/features/combat/combat-sim-targets.js`, and
  * `combat-sim-targets.test.js` asserts this copy stays in sync with it.
  *
- * @returns {boolean} True if on a Combat Simulator
+ * @returns {'shykai'|'szerra'|'metz'|null} Simulator site, or null on a game page
  */
 function isCombatSimulatorPage() {
-    const url = window.location.href;
-    return (
-        url.includes('shykai.github.io/MWICombatSimulatorTest/dist/') ||
-        url.includes('szerra.github.io/mwi-shrine-combat-simulator/')
-    );
+    let url;
+    try {
+        url = new URL(window.location.href);
+    } catch {
+        return null;
+    }
+    if (url.origin === 'https://shykai.github.io' && url.pathname.startsWith('/MWICombatSimulatorTest/dist/'))
+        return 'shykai';
+    if (url.origin === 'https://szerra.github.io' && url.pathname.startsWith('/mwi-shrine-combat-simulator/'))
+        return 'szerra';
+    if (url.origin === 'https://metzlii.github.io' && url.pathname.startsWith('/metz-combat-simulator/')) return 'metz';
+    return null;
 }
 
 /* ------------------------------------------------------------------------- *
@@ -2478,7 +2485,13 @@ function registerFeatures() {
     featureRegistry.replaceFeatures(features);
 }
 
-if (isCombatSimulatorPage()) {
+const combatSimulatorSite = isCombatSimulatorPage();
+
+if (combatSimulatorSite === 'metz') {
+    Combat.combatSimIntegrationMetz.initialize();
+
+    // Skip all other initialization
+} else if (combatSimulatorSite) {
     // Initialize combat sim integration only
     Combat.combatSimIntegration.initialize();
 
@@ -2507,6 +2520,11 @@ if (isCombatSimulatorPage()) {
     // From here on, every interval the script creates reports into the rolling
     // stats while measuring is on — the stall ledger's attribution net
     Core.installIntervalTracing?.();
+
+    // Long-lived tabs need a caller to re-check the 15-minute snapshot cache even when
+    // no optional market watcher is enabled. The API timer uses unforced fetches and the
+    // shared in-flight dedup, so other refresh callers cannot create a request burst.
+    marketAPI.startAutoRefresh();
 
     performanceMonitor.mark('script:start');
 

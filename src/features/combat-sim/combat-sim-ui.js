@@ -98,6 +98,7 @@ import {
     runUpgradeAnalysis,
     getStyleExcludedSkills,
     houseRoomAffectsCombat,
+    houseRoomMovesWinRate,
     houseUpgradeMaterials,
     assignRankScores,
     planWithinBudget,
@@ -7329,8 +7330,10 @@ class CombatSimUI {
             Math.max(0, parseInt(this.panel.querySelector('#mwi-csim-house-target-level')?.value) || 0)
         );
 
+        const skipSkillingRooms = config.getSetting('combatSim_upgradeSkipSkillingRooms') === true;
+        const roomPredicate = skipSkillingRooms ? houseRoomMovesWinRate : houseRoomAffectsCombat;
         const rooms = Object.entries(roomMap)
-            .filter(([, detail]) => houseRoomAffectsCombat(detail))
+            .filter(([, detail]) => roomPredicate(detail))
             .map(([hrid, detail]) => ({
                 hrid,
                 name: detail.name || hrid.split('/').pop().replace(/_/g, ' '),

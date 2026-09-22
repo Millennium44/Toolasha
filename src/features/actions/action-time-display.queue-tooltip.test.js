@@ -45,6 +45,7 @@ vi.mock('../../core/dom-observer.js', () => ({
 const game = vi.hoisted(() => ({
     currentActions: [],
     actionDetails: {},
+    completionStyle: 'absolute',
 }));
 
 vi.mock('../../core/data-manager.js', () => ({
@@ -66,7 +67,8 @@ vi.mock('../../core/data-manager.js', () => ({
 vi.mock('../../core/config.js', () => ({
     default: {
         getSetting: (key) => key === 'actionQueue',
-        getSettingValue: (_key, fallback) => fallback,
+        getSettingValue: (key, fallback) =>
+            key === 'actionQueue_completionTimeStyle' ? game.completionStyle : fallback,
         COLOR_TOOLTIP_INFO: '#abc',
     },
 }));
@@ -136,6 +138,7 @@ beforeEach(async () => {
     document.body.innerHTML = '';
     game.actionDetails = { [ACTION_HRID]: { type: '/action_types/enhancing', hrid: ACTION_HRID } };
     game.currentActions = [enhancingAction(0)];
+    game.completionStyle = 'absolute';
     actionTimeDisplay.initializeQueueTooltipObserver();
 });
 
@@ -182,5 +185,53 @@ describe('queue tooltip content-keyed guard', () => {
         // because `.mwi-queue-action-time` from the first open is still in the
         // (reused) DOM subtree — it never even attempts to recompute.
         expect(totalText(el)).toBe('Total: 8s');
+    });
+
+    test('the relative completion style wires cumulative duration into the rendered row', () => {
+        game.completionStyle = 'relative';
+        const el = queueTooltipPopper();
+
+        observerState.handler(el);
+
+        expect(el.querySelector('.mwi-queue-action-time').textContent).toBe('[20s] in 20s');
+    });
+
+    test('a reused popper is reprocessed when only the completion style changed', async () => {
+        const el = queueTooltipPopper();
+        observerState.handler(el);
+        expect(el.querySelector('.mwi-queue-action-time').textContent).toMatch(/^\[20s\] /);
+        expect(el.querySelector('.mwi-queue-action-time').textContent).not.toContain('in 20s');
+
+        el.remove();
+        await Promise.resolve();
+        await Promise.resolve();
+
+        game.completionStyle = 'relative';
+        document.body.appendChild(el);
+        observerState.handler(el);
+
+        expect(el.querySelector('.mwi-queue-action-time').textContent).toBe('[20s] in 20s');
+    });
+
+    test('a reused popper annotates a replaced row even when the action data is unchanged', async () => {
+        const el = queueTooltipPopper();
+        observerState.handler(el);
+        const actions = el.querySelector('[class*="QueuedActions_actions"]');
+        actions.querySelector('[class*="QueuedActions_action__"]').outerHTML = `
+            <div class="QueuedActions_action__item">
+                <div class="QueuedActions_actionText__y">
+                    <div class="QueuedActions_text__z">#1<svg><use href="#enhancing_icon"></use></svg>Cheese Sword +1</div>
+                </div>
+            </div>`;
+
+        el.remove();
+        await Promise.resolve();
+        await Promise.resolve();
+        document.body.appendChild(el);
+        observerState.handler(el);
+
+        expect(actions.querySelectorAll('.mwi-queue-action-time')).toHaveLength(1);
+        expect(totalText(el)).toBe('Total: 20s');
+        expect(actions.querySelectorAll('.mwi-queue-tooltip-total')).toHaveLength(1);
     });
 });

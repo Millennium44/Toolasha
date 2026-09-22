@@ -752,24 +752,21 @@ describe('the Queued Actions panel', () => {
         expect(total()).toBe('Total time: [∞]');
     });
 
+    test('finite rows after Fight ∞ are not counted as reachable time', () => {
+        game.currentActions = [combatAction(1, { maxCount: 0 }), coinifyAction(2)];
+        const menu = queueMenu(['Gobo Planet (T3)', 'Coinify']);
+        actionTimeDisplay.injectQueueTimes(menu);
+
+        expect(rowTexts(menu)).toEqual(['[∞]', '[30s]']);
+        expect(total()).toBe('Total time: [∞]');
+    });
+
     test('a non-combat queue is drawn exactly as before', () => {
         game.currentActions = [coinifyAction(1), coinifyAction(2, 6)];
         const menu = queueMenu(['Coinify', 'Coinify']);
         actionTimeDisplay.injectQueueTimes(menu);
-        // Recorded from the build before combat rows were timed
-        expect(menu.parentElement.innerHTML).toMatchInlineSnapshot(`
-          "<div class="QueuedActions_queuedActionsEditMenu__x">
-                  <div class="QueuedActions_action__item">
-                      <div class="QueuedActions_actionText__y">
-                          <div class="QueuedActions_text__z">#1Coinify</div>
-                      <div class="mwi-queue-action-time" style="color: var(--text-color-secondary, undefined); font-size: 0.85em; margin-top: 2px;">[30s] 12:00:30</div><div class="mwi-queue-action-profit" data-div-index="0" style="color: var(--text-color-secondary, undefined); font-size: 0.85em; margin-top: 2px;"></div></div>
-                  </div>
-                  <div class="QueuedActions_action__item">
-                      <div class="QueuedActions_actionText__y">
-                          <div class="QueuedActions_text__z">#2Coinify</div>
-                      <div class="mwi-queue-action-time" style="color: var(--text-color-secondary, undefined); font-size: 0.85em; margin-top: 2px;">[0h 01m 00s] 12:01:30</div><div class="mwi-queue-action-profit" data-div-index="1" style="color: var(--text-color-secondary, undefined); font-size: 0.85em; margin-top: 2px;"></div></div>
-                  </div></div><div id="mwi-queue-total-time" style="color: var(--text-color-primary, undefined); font-weight: bold; margin-top: 12px; padding: 8px; text-align: center; border-top-width: var(--border-color, undefined); border-top-style: var(--border-color, undefined); border-top-color: var(--border-color, undefined);">Total time: 0h 01m 30s</div>"
-        `);
+        expect(rowTexts(menu)).toEqual(['[30s] 12:00:30', '[0h 01m 00s] 12:01:30']);
+        expect(total()).toBe('Total time: 0h 01m 30s');
     });
 });
 

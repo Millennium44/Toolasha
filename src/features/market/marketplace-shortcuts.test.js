@@ -10,7 +10,15 @@
 
 import { describe, test, expect, beforeEach, vi } from 'vitest';
 
-vi.mock('../../core/dom-observer.js', () => ({ default: { onClass: () => () => {} } }));
+vi.mock('../../core/dom-observer.js', () => ({
+    default: {
+        onClass: () => () => {},
+        onReady: (_name, callback) => {
+            callback();
+            return () => {};
+        },
+    },
+}));
 vi.mock('../../core/data-manager.js', () => ({ default: { characterItems: [] } }));
 vi.mock('../../utils/marketplace-tabs.js', () => ({ navigateToMarketplace: () => {} }));
 
@@ -49,6 +57,129 @@ describe('executeAction reads the submenu quantity as a comma-formatted number',
         } finally {
             vi.useRealTimers();
         }
+    });
+});
+
+describe('Marketplace Action dropdown portal', () => {
+    function actionMenu() {
+        const menu = document.createElement('div');
+        menu.className = 'Item_actionMenu__liveHash';
+        menu.style.overflow = 'hidden';
+        menu.innerHTML = '<button class="Button_button__liveHash">View Marketplace</button>';
+        document.body.appendChild(menu);
+        return menu;
+    }
+
+    test("renders the panel under its toggle in <body>, outside the game's clipped menu", () => {
+        const menu = actionMenu();
+        const dropdown = marketplaceShortcuts.buildDropdown(menu, '/items/cheese', 0);
+        menu.appendChild(dropdown);
+        const toggle = dropdown.querySelector('.mwi-marketplace-dropdown-toggle');
+        vi.spyOn(toggle, 'getBoundingClientRect').mockReturnValue({ left: 80, bottom: 144, width: 220 });
+
+        toggle.click();
+
+        const panel = dropdown._dropdownPanel;
+        expect(panel.parentElement).toBe(document.body);
+        expect(menu.contains(panel)).toBe(false);
+        expect(panel.style.position).toBe('fixed');
+        expect(panel.style.top).toBe('148px');
+        expect(panel.style.left).toBe('80px');
+        expect(panel.style.width).toBe('220px');
+        expect(panel.style.display).toBe('flex');
+    });
+
+    test('disable removes the portaled panel as well as its native-menu toggle', () => {
+        const menu = actionMenu();
+        const dropdown = marketplaceShortcuts.buildDropdown(menu, '/items/cheese', 0);
+        menu.appendChild(dropdown);
+
+        marketplaceShortcuts.disable();
+
+        expect(document.querySelector('.mwi-marketplace-dropdown')).toBeNull();
+        expect(document.querySelector('.mwi-marketplace-dropdown-panel')).toBeNull();
+        marketplaceShortcuts.initialize();
+    });
+
+    test('opening a second item menu closes the first portaled panel', () => {
+        const firstMenu = actionMenu();
+        const first = marketplaceShortcuts.buildDropdown(firstMenu, '/items/cheese', 0);
+        firstMenu.appendChild(first);
+        const secondMenu = actionMenu();
+        const second = marketplaceShortcuts.buildDropdown(secondMenu, '/items/milk', 0);
+        secondMenu.appendChild(second);
+        first.querySelector('.mwi-marketplace-dropdown-toggle').click();
+        second.querySelector('.mwi-marketplace-dropdown-toggle').click();
+
+        expect(first._dropdownPanel.style.display).toBe('none');
+        expect(second._dropdownPanel.style.display).toBe('flex');
+    });
+
+    test('an outside click closes the open portal and it reopens in one click', () => {
+        const menu = actionMenu();
+        const dropdown = marketplaceShortcuts.buildDropdown(menu, '/items/cheese', 0);
+        menu.appendChild(dropdown);
+        const toggle = dropdown.querySelector('.mwi-marketplace-dropdown-toggle');
+        toggle.click();
+        expect(dropdown._dropdownPanel.style.display).toBe('flex');
+
+        document.body.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+
+        expect(dropdown._dropdownPanel.style.display).toBe('none');
+
+        toggle.click();
+        expect(dropdown._dropdownPanel.style.display).toBe('flex');
+    });
+
+    test('Escape closes the portal and it reopens in one click', () => {
+        const menu = actionMenu();
+        const dropdown = marketplaceShortcuts.buildDropdown(menu, '/items/cheese', 0);
+        menu.appendChild(dropdown);
+        const toggle = dropdown.querySelector('.mwi-marketplace-dropdown-toggle');
+        toggle.click();
+
+        document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+
+        expect(dropdown._dropdownPanel.style.display).toBe('none');
+        toggle.click();
+        expect(dropdown._dropdownPanel.style.display).toBe('flex');
+    });
+
+    test('watches the document only while a portaled panel is open', async () => {
+        marketplaceShortcuts.closeAllDropdowns();
+        const menu = actionMenu();
+        const dropdown = marketplaceShortcuts.buildDropdown(menu, '/items/cheese', 0);
+        menu.appendChild(dropdown);
+        const toggle = dropdown.querySelector('.mwi-marketplace-dropdown-toggle');
+        expect(marketplaceShortcuts.portalObserver).toBeNull();
+
+        toggle.click();
+        expect(marketplaceShortcuts.portalObserver).not.toBeNull();
+
+        toggle.click();
+        expect(marketplaceShortcuts.portalObserver).toBeNull();
+
+        toggle.click();
+        document.body.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+        expect(marketplaceShortcuts.portalObserver).toBeNull();
+
+        // The game removing an open panel's menu also ends the watch
+        toggle.click();
+        menu.remove();
+        await new Promise((resolve) => setTimeout(resolve, 0));
+        expect(marketplaceShortcuts.portalObserver).toBeNull();
+    });
+
+    test("removing the game's item menu removes its portaled panel", async () => {
+        const menu = actionMenu();
+        const dropdown = marketplaceShortcuts.buildDropdown(menu, '/items/cheese', 0);
+        menu.appendChild(dropdown);
+        dropdown.querySelector('.mwi-marketplace-dropdown-toggle').click();
+
+        menu.remove();
+        await new Promise((resolve) => setTimeout(resolve, 0));
+
+        expect(dropdown._dropdownPanel.isConnected).toBe(false);
     });
 });
 

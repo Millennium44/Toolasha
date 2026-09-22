@@ -25,6 +25,7 @@ const mocks = vi.hoisted(() => ({
     itemPrice: 0,
     /** Per-hrid price overrides, so a test can make catalysts cheap and drops valuable */
     itemPrices: {},
+    estimatedItems: new Set(),
 }));
 
 vi.mock('../../core/config.js', () => ({ default: { getSetting: () => true, getSettingValue: (k, f) => f } }));
@@ -41,7 +42,10 @@ vi.mock('../../core/data-manager.js', () => ({
     },
 }));
 vi.mock('../../utils/tea-parser.js', () => ({ getDrinkConcentration: () => mocks.drinkConcentration }));
-vi.mock('../../utils/market-data.js', () => ({ getItemPrice: (hrid) => mocks.itemPrices[hrid] ?? mocks.itemPrice }));
+vi.mock('../../utils/market-data.js', () => ({
+    getItemPrice: (hrid) => mocks.itemPrices[hrid] ?? mocks.itemPrice,
+    isPriceEstimated: (hrid) => mocks.estimatedItems.has(hrid),
+}));
 vi.mock('../../utils/buff-parser.js', () => ({ getAlchemySuccessBonus: () => mocks.alchemyTeaBonus }));
 vi.mock('../../utils/equipment-parser.js', () => ({
     parseEquipmentSpeedBonuses: () => mocks.equipmentSpeed,
@@ -49,7 +53,10 @@ vi.mock('../../utils/equipment-parser.js', () => ({
     parseEssenceFindBonus: () => 0,
     parseRareFindBonus: () => 0,
 }));
-vi.mock('../../utils/action-calculator.js', () => ({ calculateActionStats: () => mocks.actionStats }));
+vi.mock('../../utils/action-calculator.js', () => ({
+    calculateActionStats: (...args) =>
+        typeof mocks.actionStats === 'function' ? mocks.actionStats(...args) : mocks.actionStats,
+}));
 vi.mock('../../utils/house-efficiency.js', () => ({ calculateHouseRareFind: () => 0 }));
 vi.mock('../../api/marketplace.js', () => ({ default: { getPrice: () => null, on: () => () => {} } }));
 vi.mock('./expected-value-calculator.js', () => ({ default: { getCachedValue: () => null, isInitialized: false } }));
@@ -66,6 +73,7 @@ beforeEach(() => {
     mocks.skills = [];
     mocks.itemPrice = 0;
     mocks.itemPrices = {};
+    mocks.estimatedItems = new Set();
 });
 
 describe('calculateSuccessRateBreakdown', () => {
@@ -98,6 +106,16 @@ describe('calculateSuccessRateBreakdown', () => {
     });
 });
 
+describe('getUnderLevelPenalty', () => {
+    test('uses an explicitly planned Alchemy level instead of the live character level', () => {
+        mocks.skills = [{ skillHrid: '/skills/alchemy', level: 90 }];
+        const plannedSkills = [{ skillHrid: '/skills/alchemy', level: 10 }];
+
+        expect(alchemyProfitCalculator.getUnderLevelPenalty(100, plannedSkills)).toBeCloseTo(-0.81, 10);
+        expect(alchemyProfitCalculator.getUnderLevelPenalty(100)).toBeCloseTo(-0.09, 10);
+    });
+});
+
 describe('_bestCatalystCombo', () => {
     // netProfit is highest with a catalyst that costs nothing extra in this
     // fixture (catalystPrice comes from getItemPrice, mocked to 0), so the
@@ -125,10 +143,38 @@ describe('_bestCatalystCombo', () => {
     test('a nonzero tea cost can make the no-tea combo win despite a lower success rate', () => {
         const best = alchemyProfitCalculator._bestCatalystCombo(
             baseParams({
+                teaBonusOverride: 0.1,
                 computeTeaCost: (teaBonus) => (teaBonus > 0 ? 1_000_000 : 0),
             })
         );
         expect(best.teaBonus).toBe(0);
+        expect(best.usesTea).toBe(false);
+    });
+
+    test('a fixed tea candidate is charged even when it has no Alchemy Success bonus', () => {
+        const best = alchemyProfitCalculator._bestCatalystCombo(
+            baseParams({
+                teaBonusOverride: 0,
+                fixedTeaSelection: true,
+                computeTeaCost: () => 12_345,
+            })
+        );
+
+        expect(best.usesTea).toBe(true);
+        expect(best.teaBonus).toBe(0);
+        expect(best.teaCostPerHour).toBe(12_345);
+        expect(best.profitPerHour).toBeLessThan(
+            alchemyProfitCalculator._bestCatalystCombo(baseParams({ teaBonusOverride: 0 })).profitPerHour
+        );
+    });
+
+    test('a catalyst with no price cannot win as a free catalyst', () => {
+        mocks.itemPrice = null;
+
+        const best = alchemyProfitCalculator._bestCatalystCombo(baseParams({ fixedTeaSelection: true }));
+
+        expect(best.catalystHrid).toBeNull();
+        expect(best.catalystBonus).toBe(0);
     });
 
     test('picks among exactly six combinations and returns the best profitPerHour', () => {
@@ -208,6 +254,10 @@ describe('tea speed is applied on every alchemy path', () => {
             name: 'Alchemy Tea',
             consumableDetail: { buffs: [{ typeHrid: '/buff_types/action_speed', flatBoost: 0.06 }] },
         },
+        '/items/efficiency_tea': {
+            name: 'Efficiency Tea',
+            consumableDetail: { buffs: [{ typeHrid: '/buff_types/efficiency', flatBoost: 0.1 }] },
+        },
         '/items/cheese': {
             name: 'Cheese',
             itemLevel: 10,
@@ -229,6 +279,17 @@ describe('tea speed is applied on every alchemy path', () => {
                 transmuteDropTable: [{ itemHrid: '/items/cheese', dropRate: 1, minCount: 1, maxCount: 1 }],
             },
         },
+        '/items/cheese_hat_refined': {
+            name: 'Cheese Hat (Refined)',
+            itemLevel: 10,
+            alchemyDetail: {
+                unrefineDetail: {
+                    baseItemHrid: '/items/cheese_hat',
+                    shardReturn: { itemHrid: '/items/refinement_shard', count: 2 },
+                },
+            },
+        },
+        '/items/refinement_shard': { name: 'Refinement Shard' },
     };
 
     const alchemyAction = { type: '/action_types/alchemy', baseTimeCost: BASE_TIME_SECONDS * 1e9 };
@@ -238,6 +299,16 @@ describe('tea speed is applied on every alchemy path', () => {
         ['coinify', (calc) => calc.calculateCoinifyProfit('/items/cheese')],
         ['decompose', (calc) => calc.calculateDecomposeProfit('/items/cheese_hat')],
         ['transmute', (calc) => calc.calculateTransmuteProfit('/items/milk')],
+        ['unrefine', (calc) => calc.calculateUnrefineProfit('/items/cheese_hat_refined', 7)],
+    ];
+    const fixedDrinkPaths = [
+        ['coinify', (calc, context) => calc.calculateCoinifyProfit('/items/cheese', 0, false, 0, context)],
+        ['decompose', (calc, context) => calc.calculateDecomposeProfit('/items/cheese_hat', 0, false, 0, context)],
+        ['transmute', (calc, context) => calc.calculateTransmuteProfit('/items/milk', false, 0, null, context)],
+        [
+            'unrefine',
+            (calc, context) => calc.calculateUnrefineProfit('/items/cheese_hat_refined', 7, false, 0, context),
+        ],
     ];
 
     beforeEach(() => {
@@ -247,6 +318,7 @@ describe('tea speed is applied on every alchemy path', () => {
                 '/actions/alchemy/coinify': alchemyAction,
                 '/actions/alchemy/decompose': alchemyAction,
                 '/actions/alchemy/transmute': alchemyAction,
+                '/actions/alchemy/unrefine': alchemyAction,
             },
         };
         mocks.equipmentSpeed = 0.25;
@@ -260,6 +332,16 @@ describe('tea speed is applied on every alchemy path', () => {
 
     test.each(paths)('%s: a speed tea shortens the action and shows up in the breakdown', (_name, run) => {
         mocks.drinkSlots = [{ itemHrid: '/items/alchemy_tea' }];
+        mocks.itemPrices =
+            _name === 'coinify'
+                ? { '/items/cheese': 0 }
+                : _name === 'unrefine'
+                  ? {
+                        '/items/cheese_hat_refined': 100,
+                        '/items/cheese_hat': 1_000,
+                        '/items/refinement_shard': 100,
+                    }
+                  : { '/items/cheese': 1_000, '/items/cheese_hat': 100, '/items/milk': 10 };
 
         const result = run(alchemyProfitCalculator);
 
@@ -284,6 +366,43 @@ describe('tea speed is applied on every alchemy path', () => {
         expect(result.actionTime).toBe(EQUIPMENT_ONLY_TIME);
     });
 
+    test.each(fixedDrinkPaths)('%s: a fixed speed-tea candidate pays its tea cost exactly once', (_name, run) => {
+        mocks.itemPrices['/items/alchemy_tea'] = 100;
+        mocks.alchemyTeaBonus = 0.1;
+        const context = {
+            equipment: new Map(),
+            drinks: [{ itemHrid: '/items/alchemy_tea' }],
+            skills: [],
+            fixedTeaSelection: true,
+        };
+
+        const result = run(alchemyProfitCalculator, context);
+
+        expect(result).not.toBeNull();
+        expect(result.successRateBreakdown.tea).toBe(0);
+        expect(result.totalTeaCostPerHour).toBeGreaterThan(0);
+        expect(result.profitPerHour).toBeCloseTo(
+            result.revenuePerHour -
+                result.materialCostPerHour -
+                result.catalystCostPerHour -
+                result.totalTeaCostPerHour,
+            6
+        );
+    });
+
+    test.each(fixedDrinkPaths)('%s: an empty fixed candidate does not inherit live tea', (_name, run) => {
+        mocks.alchemyTeaBonus = 0.1;
+        mocks.drinkSlots = [{ itemHrid: '/items/alchemy_tea' }];
+        const context = { equipment: new Map(), drinks: [], skills: [], fixedTeaSelection: true };
+
+        const result = run(alchemyProfitCalculator, context);
+
+        expect(result).not.toBeNull();
+        expect(result.actionSpeedBreakdown.tea).toBe(0);
+        expect(result.successRateBreakdown.tea).toBe(0);
+        expect(result.totalTeaCostPerHour).toBe(0);
+    });
+
     test('the action time never drops below the game minimum', () => {
         mocks.drinkSlots = [{ itemHrid: '/items/alchemy_tea' }];
         mocks.actionStats = { actionTime: 3, totalEfficiency: 0, efficiencyBreakdown: {} };
@@ -291,6 +410,134 @@ describe('tea speed is applied on every alchemy path', () => {
         const result = alchemyProfitCalculator.calculateCoinifyProfit('/items/cheese');
 
         expect(result.actionTime).toBe(3);
+    });
+
+    test.each(paths.slice(0, 3))('%s: a no-tea tooltip winner does not retain live tea speed', (_name, run) => {
+        mocks.drinkSlots = [{ itemHrid: '/items/alchemy_tea' }];
+        mocks.itemPrices['/items/alchemy_tea'] = 1_000_000;
+
+        const result = run(alchemyProfitCalculator);
+
+        expect(result.winningTeaUsed).toBe(false);
+        expect(result.actionTime).toBe(EQUIPMENT_ONLY_TIME);
+        expect(result.actionSpeedBreakdown.tea).toBe(0);
+        expect(result.totalTeaCostPerHour).toBe(0);
+        expect(result.consumableCosts).toEqual([]);
+        expect(result.profitPerHour).toBeCloseTo(
+            result.revenuePerHour -
+                result.materialCostPerHour -
+                result.catalystCostPerHour -
+                result.totalTeaCostPerHour,
+            6
+        );
+    });
+
+    test.each(paths.slice(0, 3))('%s: a no-tea tooltip winner does not retain tea efficiency', (_name, run) => {
+        mocks.drinkSlots = [{ itemHrid: '/items/efficiency_tea' }];
+        mocks.itemPrices['/items/efficiency_tea'] = 1_000_000;
+        mocks.actionStats = (_details, options) => {
+            const teaEfficiency = options.actionContext?.drinks?.length === 0 ? 0 : 10;
+            return {
+                actionTime: EQUIPMENT_ONLY_TIME,
+                totalEfficiency: teaEfficiency,
+                efficiencyBreakdown: { teaEfficiency },
+            };
+        };
+
+        const result = run(alchemyProfitCalculator);
+
+        expect(result.winningTeaUsed).toBe(false);
+        expect(result.efficiency).toBe(0);
+        expect(result.efficiencyBreakdown.teaEfficiency).toBe(0);
+        expect(result.consumableCosts).toEqual([]);
+        expect(result.profitPerHour).toBeCloseTo(
+            result.revenuePerHour -
+                result.materialCostPerHour -
+                result.catalystCostPerHour -
+                result.totalTeaCostPerHour,
+            6
+        );
+    });
+
+    test('the live setup charges a speed-only tea despite zero Alchemy Success', () => {
+        mocks.drinkSlots = [{ itemHrid: '/items/alchemy_tea' }];
+        mocks.itemPrices['/items/alchemy_tea'] = 100;
+        vi.stubGlobal('document', { querySelector: () => null });
+        try {
+            const result = alchemyProfitCalculator.calculateCoinifyProfit('/items/cheese', 0, true);
+
+            expect(result.actionSpeedBreakdown.tea).toBeCloseTo(TEA_SPEED, 10);
+            expect(result.totalTeaCostPerHour).toBeGreaterThan(0);
+            expect(result.consumableCosts).toHaveLength(1);
+        } finally {
+            vi.unstubAllGlobals();
+        }
+    });
+
+    test('unrefine exposes the same detailed cost and revenue shape as the other alchemy paths', () => {
+        mocks.itemPrices['/items/cheese_hat_refined'] = 1_000;
+        mocks.itemPrices['/items/cheese_hat'] = 700;
+        mocks.itemPrices['/items/refinement_shard'] = 50;
+
+        const result = alchemyProfitCalculator.calculateUnrefineProfit('/items/cheese_hat_refined', 7);
+
+        expect(result.requirementCosts).toEqual(
+            expect.arrayContaining([
+                expect.objectContaining({
+                    itemHrid: '/items/cheese_hat_refined',
+                    enhancementLevel: 7,
+                    costPerAction: 1_000,
+                }),
+            ])
+        );
+        expect(result.dropRevenues).toEqual(
+            expect.arrayContaining([
+                expect.objectContaining({ itemHrid: '/items/cheese_hat', enhancementLevel: 7 }),
+                expect.objectContaining({ itemHrid: '/items/refinement_shard', count: 2 }),
+            ])
+        );
+        expect(result.catalystCost).toEqual(expect.objectContaining({ itemHrid: null, costPerHour: 0 }));
+    });
+
+    test('unrefine names a shard return omitted from profit for lack of a market price', () => {
+        mocks.itemPrice = null;
+        mocks.itemPrices['/items/cheese_hat_refined'] = 1_000;
+        mocks.itemPrices['/items/cheese_hat'] = 700;
+
+        const result = alchemyProfitCalculator.calculateUnrefineProfit('/items/cheese_hat_refined', 7);
+
+        expect(result).not.toBeNull();
+        expect(result.unpricedOutputs).toEqual(['/items/refinement_shard']);
+        expect(result.dropRevenues.find((drop) => drop.itemHrid === '/items/refinement_shard')).toBeUndefined();
+    });
+
+    test('unrefine retains an estimated shard value while marking it uncertain', () => {
+        mocks.itemPrices['/items/cheese_hat_refined'] = 1_000;
+        mocks.itemPrices['/items/cheese_hat'] = 700;
+        mocks.itemPrices['/items/refinement_shard'] = 50;
+        mocks.estimatedItems.add('/items/refinement_shard');
+
+        const result = alchemyProfitCalculator.calculateUnrefineProfit('/items/cheese_hat_refined', 7);
+
+        expect(
+            result.dropRevenues.find((drop) => drop.itemHrid === '/items/refinement_shard').revenuePerHour
+        ).toBeGreaterThan(0);
+        expect(result.estimatedOutputs).toEqual(['/items/refinement_shard']);
+    });
+
+    test('unrefine tooltip does not keep speed from tea it declines to pay for', () => {
+        mocks.drinkSlots = [{ itemHrid: '/items/alchemy_tea' }];
+        mocks.itemPrices['/items/alchemy_tea'] = 1_000_000;
+        mocks.itemPrices['/items/cheese_hat_refined'] = 1_000;
+        mocks.itemPrices['/items/cheese_hat'] = 700;
+        mocks.itemPrices['/items/refinement_shard'] = 50;
+
+        const result = alchemyProfitCalculator.calculateUnrefineProfit('/items/cheese_hat_refined', 7);
+
+        expect(result.actionTime).toBe(EQUIPMENT_ONLY_TIME);
+        expect(result.actionSpeedBreakdown.tea).toBe(0);
+        expect(result.totalTeaCostPerHour).toBe(0);
+        expect(result.consumableCosts).toEqual([]);
     });
 });
 
@@ -489,6 +736,21 @@ describe('official alchemy rules', () => {
                 []
             );
         });
+    });
+
+    test.each([
+        ['decompose', '/items/cheese_hat', (calc) => calc.calculateDecomposeProfit('/items/cheese_hat')],
+        ['transmute', '/items/milk', (calc) => calc.calculateTransmuteProfit('/items/milk')],
+    ])('%s preserves an estimated output value but marks its price uncertain', (_name, inputHrid, run) => {
+        mocks.itemPrices[inputHrid] = 100;
+        mocks.itemPrices['/items/cheese'] = 500;
+        mocks.estimatedItems.add('/items/cheese');
+
+        const result = run(alchemyProfitCalculator);
+
+        expect(result.unpricedOutputs).toEqual([]);
+        expect(result.dropRevenues.find((drop) => drop.itemHrid === '/items/cheese').revenuePerHour).toBeGreaterThan(0);
+        expect(result.estimatedOutputs).toEqual(['/items/cheese']);
     });
 });
 

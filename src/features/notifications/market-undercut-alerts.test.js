@@ -534,139 +534,39 @@ describe('market undercut alerts', () => {
         });
     });
 
-    // The snapshot refresh is the whole point of this feature's newer half:
-    // without it, nothing calls fetch() after startup, the bulk snapshot goes
-    // stale, and an undercut on an item the player never opened reads as "still
-    // best". It runs on a fixed timer at the market cache's own 15-minute window
-    // (no configurable interval) and, crucially, calls the *cache-respecting*
-    // fetch() — never the forcing fetch(true) — so it cannot pull faster than the
-    // cache and add to the game's rate-limiting. The shared beforeEach already
-    // wires the feature up with the master switch on, so the timer is running.
-    describe('snapshot refresh', () => {
+    // MarketAPI owns the always-on base snapshot timer. This optional feature
+    // retains only its separately authorised pooled-history refresh, so enabling
+    // undercut alerts cannot double the base cache checks or notifications.
+    describe('refresh ownership', () => {
         const CACHE = marketAPI.CACHE_DURATION;
 
-        test('an old completion cannot release the new session snapshot refresh lock', async () => {
-            let resolveOld;
-            game.fetchImpl = () =>
-                new Promise((resolve) => {
-                    resolveOld = resolve;
-                });
-            const oldRefresh = marketUndercutAlerts.refreshSnapshot();
-            marketUndercutAlerts.disable();
-            await marketUndercutAlerts.initialize();
-
-            let resolveNew;
-            game.fetchImpl = () =>
-                new Promise((resolve) => {
-                    resolveNew = resolve;
-                });
-            const newRefresh = marketUndercutAlerts.refreshSnapshot();
-            resolveOld();
-            await oldRefresh;
-
-            expect(marketUndercutAlerts.refreshInFlight).toBe(true);
-            await marketUndercutAlerts.refreshSnapshot();
-            expect(marketAPI.fetch).toHaveBeenCalledTimes(2);
-
-            resolveNew();
-            await newRefresh;
-            expect(marketUndercutAlerts.refreshInFlight).toBe(false);
-        });
-
-        test('an undercut against a stale snapshot is finally caught on the next refresh', async () => {
-            // The player holds the best ask in the snapshot the script currently
-            // has, and has never opened this item, so no fresher order-book patch
-            // exists — the comparison must read the snapshot itself.
-            game.listings = [listing()]; // sell at 280K
-            setPrice('/items/cheese', 0, 285000, 270000, 5 * 60 * 1000); // 5m-old, ask above theirs
-            check();
-            expect(game.notified).toHaveLength(0); // reads as still-best
-
-            // The refreshed snapshot shows a competitor now cheaper than the listing
-            game.fetchImpl = async () => {
-                game.prices['/items/cheese:0'] = { ask: 274000, bid: 270000 };
-                game.lastFetchTimestamp = Date.now();
-                game.priceListeners.forEach((cb) => cb());
-            };
-
-            await vi.advanceTimersByTimeAsync(CACHE);
-
-            expect(marketAPI.fetch).toHaveBeenCalled();
-            expect(game.notified).toHaveLength(1);
-            expect(game.notified[0].message).toContain('sell listing undercut');
-        });
-
-        test('the refresh runs once per cache window and never forces a fetch', async () => {
-            await vi.advanceTimersByTimeAsync(CACHE);
-            await vi.advanceTimersByTimeAsync(CACHE);
-
-            expect(marketAPI.fetch).toHaveBeenCalledTimes(2);
-            // Cache-respecting: called with no force argument, so it only touches
-            // the network when the 15-minute cache has actually expired.
-            marketAPI.fetch.mock.calls.forEach((args) => expect(args[0]).toBeFalsy());
-        });
-
-        test('no timer runs while the feature itself is off', async () => {
-            marketUndercutAlerts.disable();
-            game.settings[MASTER_SETTING] = false;
-            marketAPI.fetch.mockClear();
-            await marketUndercutAlerts.initialize();
-
+        test('never starts a second base-market fetch timer', async () => {
             await vi.advanceTimersByTimeAsync(4 * CACHE);
-
             expect(marketAPI.fetch).not.toHaveBeenCalled();
         });
 
-        test('a tick is skipped while the previous refresh is still in flight', async () => {
-            let releaseFetch;
-            game.fetchImpl = () =>
-                new Promise((resolve) => {
-                    releaseFetch = resolve;
-                });
-            // Re-init so the timer's fetch uses the hanging fetchImpl set above.
-            marketUndercutAlerts.disable();
-            marketAPI.fetch.mockClear();
-            await marketUndercutAlerts.initialize();
-
-            await vi.advanceTimersByTimeAsync(CACHE); // tick 1 starts, never settles
-            await vi.advanceTimersByTimeAsync(CACHE); // tick 2 must skip the in-flight fetch
-
-            expect(marketAPI.fetch).toHaveBeenCalledTimes(1);
-
-            releaseFetch();
-        });
-
-        test('a second initialize does not double the timers or the handlers', async () => {
-            // The feature registry retries features that failed to start. Without
-            // a guard the second run added a second handler pair, a second
-            // 15-minute timer, and a second stream of third-party Mooket requests
-            const handlersBefore = Object.keys(game.dmHandlers).length;
-            const listenersBefore = game.priceListeners.length;
-            marketAPI.fetch.mockClear();
-
-            await marketUndercutAlerts.initialize();
-
-            expect(Object.keys(game.dmHandlers)).toHaveLength(handlersBefore);
-            expect(game.priceListeners).toHaveLength(listenersBefore);
+        test('keeps refreshing the separately enabled pooled-history source', async () => {
+            game.settings.market_pooledHistory = true;
+            game.listings = [listing()];
+            game.mooketRows['/items/cheese:0'] = [{ a: 274000, b: 270000, time: NOW / 1000 }];
+            const fetchHistory = vi.spyOn(marketHistoryAPI, 'fetchHistory');
 
             await vi.advanceTimersByTimeAsync(CACHE);
-            expect(marketAPI.fetch).toHaveBeenCalledTimes(1);
 
-            // And the one teardown still tears everything down
-            marketUndercutAlerts.disable();
-            expect(game.priceListeners).toHaveLength(0);
-            await vi.advanceTimersByTimeAsync(4 * CACHE);
-            expect(marketAPI.fetch).toHaveBeenCalledTimes(1);
+            expect(fetchHistory).toHaveBeenCalledWith('/items/cheese', 0, 1);
+            expect(marketAPI.fetch).not.toHaveBeenCalled();
+            fetchHistory.mockRestore();
         });
 
-        test('disable clears the refresh timer', async () => {
-            await vi.advanceTimersByTimeAsync(CACHE);
-            expect(marketAPI.fetch).toHaveBeenCalledTimes(1);
-
+        test('disable clears the pooled-history timer', async () => {
+            game.settings.market_pooledHistory = true;
+            game.listings = [listing()];
+            const fetchHistory = vi.spyOn(marketHistoryAPI, 'fetchHistory');
             marketUndercutAlerts.disable();
             await vi.advanceTimersByTimeAsync(4 * CACHE);
 
-            expect(marketAPI.fetch).toHaveBeenCalledTimes(1); // no ticks after teardown
+            expect(fetchHistory).not.toHaveBeenCalled();
+            fetchHistory.mockRestore();
         });
     });
 });

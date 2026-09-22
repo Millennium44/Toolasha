@@ -68,6 +68,7 @@ vi.mock('../../api/marketplace.js', () => ({
 }));
 
 vi.mock('./gathering-profit.js', () => ({ calculateGatheringProfit: async () => null }));
+vi.mock('../../utils/experience-calculator.js', () => ({ calculateExpPerHour: () => null }));
 vi.mock('../market/profit-calculator.js', () => ({ default: { calculate: async () => null } }));
 vi.mock('../market/alchemy-profit-calculator.js', () => ({ default: { calculate: async () => null } }));
 vi.mock('../enhancement/enhancement-xp.js', () => ({ calculateEnhancementPredictions: () => null }));
@@ -263,6 +264,53 @@ describe('the Queued Actions panel shows what a fight is expected to make', () =
         await flush();
 
         expect(totalText()).toContain('Total profit: +2.00M + [?]');
+    });
+
+    test('a fight after a Repeat-∞ row keeps its row estimate out of the reachable profit total', async () => {
+        game.actionDetails = { [GOBO]: gobo, [MILK]: cow };
+        game.currentActions = [combatAction(1), endlessAction(2, MILK), combatAction(3)];
+        const menu = queueMenu(['Gobo Planet (T3)', 'Milk Cow', 'Gobo Planet (T3)']);
+        actionTimeDisplay.injectQueueTimes(menu);
+        await flush();
+
+        expect(profits(menu)).toEqual(['Profit: +2.00M (1.00M/hr)', 'Profit: +2.00M (1.00M/hr)']);
+        expect(totalText()).toContain('Total profit: +2.00M + [?]');
+        expect(totalText()).not.toContain('Total profit: +4.00M');
+    });
+
+    test('market rows after an endless row retain row estimates without inflating the footer', async () => {
+        const menu = queueMenu(['Milk Cow', 'Milk Cow']);
+        const profitLines = menu.querySelectorAll('[class*="QueuedActions_action__"]');
+        for (const [index, row] of [...profitLines].entries()) {
+            const line = document.createElement('div');
+            line.className = 'mwi-queue-action-profit';
+            line.dataset.divIndex = String(index);
+            row.appendChild(line);
+        }
+        const total = document.createElement('div');
+        document.body.appendChild(total);
+        const calculate = vi.spyOn(actionTimeDisplay, 'calculateProfitForAction').mockResolvedValue(5_000);
+
+        try {
+            await actionTimeDisplay.calculateAndDisplayTotalProfit(
+                total,
+                [
+                    { divIndex: 0, isReachable: true },
+                    { divIndex: 1, isReachable: false },
+                ],
+                'Total time: [∞]',
+                menu,
+                { total: 0, hasAny: false, incomplete: true }
+            );
+
+            expect([...profitLines].map((row) => row.querySelector('.mwi-queue-action-profit')?.textContent)).toEqual([
+                'Profit: +5.00K',
+                'Profit: +5.00K',
+            ]);
+            expect(total.textContent).toContain('Total profit: +5.00K + [?]');
+        } finally {
+            calculate.mockRestore();
+        }
     });
 
     test('the same row marks the Estimated Value total short too', async () => {

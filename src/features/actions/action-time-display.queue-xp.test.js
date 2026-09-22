@@ -333,6 +333,32 @@ describe('the Queued Actions panel shows what the queue is expected to teach', (
         expect(totalText()).toContain('Total XP: 25.00K + [?]');
     });
 
+    test('rows after a Repeat-∞ action show their own XP but do not enter the reachable total', async () => {
+        game.currentActions = [countedAction(1, MILK, 250), endlessAction(2, MILK), countedAction(3, MILK, 500)];
+        const menu = queueMenu(['Milk Cow', 'Milk Cow', 'Milk Cow']);
+        actionTimeDisplay.injectQueueTimes(menu);
+        await flush();
+
+        expect(xpLines(menu)).toEqual(['XP: 25.00K (36.00K/hr)', 'XP: 36.00K/hr', 'XP: 50.00K (36.00K/hr)']);
+        expect(totalText()).toContain('Total XP: 25.00K + [?]');
+        expect(totalText()).not.toContain('75.00K');
+    });
+
+    test('an active Repeat-∞ action prevents queued rows from entering the duration and XP totals', async () => {
+        const header = document.createElement('div');
+        header.className = 'Header_actionName__x';
+        header.textContent = 'Milk Cow';
+        document.body.appendChild(header);
+        game.currentActions = [endlessAction(1, MILK), countedAction(2, MILK, 500)];
+        const menu = queueMenu(['Milk Cow']);
+        actionTimeDisplay.injectQueueTimes(menu);
+        await flush();
+
+        expect(totalText()).toContain('Total time: [∞]');
+        expect(totalText()).not.toContain('Total XP: 50.00K');
+        expect(xpLines(menu)).toEqual(['XP: 50.00K (36.00K/hr)']);
+    });
+
     test('with the setting off nothing is drawn at all', async () => {
         game.showXp = false;
         game.currentActions = [combatAction(1), countedAction(2, MILK, 250)];

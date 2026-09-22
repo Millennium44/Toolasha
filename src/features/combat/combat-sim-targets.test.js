@@ -24,8 +24,8 @@ const projectRoot = join(dirname(fileURLToPath(import.meta.url)), '..', '..', '.
 const read = (relativePath) => readFileSync(join(projectRoot, relativePath), 'utf8');
 
 describe('COMBAT_SIM_TARGETS', () => {
-    test('lists both supported simulators', () => {
-        expect(COMBAT_SIM_TARGETS.map((target) => target.id)).toEqual(['shykai', 'szerra']);
+    test('lists every supported simulator', () => {
+        expect(COMBAT_SIM_TARGETS.map((target) => target.id)).toEqual(['shykai', 'szerra', 'metz']);
     });
 
     test('every target is fully specified with a unique id, label and url', () => {
@@ -65,6 +65,7 @@ describe('isCombatSimulatorPage', () => {
     test('recognises deep links inside a simulator', () => {
         expect(isCombatSimulatorPage('https://shykai.github.io/MWICombatSimulatorTest/dist/index.html#sim')).toBe(true);
         expect(isCombatSimulatorPage('https://szerra.github.io/mwi-shrine-combat-simulator/index.html?p=1')).toBe(true);
+        expect(isCombatSimulatorPage('https://metzlii.github.io/metz-combat-simulator/setup')).toBe(true);
     });
 
     test.each([
@@ -73,6 +74,15 @@ describe('isCombatSimulatorPage', () => {
         ['an unrelated github pages site', 'https://doh-nuts.github.io/Enhancelator/'],
         ['the szerra user page without the simulator repo', 'https://szerra.github.io/'],
         ['the shykai user page without the simulator repo', 'https://shykai.github.io/'],
+        ['the metzlii user page without the simulator repo', 'https://metzlii.github.io/'],
+        [
+            'a game URL that merely mentions a simulator in its query',
+            'https://www.milkywayidle.com/game?next=https://metzlii.github.io/metz-combat-simulator/',
+        ],
+        [
+            'an unrelated host that merely mentions a simulator in its path',
+            'https://example.com/metzlii.github.io/metz-combat-simulator/',
+        ],
         ['an empty url', ''],
     ])('does not recognise %s', (_label, url) => {
         expect(isCombatSimulatorPage(url)).toBe(false);
@@ -92,8 +102,10 @@ describe('the copies of the target list stay in sync', () => {
         const body = source.slice(source.indexOf('function isCombatSimulatorPage'));
         const detector = body.slice(0, body.indexOf('\n}\n') + 2);
 
-        const fragments = [...detector.matchAll(/url\.includes\('([^']+)'\)/g)].map((match) => match[1]);
-        expect(fragments).toEqual(COMBAT_SIM_TARGETS.map((target) => target.urlFragment));
+        const runtimeTargets = [
+            ...detector.matchAll(/url\.origin === '([^']+)' && url\.pathname\.startsWith\('([^']+)'\)/g),
+        ].map((match) => `${new URL(match[1]).host}/${match[2].slice(1)}`);
+        expect(runtimeTargets).toEqual(COMBAT_SIM_TARGETS.map((target) => target.urlFragment));
     });
 
     test.each(['userscript-header.txt', 'library-headers/entrypoint.txt'])(

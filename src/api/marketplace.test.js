@@ -117,6 +117,196 @@ describe('MarketAPI fetch', () => {
     });
 });
 
+describe('MarketAPI automatic snapshot refresh', () => {
+    beforeEach(() => {
+        vi.resetModules();
+        vi.useFakeTimers();
+        vi.stubGlobal('fetch', vi.fn());
+        // No spread unless a test asks for one, so the cadence tests read exact expiries
+        vi.spyOn(Math, 'random').mockReturnValue(0);
+        createMocks(true);
+    });
+
+    afterEach(() => {
+        vi.useRealTimers();
+        vi.unstubAllGlobals();
+        vi.restoreAllMocks();
+    });
+
+    test('each check lands a random 0-60 s after the cache expiry', async () => {
+        Math.random.mockReturnValue(0.5);
+        const { default: marketAPI } = await import('./marketplace.js');
+        const refresh = vi.spyOn(marketAPI, 'fetch').mockResolvedValue(null);
+
+        marketAPI.startAutoRefresh();
+        await vi.advanceTimersByTimeAsync(marketAPI.CACHE_DURATION + 29_999);
+        expect(refresh).not.toHaveBeenCalled();
+
+        await vi.advanceTimersByTimeAsync(1);
+        expect(refresh).toHaveBeenCalledTimes(1);
+        marketAPI.stopAutoRefresh();
+    });
+
+    test('a tab whose spread-out check finds the shared cache already refreshed does not fetch', async () => {
+        Math.random.mockReturnValue(0.5);
+        vi.setSystemTime(1_000_000);
+        const { get, getJSON } = createMocks(true);
+        let cachedAt = Date.now() - 14 * 60_000;
+        get.mockImplementation(async (key) => (key === 'Toolasha_marketAPI_timestamp' ? cachedAt : null));
+        getJSON.mockImplementation(async (key) =>
+            key === 'Toolasha_marketAPI_json'
+                ? { marketData: { '/items/cheese': { 0: { a: 20, b: 19 } } }, timestamp: 1 }
+                : {}
+        );
+        fetch.mockResolvedValue({
+            ok: true,
+            json: async () => ({ marketData: { '/items/cheese': { 0: { a: 21, b: 20 } } }, timestamp: 2 }),
+        });
+        const { default: marketAPI } = await import('./marketplace.js');
+
+        marketAPI.startAutoRefresh();
+        await marketAPI.fetch();
+
+        // The shared cache expires a minute from now; another tab refreshes it ten seconds after
+        await vi.advanceTimersByTimeAsync(70_000);
+        cachedAt = Date.now();
+        await vi.advanceTimersByTimeAsync(20_000);
+
+        expect(fetch).not.toHaveBeenCalled();
+        marketAPI.stopAutoRefresh();
+    });
+
+    test('rechecks long-lived sessions on the cache cadence without forcing a request', async () => {
+        const { default: marketAPI } = await import('./marketplace.js');
+        const refresh = vi.spyOn(marketAPI, 'fetch').mockResolvedValue(null);
+
+        marketAPI.startAutoRefresh();
+        await vi.advanceTimersByTimeAsync(marketAPI.CACHE_DURATION * 2);
+
+        expect(refresh).toHaveBeenCalledTimes(2);
+        expect(refresh.mock.calls).toEqual([[], []]);
+        marketAPI.stopAutoRefresh();
+    });
+
+    test('starting twice still owns only one interval', async () => {
+        const { default: marketAPI } = await import('./marketplace.js');
+        const refresh = vi.spyOn(marketAPI, 'fetch').mockResolvedValue(null);
+
+        marketAPI.startAutoRefresh();
+        marketAPI.startAutoRefresh();
+        await vi.advanceTimersByTimeAsync(marketAPI.CACHE_DURATION);
+
+        expect(refresh).toHaveBeenCalledTimes(1);
+        marketAPI.stopAutoRefresh();
+    });
+
+    test('stop clears the interval and allows a later restart', async () => {
+        const { default: marketAPI } = await import('./marketplace.js');
+        const refresh = vi.spyOn(marketAPI, 'fetch').mockResolvedValue(null);
+
+        marketAPI.startAutoRefresh();
+        marketAPI.stopAutoRefresh();
+        await vi.advanceTimersByTimeAsync(marketAPI.CACHE_DURATION * 2);
+        expect(refresh).not.toHaveBeenCalled();
+
+        marketAPI.startAutoRefresh();
+        await vi.advanceTimersByTimeAsync(marketAPI.CACHE_DURATION);
+        expect(refresh).toHaveBeenCalledTimes(1);
+        marketAPI.stopAutoRefresh();
+    });
+
+    test('a timer started before the startup fetch retries when that later cache actually expires', async () => {
+        vi.setSystemTime(1_000_000);
+        const { get, getJSON } = createMocks(true);
+        const cachedAt = Date.now() + 5_000;
+        get.mockImplementation(async (key) => (key === 'Toolasha_marketAPI_timestamp' ? cachedAt : 1));
+        getJSON.mockImplementation(async (key) =>
+            key === 'Toolasha_marketAPI_json'
+                ? { marketData: { '/items/cheese': { 0: { a: 20, b: 19 } } }, timestamp: 1 }
+                : {}
+        );
+        fetch.mockResolvedValue({
+            ok: true,
+            json: async () => ({ marketData: { '/items/cheese': { 0: { a: 21, b: 20 } } }, timestamp: 2 }),
+        });
+        const { default: marketAPI } = await import('./marketplace.js');
+
+        marketAPI.startAutoRefresh();
+        await vi.advanceTimersByTimeAsync(marketAPI.CACHE_DURATION);
+        expect(fetch).not.toHaveBeenCalled();
+
+        await vi.advanceTimersByTimeAsync(5_000);
+        expect(fetch).toHaveBeenCalledTimes(1);
+        marketAPI.stopAutoRefresh();
+    });
+
+    test('a restored nearly expired snapshot refreshes when its remaining minute expires', async () => {
+        vi.setSystemTime(1_000_000);
+        const { get, getJSON } = createMocks(true);
+        const cachedAt = Date.now() - 14 * 60_000;
+        get.mockImplementation(async (key) => (key === 'Toolasha_marketAPI_timestamp' ? cachedAt : null));
+        getJSON.mockImplementation(async (key) =>
+            key === 'Toolasha_marketAPI_json'
+                ? { marketData: { '/items/cheese': { 0: { a: 20, b: 19 } } }, timestamp: 1 }
+                : {}
+        );
+        fetch.mockResolvedValue({
+            ok: true,
+            json: async () => ({ marketData: { '/items/cheese': { 0: { a: 21, b: 20 } } }, timestamp: 2 }),
+        });
+        const { default: marketAPI } = await import('./marketplace.js');
+
+        marketAPI.startAutoRefresh();
+        await marketAPI.fetch();
+        expect(fetch).not.toHaveBeenCalled();
+
+        await vi.advanceTimersByTimeAsync(60_000);
+        expect(fetch).toHaveBeenCalledTimes(1);
+        marketAPI.stopAutoRefresh();
+    });
+
+    test('a forced snapshot refresh moves the next automatic check to its new expiry', async () => {
+        vi.setSystemTime(1_000_000);
+        const { default: marketAPI } = await import('./marketplace.js');
+        const refresh = vi.spyOn(marketAPI, 'fetch').mockResolvedValue(null);
+
+        marketAPI.startAutoRefresh();
+        await vi.advanceTimersByTimeAsync(5 * 60_000);
+        marketAPI.cacheData({ marketData: {}, timestamp: 1 });
+
+        await vi.advanceTimersByTimeAsync(10 * 60_000);
+        expect(refresh).not.toHaveBeenCalled();
+        await vi.advanceTimersByTimeAsync(5 * 60_000);
+        expect(refresh).toHaveBeenCalledTimes(1);
+        marketAPI.stopAutoRefresh();
+    });
+
+    test('a stopped in-flight check cannot schedule over a restarted refresh', async () => {
+        const { default: marketAPI } = await import('./marketplace.js');
+        let release;
+        const first = new Promise((resolve) => {
+            release = resolve;
+        });
+        const refresh = vi
+            .spyOn(marketAPI, 'fetch')
+            .mockImplementationOnce(() => first)
+            .mockResolvedValue(null);
+
+        marketAPI.startAutoRefresh();
+        vi.advanceTimersByTime(marketAPI.CACHE_DURATION);
+        expect(refresh).toHaveBeenCalledTimes(1);
+
+        marketAPI.stopAutoRefresh();
+        marketAPI.startAutoRefresh();
+        release(null);
+        await Promise.resolve();
+        await vi.advanceTimersByTimeAsync(marketAPI.CACHE_DURATION);
+        expect(refresh).toHaveBeenCalledTimes(2);
+        expect(vi.getTimerCount()).toBe(1);
+        marketAPI.stopAutoRefresh();
+    });
+});
+
 describe('MarketAPI fetch in-flight dedup', () => {
     beforeEach(() => {
         vi.resetModules();

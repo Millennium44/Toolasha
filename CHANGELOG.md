@@ -6,6 +6,62 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Metz combat simulator import and profile export
+
+- The sidebar now links to Metz Combat Simulator, where Toolasha imports the current character, cached party profiles, saved loadouts, spare gear and abilities, and the enhancing and alchemy setup. Opening it from a game tab refreshes the character snapshot it imports, so the import matches that tab's character and today's inventory rather than login's.
+
+### Action and queue completion times can be shown independently
+
+- The action bar can show time remaining, completion ETA, both or neither, and queued rows can separately show cumulative duration, completion clock or both. Existing on/off choices carry over, including one synced back later from an older build.
+
+### Alchemy Optimizer uses the item, gear and teas being tested
+
+- Alchemy recommendations now price the running or chosen item with the hypothetical gear, teas and planned level, support Unrefine, and refuse item/action pairs the game cannot perform. Unpriced catalysts and outputs are flagged as uncertain instead of counted as free.
+
+### Skilling Optimizer plans at the chosen level and respects real requirements
+
+- Tea recommendations and equipment use the planned level, gear locked above it is no longer recommended, owned +0 gear counts as owned, and an enhanced cross-tier upgrade with no listing is costed from its +0 price plus the enhancement estimate.
+
+### Skilling Optimizer can sort by fixed percentage-point value
+
+- Equipment Progression can rank upgrades by gold per 0.01% Exp/hr or Profit gain, so similar improvements compare directly across slots.
+
+### Combat Sim can skip skilling house rooms
+
+- Upgrade Advisor can optionally skip house rooms whose only combat effect is the shared Wisdom and Rare Find bonus, saving simulation time; it is off by default.
+
+### Combat Sim skips ability swaps that cannot affect the fight
+
+- Solo upgrade searches no longer spend simulations on party-only threat and revive abilities.
+
+### Market prices refresh throughout long sessions
+
+- The market snapshot is now rechecked when its 15-minute cache expires for every player, not only those with a listing alert on. Open tabs spread their checks over a minute so one tab refreshes the shared cache instead of every tab fetching at once.
+
+### Marketplace Action opens outside the game's clipped menu
+
+- The four Marketplace Action choices open in a panel below the button instead of being cut off by the item's scrollable menu, and close on outside click, Escape or when the menu goes away.
+
+### Can Produce counts the spendable copies of an item
+
+- Can Produce now counts every spendable +0 stack and ignores enhanced copies, so one enhanced item no longer hides thousands of usable ones.
+
+### Queue rows stay usable and their totals follow the live order
+
+- Long timing and profit details no longer push a queued action's delete button off the popup, and queue totals stop at an endless action while later rows keep their own estimates.
+
+### Custom Tabs recovers items hidden by collapsed native categories
+
+- Custom Tabs now opens a collapsed Inventory category that holds a missing assigned item instead of leaving it out with only a warning.
+
+### Enhancement auto-protection survives a late-rendered slot
+
+- Automatic "Protect From" updates keep working when the enhancement panel adds its protection slot late or the selected item changes.
+
+### Character Select shows the activity snapshot from the moment you left
+
+- Opening Character Select checkpoints the active character first, so its slot no longer shows an older queue projection.
+
 ### Notice history survives a temporary storage read failure
 
 - A notice arriving while its saved history cannot be read no longer replaces that history with a one-entry log. The script keeps the new notice in memory and merges it with the saved log when reading succeeds, even across a character switch.

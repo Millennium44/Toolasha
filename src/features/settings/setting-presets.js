@@ -57,7 +57,6 @@ const ESSENTIALS = [
     'actionBar_enabled',
     'actionBar_showQueueCount',
     'actionBar_showActionDuration',
-    'actionBar_showTimeRemaining',
     'actionBar_showRecycleTime',
     // Skill page & tiles
     'actionPanel_showFilter',

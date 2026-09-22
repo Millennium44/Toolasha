@@ -26,7 +26,7 @@ export function buildEnhancementLevelMap() {
         if (!item.itemHrid || item.count === 0) continue;
         const existing = map.get(item.itemHrid) ?? 0;
         const level = item.enhancementLevel ?? 0;
-        if (level > existing) {
+        if (!map.has(item.itemHrid) || level > existing) {
             map.set(item.itemHrid, level);
         }
     }

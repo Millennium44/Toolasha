@@ -58,6 +58,40 @@ afterEach(() => {
 });
 
 describe('character activity collector session lifecycle', () => {
+    test('checkpoints the active character immediately for Character Select without delaying on preferences', async () => {
+        await collector.initialize();
+        state.saveRecord.mockClear();
+        state.savePreferences.mockClear();
+
+        await collector.checkpointForCharacterSelect();
+
+        expect(state.saveRecord).toHaveBeenCalledExactlyOnceWith(
+            'character-a',
+            expect.objectContaining({ characterId: 'character-a', projection: state.projection }),
+            true
+        );
+        expect(state.savePreferences).not.toHaveBeenCalled();
+    });
+
+    test('reports an immediate checkpoint that storage could not land', async () => {
+        await collector.initialize();
+        state.saveRecord.mockClear().mockResolvedValue(false);
+
+        await expect(collector.checkpointForCharacterSelect()).resolves.toBe(false);
+    });
+
+    test('does not checkpoint after cleanup or after the live character has changed', async () => {
+        await collector.initialize();
+        state.saveRecord.mockClear();
+        state.characterId = 'character-b';
+
+        await collector.checkpointForCharacterSelect();
+        collector.cleanup();
+        await collector.checkpointForCharacterSelect();
+
+        expect(state.saveRecord).not.toHaveBeenCalled();
+    });
+
     test('persists the refreshed queue when the same character reconnects without an action update', async () => {
         await collector.initialize();
         state.saveRecord.mockClear();

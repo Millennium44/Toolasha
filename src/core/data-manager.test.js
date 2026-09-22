@@ -22,6 +22,7 @@ vi.mock('./websocket.js', () => {
             }),
             onSocketEvent: vi.fn(),
             offSocketEvent: vi.fn(),
+            saveCombatSimSnapshot: vi.fn(() => true),
         },
     };
 });
@@ -594,6 +595,8 @@ describe('event listener snapshots (upstream 03204a5)', () => {
 describe('inventory index', () => {
     test('items_updated updates, removes and appends by id without rescanning', async () => {
         const { default: dataManager } = await import('./data-manager.js');
+        const { default: webSocketHook } = await import('./websocket.js');
+        webSocketHook.saveCombatSimSnapshot.mockClear();
         dataManager.characterItems = [
             { id: 'a', count: 1, itemLocationHrid: '/item_locations/inventory' },
             { id: 'b', count: 2, itemLocationHrid: '/item_locations/inventory' },
@@ -613,6 +616,9 @@ describe('inventory index', () => {
         expect(dataManager.characterItems.map((i) => i.id)).toEqual(['b', 'c', 'd']);
         expect(dataManager.characterItems.find((i) => i.id === 'b').count).toBe(20);
         expect(dataManager.characterItems.find((i) => i.id === 'd').count).toBe(7);
+        // Inventory ticks stay in memory; the simulator snapshot is written only when a
+        // simulator is opened, not on every action for every player
+        expect(webSocketHook.saveCombatSimSnapshot).not.toHaveBeenCalled();
     });
 
     test('the index recovers when characterItems is replaced behind its back', async () => {
@@ -633,6 +639,8 @@ describe('inventory index', () => {
 
     test('action_completed inventory updates go through the same index', async () => {
         const { default: dataManager } = await import('./data-manager.js');
+        const { default: webSocketHook } = await import('./websocket.js');
+        webSocketHook.saveCombatSimSnapshot.mockClear();
         dataManager.characterItems = [{ id: 'a', count: 1, itemLocationHrid: '/item_locations/inventory' }];
         dataManager._itemIndexById = null;
         dataManager.characterActions = [];
@@ -651,6 +659,51 @@ describe('inventory index', () => {
             ['a', 9],
             ['z', 4],
         ]);
+        // Inventory ticks stay in memory; the simulator snapshot is written only when a
+        // simulator is opened, not on every action for every player
+        expect(webSocketHook.saveCombatSimSnapshot).not.toHaveBeenCalled();
+    });
+});
+
+describe('saveSimulatorSnapshot', () => {
+    test('writes the live inventory, abilities and drink slots stamped for the current character', async () => {
+        const { default: dataManager } = await import('./data-manager.js');
+        const { default: webSocketHook } = await import('./websocket.js');
+        webSocketHook.saveCombatSimSnapshot.mockClear();
+        dataManager.currentCharacterId = 'char-snap';
+        dataManager.currentCharacterName = 'Snap';
+        dataManager.isCharacterSwitching = false;
+        dataManager.characterData = {
+            character: { id: 'char-snap' },
+            characterItems: [{ id: 'login', count: 1 }],
+            characterAbilities: [{ abilityHrid: '/abilities/poke', level: 12 }],
+            actionTypeDrinkSlotsMap: { '/action_types/combat': [] },
+        };
+        dataManager.characterItems = [{ id: 'now', count: 3 }];
+        dataManager.actionTypeDrinkSlotsMap = new Map([['/action_types/combat', [{ itemHrid: '/items/tea' }]]]);
+
+        expect(dataManager.saveSimulatorSnapshot()).toBe(true);
+
+        const [snapshot, owner] = webSocketHook.saveCombatSimSnapshot.mock.calls[0];
+        expect(owner).toEqual({ characterId: 'char-snap', characterName: 'Snap' });
+        expect(snapshot.characterItems).toEqual([{ id: 'now', count: 3 }]);
+        expect(snapshot.characterAbilities).toEqual([{ abilityHrid: '/abilities/poke', level: 12 }]);
+        expect(snapshot.actionTypeDrinkSlotsMap).toEqual({ '/action_types/combat': [{ itemHrid: '/items/tea' }] });
+        // The live characterData object is not rewritten by taking a snapshot of it
+        expect(dataManager.characterData.characterItems).toEqual([{ id: 'login', count: 1 }]);
+    });
+
+    test('writes nothing mid character switch', async () => {
+        const { default: dataManager } = await import('./data-manager.js');
+        const { default: webSocketHook } = await import('./websocket.js');
+        webSocketHook.saveCombatSimSnapshot.mockClear();
+        dataManager.characterData = { character: { id: 'char-snap' } };
+        dataManager.currentCharacterId = 'char-snap';
+        dataManager.isCharacterSwitching = true;
+
+        expect(dataManager.saveSimulatorSnapshot()).toBe(false);
+        expect(webSocketHook.saveCombatSimSnapshot).not.toHaveBeenCalled();
+        dataManager.isCharacterSwitching = false;
     });
 });
 

@@ -9,7 +9,7 @@
  */
 import { describe, test, expect, vi, beforeEach } from 'vitest';
 
-const state = vi.hoisted(() => ({ gameData: null, skills: [], houseRooms: new Map() }));
+const state = vi.hoisted(() => ({ gameData: null, skills: [], houseRooms: new Map(), actions: [] }));
 const prices = vi.hoisted(() => ({ byHrid: {}, estimated: new Set() }));
 
 vi.mock('../core/data-manager.js', () => ({
@@ -18,6 +18,7 @@ vi.mock('../core/data-manager.js', () => ({
         getSkills: () => state.skills,
         getEquipment: () => new Map(),
         getHouseRooms: () => state.houseRooms,
+        getCurrentActions: () => state.actions,
         getCommunityBuffLevel: () => 0,
         getAchievementBuffFlatBoost: () => 0,
         getPersonalBuffFlatBoost: () => 0,
@@ -35,12 +36,13 @@ vi.mock('./experience-parser.js', () => ({
     calculateExperienceMultiplier: () => ({ totalWisdom: 0, breakdown: { consumableWisdom: 0 }, charmExperience: 0 }),
 }));
 
-const alchemyCalc = vi.hoisted(() => ({ decompose: null, coinify: null, transmute: null }));
+const alchemyCalc = vi.hoisted(() => ({ decompose: null, coinify: null, transmute: null, unrefine: null }));
 vi.mock('../features/market/alchemy-profit-calculator.js', () => ({
     default: {
         calculateCoinifyProfit: (...args) => alchemyCalc.coinify?.(...args) ?? null,
         calculateDecomposeProfit: (...args) => alchemyCalc.decompose?.(...args) ?? null,
         calculateTransmuteProfit: (...args) => alchemyCalc.transmute?.(...args) ?? null,
+        calculateUnrefineProfit: (...args) => alchemyCalc.unrefine?.(...args) ?? null,
     },
 }));
 
@@ -65,6 +67,7 @@ const {
     calculateSkillPerformance,
     findOptimalTeas,
     getSkillActionsForDisplay,
+    resolveActiveAlchemyItemContext,
 } = await import('./tea-optimizer.js');
 
 const knownItems = [
@@ -84,11 +87,13 @@ beforeEach(() => {
     state.gameData = { itemDetailMap: Object.fromEntries(knownItems.map((hrid) => [hrid, {}])) };
     state.skills = [];
     state.houseRooms = new Map();
+    state.actions = [];
     prices.byHrid = {};
     prices.estimated = new Set();
     alchemyCalc.decompose = null;
     alchemyCalc.coinify = null;
     alchemyCalc.transmute = null;
+    alchemyCalc.unrefine = null;
 });
 
 describe('getRelevantTeas', () => {
@@ -320,7 +325,10 @@ describe('scoreEquipmentSetup — alchemy', () => {
     // skilling-optimizer-ui.js's slotGoldBaseline); every one of those calls
     // was silently scored on XP/hour instead.
     beforeEach(() => {
-        state.gameData.itemDetailMap['/items/scrap_trinket'] = { alchemyDetail: {}, itemLevel: 5 };
+        state.gameData.itemDetailMap['/items/scrap_trinket'] = {
+            alchemyDetail: { decomposeItems: [] },
+            itemLevel: 5,
+        };
         state.gameData.actionDetailMap = {
             '/actions/alchemy/decompose': {
                 type: '/action_types/alchemy',
@@ -332,12 +340,30 @@ describe('scoreEquipmentSetup — alchemy', () => {
     });
 
     test('a gold-goal score comes from the alchemy profit calculator, not the XP path', () => {
-        alchemyCalc.decompose = () => ({ profitPerHour: 4321 });
+        const calls = [];
+        alchemyCalc.decompose = (...args) => {
+            calls.push(args);
+            return { profitPerHour: 4321 };
+        };
+        const equipment = new Map([
+            ['/item_locations/alchemy_tool', { itemHrid: '/items/alchemists_tool', enhancementLevel: 7 }],
+        ]);
+        const alchemyContext = { actionType: 'decompose', itemHrid: '/items/scrap_trinket', enhancementLevel: 0 };
 
-        const score = scoreEquipmentSetup('alchemy', 'gold', new Map(), 10);
+        const score = scoreEquipmentSetup('alchemy', 'gold', equipment, 10, null, [], alchemyContext);
 
-        expect(alchemyCalc.decompose).toBeTruthy();
         expect(score).toBe(4321);
+        expect(calls[0][4]).toEqual({
+            equipment,
+            drinks: [],
+            skills: [{ skillHrid: '/skills/alchemy', level: 10 }],
+            fixedTeaSelection: true,
+        });
+    });
+
+    test('a gold-goal score without a real item basis fails closed instead of pricing a substitute', () => {
+        alchemyCalc.decompose = () => ({ profitPerHour: 4321 });
+        expect(scoreEquipmentSetup('alchemy', 'gold', new Map(), 10)).toBe(0);
     });
 
     test('an xp-goal score is unaffected by the fix', () => {
@@ -353,6 +379,96 @@ describe('scoreEquipmentSetup — alchemy', () => {
     });
 });
 
+describe('planned Alchemy context in tea optimization', () => {
+    beforeEach(() => {
+        state.skills = [{ skillHrid: '/skills/alchemy', level: 5 }];
+        state.gameData.itemDetailMap['/items/moon_ore'] = {
+            alchemyDetail: { isCoinifiable: true },
+            itemLevel: 100,
+        };
+        state.gameData.itemDetailMap['/items/decompose_only'] = {
+            alchemyDetail: { decomposeItems: [] },
+            itemLevel: 100,
+        };
+        state.gameData.actionDetailMap = {
+            '/actions/alchemy/coinify': {
+                type: '/action_types/alchemy',
+                name: 'Coinify',
+                baseTimeCost: 20e9,
+                levelRequirement: { level: 1 },
+            },
+        };
+    });
+
+    test('passes the planned level into the hypothetical Alchemy gold setup', () => {
+        const levels = [];
+        alchemyCalc.coinify = (...args) => {
+            levels.push(args[4].skills.find((skill) => skill.skillHrid === '/skills/alchemy').level);
+            return { profitPerHour: 777 };
+        };
+        const context = { actionType: 'coinify', itemHrid: '/items/moon_ore' };
+
+        const result = findOptimalTeas('alchemy', 'gold', null, null, null, context, new Map(), null, 100);
+
+        expect(result.error).toBeUndefined();
+        expect(levels.length).toBeGreaterThan(0);
+        expect(new Set(levels)).toEqual(new Set([100]));
+    });
+
+    test('rejects an impossible item/action pair before either scoring path', () => {
+        const context = { actionType: 'coinify', itemHrid: '/items/decompose_only' };
+        expect(findOptimalTeas('alchemy', 'xp', null, null, null, context).error).toMatch(/cannot|invalid/i);
+        expect(scoreEquipmentSetup('alchemy', 'xp', new Map(), 100, null, [], context)).toBe(0);
+        expect(
+            calculateSkillPerformance('alchemy', new Map(), [], 100, null, { alchemyContext: context })
+        ).toMatchObject({
+            xpPerHour: 0,
+            goldPerHour: 0,
+        });
+    });
+});
+
+describe('resolveActiveAlchemyItemContext', () => {
+    test('uses the actual front action in game queue order and parses its compound item hash', () => {
+        state.actions = [
+            {
+                actionHrid: '/actions/alchemy/coinify',
+                primaryItemHash: '123::/item_locations/inventory::/items/sugar::7',
+                ordinal: 5,
+                partyID: 0,
+                isDone: false,
+            },
+            {
+                actionHrid: '/actions/alchemy/decompose',
+                primaryItemHash: '123::/item_locations/inventory::/items/milk::3',
+                ordinal: 1,
+                partyID: 0,
+                isDone: false,
+            },
+        ];
+
+        expect(resolveActiveAlchemyItemContext()).toEqual({
+            actionType: 'decompose',
+            itemHrid: '/items/milk',
+            enhancementLevel: 3,
+        });
+    });
+
+    test('does not select queued Alchemy behind a running non-Alchemy action', () => {
+        state.actions = [
+            {
+                actionHrid: '/actions/alchemy/coinify',
+                primaryItemHash: '123::/item_locations/inventory::/items/sugar::0',
+                ordinal: 2,
+                partyID: 0,
+                isDone: false,
+            },
+            { actionHrid: '/actions/cooking/cheese', ordinal: 1, partyID: 0, isDone: false },
+        ];
+        expect(resolveActiveAlchemyItemContext()).toBeNull();
+    });
+});
+
 describe('calculateSkillPerformance — alchemy', () => {
     // Unlike scoreEquipmentSetup and findOptimalTeas, calculateSkillPerformance had
     // no alchemy special case at all — it ran alchemy actions through the same
@@ -364,7 +480,10 @@ describe('calculateSkillPerformance — alchemy', () => {
     // figure always read as zero. This feeds the skilling optimizer's simulation
     // panel (skilling-optimizer-ui.js's _runSimulation) whenever Alchemy is picked.
     beforeEach(() => {
-        state.gameData.itemDetailMap['/items/scrap_trinket'] = { alchemyDetail: {}, itemLevel: 5 };
+        state.gameData.itemDetailMap['/items/scrap_trinket'] = {
+            alchemyDetail: { decomposeItems: [] },
+            itemLevel: 5,
+        };
         state.gameData.actionDetailMap = {
             '/actions/alchemy/decompose': {
                 type: '/action_types/alchemy',
@@ -381,6 +500,128 @@ describe('calculateSkillPerformance — alchemy', () => {
 
         expect(alchemyCalc.decompose).toBeTruthy();
         expect(result.goldPerHour).toBe(555);
+    });
+
+    test('an Alchemy result with unpriced outputs keeps the missing-price warning', () => {
+        alchemyCalc.decompose = () => ({
+            profitPerHour: 555,
+            unpricedOutputs: ['/items/unlisted_essence'],
+        });
+
+        const result = calculateSkillPerformance('alchemy', new Map(), [], 10);
+
+        expect(result.goldPerHour).toBe(555);
+        expect(result.hasMissingPrices).toBe(true);
+    });
+
+    test('an Alchemy result valued from an estimated output keeps the price warning', () => {
+        alchemyCalc.decompose = () => ({
+            profitPerHour: 555,
+            unpricedOutputs: [],
+            estimatedOutputs: ['/items/cheese'],
+        });
+
+        const result = calculateSkillPerformance('alchemy', new Map(), [], 10);
+
+        expect(result.goldPerHour).toBe(555);
+        expect(result.hasMissingPrices).toBe(true);
+    });
+
+    test('an Unrefine result with an unpriced shard keeps the missing-price warning', () => {
+        state.gameData.itemDetailMap['/items/refined_plate'] = {
+            alchemyDetail: { unrefineDetail: { baseItemHrid: '/items/base_plate' } },
+            itemLevel: 20,
+        };
+        state.gameData.actionDetailMap['/actions/alchemy/unrefine'] = {
+            type: '/action_types/alchemy',
+            name: 'Unrefine',
+            baseTimeCost: 20e9,
+        };
+        alchemyCalc.unrefine = () => ({
+            profitPerHour: 555,
+            unpricedOutputs: ['/items/refinement_shard'],
+        });
+
+        const result = calculateSkillPerformance('alchemy', new Map(), [], 20, null, {
+            alchemyContext: { actionType: 'unrefine', itemHrid: '/items/refined_plate', enhancementLevel: 7 },
+        });
+
+        expect(result.goldPerHour).toBe(555);
+        expect(result.hasMissingPrices).toBe(true);
+    });
+
+    test('uses the running item and the planned skill level for both XP and Gold/hr', () => {
+        state.skills = [{ skillHrid: '/skills/alchemy', level: 5 }];
+        state.gameData.itemDetailMap['/items/moon_ore'] = { alchemyDetail: { isCoinifiable: true }, itemLevel: 100 };
+        state.gameData.itemDetailMap['/items/catalytic_tea'] = {
+            consumableDetail: { buffs: [{ typeHrid: '/buff_types/alchemy_success', ratioBoost: 0.05 }] },
+        };
+        state.gameData.actionDetailMap['/actions/alchemy/coinify'] = {
+            type: '/action_types/alchemy',
+            name: 'Coinify',
+            baseTimeCost: 20e9,
+            levelRequirement: { level: 1 },
+        };
+        state.actions = [
+            {
+                actionHrid: '/actions/alchemy/coinify',
+                primaryItemHash: 'character::/item_locations/inventory::/items/moon_ore::7',
+                ordinal: 1,
+                partyID: 0,
+                isDone: false,
+            },
+        ];
+        let args;
+        alchemyCalc.coinify = (...received) => {
+            args = received;
+            return { profitPerHour: 777 };
+        };
+
+        const result = calculateSkillPerformance('alchemy', new Map(), ['/items/catalytic_tea'], 10);
+
+        expect(result.goldPerHour).toBe(777);
+        expect(args[0]).toBe('/items/moon_ore');
+        expect(args[1]).toBe(7);
+        expect(args[4].skills.find((skill) => skill.skillHrid === '/skills/alchemy').level).toBe(10);
+        expect(args[4].fixedTeaSelection).toBe(true);
+        // Coinify at item level 100 and planned level 10 has a -0.81 penalty.
+        // Catalytic Tea is additive: 0.7 * (1 - 0.81 + 0.05) = 0.168 success.
+        const successRate = 0.7 * (1 - 0.81 + 0.05);
+        const xpPerAction = successRate * 110 + (1 - successRate) * 11;
+        expect(result.xpPerHour).toBeCloseTo(180 * xpPerAction, 8);
+    });
+
+    test('an explicit item selection overrides a different running Alchemy action', () => {
+        state.gameData.itemDetailMap['/items/refined_plate'] = {
+            alchemyDetail: { unrefineDetail: { baseItemHrid: '/items/base_plate' } },
+            itemLevel: 20,
+        };
+        state.gameData.actionDetailMap['/actions/alchemy/unrefine'] = {
+            type: '/action_types/alchemy',
+            name: 'Unrefine',
+            baseTimeCost: 20e9,
+        };
+        state.actions = [
+            {
+                actionHrid: '/actions/alchemy/decompose',
+                primaryItemHash: 'character::/item_locations/inventory::/items/scrap_trinket::0',
+                ordinal: 1,
+                partyID: 0,
+                isDone: false,
+            },
+        ];
+        let args;
+        alchemyCalc.unrefine = (...received) => {
+            args = received;
+            return { profitPerHour: 246 };
+        };
+
+        const result = calculateSkillPerformance('alchemy', new Map(), [], 20, null, {
+            alchemyContext: { actionType: 'unrefine', itemHrid: '/items/refined_plate', enhancementLevel: 10 },
+        });
+
+        expect(result.goldPerHour).toBe(246);
+        expect(args.slice(0, 2)).toEqual(['/items/refined_plate', 10]);
     });
 });
 

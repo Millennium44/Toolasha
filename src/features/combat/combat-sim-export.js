@@ -23,6 +23,10 @@ const BRIDGE_STALE_MS = 60 * 60 * 1000; // 1 hour
  */
 let lastBridgeIssue = null;
 
+function sameCharacterId(left, right) {
+    return left != null && right != null && String(left) === String(right);
+}
+
 /**
  * Reason the most recent ownership-checked GM-bridged read was refused, or null if the last
  * checked read was clean (matched owner, legacy/unstamped, or merely stale).
@@ -89,7 +93,7 @@ export function checkBridgeStamp(key, label, { enforceOwner }) {
     if (!enforceOwner) return true;
 
     const currentCharacterId = dataManager.getCurrentCharacterId();
-    if (currentCharacterId && meta.characterId !== currentCharacterId) {
+    if (currentCharacterId && !sameCharacterId(meta.characterId, currentCharacterId)) {
         lastBridgeIssue = `${label} is from character "${
             meta.characterName || meta.characterId
         }" in another tab — open the sim from that tab, or re-focus this one so it re-syncs.`;
@@ -104,10 +108,13 @@ export function checkBridgeStamp(key, label, { enforceOwner }) {
  * Get character data from dataManager (in-memory, always current).
  * Falls back to GM storage when running on the Shykai page (dataManager is empty cross-domain).
  * The GM fallback is ownership-checked: a value written by a different character's tab is
- * refused rather than silently exporting the wrong gear (see checkBridgeStamp above).
+ * refused rather than silently exporting the wrong gear (see checkBridgeStamp above). The game
+ * tab rewrites that value with its current inventory and abilities whenever it opens a
+ * simulator (DataManager.saveSimulatorSnapshot), so it is only login-old if the simulator was
+ * opened some other way.
  * @returns {Object|null}
  */
-function getCharacterData() {
+export function getCharacterData() {
     const data = dataManager.characterData;
     if (data) return data;
     // Cross-domain fallback: read from GM storage (saved by game page)
@@ -132,7 +139,7 @@ function getCharacterData() {
  * battle as "not in combat" and fall back to profile-derived data.
  * @returns {Object|null}
  */
-function getBattleData() {
+export function getBattleData() {
     if (dataManager.battleData) return dataManager.battleData;
     if (typeof GM_getValue !== 'undefined') {
         try {
@@ -154,7 +161,7 @@ function getBattleData() {
  * mismatch here is not refused — only staleness is checked.
  * @returns {Object|null}
  */
-function getClientData() {
+export function getClientData() {
     const data = dataManager.getInitClientData();
     if (data) return data;
     if (typeof GM_getValue !== 'undefined') {
@@ -177,7 +184,7 @@ function getClientData() {
  * mismatch is not refused — only staleness is checked.
  * @returns {Promise<Array>}
  */
-async function getProfileList() {
+export async function getProfileList() {
     if (storage.available) {
         try {
             const list = await storage.getJSON('profile_list', 'combatExport', null);
@@ -277,7 +284,7 @@ function buildGuildCombatBuffLevels(levelOf, extraHrids = []) {
  * @param {Object} clientObj - Client data (optional)
  * @returns {Object} Player export object
  */
-function constructSelfPlayer(characterObj, clientObj) {
+export function constructSelfPlayer(characterObj, clientObj) {
     const playerObj = {
         player: {
             attackLevel: 1,
@@ -446,7 +453,7 @@ function constructSelfPlayer(characterObj, clientObj) {
  * @param {Object} battleObj - Battle data (optional, for consumables)
  * @returns {Object} Player export object
  */
-function constructPartyPlayer(profile, clientObj, battleObj) {
+export function constructPartyPlayer(profile, clientObj, battleObj) {
     const playerObj = {
         player: {
             attackLevel: 1,
@@ -494,7 +501,7 @@ function constructPartyPlayer(profile, clientObj, battleObj) {
     // Get consumables from battle data if available
     let battlePlayer = null;
     if (battleObj?.players) {
-        battlePlayer = battleObj.players.find((p) => p.character?.id === profile.characterID);
+        battlePlayer = battleObj.players.find((p) => sameCharacterId(p.character?.id, profile.characterID));
     }
 
     if (battlePlayer?.combatConsumables) {
@@ -638,8 +645,8 @@ export async function constructExportObject(externalProfileId = null, singlePlay
         '{"player":{"attackLevel":1,"magicLevel":1,"meleeLevel":1,"rangedLevel":1,"defenseLevel":1,"staminaLevel":1,"intelligenceLevel":1,"equipment":[]},"food":{"/action_types/combat":[{"itemHrid":""},{"itemHrid":""},{"itemHrid":""}]},"drinks":{"/action_types/combat":[{"itemHrid":""},{"itemHrid":""},{"itemHrid":""}]},"abilities":[{"abilityHrid":"","level":1},{"abilityHrid":"","level":1},{"abilityHrid":"","level":1},{"abilityHrid":"","level":1},{"abilityHrid":"","level":1}],"triggerMap":{},"zone":"/actions/combat/fly","houseRooms":{"/house_rooms/dairy_barn":0,"/house_rooms/garden":0,"/house_rooms/log_shed":0,"/house_rooms/forge":0,"/house_rooms/workshop":0,"/house_rooms/sewing_parlor":0,"/house_rooms/kitchen":0,"/house_rooms/brewery":0,"/house_rooms/laboratory":0,"/house_rooms/observatory":0,"/house_rooms/dining_room":0,"/house_rooms/library":0,"/house_rooms/dojo":0,"/house_rooms/gym":0,"/house_rooms/armory":0,"/house_rooms/archery_range":0,"/house_rooms/mystical_study":0},"achievements":{}}';
 
     // Check if exporting another player's profile
-    if (externalProfileId && externalProfileId !== characterObj.character.id) {
-        const profile = profileList.find((p) => p.characterID === externalProfileId);
+    if (externalProfileId && !sameCharacterId(externalProfileId, characterObj.character.id)) {
+        const profile = profileList.find((p) => sameCharacterId(p.characterID, externalProfileId));
 
         if (!profile) {
             console.error('[Combat Sim Export] Profile not found for:', externalProfileId);
@@ -729,7 +736,7 @@ export async function constructExportObject(externalProfileId = null, singlePlay
         let slotIndex = 1;
         for (const member of Object.values(characterObj.partyInfo.partySlotMap)) {
             if (member.characterID) {
-                if (member.characterID === characterObj.character.id) {
+                if (sameCharacterId(member.characterID, characterObj.character.id)) {
                     // This is you
                     yourSlotIndex = slotIndex; // Remember your slot
                     exportObj[slotIndex] = JSON.stringify(constructSelfPlayer(characterObj, clientObj));
@@ -737,7 +744,7 @@ export async function constructExportObject(externalProfileId = null, singlePlay
                     importedPlayerPositions[slotIndex - 1] = true;
                 } else {
                     // Party member - try to get from profile list
-                    const profile = profileList.find((p) => p.characterID === member.characterID);
+                    const profile = profileList.find((p) => sameCharacterId(p.characterID, member.characterID));
                     if (profile) {
                         exportObj[slotIndex] = JSON.stringify(constructPartyPlayer(profile, clientObj, battleObj));
                         playerIDs[slotIndex - 1] = profile.characterName;

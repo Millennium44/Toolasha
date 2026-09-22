@@ -533,6 +533,27 @@ describe('saveCombatSimData GM-storage bridge stamping', () => {
         expect(meta.writtenAt).toBeGreaterThanOrEqual(before);
     });
 
+    test('a simulator snapshot replaces the login payload synchronously, stamped for its owner', () => {
+        const snapshot = { type: 'init_character_data', character: { id: 'char-live' }, characterItems: [] };
+
+        const written = webSocketHook.saveCombatSimSnapshot(snapshot, {
+            characterId: 'char-live',
+            characterName: 'Live',
+        });
+
+        expect(written).toBe(true);
+        expect(globalThis.GM_setValue).toHaveBeenCalledWith('toolasha_init_character_data', JSON.stringify(snapshot));
+        expect(metaWrite('toolasha_init_character_data_meta')).toMatchObject({
+            characterId: 'char-live',
+            characterName: 'Live',
+        });
+    });
+
+    test('a simulator snapshot without an owner is not written', () => {
+        expect(webSocketHook.saveCombatSimSnapshot({ character: {} }, null)).toBe(false);
+        expect(globalThis.GM_setValue).not.toHaveBeenCalled();
+    });
+
     test('stamps toolasha_init_client_data and toolasha_new_battle with the last character seen on this tab', async () => {
         webSocketHook.processMessage(msg('init_character_data', { character: { id: 'char-7', name: 'Zog' } }));
         await new Promise((r) => setTimeout(r, 0));

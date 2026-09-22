@@ -8,16 +8,28 @@
 
 import { describe, test, expect, beforeEach, vi } from 'vitest';
 
+const state = vi.hoisted(() => ({ characterId: 'self-1', saveSimulatorSnapshot: null }));
+
 vi.mock('../../core/config.js', () => ({ default: { getSetting: () => true, COLOR_ACCENT: '#fff' } }));
 vi.mock('../../core/dom-observer.js', () => ({ default: { onClass: () => () => {} } }));
+vi.mock('../../core/data-manager.js', () => ({
+    default: {
+        getCurrentCharacterId: () => state.characterId,
+        saveSimulatorSnapshot: (...args) => state.saveSimulatorSnapshot(...args),
+    },
+}));
 vi.mock('../combat/combat-sim-targets.js', () => ({
-    COMBAT_SIM_TARGETS: [{ id: 'test-sim', label: 'Test Sim', url: 'https://sim.example.com/import' }],
+    COMBAT_SIM_TARGETS: [
+        { id: 'test-sim', label: 'Test Sim', url: 'https://sim.example.com/import' },
+        { id: 'metz', label: 'Combat Sim (Metz)', url: 'https://metzlii.github.io/metz-combat-simulator/' },
+    ],
 }));
 
 const externalLinks = (await import('./external-links.js')).default;
 
 beforeEach(() => {
     document.body.innerHTML = '';
+    state.saveSimulatorSnapshot = vi.fn(() => true);
 });
 
 /** A bare stand-in for the minor-nav container the game renders */
@@ -71,5 +83,59 @@ describe('external link tooltips', () => {
         container.querySelector('.mwi-external-link').click();
 
         expect(openSpy).toHaveBeenCalledWith('https://example.com/tool', '_blank', 'noopener');
+    });
+
+    test('passes the game tab character to Metz when opening its external page', () => {
+        const openSpy = vi.spyOn(window, 'open').mockImplementation(() => {});
+        const container = navContainer();
+        externalLinks.addLinks(container);
+
+        [...container.querySelectorAll('.mwi-external-link')]
+            .find((link) => link.textContent === 'Combat Sim (Metz)')
+            .click();
+
+        expect(openSpy).toHaveBeenCalledWith(
+            'https://metzlii.github.io/metz-combat-simulator/?toolashaCharacterId=self-1',
+            '_blank',
+            'noopener'
+        );
+    });
+
+    test('refreshes the simulator snapshot before opening a simulator, and before the new tab exists', () => {
+        const order = [];
+        state.saveSimulatorSnapshot = vi.fn(() => order.push('snapshot'));
+        vi.spyOn(window, 'open').mockImplementation(() => order.push('open'));
+        const container = navContainer();
+        externalLinks.addLinks(container);
+
+        [...container.querySelectorAll('.mwi-external-link')]
+            .find((link) => link.textContent === 'Combat Sim (Metz)')
+            .click();
+
+        expect(order).toEqual(['snapshot', 'open']);
+    });
+
+    test('non-simulator links do not write a snapshot', () => {
+        vi.spyOn(window, 'open').mockImplementation(() => {});
+        const container = navContainer();
+        externalLinks.addLinks(container);
+
+        [...container.querySelectorAll('.mwi-external-link')].find((link) => link.textContent === 'Milkonomy').click();
+
+        expect(state.saveSimulatorSnapshot).not.toHaveBeenCalled();
+    });
+
+    test('a failed snapshot still opens the simulator', () => {
+        state.saveSimulatorSnapshot = vi.fn(() => {
+            throw new Error('quota');
+        });
+        vi.spyOn(console, 'error').mockImplementation(() => {});
+        const openSpy = vi.spyOn(window, 'open').mockImplementation(() => {});
+        const container = navContainer();
+        externalLinks.addLinks(container);
+
+        [...container.querySelectorAll('.mwi-external-link')].find((link) => link.textContent === 'Test Sim').click();
+
+        expect(openSpy).toHaveBeenCalledWith('https://sim.example.com/import', '_blank', 'noopener');
     });
 });

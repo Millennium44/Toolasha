@@ -224,6 +224,8 @@ const { runSimulation, plannedWorkerCount } = await import('./combat-sim-runner.
 const { buildGameDataPayload, calculateSimRevenue } = await import('./combat-sim-adapter.js');
 const { runLabyrinthSimulation } = await import('./combat-sim-runner.js');
 const { findMaxLabyrinthLevel } = await import('./labyrinth-level-finder.js');
+const { settingsGroups } = await import('../../core/settings-schema.js');
+const config = (await import('../../core/config.js')).default;
 
 // The advisor asks the shared pricing rule what one attempt's materials come to.
 // Most tests here are not about that number, so give it a default they can ignore
@@ -241,6 +243,102 @@ beforeEach(() => {
 
 const MAIN_HAND = '/equipment_types/main_hand';
 const BACK = '/equipment_types/back';
+
+describe('generateCandidates ability-swap pruning', () => {
+    const gameData = {
+        itemDetailMap: {
+            '/items/fire_staff': {
+                equipmentDetail: { type: MAIN_HAND, combatStats: { magicDamage: 1 } },
+            },
+        },
+        abilityDetailMap: {
+            '/abilities/smash': {
+                name: 'Smash',
+                isSpecialAbility: false,
+                cooldownDuration: 5e9,
+                abilityEffects: [{ combatStyleHrid: '/combat_styles/magic' }],
+            },
+            '/abilities/fireball': {
+                name: 'Fireball',
+                isSpecialAbility: false,
+                cooldownDuration: 0,
+                abilityEffects: [{ combatStyleHrid: '/combat_styles/magic' }],
+            },
+            '/abilities/water_strike': {
+                name: 'Water Strike',
+                isSpecialAbility: false,
+                cooldownDuration: 0,
+                abilityEffects: [{ combatStyleHrid: '/combat_styles/magic' }],
+            },
+            '/abilities/provoke': {
+                name: 'Provoke',
+                isSpecialAbility: false,
+                cooldownDuration: 60e9,
+                abilityEffects: [{ effectType: '/ability_effect_types/buff', buffs: [] }],
+            },
+            '/abilities/taunt': {
+                name: 'Taunt',
+                isSpecialAbility: false,
+                cooldownDuration: 60e9,
+                abilityEffects: [{ effectType: '/ability_effect_types/buff', buffs: [] }],
+            },
+            '/abilities/revive': {
+                name: 'Revive',
+                isSpecialAbility: false,
+                cooldownDuration: 300e9,
+                abilityEffects: [{ effectType: '/ability_effect_types/buff', buffs: [] }],
+            },
+        },
+    };
+
+    const candidates = (abilities, playerCount) =>
+        generateCandidates(
+            {
+                equipment: { [MAIN_HAND]: { hrid: '/items/fire_staff' } },
+                abilities,
+            },
+            gameData,
+            'ability_swap',
+            0,
+            'increment',
+            false,
+            null,
+            null,
+            0,
+            null,
+            null,
+            0,
+            { playerCount }
+        );
+
+    test('solo runs omit threat and revive abilities that cannot affect one player', () => {
+        const result = candidates([null, { hrid: '/abilities/smash', level: 10 }, null, null, null], 1);
+        const offered = result.map((candidate) => candidate.upgradeHrid);
+        expect(offered).not.toContain('/abilities/provoke');
+        expect(offered).not.toContain('/abilities/taunt');
+        expect(offered).not.toContain('/abilities/revive');
+    });
+
+    test('party runs retain threat and revive candidates', () => {
+        const result = candidates([null, { hrid: '/abilities/smash', level: 10 }, null, null, null], 2);
+        const offered = result.map((candidate) => candidate.upgradeHrid);
+        expect(offered).toContain('/abilities/provoke');
+        expect(offered).toContain('/abilities/taunt');
+        expect(offered).toContain('/abilities/revive');
+    });
+
+    test('keeps a zero-cooldown replacement before another zero-cooldown ability', () => {
+        const result = candidates(
+            [null, { hrid: '/abilities/smash', level: 10 }, { hrid: '/abilities/water_strike', level: 10 }, null, null],
+            1
+        );
+        const slotOne = result.filter((candidate) => candidate.slot === 'ability_1');
+        // Ability evaluation is slot-ordered. Fireball in slot 1 can cast before
+        // Water Strike in slot 2, and their default triggers/effects need not be
+        // the same, so cooldown alone cannot prove this candidate is redundant.
+        expect(slotOne.map((candidate) => candidate.upgradeHrid)).toContain('/abilities/fireball');
+    });
+});
 
 function buildGameData() {
     return {
@@ -5869,6 +5967,11 @@ describe('house rooms a win rate can feel', () => {
         actionBuffs: [scoped('/buff_types/wisdom', '/action_types/combat')],
     };
 
+    test('skipping skilling rooms is opt-in', () => {
+        expect(settingsGroups.combat.settings.combatSim_upgradeSkipSkillingRooms.default).toBe(false);
+        expect(config.getSetting('combatSim_upgradeSkipSkillingRooms')).toBe(false);
+    });
+
     test('a skilling room is no longer admitted on the global buffs every room grants', () => {
         // The old test still holds — this is the pair that makes the point
         expect(houseRoomAffectsCombat(DAIRY_BARN)).toBe(true);
@@ -5940,14 +6043,76 @@ describe('house rooms a win rate can feel', () => {
         const winRate = generateHouseCandidates({ houseRooms: {} }, houseData, 0, null, { winRateOnly: true }).map(
             (c) => c.roomHrid
         );
+        const skipSkilling = generateHouseCandidates({ houseRooms: {} }, houseData, 0, null, {
+            skipSkillingRooms: true,
+        }).map((c) => c.roomHrid);
+        const passedThroughAdvisor = generateCandidates(
+            { houseRooms: {} },
+            houseData,
+            'house',
+            0,
+            'increment',
+            false,
+            null,
+            null,
+            0,
+            null,
+            null,
+            0,
+            { skipSkillingRooms: true }
+        ).map((c) => c.roomHrid);
 
         expect(all.sort()).toEqual(['/house_rooms/armory', '/house_rooms/dairy_barn']);
         expect(winRate).toEqual(['/house_rooms/armory']);
+        expect(skipSkilling).toEqual(['/house_rooms/armory']);
+        expect(passedThroughAdvisor).toEqual(['/house_rooms/armory']);
     });
 
     test('and the scan counts the same rooms the generator offers', () => {
         expect(describeHouseScan({ houseRooms: {} }, houseData).combatRelevant).toBe(2);
         expect(describeHouseScan({ houseRooms: {} }, houseData, { winRateOnly: true }).combatRelevant).toBe(1);
+    });
+
+    test('the completed analysis explains an empty filtered set using that same filtered set', async () => {
+        buildGameDataPayload.mockReturnValue({ ...buildGameData(), ...houseData });
+        calculateSimRevenue.mockReturnValue({ netPerHour: 0 });
+        runSimulation.mockResolvedValue({
+            simulatedTime: 3600 * 1e9,
+            encounters: 100,
+            deaths: { player1: 0 },
+            totalDamageDealt: { player1: 1000 },
+            experienceGained: { player1: { attack: 1000 } },
+        });
+        const getSetting = vi
+            .spyOn(config, 'getSetting')
+            .mockImplementation((key, fallback = false) =>
+                key === 'combatSim_upgradeSkipSkillingRooms' ? true : fallback
+            );
+
+        try {
+            const analysis = await runUpgradeAnalysis({
+                playerDTOs: [
+                    {
+                        hrid: 'player1',
+                        equipment: {},
+                        abilities: [],
+                        drinks: [],
+                        houseRooms: { '/house_rooms/armory': 8 },
+                    },
+                ],
+                playerIndex: 0,
+                zoneHrid: '/actions/combat/zone',
+                difficultyTier: 0,
+                hours: 1,
+                communityBuffs: {},
+                upgradeModes: ['house'],
+            });
+
+            expect(analysis.results).toEqual([]);
+            expect(analysis.houseScan).toMatchObject({ combatRelevant: 1, belowCap: 0 });
+        } finally {
+            getSetting.mockRestore();
+        }
     });
 });
 

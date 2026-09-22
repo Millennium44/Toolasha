@@ -223,6 +223,7 @@ describe('a queued row is credited with what the rows before it produce', () => 
         // Row 2 performs 100 decomposes at a 0.6 success rate → 60 essence expected, on top
         // of the 15 held: 75 essence, and coinify consumes 10 at a time → 7 actions.
         expect(rowLimits(el)).toEqual(['[∞]', '[0h 16m 40s · mat: 100]', '[0h 01m 10s · mat: ~7]']);
+        expect(el.querySelector('.mwi-queue-tooltip-total').textContent).toBe('Total: [∞]');
     });
 
     test('a deterministic craft chain is exact and carries no estimate marker', () => {
@@ -254,6 +255,21 @@ describe('a queued row is credited with what the rows before it produce', () => 
         observerState.handler(el);
 
         expect(rowLimits(el)).toEqual(['[∞]', '[0s · mat: 0]']);
+    });
+
+    test('an unbounded running action keeps later queued time out of the total', () => {
+        game.inventory = [stack(STAR_FRUIT, 100), stack(COIN, 1_000_000)];
+        game.currentActions = [queued(1, FORAGE_STAR_FRUIT), queued(2, DECOMPOSE, { primaryItemHrid: STAR_FRUIT })];
+        const header = document.createElement('div');
+        header.className = 'Header_actionName__live';
+        header.textContent = 'Star Fruit';
+        document.body.appendChild(header);
+
+        const el = queueTooltipPopper(['Decompose: Star Fruit']);
+        observerState.handler(el);
+
+        expect(rowLimits(el)).toEqual(['[0h 16m 40s · mat: 100]']);
+        expect(el.querySelector('.mwi-queue-tooltip-total').textContent).toBe('Total: [∞]');
     });
 });
 

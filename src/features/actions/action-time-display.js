@@ -78,6 +78,60 @@ function formatCompletionTime(completionTime, includeDate) {
     return formatDateTime(completionTime, { includeDate, includeTime: true, includeSeconds: true });
 }
 
+/**
+ * Format a reachable queue row's cumulative completion suffix.
+ * @param {number} accumulatedTime - Seconds from now until this row finishes
+ * @param {boolean} [estimated=false] - Whether any preceding duration is estimated
+ * @param {string} [style] - absolute, relative or both
+ * @returns {string} A leading-space-prefixed suffix
+ */
+export function buildQueueCompletionText(
+    accumulatedTime,
+    estimated = false,
+    style = config.getSettingValue('actionQueue_completionTimeStyle', 'absolute')
+) {
+    if (!['absolute', 'relative', 'both'].includes(style)) style = 'absolute';
+    const parts = [];
+    if (style === 'relative' || style === 'both') parts.push(`in ${timeReadable(accumulatedTime)}`);
+    if (style === 'absolute' || style === 'both') {
+        const completionDate = new Date();
+        completionDate.setSeconds(completionDate.getSeconds() + accumulatedTime);
+        const isToday = completionDate.toDateString() === new Date().toDateString();
+        parts.push(formatCompletionTime(completionDate, !isToday));
+    }
+    if (parts.length === 0) return '';
+    return ` ${estimated ? '~' : ''}${parts.join(' · ')}`;
+}
+
+/**
+ * The action bar's time display mode, tolerating the checkbox it used to be.
+ *
+ * The key migration rewrites a stored boolean once, but an older build syncing from another
+ * device, or a downgrade and back, can put one there again afterwards. Read raw, `false` is not
+ * `'none'` and would show both figures to a player who had turned them off.
+ * @param {*} value - Stored setting value
+ * @returns {string} both, relative, absolute or none
+ */
+export function normalizeTimeRemainingMode(value) {
+    if (value === true) return 'both';
+    if (value === false) return 'none';
+    return ['both', 'relative', 'absolute', 'none'].includes(value) ? value : 'both';
+}
+
+/**
+ * Format the action bar's relative and absolute estimates independently.
+ * @param {string} mode - both, relative, absolute or none
+ * @param {string} relativeText
+ * @param {string} absoluteText
+ * @returns {string}
+ */
+export function buildActionTimeText(mode, relativeText, absoluteText) {
+    if (mode === 'relative') return relativeText;
+    if (mode === 'absolute') return absoluteText;
+    if (mode === 'none') return '';
+    return `${relativeText} → ${absoluteText}`;
+}
+
 // Marks a native QueuedActions edit-menu once Toolasha has enhanced it, so the width contract
 // below and the row-wrapping rules only ever apply to that specific popup - never to unrelated
 // MUI tooltips/poppers elsewhere in the game.
@@ -110,6 +164,7 @@ const QUEUE_EDIT_MENU_CSS = `
     max-width: min(414px, calc(100vw - 64px));
     min-width: min(280px, calc(100vw - 64px));
     box-sizing: border-box;
+    overflow-x: hidden;
 }
 @supports (width: 100dvw) {
     .${QUEUE_EDIT_MENU_MARKER_CLASS} {
@@ -127,6 +182,18 @@ const QUEUE_EDIT_MENU_CSS = `
     white-space: normal;
     overflow-wrap: anywhere;
     box-sizing: border-box;
+}
+/* A native queue row combines its drag handle, text column and delete button in one flex line.
+   Toolasha's extra time/profit text can make that line wider than the popup unless the row may
+   wrap and the text column may shrink. Keep the trailing delete control inside the visible menu. */
+.${QUEUE_EDIT_MENU_MARKER_CLASS} [class*="QueuedActions_action__"] {
+    flex-wrap: wrap;
+    min-width: 0;
+    max-width: 100%;
+}
+.${QUEUE_EDIT_MENU_MARKER_CLASS} [class*="QueuedActions_actionText"] {
+    min-width: 0;
+    overflow-wrap: anywhere;
 }
 `;
 
@@ -1595,6 +1662,7 @@ class ActionTimeDisplay {
                 'actionBar_showActionDuration',
                 'actionBar_showActionsPerHour',
                 'actionBar_showTimeRemaining',
+                'actionQueue_completionTimeStyle',
                 'profitCalc_pricingMode',
                 ...PATIENT_TICK_SETTING_KEYS,
                 IRONCOW_VALUATION_SETTING,
@@ -1611,7 +1679,8 @@ class ActionTimeDisplay {
                         }
                         return;
                     }
-                    this.updateDisplay();
+                    if (key === 'actionQueue_completionTimeStyle') this.redrawQueueMenu();
+                    else this.updateDisplay();
                 });
             }
         }
@@ -1813,22 +1882,9 @@ class ActionTimeDisplay {
             const actionDivs = tooltipContent.querySelectorAll('[class*="QueuedActions_action__"]');
             if (actionDivs.length === 0) return;
 
-            // Content-keyed guard against duplicate/stale injection. tooltip-observer.js
-            // redelivers a popper as freshly "opened" once it has genuinely left and
-            // returned to the document — which is what happens when the game closes this
-            // tooltip and later reuses the same popper element for the next hover of the
-            // same "+N Queued Actions" badge. Between those two hovers the queue keeps
-            // moving (actions complete, get reordered, or are edited), so a guard that only
-            // checks "was anything injected before" — with no key describing which queue
-            // state that was for — would find the previous hover's leftover
-            // `.mwi-queue-action-time` markers and skip re-injection entirely, leaving the
-            // stale time/total on screen under the new queue state. Same guard shape fixed
-            // for tooltip-prices.js (6dc52988) and dungeon-token-tooltips.js (d3101317).
-            const contentKey = `${actionDivs.length}|${currentActions
-                .map((a) => `${a.id}:${a.currentCount}:${a.maxCount ?? ''}:${a.ordinal}`)
-                .join(',')}`;
-            if (tooltipContent.dataset.mwiQueueContentKey === contentKey) return;
-            tooltipContent.dataset.mwiQueueContentKey = contentKey;
+            // A popper can be reused after the queue, inventory, completion style, or even its
+            // row elements change. Recalculate on each opening; the observer already delivers
+            // one opening per mount, and sweeping our previous nodes keeps it idempotent.
             tooltipContent
                 .querySelectorAll('.mwi-queue-action-time, .mwi-queue-tooltip-total')
                 .forEach((el) => el.remove());
@@ -1847,8 +1903,11 @@ class ActionTimeDisplay {
             // Include current action time in total (same as edit menu)
             const currentActionTime = this.calculateCurrentActionTime(currentActions, inventoryLookup);
             if (currentActionTime) {
-                accumulatedTime += currentActionTime.totalTime;
-                if (currentActionTime.hasInfinite) hasInfinite = true;
+                if (currentActionTime.hasInfinite) {
+                    hasInfinite = true;
+                } else {
+                    accumulatedTime += currentActionTime.totalTime;
+                }
                 if (currentActionTime.hasUnknown) hasUnknown = true;
                 if (currentActionTime.isEstimated) hasEstimate = true;
             }
@@ -1878,13 +1937,15 @@ class ActionTimeDisplay {
                 if (combat) {
                     let combatText = combat.text;
                     if (combat.kind === 'estimate') {
-                        accumulatedTime += combat.seconds;
-                        hasEstimate = true;
+                        // An unbounded predecessor never hands the queue on. Keep this row's
+                        // own duration visible, but do not present it as part of the reachable
+                        // queue total (or as a reason to mark that total estimated).
+                        if (!hasInfinite) {
+                            accumulatedTime += combat.seconds;
+                            hasEstimate = true;
+                        }
                         if (!hasInfinite && !hasUnknown) {
-                            const completionDate = new Date();
-                            completionDate.setSeconds(completionDate.getSeconds() + accumulatedTime);
-                            const isToday = completionDate.toDateString() === new Date().toDateString();
-                            combatText += ` ~${formatCompletionTime(completionDate, !isToday)}`;
+                            combatText += buildQueueCompletionText(accumulatedTime, true);
                         }
                     } else {
                         hasUnknown = true;
@@ -1905,10 +1966,10 @@ class ActionTimeDisplay {
 
                 if (result.isTrulyInfinite) {
                     hasInfinite = true;
-                } else {
+                } else if (!hasInfinite) {
                     accumulatedTime += result.actionTimeSeconds;
                 }
-                if (result.materialLimitIsEstimated) hasEstimate = true;
+                if (!hasInfinite && result.materialLimitIsEstimated) hasEstimate = true;
 
                 // Format time text
                 let timeText;
@@ -1925,11 +1986,7 @@ class ActionTimeDisplay {
 
                 // Add completion time
                 if (!hasInfinite && !hasUnknown && !result.isTrulyInfinite) {
-                    const completionDate = new Date();
-                    completionDate.setSeconds(completionDate.getSeconds() + accumulatedTime);
-                    const isToday = completionDate.toDateString() === new Date().toDateString();
-                    const mark = hasEstimate ? '~' : '';
-                    timeText += ` ${mark}${formatCompletionTime(completionDate, !isToday)}`;
+                    timeText += buildQueueCompletionText(accumulatedTime, hasEstimate);
                 }
 
                 this.appendTimeToActionDiv(actionDiv, timeText);
@@ -2855,8 +2912,11 @@ class ActionTimeDisplay {
         this.appendStatsToActionName(actionNameElement, statsToAppend.join(' · '));
 
         // Line 2: Time estimates in our div
+        const timeRemainingMode = normalizeTimeRemainingMode(
+            config.getSettingValue('actionBar_showTimeRemaining', 'both')
+        );
         if (
-            config.getSetting('actionBar_showTimeRemaining') &&
+            timeRemainingMode !== 'none' &&
             remainingQueuedActions !== Infinity &&
             !isNaN(remainingQueuedActions) &&
             remainingQueuedActions > 0
@@ -2870,10 +2930,12 @@ class ActionTimeDisplay {
                 const recycleTimeStr = timeReadable(recycleTimeSeconds);
                 const recycleIsToday = recycleCompletion.toDateString() === new Date().toDateString();
                 const recycleClockTime = formatCompletionTime(recycleCompletion, !recycleIsToday);
-                recycleHtml = `<span style="color:#4dd0a0; margin-left:12px; font-size:11px;">Est. w/ recycle: ${recycleTimeStr} → ${recycleClockTime}</span>`;
+                const recycleText = buildActionTimeText(timeRemainingMode, recycleTimeStr, recycleClockTime);
+                recycleHtml = `<span style="color:#4dd0a0; margin-left:12px; font-size:11px;">Est. w/ recycle: ${recycleText}</span>`;
             }
             const progressNote = partialProgressNote(elapsedInCurrentUnit);
-            this.displayElement.innerHTML = `<span style="display: inline-flex; flex-wrap: nowrap; align-items: baseline; gap: 0.25em;"><span>⏱</span>${matsLabel} ${timeStr} → ${clockTime}${progressNote}</span>${recycleHtml}`;
+            const timeText = buildActionTimeText(timeRemainingMode, timeStr, clockTime);
+            this.displayElement.innerHTML = `<span style="display: inline-flex; flex-wrap: nowrap; align-items: baseline; gap: 0.25em;"><span>⏱</span>${matsLabel} ${timeText}${progressNote}</span>${recycleHtml}`;
         } else {
             this.displayElement.innerHTML = '';
         }
@@ -3052,12 +3114,10 @@ class ActionTimeDisplay {
         this.appendStatsToActionName(actionNameElement, statsToAppend.join(' · '));
 
         // Line 2: Time estimate — always material-based for enhancing
-        if (
-            config.getSetting('actionBar_showTimeRemaining') &&
-            materialTime !== null &&
-            materialTime > 0 &&
-            isFinite(materialTime)
-        ) {
+        const timeRemainingMode = normalizeTimeRemainingMode(
+            config.getSettingValue('actionBar_showTimeRemaining', 'both')
+        );
+        if (timeRemainingMode !== 'none' && materialTime !== null && materialTime > 0 && isFinite(materialTime)) {
             const timeStr = timeReadable(materialTime);
 
             const completionTime = new Date();
@@ -3069,7 +3129,8 @@ class ActionTimeDisplay {
 
             const itemIconHtml = this.getItemIconHtml(limitingItemHrid);
             const matsLabel = itemIconHtml ? `${itemIconHtml}:` : 'Mats:';
-            this.displayElement.innerHTML = `<span style="display: inline-flex; flex-wrap: nowrap; align-items: baseline; gap: 0.25em;"><span>⏱</span>${matsLabel} ${timeStr} → ${clockTime} (${materialLimitIsEstimated ? '~' : ''}${formatWithSeparator(materialLimit)} actions)</span>`;
+            const timeText = buildActionTimeText(timeRemainingMode, timeStr, clockTime);
+            this.displayElement.innerHTML = `<span style="display: inline-flex; flex-wrap: nowrap; align-items: baseline; gap: 0.25em;"><span>⏱</span>${matsLabel} ${timeText} (${materialLimitIsEstimated ? '~' : ''}${formatWithSeparator(materialLimit)} actions)</span>`;
         } else {
             this.displayElement.innerHTML = '';
         }
@@ -4227,7 +4288,7 @@ class ActionTimeDisplay {
             const itemHrid = '/items/' + itemName.toLowerCase().replace(/\s+/g, '_');
 
             // Find enhancing action matching this item (excluding already-used actions)
-            return cachedActions.find((a) => {
+            return [...cachedActions].sort(compareActionQueueOrder).find((a) => {
                 if (usedActionIds.has(a.id)) {
                     return false; // Skip already-matched actions
                 }
@@ -4254,7 +4315,7 @@ class ActionTimeDisplay {
         }
 
         // Match action from cache (same logic as main display, excluding already-used actions)
-        return cachedActions.find((a) => {
+        return [...cachedActions].sort(compareActionQueueOrder).find((a) => {
             if (usedActionIds.has(a.id)) {
                 return false; // Skip already-matched actions
             }
@@ -4456,6 +4517,7 @@ class ActionTimeDisplay {
                             if (materialLimit === null) {
                                 // Endless and unbounded: no count, so no figure, and the total
                                 // must not print as if this row were worth nothing
+                                hasInfinite = true;
                                 this.markValueUnbounded(valueTally, actionDetails);
                             }
 
@@ -4593,20 +4655,20 @@ class ActionTimeDisplay {
                     console.warn('[Action Time Display] Unknown queued action:', actionObj.actionHrid);
                     continue;
                 }
+                const isReachable = !hasInfinite;
 
                 // A counted fight: timed from the last all-zones sim, or read as unknown
                 const combat = this.combatRowEstimate(actionObj, actionDetails);
                 if (combat) {
                     let combatText = combat.text;
                     if (combat.kind === 'estimate') {
-                        accumulatedTime += combat.seconds;
-                        hasEstimate = true;
-                        usesSimRate = true;
+                        if (isReachable) {
+                            accumulatedTime += combat.seconds;
+                            hasEstimate = true;
+                            usesSimRate = true;
+                        }
                         if (!hasInfinite && !hasUnknown) {
-                            const completionDate = new Date();
-                            completionDate.setSeconds(completionDate.getSeconds() + accumulatedTime);
-                            const isToday = completionDate.toDateString() === new Date().toDateString();
-                            combatText += ` ~${formatCompletionTime(completionDate, !isToday)}`;
+                            combatText += buildQueueCompletionText(accumulatedTime, true);
                         }
                     } else {
                         hasUnknown = true;
@@ -4625,10 +4687,10 @@ class ActionTimeDisplay {
                     (combatTextContainer || actionDiv).appendChild(combatDiv);
                     this.appendZoneSimLine(actionDiv, actionObj, actionDetails);
                     this.appendCombatRowProfit(actionDiv, combat);
-                    this.addCombatValue(valueTally, combat);
+                    if (isReachable) this.addCombatValue(valueTally, combat);
                     const combatXp = this.combatRowXp(combat);
                     this.appendQueueRowXp(actionDiv, combatXp);
-                    this.addQueueXp(xpTally, combatXp);
+                    if (isReachable) this.addQueueXp(xpTally, combatXp);
                     continue;
                 }
 
@@ -4661,7 +4723,7 @@ class ActionTimeDisplay {
                         count = enhancingTime.count;
                         totalTime = enhancingTime.totalTime;
                         actionTimeSeconds = enhancingTime.totalTime;
-                        accumulatedTime += enhancingTime.totalTime;
+                        if (isReachable) accumulatedTime += enhancingTime.totalTime;
                         // Only when the cap bound, as in the non-enhancing branch below
                         if (enhancingTime.limitType) {
                             materialLimit = enhancingTime.count;
@@ -4741,7 +4803,7 @@ class ActionTimeDisplay {
                         const avgActionsPerBaseAction = calculateEfficiencyMultiplier(totalEfficiency);
                         baseActionsNeeded = Math.ceil(count / avgActionsPerBaseAction);
                         totalTime = baseActionsNeeded * actionTime;
-                        accumulatedTime += totalTime;
+                        if (isReachable) accumulatedTime += totalTime;
                         actionTimeSeconds = totalTime;
                     }
                 }
@@ -4762,11 +4824,12 @@ class ActionTimeDisplay {
                         timeSeconds: actionTimeSeconds,
                         count: count,
                         baseActionsNeeded: baseActionsNeeded,
+                        isReachable,
                         divIndex: divIndex, // Store index to match back to DOM element
                     });
                 }
 
-                if (materialLimitIsEstimated) {
+                if (isReachable && materialLimitIsEstimated) {
                     hasEstimate = true;
                     hasMaterialLimitEstimate = true;
                 }
@@ -4774,12 +4837,7 @@ class ActionTimeDisplay {
                 // Format completion time
                 let completionText = '';
                 if (!hasInfinite && !hasUnknown && !isTrulyInfinite) {
-                    const completionDate = new Date();
-                    completionDate.setSeconds(completionDate.getSeconds() + accumulatedTime);
-                    const isToday = completionDate.toDateString() === new Date().toDateString();
-                    const mark = hasEstimate ? '~' : '';
-
-                    completionText = ` ${mark}${formatCompletionTime(completionDate, !isToday)}`;
+                    completionText = buildQueueCompletionText(accumulatedTime, hasEstimate);
                 }
 
                 // Create time display element
@@ -4829,13 +4887,13 @@ class ActionTimeDisplay {
                     const infiniteCombat = this.combatRowReading(actionObj, actionDetails);
                     if (infiniteCombat) {
                         this.appendCombatRowProfit(actionDiv, infiniteCombat);
-                        this.addCombatValue(valueTally, infiniteCombat);
+                        if (isReachable) this.addCombatValue(valueTally, infiniteCombat);
                         const infiniteXp = this.combatRowXp(infiniteCombat);
                         this.appendQueueRowXp(actionDiv, infiniteXp);
                         // A rate with no run to apply it to: the row shows the rate, the total
                         // goes short, exactly as it does for the profit figure beside it
-                        this.addQueueXp(xpTally, infiniteXp);
-                    } else {
+                        if (isReachable) this.addQueueXp(xpTally, infiniteXp);
+                    } else if (isReachable) {
                         // Nothing to value this row by, and it never ends: the total says so
                         this.markValueUnbounded(valueTally, actionDetails);
                     }
@@ -4875,7 +4933,7 @@ class ActionTimeDisplay {
                 if (!isCombatRow) {
                     const skillXp = this.skillingRowXp(actionObj.actionHrid, isTrulyInfinite ? 0 : count);
                     this.appendQueueRowXp(actionDiv, skillXp);
-                    this.addQueueXp(xpTally, skillXp);
+                    if (isReachable) this.addQueueXp(xpTally, skillXp);
                 }
             }
 
@@ -5015,11 +5073,12 @@ class ActionTimeDisplay {
                 const actionProfit = result.status === 'fulfilled' && result.value !== null ? result.value : null;
 
                 if (actionProfit !== null) {
-                    totalProfit += actionProfit;
-                    hasProfitData = true;
-
                     // Update individual action's profit display
                     const action = actionsToCalculate[index];
+                    if (action.isReachable !== false) {
+                        totalProfit += actionProfit;
+                        hasProfitData = true;
+                    }
                     if (action.divIndex !== undefined) {
                         const profitDiv = document.querySelector(
                             `.mwi-queue-action-profit[data-div-index="${action.divIndex}"]`

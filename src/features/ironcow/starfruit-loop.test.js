@@ -86,6 +86,7 @@ vi.mock('../../core/data-manager.js', () => ({
 vi.mock('../../utils/market-data.js', () => ({
     getItemPrice: (hrid) => market.prices[hrid] ?? 0,
     getPricingMode: () => market.pricingMode,
+    isPriceEstimated: () => false,
 }));
 
 // --- what the alchemy calculator stands on -------------------------------

@@ -65,7 +65,14 @@ const { default: config } = await import('./config.js');
  * Every key migration's `once` id, in schema order — what the per-character
  * record holds once a load has evaluated the whole batch.
  */
-const ALL_MIGRATIONS = ['patientTickSides', 'labyrinthSimBudget', 'marketListingAge', 'inventoryValueBadges'];
+const ALL_MIGRATIONS = [
+    'actionBarTimeDisplay',
+    'queueCompletionTimeStyleRename',
+    'patientTickSides',
+    'labyrinthSimBudget',
+    'marketListingAge',
+    'inventoryValueBadges',
+];
 
 /**
  * Refuse the next write of a character's settings map, and only that.
@@ -310,6 +317,90 @@ describe('one-time rewrite of the inert enhanceSim_baseItemCraftingCost default'
 
         expect(settings.enhanceSim_baseItemCraftingCost.isTrue).toBe(true);
         expect(stored.get(FLAG)).toBe(true);
+    });
+});
+
+describe('one-time migration of action and queue time display choices', () => {
+    const KEY = 'script_settingsMap_alice';
+    const STATE = `json:settings_key_migrations_applied_${KEY}`;
+
+    beforeEach(() => {
+        stored.clear();
+        settingsStorage.currentCharacterId = 'alice';
+        settingsStorage.currentCharacterName = 'Alice';
+    });
+
+    test.each([
+        [true, 'both'],
+        [false, 'none'],
+    ])('the old action-bar checkbox value %s becomes %s and is persisted as a select', async (isTrue, expected) => {
+        stored.set(`json:${KEY}`, {
+            actionBar_showTimeRemaining: {
+                id: 'actionBar_showTimeRemaining',
+                type: 'checkbox',
+                isTrue,
+            },
+        });
+
+        const settings = await settingsStorage.loadSettings();
+
+        expect(settings.actionBar_showTimeRemaining.value).toBe(expected);
+        expect(settings.actionBar_showTimeRemaining).not.toHaveProperty('isTrue');
+        expect(stored.get(`json:${KEY}`).actionBar_showTimeRemaining).toEqual({
+            id: 'actionBar_showTimeRemaining',
+            type: 'select',
+            value: expected,
+        });
+        expect(stored.get(STATE)).toEqual(ALL_MIGRATIONS);
+    });
+
+    test('a select value already chosen by a newer build is never overwritten', async () => {
+        stored.set(`json:${KEY}`, {
+            actionBar_showTimeRemaining: {
+                id: 'actionBar_showTimeRemaining',
+                type: 'select',
+                value: 'absolute',
+            },
+        });
+
+        const settings = await settingsStorage.loadSettings();
+
+        expect(settings.actionBar_showTimeRemaining.value).toBe('absolute');
+    });
+
+    test('the short-lived upstream queue key is carried to the Action Queue key', async () => {
+        stored.set(`json:${KEY}`, {
+            actionBar_completionTimeStyle: {
+                id: 'actionBar_completionTimeStyle',
+                type: 'select',
+                value: 'relative',
+            },
+        });
+
+        const settings = await settingsStorage.loadSettings();
+
+        expect(settings.actionQueue_completionTimeStyle.value).toBe('relative');
+        expect(stored.get(`json:${KEY}`).actionQueue_completionTimeStyle.value).toBe('relative');
+        expect(stored.get(`json:${KEY}`).actionBar_completionTimeStyle.value).toBe('relative');
+    });
+
+    test('the final Action Queue key wins over the short-lived upstream key', async () => {
+        stored.set(`json:${KEY}`, {
+            actionBar_completionTimeStyle: {
+                id: 'actionBar_completionTimeStyle',
+                type: 'select',
+                value: 'relative',
+            },
+            actionQueue_completionTimeStyle: {
+                id: 'actionQueue_completionTimeStyle',
+                type: 'select',
+                value: 'both',
+            },
+        });
+
+        const settings = await settingsStorage.loadSettings();
+
+        expect(settings.actionQueue_completionTimeStyle.value).toBe('both');
     });
 });
 

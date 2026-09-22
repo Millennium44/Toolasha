@@ -67,6 +67,7 @@ const { default: actionTimeDisplay } = await import('./action-time-display.js');
 const GOBO = '/actions/combat/gobo_planet';
 const WEREWOLF = '/actions/combat/werewolf';
 const COINIFY = '/actions/alchemy/coinify';
+const ENHANCE = '/actions/enhancing/cheese_sword';
 
 /** One queue row, as the game draws it: "#2" and the label share one text node. */
 function row(position, label) {
@@ -108,6 +109,7 @@ describe('matchActionFromDiv with a tier annotation', () => {
                 inputItems: [],
                 outputItems: [],
             },
+            [ENHANCE]: { hrid: ENHANCE, type: '/action_types/enhancing' },
         };
     });
 
@@ -132,5 +134,31 @@ describe('matchActionFromDiv with a tier annotation', () => {
         const actions = [queued(1, COINIFY)];
         const matched = actionTimeDisplay.matchActionFromDiv(row(1, 'Coinify: Foraging Essence'), actions);
         expect(matched).toBe(actions[0]);
+    });
+
+    test('duplicate labels follow queue order even when the cached actions arrive out of order', () => {
+        const later = { ...queued(7, GOBO, 3), ordinal: 221, characterLoadoutID: 70 };
+        const earlier = { ...queued(8, GOBO, 3), ordinal: 219, characterLoadoutID: 80 };
+        const actions = [later, earlier];
+        const used = new Set();
+
+        const firstMatch = actionTimeDisplay.matchActionFromDiv(row(1, 'Gobo Planet (T3)'), actions, used);
+        used.add(firstMatch.id);
+        const secondMatch = actionTimeDisplay.matchActionFromDiv(row(2, 'Gobo Planet (T3)'), actions, used);
+
+        expect(firstMatch).toBe(earlier);
+        expect(secondMatch).toBe(later);
+    });
+
+    test('duplicate enhancing rows also follow queue order', () => {
+        const itemHash = 'char1::/item_locations/inventory::/items/cheese_sword::1';
+        const later = { ...queued(7, ENHANCE), ordinal: 221, primaryItemHash: itemHash };
+        const earlier = { ...queued(8, ENHANCE), ordinal: 219, primaryItemHash: itemHash };
+        const enhancingRow = row(1, 'Cheese Sword +1');
+        enhancingRow
+            .querySelector('[class*="QueuedActions_text__"]')
+            .insertAdjacentHTML('afterbegin', '<svg><use href="#enhancing_icon"></use></svg>');
+
+        expect(actionTimeDisplay.matchActionFromDiv(enhancingRow, [later, earlier])).toBe(earlier);
     });
 });

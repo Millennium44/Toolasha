@@ -120,8 +120,8 @@ const IRON = '/items/iron_bar';
 const STONE = '/items/enhancement_stone';
 
 /** Inventory rows, defaulting to the inventory location the index filters on */
-function stack(itemHrid, count, itemLocationHrid = '/item_locations/inventory') {
-    return { itemHrid, count, itemLocationHrid };
+function stack(itemHrid, count, itemLocationHrid = '/item_locations/inventory', enhancementLevel = 0) {
+    return { itemHrid, count, itemLocationHrid, enhancementLevel };
 }
 
 beforeEach(() => {
@@ -165,6 +165,24 @@ describe('calculateMaxProduceable', () => {
 
     test('ignores stacks held outside the inventory', () => {
         game.inventory = [stack(CHEESE, 120), stack(IRON, 65, '/item_locations/bank')];
+
+        expect(maxProduceable.calculateMaxProduceable(SWORD)).toBe(0);
+    });
+
+    test('combines multiple spendable +0 rows instead of trusting their render order', () => {
+        game.inventory = [stack(CHEESE, 70), stack(CHEESE, 50), stack(IRON, 65)];
+
+        expect(maxProduceable.calculateMaxProduceable(SWORD)).toBe(12);
+    });
+
+    test('accepts a string zero enhancement level as an unenhanced stack', () => {
+        game.inventory = [stack(CHEESE, 120, '/item_locations/inventory', '0'), stack(IRON, 65)];
+
+        expect(maxProduceable.calculateMaxProduceable(SWORD)).toBe(12);
+    });
+
+    test('never reports a negative craft count from a transient non-positive row', () => {
+        game.inventory = [stack(CHEESE, -10), stack(IRON, 65)];
 
         expect(maxProduceable.calculateMaxProduceable(SWORD)).toBe(0);
     });
@@ -217,6 +235,27 @@ describe('calculateMaxProduceable — upgrade items', () => {
 
     test('no upgrade item in the bank means nothing can be made', () => {
         game.actionDetails[SWORD].upgradeItemHrid = STONE;
+
+        expect(maxProduceable.calculateMaxProduceable(SWORD)).toBe(0);
+    });
+
+    test('an enhanced copy cannot mask the spendable +0 stack with the same item HRID', () => {
+        game.actionDetails[SWORD].upgradeItemHrid = STONE;
+        game.inventory = [
+            stack(CHEESE, 120),
+            stack(IRON, 65),
+            stack(STONE, 12),
+            // The live inventory DTO reports enhanced and +0 copies as separate rows.
+            // Whichever row appears last must not change how many +0 copies can be spent.
+            stack(STONE, 1, '/item_locations/inventory', 5),
+        ];
+
+        expect(maxProduceable.calculateMaxProduceable(SWORD)).toBe(12);
+    });
+
+    test('an enhanced-only copy is not spendable as the upgrade item', () => {
+        game.actionDetails[SWORD].upgradeItemHrid = STONE;
+        game.inventory = [stack(CHEESE, 120), stack(IRON, 65), stack(STONE, 1, '/item_locations/inventory', 5)];
 
         expect(maxProduceable.calculateMaxProduceable(SWORD)).toBe(0);
     });

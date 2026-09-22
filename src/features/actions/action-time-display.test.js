@@ -89,7 +89,13 @@ vi.mock('../../utils/market-data.js', () => ({
 
 const actionTimeDisplayModule = await import('./action-time-display.js');
 const actionTimeDisplay = actionTimeDisplayModule.default;
-const { partialProgressNote, parseInventoryCountFromActionName } = actionTimeDisplayModule;
+const {
+    partialProgressNote,
+    parseInventoryCountFromActionName,
+    buildActionTimeText,
+    buildQueueCompletionText,
+    normalizeTimeRemainingMode,
+} = actionTimeDisplayModule;
 const { _resetGameNumberSeparators } = await import('../../utils/number-parser.js');
 const { formatDateTime } = await import('../../utils/formatters.js');
 
@@ -117,6 +123,67 @@ beforeEach(() => {
             alchemyDetail: { bulkMultiplier: 1, transmuteSuccessRate: 0.5 },
         },
     };
+});
+
+describe('independent action and queue time display modes', () => {
+    test.each([
+        ['both', '3h 40m → 14:32'],
+        ['relative', '3h 40m'],
+        ['absolute', '14:32'],
+        ['none', ''],
+    ])('%s action-bar mode selects the intended figures', (mode, expected) => {
+        expect(buildActionTimeText(mode, '3h 40m', '14:32')).toBe(expected);
+    });
+
+    test('a legacy checkbox value that reappears after the migration keeps its meaning', () => {
+        // An older build syncing from another device can write the boolean back after the
+        // one-time migration ran; `false` must stay "off", not fall through to both figures
+        expect(buildActionTimeText(normalizeTimeRemainingMode(false), '3h 40m', '14:32')).toBe('');
+        expect(normalizeTimeRemainingMode(true)).toBe('both');
+        expect(normalizeTimeRemainingMode('absolute')).toBe('absolute');
+        expect(normalizeTimeRemainingMode('garbage')).toBe('both');
+    });
+
+    test('queue relative mode shows the cumulative duration without a clock', () => {
+        const text = buildQueueCompletionText(3 * 3600 + 40 * 60, false, 'relative');
+
+        expect(text).toContain('in 3h 40m');
+        expect(text).not.toContain('·');
+    });
+
+    test('queue both mode keeps the estimate mark and joins cumulative duration to the clock', () => {
+        vi.useFakeTimers();
+        vi.setSystemTime(new Date('2026-09-22T12:00:00'));
+
+        const text = buildQueueCompletionText(3900, true, 'both');
+
+        expect(text).toContain('~in 1h 05m');
+        expect(text).toContain(' · ');
+        expect(text).toContain(
+            formatDateTime(new Date('2026-09-22T13:05:00'), {
+                includeDate: false,
+                includeTime: true,
+                includeSeconds: true,
+            })
+        );
+        vi.useRealTimers();
+    });
+
+    test('an invalid imported queue style falls back to the shipped clock display', () => {
+        vi.useFakeTimers();
+        vi.setSystemTime(new Date('2026-09-22T12:00:00'));
+
+        const text = buildQueueCompletionText(3900, false, 'retired-style');
+
+        expect(text).toContain(
+            formatDateTime(new Date('2026-09-22T13:05:00'), {
+                includeDate: false,
+                includeTime: true,
+                includeSeconds: true,
+            })
+        );
+        vi.useRealTimers();
+    });
 });
 
 describe('setupActionNameObserver does not leak a duplicate observer', () => {

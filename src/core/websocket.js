@@ -777,11 +777,16 @@ class WebSocketHook {
                 // dataManager: saveCombatSimData runs before dataManager's own init_character_data
                 // handler (see processMessage), so dataManager.getCurrentCharacterId() would still
                 // report the *previous* character during a character switch.
+                let bridgeOwner = null;
                 try {
                     const parsedCharacter = JSON.parse(message);
                     if (parsedCharacter.character?.id) {
                         this.bridgeCharacterId = parsedCharacter.character.id;
                         this.bridgeCharacterName = parsedCharacter.character.name || null;
+                        bridgeOwner = {
+                            characterId: this.bridgeCharacterId,
+                            characterName: this.bridgeCharacterName,
+                        };
                     }
                 } catch {
                     /* ignore — meta write below falls back to the last known bridge character */
@@ -789,7 +794,7 @@ class WebSocketHook {
                 setTimeout(() => {
                     try {
                         GM_setValue('toolasha_init_character_data', message);
-                        this.writeBridgeMeta('toolasha_init_character_data_meta');
+                        this.writeBridgeMeta('toolasha_init_character_data_meta', bridgeOwner);
                     } catch {
                         /* ignore */
                     }
@@ -871,6 +876,31 @@ class WebSocketHook {
     }
 
     /**
+     * Replace the bridged login snapshot with the character as this tab knows it now.
+     *
+     * The login-time `toolasha_init_character_data` is all an external simulator page can
+     * read, and it goes stale as soon as the player gains an item, levels an ability or swaps
+     * a tea. Rather than rewrite it on every inventory tick (a full-inventory serialize on
+     * every action, for every player, whether or not they ever open a simulator), the game
+     * tab refreshes it once, at the moment it opens a simulator. Synchronous so the snapshot
+     * is in place before the new tab loads.
+     * @param {Object} characterData - init_character_data-shaped object with current fields
+     * @param {{characterId: string|number, characterName?: string|null}} owner - Character the snapshot belongs to
+     * @returns {boolean} True if the snapshot was written
+     */
+    saveCombatSimSnapshot(characterData, owner) {
+        if (typeof GM_setValue === 'undefined' || !characterData || owner?.characterId == null) return false;
+        try {
+            GM_setValue('toolasha_init_character_data', JSON.stringify(characterData));
+            this.writeBridgeMeta('toolasha_init_character_data_meta', owner);
+            return true;
+        } catch (error) {
+            console.error('[WebSocket] Simulator snapshot write failed:', error);
+            return false;
+        }
+    }
+
+    /**
      * Merge one shared profile into the stored profile list and persist it.
      *
      * Runs serialised behind `_profileChain` — see the call site. Everything here is
@@ -921,15 +951,16 @@ class WebSocketHook {
      * `this.bridgeCharacterName`) since that is the only writer identity reliably available
      * synchronously at write time.
      * @param {string} metaKey - Namespaced meta key to write, e.g. 'toolasha_init_character_data_meta'
+     * @param {{characterId?: string|number|null, characterName?: string|null}|null} [owner]
      */
-    writeBridgeMeta(metaKey) {
+    writeBridgeMeta(metaKey, owner = null) {
         if (typeof GM_setValue === 'undefined') return;
         try {
             GM_setValue(
                 metaKey,
                 JSON.stringify({
-                    characterId: this.bridgeCharacterId || null,
-                    characterName: this.bridgeCharacterName || null,
+                    characterId: owner?.characterId || this.bridgeCharacterId || null,
+                    characterName: owner?.characterName || this.bridgeCharacterName || null,
                     writtenAt: Date.now(),
                 })
             );
