@@ -6,106 +6,61 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
-### Optimizer planning uses the selected level and valid Alchemy actions
-
-- Both tea recommendation columns now score at the optimizer's planned level, matching the equipment progression instead of silently using the live character level.
-- Manual Alchemy item/action pairs that the game cannot perform no longer generate XP or gold recommendations. The optimizer explains the invalid pairing, and its automatic decompose reference uses only decomposable items.
-
-### Optimizer ownership and Metz imports respect the originating character
-
-- Owned unenhanced (+0) gear now qualifies for the optimizer's achievable loadout instead of being mistaken for unowned gear.
-- The Metz sidebar link carries the active character ID, and its import refuses data last synced by a different game tab. Directly opened Metz pages ask to reopen it from the game sidebar so the intended character is explicit.
-
-### Alchemy estimates honor selected drinks and uncertain prices
-
-- Alchemy recommendations no longer treat a catalyst with no price as free, and Unrefine now warns when an unpriced shard return is left out of the profit estimate. The optimizer also marks Alchemy results that rely on estimated output prices as uncertain.
-- Alchemy tooltips now recalculate action speed and efficiency when a no-tea setup wins, while the live action view charges speed-only teas even without an Alchemy Success bonus.
-
-### Queue totals and hover details follow the live action order
-
-- Queue XP and value totals stop at an endless action, while later rows retain their own estimates for planning. Duplicate action labels now follow execution order, and a reopened queue tooltip refreshes after inventory or row changes.
-
-### Metz imports follow the current character and inventory
-
-- Live inventory updates no longer label the departing character's items as a newly selected character's inventory during a switch. Metz skilling imports now list speed gear only while that piece is still held in inventory, excluding equipped or depleted rows.
-
-### Market prices refresh when their saved snapshot expires
-
-- A reopened game tab now refreshes a nearly expired market snapshot at its actual expiry, so prices do not remain stale for another full cache interval.
-
-### Optimizer review follow-ups keep tested setups and ownership honest
-
-- Alchemy tea candidates now keep their full drink cost while the calculator chooses the best catalyst, including speed or efficiency teas with no Alchemy Success bonus. Partial decompose and transmute prices also remain visibly marked as incomplete.
-- External Metz imports now receive a current inventory snapshot after live item changes, and applying a saved loadout moves displaced live gear and abilities back into the spare pool while consuming the newly equipped copies exactly once.
-
-### Audit round: inventory counts and late-rendered controls stay in sync
-
-- Can Produce now combines every spendable +0 row, accepts serialized zero levels, and never shows a negative total during an inventory transition. Custom Tabs opens only the collapsed category that contains a missing assigned item and can retry after being closed, while enhancement auto-protection follows replaced slots and newly selected items without leaving stale watchers behind.
-
-### Character Select and queue timing stay accurate at failure boundaries
-
-- Character Select now retries its departure checkpoint after a transient storage failure instead of leaving the active character's status stale for the rest of that screen.
-- An endless action now keeps later, unreachable queue rows out of the queue's total duration while still showing each row's own duration for planning.
-
 ### Metz combat simulator import and profile export
 
-- The external-tools menu now links to Metz Combat Simulator, where Toolasha can import the current character and cached party profiles directly from its setup screen. Profile exports include saved combat loadouts, spare gear and abilities, and the available enhancing and alchemy setup for optimizer calculations.
-- Direct Metz imports now update its controlled paste field reliably, carry bridged inventory and Moo Pass data on the simulator page, and keep party/profile identities aligned when character IDs use different JSON types. Simulator detection is also restricted to the supported hosts and paths, so a matching URL embedded in an unrelated page cannot suppress Toolasha's normal startup.
+- The sidebar now links to Metz Combat Simulator, where Toolasha imports the current character, cached party profiles, saved loadouts, spare gear and abilities, and the enhancing and alchemy setup. Opening it from a game tab refreshes the character snapshot it imports, so the import matches that tab's character and today's inventory rather than login's.
 
 ### Action and queue completion times can be shown independently
 
-- The action bar can now show time remaining, completion ETA, both or neither. Queued-action rows can independently show their cumulative duration, completion clock or both, while existing on/off and clock-only choices are preserved.
-- Queue hover details now refresh after changing the completion-display style even when the queue itself has not changed, and invalid imported style values safely fall back to the completion clock.
-
-### Combat Sim can skip skilling house rooms
-
-- Upgrade Advisor can now omit house rooms whose only combat benefit is their shared Wisdom and Rare Find bonuses, reducing House Rooms analysis time when their small EXP and Profit changes are not needed. The option is off by default so existing analyses keep considering every real effect.
-- When that option is enabled, the per-room target picker and empty-result explanation now use the same filtered room set as the analysis instead of offering ignored targets or describing skipped rooms as candidates.
-
-### Skilling Optimizer can sort by fixed percentage-point value
-
-- Equipment Progression can now rank upgrades by gold spent per 0.01% Exp/hr or Profit gain, making similarly sized percentage improvements directly comparable across equipment slots. A replacement fully paid for by selling the compared item correctly ranks as a zero-cost improvement.
+- The action bar can show time remaining, completion ETA, both or neither, and queued rows can separately show cumulative duration, completion clock or both. Existing on/off choices carry over, including one synced back later from an older build.
 
 ### Alchemy Optimizer uses the item, gear and teas being tested
 
-- Alchemy recommendations now price the running action or a manually selected item, carry hypothetical gear and each tea combination into the calculation, and support Unrefine. Gold estimates stay unavailable when there is no real item basis instead of silently substituting a different item.
-- Planned Alchemy levels now drive both success and efficiency, and XP uses the same under-level and Catalytic Tea success formula as Gold/hr.
+- Alchemy recommendations now price the running or chosen item with the hypothetical gear, teas and planned level, support Unrefine, and refuse item/action pairs the game cannot perform. Unpriced catalysts and outputs are flagged as uncertain instead of counted as free.
+
+### Skilling Optimizer plans at the chosen level and respects real requirements
+
+- Tea recommendations and equipment use the planned level, gear locked above it is no longer recommended, owned +0 gear counts as owned, and an enhanced cross-tier upgrade with no listing is costed from its +0 price plus the enhancement estimate.
+
+### Skilling Optimizer can sort by fixed percentage-point value
+
+- Equipment Progression can rank upgrades by gold per 0.01% Exp/hr or Profit gain, so similar improvements compare directly across slots.
+
+### Combat Sim can skip skilling house rooms
+
+- Upgrade Advisor can optionally skip house rooms whose only combat effect is the shared Wisdom and Rare Find bonus, saving simulation time; it is off by default.
 
 ### Combat Sim skips ability swaps that cannot affect the fight
 
-- Solo upgrade searches no longer spend simulations on party-only threat and revive abilities. Zero-cooldown swaps remain eligible when their slot order or triggers can change which ability casts.
-
-### Skilling Optimizer respects real equipment requirements and prices cross-tier upgrades
-
-- Equipment locked above the planned skill level is no longer recommended, and an enhanced cross-tier target can now be costed from its +0 price plus the shared enhancement estimate when that exact level has no listing.
+- Solo upgrade searches no longer spend simulations on party-only threat and revive abilities.
 
 ### Market prices refresh throughout long sessions
 
-- The broad market snapshot was loaded at startup but could stay stale for the rest of a long-lived tab unless an optional listing alert happened to be enabled. It is now rechecked on the existing 15-minute cache cadence for every player, aligned to when the cache was actually written so a slightly later startup fetch cannot postpone the next refresh for another full cycle.
+- The market snapshot is now rechecked when its 15-minute cache expires for every player, not only those with a listing alert on. Open tabs spread their checks over a minute so one tab refreshes the shared cache instead of every tab fetching at once.
 
 ### Marketplace Action opens outside the game's clipped menu
 
-- The four Marketplace Action choices could be cut off by the inventory item's short, scrollable action menu. The choices now open in a panel positioned below the button but outside that clipped container; outside clicks and Escape close it normally, opening another item closes the previous panel, and removing the game's menu no longer leaves an orphan behind.
+- The four Marketplace Action choices open in a panel below the button instead of being cut off by the item's scrollable menu, and close on outside click, Escape or when the menu goes away.
 
-### Can Produce counts the spendable copy of an enhanced item
+### Can Produce counts the spendable copies of an item
 
-- Owning both a +0 item and an enhanced copy could make Can Produce use whichever stack the game listed last, so one enhanced copy could hide thousands of spendable +0 copies. Enhanced items are no longer treated as crafting material, and the +0 stack determines the real limit.
+- Can Produce now counts every spendable +0 stack and ignores enhanced copies, so one enhanced item no longer hides thousands of usable ones.
 
-### Queued actions keep their delete button on-screen
+### Queue rows stay usable and their totals follow the live order
 
-- Long timing and profit details no longer push a queued action's delete button beyond the popup edge. Queue rows can wrap and their text can shrink inside the menu instead of requiring horizontal scrolling.
+- Long timing and profit details no longer push a queued action's delete button off the popup, and queue totals stop at an endless action while later rows keep their own estimates.
 
 ### Custom Tabs recovers items hidden by collapsed native categories
 
-- A collapsed category in the game's Inventory panel removes its item tiles from the page, so Custom Tabs could omit owned items and show only a warning. Custom Tabs now asks the game's own category controls to reveal those tiles, without repeatedly toggling a category while the inventory rerenders.
+- Custom Tabs now opens a collapsed Inventory category that holds a missing assigned item instead of leaving it out with only a warning.
 
 ### Enhancement auto-protection survives a late-rendered slot
 
-- Enhancement panels opened from Inventory can add their protection-item slot after the rest of the panel. Toolasha now retries attaching its slot watcher, so automatic “Protect From” updates keep working in those sessions.
+- Automatic "Protect From" updates keep working when the enhancement panel adds its protection slot late or the selected item changes.
 
 ### Character Select shows the activity snapshot from the moment you left
 
-- Opening native Character Select now immediately checkpoints the active character before its slots read saved activity. Switching through that route no longer leaves the departing character showing an older queue projection until another update or page unload occurs.
+- Opening Character Select checkpoints the active character first, so its slot no longer shows an older queue projection.
 
 ### Notice history survives a temporary storage read failure
 
