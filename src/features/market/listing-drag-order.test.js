@@ -6,10 +6,20 @@ const game = vi.hoisted(() => ({
     characterId: '30404',
     listings: [],
     stored: [],
+    settingEnabled: true,
+    settingChange: null,
     set: vi.fn(async () => true),
 }));
 
-vi.mock('../../core/config.js', () => ({ default: { getSetting: () => true } }));
+vi.mock('../../core/config.js', () => ({
+    default: {
+        getSetting: () => game.settingEnabled,
+        onSettingChange: (key, callback) => {
+            if (key === 'market_listingDragOrder') game.settingChange = callback;
+            return () => {};
+        },
+    },
+}));
 vi.mock('../../core/data-manager.js', () => ({
     default: {
         getCurrentCharacterId: () => game.characterId,
@@ -62,6 +72,7 @@ beforeEach(() => {
     game.characterId = '30404';
     game.listings = [];
     game.stored = [];
+    game.settingEnabled = true;
     game.set.mockClear();
 });
 
@@ -198,5 +209,21 @@ describe('initialization', () => {
 
         expect(rowIds(table)).toEqual(['2', '3', '1']);
         expect(listingDragOrder.storageKey).toBe('marketListingDragOrder_30404');
+    });
+
+    test('the feature checkbox enables and disables the controls without a reload', async () => {
+        const table = buildTable([1, 2, 3]);
+        await listingDragOrder.initialize();
+        expect(table.querySelectorAll('.mwi-listing-drag-handle')).toHaveLength(3);
+
+        game.settingEnabled = false;
+        await game.settingChange(false);
+        expect(table.querySelector('.mwi-listing-drag-handle')).toBeNull();
+        expect(listingDragOrder.isInitialized).toBe(false);
+
+        game.settingEnabled = true;
+        await game.settingChange(true);
+        expect(table.querySelectorAll('.mwi-listing-drag-handle')).toHaveLength(3);
+        expect(listingDragOrder.isInitialized).toBe(true);
     });
 });

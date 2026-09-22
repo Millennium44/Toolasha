@@ -55,6 +55,17 @@ class ListingDragOrder {
         this.decorateQueued = new WeakSet();
     }
 
+    /** Follow the feature checkbox immediately instead of requiring a reload. */
+    setupSettingListener() {
+        config.onSettingChange('market_listingDragOrder', async (enabled) => {
+            if (enabled) {
+                await this.initialize();
+            } else {
+                this.cleanup();
+            }
+        });
+    }
+
     async initialize() {
         if (this.isInitialized || !config.getSetting('market_listingDragOrder')) return;
 
@@ -107,9 +118,10 @@ class ListingDragOrder {
     _queueDecorate(table) {
         if (this.decorateQueued.has(table)) return;
         this.decorateQueued.add(table);
+        const ticket = captureOwner(this);
         queueMicrotask(() => {
             this.decorateQueued.delete(table);
-            if (table.isConnected) this._decorate(table);
+            if (table.isConnected && this.isInitialized && stillOurs(ticket)) this._decorate(table);
         });
     }
 
@@ -363,4 +375,5 @@ class ListingDragOrder {
 }
 
 const listingDragOrder = new ListingDragOrder();
+listingDragOrder.setupSettingListener();
 export default listingDragOrder;

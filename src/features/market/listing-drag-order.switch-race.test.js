@@ -14,7 +14,9 @@ const world = vi.hoisted(() => ({
 
 const registrations = vi.hoisted(() => ({ live: [] }));
 
-vi.mock('../../core/config.js', () => ({ default: { getSetting: () => true } }));
+vi.mock('../../core/config.js', () => ({
+    default: { getSetting: () => true, onSettingChange: () => () => {} },
+}));
 vi.mock('../../core/data-manager.js', () => ({
     default: {
         getCurrentCharacterId: () => world.characterId,
