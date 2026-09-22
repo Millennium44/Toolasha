@@ -6069,6 +6069,48 @@ describe('house rooms a win rate can feel', () => {
         expect(describeHouseScan({ houseRooms: {} }, houseData).combatRelevant).toBe(2);
         expect(describeHouseScan({ houseRooms: {} }, houseData, { winRateOnly: true }).combatRelevant).toBe(1);
     });
+
+    test('the completed analysis explains an empty filtered set using that same filtered set', async () => {
+        buildGameDataPayload.mockReturnValue({ ...buildGameData(), ...houseData });
+        calculateSimRevenue.mockReturnValue({ netPerHour: 0 });
+        runSimulation.mockResolvedValue({
+            simulatedTime: 3600 * 1e9,
+            encounters: 100,
+            deaths: { player1: 0 },
+            totalDamageDealt: { player1: 1000 },
+            experienceGained: { player1: { attack: 1000 } },
+        });
+        const getSetting = vi
+            .spyOn(config, 'getSetting')
+            .mockImplementation((key, fallback = false) =>
+                key === 'combatSim_upgradeSkipSkillingRooms' ? true : fallback
+            );
+
+        try {
+            const analysis = await runUpgradeAnalysis({
+                playerDTOs: [
+                    {
+                        hrid: 'player1',
+                        equipment: {},
+                        abilities: [],
+                        drinks: [],
+                        houseRooms: { '/house_rooms/armory': 8 },
+                    },
+                ],
+                playerIndex: 0,
+                zoneHrid: '/actions/combat/zone',
+                difficultyTier: 0,
+                hours: 1,
+                communityBuffs: {},
+                upgradeModes: ['house'],
+            });
+
+            expect(analysis.results).toEqual([]);
+            expect(analysis.houseScan).toMatchObject({ combatRelevant: 1, belowCap: 0 });
+        } finally {
+            getSetting.mockRestore();
+        }
+    });
 });
 
 /**

@@ -89,6 +89,8 @@ const mocks = vi.hoisted(() => ({
     cancelActiveCalls: 0,
     /** Who is logged in; a test moves it mid-run to stage a character switch */
     characterId: 'char1',
+    /** Whether the House Upgrade target grid omits skilling-only rooms */
+    skipSkillingRooms: false,
 }));
 
 vi.mock('../../core/config.js', () => ({
@@ -101,7 +103,8 @@ vi.mock('../../core/config.js', () => ({
             if (key === 'profitCalc_patientTickBuy' || key === 'profitCalc_patientTickSell') return mocks.patientTick;
             return fallback;
         },
-        getSetting: (_key, fallback = false) => fallback,
+        getSetting: (key, fallback = false) =>
+            key === 'combatSim_upgradeSkipSkillingRooms' ? mocks.skipSkillingRooms : fallback,
         getPricingModeLabel: () => 'Hybrid',
         getPricingModeDisplayLabel: () => 'Hybrid',
     },
@@ -4739,6 +4742,7 @@ describe('the House-targets grid and a room a loaded DTO does not carry', () => 
         mocks.houseRoomLevels = {};
         mocks.editedDTOs = null;
         mocks.editorSelfHrid = null;
+        mocks.skipSkillingRooms = false;
         ui.destroy();
     });
 
@@ -4765,6 +4769,26 @@ describe('the House-targets grid and a room a loaded DTO does not carry', () => 
         const grid = ui.panel.querySelector('#mwi-csim-house-targets');
 
         expect(grid.textContent).toContain('Dojo (6)');
+    });
+
+    test('with skilling rooms skipped, the grid does not offer targets the analysis will ignore', () => {
+        mocks.skipSkillingRooms = true;
+        mocks.houseRoomDetailMap['/house_rooms/dairy_barn'] = {
+            name: 'Dairy Barn',
+            globalBuffs: [{ typeHrid: '/buff_types/wisdom' }, { typeHrid: '/buff_types/rare_find' }],
+            actionBuffs: [
+                {
+                    typeHrid: '/buff_types/efficiency',
+                    usableInActionTypeMap: { '/action_types/milking': true },
+                },
+            ],
+        };
+
+        ui.panel.querySelector('#mwi-csim-house-targets-toggle').click();
+        const grid = ui.panel.querySelector('#mwi-csim-house-targets');
+
+        expect(grid.textContent).not.toContain('Dairy Barn');
+        expect(grid.textContent).toContain('Dojo');
     });
 });
 

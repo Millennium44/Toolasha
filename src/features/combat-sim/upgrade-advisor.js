@@ -3248,6 +3248,7 @@ export async function runUpgradeAnalysis(params, onProgress, options = {}) {
     // random numbers, so a delta reflects the upgrade rather than the gap between
     // two independent samples. A fresh seed per analysis keeps re-runs resampling.
     const simSeed = analysisSeed();
+    const skipSkillingRooms = config.getSetting('combatSim_upgradeSkipSkillingRooms') === true;
 
     const candidateModes = resolveCandidateModes(upgradeModes, upgradeMode);
     const candidates = candidateModes.flatMap((mode) =>
@@ -3266,7 +3267,7 @@ export async function runUpgradeAnalysis(params, onProgress, options = {}) {
             guildShrineTargetLevel,
             // Keep the paired guild-shrine fields together; a source guard enforces this invariant.
             // prettier-ignore
-            { auraSwapsOnly, communityBuffTargetLevel, guildShrineTargets, guildShrineCapToGuild, isSelf, playerCount: playerDTOs.length, skipSkillingRooms: config.getSetting('combatSim_upgradeSkipSkillingRooms') }
+            { auraSwapsOnly, communityBuffTargetLevel, guildShrineTargets, guildShrineCapToGuild, isSelf, playerCount: playerDTOs.length, skipSkillingRooms }
         )
     );
     // Candidates the caller asked for by name, alongside whatever the mode
@@ -3597,7 +3598,9 @@ export async function runUpgradeAnalysis(params, onProgress, options = {}) {
         results,
         food,
         // Explains an empty house result rather than leaving it as "no upgrades"
-        houseScan: candidateModes.includes('house') ? describeHouseScan(playerDTO, gameData) : null,
+        houseScan: candidateModes.includes('house')
+            ? describeHouseScan(playerDTO, gameData, { skipSkillingRooms })
+            : null,
         // Enough to re-run this exact analysis on a chosen set of picks at once —
         // same seed, same zone, same everything else — which is what a budget
         // plan's confirming run needs to mean anything. See

@@ -18,6 +18,7 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 ### Combat Sim can skip skilling house rooms
 
 - Upgrade Advisor can now omit house rooms whose only combat benefit is their shared Wisdom and Rare Find bonuses, reducing House Rooms analysis time when their small EXP and Profit changes are not needed. The option is off by default so existing analyses keep considering every real effect.
+- When that option is enabled, the per-room target picker and empty-result explanation now use the same filtered room set as the analysis instead of offering ignored targets or describing skipped rooms as candidates.
 
 ### Skilling Optimizer can sort by fixed percentage-point value
 
