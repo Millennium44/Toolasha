@@ -64,10 +64,7 @@ class MarketplaceShortcuts {
      */
     closeAllDropdowns() {
         document.querySelectorAll('.mwi-marketplace-dropdown').forEach((wrapper) => {
-            const panel = wrapper._dropdownPanel;
-            if (panel) panel.style.display = 'none';
-            const chevron = wrapper.querySelector('.mwi-mp-chevron');
-            if (chevron) chevron.style.transform = '';
+            wrapper._closeDropdown?.();
         });
     }
 
@@ -272,6 +269,7 @@ class MarketplaceShortcuts {
         wrapper.appendChild(toggle);
         document.body.appendChild(panel);
         wrapper._dropdownPanel = panel;
+        wrapper._closeDropdown = closePanel;
         return wrapper;
     }
 

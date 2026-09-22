@@ -8,7 +8,7 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ### Marketplace Action opens outside the game's clipped menu
 
-- The four Marketplace Action choices could be cut off by the inventory item's short, scrollable action menu. The choices now open in a panel positioned below the button but outside that clipped container, and outside clicks close every such panel normally.
+- The four Marketplace Action choices could be cut off by the inventory item's short, scrollable action menu. The choices now open in a panel positioned below the button but outside that clipped container; outside clicks close every such panel normally, and one click opens it again.
 
 ### Can Produce counts the spendable copy of an enhanced item
 

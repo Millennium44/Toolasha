@@ -109,6 +109,9 @@ describe('Marketplace Action dropdown portal', () => {
 
         expect(first._dropdownPanel.style.display).toBe('none');
         expect(second._dropdownPanel.style.display).toBe('none');
+
+        first.querySelector('.mwi-marketplace-dropdown-toggle').click();
+        expect(first._dropdownPanel.style.display).toBe('flex');
     });
 });
 
