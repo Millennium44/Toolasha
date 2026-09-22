@@ -5428,6 +5428,59 @@ describe('dungeons in the all-zones run and in the plan', () => {
         ]);
     });
 
+    test('Sim All Dungeons is a separate mode with a selectable T0-T2 dungeon list', () => {
+        mocks.zones = [
+            { hrid: '/actions/combat/fly', name: 'Fly', maxSpawnCount: 1, maxDifficulty: 5, isDungeon: false },
+            { hrid: '/actions/combat/den', name: 'Den', maxSpawnCount: 1, maxDifficulty: 0, isDungeon: true },
+            { hrid: '/actions/combat/cove', name: 'Cove', maxSpawnCount: 1, maxDifficulty: 0, isDungeon: true },
+        ];
+        const dungeonBox = ui.panel.querySelector('#mwi-csim-allzones-dungeons');
+        dungeonBox.click();
+
+        expect(ui._allZonesMode).toBe('dungeons');
+        expect(ui.panel.querySelector('#mwi-csim-allzones-group').checked).toBe(false);
+        expect(ui.panel.querySelector('#mwi-csim-allzones-solo').checked).toBe(false);
+        expect([...ui.panel.querySelectorAll('.mwi-csim-zone-cb')].map((box) => box.dataset.hrid)).toEqual([
+            '/actions/combat/den',
+            '/actions/combat/cove',
+        ]);
+
+        // The planner preference must not append a second copy to the explicit
+        // dungeon-only selection, and dungeon tiers stop at T2 regardless of
+        // the ordinary-zone difficulty metadata.
+        ui._includeDungeons = true;
+        expect(ui._getSelectedAllZones()).toEqual([
+            { zoneHrid: '/actions/combat/den', difficultyTier: 0, name: 'Den' },
+            { zoneHrid: '/actions/combat/den', difficultyTier: 1, name: 'Den' },
+            { zoneHrid: '/actions/combat/den', difficultyTier: 2, name: 'Den' },
+            { zoneHrid: '/actions/combat/cove', difficultyTier: 0, name: 'Cove' },
+            { zoneHrid: '/actions/combat/cove', difficultyTier: 1, name: 'Cove' },
+            { zoneHrid: '/actions/combat/cove', difficultyTier: 2, name: 'Cove' },
+        ]);
+
+        ui.panel.querySelector('#mwi-csim-allzones-group').click();
+        expect(ui._allZonesMode).toBe('group');
+        expect(dungeonBox.checked).toBe(false);
+    });
+
+    test('a dungeon-only sweep accepts a full five-player party', async () => {
+        mocks.zones = [
+            { hrid: '/actions/combat/den', name: 'Den', maxSpawnCount: 1, maxDifficulty: 0, isDungeon: true },
+        ];
+        mocks.playerDTOs = Array.from({ length: 5 }, (_, index) => ({
+            hrid: `player${index + 1}`,
+            equipment: {},
+        }));
+        mocks.allZonesRuns = 0;
+        ui.panel.querySelector('#mwi-csim-allzones-dungeons').click();
+
+        await ui._onSimulateAllZones();
+
+        expect(mocks.allZonesRuns).toBe(1);
+        expect(mocks.allZonesArgs.playerDTOs).toHaveLength(5);
+        mocks.playerDTOs = [{ hrid: 'player1', equipment: {} }];
+    });
+
     test('a dungeon row is marked [D] and planned at the clear time the run history measured', async () => {
         // Twenty minutes a clear is three an hour, half the sim's six — so the
         // sim's 60 goblins an hour become 30

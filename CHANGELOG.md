@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Sim every dungeon from one Combat Simulator run
+
+- The Combat Simulator now has a dedicated **Sim All Dungeons** mode beside the existing zone sweeps. It lists each dungeon for selection, runs tiers 0–2, and supports a full five-player dungeon party without mixing ordinary combat zones into the results.
+
 ### Preserve patient marketplace order prices
 
 - Clicking an hourglass Buy or Sell order now keeps the out-of-band price and estimated wait chosen by the game instead of having Toolasha replace it with the current best listing price, and editing that price afterwards no longer triggers the auto-fill.

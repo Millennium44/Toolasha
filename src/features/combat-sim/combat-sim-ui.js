@@ -1835,7 +1835,7 @@ class CombatSimUI {
         this._activeDetailIndex = null; // which history entry's details are shown
         this._activeMainTab = 'configure';
         // All Zones state
-        this._allZonesMode = null; // null = off, 'group' or 'solo'
+        this._allZonesMode = null; // null = off, 'group', 'solo', or 'dungeons'
         this._allZonesResults = null; // Array of {zone, simResult, revenue}
         this._allZonesSortCol = 'score'; // default the Results table to score, descending
         this._allZonesSortAsc = false;
@@ -1989,6 +1989,7 @@ class CombatSimUI {
         allZonesRow.style.cssText = `
             display: flex;
             align-items: center;
+            flex-wrap: wrap;
             gap: 12px;
             padding: 6px 14px;
             border-bottom: 1px solid #222;
@@ -2005,6 +2006,10 @@ class CombatSimUI {
             <label style="${labelStyle}">
                 <input type="checkbox" id="mwi-csim-allzones-solo" style="${checkboxStyle}">
                 Sim All Solo
+            </label>
+            <label style="${labelStyle}">
+                <input type="checkbox" id="mwi-csim-allzones-dungeons" style="${checkboxStyle}">
+                Sim All Dungeons
             </label>
             <label id="mwi-csim-allzones-hours-label" style="color:#888; font-size:12px; display:none;">Hours</label>
             <input id="mwi-csim-allzones-hours" type="number" min="1" max="10000" value="${config.getSettingValue('combatSim_allZonesDefaultHours', 10)}" style="display:none; width:60px; background:#1a1a2e; color:#e0e0e0; border:1px solid #444; border-radius:4px; padding:3px 6px; font-size:12px; text-align:center;">
@@ -2489,6 +2494,7 @@ class CombatSimUI {
         this.panel.querySelector('#mwi-csim-allzones-group').addEventListener('change', (e) => {
             if (e.target.checked) {
                 this.panel.querySelector('#mwi-csim-allzones-solo').checked = false;
+                this.panel.querySelector('#mwi-csim-allzones-dungeons').checked = false;
                 this._allZonesMode = 'group';
             } else {
                 this._allZonesMode = null;
@@ -2498,7 +2504,18 @@ class CombatSimUI {
         this.panel.querySelector('#mwi-csim-allzones-solo').addEventListener('change', (e) => {
             if (e.target.checked) {
                 this.panel.querySelector('#mwi-csim-allzones-group').checked = false;
+                this.panel.querySelector('#mwi-csim-allzones-dungeons').checked = false;
                 this._allZonesMode = 'solo';
+            } else {
+                this._allZonesMode = null;
+            }
+            this._updateAllZonesUI();
+        });
+        this.panel.querySelector('#mwi-csim-allzones-dungeons').addEventListener('change', (e) => {
+            if (e.target.checked) {
+                this.panel.querySelector('#mwi-csim-allzones-group').checked = false;
+                this.panel.querySelector('#mwi-csim-allzones-solo').checked = false;
+                this._allZonesMode = 'dungeons';
             } else {
                 this._allZonesMode = null;
             }
@@ -2758,6 +2775,7 @@ class CombatSimUI {
         if (!checklist) return;
 
         const zones = getCombatZones().filter((z) => {
+            if (this._allZonesMode === 'dungeons') return z.isDungeon;
             if (z.isDungeon) return false;
             if (this._allZonesMode === 'group') return z.maxSpawnCount > 1;
             if (this._allZonesMode === 'solo') return z.maxSpawnCount === 1;
@@ -2805,15 +2823,16 @@ class CombatSimUI {
             const zone = allZones.find((z) => z.hrid === hrid);
             if (!zone) return;
 
-            for (let t = 0; t <= zone.maxDifficulty; t++) {
+            const maxTier = zone.isDungeon ? DUNGEON_MAX_TIER : zone.maxDifficulty;
+            for (let t = 0; t <= maxTier; t++) {
                 selected.push({ zoneHrid: zone.hrid, difficultyTier: t, name: zone.name });
             }
         });
 
-        // Dungeons are not in the checklist — there are only a handful of them
-        // and they are all-or-nothing, so one preference decides it. Appended
-        // last so an ordinary run's rows keep the order they always had.
-        if (this._includeDungeons) {
+        // The Bestiary planner can still add every dungeon to an ordinary zone
+        // sweep. Append those last so the ordinary rows keep their old order;
+        // dungeon-only mode already gets its selected dungeons from the checklist.
+        if (this._includeDungeons && this._allZonesMode !== 'dungeons') {
             for (const zone of allZones.filter((z) => z.isDungeon)) {
                 // T0-T2, the same range the Configure tier dropdown offers
                 for (let t = 0; t <= DUNGEON_MAX_TIER; t++) {
@@ -3973,8 +3992,10 @@ class CombatSimUI {
         this._allZonesMode = null;
         const groupBox = this.panel.querySelector('#mwi-csim-allzones-group');
         const soloBox = this.panel.querySelector('#mwi-csim-allzones-solo');
+        const dungeonBox = this.panel.querySelector('#mwi-csim-allzones-dungeons');
         if (groupBox) groupBox.checked = false;
         if (soloBox) soloBox.checked = false;
+        if (dungeonBox) dungeonBox.checked = false;
         this._updateAllZonesUI();
 
         const zoneSelect = this.panel.querySelector('#mwi-csim-zone');
@@ -4825,8 +4846,9 @@ class CombatSimUI {
             return;
         }
 
-        // All-zones is always non-dungeon — enforce 3-player max
-        if (playerDTOs.length > 3) {
+        // Ordinary combat zones support only three players. A dungeon-only
+        // sweep may use the game's full five-player dungeon party.
+        if (this._allZonesMode !== 'dungeons' && playerDTOs.length > 3) {
             this._showWarning(
                 `Non-dungeon zones support max 3 players (you have ${playerDTOs.length}). Remove players to continue.`
             );
