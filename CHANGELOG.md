@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Enhancement auto-protection survives a late-rendered slot
+
+- Enhancement panels opened from Inventory can add their protection-item slot after the rest of the panel. Toolasha now retries attaching its slot watcher, so automatic “Protect From” updates keep working in those sessions.
+
 ### Character Select shows the activity snapshot from the moment you left
 
 - Opening native Character Select now immediately checkpoints the active character before its slots read saved activity. Switching through that route no longer leaves the departing character showing an older queue projection until another update or page unload occurs.

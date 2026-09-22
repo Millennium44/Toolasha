@@ -481,10 +481,12 @@ function autoFillProtectFrom(panel, itemHrid) {
  */
 function setupProtectionSlotObserver(panel, itemHrid) {
     if (panel.dataset.mwiProtectObserverAdded) return;
-    panel.dataset.mwiProtectObserverAdded = 'true';
 
+    // Inventory-opened enhancement panels can render the protection slot on a later pass. Only
+    // latch after the watcher is actually attached so the panel mutation path can retry setup.
     const protectionContainer = panel.querySelector('[class*="protectionItemInputContainer"]');
     if (!protectionContainer) return;
+    panel.dataset.mwiProtectObserverAdded = 'true';
 
     let debounceTimer = null;
     const unwatch = createMutationWatcher(
