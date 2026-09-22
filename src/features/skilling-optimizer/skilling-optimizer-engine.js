@@ -13,6 +13,7 @@ import {
     calculateSkillPerformance,
     skillGoldHasUnpricedMaterials,
     resolveActiveAlchemyItemContext,
+    isAlchemyContextApplicable,
 } from '../../utils/tea-optimizer.js';
 import { resolveItemPrice } from '../../utils/profit-helpers.js';
 import { calculateDirectEnhancementCost } from '../combat-sim/upgrade-advisor.js';
@@ -433,6 +434,13 @@ export function optimizeSkill(skillName, playerLevel, selectedActionHrids = null
     const playerLevels = buildPlayerLevelMap(skillName, playerLevel);
     const alchemyContext =
         skillName.toLowerCase() === 'alchemy' ? alchemyItemOverride || resolveActiveAlchemyItemContext() : null;
+    if (
+        skillName.toLowerCase() === 'alchemy' &&
+        alchemyItemOverride &&
+        !isAlchemyContextApplicable(alchemyItemOverride, itemDetailMap)
+    ) {
+        return null;
+    }
 
     const xpBaseline = scoreEquipmentSetup(
         skillName,
@@ -566,7 +574,8 @@ export function optimizeSkill(skillName, playerLevel, selectedActionHrids = null
         null,
         alchemyContext,
         optimalEquipmentAtMax,
-        selectedActionHrids
+        selectedActionHrids,
+        playerLevel
     );
     const goldTeaResult = findOptimalTeas(
         skillName,
@@ -576,7 +585,8 @@ export function optimizeSkill(skillName, playerLevel, selectedActionHrids = null
         null,
         alchemyContext,
         optimalEquipmentAtMax,
-        selectedActionHrids
+        selectedActionHrids,
+        playerLevel
     );
 
     // The equipment progression ranks gathering skills by gold, and — like the tile

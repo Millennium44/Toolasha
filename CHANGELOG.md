@@ -6,6 +6,11 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Optimizer planning uses the selected level and valid Alchemy actions
+
+- Both tea recommendation columns now score at the optimizer's planned level, matching the equipment progression instead of silently using the live character level.
+- Manual Alchemy item/action pairs that the game cannot perform no longer generate XP or gold recommendations. The optimizer explains the invalid pairing, and its automatic decompose reference uses only decomposable items.
+
 ### Optimizer ownership and Metz imports respect the originating character
 
 - Owned unenhanced (+0) gear now qualifies for the optimizer's achievable loadout instead of being mistaken for unowned gear.

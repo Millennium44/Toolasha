@@ -42,6 +42,24 @@ export const SKILL_TO_ACTION_TYPE = {
 const GATHERING_SKILLS = ['milking', 'foraging', 'woodcutting'];
 const PRODUCTION_SKILLS = ['cheesesmithing', 'crafting', 'tailoring', 'cooking', 'brewing', 'alchemy'];
 
+/** Match the game's item-side requirements for each Alchemy operation. */
+export function isAlchemyContextApplicable(context, itemDetailMap) {
+    const detail = itemDetailMap?.[context?.itemHrid]?.alchemyDetail;
+    if (!detail) return false;
+    switch (context.actionType) {
+        case 'coinify':
+            return detail.isCoinifiable === true;
+        case 'decompose':
+            return Array.isArray(detail.decomposeItems);
+        case 'transmute':
+            return Array.isArray(detail.transmuteDropTable);
+        case 'unrefine':
+            return Boolean(detail.unrefineDetail?.baseItemHrid);
+        default:
+            return false;
+    }
+}
+
 /**
  * Get all relevant teas for a skill and optimization goal
  * Returns teas grouped by exclusivity (skill teas are mutually exclusive)
@@ -1009,6 +1027,7 @@ function getOtherEfficiencySources(actionType, houseRoomLevels = null) {
  * @param {string} goal - 'xp' or 'gold'
  * @param {string|null} locationName - Optional location name to filter actions (e.g., "Silly Cow Valley")
  * @param {string|null} actionNameFilter - Optional action name to restrict optimization to a single action
+ * @param {number|null} playerLevelOverride - Planned level; null uses the live character level
  * @returns {Object} Optimization result
  */
 export function findOptimalTeas(
@@ -1019,7 +1038,8 @@ export function findOptimalTeas(
     constraints = null,
     alchemyContext = null,
     equipmentOverride = null,
-    selectedActionHrids = null
+    selectedActionHrids = null,
+    playerLevelOverride = null
 ) {
     const normalizedSkill = skillName.toLowerCase();
     const isGathering = GATHERING_SKILLS.includes(normalizedSkill);
@@ -1033,15 +1053,24 @@ export function findOptimalTeas(
     if (!gameData?.itemDetailMap) {
         return { error: 'Game data not loaded' };
     }
+    if (
+        normalizedSkill === 'alchemy' &&
+        alchemyContext &&
+        !isAlchemyContextApplicable(alchemyContext, gameData.itemDetailMap)
+    ) {
+        return { error: 'This item cannot perform the selected Alchemy action.' };
+    }
 
     // Get player's skill level
     const skills = dataManager.getSkills();
     const skillHrid = `/skills/${normalizedSkill}`;
-    let playerLevel = 1;
-    for (const skill of skills || []) {
-        if (skill.skillHrid === skillHrid) {
-            playerLevel = skill.level;
-            break;
+    let playerLevel = Number.isFinite(playerLevelOverride) && playerLevelOverride >= 1 ? playerLevelOverride : 1;
+    if (playerLevelOverride == null || !Number.isFinite(playerLevelOverride) || playerLevelOverride < 1) {
+        for (const skill of skills || []) {
+            if (skill.skillHrid === skillHrid) {
+                playerLevel = skill.level;
+                break;
+            }
         }
     }
 
@@ -1358,7 +1387,7 @@ function getRepresentativeAlchemyItemHrid(playerLevel, itemDetailMap) {
     let fallbackHrid = null;
     let fallbackLevel = Infinity;
     for (const [hrid, detail] of Object.entries(itemDetailMap)) {
-        if (!detail.alchemyDetail || !detail.itemLevel) continue;
+        if (!Array.isArray(detail.alchemyDetail?.decomposeItems) || !detail.itemLevel) continue;
         if (detail.itemLevel <= playerLevel) {
             if (detail.itemLevel > bestLevel) {
                 bestLevel = detail.itemLevel;
@@ -1398,6 +1427,12 @@ export function scoreEquipmentSetup(
 
     const gameData = dataManager.getInitClientData();
     if (!gameData?.itemDetailMap) return 0;
+    if (
+        normalizedSkill === 'alchemy' &&
+        alchemyContext &&
+        !isAlchemyContextApplicable(alchemyContext, gameData.itemDetailMap)
+    )
+        return 0;
 
     const actionType = SKILL_TO_ACTION_TYPE[normalizedSkill];
     if (!actionType) return 0;
@@ -1609,6 +1644,12 @@ export function calculateSkillPerformance(
 
     const gameData = dataManager.getInitClientData();
     if (!gameData?.itemDetailMap) return empty;
+    if (
+        normalizedSkill === 'alchemy' &&
+        alchemyContext &&
+        !isAlchemyContextApplicable(alchemyContext, gameData.itemDetailMap)
+    )
+        return empty;
 
     const actionType = SKILL_TO_ACTION_TYPE[normalizedSkill];
     if (!actionType) return empty;

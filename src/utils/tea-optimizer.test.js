@@ -325,7 +325,10 @@ describe('scoreEquipmentSetup — alchemy', () => {
     // skilling-optimizer-ui.js's slotGoldBaseline); every one of those calls
     // was silently scored on XP/hour instead.
     beforeEach(() => {
-        state.gameData.itemDetailMap['/items/scrap_trinket'] = { alchemyDetail: {}, itemLevel: 5 };
+        state.gameData.itemDetailMap['/items/scrap_trinket'] = {
+            alchemyDetail: { decomposeItems: [] },
+            itemLevel: 5,
+        };
         state.gameData.actionDetailMap = {
             '/actions/alchemy/decompose': {
                 type: '/action_types/alchemy',
@@ -373,6 +376,55 @@ describe('scoreEquipmentSetup — alchemy', () => {
 
         expect(score).not.toBe(4321);
         expect(score).toBeGreaterThan(0);
+    });
+});
+
+describe('planned Alchemy context in tea optimization', () => {
+    beforeEach(() => {
+        state.skills = [{ skillHrid: '/skills/alchemy', level: 5 }];
+        state.gameData.itemDetailMap['/items/moon_ore'] = {
+            alchemyDetail: { isCoinifiable: true },
+            itemLevel: 100,
+        };
+        state.gameData.itemDetailMap['/items/decompose_only'] = {
+            alchemyDetail: { decomposeItems: [] },
+            itemLevel: 100,
+        };
+        state.gameData.actionDetailMap = {
+            '/actions/alchemy/coinify': {
+                type: '/action_types/alchemy',
+                name: 'Coinify',
+                baseTimeCost: 20e9,
+                levelRequirement: { level: 1 },
+            },
+        };
+    });
+
+    test('passes the planned level into the hypothetical Alchemy gold setup', () => {
+        const levels = [];
+        alchemyCalc.coinify = (...args) => {
+            levels.push(args[4].skills.find((skill) => skill.skillHrid === '/skills/alchemy').level);
+            return { profitPerHour: 777 };
+        };
+        const context = { actionType: 'coinify', itemHrid: '/items/moon_ore' };
+
+        const result = findOptimalTeas('alchemy', 'gold', null, null, null, context, new Map(), null, 100);
+
+        expect(result.error).toBeUndefined();
+        expect(levels.length).toBeGreaterThan(0);
+        expect(new Set(levels)).toEqual(new Set([100]));
+    });
+
+    test('rejects an impossible item/action pair before either scoring path', () => {
+        const context = { actionType: 'coinify', itemHrid: '/items/decompose_only' };
+        expect(findOptimalTeas('alchemy', 'xp', null, null, null, context).error).toMatch(/cannot|invalid/i);
+        expect(scoreEquipmentSetup('alchemy', 'xp', new Map(), 100, null, [], context)).toBe(0);
+        expect(
+            calculateSkillPerformance('alchemy', new Map(), [], 100, null, { alchemyContext: context })
+        ).toMatchObject({
+            xpPerHour: 0,
+            goldPerHour: 0,
+        });
     });
 });
 
@@ -428,7 +480,10 @@ describe('calculateSkillPerformance — alchemy', () => {
     // figure always read as zero. This feeds the skilling optimizer's simulation
     // panel (skilling-optimizer-ui.js's _runSimulation) whenever Alchemy is picked.
     beforeEach(() => {
-        state.gameData.itemDetailMap['/items/scrap_trinket'] = { alchemyDetail: {}, itemLevel: 5 };
+        state.gameData.itemDetailMap['/items/scrap_trinket'] = {
+            alchemyDetail: { decomposeItems: [] },
+            itemLevel: 5,
+        };
         state.gameData.actionDetailMap = {
             '/actions/alchemy/decompose': {
                 type: '/action_types/alchemy',

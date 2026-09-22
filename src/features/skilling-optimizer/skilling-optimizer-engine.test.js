@@ -41,14 +41,18 @@ vi.mock('../../utils/tea-optimizer.js', () => ({
         const [{ itemHrid, enhancementLevel }] = [...equipment.values()];
         return scoring.scores[goal]?.[`${itemHrid}@${enhancementLevel}`] ?? scoring.baseline[goal];
     },
-    findOptimalTeas: (skillName, goal, _a, _b, _c, _d, equipment, selectedActionHrids) => {
-        scoring.teaCalls.push({ skillName, goal, equipment, selectedActionHrids });
+    findOptimalTeas: (skillName, goal, _a, _b, _c, _d, equipment, selectedActionHrids, playerLevel) => {
+        scoring.teaCalls.push({ skillName, goal, equipment, selectedActionHrids, playerLevel });
         return scoring.teaResults[goal];
     },
     getSkillActionsForDisplay: () => [],
     calculateSkillPerformance: () => ({}),
     skillGoldHasUnpricedMaterials: () => scoring.goldHasMissingPrices,
     resolveActiveAlchemyItemContext: () => scoring.activeAlchemyContext,
+    isAlchemyContextApplicable: (context, itemDetailMap) => {
+        const detail = itemDetailMap?.[context?.itemHrid]?.alchemyDetail;
+        return context?.actionType === 'coinify' ? detail?.isCoinifiable === true : Boolean(detail);
+    },
 }));
 
 // calculateSlotUpgradeCost is the only consumer. Each entry is keyed by side so a test can
@@ -137,6 +141,8 @@ function itemDetailMap() {
             consumableDetail: { buffs: [{ typeHrid: '/buff_types/combat_drop_quantity', flatBoost: 0.1 }] },
         },
         '/items/plain_coffee': { name: 'Plain Coffee', consumableDetail: { buffs: [] } },
+        '/items/coinifiable_ore': { name: 'Coinifiable Ore', itemLevel: 5, alchemyDetail: { isCoinifiable: true } },
+        '/items/decompose_only': { name: 'Decompose Only', itemLevel: 5, alchemyDetail: { decomposeItems: [] } },
     };
 }
 
@@ -158,7 +164,7 @@ beforeEach(() => {
 });
 
 describe('optimizeSkill Alchemy item basis', () => {
-    const context = { actionType: 'coinify', itemHrid: '/items/milk', enhancementLevel: 0 };
+    const context = { actionType: 'coinify', itemHrid: '/items/coinifiable_ore', enhancementLevel: 0 };
 
     test('passes a manually selected real item through every baseline and equipment score', () => {
         optimizeSkill('Alchemy', 60, null, context);
@@ -172,6 +178,24 @@ describe('optimizeSkill Alchemy item basis', () => {
         expect(result.alchemyContext).toBe(context);
         expect(result.alchemyContextIsManual).toBe(false);
     });
+
+    test('rejects a manual item that cannot perform the selected action before scoring', () => {
+        const invalid = { actionType: 'coinify', itemHrid: '/items/decompose_only', enhancementLevel: 0 };
+        expect(optimizeSkill('Alchemy', 60, null, invalid)).toBeNull();
+        expect(scoring.calls).toHaveLength(0);
+        expect(scoring.teaCalls).toHaveLength(0);
+    });
+
+    test('a saved Alchemy item choice does not block optimizing another skill', () => {
+        const stale = { actionType: 'coinify', itemHrid: '/items/decompose_only', enhancementLevel: 0 };
+        expect(optimizeSkill('Cheesesmithing', 60, null, stale)).not.toBeNull();
+    });
+});
+
+test('the tea recommendations use the same planned level as equipment scoring', () => {
+    optimizeSkill('Cheesesmithing', 42);
+    expect(scoring.teaCalls).toHaveLength(2);
+    expect(scoring.teaCalls.every((call) => call.playerLevel === 42)).toBe(true);
 });
 
 describe('buildAchievableEquipment', () => {

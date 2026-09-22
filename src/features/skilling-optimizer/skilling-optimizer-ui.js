@@ -435,7 +435,8 @@ class SkillingSimulatorUI {
                                   null,
                                   result.alchemyContext,
                                   achievableEquipment,
-                                  this.selectedActionHrids
+                                  this.selectedActionHrids,
+                                  this.currentLevel
                               )
                             : null;
                         const goldAchievable = result
@@ -447,7 +448,8 @@ class SkillingSimulatorUI {
                                   null,
                                   result.alchemyContext,
                                   achievableEquipment,
-                                  this.selectedActionHrids
+                                  this.selectedActionHrids,
+                                  this.currentLevel
                               )
                             : null;
 
@@ -461,6 +463,8 @@ class SkillingSimulatorUI {
                                 { xpResult: xpAchievable, goldResult: goldAchievable },
                                 loadoutItemMap.size > 0 ? loadoutItemMap : null
                             );
+                        } else if (this.currentSkill === 'Alchemy' && this.alchemyItemOverride) {
+                            resultsArea.textContent = 'That item cannot perform the selected Alchemy action.';
                         }
                     }, 0)
                 );
