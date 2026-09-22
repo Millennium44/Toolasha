@@ -29,7 +29,8 @@ vi.mock('../../core/storage.js', () => ({
     },
 }));
 
-const { checkBridgeStamp, getLastBridgeIssue, constructExportObject } = await import('./combat-sim-export.js');
+const { checkBridgeStamp, getLastBridgeIssue, getCharacterData, constructExportObject } =
+    await import('./combat-sim-export.js');
 
 function metaFor(characterId, { characterName = 'Hero', writtenAt = Date.now() } = {}) {
     return JSON.stringify({ characterId, characterName, writtenAt });
@@ -146,6 +147,64 @@ describe('checkBridgeStamp', () => {
 });
 
 describe('constructExportObject with the GM-storage fallback', () => {
+    test('overlays the current bridged inventory onto the login snapshot', () => {
+        dataManagerMock.getCurrentCharacterId.mockReturnValue('char-mine');
+        const currentItems = [{ id: 'new', itemHrid: '/items/new_sword', count: 2 }];
+        globalThis.GM_getValue = vi.fn((key) => {
+            if (key === 'toolasha_init_character_data') {
+                return JSON.stringify({
+                    character: { id: 'char-mine', name: 'Me' },
+                    characterItems: [{ id: 'old', count: 1 }],
+                });
+            }
+            if (key === 'toolasha_init_character_data_meta' || key === 'toolasha_character_items_meta') {
+                return metaFor('char-mine', { characterName: 'Me' });
+            }
+            if (key === 'toolasha_character_items') {
+                return JSON.stringify({ characterId: 'char-mine', characterItems: currentItems });
+            }
+            return null;
+        });
+
+        expect(getCharacterData().characterItems).toEqual(currentItems);
+    });
+
+    test('does not combine inventory from a different character with the login snapshot', () => {
+        dataManagerMock.getCurrentCharacterId.mockReturnValue(null);
+        const loginItems = [{ id: 'mine', count: 1 }];
+        globalThis.GM_getValue = vi.fn((key) => {
+            if (key === 'toolasha_init_character_data') {
+                return JSON.stringify({ character: { id: 'char-mine', name: 'Me' }, characterItems: loginItems });
+            }
+            if (key === 'toolasha_init_character_data_meta') return metaFor('char-mine');
+            if (key === 'toolasha_character_items_meta') return metaFor('char-other');
+            if (key === 'toolasha_character_items') {
+                return JSON.stringify({ characterId: 'char-other', characterItems: [{ id: 'theirs', count: 9 }] });
+            }
+            return null;
+        });
+
+        expect(getCharacterData().characterItems).toEqual(loginItems);
+        expect(console.warn).toHaveBeenCalledWith(expect.stringContaining('another character'));
+    });
+
+    test('a corrupt current-inventory bridge falls back to the valid login snapshot', () => {
+        const loginItems = [{ id: 'mine', count: 1 }];
+        globalThis.GM_getValue = vi.fn((key) => {
+            if (key === 'toolasha_init_character_data') {
+                return JSON.stringify({ character: { id: 'char-mine', name: 'Me' }, characterItems: loginItems });
+            }
+            if (key === 'toolasha_init_character_data_meta' || key === 'toolasha_character_items_meta') {
+                return metaFor('char-mine');
+            }
+            if (key === 'toolasha_character_items') return '{not valid json';
+            return null;
+        });
+
+        expect(getCharacterData().characterItems).toEqual(loginItems);
+        expect(console.warn).toHaveBeenCalledWith(expect.stringContaining('inventory bridge is corrupt'));
+    });
+
     test('refuses and returns null when the character-data bridge belongs to another character', async () => {
         dataManagerMock.characterData = null; // force the GM fallback
         dataManagerMock.getCurrentCharacterId.mockReturnValue('char-mine');

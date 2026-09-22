@@ -277,4 +277,48 @@ describe('Metz combat export', () => {
             { abilityHrid: '/abilities/cleave', level: 60 },
         ]);
     });
+
+    test('saved loadouts move displaced live gear into owned and consume selected spare gear once', () => {
+        const character = {
+            player: {
+                equipment: [
+                    {
+                        itemLocationHrid: '/item_locations/body',
+                        itemHrid: '/items/live_body',
+                        enhancementLevel: 5,
+                    },
+                ],
+            },
+            abilities: [{ abilityHrid: '/abilities/live_skill', level: 50 }],
+            owned: {
+                capturedAt: '2026-09-22T00:00:00.000Z',
+                equipment: [{ itemHrid: '/items/saved_body', enhancementLevel: 9, count: 2, equipped: false }],
+                abilities: [{ abilityHrid: '/abilities/saved_skill', level: 60, equipped: false }],
+            },
+        };
+
+        const overridden = applyLoadoutOverrideToMetzCharacter(character, {
+            equipment: [
+                {
+                    itemLocationHrid: '/item_locations/body',
+                    itemHrid: '/items/saved_body',
+                    enhancementLevel: 9,
+                },
+            ],
+            abilities: [{ abilityHrid: '/abilities/saved_skill', level: 60 }],
+            triggerMap: {},
+            food: [],
+            drinks: [],
+        });
+
+        expect(overridden.owned).toEqual({
+            capturedAt: '2026-09-22T00:00:00.000Z',
+            equipment: expect.arrayContaining([
+                { itemHrid: '/items/live_body', enhancementLevel: 5, count: 1, equipped: false },
+                { itemHrid: '/items/saved_body', enhancementLevel: 9, count: 1, equipped: false },
+            ]),
+            abilities: [{ abilityHrid: '/abilities/live_skill', level: 50, equipped: false }],
+        });
+        expect(overridden.owned.equipment).toHaveLength(2);
+    });
 });

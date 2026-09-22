@@ -430,6 +430,7 @@ class AlchemyProfitCalculator {
      * @param {Function} params.computeNetProfit - fn(successRate) => netProfitPerAttempt
      * @param {Function} params.computeTeaCost - fn(teaBonus) => totalTeaCostPerHour
      * @param {number} [params.levelPenalty=0] - Under-level penalty for transmute
+     * @param {boolean} [params.fixedTeaSelection=false] - Keep the supplied drinks in every catalyst candidate
      * @returns {Object} { catalystBonus, catalystHrid, catalystPrice, teaBonus, teaCostPerHour, successRateBreakdown }
      */
     _bestCatalystCombo({
@@ -443,6 +444,7 @@ class AlchemyProfitCalculator {
         computeTeaCost,
         levelPenalty = 0,
         teaBonusOverride = null,
+        fixedTeaSelection = false,
     }) {
         const liveTeaBonus = teaBonusOverride !== null ? teaBonusOverride : getAlchemySuccessBonus();
         const typeSpecificHrid = CATALYST_HRIDS[actionType];
@@ -450,34 +452,26 @@ class AlchemyProfitCalculator {
         const typeSpecificPrice = getItemPrice(typeSpecificHrid, { context: 'profit', side: 'buy' }) ?? 0;
         const primeCatalystPrice = getItemPrice(primeCatalystHrid, { context: 'profit', side: 'buy' }) ?? 0;
 
-        const combinations = [
-            { catalystBonus: 0, catalystHrid: null, catalystPrice: 0, teaBonus: liveTeaBonus },
-            { catalystBonus: 0, catalystHrid: null, catalystPrice: 0, teaBonus: 0 },
+        const catalystChoices = [
+            { catalystBonus: 0, catalystHrid: null, catalystPrice: 0 },
             {
                 catalystBonus: CATALYST_BONUSES.typeSpecific,
                 catalystHrid: typeSpecificHrid,
                 catalystPrice: typeSpecificPrice,
-                teaBonus: liveTeaBonus,
-            },
-            {
-                catalystBonus: CATALYST_BONUSES.typeSpecific,
-                catalystHrid: typeSpecificHrid,
-                catalystPrice: typeSpecificPrice,
-                teaBonus: 0,
             },
             {
                 catalystBonus: CATALYST_BONUSES.prime,
                 catalystHrid: primeCatalystHrid,
                 catalystPrice: primeCatalystPrice,
-                teaBonus: liveTeaBonus,
-            },
-            {
-                catalystBonus: CATALYST_BONUSES.prime,
-                catalystHrid: primeCatalystHrid,
-                catalystPrice: primeCatalystPrice,
-                teaBonus: 0,
             },
         ];
+        const teaChoices = fixedTeaSelection
+            ? [{ teaBonus: liveTeaBonus, usesTea: true }]
+            : [
+                  { teaBonus: liveTeaBonus, usesTea: true },
+                  { teaBonus: 0, usesTea: false },
+              ];
+        const combinations = catalystChoices.flatMap((catalyst) => teaChoices.map((tea) => ({ ...catalyst, ...tea })));
 
         let best = null;
         let bestProfitPerHour = -Infinity;
@@ -496,7 +490,9 @@ class AlchemyProfitCalculator {
             const catalystCostPerHour = catalystCostPerAttempt * actionsPerHour;
 
             const netProfitPerAttempt = computeNetProfit(successRate) - catalystCostPerAttempt;
-            const teaCostPerHour = combo.teaBonus > 0 ? computeTeaCost(combo.teaBonus) : 0;
+            // A fixed candidate may contain speed/efficiency tea without an Alchemy
+            // Success buff. It still has a real cost even though teaBonus is zero.
+            const teaCostPerHour = combo.usesTea ? computeTeaCost(combo.teaBonus) : 0;
 
             const profitPerSecond = (netProfitPerAttempt * (1 + efficiencyDecimal)) / actionTime;
             const profitPerHour = profitPerSecond * SECONDS_PER_HOUR + alchemyBonusRevenue - teaCostPerHour;
@@ -768,6 +764,7 @@ class AlchemyProfitCalculator {
                 computeNetProfit: (successRate) => coinsProduced * successRate - (materialCost + coinCost),
                 computeTeaCost: () => teaCostData.totalCostPerHour,
                 teaBonusOverride,
+                fixedTeaSelection: actionContext?.fixedTeaSelection === true,
             });
 
             const {
@@ -1077,6 +1074,7 @@ class AlchemyProfitCalculator {
                 computeNetProfit: (successRate) => outputValue * successRate - (inputPrice + coinCost),
                 computeTeaCost: () => teaCostData.totalCostPerHour,
                 teaBonusOverride,
+                fixedTeaSelection: actionContext?.fixedTeaSelection === true,
             });
 
             const {
@@ -1401,6 +1399,7 @@ class AlchemyProfitCalculator {
                 levelPenalty,
                 teaBonusOverride,
                 catalystChoice,
+                fixedTeaSelection: actionContext?.fixedTeaSelection === true,
             });
 
             const {

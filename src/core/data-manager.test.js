@@ -22,6 +22,7 @@ vi.mock('./websocket.js', () => {
             }),
             onSocketEvent: vi.fn(),
             offSocketEvent: vi.fn(),
+            saveCombatSimInventory: vi.fn(),
         },
     };
 });
@@ -594,6 +595,8 @@ describe('event listener snapshots (upstream 03204a5)', () => {
 describe('inventory index', () => {
     test('items_updated updates, removes and appends by id without rescanning', async () => {
         const { default: dataManager } = await import('./data-manager.js');
+        const { default: webSocketHook } = await import('./websocket.js');
+        webSocketHook.saveCombatSimInventory.mockClear();
         dataManager.characterItems = [
             { id: 'a', count: 1, itemLocationHrid: '/item_locations/inventory' },
             { id: 'b', count: 2, itemLocationHrid: '/item_locations/inventory' },
@@ -613,6 +616,7 @@ describe('inventory index', () => {
         expect(dataManager.characterItems.map((i) => i.id)).toEqual(['b', 'c', 'd']);
         expect(dataManager.characterItems.find((i) => i.id === 'b').count).toBe(20);
         expect(dataManager.characterItems.find((i) => i.id === 'd').count).toBe(7);
+        expect(webSocketHook.saveCombatSimInventory).toHaveBeenCalledWith(dataManager.characterItems);
     });
 
     test('the index recovers when characterItems is replaced behind its back', async () => {
@@ -633,6 +637,8 @@ describe('inventory index', () => {
 
     test('action_completed inventory updates go through the same index', async () => {
         const { default: dataManager } = await import('./data-manager.js');
+        const { default: webSocketHook } = await import('./websocket.js');
+        webSocketHook.saveCombatSimInventory.mockClear();
         dataManager.characterItems = [{ id: 'a', count: 1, itemLocationHrid: '/item_locations/inventory' }];
         dataManager._itemIndexById = null;
         dataManager.characterActions = [];
@@ -651,6 +657,7 @@ describe('inventory index', () => {
             ['a', 9],
             ['z', 4],
         ]);
+        expect(webSocketHook.saveCombatSimInventory).toHaveBeenCalledWith(dataManager.characterItems);
     });
 });
 

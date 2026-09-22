@@ -516,13 +516,21 @@ describe('saveCombatSimData GM-storage bridge stamping', () => {
 
     test('stamps toolasha_init_character_data with the writing character and a fresh writtenAt, payload untouched', async () => {
         const before = Date.now();
-        const characterMessage = msg('init_character_data', { character: { id: 'char-42', name: 'Milky' } });
+        const characterItems = [{ id: 'item-1', itemHrid: '/items/plate_body', count: 1 }];
+        const characterMessage = msg('init_character_data', {
+            character: { id: 'char-42', name: 'Milky' },
+            characterItems,
+        });
 
         webSocketHook.processMessage(characterMessage);
         await new Promise((r) => setTimeout(r, 0));
 
         // Payload key keeps its original raw-message shape (external Shykai sim reads it directly).
         expect(globalThis.GM_setValue).toHaveBeenCalledWith('toolasha_init_character_data', characterMessage);
+        expect(globalThis.GM_setValue).toHaveBeenCalledWith(
+            'toolasha_character_items',
+            JSON.stringify({ characterId: 'char-42', characterItems })
+        );
 
         const meta = metaWrite('toolasha_init_character_data_meta');
         expect(meta).toEqual({
@@ -531,6 +539,40 @@ describe('saveCombatSimData GM-storage bridge stamping', () => {
             writtenAt: expect.any(Number),
         });
         expect(meta.writtenAt).toBeGreaterThanOrEqual(before);
+        expect(metaWrite('toolasha_character_items_meta')).toMatchObject({ characterId: 'char-42' });
+    });
+
+    test('rewrites the lightweight inventory bridge after live inventory changes', async () => {
+        webSocketHook.processMessage(
+            msg('init_character_data', { character: { id: 'char-live', name: 'Live' }, characterItems: [] })
+        );
+        await new Promise((r) => setTimeout(r, 0));
+        globalThis.GM_setValue.mockClear();
+
+        const characterItems = [{ id: 'new-item', itemHrid: '/items/new_sword', count: 2 }];
+        webSocketHook.saveCombatSimInventory(characterItems);
+        await new Promise((r) => setTimeout(r, 0));
+
+        expect(globalThis.GM_setValue).toHaveBeenCalledWith(
+            'toolasha_character_items',
+            JSON.stringify({ characterId: 'char-live', characterItems })
+        );
+        expect(metaWrite('toolasha_character_items_meta')).toMatchObject({ characterId: 'char-live' });
+    });
+
+    test('an inventory write keeps the owner captured before a rapid character switch', async () => {
+        webSocketHook.bridgeCharacterId = 'char-a';
+        webSocketHook.bridgeCharacterName = 'A';
+        webSocketHook.saveCombatSimInventory([{ id: 'a-item', count: 1 }]);
+
+        webSocketHook.bridgeCharacterId = 'char-b';
+        webSocketHook.bridgeCharacterName = 'B';
+        await new Promise((r) => setTimeout(r, 0));
+
+        expect(metaWrite('toolasha_character_items_meta')).toMatchObject({
+            characterId: 'char-a',
+            characterName: 'A',
+        });
     });
 
     test('stamps toolasha_init_client_data and toolasha_new_battle with the last character seen on this tab', async () => {

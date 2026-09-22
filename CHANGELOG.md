@@ -6,6 +6,11 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Optimizer review follow-ups keep tested setups and ownership honest
+
+- Alchemy tea candidates now keep their full drink cost while the calculator chooses the best catalyst, including speed or efficiency teas with no Alchemy Success bonus. Partial decompose and transmute prices also remain visibly marked as incomplete.
+- External Metz imports now receive a current inventory snapshot after live item changes, and applying a saved loadout moves displaced live gear and abilities back into the spare pool while consuming the newly equipped copies exactly once.
+
 ### Audit round: inventory counts and late-rendered controls stay in sync
 
 - Can Produce now combines every spendable +0 row, accepts serialized zero levels, and never shows a negative total during an inventory transition. Custom Tabs opens only the collapsed category that contains a missing assigned item and can retry after being closed, while enhancement auto-protection follows replaced slots and newly selected items without leaving stale watchers behind.

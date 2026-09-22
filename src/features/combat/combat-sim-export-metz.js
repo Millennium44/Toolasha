@@ -93,7 +93,10 @@ function isCombatWearable(itemHrid, itemDetailMap) {
 function buildOwnedBlock({ inventoryItems, itemDetailMap, characterAbilities, equippedAbilityHrids, capturedAt }) {
     const equipment = (inventoryItems || [])
         .filter(
-            (item) => item.itemLocationHrid === INVENTORY_LOCATION && isCombatWearable(item.itemHrid, itemDetailMap)
+            (item) =>
+                item.itemLocationHrid === INVENTORY_LOCATION &&
+                Number(item.count) > 0 &&
+                isCombatWearable(item.itemHrid, itemDetailMap)
         )
         .map((item) => ({
             itemHrid: item.itemHrid,
@@ -106,6 +109,55 @@ function buildOwnedBlock({ inventoryItems, itemDetailMap, characterAbilities, eq
         .map((ability) => ({ abilityHrid: ability.abilityHrid, level: ability.level || 1, equipped: false }));
 
     return equipment.length || abilities.length ? { ...(capturedAt && { capturedAt }), equipment, abilities } : null;
+}
+
+function equipmentIdentity(item) {
+    return `${item?.itemHrid || ''}::${Number(item?.enhancementLevel) || 0}`;
+}
+
+function reconcileOwnedEquipment(character, equipped) {
+    const pool = new Map();
+    const add = (item, count) => {
+        if (!item?.itemHrid || count <= 0) return;
+        const key = equipmentIdentity(item);
+        const current = pool.get(key);
+        if (current) current.count += count;
+        else {
+            pool.set(key, {
+                itemHrid: item.itemHrid,
+                enhancementLevel: Number(item.enhancementLevel) || 0,
+                count,
+                equipped: false,
+            });
+        }
+    };
+
+    for (const item of character.player?.equipment || []) add(item, 1);
+    for (const item of character.owned?.equipment || []) add(item, Number(item.count) || 1);
+
+    for (const item of equipped) {
+        const key = equipmentIdentity(item);
+        const spare = pool.get(key);
+        if (!spare) continue;
+        spare.count -= 1;
+        if (spare.count <= 0) pool.delete(key);
+    }
+    return [...pool.values()];
+}
+
+function reconcileOwnedAbilities(character, equipped) {
+    const pool = new Map();
+    for (const ability of [...(character.abilities || []), ...(character.owned?.abilities || [])]) {
+        if (ability?.abilityHrid) {
+            pool.set(ability.abilityHrid, {
+                abilityHrid: ability.abilityHrid,
+                level: Number(ability.level) || 1,
+                equipped: false,
+            });
+        }
+    }
+    for (const ability of equipped) pool.delete(ability.abilityHrid);
+    return [...pool.values()];
 }
 
 function toMetzCharacter(name, source, extra = {}) {
@@ -201,12 +253,25 @@ export async function constructMetzCharacterExport(externalProfileId = null) {
 /** Apply a saved combat loadout without overwriting tools learned from live equipment. */
 export function applyLoadoutOverrideToMetzCharacter(character, { equipment, abilities, triggerMap, food, drinks }) {
     const { equipment: strippedEquipment } = extractToolsFromEquipment((equipment || []).map((item) => ({ ...item })));
+    const filledAbilities = dropBlankSlots(abilities, 'abilityHrid');
+    const ownedEquipment = reconcileOwnedEquipment(character, strippedEquipment);
+    const ownedAbilities = reconcileOwnedAbilities(character, filledAbilities);
+    const { owned: previousOwned, ...characterWithoutOwned } = character;
+    const owned =
+        ownedEquipment.length || ownedAbilities.length
+            ? {
+                  ...(previousOwned?.capturedAt && { capturedAt: previousOwned.capturedAt }),
+                  equipment: ownedEquipment,
+                  abilities: ownedAbilities,
+              }
+            : null;
     return {
-        ...character,
+        ...characterWithoutOwned,
         player: { ...character.player, equipment: strippedEquipment },
-        abilities: dropBlankSlots(abilities, 'abilityHrid'),
+        abilities: filledAbilities,
         triggerMap: triggerMap || {},
         food: { '/action_types/combat': dropBlankSlots(food, 'itemHrid') },
         drinks: { '/action_types/combat': dropBlankSlots(drinks, 'itemHrid') },
+        ...(owned && { owned }),
     };
 }

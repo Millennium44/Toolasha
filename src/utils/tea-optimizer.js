@@ -509,6 +509,11 @@ function calculateProductionGoldPerHour(actionDetails, buffs, playerLevel, other
 function calculateAlchemyGoldPerHour(alchemyContext, buffs, actionContext = null) {
     const { actionType, itemHrid, enhancementLevel = 0 } = alchemyContext;
     const teaBonusOverride = buffs.alchemySuccess || 0;
+    // Every call from this optimizer is evaluating one explicit drink candidate.
+    // The profit calculator may still choose the best catalyst, but it must not
+    // compare that candidate against a synthetic no-tea setup that keeps the
+    // candidate's speed/efficiency while dropping its cost.
+    const fixedActionContext = actionContext ? { ...actionContext, fixedTeaSelection: true } : null;
 
     let profitData = null;
     if (actionType === 'coinify') {
@@ -517,7 +522,7 @@ function calculateAlchemyGoldPerHour(alchemyContext, buffs, actionContext = null
             enhancementLevel,
             false,
             teaBonusOverride,
-            actionContext
+            fixedActionContext
         );
     } else if (actionType === 'decompose') {
         profitData = alchemyProfitCalculator.calculateDecomposeProfit(
@@ -525,7 +530,7 @@ function calculateAlchemyGoldPerHour(alchemyContext, buffs, actionContext = null
             enhancementLevel,
             false,
             teaBonusOverride,
-            actionContext
+            fixedActionContext
         );
     } else if (actionType === 'transmute') {
         profitData = alchemyProfitCalculator.calculateTransmuteProfit(
@@ -533,7 +538,7 @@ function calculateAlchemyGoldPerHour(alchemyContext, buffs, actionContext = null
             false,
             teaBonusOverride,
             null,
-            actionContext
+            fixedActionContext
         );
     } else if (actionType === 'unrefine') {
         profitData = alchemyProfitCalculator.calculateUnrefineProfit(
@@ -541,12 +546,15 @@ function calculateAlchemyGoldPerHour(alchemyContext, buffs, actionContext = null
             enhancementLevel,
             false,
             teaBonusOverride,
-            actionContext
+            fixedActionContext
         );
     }
 
     if (!profitData) return { profitPerHour: 0, hasMissingPrice: true };
-    return { profitPerHour: profitData.profitPerHour || 0, hasMissingPrice: false };
+    return {
+        profitPerHour: profitData.profitPerHour || 0,
+        hasMissingPrice: Array.isArray(profitData.unpricedOutputs) && profitData.unpricedOutputs.length > 0,
+    };
 }
 
 /**

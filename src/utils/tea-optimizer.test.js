@@ -354,6 +354,7 @@ describe('scoreEquipmentSetup — alchemy', () => {
             equipment,
             drinks: [],
             skills: [{ skillHrid: '/skills/alchemy', level: 10 }],
+            fixedTeaSelection: true,
         });
     });
 
@@ -446,6 +447,18 @@ describe('calculateSkillPerformance — alchemy', () => {
         expect(result.goldPerHour).toBe(555);
     });
 
+    test('an Alchemy result with unpriced outputs keeps the missing-price warning', () => {
+        alchemyCalc.decompose = () => ({
+            profitPerHour: 555,
+            unpricedOutputs: ['/items/unlisted_essence'],
+        });
+
+        const result = calculateSkillPerformance('alchemy', new Map(), [], 10);
+
+        expect(result.goldPerHour).toBe(555);
+        expect(result.hasMissingPrices).toBe(true);
+    });
+
     test('uses the running item and the planned skill level for both XP and Gold/hr', () => {
         state.skills = [{ skillHrid: '/skills/alchemy', level: 5 }];
         state.gameData.itemDetailMap['/items/moon_ore'] = { alchemyDetail: { isCoinifiable: true }, itemLevel: 100 };
@@ -479,6 +492,7 @@ describe('calculateSkillPerformance — alchemy', () => {
         expect(args[0]).toBe('/items/moon_ore');
         expect(args[1]).toBe(7);
         expect(args[4].skills.find((skill) => skill.skillHrid === '/skills/alchemy').level).toBe(10);
+        expect(args[4].fixedTeaSelection).toBe(true);
         // Coinify at item level 100 and planned level 10 has a -0.81 penalty.
         // Catalytic Tea is additive: 0.7 * (1 - 0.81 + 0.05) = 0.168 success.
         const successRate = 0.7 * (1 - 0.81 + 0.05);

@@ -777,11 +777,20 @@ class WebSocketHook {
                 // dataManager: saveCombatSimData runs before dataManager's own init_character_data
                 // handler (see processMessage), so dataManager.getCurrentCharacterId() would still
                 // report the *previous* character during a character switch.
+                let initialCharacterItems = null;
+                let bridgeOwner = null;
                 try {
                     const parsedCharacter = JSON.parse(message);
                     if (parsedCharacter.character?.id) {
                         this.bridgeCharacterId = parsedCharacter.character.id;
                         this.bridgeCharacterName = parsedCharacter.character.name || null;
+                        bridgeOwner = {
+                            characterId: this.bridgeCharacterId,
+                            characterName: this.bridgeCharacterName,
+                        };
+                    }
+                    if (Array.isArray(parsedCharacter.characterItems)) {
+                        initialCharacterItems = parsedCharacter.characterItems;
                     }
                 } catch {
                     /* ignore — meta write below falls back to the last known bridge character */
@@ -789,7 +798,17 @@ class WebSocketHook {
                 setTimeout(() => {
                     try {
                         GM_setValue('toolasha_init_character_data', message);
-                        this.writeBridgeMeta('toolasha_init_character_data_meta');
+                        this.writeBridgeMeta('toolasha_init_character_data_meta', bridgeOwner);
+                        if (bridgeOwner?.characterId && initialCharacterItems) {
+                            GM_setValue(
+                                'toolasha_character_items',
+                                JSON.stringify({
+                                    characterId: bridgeOwner.characterId,
+                                    characterItems: initialCharacterItems,
+                                })
+                            );
+                            this.writeBridgeMeta('toolasha_character_items_meta', bridgeOwner);
+                        }
                     } catch {
                         /* ignore */
                     }
@@ -871,6 +890,35 @@ class WebSocketHook {
     }
 
     /**
+     * Keep a lightweight current-inventory bridge beside the login snapshot.
+     * DataManager calls this only after accepting an update from the active
+     * character socket, so an old socket cannot overwrite the new character.
+     * @param {Array<Object>} characterItems
+     */
+    saveCombatSimInventory(characterItems) {
+        if (typeof GM_setValue === 'undefined' || !this.bridgeCharacterId || !Array.isArray(characterItems)) {
+            return;
+        }
+
+        const bridgeOwner = {
+            characterId: this.bridgeCharacterId,
+            characterName: this.bridgeCharacterName,
+        };
+        const payload = JSON.stringify({
+            characterId: bridgeOwner.characterId,
+            characterItems,
+        });
+        setTimeout(() => {
+            try {
+                GM_setValue('toolasha_character_items', payload);
+                this.writeBridgeMeta('toolasha_character_items_meta', bridgeOwner);
+            } catch {
+                /* ignore */
+            }
+        }, 0);
+    }
+
+    /**
      * Merge one shared profile into the stored profile list and persist it.
      *
      * Runs serialised behind `_profileChain` — see the call site. Everything here is
@@ -921,15 +969,16 @@ class WebSocketHook {
      * `this.bridgeCharacterName`) since that is the only writer identity reliably available
      * synchronously at write time.
      * @param {string} metaKey - Namespaced meta key to write, e.g. 'toolasha_init_character_data_meta'
+     * @param {{characterId?: string|number|null, characterName?: string|null}|null} [owner]
      */
-    writeBridgeMeta(metaKey) {
+    writeBridgeMeta(metaKey, owner = null) {
         if (typeof GM_setValue === 'undefined') return;
         try {
             GM_setValue(
                 metaKey,
                 JSON.stringify({
-                    characterId: this.bridgeCharacterId || null,
-                    characterName: this.bridgeCharacterName || null,
+                    characterId: owner?.characterId || this.bridgeCharacterId || null,
+                    characterName: owner?.characterName || this.bridgeCharacterName || null,
                     writtenAt: Date.now(),
                 })
             );

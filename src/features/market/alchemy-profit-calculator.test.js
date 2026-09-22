@@ -135,10 +135,29 @@ describe('_bestCatalystCombo', () => {
     test('a nonzero tea cost can make the no-tea combo win despite a lower success rate', () => {
         const best = alchemyProfitCalculator._bestCatalystCombo(
             baseParams({
+                teaBonusOverride: 0.1,
                 computeTeaCost: (teaBonus) => (teaBonus > 0 ? 1_000_000 : 0),
             })
         );
         expect(best.teaBonus).toBe(0);
+        expect(best.usesTea).toBe(false);
+    });
+
+    test('a fixed tea candidate is charged even when it has no Alchemy Success bonus', () => {
+        const best = alchemyProfitCalculator._bestCatalystCombo(
+            baseParams({
+                teaBonusOverride: 0,
+                fixedTeaSelection: true,
+                computeTeaCost: () => 12_345,
+            })
+        );
+
+        expect(best.usesTea).toBe(true);
+        expect(best.teaBonus).toBe(0);
+        expect(best.teaCostPerHour).toBe(12_345);
+        expect(best.profitPerHour).toBeLessThan(
+            alchemyProfitCalculator._bestCatalystCombo(baseParams({ teaBonusOverride: 0 })).profitPerHour
+        );
     });
 
     test('picks among exactly six combinations and returns the best profitPerHour', () => {
