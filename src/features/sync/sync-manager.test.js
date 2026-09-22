@@ -525,7 +525,33 @@ describe('pull', () => {
 
         expect(await oldPull).toMatchObject({ ok: false, reason: 'stopped-after-apply' });
         expect(stored.map.toolasha_sync_lastSyncedAt).toBeUndefined();
-        expect(toasts).toHaveLength(0);
+        expect(toasts.at(-1)).toMatchObject({ kind: 'warn', duration: 0 });
+        expect(toasts.at(-1).message).toContain('Reload now');
+    });
+
+    test('cleanup during an import still guards histories held back from that download', async () => {
+        stored.map.toolasha_sync_gistId = 'abc';
+        gist.read = remote('2026-02-01T00:00:00.000Z');
+        payload.mergeHeld = [{ label: 'market history', store: 'marketplace' }];
+        let finishApply;
+        payload.applyWait = new Promise((resolve) => {
+            finishApply = resolve;
+        });
+
+        const oldPull = syncManager.pull();
+        await vi.waitFor(() => expect(payload.applyCalls).toBe(1));
+        syncManager.cleanup();
+        finishApply();
+
+        expect(await oldPull).toMatchObject({ ok: false, reason: 'stopped-after-apply' });
+        expect(stored.map.toolasha_sync_mergeHeld).toMatchObject({
+            exportedAt: '2026-02-01T00:00:00.000Z',
+            hash: 'h:{"remote":1}',
+        });
+        expect(stored.map.toolasha_sync_lastSyncedAt).toBeUndefined();
+        expect(toasts.at(-1).message).toContain('Reload now');
+        expect(await syncManager.push()).toMatchObject({ ok: false, reason: 'held-back' });
+        expect(gist.writes).toHaveLength(0);
     });
 });
 
