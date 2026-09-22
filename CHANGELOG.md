@@ -12,10 +12,9 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ### Cross-device sync keeps unfinished pulls recoverable
 
-- If a local history could not be read during a pull, its downloaded counterpart was held back but the gist was marked fully synced; a later pull then said "already up to date" and could never retrieve that record. The same gist can now be retried after storage recovers, and pushes pause until those missing records have landed.
-- A manual sync in one tab now asks you to retry while another tab is syncing, instead of bypassing the cross-tab lock and risking an overlapping gist write.
-- A pull waiting on GitHub is discarded when you switch characters, so the previous character's download and status do not appear on the new screen.
-- If a character switch happens after an import has already started, the script now warns you to reload and keeps any held-back histories protected from an automatic push.
+- A pull that held back records it could not merge (a local history was unreadable) no longer marks the gist fully synced, so pulling again after storage recovers retrieves them; pushes pause until then so the gist's copy is not overwritten.
+- A manual sync while another tab is syncing now asks you to retry instead of bypassing the cross-tab lock.
+- A pull that finishes after a character switch is discarded instead of applied, or, if its import had already started, asks you to reload and holds off other syncs until it finishes.
 
 ### Combat simulation: reviving an ally keeps active curses
 

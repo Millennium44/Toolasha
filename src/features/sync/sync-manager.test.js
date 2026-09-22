@@ -67,6 +67,7 @@ const payload = vi.hoisted(() => ({ text: '{"local":1}' }));
 vi.mock('./sync-payload.js', () => ({
     buildPayloadJSON: async () => {
         storageCalls.push('buildPayloadJSON');
+        if (payload.buildWait) await payload.buildWait;
         return payload.text;
     },
     applyPayload: async (json) => {
@@ -98,6 +99,8 @@ const gist = vi.hoisted(() => ({
     readCalls: 0,
     readError: null,
     writeError: null,
+    writeWait: null,
+    writeAttempts: 0,
     writes: [],
 }));
 
@@ -119,6 +122,8 @@ vi.mock('./gist-client.js', () => ({
         return gist.read;
     },
     writeSyncGist: async (_token, id, manifest, chunks, previous) => {
+        gist.writeAttempts += 1;
+        if (gist.writeWait) await gist.writeWait;
         if (gist.writeError) throw gist.writeError;
         gist.writes.push({ id, manifest, chunks, previous });
         return { id: id ?? 'created-id', updatedAt: 'now' };
@@ -147,6 +152,7 @@ beforeEach(() => {
     payload.applied = undefined;
     payload.applyCalls = 0;
     payload.applyWait = null;
+    payload.buildWait = null;
     payload.appliedText = undefined;
     payload.merged = [];
     payload.mergeFailed = [];
@@ -160,6 +166,8 @@ beforeEach(() => {
     gist.readCalls = 0;
     gist.readError = null;
     gist.writeError = null;
+    gist.writeWait = null;
+    gist.writeAttempts = 0;
     gist.writes = [];
     panelOpens.length = 0;
     clearPullSummary();
@@ -552,6 +560,60 @@ describe('pull', () => {
         expect(toasts.at(-1).message).toContain('Reload now');
         expect(await syncManager.push()).toMatchObject({ ok: false, reason: 'held-back' });
         expect(gist.writes).toHaveLength(0);
+    });
+
+    test('without Web Locks, a switch push cannot upload while a cancelled import is still finishing', async () => {
+        // The busy flag is the only same-tab exclusion when the browser has no
+        // Web Locks. Cleanup used to clear it, so the next character's switch
+        // push could read "no held marker", upload the incomplete local copy
+        // over the remote-only records, then erase the marker the import wrote.
+        vi.stubGlobal('navigator', {});
+        try {
+            stored.map.toolasha_sync_gistId = 'abc';
+            stored.map.toolasha_sync_lastSyncedAt = '2026-01-01T00:00:00.000Z';
+            stored.map.toolasha_sync_lastHash = 'h:{"local":1}';
+            gist.read = remote('2026-02-01T00:00:00.000Z');
+            payload.mergeHeld = [{ label: 'market history', store: 'marketplace' }];
+            let finishApply;
+            payload.applyWait = new Promise((resolve) => {
+                finishApply = resolve;
+            });
+            let finishWrite;
+            gist.writeWait = new Promise((resolve) => {
+                finishWrite = resolve;
+            });
+
+            const oldPull = syncManager.pull();
+            await vi.waitFor(() => expect(payload.applyCalls).toBe(1));
+            payload.text = '{"local":2}';
+            syncManager.cleanup();
+            character.id = 'char-B';
+
+            let settled = false;
+            const switchPush = (async () => {
+                const result = await syncManager.push({ silent: true });
+                settled = true;
+                return result;
+            })();
+            // Let the push either stand down or get as far as the gist write,
+            // so it is past every held-marker check before the import lands.
+            await vi.waitFor(() => expect(settled || gist.writeAttempts > 0).toBe(true));
+            finishApply();
+            expect(await oldPull).toMatchObject({ ok: false, reason: 'stopped-after-apply' });
+            finishWrite();
+            await switchPush;
+
+            expect(gist.writes).toHaveLength(0);
+            expect(stored.map.toolasha_sync_mergeHeld).toMatchObject({
+                exportedAt: '2026-02-01T00:00:00.000Z',
+                hash: 'h:{"remote":1}',
+            });
+            // The cancelled operation released its own lock once it finished
+            expect(syncManager.busy).toBe(false);
+        } finally {
+            vi.unstubAllGlobals();
+            character.id = 'char-A';
+        }
     });
 });
 
@@ -1033,6 +1095,30 @@ describe('the cross-tab lock', () => {
         expect(await syncManager._run('push', true, operation)).toMatchObject({ ok: true });
         expect(operation).toHaveBeenCalledTimes(1);
     });
+
+    test('a manual sync right after a character switch is told this tab is still busy, not another tab', async () => {
+        stored.map.toolasha_sync_gistId = 'abc';
+        gist.read = {
+            manifest: { exportedAt: '2026-02-01T00:00:00.000Z', chunks: 1, hash: 'h:{"remote":1}', bytes: 12 },
+            payload: '{"remote":1}',
+        };
+        let finishApply;
+        payload.applyWait = new Promise((resolve) => {
+            finishApply = resolve;
+        });
+
+        const oldPull = syncManager.pull();
+        await vi.waitFor(() => expect(payload.applyCalls).toBe(1));
+        syncManager.cleanup();
+
+        expect(await syncManager.push()).toMatchObject({ ok: false, reason: 'busy' });
+        expect(toasts.at(-1).message).toBe('A sync is already running.');
+        expect(gist.writes).toHaveLength(0);
+
+        finishApply();
+        await oldPull;
+        expect(syncManager.busy).toBe(false);
+    });
 });
 
 describe('a pull that did not apply', () => {
@@ -1232,5 +1318,47 @@ describe('what a pull says it reconciled', () => {
         expect(lastPullSummary()).toBeNull();
         syncManager.cleanup();
         character.id = 'char-A';
+    });
+});
+
+describe('the held-back marker outlives a push that was already under way', () => {
+    // Another tab (or a browser without Web Locks) can record held-back
+    // records while this tab's push is between its first check and the write.
+    const held = { exportedAt: '2026-02-01T00:00:00.000Z', hash: 'h:{"remote":1}' };
+
+    beforeEach(() => {
+        stored.map.toolasha_sync_gistId = 'abc';
+        stored.map.toolasha_sync_lastSyncedAt = '2026-01-01T00:00:00.000Z';
+        stored.map.toolasha_sync_lastHash = 'h:old';
+    });
+
+    test('a marker that lands while the payload is built stops the upload', async () => {
+        let finishBuild;
+        payload.buildWait = new Promise((resolve) => {
+            finishBuild = resolve;
+        });
+
+        const pushing = syncManager.push();
+        await vi.waitFor(() => expect(storageCalls).toContain('buildPayloadJSON'));
+        stored.map.toolasha_sync_mergeHeld = held;
+        finishBuild();
+
+        expect(await pushing).toMatchObject({ ok: false, reason: 'held-back' });
+        expect(gist.writes).toHaveLength(0);
+    });
+
+    test("a push's bookkeeping does not erase a marker it did not write", async () => {
+        let finishWrite;
+        gist.writeWait = new Promise((resolve) => {
+            finishWrite = resolve;
+        });
+
+        const pushing = syncManager.push();
+        await vi.waitFor(() => expect(gist.writeAttempts).toBe(1));
+        stored.map.toolasha_sync_mergeHeld = held;
+        finishWrite();
+
+        expect(await pushing).toMatchObject({ ok: true });
+        expect(stored.map.toolasha_sync_mergeHeld).toEqual(held);
     });
 });
