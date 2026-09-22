@@ -198,6 +198,21 @@ describe('reordering controls', () => {
 
         expect(drop.defaultPrevented).toBe(false);
     });
+
+    test('detaching a listings table releases its observer and delegated listeners', async () => {
+        const table = buildTable([1, 2]);
+        await listingDragOrder.initialize();
+        const first = table.querySelector('tbody tr');
+        expect(listingDragOrder.tableResources.size).toBe(1);
+
+        table.remove();
+        await new Promise((resolve) => setTimeout(resolve, 0));
+
+        expect(listingDragOrder.tableResources.size).toBe(0);
+        const drop = new Event('drop', { bubbles: true, cancelable: true });
+        first.dispatchEvent(drop);
+        expect(drop.defaultPrevented).toBe(false);
+    });
 });
 
 describe('initialization', () => {

@@ -48,7 +48,7 @@ class ListingDragOrder {
     constructor() {
         this.isInitialized = false;
         this.cleanupRegistry = createCleanupRegistry();
-        this.tbodyObservers = new WeakMap();
+        this.tableResources = new Map();
         this.savedOrder = [];
         this.storageKey = null;
         this.draggedRow = null;
@@ -80,6 +80,14 @@ class ListingDragOrder {
         this.isInitialized = true;
         addStyles(CSS, STYLE_ID);
 
+        // The game replaces the whole listings table when the marketplace is
+        // closed and reopened. Release per-table observers/listeners on the
+        // removal mutation instead of retaining each old subtree until a
+        // character switch or feature toggle.
+        const detachObserver = new MutationObserver(() => this._pruneDetachedTables());
+        detachObserver.observe(document.body, { childList: true, subtree: true });
+        this.cleanupRegistry.registerObserver(detachObserver);
+
         const unregister = domObserver.onClass('ListingDragOrder', TABLE_CLASS, (tableNode) => {
             this._watchTable(tableNode);
         });
@@ -103,15 +111,33 @@ class ListingDragOrder {
         const tbody = table.querySelector('tbody');
         if (!tbody) return;
 
-        if (!this.tbodyObservers.has(tbody)) {
+        const held = this.tableResources.get(table);
+        if (held?.tbody !== tbody) {
+            if (held) this._disposeTable(table);
+            const resources = createCleanupRegistry();
             const observer = new MutationObserver(() => this._queueDecorate(table));
             observer.observe(tbody, { childList: true, subtree: true });
-            this.tbodyObservers.set(tbody, observer);
-            this.cleanupRegistry.registerObserver(observer);
-            this._registerTableListeners(table, tbody);
+            resources.registerObserver(observer);
+            this._registerTableListeners(table, tbody, resources);
+            this.tableResources.set(table, { tbody, resources });
         }
 
         this._decorate(table);
+    }
+
+    /** Release observers and handlers owned by tables that left the document. */
+    _pruneDetachedTables() {
+        for (const table of this.tableResources.keys()) {
+            if (!table.isConnected) this._disposeTable(table);
+        }
+    }
+
+    /** @param {HTMLElement} table */
+    _disposeTable(table) {
+        const held = this.tableResources.get(table);
+        if (!held) return;
+        held.resources.cleanupAll();
+        this.tableResources.delete(table);
     }
 
     /** @param {HTMLElement} table */
@@ -192,37 +218,38 @@ class ListingDragOrder {
      * rows without leaving a listener closure attached to every old row.
      * @param {HTMLElement} table
      * @param {HTMLElement} tbody
+     * @param {ReturnType<typeof createCleanupRegistry>} resources
      */
-    _registerTableListeners(table, tbody) {
+    _registerTableListeners(table, tbody, resources) {
         const handleFor = (event) => event.target?.closest?.('.mwi-listing-drag-handle');
         const rowFor = (event) => event.target?.closest?.('tr[data-listing-id]');
 
-        this.cleanupRegistry.registerListener(tbody, 'click', (event) => {
+        resources.registerListener(tbody, 'click', (event) => {
             if (!handleFor(event)) return;
             event.preventDefault();
             event.stopPropagation();
         });
-        this.cleanupRegistry.registerListener(tbody, 'dragstart', (event) => {
+        resources.registerListener(tbody, 'dragstart', (event) => {
             const handle = handleFor(event);
             const row = handle?.closest('tr[data-listing-id]');
             if (row) this._startDrag(event, row, table);
         });
-        this.cleanupRegistry.registerListener(tbody, 'dragend', (event) => {
+        resources.registerListener(tbody, 'dragend', (event) => {
             if (handleFor(event)) this._finishDrag(table);
         });
-        this.cleanupRegistry.registerListener(tbody, 'keydown', (event) => {
+        resources.registerListener(tbody, 'keydown', (event) => {
             const handle = handleFor(event);
             const row = handle?.closest('tr[data-listing-id]');
             if (row) this._handleKeydown(event, row, table);
         });
-        this.cleanupRegistry.registerListener(tbody, 'dragover', (event) => {
+        resources.registerListener(tbody, 'dragover', (event) => {
             const row = rowFor(event);
             if (row) this._dragOver(event, row);
         });
-        this.cleanupRegistry.registerListener(tbody, 'dragleave', (event) => {
+        resources.registerListener(tbody, 'dragleave', (event) => {
             rowFor(event)?.classList.remove('mwi-listing-drag-over');
         });
-        this.cleanupRegistry.registerListener(tbody, 'drop', (event) => {
+        resources.registerListener(tbody, 'drop', (event) => {
             const row = rowFor(event);
             if (!row) return;
             event.preventDefault();
@@ -360,12 +387,13 @@ class ListingDragOrder {
     cleanup() {
         noteTeardown(this);
         this.cleanupRegistry.cleanupAll();
+        for (const table of [...this.tableResources.keys()]) this._disposeTable(table);
         document.querySelectorAll('.mwi-listing-drag-handle').forEach((handle) => handle.remove());
         document.querySelectorAll(`[class*="${TABLE_CLASS}"]`).forEach((table) => {
             delete table.dataset.mwiManualListingOrder;
         });
         removeStyles(STYLE_ID);
-        this.tbodyObservers = new WeakMap();
+        this.tableResources = new Map();
         this.decorateQueued = new WeakSet();
         this.savedOrder = [];
         this.storageKey = null;
