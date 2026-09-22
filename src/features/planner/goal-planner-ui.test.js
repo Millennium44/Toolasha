@@ -792,6 +792,28 @@ describe('adding and removing a goal', () => {
         expect(plannerContext.builds).toBe(pricedBuilds);
     });
 
+    test('an added goal during a finishing refresh is planned after that refresh settles', async () => {
+        const gate = Promise.withResolvers();
+        const sweeping = Promise.withResolvers();
+        ledger.onSweep = async () => {
+            sweeping.resolve();
+            await gate.promise;
+        };
+        goalPlannerPanel.show();
+        await goalPlannerPanel.load();
+
+        const refreshing = goalPlannerPanel.refresh();
+        await sweeping.promise;
+        await goalPlannerPanel.addGoal({ type: 'gold', amount: 900_000_000 });
+        expect(goalPlannerPanel.plans.some((plan) => plan.title === 'Have 900.0M coins')).toBe(false);
+
+        ledger.onSweep = null;
+        gate.resolve();
+        await refreshing;
+        expect(goalPlannerPanel.plans.some((plan) => plan.title === 'Have 900.0M coins')).toBe(true);
+        expect(plannerContext.builds).toBe(1);
+    });
+
     test('a goal added before anything was priced prices once, rather than showing nothing', async () => {
         store.data = {};
         goalPlannerPanel.show();
