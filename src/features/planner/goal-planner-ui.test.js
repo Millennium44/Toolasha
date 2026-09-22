@@ -814,6 +814,53 @@ describe('adding and removing a goal', () => {
         expect(plannerContext.builds).toBe(1);
     });
 
+    test('a goal added while a refresh fails to price retries the pricing, not the stale prices', async () => {
+        goalPlannerPanel.show();
+        await goalPlannerPanel.load();
+        await goalPlannerPanel.refresh();
+        const gate = Promise.withResolvers();
+        const building = Promise.withResolvers();
+        plannerContext.onBuild = async () => {
+            building.resolve();
+            await gate.promise;
+            throw new Error('market down');
+        };
+
+        const refreshing = goalPlannerPanel.refresh();
+        await building.promise;
+        await goalPlannerPanel.addGoal({ type: 'gold', amount: 900_000_000 });
+        plannerContext.onBuild = null;
+        gate.resolve();
+        await refreshing;
+
+        // priced once, failed once, retried once
+        expect(plannerContext.builds).toBe(3);
+        expect(goalPlannerPanel.plans.some((plan) => plan.title === 'Have 900.0M coins')).toBe(true);
+        expect(text()).not.toContain('Pricing failed');
+    });
+
+    test('a retried pricing that fails again keeps the failure on screen', async () => {
+        goalPlannerPanel.show();
+        await goalPlannerPanel.load();
+        await goalPlannerPanel.refresh();
+        const gate = Promise.withResolvers();
+        const building = Promise.withResolvers();
+        plannerContext.onBuild = async () => {
+            building.resolve();
+            await gate.promise;
+            throw new Error('market down');
+        };
+
+        const refreshing = goalPlannerPanel.refresh();
+        await building.promise;
+        await goalPlannerPanel.addGoal({ type: 'gold', amount: 900_000_000 });
+        gate.resolve();
+        await refreshing;
+
+        expect(text()).toContain('Pricing failed');
+        plannerContext.onBuild = null;
+    });
+
     test('a goal added before anything was priced prices once, rather than showing nothing', async () => {
         store.data = {};
         goalPlannerPanel.show();
