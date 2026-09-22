@@ -22,7 +22,7 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ### Goal planner keeps up with edits and market-source changes
 
-- Adding a goal or pressing Refresh while a plan is finishing now runs the requested calculation once the current one settles, so the new goal does not remain unplanned until another click.
+- Adding a goal or pressing Refresh while a plan is finishing now runs the requested calculation once the current one settles, so the new goal does not remain unplanned until another click; if that plan's pricing failed, the follow-up retries the pricing instead of hiding the failure behind stale prices.
 - Market-volume limits follow the selected history source. Switching to a source without volume no longer leaves the previous source's sale-rate cap in place or presents its measurement as current.
 
 ### Storage restores and settings copies report what actually landed

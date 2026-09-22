@@ -518,6 +518,7 @@ class GoalPlannerPanel {
         const owner = dataManager.getCurrentCharacterId() || null;
         const current = this._currentOperation();
         const gone = () => !current();
+        let pricingFailed = false;
         try {
             if (reprice || !this.context) {
                 const context = await buildPlannerContext();
@@ -544,12 +545,16 @@ class GoalPlannerPanel {
             // `finally` rewrites that line, so a message put there directly is
             // gone before anybody reads it
             this.notice = reprice ? 'Pricing failed — see the console.' : 'Planning failed — see the console.';
+            pricingFailed = reprice;
         } finally {
             if (current()) {
                 this.busy = false;
                 this._render();
                 if (this.pendingReplan) {
-                    const repriceAgain = this.pendingReprice;
+                    // A queued pass after a failed pricing retries the pricing:
+                    // replanning on the old prices would clear the failure notice
+                    // while still showing the stale costs it warned about
+                    const repriceAgain = this.pendingReprice || pricingFailed;
                     this.pendingReplan = false;
                     this.pendingReprice = false;
                     await this.replan({ reprice: repriceAgain });
