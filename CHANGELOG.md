@@ -6,6 +6,11 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Goal planner keeps up with edits and market-source changes
+
+- Adding a goal or pressing Refresh while a plan is finishing now runs the requested calculation once the current one settles, so the new goal does not remain unplanned until another click.
+- Market-volume limits follow the selected history source. Switching to a source without volume no longer leaves the previous source's sale-rate cap in place or presents its measurement as current.
+
 ### Storage restores and settings copies report what actually landed
 
 - Settings imports, character copies and unreadable-store recovery no longer report success when IndexedDB refused a write, and a refused settings save keeps its changes queued for the next one. Nested restores also hold live writes until the outermost one ends.

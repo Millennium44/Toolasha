@@ -105,6 +105,23 @@ describe('measuring how fast an item sells', () => {
         expect(history.calls).toHaveLength(0);
     });
 
+    test('switching history sources does not reuse a volume measurement from the previous pool', async () => {
+        history.rows['/items/log'] = tradedAt(1);
+        expect((await dailyVolume('/items/log')).known).toBe(true);
+
+        history.hasVolume = false;
+        expect((await dailyVolume('/items/log')).known).toBe(false);
+        expect(history.calls).toHaveLength(1);
+        const { measured } = await applyLiquidityLimits([
+            { label: 'Make logs', goldPerHour: 100, sells: [{ itemHrid: '/items/log', unitsPerHour: 1 }] },
+        ]);
+        expect(measured).toBe(false);
+
+        history.hasVolume = true;
+        expect((await dailyVolume('/items/log')).known).toBe(true);
+        expect(history.calls).toHaveLength(1);
+    });
+
     test('asks the server once per item, however often it is asked', async () => {
         history.rows['/items/log'] = tradedAt(240);
         await dailyVolume('/items/log');

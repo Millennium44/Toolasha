@@ -110,14 +110,14 @@ export function resetLiquidityCache() {
  * @param {string} key - The cache key for both maps
  * @returns {Promise<{itemHrid: string, unitsPerDay: number, days: number, known: boolean}>}
  */
-async function measureDailyVolume(itemHrid, enhancementLevel, key) {
+async function measureDailyVolume(itemHrid, enhancementLevel, key, source) {
     const unknown = { itemHrid, unitsPerDay: 0, days: 0, known: false };
 
     // A source that carries no volume (mooket I) tells us nothing about how much
     // trades — which is a different thing from a source that watched and saw
     // nothing. Treating its silence as a measured zero would crush every rate to
     // nothing the moment someone switched sources, so it stays unknown.
-    if (!marketHistoryAPI.currentSource().hasVolume) {
+    if (!source.hasVolume) {
         cache.set(key, unknown);
         return unknown;
     }
@@ -165,7 +165,7 @@ async function measureDailyVolume(itemHrid, enhancementLevel, key) {
  *   which is not the same as a measured zero, and must not be read as one.
  */
 export function cachedDailyVolume(itemHrid, enhancementLevel = 0) {
-    return cache.get(`${itemHrid}:${enhancementLevel}`) || null;
+    return cache.get(`${marketHistoryAPI.currentSource().key}:${itemHrid}:${enhancementLevel}`) || null;
 }
 
 /**
@@ -178,14 +178,18 @@ export function cachedDailyVolume(itemHrid, enhancementLevel = 0) {
  *   rows — which is different from a measured zero and must not be treated as one.
  */
 export async function dailyVolume(itemHrid, enhancementLevel = 0) {
-    const key = `${itemHrid}:${enhancementLevel}`;
+    // The same item is a different measurement in each history pool. One pool
+    // has no volume at all, so reusing the other pool's answer on a source
+    // switch silently leaves a stale cap in the planner.
+    const source = marketHistoryAPI.currentSource();
+    const key = `${source.key}:${itemHrid}:${enhancementLevel}`;
     const cached = cache.get(key);
     if (cached) return cached;
 
     const inFlight = pending.get(key);
     if (inFlight) return inFlight;
 
-    const lookup = measureDailyVolume(itemHrid, enhancementLevel, key);
+    const lookup = measureDailyVolume(itemHrid, enhancementLevel, key, source);
     pending.set(key, lookup);
     try {
         return await lookup;
@@ -457,7 +461,8 @@ export async function applyLiquidityLimits(rates) {
     }
 
     bounded.sort((a, b) => (Number(b.goldPerHour) || 0) - (Number(a.goldPerHour) || 0));
-    const measured = [...cache.values()].some((entry) => entry.known);
+    const sourcePrefix = `${marketHistoryAPI.currentSource().key}:`;
+    const measured = [...cache.entries()].some(([key, entry]) => key.startsWith(sourcePrefix) && entry.known);
     return { rates: bounded, measured };
 }
 

@@ -355,6 +355,8 @@ class GoalPlannerPanel {
         this.combatStatus = null;
         this.pricedAt = null;
         this.busy = false;
+        this.pendingReplan = false;
+        this.pendingReprice = false;
         this.formType = null;
         this.loaded = null;
         this.generation = 0;
@@ -431,6 +433,8 @@ class GoalPlannerPanel {
         unregisterCommand('Goal Planner');
         this._remove();
         this.busy = false;
+        this.pendingReplan = false;
+        this.pendingReprice = false;
         this.loaded = null;
         this.formType = null;
         this.goals = [];
@@ -493,7 +497,14 @@ class GoalPlannerPanel {
      * @returns {Promise<void>}
      */
     async replan({ reprice = false } = {}) {
-        if (this.busy) return;
+        if (this.busy) {
+            // A goal can be added while a refresh is writing its old plans or
+            // restating reservations. That edit needs one more pass, not a
+            // dropped request and a new goal with no priced step.
+            this.pendingReplan = true;
+            this.pendingReprice ||= reprice;
+            return;
+        }
         this.busy = true;
         this.notice = null;
         this._status(reprice ? 'Pricing…' : 'Planning…');
@@ -537,6 +548,12 @@ class GoalPlannerPanel {
             if (current()) {
                 this.busy = false;
                 this._render();
+                if (this.pendingReplan) {
+                    const repriceAgain = this.pendingReprice;
+                    this.pendingReplan = false;
+                    this.pendingReprice = false;
+                    await this.replan({ reprice: repriceAgain });
+                }
             }
         }
     }
