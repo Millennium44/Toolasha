@@ -787,14 +787,62 @@ export function attemptsFromRecordingFile(file) {
     if (!file || typeof file !== 'object' || file.format !== RECORDING_FORMAT) {
         throw new Error(`[LabyrinthFightRecorder] Not a ${RECORDING_FORMAT} file`);
     }
-    const buildFormat = Number(file.replayBuildFormat) || 0;
+    const hasBuildFormat = Object.prototype.hasOwnProperty.call(file, 'replayBuildFormat');
+    if (Number(file.version) >= 5 && !hasBuildFormat) {
+        throw new Error('[LabyrinthFightRecorder] This recording is missing replay build format metadata.');
+    }
+    const rawBuildFormat = file.replayBuildFormat;
+    if (hasBuildFormat && (!Number.isInteger(rawBuildFormat) || rawBuildFormat < 0)) {
+        throw new Error('[LabyrinthFightRecorder] This recording has invalid replay build format metadata.');
+    }
+    const buildFormat = hasBuildFormat ? rawBuildFormat : 0;
     if (buildFormat > REPLAY_BUILD_FORMAT) {
         throw new Error(
             `[LabyrinthFightRecorder] This recording interns saved builds under format ${buildFormat}, newer than ` +
                 `${REPLAY_BUILD_FORMAT}; its fights cannot be bound to their builds by this build of the script.`
         );
     }
-    const entries = Array.isArray(file.attempts) ? file.attempts : [];
+    if (Number(file.version) >= 5 && buildFormat !== REPLAY_BUILD_FORMAT) {
+        throw new Error(
+            `[LabyrinthFightRecorder] Recording version ${file.version} requires replay build format ` +
+                `${REPLAY_BUILD_FORMAT}, not ${buildFormat}.`
+        );
+    }
+    if (!Array.isArray(file.attempts)) {
+        throw new Error('[LabyrinthFightRecorder] This recording is missing attempts.');
+    }
+    const entries = file.attempts;
+    if (buildFormat === REPLAY_BUILD_FORMAT) {
+        const carriers = new Map();
+        for (const entry of entries) {
+            const id = entry?.replayBuildId == null ? null : String(entry.replayBuildId);
+            if (entry?.replayInputs == null) continue;
+            if (!id) {
+                throw new Error('[LabyrinthFightRecorder] An interned recording carries a saved build without an id.');
+            }
+            const inputs = copyReplayInputs(entry.replayInputs);
+            if (!inputs) {
+                throw new Error(`[LabyrinthFightRecorder] Saved build ${id} is unreadable.`);
+            }
+            const key = replayBuildKey(inputs);
+            if (replayBuildIdFor(key) !== id) {
+                throw new Error(`[LabyrinthFightRecorder] Saved build id ${id} does not match its saved build.`);
+            }
+            const held = carriers.get(id);
+            if (held !== undefined && held !== key) {
+                throw new Error(`[LabyrinthFightRecorder] Saved build id ${id} is claimed by different builds.`);
+            }
+            carriers.set(id, key);
+        }
+        for (const entry of entries) {
+            const id = entry?.replayBuildId == null ? null : String(entry.replayBuildId);
+            if (id && !carriers.has(id)) {
+                throw new Error(
+                    `[LabyrinthFightRecorder] Fight ${entry?.recordId || '(unknown)'} references missing saved build ${id}.`
+                );
+            }
+        }
+    }
     return expandReplayBuilds(entries).map((entry) => ({ ...entry }));
 }
 

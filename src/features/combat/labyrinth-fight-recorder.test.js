@@ -984,6 +984,70 @@ describe('the exported file interns saved builds the way the stored pool does', 
         expect(() => attemptsFromRecordingFile(future)).toThrow(/newer than/);
     });
 
+    test('an interned export with a dangling build reference is refused', () => {
+        const malformed = {
+            format: RECORDING_FORMAT,
+            version: RECORDING_VERSION,
+            replayBuildFormat: REPLAY_BUILD_FORMAT,
+            attempts: [{ ...attempt(), recordId: 'a', replayBuildId: 'missing', replayInputs: null }],
+        };
+        expect(() => attemptsFromRecordingFile(malformed)).toThrow(/missing saved build/);
+    });
+
+    test('an interned export cannot bind an id to malformed or different build content', () => {
+        const valid = build(10);
+        const wrongId = {
+            format: RECORDING_FORMAT,
+            version: RECORDING_VERSION,
+            replayBuildFormat: REPLAY_BUILD_FORMAT,
+            attempts: [{ ...attempt(), recordId: 'a', replayBuildId: 'not-that-build', replayInputs: valid }],
+        };
+        expect(() => attemptsFromRecordingFile(wrongId)).toThrow(/does not match its saved build/);
+
+        const invalidInputs = {
+            ...wrongId,
+            attempts: [
+                {
+                    ...attempt(),
+                    recordId: 'a',
+                    replayBuildId: 'not-a-valid-build',
+                    replayInputs: { version: 1, playerDTO: { hrid: 'player1' } },
+                },
+            ],
+        };
+        expect(() => attemptsFromRecordingFile(invalidInputs)).toThrow(/is unreadable/);
+    });
+
+    test('version 5 cannot omit the interning marker or attempts array', () => {
+        expect(() =>
+            attemptsFromRecordingFile({ format: RECORDING_FORMAT, version: RECORDING_VERSION, attempts: [] })
+        ).toThrow(/missing replay build format/);
+        expect(() =>
+            attemptsFromRecordingFile({
+                format: RECORDING_FORMAT,
+                version: RECORDING_VERSION,
+                replayBuildFormat: REPLAY_BUILD_FORMAT,
+            })
+        ).toThrow(/missing attempts/);
+    });
+
+    test.each([
+        ['null', null, /invalid replay build format/],
+        ['a numeric string', '1', /invalid replay build format/],
+        ['garbage', 'garbage', /invalid replay build format/],
+        ['a negative integer', -1, /invalid replay build format/],
+        ['legacy format zero', 0, /requires replay build format 1/],
+    ])('version 5 refuses %s as its interning marker', (_label, replayBuildFormat, message) => {
+        expect(() =>
+            attemptsFromRecordingFile({
+                format: RECORDING_FORMAT,
+                version: RECORDING_VERSION,
+                replayBuildFormat,
+                attempts: [],
+            })
+        ).toThrow(message);
+    });
+
     test('something that is not a recording is refused', () => {
         expect(() => attemptsFromRecordingFile({ format: 'toolasha-combat-recording', attempts: [] })).toThrow(
             /Not a toolasha-labyrinth-recording/

@@ -8,10 +8,13 @@
 
 import { describe, test, expect, vi } from 'vitest';
 
-vi.mock('../../core/storage.js', () => ({ default: { get: async () => null, set: async () => true } }));
+const storageResult = vi.hoisted(() => ({ value: true }));
+vi.mock('../../core/storage.js', () => ({
+    default: { get: async () => null, set: async () => storageResult.value },
+}));
 vi.mock('../../core/data-manager.js', () => ({ default: { getCurrentCharacterId: () => 'me' } }));
 
-const { replayCohortKey, describeReplayCohorts, applyReplayCohortSelection } =
+const { replayCohortKey, describeReplayCohorts, applyReplayCohortSelection, writeReplayCohortSelection } =
     await import('./labyrinth-replay-selection.js');
 const { replayBuildSummary } = await import('./labyrinth-replay-inputs.js');
 
@@ -142,4 +145,13 @@ describe('applyReplayCohortSelection', () => {
         expect(chosen).toEqual([candidates[0], candidates[1]]);
         expect(selection).toMatchObject({ applied: true, requested: 2 });
     });
+});
+
+test('a storage write that resolves false is reported as refused', async () => {
+    storageResult.value = false;
+    try {
+        await expect(writeReplayCohortSelection(['one'])).resolves.toBe(false);
+    } finally {
+        storageResult.value = true;
+    }
 });
