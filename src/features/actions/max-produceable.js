@@ -41,14 +41,15 @@ const PRODUCTION_TYPES = [
 ];
 
 /**
- * Build inventory index map for O(1) lookups
+ * Build inventory index map for O(1) lookups. Only unenhanced (+0) inventory stacks are
+ * spendable as action inputs; an enhanced copy with the same item HRID must not replace one.
  * @param {Array} inventory - Inventory array from dataManager
  * @returns {Map} Map of itemHrid → inventory item
  */
 function buildInventoryIndex(inventory) {
     const index = new Map();
     for (const item of inventory) {
-        if (item.itemLocationHrid === '/item_locations/inventory') {
+        if (item.itemLocationHrid === '/item_locations/inventory' && !item.enhancementLevel) {
             index.set(item.itemHrid, item);
         }
     }

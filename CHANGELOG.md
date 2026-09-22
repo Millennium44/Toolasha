@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Can Produce counts the spendable copy of an enhanced item
+
+- Owning both a +0 item and an enhanced copy could make Can Produce use whichever stack the game listed last, so one enhanced copy could hide thousands of spendable +0 copies. Enhanced items are no longer treated as crafting material, and the +0 stack determines the real limit.
+
 ### Queued actions keep their delete button on-screen
 
 - Long timing and profit details no longer push a queued action's delete button beyond the popup edge. Queue rows can wrap and their text can shrink inside the menu instead of requiring horizontal scrolling.
