@@ -89,8 +89,13 @@ vi.mock('../../utils/market-data.js', () => ({
 
 const actionTimeDisplayModule = await import('./action-time-display.js');
 const actionTimeDisplay = actionTimeDisplayModule.default;
-const { partialProgressNote, parseInventoryCountFromActionName, buildActionTimeText, buildQueueCompletionText } =
-    actionTimeDisplayModule;
+const {
+    partialProgressNote,
+    parseInventoryCountFromActionName,
+    buildActionTimeText,
+    buildQueueCompletionText,
+    normalizeTimeRemainingMode,
+} = actionTimeDisplayModule;
 const { _resetGameNumberSeparators } = await import('../../utils/number-parser.js');
 const { formatDateTime } = await import('../../utils/formatters.js');
 
@@ -128,6 +133,15 @@ describe('independent action and queue time display modes', () => {
         ['none', ''],
     ])('%s action-bar mode selects the intended figures', (mode, expected) => {
         expect(buildActionTimeText(mode, '3h 40m', '14:32')).toBe(expected);
+    });
+
+    test('a legacy checkbox value that reappears after the migration keeps its meaning', () => {
+        // An older build syncing from another device can write the boolean back after the
+        // one-time migration ran; `false` must stay "off", not fall through to both figures
+        expect(buildActionTimeText(normalizeTimeRemainingMode(false), '3h 40m', '14:32')).toBe('');
+        expect(normalizeTimeRemainingMode(true)).toBe('both');
+        expect(normalizeTimeRemainingMode('absolute')).toBe('absolute');
+        expect(normalizeTimeRemainingMode('garbage')).toBe('both');
     });
 
     test('queue relative mode shows the cumulative duration without a clock', () => {

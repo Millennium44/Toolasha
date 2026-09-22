@@ -104,6 +104,21 @@ export function buildQueueCompletionText(
 }
 
 /**
+ * The action bar's time display mode, tolerating the checkbox it used to be.
+ *
+ * The key migration rewrites a stored boolean once, but an older build syncing from another
+ * device, or a downgrade and back, can put one there again afterwards. Read raw, `false` is not
+ * `'none'` and would show both figures to a player who had turned them off.
+ * @param {*} value - Stored setting value
+ * @returns {string} both, relative, absolute or none
+ */
+export function normalizeTimeRemainingMode(value) {
+    if (value === true) return 'both';
+    if (value === false) return 'none';
+    return ['both', 'relative', 'absolute', 'none'].includes(value) ? value : 'both';
+}
+
+/**
  * Format the action bar's relative and absolute estimates independently.
  * @param {string} mode - both, relative, absolute or none
  * @param {string} relativeText
@@ -2897,7 +2912,9 @@ class ActionTimeDisplay {
         this.appendStatsToActionName(actionNameElement, statsToAppend.join(' · '));
 
         // Line 2: Time estimates in our div
-        const timeRemainingMode = config.getSettingValue('actionBar_showTimeRemaining', 'both');
+        const timeRemainingMode = normalizeTimeRemainingMode(
+            config.getSettingValue('actionBar_showTimeRemaining', 'both')
+        );
         if (
             timeRemainingMode !== 'none' &&
             remainingQueuedActions !== Infinity &&
@@ -3097,7 +3114,9 @@ class ActionTimeDisplay {
         this.appendStatsToActionName(actionNameElement, statsToAppend.join(' · '));
 
         // Line 2: Time estimate — always material-based for enhancing
-        const timeRemainingMode = config.getSettingValue('actionBar_showTimeRemaining', 'both');
+        const timeRemainingMode = normalizeTimeRemainingMode(
+            config.getSettingValue('actionBar_showTimeRemaining', 'both')
+        );
         if (timeRemainingMode !== 'none' && materialTime !== null && materialTime > 0 && isFinite(materialTime)) {
             const timeStr = timeReadable(materialTime);
 
