@@ -154,15 +154,14 @@ class MarketplaceShortcuts {
             '</span>' +
             '<span class="mwi-mp-chevron" style="font-size: 0.65em; transition: transform 0.15s; display: inline-block;">▼</span>';
 
-        // Create dropdown panel (hidden by default)
+        // Keep the toggle in the native action menu, but portal the panel to <body>. The
+        // game's menu is an overflow-clipped scroll box, so a child panel cannot extend far
+        // enough to show all four marketplace actions.
         const panel = document.createElement('div');
         panel.classList.add('mwi-marketplace-dropdown-panel');
         panel.style.cssText = `
             display: none;
-            position: absolute;
-            top: calc(100% + 4px);
-            left: 0;
-            width: 100%;
+            position: fixed;
             z-index: 9999;
             flex-direction: column;
             background: var(--color-surface, #1e1e2e);
@@ -240,6 +239,12 @@ class MarketplaceShortcuts {
             e.stopPropagation();
             e.preventDefault();
             open = !open;
+            if (open) {
+                const rect = toggle.getBoundingClientRect();
+                panel.style.top = `${rect.bottom + 4}px`;
+                panel.style.left = `${rect.left}px`;
+                panel.style.width = `${rect.width}px`;
+            }
             panel.style.display = open ? 'flex' : 'none';
             const chevron = toggle.querySelector('.mwi-mp-chevron');
             if (chevron) chevron.style.transform = open ? 'rotate(180deg)' : '';
@@ -253,7 +258,8 @@ class MarketplaceShortcuts {
         document.addEventListener('click', this.closeHandler);
 
         wrapper.appendChild(toggle);
-        wrapper.appendChild(panel);
+        document.body.appendChild(panel);
+        wrapper._dropdownPanel = panel;
         return wrapper;
     }
 
@@ -854,6 +860,7 @@ class MarketplaceShortcuts {
         this.timerRegistry.clearAll();
 
         document.querySelectorAll('.mwi-marketplace-dropdown').forEach((el) => el.remove());
+        document.querySelectorAll('.mwi-marketplace-dropdown-panel').forEach((el) => el.remove());
         document.querySelectorAll('.mwi-mp-quick-input').forEach((el) => el.remove());
         document.querySelectorAll('.mwi-mp-multiplier').forEach((el) => el.remove());
 

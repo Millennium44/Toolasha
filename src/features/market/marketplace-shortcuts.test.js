@@ -52,6 +52,48 @@ describe('executeAction reads the submenu quantity as a comma-formatted number',
     });
 });
 
+describe('Marketplace Action dropdown portal', () => {
+    function actionMenu() {
+        const menu = document.createElement('div');
+        menu.className = 'Item_actionMenu__liveHash';
+        menu.style.overflow = 'hidden';
+        menu.innerHTML = '<button class="Button_button__liveHash">View Marketplace</button>';
+        document.body.appendChild(menu);
+        return menu;
+    }
+
+    test("renders the panel under its toggle in <body>, outside the game's clipped menu", () => {
+        const menu = actionMenu();
+        const dropdown = marketplaceShortcuts.buildDropdown(menu, '/items/cheese', 0);
+        menu.appendChild(dropdown);
+        const toggle = dropdown.querySelector('.mwi-marketplace-dropdown-toggle');
+        vi.spyOn(toggle, 'getBoundingClientRect').mockReturnValue({ left: 80, bottom: 144, width: 220 });
+
+        toggle.click();
+
+        const panel = dropdown._dropdownPanel;
+        expect(panel.parentElement).toBe(document.body);
+        expect(menu.contains(panel)).toBe(false);
+        expect(panel.style.position).toBe('fixed');
+        expect(panel.style.top).toBe('148px');
+        expect(panel.style.left).toBe('80px');
+        expect(panel.style.width).toBe('220px');
+        expect(panel.style.display).toBe('flex');
+    });
+
+    test('disable removes the portaled panel as well as its native-menu toggle', () => {
+        const menu = actionMenu();
+        const dropdown = marketplaceShortcuts.buildDropdown(menu, '/items/cheese', 0);
+        menu.appendChild(dropdown);
+
+        marketplaceShortcuts.disable();
+
+        expect(document.querySelector('.mwi-marketplace-dropdown')).toBeNull();
+        expect(document.querySelector('.mwi-marketplace-dropdown-panel')).toBeNull();
+        marketplaceShortcuts.initialize();
+    });
+});
+
 describe('teardown cancels delayed marketplace work', () => {
     test('a shortcut does not resume into a marketplace click after disable', async () => {
         vi.useFakeTimers();

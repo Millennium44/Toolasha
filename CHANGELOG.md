@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Marketplace Action opens outside the game's clipped menu
+
+- The four Marketplace Action choices could be cut off by the inventory item's short, scrollable action menu. The choices now open in a panel positioned below the button but outside that clipped container.
+
 ### Can Produce counts the spendable copy of an enhanced item
 
 - Owning both a +0 item and an enhanced copy could make Can Produce use whichever stack the game listed last, so one enhanced copy could hide thousands of spendable +0 copies. Enhanced items are no longer treated as crafting material, and the +0 stack determines the real limit.
