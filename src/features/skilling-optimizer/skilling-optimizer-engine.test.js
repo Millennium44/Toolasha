@@ -186,6 +186,18 @@ describe('optimizeSkill Alchemy item basis', () => {
         expect(scoring.teaCalls).toHaveLength(0);
     });
 
+    test('skips the Gold tea search when no Alchemy item is running or chosen', () => {
+        const result = optimizeSkill('Alchemy', 60);
+        expect(scoring.teaCalls.map((call) => call.goal)).toEqual(['xp']);
+        expect(result.goldTeaResult).toBeNull();
+    });
+
+    test('still searches Gold teas once an Alchemy item gives it something to price', () => {
+        scoring.activeAlchemyContext = context;
+        optimizeSkill('Alchemy', 60);
+        expect(scoring.teaCalls.map((call) => call.goal)).toEqual(['xp', 'gold']);
+    });
+
     test('a saved Alchemy item choice does not block optimizing another skill', () => {
         const stale = { actionType: 'coinify', itemHrid: '/items/decompose_only', enhancementLevel: 0 };
         expect(optimizeSkill('Cheesesmithing', 60, null, stale)).not.toBeNull();

@@ -439,19 +439,23 @@ class SkillingSimulatorUI {
                                   this.currentLevel
                               )
                             : null;
-                        const goldAchievable = result
-                            ? findOptimalTeas(
-                                  this.currentSkill,
-                                  'gold',
-                                  null,
-                                  null,
-                                  null,
-                                  result.alchemyContext,
-                                  achievableEquipment,
-                                  this.selectedActionHrids,
-                                  this.currentLevel
-                              )
-                            : null;
+                        // No Alchemy item to price means no Gold answer; skip the search
+                        const hasGoldBasis =
+                            this.currentSkill?.toLowerCase() !== 'alchemy' || Boolean(result?.alchemyContext);
+                        const goldAchievable =
+                            result && hasGoldBasis
+                                ? findOptimalTeas(
+                                      this.currentSkill,
+                                      'gold',
+                                      null,
+                                      null,
+                                      null,
+                                      result.alchemyContext,
+                                      achievableEquipment,
+                                      this.selectedActionHrids,
+                                      this.currentLevel
+                                  )
+                                : null;
 
                         optimizeBtn.textContent = 'Optimize';
                         optimizeBtn.disabled = false;

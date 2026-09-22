@@ -414,6 +414,17 @@ export function calculateSlotUpgradeCost(itemHrid, enhancementLevel, currentEqui
 }
 
 /**
+ * Whether a Gold tea search has anything to price. Every skill but Alchemy does; Alchemy
+ * prices one item, so it needs the running or chosen item.
+ * @param {string} skillName - Skill display name
+ * @param {Object|null} alchemyContext - Resolved Alchemy item context
+ * @returns {boolean}
+ */
+function hasAlchemyGoldBasis(skillName, alchemyContext) {
+    return skillName.toLowerCase() !== 'alchemy' || Boolean(alchemyContext);
+}
+
+/**
  * Optimize a skill for the given player level and selected actions.
  * Equipment is always scored for XP (efficiency/speed benefit both goals equally).
  * Returns per-slot progression plus tea results for both XP and Gold goals.
@@ -577,17 +588,21 @@ export function optimizeSkill(skillName, playerLevel, selectedActionHrids = null
         selectedActionHrids,
         playerLevel
     );
-    const goldTeaResult = findOptimalTeas(
-        skillName,
-        'gold',
-        null,
-        null,
-        null,
-        alchemyContext,
-        optimalEquipmentAtMax,
-        selectedActionHrids,
-        playerLevel
-    );
+    // Alchemy gold is priced per item; with no running or chosen item there is nothing to
+    // price, so the tea search would only spend time producing an unusable answer
+    const goldTeaResult = hasAlchemyGoldBasis(skillName, alchemyContext)
+        ? findOptimalTeas(
+              skillName,
+              'gold',
+              null,
+              null,
+              null,
+              alchemyContext,
+              optimalEquipmentAtMax,
+              selectedActionHrids,
+              playerLevel
+          )
+        : null;
 
     // The equipment progression ranks gathering skills by gold, and — like the tile
     // calculators it wraps — that ranking treats an unpriced material as worth 0 rather
