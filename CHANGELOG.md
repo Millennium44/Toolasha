@@ -8,7 +8,7 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ### Arrange My Listings by dragging
 
-- My Listings rows now have a drag handle (and keyboard Up/Down) so players can keep their listings in a personal order, remembered per character. It only changes what you see, yields to an active column sort, and Escape cancels a drag.
+- My Listings rows now have a drag handle (and keyboard Up/Down) so players can keep their listings in a personal order, remembered per character. It only changes what you see, yields to an active column sort, and Escape cancels a drag. Off by default; turn it on under Market settings.
 
 ### Metz combat simulator import and profile export
 

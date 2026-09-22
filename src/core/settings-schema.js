@@ -1444,7 +1444,7 @@ export const settingsGroups = {
                 id: 'market_listingDragOrder',
                 label: 'Market: Drag to arrange My Listings',
                 type: 'checkbox',
-                default: true,
+                default: false,
                 help:
                     'Adds a drag handle beside each My Listings status and remembers your visual order per ' +
                     'character. Clear any active column sort before dragging. This does not change server order.',

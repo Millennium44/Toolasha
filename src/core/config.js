@@ -216,7 +216,7 @@ class Config {
                 settingKey: 'market_collectableListingsToTop',
             },
             market_listingDragOrder: {
-                enabled: true,
+                enabled: false,
                 name: 'Listing Drag Order',
                 category: 'Market',
                 description: 'Adds drag handles for arranging My Listings per character',
