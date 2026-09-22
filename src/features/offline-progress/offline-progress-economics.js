@@ -50,6 +50,8 @@ class OfflineProgressEconomics {
         this.currentModalSignature = null;
         this.pricingModeChangeHandler = null;
         this.modalCleanupUnwatch = null;
+        this.incompleteModalObserver = null;
+        this.incompleteModalNode = null;
     }
 
     /**
@@ -130,6 +132,7 @@ class OfflineProgressEconomics {
      */
     handleCharacterSwitching() {
         this.currentOfflineData = null;
+        this.stopWatchingIncompleteModal();
         this.teardownBlock();
     }
 
@@ -144,18 +147,49 @@ class OfflineProgressEconomics {
         // to rebuild the block while every native field around it switched to the new payload.
         if (this.processedModals.get(node) === this.currentOfflineData) return;
 
-        this.processedModals.set(node, this.currentOfflineData);
-        this.renderBlock(node);
+        const renderedData = this.currentOfflineData;
+        if (this.renderBlock(node)) {
+            this.stopWatchingIncompleteModal();
+            this.processedModals.set(node, renderedData);
+        } else {
+            this.watchIncompleteModal(node);
+        }
+    }
+
+    /**
+     * Retry a modal content node that React inserted before its native anchor children.
+     * @param {Element} node - Incomplete modal content element
+     */
+    watchIncompleteModal(node) {
+        if (this.incompleteModalNode === node && this.incompleteModalObserver) return;
+        this.stopWatchingIncompleteModal();
+        this.incompleteModalNode = node;
+        this.incompleteModalObserver = new MutationObserver(() => {
+            if (!node.isConnected) {
+                this.stopWatchingIncompleteModal();
+                return;
+            }
+            this.processModalNode(node);
+        });
+        this.incompleteModalObserver.observe(node, { childList: true, subtree: true });
+    }
+
+    /** Stop the bounded retry observer for an incomplete modal. */
+    stopWatchingIncompleteModal() {
+        this.incompleteModalObserver?.disconnect();
+        this.incompleteModalObserver = null;
+        this.incompleteModalNode = null;
     }
 
     /**
      * Compute economics and inject the summary block right after the native duration line.
      * @param {Element} modalContentNode - OfflineProgressModal_modalContent element
+     * @returns {boolean} Whether the native anchor existed and the block was rendered
      */
     renderBlock(modalContentNode) {
         const anchor = modalContentNode.querySelector(`[class*="${MODAL_ANCHOR_CLASS}"]`);
         const wrapper = anchor?.parentElement;
-        if (!wrapper) return;
+        if (!wrapper) return false;
 
         this.teardownBlock();
 
@@ -171,7 +205,7 @@ class OfflineProgressEconomics {
             this.currentModalSignature = readNativeSignature(modalContentNode);
         } catch (error) {
             console.error('[Offline Progress Economics] Could not build the summary block:', error);
-            return;
+            return false;
         }
 
         this.pricingModeChangeHandler = () => this.recompute();
@@ -181,6 +215,7 @@ class OfflineProgressEconomics {
         }
 
         this.setupCleanupObserver(modalContentNode);
+        return true;
     }
 
     /**
@@ -227,8 +262,10 @@ class OfflineProgressEconomics {
             return;
         }
 
-        this.processedModals.set(modal, this.currentOfflineData);
-        this.renderBlock(modal);
+        const renderedData = this.currentOfflineData;
+        if (this.renderBlock(modal)) {
+            this.processedModals.set(modal, renderedData);
+        }
     }
 
     /**
@@ -313,6 +350,7 @@ class OfflineProgressEconomics {
         }
 
         this.teardownBlock();
+        this.stopWatchingIncompleteModal();
         this.currentOfflineData = null;
         this.processedModals = new WeakMap();
 

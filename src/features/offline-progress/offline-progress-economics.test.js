@@ -224,6 +224,46 @@ describe('offline-progress-economics', () => {
         expect(document.querySelectorAll('#mwi-offline-economics')).toHaveLength(1);
     });
 
+    test('retries a modal whose native anchor had not mounted on the first observation', async () => {
+        offlineProgressEconomics.initialize();
+        triggerCharacterInitialized();
+
+        const modalNode = document.createElement('div');
+        modalNode.className = 'OfflineProgressModal_modalContent__2wXXA';
+        document.body.appendChild(modalNode);
+        const onClassCallback = mockOnClass.mock.calls[0][2];
+
+        // React can attach the modal content node before populating its children. Seeing that
+        // incomplete node must not permanently mark this payload as rendered.
+        onClassCallback(modalNode);
+        expect(document.querySelector('#mwi-offline-economics')).toBeNull();
+
+        const wrapper = document.createElement('div');
+        const anchor = document.createElement('div');
+        anchor.className = 'OfflineProgressModal_offlineProgress__3P0VR';
+        wrapper.appendChild(anchor);
+        modalNode.appendChild(wrapper);
+        await new Promise((resolve) => setTimeout(resolve, 0));
+
+        expect(document.querySelectorAll('#mwi-offline-economics')).toHaveLength(1);
+    });
+
+    test('disabling cancels the incomplete-modal retry before its anchor arrives', async () => {
+        offlineProgressEconomics.initialize();
+        triggerCharacterInitialized();
+        const modalNode = document.createElement('div');
+        modalNode.className = 'OfflineProgressModal_modalContent__2wXXA';
+        document.body.appendChild(modalNode);
+        mockOnClass.mock.calls[0][2](modalNode);
+
+        offlineProgressEconomics.disable();
+        modalNode.innerHTML =
+            '<div><div class="OfflineProgressModal_offlineProgress__3P0VR"><span>Away</span><span>8h</span></div></div>';
+        await new Promise((resolve) => setTimeout(resolve, 0));
+
+        expect(document.querySelector('#mwi-offline-economics')).toBeNull();
+    });
+
     test('character_switching removes the injected block and clears cached offline data', () => {
         offlineProgressEconomics.initialize();
         triggerCharacterInitialized();

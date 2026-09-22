@@ -36,6 +36,7 @@ import { coinFormatter, formatKMB } from '../../utils/formatters.js';
 import {
     isWelcomeBackModal,
     findWelcomeBackModal,
+    currentWelcomeBackModal,
     onWelcomeBackModal,
     placeInWelcomeBackModal,
 } from '../../utils/welcome-back-modal.js';
@@ -312,6 +313,52 @@ export function enrichModal(modal, priceOf = marketPriceOf) {
 }
 
 let unregister = null;
+let modalObserver = null;
+let watchedModal = null;
+let nativeSignature = null;
+
+/**
+ * Text owned by the game, excluding the row this feature injects.
+ * @param {HTMLElement} modal - Welcome modal content
+ * @returns {string} A stable-enough signature for native content changes
+ */
+function readNativeSignature(modal) {
+    const copy = modal.cloneNode(true);
+    copy.querySelectorAll(`.${ROW_CLASS}`).forEach((row) => row.remove());
+    return (copy.textContent || '').replace(/\s+/g, ' ').trim();
+}
+
+/** Stop watching the currently open modal. */
+function stopWatchingModal() {
+    modalObserver?.disconnect();
+    modalObserver = null;
+    watchedModal = null;
+    nativeSignature = null;
+}
+
+/**
+ * Enrich one modal and keep its row paired with the native contents when React reuses the node.
+ * @param {HTMLElement} modal - Welcome modal content
+ */
+function watchAndEnrichModal(modal) {
+    if (!modal) return;
+
+    if (watchedModal !== modal) {
+        stopWatchingModal();
+        watchedModal = modal;
+        nativeSignature = readNativeSignature(modal);
+        enrichModal(modal);
+        modalObserver = new MutationObserver(() => watchAndEnrichModal(modal));
+        modalObserver.observe(modal, { childList: true, subtree: true, characterData: true });
+        return;
+    }
+
+    const nextSignature = readNativeSignature(modal);
+    if (nextSignature === nativeSignature) return;
+    nativeSignature = nextSignature;
+    modal.querySelector(`.${ROW_CLASS}`)?.remove();
+    enrichModal(modal);
+}
 
 const welcomeBackValue = {
     initialize() {
@@ -321,7 +368,12 @@ const welcomeBackValue = {
         // Debounced by the shared helper: the modal's items arrive in a burst,
         // and the row has to be written after the last of them or it would
         // price half a night
-        unregister = onWelcomeBackModal('WelcomeBackValue', (modal) => enrichModal(modal));
+        unregister = onWelcomeBackModal('WelcomeBackValue', watchAndEnrichModal);
+
+        // Feature initialization follows character_initialized, while the game's
+        // modal renders from that same event. It may already be on screen before
+        // the insertion observer is installed.
+        watchAndEnrichModal(currentWelcomeBackModal());
     },
 
     cleanup() {
@@ -329,6 +381,7 @@ const welcomeBackValue = {
             unregister();
             unregister = null;
         }
+        stopWatchingModal();
         document.querySelectorAll(`.${ROW_CLASS}`).forEach((row) => row.remove());
     },
 };

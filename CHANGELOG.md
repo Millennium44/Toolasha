@@ -6,6 +6,11 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Welcome Back values now follow the modal through every mount and reconnect
+
+- The compact market-value line now catches a Welcome Back modal that was already open when the feature started, and refreshes when a same-character reconnect reuses that modal node with different loot instead of leaving the previous return's total beside it.
+- Offline Economics no longer permanently gives up on a modal observed before React has mounted its native duration anchor; it retries once the completed modal is observed and draws the summary normally.
+
 ### Dependency failures are caught before release and explained accurately
 
 - The release gate now parses each complete `@require` response as a classic script and rejects partial, empty, HTML, JSON, truncated and module responses, and CI actually runs that gate before a change can land.
