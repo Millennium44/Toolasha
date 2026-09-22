@@ -188,6 +188,12 @@ const ALL_ZONES_DUNGEONS_KEY = 'combatSimAllZonesIncludeDungeons';
 /** Dungeons run T0-T2 where an ordinary zone runs T0-T5 */
 const DUNGEON_MAX_TIER = 2;
 
+/** Largest party the game lets into an ordinary combat zone */
+const ZONE_MAX_PARTY = 3;
+
+/** Largest party the game lets into a dungeon */
+const DUNGEON_MAX_PARTY = 5;
+
 /**
  * What the Max-tier Food checkbox promises, in one hover.
  *
@@ -4623,12 +4629,18 @@ class CombatSimUI {
             return;
         }
 
-        // Enforce 3-player max for non-dungeon zones
+        // Enforce the game's party caps: 3 for an ordinary zone, 5 for a dungeon
         const zones = getCombatZones();
         const selectedZone = zones.find((z) => z.hrid === zoneHrid);
-        if (selectedZone && !selectedZone.isDungeon && playerDTOs.length > 3) {
+        if (selectedZone && !selectedZone.isDungeon && playerDTOs.length > ZONE_MAX_PARTY) {
             this._showWarning(
-                `Non-dungeon zones support max 3 players (you have ${playerDTOs.length}). Remove players to continue.`
+                `Non-dungeon zones support max ${ZONE_MAX_PARTY} players (you have ${playerDTOs.length}). Remove players to continue.`
+            );
+            return;
+        }
+        if (selectedZone?.isDungeon && playerDTOs.length > DUNGEON_MAX_PARTY) {
+            this._showWarning(
+                `Dungeons support max ${DUNGEON_MAX_PARTY} players (you have ${playerDTOs.length}). Remove players to continue.`
             );
             return;
         }
@@ -4846,11 +4858,23 @@ class CombatSimUI {
             return;
         }
 
-        // Ordinary combat zones support only three players. A dungeon-only
-        // sweep may use the game's full five-player dungeon party.
-        if (this._allZonesMode !== 'dungeons' && playerDTOs.length > 3) {
+        // Ordinary combat zones support only three players; a sweep made only
+        // of dungeons may use the game's full five-player dungeon party. Taken
+        // from the zones captured before the await, not the mode checkbox —
+        // the mode can be flipped while the players load, and a mixed sweep
+        // (planner-added dungeons) still runs its ordinary zones capped at 3.
+        const dungeonIds = new Set(
+            getCombatZones()
+                .filter((z) => z.isDungeon)
+                .map((z) => z.hrid)
+        );
+        const dungeonsOnly = selectedZones.every((z) => dungeonIds.has(z.zoneHrid));
+        const maxParty = dungeonsOnly ? DUNGEON_MAX_PARTY : ZONE_MAX_PARTY;
+        if (playerDTOs.length > maxParty) {
             this._showWarning(
-                `Non-dungeon zones support max 3 players (you have ${playerDTOs.length}). Remove players to continue.`
+                dungeonsOnly
+                    ? `Dungeons support max ${DUNGEON_MAX_PARTY} players (you have ${playerDTOs.length}). Remove players to continue.`
+                    : `Non-dungeon zones support max ${ZONE_MAX_PARTY} players (you have ${playerDTOs.length}). Remove players to continue.`
             );
             return;
         }
