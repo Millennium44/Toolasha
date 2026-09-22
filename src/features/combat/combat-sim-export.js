@@ -108,7 +108,10 @@ export function checkBridgeStamp(key, label, { enforceOwner }) {
  * Get character data from dataManager (in-memory, always current).
  * Falls back to GM storage when running on the Shykai page (dataManager is empty cross-domain).
  * The GM fallback is ownership-checked: a value written by a different character's tab is
- * refused rather than silently exporting the wrong gear (see checkBridgeStamp above).
+ * refused rather than silently exporting the wrong gear (see checkBridgeStamp above). The game
+ * tab rewrites that value with its current inventory and abilities whenever it opens a
+ * simulator (DataManager.saveSimulatorSnapshot), so it is only login-old if the simulator was
+ * opened some other way.
  * @returns {Object|null}
  */
 export function getCharacterData() {
@@ -119,31 +122,7 @@ export function getCharacterData() {
         try {
             const raw = GM_getValue('toolasha_init_character_data', null);
             if (raw && checkBridgeStamp('toolasha_init_character_data', 'Character data', { enforceOwner: true })) {
-                const characterData = JSON.parse(raw);
-                const inventoryRaw = GM_getValue('toolasha_character_items', null);
-                if (
-                    inventoryRaw &&
-                    checkBridgeStamp('toolasha_character_items', 'Current inventory', { enforceOwner: true })
-                ) {
-                    try {
-                        const inventoryBridge = JSON.parse(inventoryRaw);
-                        if (
-                            sameCharacterId(inventoryBridge?.characterId, characterData.character?.id) &&
-                            Array.isArray(inventoryBridge.characterItems)
-                        ) {
-                            characterData.characterItems = inventoryBridge.characterItems;
-                        } else {
-                            console.warn(
-                                '[Combat Sim Export] Current inventory belongs to another character; ignoring it.'
-                            );
-                        }
-                    } catch {
-                        console.warn(
-                            '[Combat Sim Export] Current inventory bridge is corrupt; using the login snapshot.'
-                        );
-                    }
-                }
-                return characterData;
+                return JSON.parse(raw);
             }
         } catch {
             /* ignore */

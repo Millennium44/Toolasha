@@ -1384,7 +1384,6 @@ class DataManager {
 
                 // Notify items_updated listeners (e.g. networth) of the inventory change
                 this.emit('items_updated', data);
-                this.webSocketHook.saveCombatSimInventory?.(this.characterItems, this.currentCharacterId);
             }
 
             // CRITICAL: Update skill experience from action_completed (this is how XP updates in real-time!)
@@ -1477,7 +1476,6 @@ class DataManager {
                 }
 
                 this.updateEquipmentMap(data.endCharacterItems);
-                this.webSocketHook.saveCombatSimInventory?.(this.characterItems, this.currentCharacterId);
             }
 
             this.emit('items_updated', data);
@@ -2390,6 +2388,31 @@ class DataManager {
      */
     getBuffStateVersion() {
         return this.buffStateVersion;
+    }
+
+    /**
+     * Refresh the character snapshot external combat simulators import from.
+     *
+     * Called when this tab opens a simulator. `characterData` already carries live skills,
+     * owned abilities and the equipped kit; the inventory and drink slots are kept beside it,
+     * so they are folded back in here. Stamped with the character this tab is playing, which
+     * is the id the simulator link carries.
+     * @returns {boolean} True if a snapshot was written
+     */
+    saveSimulatorSnapshot() {
+        const characterId = this.currentCharacterId;
+        if (!this.characterData || characterId == null || this.isCharacterSwitching) return false;
+        const snapshot = { ...this.characterData };
+        if (Array.isArray(this.characterItems)) snapshot.characterItems = this.characterItems;
+        if (this.actionTypeDrinkSlotsMap.size > 0) {
+            snapshot.actionTypeDrinkSlotsMap = Object.fromEntries(this.actionTypeDrinkSlotsMap);
+        }
+        return (
+            this.webSocketHook.saveCombatSimSnapshot?.(snapshot, {
+                characterId,
+                characterName: this.currentCharacterName,
+            }) ?? false
+        );
     }
 
     /**

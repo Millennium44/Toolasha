@@ -8,11 +8,16 @@
 
 import { describe, test, expect, beforeEach, vi } from 'vitest';
 
-const state = vi.hoisted(() => ({ characterId: 'self-1' }));
+const state = vi.hoisted(() => ({ characterId: 'self-1', saveSimulatorSnapshot: null }));
 
 vi.mock('../../core/config.js', () => ({ default: { getSetting: () => true, COLOR_ACCENT: '#fff' } }));
 vi.mock('../../core/dom-observer.js', () => ({ default: { onClass: () => () => {} } }));
-vi.mock('../../core/data-manager.js', () => ({ default: { getCurrentCharacterId: () => state.characterId } }));
+vi.mock('../../core/data-manager.js', () => ({
+    default: {
+        getCurrentCharacterId: () => state.characterId,
+        saveSimulatorSnapshot: (...args) => state.saveSimulatorSnapshot(...args),
+    },
+}));
 vi.mock('../combat/combat-sim-targets.js', () => ({
     COMBAT_SIM_TARGETS: [
         { id: 'test-sim', label: 'Test Sim', url: 'https://sim.example.com/import' },
@@ -24,6 +29,7 @@ const externalLinks = (await import('./external-links.js')).default;
 
 beforeEach(() => {
     document.body.innerHTML = '';
+    state.saveSimulatorSnapshot = vi.fn(() => true);
 });
 
 /** A bare stand-in for the minor-nav container the game renders */
@@ -93,5 +99,43 @@ describe('external link tooltips', () => {
             '_blank',
             'noopener'
         );
+    });
+
+    test('refreshes the simulator snapshot before opening a simulator, and before the new tab exists', () => {
+        const order = [];
+        state.saveSimulatorSnapshot = vi.fn(() => order.push('snapshot'));
+        vi.spyOn(window, 'open').mockImplementation(() => order.push('open'));
+        const container = navContainer();
+        externalLinks.addLinks(container);
+
+        [...container.querySelectorAll('.mwi-external-link')]
+            .find((link) => link.textContent === 'Combat Sim (Metz)')
+            .click();
+
+        expect(order).toEqual(['snapshot', 'open']);
+    });
+
+    test('non-simulator links do not write a snapshot', () => {
+        vi.spyOn(window, 'open').mockImplementation(() => {});
+        const container = navContainer();
+        externalLinks.addLinks(container);
+
+        [...container.querySelectorAll('.mwi-external-link')].find((link) => link.textContent === 'Milkonomy').click();
+
+        expect(state.saveSimulatorSnapshot).not.toHaveBeenCalled();
+    });
+
+    test('a failed snapshot still opens the simulator', () => {
+        state.saveSimulatorSnapshot = vi.fn(() => {
+            throw new Error('quota');
+        });
+        vi.spyOn(console, 'error').mockImplementation(() => {});
+        const openSpy = vi.spyOn(window, 'open').mockImplementation(() => {});
+        const container = navContainer();
+        externalLinks.addLinks(container);
+
+        [...container.querySelectorAll('.mwi-external-link')].find((link) => link.textContent === 'Test Sim').click();
+
+        expect(openSpy).toHaveBeenCalledWith('https://sim.example.com/import', '_blank', 'noopener');
     });
 });

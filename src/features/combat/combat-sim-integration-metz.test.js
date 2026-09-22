@@ -88,7 +88,7 @@ describe('Metz simulator page integration', () => {
         document.querySelector('#toolasha-metz-import-button').click();
         await vi.runAllTimersAsync();
 
-        expect(alert).toHaveBeenCalledWith(expect.stringContaining('does not match'));
+        expect(alert).toHaveBeenCalledWith(expect.stringContaining('synced a different character'));
         expect(document.querySelector('textarea').value).toBe('');
     });
 

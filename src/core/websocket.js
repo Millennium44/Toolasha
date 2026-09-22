@@ -777,7 +777,6 @@ class WebSocketHook {
                 // dataManager: saveCombatSimData runs before dataManager's own init_character_data
                 // handler (see processMessage), so dataManager.getCurrentCharacterId() would still
                 // report the *previous* character during a character switch.
-                let initialCharacterItems = null;
                 let bridgeOwner = null;
                 try {
                     const parsedCharacter = JSON.parse(message);
@@ -789,9 +788,6 @@ class WebSocketHook {
                             characterName: this.bridgeCharacterName,
                         };
                     }
-                    if (Array.isArray(parsedCharacter.characterItems)) {
-                        initialCharacterItems = parsedCharacter.characterItems;
-                    }
                 } catch {
                     /* ignore — meta write below falls back to the last known bridge character */
                 }
@@ -799,16 +795,6 @@ class WebSocketHook {
                     try {
                         GM_setValue('toolasha_init_character_data', message);
                         this.writeBridgeMeta('toolasha_init_character_data_meta', bridgeOwner);
-                        if (bridgeOwner?.characterId && initialCharacterItems) {
-                            GM_setValue(
-                                'toolasha_character_items',
-                                JSON.stringify({
-                                    characterId: bridgeOwner.characterId,
-                                    characterItems: initialCharacterItems,
-                                })
-                            );
-                            this.writeBridgeMeta('toolasha_character_items_meta', bridgeOwner);
-                        }
                     } catch {
                         /* ignore */
                     }
@@ -890,39 +876,28 @@ class WebSocketHook {
     }
 
     /**
-     * Keep a lightweight current-inventory bridge beside the login snapshot.
-     * DataManager calls this only after accepting an update from the active
-     * character socket, so an old socket cannot overwrite the new character.
-     * @param {Array<Object>} characterItems
-     * @param {string|number|null} characterId - Owner of DataManager's currently cached inventory
+     * Replace the bridged login snapshot with the character as this tab knows it now.
+     *
+     * The login-time `toolasha_init_character_data` is all an external simulator page can
+     * read, and it goes stale as soon as the player gains an item, levels an ability or swaps
+     * a tea. Rather than rewrite it on every inventory tick (a full-inventory serialize on
+     * every action, for every player, whether or not they ever open a simulator), the game
+     * tab refreshes it once, at the moment it opens a simulator. Synchronous so the snapshot
+     * is in place before the new tab loads.
+     * @param {Object} characterData - init_character_data-shaped object with current fields
+     * @param {{characterId: string|number, characterName?: string|null}} owner - Character the snapshot belongs to
+     * @returns {boolean} True if the snapshot was written
      */
-    saveCombatSimInventory(characterItems, characterId) {
-        if (
-            typeof GM_setValue === 'undefined' ||
-            !this.bridgeCharacterId ||
-            characterId == null ||
-            String(characterId) !== String(this.bridgeCharacterId) ||
-            !Array.isArray(characterItems)
-        ) {
-            return;
+    saveCombatSimSnapshot(characterData, owner) {
+        if (typeof GM_setValue === 'undefined' || !characterData || owner?.characterId == null) return false;
+        try {
+            GM_setValue('toolasha_init_character_data', JSON.stringify(characterData));
+            this.writeBridgeMeta('toolasha_init_character_data_meta', owner);
+            return true;
+        } catch (error) {
+            console.error('[WebSocket] Simulator snapshot write failed:', error);
+            return false;
         }
-
-        const bridgeOwner = {
-            characterId: this.bridgeCharacterId,
-            characterName: this.bridgeCharacterName,
-        };
-        const payload = JSON.stringify({
-            characterId: bridgeOwner.characterId,
-            characterItems,
-        });
-        setTimeout(() => {
-            try {
-                GM_setValue('toolasha_character_items', payload);
-                this.writeBridgeMeta('toolasha_character_items_meta', bridgeOwner);
-            } catch {
-                /* ignore */
-            }
-        }, 0);
     }
 
     /**

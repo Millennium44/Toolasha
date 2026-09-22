@@ -113,6 +113,15 @@ class ExternalLinks {
 
         div.addEventListener('click', () => {
             let destination = url;
+            if (targetId) {
+                // The simulator page imports from a bridged snapshot, not from this tab. Refresh
+                // it now so the import carries today's inventory and abilities, not login's.
+                try {
+                    dataManager.saveSimulatorSnapshot?.();
+                } catch (error) {
+                    console.error('[External Links] Simulator snapshot failed:', error);
+                }
+            }
             if (targetId === 'metz') {
                 const characterId = dataManager.getCurrentCharacterId();
                 if (characterId != null) {

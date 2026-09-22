@@ -114,7 +114,7 @@ async function importIntoMetz(button) {
         if (!team) {
             setButtonStatus(button, 'Character data mismatch', '#dc3545');
             alert(
-                'The last synced character does not match the game tab that opened Metz. Return to that game tab and open Metz again.'
+                'Another game tab has synced a different character since this page was opened. Return to the game tab playing the character you want and click its Metz link again.'
             );
             return;
         }
