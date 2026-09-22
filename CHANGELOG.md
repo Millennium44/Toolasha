@@ -13,6 +13,7 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 ### Action and queue completion times can be shown independently
 
 - The action bar can now show time remaining, completion ETA, both or neither. Queued-action rows can independently show their cumulative duration, completion clock or both, while existing on/off and clock-only choices are preserved.
+- Queue hover details now refresh after changing the completion-display style even when the queue itself has not changed, and invalid imported style values safely fall back to the completion clock.
 
 ### Combat Sim can skip skilling house rooms
 

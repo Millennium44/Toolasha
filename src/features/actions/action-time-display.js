@@ -90,6 +90,7 @@ export function buildQueueCompletionText(
     estimated = false,
     style = config.getSettingValue('actionQueue_completionTimeStyle', 'absolute')
 ) {
+    if (!['absolute', 'relative', 'both'].includes(style)) style = 'absolute';
     const parts = [];
     if (style === 'relative' || style === 'both') parts.push(`in ${timeReadable(accumulatedTime)}`);
     if (style === 'absolute' || style === 'both') {
@@ -1877,7 +1878,8 @@ class ActionTimeDisplay {
             // `.mwi-queue-action-time` markers and skip re-injection entirely, leaving the
             // stale time/total on screen under the new queue state. Same guard shape fixed
             // for tooltip-prices.js (6dc52988) and dungeon-token-tooltips.js (d3101317).
-            const contentKey = `${actionDivs.length}|${currentActions
+            const completionStyle = config.getSettingValue('actionQueue_completionTimeStyle', 'absolute');
+            const contentKey = `${completionStyle}|${actionDivs.length}|${currentActions
                 .map((a) => `${a.id}:${a.currentCount}:${a.maxCount ?? ''}:${a.ordinal}`)
                 .join(',')}`;
             if (tooltipContent.dataset.mwiQueueContentKey === contentKey) return;

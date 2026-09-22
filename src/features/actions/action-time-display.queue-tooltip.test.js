@@ -195,4 +195,21 @@ describe('queue tooltip content-keyed guard', () => {
 
         expect(el.querySelector('.mwi-queue-action-time').textContent).toBe('[20s] in 20s');
     });
+
+    test('a reused popper is reprocessed when only the completion style changed', async () => {
+        const el = queueTooltipPopper();
+        observerState.handler(el);
+        expect(el.querySelector('.mwi-queue-action-time').textContent).toMatch(/^\[20s\] /);
+        expect(el.querySelector('.mwi-queue-action-time').textContent).not.toContain('in 20s');
+
+        el.remove();
+        await Promise.resolve();
+        await Promise.resolve();
+
+        game.completionStyle = 'relative';
+        document.body.appendChild(el);
+        observerState.handler(el);
+
+        expect(el.querySelector('.mwi-queue-action-time').textContent).toBe('[20s] in 20s');
+    });
 });

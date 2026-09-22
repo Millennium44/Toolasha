@@ -154,6 +154,22 @@ describe('independent action and queue time display modes', () => {
         );
         vi.useRealTimers();
     });
+
+    test('an invalid imported queue style falls back to the shipped clock display', () => {
+        vi.useFakeTimers();
+        vi.setSystemTime(new Date('2026-09-22T12:00:00'));
+
+        const text = buildQueueCompletionText(3900, false, 'retired-style');
+
+        expect(text).toContain(
+            formatDateTime(new Date('2026-09-22T13:05:00'), {
+                includeDate: false,
+                includeTime: true,
+                includeSeconds: true,
+            })
+        );
+        vi.useRealTimers();
+    });
 });
 
 describe('setupActionNameObserver does not leak a duplicate observer', () => {
