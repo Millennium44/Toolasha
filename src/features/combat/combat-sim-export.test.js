@@ -76,6 +76,16 @@ describe('checkBridgeStamp', () => {
         expect(getLastBridgeIssue()).toBeNull();
     });
 
+    test('matching numeric and string character IDs are the same bridge owner', () => {
+        dataManagerMock.getCurrentCharacterId.mockReturnValue(30404);
+        globalThis.GM_getValue = vi.fn(() => metaFor('30404'));
+
+        const ok = checkBridgeStamp('toolasha_init_character_data', 'Character data', { enforceOwner: true });
+
+        expect(ok).toBe(true);
+        expect(getLastBridgeIssue()).toBeNull();
+    });
+
     test('mismatched read refuses with a clear console warning and a user-facing message', () => {
         dataManagerMock.getCurrentCharacterId.mockReturnValue('char-2');
         globalThis.GM_getValue = vi.fn(() => metaFor('char-1', { characterName: 'OtherToon' }));

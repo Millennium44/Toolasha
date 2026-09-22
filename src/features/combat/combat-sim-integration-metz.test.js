@@ -42,6 +42,39 @@ describe('Metz simulator page integration', () => {
         expect(inputs).toEqual([JSON.stringify(mocks.team)]);
     });
 
+    test('uses the native value setter so a controlled textarea receives the import', async () => {
+        const textarea = document.querySelector('textarea');
+        const descriptor = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value');
+        const controlledSetter = vi.fn();
+        Object.defineProperty(textarea, 'value', {
+            configurable: true,
+            get: () => descriptor.get.call(textarea),
+            set: controlledSetter,
+        });
+        const inputs = [];
+        textarea.addEventListener('input', () => inputs.push(descriptor.get.call(textarea)));
+
+        initialize();
+        document.querySelector('#toolasha-metz-import-button').click();
+        await vi.runAllTimersAsync();
+
+        expect(controlledSetter).not.toHaveBeenCalled();
+        expect(inputs).toEqual([JSON.stringify(mocks.team)]);
+    });
+
+    test('cancels a pending DOM-ready start when disabled', () => {
+        const body = document.body;
+        body.remove();
+        const observe = vi.spyOn(MutationObserver.prototype, 'observe');
+
+        initialize();
+        disable();
+        document.documentElement.append(body);
+        document.dispatchEvent(new Event('DOMContentLoaded'));
+
+        expect(observe).not.toHaveBeenCalled();
+    });
+
     test('remounts when the single-page setup field is replaced and cleans up', async () => {
         initialize();
         document.body.innerHTML = '<div><textarea placeholder="Import export"></textarea></div>';

@@ -9,11 +9,18 @@ const BUTTON_ID = 'toolasha-metz-import-button';
 const DEFAULT_LABEL = 'Import from Toolasha';
 let mutationObserver = null;
 let mountTimeout = null;
+let domReadyHandler = null;
 
 export function initialize() {
     disable();
     if (document.body) start();
-    else document.addEventListener('DOMContentLoaded', start, { once: true });
+    else {
+        domReadyHandler = () => {
+            domReadyHandler = null;
+            start();
+        };
+        document.addEventListener('DOMContentLoaded', domReadyHandler, { once: true });
+    }
 }
 
 function start() {
@@ -24,6 +31,8 @@ function start() {
 
 export function disable() {
     timerRegistry.clearAll();
+    if (domReadyHandler) document.removeEventListener('DOMContentLoaded', domReadyHandler);
+    domReadyHandler = null;
     mutationObserver?.disconnect();
     mutationObserver = null;
     if (mountTimeout) clearTimeout(mountTimeout);
@@ -84,6 +93,15 @@ function setButtonStatus(button, label, backgroundColor) {
     );
 }
 
+function setTextareaValue(textarea, value) {
+    // React tracks controlled inputs by wrapping the element's own `value` setter. Calling that
+    // wrapper and then dispatching input can look unchanged to React. Metz itself uses the native
+    // prototype setter for programmatic imports; follow the same path before emitting input.
+    const setter = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')?.set;
+    if (setter) setter.call(textarea, value);
+    else textarea.value = value;
+}
+
 async function importIntoMetz(button) {
     try {
         const team = await constructMetzTeamExport();
@@ -100,7 +118,7 @@ async function importIntoMetz(button) {
             return;
         }
         textarea.focus();
-        textarea.value = json;
+        setTextareaValue(textarea, json);
         if (typeof ClipboardEvent === 'function' && typeof DataTransfer === 'function') {
             const clipboardData = new DataTransfer();
             clipboardData.setData('text/plain', json);

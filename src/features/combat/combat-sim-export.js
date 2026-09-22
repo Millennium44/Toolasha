@@ -23,6 +23,10 @@ const BRIDGE_STALE_MS = 60 * 60 * 1000; // 1 hour
  */
 let lastBridgeIssue = null;
 
+function sameCharacterId(left, right) {
+    return left != null && right != null && String(left) === String(right);
+}
+
 /**
  * Reason the most recent ownership-checked GM-bridged read was refused, or null if the last
  * checked read was clean (matched owner, legacy/unstamped, or merely stale).
@@ -89,7 +93,7 @@ export function checkBridgeStamp(key, label, { enforceOwner }) {
     if (!enforceOwner) return true;
 
     const currentCharacterId = dataManager.getCurrentCharacterId();
-    if (currentCharacterId && meta.characterId !== currentCharacterId) {
+    if (currentCharacterId && !sameCharacterId(meta.characterId, currentCharacterId)) {
         lastBridgeIssue = `${label} is from character "${
             meta.characterName || meta.characterId
         }" in another tab — open the sim from that tab, or re-focus this one so it re-syncs.`;
@@ -494,7 +498,7 @@ export function constructPartyPlayer(profile, clientObj, battleObj) {
     // Get consumables from battle data if available
     let battlePlayer = null;
     if (battleObj?.players) {
-        battlePlayer = battleObj.players.find((p) => p.character?.id === profile.characterID);
+        battlePlayer = battleObj.players.find((p) => sameCharacterId(p.character?.id, profile.characterID));
     }
 
     if (battlePlayer?.combatConsumables) {
@@ -638,8 +642,8 @@ export async function constructExportObject(externalProfileId = null, singlePlay
         '{"player":{"attackLevel":1,"magicLevel":1,"meleeLevel":1,"rangedLevel":1,"defenseLevel":1,"staminaLevel":1,"intelligenceLevel":1,"equipment":[]},"food":{"/action_types/combat":[{"itemHrid":""},{"itemHrid":""},{"itemHrid":""}]},"drinks":{"/action_types/combat":[{"itemHrid":""},{"itemHrid":""},{"itemHrid":""}]},"abilities":[{"abilityHrid":"","level":1},{"abilityHrid":"","level":1},{"abilityHrid":"","level":1},{"abilityHrid":"","level":1},{"abilityHrid":"","level":1}],"triggerMap":{},"zone":"/actions/combat/fly","houseRooms":{"/house_rooms/dairy_barn":0,"/house_rooms/garden":0,"/house_rooms/log_shed":0,"/house_rooms/forge":0,"/house_rooms/workshop":0,"/house_rooms/sewing_parlor":0,"/house_rooms/kitchen":0,"/house_rooms/brewery":0,"/house_rooms/laboratory":0,"/house_rooms/observatory":0,"/house_rooms/dining_room":0,"/house_rooms/library":0,"/house_rooms/dojo":0,"/house_rooms/gym":0,"/house_rooms/armory":0,"/house_rooms/archery_range":0,"/house_rooms/mystical_study":0},"achievements":{}}';
 
     // Check if exporting another player's profile
-    if (externalProfileId && externalProfileId !== characterObj.character.id) {
-        const profile = profileList.find((p) => p.characterID === externalProfileId);
+    if (externalProfileId && !sameCharacterId(externalProfileId, characterObj.character.id)) {
+        const profile = profileList.find((p) => sameCharacterId(p.characterID, externalProfileId));
 
         if (!profile) {
             console.error('[Combat Sim Export] Profile not found for:', externalProfileId);
@@ -729,7 +733,7 @@ export async function constructExportObject(externalProfileId = null, singlePlay
         let slotIndex = 1;
         for (const member of Object.values(characterObj.partyInfo.partySlotMap)) {
             if (member.characterID) {
-                if (member.characterID === characterObj.character.id) {
+                if (sameCharacterId(member.characterID, characterObj.character.id)) {
                     // This is you
                     yourSlotIndex = slotIndex; // Remember your slot
                     exportObj[slotIndex] = JSON.stringify(constructSelfPlayer(characterObj, clientObj));
@@ -737,7 +741,7 @@ export async function constructExportObject(externalProfileId = null, singlePlay
                     importedPlayerPositions[slotIndex - 1] = true;
                 } else {
                     // Party member - try to get from profile list
-                    const profile = profileList.find((p) => p.characterID === member.characterID);
+                    const profile = profileList.find((p) => sameCharacterId(p.characterID, member.characterID));
                     if (profile) {
                         exportObj[slotIndex] = JSON.stringify(constructPartyPlayer(profile, clientObj, battleObj));
                         playerIDs[slotIndex - 1] = profile.characterName;

@@ -18,6 +18,11 @@ const ENHANCING_TOOL_LOCATION = '/item_locations/enhancing_tool';
 const ALCHEMY_TOOL_LOCATION = '/item_locations/alchemy_tool';
 const INVENTORY_LOCATION = '/item_locations/inventory';
 const SPEED_GEAR_STATS = ['enhancingSpeed', 'skillingSpeed'];
+const COMBAT_CHARM_HRID = /_(attack|defense|intelligence|stamina|magic|ranged|melee)_charm$/;
+
+function sameCharacterId(left, right) {
+    return left != null && right != null && String(left) === String(right);
+}
 
 function dropBlankSlots(slots, hridField) {
     return (slots || []).filter((slot) => slot?.[hridField]);
@@ -81,10 +86,11 @@ function buildSpeedGear(inventoryItems, itemDetailMap) {
 
 function isCombatWearable(itemHrid, itemDetailMap) {
     const equipmentDetail = itemDetailMap?.[itemHrid]?.equipmentDetail;
-    return Boolean(equipmentDetail) && !equipmentDetail.type?.endsWith('_tool');
+    if (!equipmentDetail) return false;
+    return Object.values(equipmentDetail.combatStats || {}).some(Boolean) || COMBAT_CHARM_HRID.test(itemHrid);
 }
 
-function buildOwnedBlock({ inventoryItems, itemDetailMap, characterAbilities, equippedAbilityHrids }) {
+function buildOwnedBlock({ inventoryItems, itemDetailMap, characterAbilities, equippedAbilityHrids, capturedAt }) {
     const equipment = (inventoryItems || [])
         .filter(
             (item) => item.itemLocationHrid === INVENTORY_LOCATION && isCombatWearable(item.itemHrid, itemDetailMap)
@@ -99,7 +105,7 @@ function buildOwnedBlock({ inventoryItems, itemDetailMap, characterAbilities, eq
         .filter((ability) => ability?.abilityHrid && !equippedAbilityHrids.has(ability.abilityHrid))
         .map((ability) => ({ abilityHrid: ability.abilityHrid, level: ability.level || 1, equipped: false }));
 
-    return equipment.length || abilities.length ? { capturedAt: new Date().toISOString(), equipment, abilities } : null;
+    return equipment.length || abilities.length ? { ...(capturedAt && { capturedAt }), equipment, abilities } : null;
 }
 
 function toMetzCharacter(name, source, extra = {}) {
@@ -125,12 +131,22 @@ function toMetzCharacter(name, source, extra = {}) {
 function buildSelfMetzCharacter(characterObj, clientObj) {
     const source = constructSelfPlayer(characterObj, clientObj);
     const itemDetailMap = clientObj?.itemDetailMap;
-    const inventoryItems = dataManager.getInventory() || [];
+    // On an external simulator page dataManager is intentionally empty. The GM bridge still
+    // carries init_character_data, whose characterItems are the only inventory source there.
+    // On the game page prefer the live collection so an emptied bag cannot fall back to the
+    // login snapshot and resurrect items that are no longer owned.
+    const hasLiveData = characterObj === dataManager.characterData;
+    const inventoryItems = hasLiveData
+        ? dataManager.getInventory() || []
+        : Array.isArray(characterObj.characterItems)
+          ? characterObj.characterItems
+          : [];
+    const mooPassBuffs = hasLiveData ? dataManager.getMooPassBuffs() : characterObj.mooPassBuffs || [];
     const equippedAbilityHrids = new Set(
         (characterObj.combatUnit?.combatAbilities || []).map((ability) => ability.abilityHrid).filter(Boolean)
     );
     return toMetzCharacter(characterObj.character?.name || 'Player 1', source, {
-        hasMooPass: (dataManager.getMooPassBuffs()?.length ?? 0) > 0,
+        hasMooPass: (mooPassBuffs?.length ?? 0) > 0,
         skills: characterObj.characterSkills,
         speedGear: buildSpeedGear(inventoryItems, itemDetailMap),
         owned: buildOwnedBlock({
@@ -138,6 +154,7 @@ function buildSelfMetzCharacter(characterObj, clientObj) {
             itemDetailMap,
             characterAbilities: characterObj.characterAbilities,
             equippedAbilityHrids,
+            capturedAt: hasLiveData ? new Date().toISOString() : null,
         }),
     });
 }
@@ -153,8 +170,8 @@ export async function constructMetzTeamExport() {
     const team = [buildSelfMetzCharacter(characterObj, clientObj)];
 
     for (const member of Object.values(characterObj.partyInfo?.partySlotMap || {})) {
-        if (!member.characterID || member.characterID === characterObj.character.id) continue;
-        const profile = profileList.find((entry) => entry.characterID === member.characterID);
+        if (!member.characterID || sameCharacterId(member.characterID, characterObj.character.id)) continue;
+        const profile = profileList.find((entry) => sameCharacterId(entry.characterID, member.characterID));
         if (!profile) continue;
         team.push(
             toMetzCharacter(profile.characterName, constructPartyPlayer(profile, clientObj, battleObj), {
@@ -171,8 +188,8 @@ export async function constructMetzCharacterExport(externalProfileId = null) {
     if (!characterObj) return null;
     const clientObj = getClientData();
 
-    if (externalProfileId && externalProfileId !== characterObj.character?.id) {
-        const profile = (await getProfileList()).find((entry) => entry.characterID === externalProfileId);
+    if (externalProfileId && !sameCharacterId(externalProfileId, characterObj.character?.id)) {
+        const profile = (await getProfileList()).find((entry) => sameCharacterId(entry.characterID, externalProfileId));
         if (!profile) return null;
         return toMetzCharacter(profile.characterName, constructPartyPlayer(profile, clientObj, getBattleData()), {
             skills: profile.profile?.characterSkills,

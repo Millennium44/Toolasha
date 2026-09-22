@@ -3,7 +3,7 @@
  *
  * The external combat simulators the "Import from Toolasha" flow drives, in one place.
  *
- * Both supported simulators are forks of the same MCS lineage, so they share the export/import
+ * The original supported simulators are forks of the same MCS lineage, so they share the export/import
  * JSON format `combat-sim-export.js` builds and (bar one id) the selectors
  * `combat-sim-integration.js` drives — the only per-simulator fact is the domain. Adding a
  * simulator is therefore a matter of listing it here, adding its `@match` to the userscript
@@ -56,7 +56,18 @@ export const COMBAT_SIM_TARGETS = [
  */
 export function combatSimTargetForUrl(url = typeof window !== 'undefined' ? window.location.href : '') {
     if (typeof url !== 'string' || !url) return null;
-    return COMBAT_SIM_TARGETS.find((target) => url.includes(target.urlFragment)) || null;
+    let parsed;
+    try {
+        parsed = new URL(url);
+    } catch {
+        return null;
+    }
+    return (
+        COMBAT_SIM_TARGETS.find((target) => {
+            const targetUrl = new URL(target.url);
+            return parsed.origin === targetUrl.origin && parsed.pathname.startsWith(targetUrl.pathname);
+        }) || null
+    );
 }
 
 /**

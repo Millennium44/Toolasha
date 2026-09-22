@@ -300,13 +300,20 @@ Utils.visualViewport?.initVisualViewportTracking?.();
  * The canonical list lives in `src/features/combat/combat-sim-targets.js`, and
  * `combat-sim-targets.test.js` asserts this copy stays in sync with it.
  *
- * @returns {boolean} True if on a Combat Simulator
+ * @returns {'shykai'|'szerra'|'metz'|null} Simulator site, or null on a game page
  */
 function isCombatSimulatorPage() {
-    const url = window.location.href;
-    if (url.includes('shykai.github.io/MWICombatSimulatorTest/dist/')) return 'shykai';
-    if (url.includes('szerra.github.io/mwi-shrine-combat-simulator/')) return 'szerra';
-    if (url.includes('metzlii.github.io/metz-combat-simulator/')) return 'metz';
+    let url;
+    try {
+        url = new URL(window.location.href);
+    } catch {
+        return null;
+    }
+    if (url.origin === 'https://shykai.github.io' && url.pathname.startsWith('/MWICombatSimulatorTest/dist/'))
+        return 'shykai';
+    if (url.origin === 'https://szerra.github.io' && url.pathname.startsWith('/mwi-shrine-combat-simulator/'))
+        return 'szerra';
+    if (url.origin === 'https://metzlii.github.io' && url.pathname.startsWith('/metz-combat-simulator/')) return 'metz';
     return null;
 }
 

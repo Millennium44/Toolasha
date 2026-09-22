@@ -1234,7 +1234,8 @@ class CombatScore {
                 return;
             }
 
-            // Build the native five slots directly from the saved slot numbers, retaining holes.
+            // Build the native five slots directly from the saved 1-based slot numbers. The
+            // Metz adapter then emits its compact ability list in that same priority order.
             const characterData = dataManager.characterData;
             const abilityLevelMap = {};
             for (const ab of characterData?.characterAbilities || []) {
