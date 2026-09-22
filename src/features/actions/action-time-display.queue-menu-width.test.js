@@ -124,6 +124,17 @@ describe('QueuedActions edit-menu width contract', () => {
         expect(css).toContain('min-width: 0;');
     });
 
+    test('native queue rows can wrap and shrink before the delete button is pushed off-screen', () => {
+        actionTimeDisplay.initializeQueueObserver();
+        const css = styleText();
+
+        expect(css).toContain('overflow-x: hidden;');
+        expect(css).toContain(`.${MARKER_CLASS} [class*="QueuedActions_action__"]`);
+        expect(css).toContain('flex-wrap: wrap;');
+        expect(css).toContain(`.${MARKER_CLASS} [class*="QueuedActions_actionText"]`);
+        expect(css).toContain('max-width: 100%;');
+    });
+
     test('the contract applies with no injected rows present at all', () => {
         actionTimeDisplay.initializeQueueObserver();
         const menu = editMenu();

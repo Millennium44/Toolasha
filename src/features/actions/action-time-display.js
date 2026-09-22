@@ -110,6 +110,7 @@ const QUEUE_EDIT_MENU_CSS = `
     max-width: min(414px, calc(100vw - 64px));
     min-width: min(280px, calc(100vw - 64px));
     box-sizing: border-box;
+    overflow-x: hidden;
 }
 @supports (width: 100dvw) {
     .${QUEUE_EDIT_MENU_MARKER_CLASS} {
@@ -127,6 +128,18 @@ const QUEUE_EDIT_MENU_CSS = `
     white-space: normal;
     overflow-wrap: anywhere;
     box-sizing: border-box;
+}
+/* A native queue row combines its drag handle, text column and delete button in one flex line.
+   Toolasha's extra time/profit text can make that line wider than the popup unless the row may
+   wrap and the text column may shrink. Keep the trailing delete control inside the visible menu. */
+.${QUEUE_EDIT_MENU_MARKER_CLASS} [class*="QueuedActions_action__"] {
+    flex-wrap: wrap;
+    min-width: 0;
+    max-width: 100%;
+}
+.${QUEUE_EDIT_MENU_MARKER_CLASS} [class*="QueuedActions_actionText"] {
+    min-width: 0;
+    overflow-wrap: anywhere;
 }
 `;
 
