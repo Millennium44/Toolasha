@@ -559,12 +559,22 @@ class SyncManager {
         if (!this._stillOwns(opToken)) return this._supersededResult(silent, 'pull', opToken);
 
         const { merged, mergeFailed, mergeHeld, complete, failed, applied, expected } = await applyPayload(payload);
+        const pendingHeld = mergeHeld?.length ? { exportedAt: remoteAt, hash: contentHash(payload) } : null;
 
         // An import already in progress cannot be cancelled between its store
         // transactions. If cleanup happened during it, leave the remote stamp
         // alone so a fresh session can retry instead of claiming completion.
+        // The import may have held back an unreadable local history and latched
+        // restored stores against further writes. Guard the remote copy from a
+        // switch push and tell the new screen to reload, even though the old
+        // operation no longer owns its normal success toast.
         if (!this._stillOwns(opToken)) {
+            if (pendingHeld) await rememberLocal({ [KEY_MERGE_HELD]: pendingHeld });
             console.warn('[Sync] Pull import finished after cleanup; leaving the sync stamp for a retry.');
+            showToast('Sync imported data during a character switch. Reload now before making more changes.', {
+                kind: 'warn',
+                duration: 0,
+            });
             return { ok: false, reason: 'stopped-after-apply' };
         }
 
@@ -583,7 +593,6 @@ class SyncManager {
             return { ok: false, reason: 'incomplete-apply' };
         }
 
-        const pendingHeld = mergeHeld?.length ? { exportedAt: remoteAt, hash: contentHash(payload) } : null;
         // If rebuilding the post-import fingerprint fails, the pull has still
         // applied other records. Leave a durable guard before that read, so a
         // later push cannot replace the records this pull held back.
