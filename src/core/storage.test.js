@@ -1207,6 +1207,7 @@ describe('Storage restore quiescing', () => {
         storage._restorePendingStores.clear();
         storage._restoreWarned.clear();
         storage._restoreInProgress = false;
+        storage._restoreDepth = 0;
         vi.spyOn(console, 'warn').mockImplementation(() => {});
     });
 
@@ -1219,6 +1220,7 @@ describe('Storage restore quiescing', () => {
         storage._restorePendingStores.clear();
         storage._restoreWarned.clear();
         storage._restoreInProgress = false;
+        storage._restoreDepth = 0;
         storage._saveToIndexedDB.mockRestore?.();
         storage.db = null;
         vi.restoreAllMocks();
@@ -1429,6 +1431,26 @@ describe('Storage restore quiescing', () => {
         const flushSpy = vi.spyOn(storage, 'flushAll');
         await storage.endRestore();
         expect(flushSpy).not.toHaveBeenCalled();
+    });
+
+    test('a nested restore keeps writers held until the outer restore ends', async () => {
+        const { db, dataByStore } = createFakeDb(['xpHistory']);
+        storage.db = db;
+
+        await storage.beginRestore();
+        await storage.beginRestore();
+        const write = storage.set('sample', 42, 'xpHistory');
+        await vi.advanceTimersByTimeAsync(storage.SAVE_DEBOUNCE_DELAY + 1);
+
+        await storage.endRestore();
+        expect(storage._restoreInProgress).toBe(true);
+        expect(storage.pendingWrites.has('xpHistory:sample')).toBe(true);
+        expect(dataByStore.get('xpHistory').has('sample')).toBe(false);
+
+        await storage.endRestore();
+        expect(storage._restoreInProgress).toBe(false);
+        expect(await write).toBe(true);
+        expect(dataByStore.get('xpHistory').get('sample')).toBe(42);
     });
 
     test('a recorder flushing through the bulk path is refused like every other writer', async () => {

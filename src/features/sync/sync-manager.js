@@ -47,6 +47,7 @@ import { compressionAvailable, gzipText, gunzipToText } from './sync-compress.js
 import { encryptText, encryptBytes, decryptText, decryptBytes, bytesToBase64, base64ToBytes } from './sync-crypto.js';
 import { buildPayloadJSON, applyPayload, contentHash, hashPayload } from './sync-payload.js';
 import { registerCommand, unregisterCommand } from '../../utils/command-registry.js';
+import { flushPersistedRecords } from '../../utils/persisted-record.js';
 import {
     buildPullSummary,
     formatPullSummaryLine,
@@ -277,6 +278,7 @@ class SyncManager {
         // session over, and the character-switch push fires as the character
         // being left goes away. Both would upload a copy with the final
         // seconds cut off, and nothing would ever put them back.
+        await flushPersistedRecords();
         await storage.flushAll?.();
 
         const payload = await buildPayloadJSON(scope);
@@ -471,6 +473,7 @@ class SyncManager {
         // Fingerprinting reads IndexedDB, not the debounce queue. Land recent
         // edits first so a pull cannot mistake an edited list for the last
         // synced copy and replace it without the conflict decision.
+        await flushPersistedRecords();
         await storage.flushAll?.();
         const localHash = contentHash(await buildPayloadJSON(config.getSetting('sync_scope', 'settings')));
         const lastHash = await storage.get(KEY_LAST_HASH, STORE, null);

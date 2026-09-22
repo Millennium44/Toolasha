@@ -56,8 +56,15 @@ vi.mock('./adoption-consent.js', () => ({
     requestAdoptionConsent: () => Promise.resolve(null),
 }));
 
-const { createPersistedRecord, createCuratedRecord, mergeById, mergeMaps, mergeSeriesMaps } =
-    await import('./persisted-record.js');
+const {
+    createPersistedRecord,
+    createCuratedRecord,
+    flushPersistedRecords,
+    _pendingRecordCountForTests,
+    mergeById,
+    mergeMaps,
+    mergeSeriesMaps,
+} = await import('./persisted-record.js');
 
 const LOG = 'log_char1';
 const stored = () => storageMock.storeFor('settings').get(LOG);
@@ -181,6 +188,47 @@ describe('load', () => {
 });
 
 describe('save', () => {
+    test('the global flush waits for a fire-and-forget save still preparing its storage write', async () => {
+        const record = byId();
+        let releaseProbe;
+        storageMock.tryGet.mockImplementationOnce(
+            () =>
+                new Promise((resolve) => {
+                    releaseProbe = () => resolve({ found: false, value: null });
+                })
+        );
+
+        record.set([{ id: 1 }]);
+        record.save();
+        await Promise.resolve();
+        let flushed = false;
+        const flush = flushPersistedRecords().then(() => {
+            flushed = true;
+        });
+
+        await Promise.resolve();
+        expect(flushed).toBe(false);
+        expect(storageMock.set).not.toHaveBeenCalled();
+
+        releaseProbe();
+        await flush;
+        expect(stored()).toEqual([{ id: 1 }]);
+    });
+
+    test('settled records leave the global flush registry', async () => {
+        const record = byId();
+        record.set([{ id: 1 }]);
+
+        await record.save();
+
+        expect(_pendingRecordCountForTests()).toBe(0);
+        storageMock.tryGet.mockClear();
+        storageMock.set.mockClear();
+        await flushPersistedRecords();
+        expect(storageMock.tryGet).not.toHaveBeenCalled();
+        expect(storageMock.set).not.toHaveBeenCalled();
+    });
+
     test('folds what is stored under memory, so rows from another writer survive', async () => {
         storageMock.storeFor('settings').set(LOG, [{ id: 1 }, { id: 2, v: 'old' }]);
         const record = byId();
