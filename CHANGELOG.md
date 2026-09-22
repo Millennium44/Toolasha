@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Notice history survives a temporary storage read failure
+
+- A notice arriving while its saved history cannot be read no longer replaces that history with a one-entry log. The script keeps the new notice in memory and merges it with the saved log when reading succeeds, even across a character switch.
+
 ### Cross-device sync keeps unfinished pulls recoverable
 
 - If a local history could not be read during a pull, its downloaded counterpart was held back but the gist was marked fully synced; a later pull then said "already up to date" and could never retrieve that record. The same gist can now be retried after storage recovers, and pushes pause until those missing records have landed.

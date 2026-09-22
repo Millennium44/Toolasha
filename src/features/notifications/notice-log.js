@@ -90,6 +90,7 @@ function currentState() {
 
 /**
  * Release a finished departing record so returning reloads any storage changes.
+ * An unread, dirty record stays in memory until its saved history can be read.
  * @param {Object} character - Record whose pending work may have finished
  */
 function releaseInactiveState(character) {
@@ -97,6 +98,7 @@ function releaseInactiveState(character) {
     if (
         shared.visible !== character &&
         !character.loading &&
+        !character.dirty &&
         shared.characters.get(character.characterId) === character
     ) {
         shared.characters.delete(character.characterId);
@@ -143,7 +145,9 @@ export function noticeLogKey(characterId) {
  * Each character retains its own record, so a pending read can finish for its
  * owner after a switch without touching the displayed log. Returning to that
  * character reuses a pending read and preserves notices appended while it ran.
- * Settled departing records are released so later visits reread storage.
+ * Settled departing records are released so later visits reread storage. A
+ * failed read leaves live entries pending for a later retry rather than
+ * overwriting saved history with a partial log.
  *
  * @returns {Promise<void>} Resolves once the entries are in memory
  */
@@ -155,8 +159,15 @@ export async function loadNoticeLog() {
     if (shared.loadedFor === characterId) return;
 
     shared.loading = (async () => {
+        let readSucceeded = false;
         try {
-            const saved = await storage.getJSON(noticeLogKey(characterId), 'settings', null);
+            const key = noticeLogKey(characterId);
+            const probe = await storage.tryGet(key, 'settings');
+            // getJSON folds an unreadable store and an absent key into the same
+            // null. A read-merge-write log must distinguish those cases.
+            if (!probe) return;
+            const saved = probe.found ? storage.parseJSON(probe.value, key, null) : null;
+            readSucceeded = true;
             // Clearing is authoritative, even if a saved log arrives later.
             if (shared.generation !== generation) return;
             if (saved && Array.isArray(saved.entries)) {
@@ -168,13 +179,13 @@ export async function loadNoticeLog() {
                 shared.seenAt = Math.max(shared.seenAt, Number(saved.seenAt) || 0);
             }
         } catch (error) {
-            // A store that cannot be read leaves what is in memory standing, and
-            // the log is marked loaded anyway — refusing to persist forever
-            // because one read failed would lose more than it protects
+            // Leave live entries in memory, but do not mark the log loaded or
+            // write them over saved history we could not read. A later load or
+            // append retries the read and merges the two before persisting.
             console.error('[NoticeLog] Could not read the notice log:', error);
         } finally {
             shared.loading = null;
-            if (shared.generation === generation) {
+            if (readSucceeded && shared.generation === generation) {
                 shared.loadedFor = characterId;
                 if (shared.dirty) await persist(shared);
             }
