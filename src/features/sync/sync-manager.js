@@ -101,6 +101,9 @@ const KEY_LAST_SYNCED_SEQ = 'toolasha_sync_lastSyncedSeq';
 /** Fingerprint of that payload, so local drift since then is detectable */
 const KEY_LAST_HASH = 'toolasha_sync_lastHash';
 
+/** Remote payload still has records held back by an unreadable local merge base. */
+const KEY_MERGE_HELD = 'toolasha_sync_mergeHeld';
+
 /** How many chunk files the gist holds, so a shrinking payload can delete the rest */
 const KEY_CHUNK_COUNT = 'toolasha_sync_chunkCount';
 
@@ -219,6 +222,11 @@ class SyncManager {
 
     /** Stop timers and setting listeners. */
     cleanup() {
+        // Character switches tear this feature down while a GitHub request may
+        // still be pending. Invalidate that operation's ownership token so it
+        // cannot apply the old character's pull after the next one opens.
+        if (typeof this.busy === 'number') this.lastCancelledToken = this.busy;
+        this.busy = false;
         unregisterCommand('Sync push');
         unregisterCommand('Sync pull');
         unregisterCommand('Sync pull summary');
@@ -266,6 +274,21 @@ class SyncManager {
      * @private
      */
     async _doPush(silent, opToken) {
+        // A previous pull could not read a local history and deliberately held
+        // its downloaded counterpart back. Uploading this incomplete union
+        // would replace that counterpart in the gist before it can be retried.
+        if (await storage.get(KEY_MERGE_HELD, STORE, null)) {
+            if (!silent) {
+                showToast(
+                    'Sync push paused: some downloaded records are still waiting. Pull again after storage recovers.',
+                    {
+                        kind: 'warn',
+                        duration: 0,
+                    }
+                );
+            }
+            return { ok: false, reason: 'held-back' };
+        }
         const token = this._token();
         const scope = config.getSetting('sync_scope', 'settings');
 
@@ -314,7 +337,7 @@ class SyncManager {
             // operation that has already run with a fresher view of both the
             // database and the gist; writing now would stomp whatever it just
             // wrote. Stand down instead of overwriting a newer sync.
-            if (!this._stillOwns(opToken)) return this._supersededResult(silent, 'push');
+            if (!this._stillOwns(opToken)) return this._supersededResult(silent, 'push', opToken);
         }
 
         // The hash above is always of the plaintext — compression and
@@ -382,7 +405,7 @@ class SyncManager {
         // fallback (no GM manager) has no timeout of its own and can hang
         // indefinitely — the same "wedged" shape, just without a dialog to
         // point at.
-        if (!this._stillOwns(opToken)) return this._supersededResult(silent, 'push');
+        if (!this._stillOwns(opToken)) return this._supersededResult(silent, 'push', opToken);
 
         const written = await writeSyncGist(token, gistId, manifest, chunks, previousChunks);
 
@@ -393,7 +416,7 @@ class SyncManager {
         // this `exportedAt`/`hash` describe a snapshot from before the wait,
         // and stamping them now would make a perfectly good later sync look
         // unsynced again.
-        if (!this._stillOwns(opToken)) return this._supersededResult(silent, 'push');
+        if (!this._stillOwns(opToken)) return this._supersededResult(silent, 'push', opToken);
 
         await this._remember({ gistId: written.id, exportedAt, hash, chunkCount: chunks.length, syncSeq });
         await rememberLocal({ [KEY_LAST_PUSHED_AT]: exportedAt });
@@ -433,6 +456,7 @@ class SyncManager {
         }
 
         const remote = await readSyncGist(token, gistId);
+        if (!this._stillOwns(opToken)) return this._supersededResult(silent, 'pull', opToken);
         const manifest = remote.manifest;
         let payload = remote.payload;
 
@@ -462,7 +486,13 @@ class SyncManager {
         const remoteSeq = readSeq(manifest?.syncSeq);
         const lastSeq = readSeq(await storage.get(KEY_LAST_SYNCED_SEQ, STORE, null));
 
-        if (!isNewer(remoteAt, lastSyncedAt, remoteSeq, lastSeq)) {
+        // A partially applied pull records its stamp so other changes are not
+        // replayed indefinitely, but its held-back keys still need the same
+        // remote payload. Only retry the exact download, not an older gist.
+        const held = await storage.get(KEY_MERGE_HELD, STORE, null);
+        const retryHeld = held?.exportedAt === remoteAt && held?.hash === contentHash(payload);
+
+        if (!retryHeld && !isNewer(remoteAt, lastSyncedAt, remoteSeq, lastSeq)) {
             if (!silent) showToast('Already up to date with GitHub.');
             return { ok: true, skipped: true, reason: 'not-newer' };
         }
@@ -516,7 +546,7 @@ class SyncManager {
             // pull's decision was made against a snapshot that no longer
             // exists, and applying it now would silently undo whatever that
             // operation just did.
-            if (!this._stillOwns(opToken)) return this._supersededResult(silent, 'pull');
+            if (!this._stillOwns(opToken)) return this._supersededResult(silent, 'pull', opToken);
             if (answer === 'push') return this._doPush(false, opToken);
             if (answer !== 'pull' && answer !== 'merge') return { ok: true, skipped: true, reason: 'cancelled' };
             pushBack = answer === 'merge';
@@ -526,9 +556,17 @@ class SyncManager {
         // no-dialog path this only catches a `fetch` fallback (no GM manager,
         // no timeout of its own) hanging long enough for a takeover — the same
         // "wedged" shape as the dialog above, just without a dialog to point at.
-        if (!this._stillOwns(opToken)) return this._supersededResult(silent, 'pull');
+        if (!this._stillOwns(opToken)) return this._supersededResult(silent, 'pull', opToken);
 
         const { merged, mergeFailed, mergeHeld, complete, failed, applied, expected } = await applyPayload(payload);
+
+        // An import already in progress cannot be cancelled between its store
+        // transactions. If cleanup happened during it, leave the remote stamp
+        // alone so a fresh session can retry instead of claiming completion.
+        if (!this._stillOwns(opToken)) {
+            console.warn('[Sync] Pull import finished after cleanup; leaving the sync stamp for a retry.');
+            return { ok: false, reason: 'stopped-after-apply' };
+        }
 
         // A pull that wrote nothing must not move the stamp. Remembering the
         // remote's `exportedAt` after a failed apply makes every later pull
@@ -545,6 +583,12 @@ class SyncManager {
             return { ok: false, reason: 'incomplete-apply' };
         }
 
+        const pendingHeld = mergeHeld?.length ? { exportedAt: remoteAt, hash: contentHash(payload) } : null;
+        // If rebuilding the post-import fingerprint fails, the pull has still
+        // applied other records. Leave a durable guard before that read, so a
+        // later push cannot replace the records this pull held back.
+        if (pendingHeld) await rememberLocal({ [KEY_MERGE_HELD]: pendingHeld });
+
         await this._remember({
             gistId,
             exportedAt: remoteAt,
@@ -555,7 +599,12 @@ class SyncManager {
             // stored. The manifest's own hash (older devices hashed the raw
             // text, stamp included) could never match a rebuild either, and
             // manufactured a permanent conflict.
-            hash: contentHash(applied ?? payload),
+            // Held-back records remain on this device even though they were
+            // removed from `applied`; fingerprint the actual local snapshot
+            // so a retry does not mistake that expected difference for an edit.
+            hash: mergeHeld?.length
+                ? contentHash(await buildPayloadJSON(config.getSetting('sync_scope', 'settings')))
+                : contentHash(applied ?? payload),
             chunkCount: Number(manifest?.chunks) || 0,
             // Lamport's rule on receive: this device is now at least as far
             // along as the payload it accepted. Written only here, after the
@@ -564,6 +613,7 @@ class SyncManager {
             // the data would never arrive, which is the same trap the stamp
             // already has to avoid.
             syncSeq: advanceSeq(lastSeq, remoteSeq),
+            mergeHeld: pendingHeld,
         });
 
         // Every figure below comes out of the apply result; nothing here re-reads
@@ -596,7 +646,7 @@ class SyncManager {
         // name the records and say what to do about them.
         const heldBack = mergeHeld?.length
             ? ` The records kept from this device (${mergeHeld.map((entry) => entry.label).join(', ')}) ` +
-              'could not be read here; pull again once storage is healthy.'
+              'could not be read here; pull again once storage is healthy. Pushes are paused until then.'
             : '';
         // Not politeness: the stores this pull replaced stop accepting writes
         // until the reload (see `storage.finishRestore`), because anything this
@@ -618,10 +668,12 @@ class SyncManager {
         // and re-opening the same conflict. `_remember` above already recorded
         // the remote's stamp, so this push is no longer a "never synced" one
         // and will not stop to ask.
-        if (pushBack) {
+        if (pushBack && !mergeHeld?.length) {
             const pushed = await this._doPush(false, opToken);
             return { ok: true, merged: merged?.length || 0, pushedBack: pushed?.ok === true };
         }
+
+        if (pushBack && mergeHeld?.length) return { ok: true, merged: merged?.length || 0, pushedBack: false };
 
         return { ok: true, merged: merged?.length || 0 };
     }
@@ -646,6 +698,7 @@ class SyncManager {
             // the next gist look like somewhere this device has already pushed to, which
             // is exactly the check that decides whether a first push stops to ask.
             [KEY_LAST_PUSHED_AT]: null,
+            [KEY_MERGE_HELD]: null,
         });
     }
 
@@ -780,17 +833,18 @@ class SyncManager {
     /**
      * Record what this device now believes about the gist.
      * @param {{gistId: string, exportedAt: string, hash: string, chunkCount: number,
-     *   syncSeq?: number|null}} state - New state. `syncSeq` is null for an exchange
+     *   syncSeq?: number|null, mergeHeld?: Object|null}} state - New state. `syncSeq` is null for an exchange
      *   with a gist that carries no counter, which must not invent one.
      * @private
      */
-    async _remember({ gistId, exportedAt, hash, chunkCount, syncSeq = null }) {
+    async _remember({ gistId, exportedAt, hash, chunkCount, syncSeq = null, mergeHeld = null }) {
         await rememberLocal({
             [KEY_GIST_ID]: gistId,
             [KEY_LAST_SYNCED_AT]: exportedAt,
             [KEY_LAST_HASH]: hash,
             [KEY_CHUNK_COUNT]: chunkCount,
             [KEY_LAST_SYNCED_SEQ]: syncSeq,
+            [KEY_MERGE_HELD]: mergeHeld,
         });
     }
 
@@ -846,12 +900,12 @@ class SyncManager {
         if (ran) return outcome;
 
         // Another tab's sync holds the lock right now. An interval tick has
-        // nothing to add — the database is shared and the winner is pushing it
-        // as we speak; the next tick re-checks. A push somebody clicked runs
-        // anyway: it must not silently do nothing, and the 409 retry absorbs
-        // the race it might lose.
+        // nothing to add — the next tick re-checks. A manual operation must
+        // be reported, not run outside the lock: a 409 retry merely replays a
+        // stale whole-gist snapshot and cannot protect the other tab's update.
         if (silent) return { ok: true, skipped: true, reason: 'another-tab' };
-        return operation(opToken);
+        showToast('Sync is running in another tab. Try again when it finishes.', { kind: 'warn' });
+        return { ok: false, reason: 'another-tab' };
     }
 
     /**
@@ -880,12 +934,20 @@ class SyncManager {
      * takeover has already run in its place.
      * @param {boolean} silent - Whether to say anything about it
      * @param {string} label - 'push' or 'pull'
+     * @param {number} opToken - The superseded operation's ownership token
      * @returns {{ok: boolean, skipped: boolean, reason: string}} Outcome
      * @private
      */
-    _supersededResult(silent, label) {
-        console.warn(`[Sync] A ${label} was superseded by a takeover while it was waiting; discarding its result.`);
-        if (!silent) {
+    _supersededResult(silent, label, opToken) {
+        const stopped = opToken <= (this.lastCancelledToken || 0);
+        console.warn(
+            stopped
+                ? `[Sync] A ${label} finished after cleanup; discarding its result.`
+                : `[Sync] A ${label} was superseded by a takeover while it was waiting; discarding its result.`
+        );
+        // Cleanup means the old character has gone away. A status toast from
+        // that operation belongs to the previous screen, not the new one.
+        if (!silent && !stopped) {
             showToast(
                 `Sync ${label} was overtaken by a newer sync while it waited. Nothing was lost — try again if needed.`
             );
@@ -926,6 +988,7 @@ class SyncManager {
             // replacing is the very thing still holding it
             return await (takingOver ? operation(token) : this._withCrossTabLock(silent, operation, token));
         } catch (error) {
+            if (!this._stillOwns(token)) return this._supersededResult(silent, label, token);
             // GistError messages are written to be shown; anything else is a bug
             // here and gets a generic message with the detail in the console.
             // Neither path can carry the token: it only ever appears in a header.

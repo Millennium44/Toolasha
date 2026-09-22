@@ -70,7 +70,9 @@ vi.mock('./sync-payload.js', () => ({
         return payload.text;
     },
     applyPayload: async (json) => {
+        payload.applyCalls = (payload.applyCalls || 0) + 1;
         payload.applied = json;
+        if (payload.applyWait) await payload.applyWait;
         return {
             restored: {},
             failed: payload.failed ?? [],
@@ -92,6 +94,8 @@ vi.mock('./sync-payload.js', () => ({
 const gist = vi.hoisted(() => ({
     found: null,
     read: null,
+    readWait: null,
+    readCalls: 0,
     readError: null,
     writeError: null,
     writes: [],
@@ -109,6 +113,8 @@ vi.mock('./gist-client.js', () => ({
     chunkPayload: (text) => [text],
     findSyncGist: async () => gist.found,
     readSyncGist: async () => {
+        gist.readCalls += 1;
+        if (gist.readWait) await gist.readWait;
         if (gist.readError) throw gist.readError;
         return gist.read;
     },
@@ -139,6 +145,8 @@ beforeEach(() => {
     payload.text = '{"local":1}';
     payload.pendingText = undefined;
     payload.applied = undefined;
+    payload.applyCalls = 0;
+    payload.applyWait = null;
     payload.appliedText = undefined;
     payload.merged = [];
     payload.mergeFailed = [];
@@ -148,6 +156,8 @@ beforeEach(() => {
     payload.failed = [];
     gist.found = null;
     gist.read = null;
+    gist.readWait = null;
+    gist.readCalls = 0;
     gist.readError = null;
     gist.writeError = null;
     gist.writes = [];
@@ -477,6 +487,45 @@ describe('pull', () => {
         expect(result.reason).toBe('not-found');
         expect(stored.map.toolasha_sync_gistId).toBeNull();
         expect(stored.map.toolasha_sync_lastSyncedAt).toBeNull();
+    });
+
+    test('a pull completing after cleanup does not apply to the new character', async () => {
+        stored.map.toolasha_sync_gistId = 'abc';
+        gist.read = remote('2026-02-01T00:00:00.000Z');
+        let finishRead;
+        gist.readWait = new Promise((resolve) => {
+            finishRead = resolve;
+        });
+
+        const oldPull = syncManager.pull();
+        await vi.waitFor(() => expect(gist.readCalls).toBe(1));
+        syncManager.cleanup();
+        character.id = 'char-B';
+        finishRead();
+
+        expect(await oldPull).toMatchObject({ skipped: true, reason: 'superseded' });
+        expect(payload.applied).toBeUndefined();
+        expect(stored.map.toolasha_sync_lastSyncedAt).toBeUndefined();
+        expect(toasts).toHaveLength(0);
+        character.id = 'char-A';
+    });
+
+    test('cleanup during an import leaves the sync stamp unset for a retry', async () => {
+        stored.map.toolasha_sync_gistId = 'abc';
+        gist.read = remote('2026-02-01T00:00:00.000Z');
+        let finishApply;
+        payload.applyWait = new Promise((resolve) => {
+            finishApply = resolve;
+        });
+
+        const oldPull = syncManager.pull();
+        await vi.waitFor(() => expect(payload.applyCalls).toBe(1));
+        syncManager.cleanup();
+        finishApply();
+
+        expect(await oldPull).toMatchObject({ ok: false, reason: 'stopped-after-apply' });
+        expect(stored.map.toolasha_sync_lastSyncedAt).toBeUndefined();
+        expect(toasts).toHaveLength(0);
     });
 });
 
@@ -929,7 +978,7 @@ describe('the cross-tab lock', () => {
         vi.unstubAllGlobals();
     });
 
-    test('a silent sync skips while another tab syncs; a manual one runs anyway', async () => {
+    test('a silent sync skips while another tab syncs; a manual one asks to retry without racing', async () => {
         let release;
         const held = new Promise((resolve) => (release = resolve));
         const holding = navigator.locks.request('toolasha-sync', () => held);
@@ -942,16 +991,21 @@ describe('the cross-tab lock', () => {
         });
         expect(operation).not.toHaveBeenCalled();
 
-        // Somebody clicked Push: it must not silently do nothing
-        expect(await syncManager._run('push', false, operation)).toMatchObject({ ok: true });
-        expect(operation).toHaveBeenCalledTimes(1);
+        // Somebody clicked Push: it must be told to retry, rather than
+        // bypassing the very lock that prevents overlapping gist writes.
+        expect(await syncManager._run('push', false, operation)).toMatchObject({
+            ok: false,
+            reason: 'another-tab',
+        });
+        expect(operation).not.toHaveBeenCalled();
+        expect(toasts.at(-1).message).toContain('another tab');
 
         release();
         await holding;
 
         // Lock free again: the silent path runs normally
         expect(await syncManager._run('push', true, operation)).toMatchObject({ ok: true });
-        expect(operation).toHaveBeenCalledTimes(2);
+        expect(operation).toHaveBeenCalledTimes(1);
     });
 });
 
@@ -1089,6 +1143,36 @@ describe('what a pull says it reconciled', () => {
         expect(toast.message).toContain('The records kept from this device (chest tallies)');
         expect(toast.message).not.toContain('1 could not be read here');
         expect(toast.action.label).toBe('What changed?');
+    });
+
+    test('a held-back record remains eligible for a later manual pull of the same gist', async () => {
+        oneOfEach();
+
+        await syncManager.pull();
+        expect(stored.map.toolasha_sync_mergeHeld).toMatchObject({
+            exportedAt: '2026-02-01T00:00:00.000Z',
+            hash: 'h:{"remote":1}',
+        });
+
+        // The read failure was transient. The gist has not changed, but its
+        // held-back key still has never landed on this device.
+        payload.mergeHeld = [];
+        const result = await syncManager.pull();
+
+        expect(result).toMatchObject({ ok: true, merged: 1 });
+        expect(payload.applyCalls).toBe(2);
+        expect(stored.map.toolasha_sync_mergeHeld).toBeNull();
+    });
+
+    test('a held-back record cannot be overwritten by a push before retrying the pull', async () => {
+        oneOfEach();
+        await syncManager.pull();
+
+        const result = await syncManager.push();
+
+        expect(result).toMatchObject({ ok: false, reason: 'held-back' });
+        expect(gist.writes).toHaveLength(0);
+        expect(toasts.at(-1).message).toContain('Pull again');
     });
 
     test('the summary is what the panel reads, and a second pull replaces it', async () => {

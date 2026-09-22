@@ -6,6 +6,12 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Cross-device sync keeps unfinished pulls recoverable
+
+- If a local history could not be read during a pull, its downloaded counterpart was held back but the gist was marked fully synced; a later pull then said "already up to date" and could never retrieve that record. The same gist can now be retried after storage recovers, and pushes pause until those missing records have landed.
+- A manual sync in one tab now asks you to retry while another tab is syncing, instead of bypassing the cross-tab lock and risking an overlapping gist write.
+- A pull waiting on GitHub is discarded when you switch characters, so the previous character's download and status do not appear on the new screen.
+
 ### Combat simulation: reviving an ally keeps active curses
 
 - Revived allies now retain the incoming-damage penalty from an unexpired curse. Previously, the simulator kept the curse visible but silently ignored its damage penalty until another stat update, making some party-survival estimates too optimistic.
