@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Combat simulation: reviving an ally keeps active curses
+
+- Revived allies now retain the incoming-damage penalty from an unexpired curse. Previously, the simulator kept the curse visible but silently ignored its damage penalty until another stat update, making some party-survival estimates too optimistic.
+
 ### Goal planner keeps up with edits and market-source changes
 
 - Adding a goal or pressing Refresh while a plan is finishing now runs the requested calculation once the current one settles, so the new goal does not remain unplanned until another click.

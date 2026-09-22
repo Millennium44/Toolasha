@@ -474,7 +474,10 @@ class CombatUtilities {
         const heal = this.randomInt(minHeal, maxHeal);
         const amountHealed = target.addHitpoints(heal);
         target.combatDetails.currentManapoints = target.combatDetails.maxManapoints;
-        target.clearCCs();
+        // A revive lifts crowd control, but the target keeps timed buffs.
+        // clearCCs() also zeros damageTaken, desynchronizing a surviving curse
+        // from the combat stat that determines the next incoming hit.
+        target.clearCCStatuses();
 
         // target.clearBuffs();
 

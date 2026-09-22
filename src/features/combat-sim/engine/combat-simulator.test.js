@@ -1070,6 +1070,62 @@ describe('revive takes the death back', () => {
         expect(victim.combatBuffs['/buff_uniques/test_aura']).toBeUndefined();
     });
 
+    test('a revived ally loses crowd control without losing a still-active curse', () => {
+        installGameData();
+        seedSimRng(3);
+        const zone = new Zone(ZONE_HRID, 0);
+        const players = ['player1', 'player2'].map((hrid) => {
+            const player = fixturePlayer();
+            player.hrid = hrid;
+            player.zoneBuffs = zone.buffs;
+            player.extraBuffs = [];
+            return player;
+        });
+        const sim = new CombatSimulator(players, zone);
+        sim.reset();
+        sim.simulationTime = ONE_SECOND;
+        players.forEach((player) => player.reset(sim.simulationTime));
+        sim.enemies = [new Monster(RAT_HRID, 0)];
+        sim.enemies[0].reset(sim.simulationTime);
+
+        const victim = players[1];
+        victim.addBuff(
+            {
+                uniqueHrid: '/buff_uniques/curse',
+                typeHrid: '/buff_types/damage_taken',
+                ratioBoost: 0,
+                flatBoost: 0.25,
+                duration: 15 * ONE_SECOND,
+            },
+            sim.simulationTime
+        );
+        expect(victim.combatDetails.combatStats.damageTaken).toBeCloseTo(0.25, 10);
+        victim.isStunned = true;
+        victim.isBlinded = true;
+        victim.isSilenced = true;
+        victim.stunExpireTime = 4 * ONE_SECOND;
+        victim.blindExpireTime = 4 * ONE_SECOND;
+        victim.silenceExpireTime = 4 * ONE_SECOND;
+        sim.eventQueue.addEvent(new StunExpirationEvent(victim.stunExpireTime, victim));
+        sim.eventQueue.addEvent(new BlindExpirationEvent(victim.blindExpireTime, victim));
+        sim.eventQueue.addEvent(new SilenceExpirationEvent(victim.silenceExpireTime, victim));
+
+        victim.combatDetails.currentHitpoints = 0;
+        sim.eventQueue.clearEventsForUnit(victim);
+        sim.simulationTime += ONE_SECOND;
+        sim.processAbilityReviveEffect(players[0], { hrid: '/abilities/revive' }, REVIVE_EFFECT);
+
+        expect(victim.combatDetails.currentHitpoints).toBeGreaterThan(0);
+        expect(victim.isStunned).toBe(false);
+        expect(victim.isBlinded).toBe(false);
+        expect(victim.isSilenced).toBe(false);
+        expect(victim.stunExpireTime).toBeNull();
+        expect(victim.blindExpireTime).toBeNull();
+        expect(victim.silenceExpireTime).toBeNull();
+        expect(victim.combatDetails.combatStats.damageTaken).toBeCloseTo(0.25, 10);
+        expect(sim.eventQueue.getByTypeAndSource(AutoAttackEvent.type, victim)).not.toBeNull();
+    });
+
     test('but a revived player still shows every time they went down', () => {
         installGameData();
         seedSimRng(3);
