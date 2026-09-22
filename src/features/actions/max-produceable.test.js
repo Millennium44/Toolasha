@@ -169,6 +169,24 @@ describe('calculateMaxProduceable', () => {
         expect(maxProduceable.calculateMaxProduceable(SWORD)).toBe(0);
     });
 
+    test('combines multiple spendable +0 rows instead of trusting their render order', () => {
+        game.inventory = [stack(CHEESE, 70), stack(CHEESE, 50), stack(IRON, 65)];
+
+        expect(maxProduceable.calculateMaxProduceable(SWORD)).toBe(12);
+    });
+
+    test('accepts a string zero enhancement level as an unenhanced stack', () => {
+        game.inventory = [stack(CHEESE, 120, '/item_locations/inventory', '0'), stack(IRON, 65)];
+
+        expect(maxProduceable.calculateMaxProduceable(SWORD)).toBe(12);
+    });
+
+    test('never reports a negative craft count from a transient non-positive row', () => {
+        game.inventory = [stack(CHEESE, -10), stack(IRON, 65)];
+
+        expect(maxProduceable.calculateMaxProduceable(SWORD)).toBe(0);
+    });
+
     test('returns null for an unknown action', () => {
         expect(maxProduceable.calculateMaxProduceable('/actions/nope')).toBeNull();
     });

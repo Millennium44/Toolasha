@@ -49,9 +49,20 @@ const PRODUCTION_TYPES = [
 function buildInventoryIndex(inventory) {
     const index = new Map();
     for (const item of inventory) {
-        if (item.itemLocationHrid === '/item_locations/inventory' && !item.enhancementLevel) {
-            index.set(item.itemHrid, item);
-        }
+        if (item.itemLocationHrid !== '/item_locations/inventory') continue;
+
+        // The live DTO normally uses a numeric level, but the same data can cross a JSON/DOM
+        // boundary as "0". Only an actual +0 row is spendable; malformed levels fail closed.
+        const enhancementLevel = Number(item.enhancementLevel ?? 0);
+        if (!Number.isFinite(enhancementLevel) || enhancementLevel !== 0) continue;
+
+        // Character items are ordinarily consolidated, but websocket replacement/rerender
+        // windows can briefly expose more than one row. Sum them so row order cannot discard
+        // spendable stock, and clamp stale non-positive rows before they reach the display.
+        const count = Number(item.count);
+        if (!Number.isFinite(count) || count <= 0) continue;
+        const existingCount = index.get(item.itemHrid)?.count || 0;
+        index.set(item.itemHrid, { ...item, count: existingCount + count });
     }
     return index;
 }

@@ -63,6 +63,7 @@ const DEBOUNCE_DELAY = 300; // 300ms debounce for event handlers
  */
 let unregisterHandlers = [];
 const observedEnhancingPanels = new WeakSet();
+const protectionPanelWatchers = new WeakMap();
 let enhancingPanelWatchers = [];
 let itemsUpdatedHandler = null;
 let consumablesUpdatedHandler = null;
@@ -255,7 +256,12 @@ function registerEnhancingPanelWatcher(panel) {
     );
 
     observedEnhancingPanels.add(panel);
-    enhancingPanelWatchers.push(unwatch);
+    enhancingPanelWatchers.push(() => {
+        unwatch();
+        // React can keep the same panel node across a disable/re-enable cycle. The old watcher
+        // was disconnected above, so its identity latch must be released with it.
+        observedEnhancingPanels.delete(panel);
+    });
 }
 
 /**
@@ -292,6 +298,13 @@ function handleEnhancingPanelMutations(panel, mutations) {
                 if (
                     addedNode.classList?.contains('SkillActionDetail_item__2vEAz') ||
                     addedNode.classList?.contains('Item_name__2C42x')
+                ) {
+                    handleEnhancingPanel(panel);
+                }
+
+                if (
+                    addedNode.matches?.('[class*="protectionItemInputContainer"]') ||
+                    addedNode.querySelector?.('[class*="protectionItemInputContainer"]')
                 ) {
                     handleEnhancingPanel(panel);
                 }
@@ -480,28 +493,45 @@ function autoFillProtectFrom(panel, itemHrid) {
  * @param {string} itemHrid
  */
 function setupProtectionSlotObserver(panel, itemHrid) {
-    if (panel.dataset.mwiProtectObserverAdded) return;
-
     // Inventory-opened enhancement panels can render the protection slot on a later pass. Only
     // latch after the watcher is actually attached so the panel mutation path can retry setup.
     const protectionContainer = panel.querySelector('[class*="protectionItemInputContainer"]');
+    const existing = protectionPanelWatchers.get(panel);
+    if (existing?.container === protectionContainer) return;
+    // React can replace the slot inside the same panel. Disconnect the watcher attached to the
+    // detached slot before following the new node.
+    existing?.cleanup();
     if (!protectionContainer) return;
     panel.dataset.mwiProtectObserverAdded = 'true';
 
     let debounceTimer = null;
+    let cleaned = false;
     const unwatch = createMutationWatcher(
         protectionContainer,
         () => {
             clearTimeout(debounceTimer);
             debounceTimer = setTimeout(() => {
                 if (config.getSetting('enhanceSim_autoProtectFrom')) {
-                    autoFillProtectFrom(panel, itemHrid);
+                    // The panel node and protection slot are reused when the selected item
+                    // changes. Resolve the current item at callback time, not attach time.
+                    autoFillProtectFrom(panel, panel.dataset.mwiItemHrid || itemHrid);
                 }
             }, 300);
         },
         { childList: true, subtree: true, attributes: true }
     );
-    enhancingPanelWatchers.push(unwatch);
+    const cleanup = () => {
+        if (cleaned) return;
+        cleaned = true;
+        clearTimeout(debounceTimer);
+        unwatch();
+        if (protectionPanelWatchers.get(panel)?.cleanup === cleanup) {
+            protectionPanelWatchers.delete(panel);
+            delete panel.dataset.mwiProtectObserverAdded;
+        }
+    };
+    protectionPanelWatchers.set(panel, { container: protectionContainer, cleanup });
+    enhancingPanelWatchers.push(cleanup);
 }
 
 /**

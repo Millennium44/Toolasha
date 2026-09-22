@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Audit round: inventory counts and late-rendered controls stay in sync
+
+- Can Produce now combines every spendable +0 row, accepts serialized zero levels, and never shows a negative total during an inventory transition. Custom Tabs opens only the collapsed category that contains a missing assigned item and can retry after being closed, while enhancement auto-protection follows replaced slots and newly selected items without leaving stale watchers behind.
+
 ### Character Select and queue timing stay accurate at failure boundaries
 
 - Character Select now retries its departure checkpoint after a transient storage failure instead of leaving the active character's status stale for the rest of that screen.
