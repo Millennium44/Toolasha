@@ -47,12 +47,14 @@ vi.mock('../../utils/tea-optimizer.js', () => ({
     getSkillActionsForDisplay: () => [],
     calculateSkillPerformance: () => ({}),
     skillGoldHasUnpricedMaterials: () => scoring.goldHasMissingPrices,
+    resolveActiveAlchemyItemContext: () => null,
 }));
 
 // calculateSlotUpgradeCost is the only consumer. Each entry is keyed by side so a test can
 // state, as data, what each leg of a buy/sell comparison resolves to — including a leg that
 // resolves to nothing at all.
 const priceBook = vi.hoisted(() => ({ entries: {}, calls: [] }));
+const enhancementPricing = vi.hoisted(() => ({ cost: null, calls: [] }));
 vi.mock('../../utils/profit-helpers.js', () => ({
     resolveItemPrice: (itemHrid, options = {}) => {
         priceBook.calls.push({ itemHrid, options });
@@ -60,6 +62,12 @@ vi.mock('../../utils/profit-helpers.js', () => ({
         const price = priceBook.entries[`${side}:${itemHrid}@${enhancementLevel}`];
         if (typeof price !== 'number') return { price: null, missing: true, estimated: false, custom: false };
         return { price, missing: false, estimated: false, custom: false };
+    },
+}));
+vi.mock('../combat-sim/upgrade-advisor.js', () => ({
+    calculateDirectEnhancementCost: (itemHrid, startLevel, targetLevel, gameData) => {
+        enhancementPricing.calls.push({ itemHrid, startLevel, targetLevel, gameData });
+        return enhancementPricing.cost;
     },
 }));
 
@@ -86,7 +94,7 @@ function itemDetailMap() {
             equipmentDetail: {
                 type: '/equipment_types/cheesesmithing_tool',
                 noncombatStats: { cheesesmithingSpeed: 0.1, cheesesmithingEfficiency: 0.05 },
-                levelRequirements: [{ levelTypeHrid: '/level_types/cheesesmithing', level: 10 }],
+                levelRequirements: [{ skillHrid: '/skills/cheesesmithing', level: 10 }],
             },
         },
         [VERDANT_TOOL]: {
@@ -95,7 +103,7 @@ function itemDetailMap() {
             equipmentDetail: {
                 type: '/equipment_types/cheesesmithing_tool',
                 noncombatStats: { cheesesmithingSpeed: 0.2, skillingEfficiency: 0.05 },
-                levelRequirements: [{ levelTypeHrid: '/level_types/cheesesmithing', level: 50 }],
+                levelRequirements: [{ skillHrid: '/skills/cheesesmithing', level: 50 }],
             },
         },
         [HAT]: {
@@ -104,7 +112,7 @@ function itemDetailMap() {
             equipmentDetail: {
                 type: '/equipment_types/head',
                 noncombatStats: { cookingEfficiency: 0.06 },
-                levelRequirements: [{ levelTypeHrid: '/level_types/cooking', level: 20 }],
+                levelRequirements: [{ skillHrid: '/skills/cooking', level: 20 }],
             },
         },
         '/items/plain_shirt': {
@@ -142,6 +150,8 @@ beforeEach(() => {
     scoring.teaResults = { xp: { teas: ['xp-tea'] }, gold: { teas: ['gold-tea'] } };
     scoring.teaCalls = [];
     scoring.goldHasMissingPrices = false;
+    enhancementPricing.cost = null;
+    enhancementPricing.calls = [];
 });
 
 describe('getPlayerSkillLevel', () => {
@@ -466,6 +476,36 @@ describe('calculateSlotUpgradeCost', () => {
 
     test('an unpriceable upgrade is null, not free', () => {
         expect(calculateSlotUpgradeCost(VERDANT_TOOL, 10, null)).toBeNull();
+    });
+
+    test("a cross-item enhanced upgrade falls back to the target's +0 price plus its enhancement cost", () => {
+        priceBook.entries[`buy:${VERDANT_TOOL}@0`] = 500;
+        priceBook.entries[`sell:${CHEESE_TOOL}@3`] = 200;
+        enhancementPricing.cost = 1000;
+
+        const cost = calculateSlotUpgradeCost(VERDANT_TOOL, 12, {
+            itemHrid: CHEESE_TOOL,
+            enhancementLevel: 3,
+        });
+
+        expect(cost).toBe(1300);
+        expect(enhancementPricing.calls).toEqual([
+            {
+                itemHrid: VERDANT_TOOL,
+                startLevel: 0,
+                targetLevel: 12,
+                gameData: game.initClientData,
+            },
+        ]);
+    });
+
+    test('an enhanced upgrade stays unpriced when its +0 item or enhancement path is unknown', () => {
+        enhancementPricing.cost = 1000;
+        expect(calculateSlotUpgradeCost(VERDANT_TOOL, 12, null)).toBeNull();
+
+        priceBook.entries[`buy:${VERDANT_TOOL}@0`] = 500;
+        enhancementPricing.cost = null;
+        expect(calculateSlotUpgradeCost(VERDANT_TOOL, 12, null)).toBeNull();
     });
 
     test('an unpriceable current item makes the net cost unknown rather than the gross price', () => {

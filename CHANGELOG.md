@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Skilling Optimizer respects real equipment requirements and prices cross-tier upgrades
+
+- Equipment locked above the planned skill level is no longer recommended, and an enhanced cross-tier target can now be costed from its +0 price plus the shared enhancement estimate when that exact level has no listing.
+
 ### Market prices refresh throughout long sessions
 
 - The broad market snapshot was loaded at startup but could stay stale for the rest of a long-lived tab unless an optional listing alert happened to be enabled. It is now rechecked on the existing 15-minute cache cadence for every player, without forcing extra requests or duplicating the alert's separate pooled-history refresh.

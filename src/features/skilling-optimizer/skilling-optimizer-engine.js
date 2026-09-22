@@ -14,6 +14,7 @@ import {
     skillGoldHasUnpricedMaterials,
 } from '../../utils/tea-optimizer.js';
 import { resolveItemPrice } from '../../utils/profit-helpers.js';
+import { calculateDirectEnhancementCost } from '../combat-sim/upgrade-advisor.js';
 
 export { getSkillActionsForDisplay, calculateSkillPerformance, findOptimalTeas };
 
@@ -186,9 +187,8 @@ function buildPlayerLevelMap(skillName, overrideLevel) {
  */
 function meetsLevelRequirements(itemDetail, playerLevels) {
     for (const req of itemDetail.equipmentDetail?.levelRequirements || []) {
-        if (!req.levelTypeHrid) continue;
-        const skillHrid = req.levelTypeHrid.replace('/level_types/', '/skills/');
-        const playerLevel = playerLevels.get(skillHrid) ?? 1;
+        if (!req.skillHrid) continue;
+        const playerLevel = playerLevels.get(req.skillHrid) ?? 1;
         if (playerLevel < req.level) return false;
     }
     return true;
@@ -280,10 +280,9 @@ export function getItemsForSlot(locationHrid, skillName) {
         let available = true;
         let maxReq = 1;
         for (const req of detail.equipmentDetail.levelRequirements || []) {
-            if (!req.levelTypeHrid) continue;
-            const skillHrid = req.levelTypeHrid.replace('/level_types/', '/skills/');
+            if (!req.skillHrid) continue;
             if (req.level > maxReq) maxReq = req.level;
-            if ((playerLevels.get(skillHrid) ?? 1) < req.level) available = false;
+            if ((playerLevels.get(req.skillHrid) ?? 1) < req.level) available = false;
         }
 
         result.push({ hrid, name: detail.name, available, maxReq, itemLevel: detail.itemLevel || 0 });
@@ -344,10 +343,19 @@ export function getSkillDrinkItems() {
 export function calculateSlotUpgradeCost(itemHrid, enhancementLevel, currentEquipped = null) {
     if (!itemHrid) return null;
 
+    const gameData = dataManager.getInitClientData();
     const buy = resolveItemPrice(itemHrid, { context: 'profit', side: 'buy', enhancementLevel });
-    if (buy.missing || typeof buy.price !== 'number') return null;
+    let buyPrice = buy.price;
+    if ((buy.missing || typeof buyPrice !== 'number') && enhancementLevel > 0) {
+        const base = resolveItemPrice(itemHrid, { context: 'profit', side: 'buy', enhancementLevel: 0 });
+        const enhancementCost = calculateDirectEnhancementCost(itemHrid, 0, enhancementLevel, gameData);
+        if (!base.missing && typeof base.price === 'number' && enhancementCost !== null) {
+            buyPrice = base.price + enhancementCost;
+        }
+    }
+    if (typeof buyPrice !== 'number') return null;
 
-    if (!currentEquipped?.itemHrid) return buy.price;
+    if (!currentEquipped?.itemHrid) return buyPrice;
 
     const sell = resolveItemPrice(currentEquipped.itemHrid, {
         context: 'profit',
@@ -356,7 +364,7 @@ export function calculateSlotUpgradeCost(itemHrid, enhancementLevel, currentEqui
     });
     if (sell.missing || typeof sell.price !== 'number') return null;
 
-    return Math.max(0, buy.price - sell.price);
+    return Math.max(0, buyPrice - sell.price);
 }
 
 /**

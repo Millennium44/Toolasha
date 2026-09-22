@@ -444,7 +444,7 @@ export function enhancementSweepParams(itemHrid) {
     return enhancementParamsFor('advisor', itemHrid);
 }
 
-function calculateEnhancementCost(itemHrid, startLevel, targetLevel, gameData) {
+export function calculateDirectEnhancementCost(itemHrid, startLevel, targetLevel, gameData) {
     // Genuine no-op: nothing to enhance
     if (targetLevel <= startLevel) {
         return 0;
@@ -2766,7 +2766,7 @@ export function calculateUpgradeCost(candidate, gameData, isSelf = true) {
         }
 
         // Fallback: enhancement cost estimate with protection
-        return calculateEnhancementCost(
+        return calculateDirectEnhancementCost(
             candidate.currentHrid,
             candidate.currentLevel,
             candidate.upgradeLevel,
@@ -2896,7 +2896,7 @@ function resolveUpgradeBuyPrice(itemHrid, enhancementLevel, gameData) {
 
         // No listing at the target level: base item price + enhancement cost
         const basePrice = resolveItemPrice(itemHrid, { side: 'buy', enhancementLevel: 0 }).price ?? 0;
-        const enhanceCost = calculateEnhancementCost(itemHrid, 0, enhancementLevel, gameData);
+        const enhanceCost = calculateDirectEnhancementCost(itemHrid, 0, enhancementLevel, gameData);
         // Unknown enhancement cost must stay unknown — pricing the item as a
         // bare +0 craft would understate an enhanced buy by the whole enhance path
         if (enhanceCost == null) {
