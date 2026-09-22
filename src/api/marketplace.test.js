@@ -122,12 +122,58 @@ describe('MarketAPI automatic snapshot refresh', () => {
         vi.resetModules();
         vi.useFakeTimers();
         vi.stubGlobal('fetch', vi.fn());
+        // No spread unless a test asks for one, so the cadence tests read exact expiries
+        vi.spyOn(Math, 'random').mockReturnValue(0);
         createMocks(true);
     });
 
     afterEach(() => {
         vi.useRealTimers();
         vi.unstubAllGlobals();
+        vi.restoreAllMocks();
+    });
+
+    test('each check lands a random 0-60 s after the cache expiry', async () => {
+        Math.random.mockReturnValue(0.5);
+        const { default: marketAPI } = await import('./marketplace.js');
+        const refresh = vi.spyOn(marketAPI, 'fetch').mockResolvedValue(null);
+
+        marketAPI.startAutoRefresh();
+        await vi.advanceTimersByTimeAsync(marketAPI.CACHE_DURATION + 29_999);
+        expect(refresh).not.toHaveBeenCalled();
+
+        await vi.advanceTimersByTimeAsync(1);
+        expect(refresh).toHaveBeenCalledTimes(1);
+        marketAPI.stopAutoRefresh();
+    });
+
+    test('a tab whose spread-out check finds the shared cache already refreshed does not fetch', async () => {
+        Math.random.mockReturnValue(0.5);
+        vi.setSystemTime(1_000_000);
+        const { get, getJSON } = createMocks(true);
+        let cachedAt = Date.now() - 14 * 60_000;
+        get.mockImplementation(async (key) => (key === 'Toolasha_marketAPI_timestamp' ? cachedAt : null));
+        getJSON.mockImplementation(async (key) =>
+            key === 'Toolasha_marketAPI_json'
+                ? { marketData: { '/items/cheese': { 0: { a: 20, b: 19 } } }, timestamp: 1 }
+                : {}
+        );
+        fetch.mockResolvedValue({
+            ok: true,
+            json: async () => ({ marketData: { '/items/cheese': { 0: { a: 21, b: 20 } } }, timestamp: 2 }),
+        });
+        const { default: marketAPI } = await import('./marketplace.js');
+
+        marketAPI.startAutoRefresh();
+        await marketAPI.fetch();
+
+        // The shared cache expires a minute from now; another tab refreshes it ten seconds after
+        await vi.advanceTimersByTimeAsync(70_000);
+        cachedAt = Date.now();
+        await vi.advanceTimersByTimeAsync(20_000);
+
+        expect(fetch).not.toHaveBeenCalled();
+        marketAPI.stopAutoRefresh();
     });
 
     test('rechecks long-lived sessions on the cache cadence without forcing a request', async () => {

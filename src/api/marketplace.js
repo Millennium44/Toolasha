@@ -62,6 +62,12 @@ class MarketAPI {
         this._cacheExpiresAt = null;
         /** Invalidates a refresh callback that settles after stop/restart. */
         this._autoRefreshGeneration = 0;
+        /**
+         * Upper bound of the random delay added to each automatic check. Every open game tab
+         * shares one cache and so one expiry; without a spread they would all fetch at that
+         * instant. Spread out, the first tab refreshes the shared cache and the rest find it fresh.
+         */
+        this.AUTO_REFRESH_JITTER_MS = 60_000;
     }
 
     /**
@@ -87,11 +93,13 @@ class MarketAPI {
 
     /**
      * Schedule one cache check, then align the next one to the cache that check observed.
-     * @param {number} delay - Milliseconds until the check
+     * The check lands a random 0–60 s after `delay` (see AUTO_REFRESH_JITTER_MS).
+     * @param {number} delay - Milliseconds until the cache expires
      * @param {number} generation - Auto-refresh lifecycle generation
      * @private
      */
     _scheduleAutoRefresh(delay, generation) {
+        const jitter = Math.floor(Math.random() * this.AUTO_REFRESH_JITTER_MS);
         this._autoRefreshInterval = setTimeout(async () => {
             this._autoRefreshInterval = null;
             try {
@@ -103,7 +111,7 @@ class MarketAPI {
                 const remaining = (this._cacheExpiresAt ?? 0) - Date.now();
                 this._scheduleAutoRefresh(remaining > 0 ? remaining : this.CACHE_DURATION, generation);
             }
-        }, delay);
+        }, delay + jitter);
     }
 
     /** Stop the page-lifetime base-snapshot refresh interval. */
