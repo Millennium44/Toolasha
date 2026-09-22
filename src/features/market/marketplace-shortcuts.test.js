@@ -145,6 +145,31 @@ describe('Marketplace Action dropdown portal', () => {
         expect(dropdown._dropdownPanel.style.display).toBe('flex');
     });
 
+    test('watches the document only while a portaled panel is open', async () => {
+        marketplaceShortcuts.closeAllDropdowns();
+        const menu = actionMenu();
+        const dropdown = marketplaceShortcuts.buildDropdown(menu, '/items/cheese', 0);
+        menu.appendChild(dropdown);
+        const toggle = dropdown.querySelector('.mwi-marketplace-dropdown-toggle');
+        expect(marketplaceShortcuts.portalObserver).toBeNull();
+
+        toggle.click();
+        expect(marketplaceShortcuts.portalObserver).not.toBeNull();
+
+        toggle.click();
+        expect(marketplaceShortcuts.portalObserver).toBeNull();
+
+        toggle.click();
+        document.body.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+        expect(marketplaceShortcuts.portalObserver).toBeNull();
+
+        // The game removing an open panel's menu also ends the watch
+        toggle.click();
+        menu.remove();
+        await new Promise((resolve) => setTimeout(resolve, 0));
+        expect(marketplaceShortcuts.portalObserver).toBeNull();
+    });
+
     test("removing the game's item menu removes its portaled panel", async () => {
         const menu = actionMenu();
         const dropdown = marketplaceShortcuts.buildDropdown(menu, '/items/cheese', 0);

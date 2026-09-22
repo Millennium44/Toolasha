@@ -68,16 +68,31 @@ class MarketplaceShortcuts {
             if (event.key === 'Escape') this.closeAllDropdowns();
         };
         document.addEventListener('keydown', this.escapeHandler);
+    }
 
-        // The panel is portaled to <body>, so React removing the native item menu
-        // does not remove it automatically. Watch removals and release any portal
-        // whose wrapper left the document.
-        const unregisterPortalObserver = domObserver.onReady('MarketplaceShortcuts_portals', () => {
-            this.portalObserver?.disconnect();
-            this.portalObserver = new MutationObserver(() => this.removeDetachedDropdowns());
-            this.portalObserver.observe(document.body, { childList: true, subtree: true });
+    /**
+     * Watch for the game removing an item menu while one of its portaled panels is open.
+     *
+     * The panel lives in <body>, so React removing the native menu does not take it along; an
+     * open one would be left floating. Only an open panel is visible, so the whole-document
+     * observer runs only while one is — a closed orphan is swept by the next click or Escape.
+     */
+    watchOpenPortals() {
+        if (this.portalObserver || !document.body) return;
+        this.portalObserver = new MutationObserver(() => {
+            this.removeDetachedDropdowns();
+            this.stopWatchingPortalsIfIdle();
         });
-        this.unregisterHandlers.push(unregisterPortalObserver);
+        this.portalObserver.observe(document.body, { childList: true, subtree: true });
+    }
+
+    /** Disconnect the portal observer once no panel is open. */
+    stopWatchingPortalsIfIdle() {
+        for (const wrapper of this.dropdowns) {
+            if (wrapper._isDropdownOpen?.()) return;
+        }
+        this.portalObserver?.disconnect();
+        this.portalObserver = null;
     }
 
     /**
@@ -274,6 +289,7 @@ class MarketplaceShortcuts {
             panel.style.display = 'none';
             const chevron = toggle.querySelector('.mwi-mp-chevron');
             if (chevron) chevron.style.transform = '';
+            this.stopWatchingPortalsIfIdle();
         };
 
         toggle.addEventListener('click', (e) => {
@@ -291,12 +307,15 @@ class MarketplaceShortcuts {
             panel.style.display = open ? 'flex' : 'none';
             const chevron = toggle.querySelector('.mwi-mp-chevron');
             if (chevron) chevron.style.transform = open ? 'rotate(180deg)' : '';
+            if (open) this.watchOpenPortals();
+            else this.stopWatchingPortalsIfIdle();
         });
 
         wrapper.appendChild(toggle);
         document.body.appendChild(panel);
         wrapper._dropdownPanel = panel;
         wrapper._closeDropdown = closePanel;
+        wrapper._isDropdownOpen = () => open;
         this.dropdowns.add(wrapper);
         return wrapper;
     }
