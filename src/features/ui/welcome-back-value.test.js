@@ -365,6 +365,16 @@ describe('injecting the row', () => {
 });
 
 describe('the feature wiring', () => {
+    test('catches up when the game mounted the welcome modal before feature initialization', () => {
+        market.prices['/items/milk'] = { ask: 20, bid: 10 };
+        const modal = welcomeModal(`${tile('milk', '100')}<div>02:00:00</div>`);
+
+        welcomeBackValue.initialize();
+
+        expect(modal.querySelector(`.${ROW_CLASS}`).textContent).toContain('Net 1,000');
+        welcomeBackValue.cleanup();
+    });
+
     test('watches for the modal and enriches it when it appears', () => {
         welcomeBackValue.initialize();
         expect(observer.handlers).toHaveLength(1);
@@ -393,5 +403,22 @@ describe('the feature wiring', () => {
 
         expect(observer.unregistered).toBe(1);
         expect(document.querySelector(`.${ROW_CLASS}`)).toBeNull();
+    });
+
+    test('a same-node reconnect redraws the value after the native modal contents change', async () => {
+        welcomeBackValue.initialize();
+        market.prices['/items/milk'] = { ask: 20, bid: 10 };
+        const modal = welcomeModal(`${tile('milk', '100')}<div>02:00:00</div>`);
+        observer.handlers[0].callback(modal);
+        expect(modal.querySelector(`.${ROW_CLASS}`).textContent).toContain('Net 1,000');
+
+        // The game reuses this element across a same-character reconnect. Its own fields update
+        // in place, so an insertion-only observer never announces a second modal node.
+        modal.querySelector('[class*="Item_count"]').textContent = '200';
+        await new Promise((resolve) => setTimeout(resolve, 0));
+
+        expect(modal.querySelectorAll(`.${ROW_CLASS}`)).toHaveLength(1);
+        expect(modal.querySelector(`.${ROW_CLASS}`).textContent).toContain('Net 2,000');
+        welcomeBackValue.cleanup();
     });
 });
