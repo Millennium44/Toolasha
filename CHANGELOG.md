@@ -6,6 +6,8 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+<!-- shipped in 3.58.0 -->
+
 ### Arrange My Listings by dragging
 
 - My Listings rows now have a drag handle (and keyboard Up/Down) so players can keep their listings in a personal order, remembered per character. It only changes what you see, yields to an active column sort, and Escape cancels a drag. Off by default; turn it on under Market settings.
@@ -3653,41 +3655,38 @@ The simulator valued every drop at its gross market price, so profit ignored the
 
 ## [3.58.0](https://github.com/Millennium44/Toolasha/compare/v3.57.1...v3.58.0) (2026-09-22)
 
-
 ### Features
 
-* let players arrange their market listings ([99e29ef](https://github.com/Millennium44/Toolasha/commit/99e29effd5e24f9e258beb10cd75bd8e5e284348))
-* port and audit upstream improvements ([#186](https://github.com/Millennium44/Toolasha/issues/186)) ([66c4ca3](https://github.com/Millennium44/Toolasha/commit/66c4ca3d2eb976ee6c51efabe3aec2a6ba6b0ddd))
-* simulate every dungeon in one run ([cd6fc30](https://github.com/Millennium44/Toolasha/commit/cd6fc308b0607522eda2ec79859617187ea47b86))
-
+- let players arrange their market listings ([99e29ef](https://github.com/Millennium44/Toolasha/commit/99e29effd5e24f9e258beb10cd75bd8e5e284348))
+- port and audit upstream improvements ([#186](https://github.com/Millennium44/Toolasha/issues/186)) ([66c4ca3](https://github.com/Millennium44/Toolasha/commit/66c4ca3d2eb976ee6c51efabe3aec2a6ba6b0ddd))
+- simulate every dungeon in one run ([cd6fc30](https://github.com/Millennium44/Toolasha/commit/cd6fc308b0607522eda2ec79859617187ea47b86))
 
 ### Bug Fixes
 
-* apply listing order toggle immediately ([016d4ed](https://github.com/Millennium44/Toolasha/commit/016d4ed764d636e7d3fcbd8798a467e5338f647b))
-* cap dungeon sim parties at five and read the sweep cap from the chosen zones ([49a5222](https://github.com/Millennium44/Toolasha/commit/49a5222dd0417139ac39643319c63e0708516603))
-* guard cancelled sync imports and require reload ([18d2e8c](https://github.com/Millennium44/Toolasha/commit/18d2e8c65a5ef5e2d804b31fdde33e0048ea1e07))
-* harden labyrinth replay ownership ([14283d4](https://github.com/Millennium44/Toolasha/commit/14283d42ab0ec22df20b3bc120829e2092f963f0))
-* harden userscript dependency startup checks ([34e22b9](https://github.com/Millennium44/Toolasha/commit/34e22b9274b8623ed62ebec69f83f441562436fb))
-* keep an hourglass price after its notice goes away ([6fc5d48](https://github.com/Millennium44/Toolasha/commit/6fc5d48b8a40e095dffee9c358d7583412de63f5))
-* keep charts optional at startup and tighten welcome back, sync and settings saves ([4ece4a8](https://github.com/Millennium44/Toolasha/commit/4ece4a8ba1f7bbbe5dbc7f05d9e4483e363531cd))
-* keep goal planner current through concurrent edits and source switches ([c484719](https://github.com/Millennium44/Toolasha/commit/c484719edb21bebc83859b1fd55a3436fa905db5))
-* keep held-back sync records retryable ([14e7b1f](https://github.com/Millennium44/Toolasha/commit/14e7b1f8bd6aa6c036067ab38be152d0d21e2ba9))
-* keep listing drag order in control ([abc56fd](https://github.com/Millennium44/Toolasha/commit/abc56fdb9025833534badac3341a84367bb785da))
-* keep nested restores held and report refused settings writes ([58196dc](https://github.com/Millennium44/Toolasha/commit/58196dc9d269eb0345918aef50e94ebad80209d1))
-* keep sync locked while a cancelled import finishes ([ef35dfa](https://github.com/Millennium44/Toolasha/commit/ef35dfa17905f9a07d8f34b392f8254d6fab629b))
-* keep welcome back values paired with their modal ([dd758d8](https://github.com/Millennium44/Toolasha/commit/dd758d8e0d1f29ea6fbff2024cfee0cd72724223))
-* preserve active curse damage on combat revive ([d72019d](https://github.com/Millennium44/Toolasha/commit/d72019dcae06c1f8922d3288e2a11d3bb78765ac))
-* preserve notice history when a storage read fails ([9d83f0a](https://github.com/Millennium44/Toolasha/commit/9d83f0aeda533dba1a036bb1c96ae6622aee8c5f))
-* preserve patient marketplace prices ([1733035](https://github.com/Millennium44/Toolasha/commit/1733035db76a0ffa61c46a860f7361b055d1d4a7))
-* release detached listing table handlers ([d9948b0](https://github.com/Millennium44/Toolasha/commit/d9948b06acf9eb24725f087c6fd0612f178d5a12))
-* retry goal planner pricing after a failed refresh with a queued edit ([3204806](https://github.com/Millennium44/Toolasha/commit/32048068ade2a82530af8f538592159c5337adf5))
-* ship listing drag order off by default ([55b6ccb](https://github.com/Millennium44/Toolasha/commit/55b6ccbaa6b3076270ceb8948c4a946b6d7b8558))
-* stop stale listing orders and interrupted drags pinning the listings table ([5485225](https://github.com/Millennium44/Toolasha/commit/548522523616b2bf3a18f9d30041432a2993fa70))
-
+- apply listing order toggle immediately ([016d4ed](https://github.com/Millennium44/Toolasha/commit/016d4ed764d636e7d3fcbd8798a467e5338f647b))
+- cap dungeon sim parties at five and read the sweep cap from the chosen zones ([49a5222](https://github.com/Millennium44/Toolasha/commit/49a5222dd0417139ac39643319c63e0708516603))
+- guard cancelled sync imports and require reload ([18d2e8c](https://github.com/Millennium44/Toolasha/commit/18d2e8c65a5ef5e2d804b31fdde33e0048ea1e07))
+- harden labyrinth replay ownership ([14283d4](https://github.com/Millennium44/Toolasha/commit/14283d42ab0ec22df20b3bc120829e2092f963f0))
+- harden userscript dependency startup checks ([34e22b9](https://github.com/Millennium44/Toolasha/commit/34e22b9274b8623ed62ebec69f83f441562436fb))
+- keep an hourglass price after its notice goes away ([6fc5d48](https://github.com/Millennium44/Toolasha/commit/6fc5d48b8a40e095dffee9c358d7583412de63f5))
+- keep charts optional at startup and tighten welcome back, sync and settings saves ([4ece4a8](https://github.com/Millennium44/Toolasha/commit/4ece4a8ba1f7bbbe5dbc7f05d9e4483e363531cd))
+- keep goal planner current through concurrent edits and source switches ([c484719](https://github.com/Millennium44/Toolasha/commit/c484719edb21bebc83859b1fd55a3436fa905db5))
+- keep held-back sync records retryable ([14e7b1f](https://github.com/Millennium44/Toolasha/commit/14e7b1f8bd6aa6c036067ab38be152d0d21e2ba9))
+- keep listing drag order in control ([abc56fd](https://github.com/Millennium44/Toolasha/commit/abc56fdb9025833534badac3341a84367bb785da))
+- keep nested restores held and report refused settings writes ([58196dc](https://github.com/Millennium44/Toolasha/commit/58196dc9d269eb0345918aef50e94ebad80209d1))
+- keep sync locked while a cancelled import finishes ([ef35dfa](https://github.com/Millennium44/Toolasha/commit/ef35dfa17905f9a07d8f34b392f8254d6fab629b))
+- keep welcome back values paired with their modal ([dd758d8](https://github.com/Millennium44/Toolasha/commit/dd758d8e0d1f29ea6fbff2024cfee0cd72724223))
+- preserve active curse damage on combat revive ([d72019d](https://github.com/Millennium44/Toolasha/commit/d72019dcae06c1f8922d3288e2a11d3bb78765ac))
+- preserve notice history when a storage read fails ([9d83f0a](https://github.com/Millennium44/Toolasha/commit/9d83f0aeda533dba1a036bb1c96ae6622aee8c5f))
+- preserve patient marketplace prices ([1733035](https://github.com/Millennium44/Toolasha/commit/1733035db76a0ffa61c46a860f7361b055d1d4a7))
+- release detached listing table handlers ([d9948b0](https://github.com/Millennium44/Toolasha/commit/d9948b06acf9eb24725f087c6fd0612f178d5a12))
+- retry goal planner pricing after a failed refresh with a queued edit ([3204806](https://github.com/Millennium44/Toolasha/commit/32048068ade2a82530af8f538592159c5337adf5))
+- ship listing drag order off by default ([55b6ccb](https://github.com/Millennium44/Toolasha/commit/55b6ccbaa6b3076270ceb8948c4a946b6d7b8558))
+- stop stale listing orders and interrupted drags pinning the listings table ([5485225](https://github.com/Millennium44/Toolasha/commit/548522523616b2bf3a18f9d30041432a2993fa70))
 
 ### Documentation
 
-* give every coding agent the workflow rules, not just one ([780716b](https://github.com/Millennium44/Toolasha/commit/780716b95088734bee664756dc08f8b88c2fa867))
+- give every coding agent the workflow rules, not just one ([780716b](https://github.com/Millennium44/Toolasha/commit/780716b95088734bee664756dc08f8b88c2fa867))
 
 ## [3.57.1](https://github.com/Millennium44/Toolasha/compare/v3.57.0...v3.57.1) (2026-09-21)
 
