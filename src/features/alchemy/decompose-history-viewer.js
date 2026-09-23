@@ -32,6 +32,14 @@ import {
 } from './history-totals-table.js';
 import { renderCatalystColumnHeader, renderCatalystCountCell } from './alchemy-catalyst-columns.js';
 import { computeExpectedSuccesses, formatExpectedSuccesses } from './alchemy-expected-successes.js';
+import {
+    appendPreFixMarker,
+    createPreFixToggle,
+    loadIncludePreFix,
+    preFixLegend,
+    saveIncludePreFix,
+    totalsSessions,
+} from './alchemy-pre-fix-sessions.js';
 import { getAlchemyOutputShopValue, describeShopValue } from './alchemy-shop-value.js';
 
 const CATALYST_OF_DECOMPOSITION_HRID = '/items/catalyst_of_decomposition';
@@ -178,6 +186,10 @@ class DecomposeHistoryViewer {
         // it is never persisted back to storage
         this.profitCache = new Map();
 
+        // Whether the totals table sums sessions recorded before the 2026-09-23
+        // tracker fix; remembered per window, read on open
+        this.includePreFix = true;
+
         // Tab injection
         this.alchemyTab = null;
         this.tabWatcher = null;
@@ -313,6 +325,7 @@ class DecomposeHistoryViewer {
      */
     async openModal() {
         this.sessions = await decomposeHistoryTracker.loadSessions();
+        this.includePreFix = await loadIncludePreFix('decompose');
         this.profitCache.clear();
         this.cachedDateRange = null;
         this.applyFilters();
@@ -825,6 +838,7 @@ class DecomposeHistoryViewer {
                 // Session Start
                 const dateCell = document.createElement('td');
                 dateCell.textContent = formatDateTime(new Date(session.startTime));
+                appendPreFixMarker(dateCell, session, 'decompose');
                 dateCell.style.padding = '6px 10px';
                 row.appendChild(dateCell);
 
@@ -1034,7 +1048,7 @@ class DecomposeHistoryViewer {
      * @returns {Array<Object>} One entry per distinct inputItemHrid
      */
     computeInputItemTotals() {
-        return groupSessionsByInputItem(this.filteredSessions, {
+        return groupSessionsByInputItem(totalsSessions(this.filteredSessions, this.includePreFix), {
             getDetail: (session) => this.profitCache.get(session.id) || this.computeSessionProfit(session),
             getSortName: (hrid) => this.getItemName(hrid),
             createGroup: (hrid) => ({
@@ -1196,7 +1210,20 @@ class DecomposeHistoryViewer {
             heading: 'Totals by Input Item',
             columns: DECOMPOSE_TOTALS_COLUMNS,
             rows,
-            legendParts: DECOMPOSE_TOTALS_LEGEND,
+            legendParts: [...DECOMPOSE_TOTALS_LEGEND, preFixLegend('decompose')],
+            controls: createPreFixToggle({
+                sessions: this.filteredSessions,
+                includePreFix: this.includePreFix,
+                onChange: (include) => {
+                    this.includePreFix = include;
+                    saveIncludePreFix('decompose', include);
+                    this.renderTotals();
+                },
+            }),
+            emptyText:
+                this.filteredSessions.length > 0 && !this.includePreFix
+                    ? 'Every session in view was recorded before the fix — tick the box above to include them.'
+                    : null,
         });
     }
 

@@ -156,17 +156,33 @@ export function totalsRowStyle(index, { pooled = false, flagged = false } = {}) 
  * @param {Array<{label: string, title?: string}>} section.columns - Header cells
  * @param {Array<HTMLTableRowElement>} section.rows - Body rows, in display order
  * @param {Array<string>} [section.legendParts] - Footnote entries; omitted entries draw no legend
+ * @param {HTMLElement|null} [section.controls] - Drawn between the heading and the table
+ * @param {string|null} [section.emptyText] - With no rows, draw the heading, controls and this line
+ *   instead of nothing — a control that emptied the table has to stay reachable to undo it
  * @returns {HTMLTableElement|null} The table, for callers that want to inspect it
  */
-export function renderTotalsSection(container, { heading, columns, rows, legendParts = [] }) {
+export function renderTotalsSection(
+    container,
+    { heading, columns, rows, legendParts = [], controls = null, emptyText = null }
+) {
     if (!container) return null;
     while (container.firstChild) container.removeChild(container.firstChild);
-    if (rows.length === 0) return null;
+    if (rows.length === 0 && !emptyText) return null;
 
     const headingEl = document.createElement('div');
     headingEl.textContent = heading;
     headingEl.style.cssText = `color: #fff; font-weight: bold; font-size: ${HISTORY_TYPE_SCALE.heading}; margin: 18px 0 8px;`;
     container.appendChild(headingEl);
+    if (controls) container.appendChild(controls);
+
+    if (rows.length === 0) {
+        const empty = document.createElement('div');
+        empty.className = 'mwi-alchemy-totals-empty';
+        empty.textContent = emptyText;
+        empty.style.cssText = `color: #888; font-size: ${HISTORY_TYPE_SCALE.body}; padding: 6px 10px;`;
+        container.appendChild(empty);
+        return null;
+    }
 
     const table = document.createElement('table');
     table.style.cssText = `width: 100%; min-width: max-content; border-collapse: collapse; color: #fff; white-space: nowrap; font-size: ${HISTORY_TYPE_SCALE.body};`;

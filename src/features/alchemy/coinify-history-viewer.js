@@ -29,6 +29,14 @@ import {
 } from './history-totals-table.js';
 import { renderCatalystColumnHeader, renderCatalystCountCell } from './alchemy-catalyst-columns.js';
 import { computeExpectedSuccesses, formatExpectedSuccesses } from './alchemy-expected-successes.js';
+import {
+    appendPreFixMarker,
+    createPreFixToggle,
+    loadIncludePreFix,
+    preFixLegend,
+    saveIncludePreFix,
+    totalsSessions,
+} from './alchemy-pre-fix-sessions.js';
 
 const CATALYST_OF_COINIFICATION_HRID = '/items/catalyst_of_coinification';
 const PRIME_CATALYST_HRID = '/items/prime_catalyst';
@@ -165,6 +173,10 @@ class CoinifyHistoryViewer {
         // it is never persisted back to storage
         this.profitCache = new Map();
 
+        // Whether the totals table sums sessions recorded before the 2026-09-23
+        // tracker fix; remembered per window, read on open
+        this.includePreFix = true;
+
         // Tab injection
         this.alchemyTab = null;
         this.tabWatcher = null;
@@ -298,6 +310,7 @@ class CoinifyHistoryViewer {
      */
     async openModal() {
         this.sessions = await coinifyHistoryTracker.loadSessions();
+        this.includePreFix = await loadIncludePreFix('coinify');
         this.profitCache.clear();
         this.cachedDateRange = null;
         this.applyFilters();
@@ -739,6 +752,7 @@ class CoinifyHistoryViewer {
                 // Session Start
                 const dateCell = document.createElement('td');
                 dateCell.textContent = formatDateTime(new Date(session.startTime));
+                appendPreFixMarker(dateCell, session, 'coinify');
                 dateCell.style.padding = '6px 10px';
                 row.appendChild(dateCell);
 
@@ -884,7 +898,7 @@ class CoinifyHistoryViewer {
      * @returns {Array<Object>} One entry per distinct inputItemHrid
      */
     computeInputItemTotals() {
-        return groupSessionsByInputItem(this.filteredSessions, {
+        return groupSessionsByInputItem(totalsSessions(this.filteredSessions, this.includePreFix), {
             getDetail: (session) => this.profitCache.get(session.id) || this.computeSessionProfit(session),
             getSortName: (hrid) => this.getItemName(hrid),
             createGroup: (hrid) => ({
@@ -932,7 +946,20 @@ class CoinifyHistoryViewer {
             heading: 'Totals by Input Item',
             columns: COINIFY_TOTALS_COLUMNS,
             rows,
-            legendParts: COINIFY_TOTALS_LEGEND,
+            legendParts: [...COINIFY_TOTALS_LEGEND, preFixLegend('coinify')],
+            controls: createPreFixToggle({
+                sessions: this.filteredSessions,
+                includePreFix: this.includePreFix,
+                onChange: (include) => {
+                    this.includePreFix = include;
+                    saveIncludePreFix('coinify', include);
+                    this.renderTotals();
+                },
+            }),
+            emptyText:
+                this.filteredSessions.length > 0 && !this.includePreFix
+                    ? 'Every session in view was recorded before the fix — tick the box above to include them.'
+                    : null,
         });
     }
 
