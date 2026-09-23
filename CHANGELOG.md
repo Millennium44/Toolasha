@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Transmute history counts a first-attempt self-return
+
+- A transmute run whose first attempt handed the item back no longer records that attempt as a failure, which had charged the input twice (one refined cape showed as a two-cape loss). Sessions already recorded keep their old figures.
+
 ### Drop rates follow the game's tier rules
 
 - Dungeon reward chances now include the game's 10%-per-tier boost, so a refinement chest is 33% at T1 and guaranteed at T2, matching the game's own reward list. Rare monster drops are no longer boosted by tier, since the game shows them at their base rate.
