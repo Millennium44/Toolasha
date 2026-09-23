@@ -453,7 +453,10 @@ class TaskStatistics {
             }
         }
 
-        const combinedTotal = rewardValue.total + (hasActionProfit ? totalActionProfit : 0);
+        // A coin-only fallback is useful for the rewards row while prices load,
+        // but it is not the board's full value. Keep the combined totals unknown
+        // until the tokens (and their task gifts) can be priced.
+        const combinedTotal = rewardValue.error ? null : rewardValue.total + (hasActionProfit ? totalActionProfit : 0);
 
         return {
             totalCoins,
@@ -465,7 +468,7 @@ class TaskStatistics {
             totalCompletionSeconds: totalCompletionSeconds > 0 ? totalCompletionSeconds : null,
             unpricedActionTasks,
             combinedTotal,
-            netTotal: combinedTotal - rerollSpend.totalValue,
+            netTotal: combinedTotal === null ? null : combinedTotal - rerollSpend.totalValue,
             taskDetails,
         };
     }
@@ -921,6 +924,7 @@ class TaskStatistics {
         // same "≥" the token valuation uses rather than passing for a firm figure
         const unpriced = rewards.unpricedActionTasks || 0;
         const partialSuffix = unpriced > 0 ? ` (${unpriced} unpriced)` : '';
+        const combinedIsPartial = unpriced > 0 || rewards.tokenValue?.isPartial;
         const totalStr =
             rewards.totalActionProfit !== null
                 ? `${unpriced > 0 ? '≥ ' : ''}${formatKMB(Math.round(rewards.totalActionProfit))}${partialSuffix}`
@@ -939,13 +943,11 @@ class TaskStatistics {
         separator2.style.cssText = 'border-top: 1px solid #3a3a3a; margin: 6px 0;';
         section.appendChild(separator2);
 
-        section.appendChild(
-            this.createRow(
-                'Combined Total',
-                `${unpriced > 0 ? '≥ ' : ''}${formatKMB(Math.round(rewards.combinedTotal))}${partialSuffix}`,
-                config.COLOR_ACCENT
-            )
-        );
+        const combinedStr =
+            rewards.combinedTotal === null
+                ? 'N/A (token value unavailable)'
+                : `${combinedIsPartial ? '≥ ' : ''}${formatKMB(Math.round(rewards.combinedTotal))}${partialSuffix}`;
+        section.appendChild(this.createRow('Combined Total', combinedStr, config.COLOR_ACCENT));
 
         // Reroll spend already sunk into this board, and the total net of it
         const spend = rewards.rerollSpend;
@@ -968,11 +970,18 @@ class TaskStatistics {
                 )
             );
 
-            const netColor = rewards.netTotal >= 0 ? config.COLOR_PROFIT : config.COLOR_LOSS;
+            const netColor =
+                rewards.netTotal === null
+                    ? config.COLOR_TEXT_SECONDARY
+                    : rewards.netTotal >= 0
+                      ? config.COLOR_PROFIT
+                      : config.COLOR_LOSS;
             section.appendChild(
                 this.createRow(
                     'Net of Rerolls',
-                    `${unpriced > 0 ? '≥ ' : ''}${formatKMB(Math.round(rewards.netTotal))}${partialSuffix}`,
+                    rewards.netTotal === null
+                        ? 'N/A (token value unavailable)'
+                        : `${combinedIsPartial ? '≥ ' : ''}${formatKMB(Math.round(rewards.netTotal))}${partialSuffix}`,
                     netColor
                 )
             );

@@ -75,14 +75,17 @@ vi.mock('./task-profit-calculator.js', () => ({
         return coins + tokens * tokenData.tokenValue + taskCount * giftPerTask;
     },
     calculateTaskTokenValue: () => game.valuation,
-    calculateTaskRewardValue: (coins, tokens, taskCount) => ({
-        coins,
-        taskTokens: tokens * game.valuation.tokenValue,
-        purpleGift: taskCount * game.valuation.giftPerTask,
-        total: coins + tokens * game.valuation.tokenValue + taskCount * game.valuation.giftPerTask,
-        breakdown: {},
-        error: null,
-    }),
+    calculateTaskRewardValue: (coins, tokens, taskCount) =>
+        game.valuation.error
+            ? { coins, taskTokens: 0, purpleGift: 0, total: coins, breakdown: {}, error: game.valuation.error }
+            : {
+                  coins,
+                  taskTokens: tokens * game.valuation.tokenValue,
+                  purpleGift: taskCount * game.valuation.giftPerTask,
+                  total: coins + tokens * game.valuation.tokenValue + taskCount * game.valuation.giftPerTask,
+                  breakdown: {},
+                  error: null,
+              },
     calculateTaskProfit: async (taskData) => ({ action: game.actionProfits[taskData.description] ?? null }),
     getCowbellValue: () => 200000,
     // Null, not zero, for an item nothing can price — the payout card has to be
@@ -179,6 +182,22 @@ describe("Purple's Gift across a week of claims", () => {
 });
 
 describe('an action nobody can price', () => {
+    test('a token valuation failure cannot turn a board total into its coins alone', async () => {
+        game.valuation = { tokenValue: null, giftPerTask: null, error: 'Market data not loaded' };
+        game.quests = [task({ id: 1, coins: 5000, tokens: 4, actionHrid: '/actions/foraging/egg' })];
+        game.actionProfits['Foraging - Egg'] = { totalValue: 30000, hasMissingPrices: false };
+
+        const rewards = await taskStatistics.calculateRewardsSummary();
+        rewards.rerollSpend = { gold: 1000, cowbells: 0, cowbellValue: 200000, totalValue: 1000 };
+        const section = taskStatistics.createActionProfitSection(rewards);
+
+        expect(rewards.rewardValue.total).toBe(5000); // fallback still records the known coins
+        expect(rewards.combinedTotal).toBe(null);
+        expect(rewards.netTotal).toBe(null);
+        expect(section.textContent).toContain('Combined TotalN/A (token value unavailable)');
+        expect(section.textContent).toContain('Net of RerollsN/A (token value unavailable)');
+    });
+
     test('gathering’s null total stays null instead of becoming a break-even zero', async () => {
         game.quests = [task({ id: 1, actionHrid: '/actions/foraging/egg' })];
         game.actionProfits['Foraging - Egg'] = { totalValue: null, hasMissingPrices: true };
@@ -257,6 +276,20 @@ describe('an action nobody can price', () => {
 
         expect(section.textContent).not.toContain('≥');
         expect(section.textContent).not.toContain('unpriced');
+    });
+
+    test('a partially priced task token makes the combined total a floor too', async () => {
+        game.valuation = { tokenValue: 2000, giftPerTask: 10000, isPartial: true, partialDrops: 1, error: null };
+        game.quests = [task({ id: 1, coins: 1000, tokens: 1, actionHrid: '/actions/foraging/egg' })];
+        game.actionProfits['Foraging - Egg'] = { totalValue: 30000, hasMissingPrices: false };
+
+        const rewards = await taskStatistics.calculateRewardsSummary();
+        rewards.rerollSpend = { gold: 1000, cowbells: 0, cowbellValue: 200000, totalValue: 1000 };
+        rewards.netTotal = rewards.combinedTotal - rewards.rerollSpend.totalValue;
+        const section = taskStatistics.createActionProfitSection(rewards);
+
+        expect(section.textContent).toContain('Combined Total≥');
+        expect(section.textContent).toContain('Net of Rerolls≥');
     });
 });
 

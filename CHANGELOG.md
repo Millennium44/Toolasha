@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Task Statistics waits for token prices before totaling rewards
+
+- When Task Shop prices are unavailable, Task Statistics now leaves the combined board value and its net of rerolls unavailable instead of showing a coin-only amount as the full total. When a token is valued through a chest with unpriced contents, those totals now show that they are lower bounds.
+
 ### Combat drop estimates respect difficulty tiers
 
 - Drop Luck now excludes monster items that are locked until a higher difficulty tier, so low-tier runs are compared with rewards they can actually earn.
