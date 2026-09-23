@@ -10,6 +10,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 - Reconnecting to the same character no longer registers another Queue Monitor settings listener, so toggling the panel does not repeat its setup and teardown work.
 
+### Combat house targets follow the room filter
+
+- An open House Targets grid now updates when the skip-skilling-rooms setting changes, while keeping levels entered for rooms that remain visible.
+
 ### Combat sims show how old each party profile is
 
 - The Combat Sim shows each party member's cached profile age and warns when a member has no gear (a hidden profile) or no cached profile at all; exports to external sims list the same warnings instead of silently sending a gearless member.

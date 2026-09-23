@@ -91,6 +91,7 @@ const mocks = vi.hoisted(() => ({
     characterId: 'char1',
     /** Whether the House Upgrade target grid omits skilling-only rooms */
     skipSkillingRooms: false,
+    settingChangeCallbacks: new Map(),
 }));
 
 vi.mock('../../core/config.js', () => ({
@@ -105,6 +106,10 @@ vi.mock('../../core/config.js', () => ({
         },
         getSetting: (key, fallback = false) =>
             key === 'combatSim_upgradeSkipSkillingRooms' ? mocks.skipSkillingRooms : fallback,
+        onSettingChange: (key, callback) => {
+            mocks.settingChangeCallbacks.set(key, callback);
+            return () => mocks.settingChangeCallbacks.delete(key);
+        },
         getPricingModeLabel: () => 'Hybrid',
         getPricingModeDisplayLabel: () => 'Hybrid',
     },
@@ -4789,6 +4794,27 @@ describe('the House-targets grid and a room a loaded DTO does not carry', () => 
 
         expect(grid.textContent).not.toContain('Dairy Barn');
         expect(grid.textContent).toContain('Dojo');
+    });
+
+    test('a settings change refreshes an open grid and preserves combat room targets', () => {
+        mocks.houseRoomDetailMap['/house_rooms/dairy_barn'] = {
+            name: 'Dairy Barn',
+            globalBuffs: [{ typeHrid: '/buff_types/wisdom' }],
+        };
+        ui.panel.querySelector('#mwi-csim-house-targets-toggle').click();
+        const grid = ui.panel.querySelector('#mwi-csim-house-targets');
+        const dojo = grid.querySelector('[data-house-target="/house_rooms/dojo"]');
+        dojo.value = '7';
+        expect(grid.textContent).toContain('Dairy Barn');
+
+        mocks.skipSkillingRooms = true;
+        mocks.settingChangeCallbacks.get('combatSim_upgradeSkipSkillingRooms')?.(true);
+
+        expect(grid.textContent).not.toContain('Dairy Barn');
+        expect(grid.querySelector('[data-house-target="/house_rooms/dojo"]').value).toBe('7');
+        expect(ui._getHouseTargets()).toMatchObject({ '/house_rooms/dojo': 7 });
+        ui.destroy();
+        expect(mocks.settingChangeCallbacks.has('combatSim_upgradeSkipSkillingRooms')).toBe(false);
     });
 });
 

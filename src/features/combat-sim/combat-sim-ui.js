@@ -1827,6 +1827,7 @@ class CombatSimUI {
         this._runStartToken = 0;
         this._upgradeRunning = false;
         this._detachDrag = null;
+        this._unsubscribeSkipSkillingRooms = null;
         this.elapsedTimer = null;
         this._activePlayerTab = 'player1';
         this._playerInfo = [];
@@ -2465,6 +2466,20 @@ class CombatSimUI {
             if (opening) {
                 this._buildHouseTargets();
             }
+        });
+        this._unsubscribeSkipSkillingRooms = config.onSettingChange('combatSim_upgradeSkipSkillingRooms', () => {
+            const grid = this.panel?.querySelector('#mwi-csim-house-targets');
+            if (!grid || grid.style.display === 'none') return;
+            const entered = new Map(
+                [...grid.querySelectorAll('[data-house-target]')].map((input) => [
+                    input.dataset.houseTarget,
+                    input.value,
+                ])
+            );
+            this._buildHouseTargets();
+            grid.querySelectorAll('[data-house-target]').forEach((input) => {
+                if (entered.has(input.dataset.houseTarget)) input.value = entered.get(input.dataset.houseTarget);
+            });
         });
         this.panel.querySelector('#mwi-csim-shrine-cap-guild')?.addEventListener('change', () => {
             this._saveShrineCapToGuild();
@@ -6983,6 +6998,8 @@ class CombatSimUI {
         }
         this._detachDrag?.();
         this._detachDrag = null;
+        this._unsubscribeSkipSkillingRooms?.();
+        this._unsubscribeSkipSkillingRooms = null;
         cleanupUpgradeMarketAutofill();
         if (this.panel) {
             unregisterFloatingPanel(this.panel);
