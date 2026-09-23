@@ -49,7 +49,9 @@ export function getAlchemyCoinCost(itemDetails, alchemyType, bulkMultiplierOverr
     const bulkMultiplier = bulkMultiplierOverride || itemDetails.alchemyDetail?.bulkMultiplier || 1;
 
     if (LEVEL_PRICED_TYPES.has(alchemyType)) {
-        const itemLevel = itemDetails.itemLevel || 1;
+        // A level-less input (Labyrinth scrolls) bills at level 0: the game's panel charges 50
+        // per scroll decompose, which (10 + level) × 5 reaches only at level 0
+        const itemLevel = itemDetails.itemLevel || 0;
         return (10 + itemLevel) * 5 * bulkMultiplier;
     }
 

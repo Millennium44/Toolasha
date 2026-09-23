@@ -19,6 +19,11 @@ describe('getAlchemyCoinCost', () => {
         expect(getAlchemyCoinCost(item({ itemLevel: 10, sellPrice: 1_000_000 }), 'decompose')).toBe(100);
     });
 
+    test('a level-less input decomposes at level 0 — 50 per scroll, as the game panel shows', () => {
+        expect(getAlchemyCoinCost(item({ itemLevel: undefined }), 'decompose')).toBe(50);
+        expect(getAlchemyCoinCost(item({ itemLevel: 0 }), 'decompose')).toBe(50);
+    });
+
     test('unrefine is priced like decompose', () => {
         expect(getAlchemyCoinCost(item({ itemLevel: 10 }), 'unrefine')).toBe(100);
     });
@@ -59,8 +64,8 @@ describe('getAlchemyCoinCost', () => {
         expect(getAlchemyCoinCost(undefined, 'transmute')).toBe(0);
     });
 
-    test('a level-less item is treated as level 1', () => {
-        expect(getAlchemyCoinCost({ sellPrice: 0 }, 'decompose')).toBe(55);
+    test('a level-less item is treated as level 0', () => {
+        expect(getAlchemyCoinCost({ sellPrice: 0 }, 'decompose')).toBe(50);
     });
 });
 
