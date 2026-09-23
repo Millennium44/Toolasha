@@ -122,6 +122,8 @@ describe('MarketAPI automatic snapshot refresh', () => {
         vi.resetModules();
         vi.useFakeTimers();
         vi.stubGlobal('fetch', vi.fn());
+        // An uncontended Web Lock, granted at once; the cross-tab tests install their own
+        vi.stubGlobal('navigator', { locks: { request: async (name, _options, callback) => callback({ name }) } });
         // No spread unless a test asks for one, so the cadence tests read exact expiries
         vi.spyOn(Math, 'random').mockReturnValue(0);
         createMocks(true);
@@ -173,6 +175,92 @@ describe('MarketAPI automatic snapshot refresh', () => {
         await vi.advanceTimersByTimeAsync(20_000);
 
         expect(fetch).not.toHaveBeenCalled();
+        marketAPI.stopAutoRefresh();
+    });
+
+    test('two tabs whose checks land together make one request between them', async () => {
+        // A hidden tab's timers are batched to whole minutes, so two background tabs'
+        // spread-out checks can still fire at the same instant
+        vi.setSystemTime(1_000_000);
+        const shared = new Map([
+            ['Toolasha_marketAPI_timestamp', Date.now() - 20 * 60_000],
+            ['Toolasha_marketAPI_json', { marketData: { '/items/cheese': { 0: { a: 20, b: 19 } } }, timestamp: 1 }],
+        ]);
+        const write = (key, value, _store, immediate) => {
+            // A debounced write reaches the shared store only after the tab's 3 s debounce
+            if (immediate) shared.set(key, value);
+            else setTimeout(() => shared.set(key, value), 3000);
+            return Promise.resolve(true);
+        };
+        vi.doMock('../core/storage.js', () => ({
+            default: {
+                get: vi.fn(async (key) => shared.get(key) ?? null),
+                getJSON: vi.fn(async (key, _store, fallback) => shared.get(key) ?? fallback),
+                set: vi.fn(write),
+                setJSON: vi.fn(write),
+            },
+        }));
+        const held = new Map();
+        vi.stubGlobal('navigator', {
+            locks: {
+                request: async (name, options, callback) => {
+                    const previous = held.get(name) ?? Promise.resolve();
+                    let release;
+                    const mine = new Promise((resolve) => {
+                        release = resolve;
+                    });
+                    held.set(
+                        name,
+                        previous.then(() => mine)
+                    );
+                    await previous;
+                    try {
+                        return await callback({ name });
+                    } finally {
+                        release();
+                    }
+                },
+            },
+        });
+        fetch.mockImplementation(async () => {
+            await new Promise((resolve) => setTimeout(resolve, 500));
+            return {
+                ok: true,
+                json: async () => ({ marketData: { '/items/cheese': { 0: { a: 21, b: 20 } } }, timestamp: 2 }),
+            };
+        });
+        const { default: firstTab } = await import('./marketplace.js');
+        const secondTab = new firstTab.constructor();
+
+        firstTab.startAutoRefresh();
+        secondTab.startAutoRefresh();
+        await vi.advanceTimersByTimeAsync(firstTab.CACHE_DURATION + 5_000);
+
+        expect(fetch).toHaveBeenCalledTimes(1);
+        expect(secondTab.getPrice('/items/cheese', 0)).toEqual(firstTab.getPrice('/items/cheese', 0));
+        firstTab.stopAutoRefresh();
+        secondTab.stopAutoRefresh();
+    });
+
+    test('a refresh another tab never finishes stops holding up this tab after the wait', async () => {
+        vi.stubGlobal('navigator', {
+            locks: {
+                // Another tab holds the lock and its request never settles
+                request: (_name, options) =>
+                    new Promise((_resolve, reject) => {
+                        options.signal?.addEventListener('abort', () => reject(new Error('AbortError')));
+                    }),
+            },
+        });
+        const { default: marketAPI } = await import('./marketplace.js');
+        const refresh = vi.spyOn(marketAPI, 'fetch').mockResolvedValue(null);
+
+        marketAPI.startAutoRefresh();
+        await vi.advanceTimersByTimeAsync(marketAPI.CACHE_DURATION);
+        expect(refresh).not.toHaveBeenCalled();
+
+        await vi.advanceTimersByTimeAsync(marketAPI.REFRESH_LOCK_WAIT_MS);
+        expect(refresh).toHaveBeenCalledTimes(1);
         marketAPI.stopAutoRefresh();
     });
 

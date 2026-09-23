@@ -68,6 +68,14 @@ class MarketAPI {
          * instant. Spread out, the first tab refreshes the shared cache and the rest find it fresh.
          */
         this.AUTO_REFRESH_JITTER_MS = 60_000;
+        /**
+         * Web Lock one tab holds while its due check runs. The spread alone is not enough: a
+         * hidden tab's timers are batched to whole minutes, so background tabs' checks still
+         * coincide. Behind the lock the next tab re-reads the cache the first one just wrote.
+         */
+        this.REFRESH_LOCK_NAME = 'Toolasha_marketAPI_refresh';
+        /** How long a due check waits on another tab's refresh (a hung request) before its own. */
+        this.REFRESH_LOCK_WAIT_MS = 30_000;
     }
 
     /**
@@ -103,7 +111,7 @@ class MarketAPI {
         this._autoRefreshInterval = setTimeout(async () => {
             this._autoRefreshInterval = null;
             try {
-                if ((this._cacheExpiresAt ?? 0) <= Date.now()) await this.fetch();
+                if ((this._cacheExpiresAt ?? 0) <= Date.now()) await this._fetchUnderRefreshLock();
             } catch (error) {
                 this.logError('Auto-refresh fetch failed', error);
             } finally {
@@ -112,6 +120,36 @@ class MarketAPI {
                 this._scheduleAutoRefresh(remaining > 0 ? remaining : this.CACHE_DURATION, generation);
             }
         }, delay + jitter);
+    }
+
+    /**
+     * Run a due check while holding the cross-tab refresh lock.
+     *
+     * Web Locks are released when their tab dies, so a tab closed mid-refresh cannot wedge the
+     * others; a tab whose request hangs is waited on for REFRESH_LOCK_WAIT_MS at most. No Web
+     * Locks API runs the check unguarded.
+     * @returns {Promise<Object|null>} Whatever fetch() answers
+     * @private
+     */
+    async _fetchUnderRefreshLock() {
+        const locks = typeof navigator !== 'undefined' ? navigator.locks : null;
+        if (typeof locks?.request !== 'function') return this.fetch();
+
+        const controller = new AbortController();
+        const waitTimer = setTimeout(() => controller.abort(), this.REFRESH_LOCK_WAIT_MS);
+        let granted = false;
+        try {
+            return await locks.request(this.REFRESH_LOCK_NAME, { signal: controller.signal }, () => {
+                granted = true;
+                clearTimeout(waitTimer);
+                return this.fetch();
+            });
+        } catch (error) {
+            if (granted) throw error;
+            return this.fetch();
+        } finally {
+            clearTimeout(waitTimer);
+        }
     }
 
     /** Stop the page-lifetime base-snapshot refresh interval. */
@@ -217,7 +255,7 @@ class MarketAPI {
 
             if (response) {
                 // Cache the fresh data
-                this.cacheData(response);
+                const cacheWritten = this.cacheData(response);
                 this.marketData = response.marketData;
                 // API timestamp is in seconds, convert to milliseconds
                 this.lastFetchTimestamp = response.timestamp * 1000;
@@ -227,6 +265,8 @@ class MarketAPI {
                 networkAlert.hide();
                 // Notify listeners of price update
                 this.notifyListeners();
+                // Settled before returning, so a tab waiting on the refresh lock reads this copy
+                await cacheWritten;
                 return this.marketData;
             }
         } catch (error) {
@@ -331,14 +371,25 @@ class MarketAPI {
     }
 
     /**
-     * Cache market data
+     * Cache market data.
+     *
+     * Written immediately, not through the storage debounce: other tabs decide whether to fetch
+     * by reading this cache, and a copy parked for 3 s is one they cannot see.
      * @param {Object} data - API response to cache
+     * @returns {Promise<void>} Settles once both writes have been handed to storage
      */
-    cacheData(data) {
-        this._cacheExpiresAt = Date.now() + this.CACHE_DURATION;
+    async cacheData(data) {
+        const cachedAt = Date.now();
+        this._cacheExpiresAt = cachedAt + this.CACHE_DURATION;
         this._alignAutoRefresh();
-        storage.setJSON(this.CACHE_KEY_DATA, data, 'settings');
-        storage.set(this.CACHE_KEY_TIMESTAMP, Date.now(), 'settings');
+        try {
+            await Promise.all([
+                storage.setJSON(this.CACHE_KEY_DATA, data, 'settings', true),
+                storage.set(this.CACHE_KEY_TIMESTAMP, cachedAt, 'settings', true),
+            ]);
+        } catch (error) {
+            this.logError('Caching the snapshot failed', error);
+        }
     }
 
     /**
