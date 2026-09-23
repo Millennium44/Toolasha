@@ -225,6 +225,19 @@ The loot-log statistics (`src/features/actions/loot-log-stats.js`) are ported fr
 **[Edible Tools](https://greasyfork.org/en/scripts/499963)** by Truth_Light (CC-BY-NC-SA-4.0 —
 same licence as this project; this entry is the attribution the BY clause requires).
 
+## Trade Volume Display
+
+The 1d/3d/5d trade-stats table pinned to the marketplace's current-item card
+(`src/features/market/market-volume-stats.js`, `src/utils/market-volume-stats-math.js`) is
+translated and adapted from **交易量显示 (Trade Volume Display)** by baozhi & SukiSukiDaiSuki
+(CC-BY-NC-SA-4.0 — same licence as this project; this entry is the attribution the BY clause
+requires). Its market-stats table, the volume-weighted average/median, the price-tier snapping and
+the hourly buy/sell-split heuristic were the source; the listing-time crowdsourcing, the
+`MessageEvent.prototype.data` hook, the IndexedDB cache and free dragging were left behind in favour
+of Toolasha's own equivalents.
+
+<https://greasyfork.org/en/scripts/570243>
+
 ## mooket I
 
 The mooket I pooled market-history endpoint by **IOMisaka** is one of the two sources the

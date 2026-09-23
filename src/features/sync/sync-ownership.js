@@ -159,6 +159,7 @@ export const OWNED_KEY_PREFIXES = [
     'marketHistoryKMBFormat',
     'mooketWatchlist',
     'mooketPanelPrefs',
+    'market_volumeStats_columns',
     'bulkSellStatusExpanded',
     'watchlist',
     'tradeHistory',

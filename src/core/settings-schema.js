@@ -1633,6 +1633,14 @@ export const settingsGroups = {
                 default: false,
                 help: 'Adds a History tab to the marketplace: a floating chart of an item\u2019s ask, bid, average traded price and volume over the last day to six months, plus a row of pinned items. The game shows what an item costs now and nothing about what it cost before, which makes every price impossible to judge. The data comes from the pooled dataset the mooket project (by Q7, MIT) maintains at q7.nainai.eu.org. This talks to a third party in both directions and is off until you turn it on: it tells that server which items you look up, and it sends back the order books you open, which is where the history you read comes from \u2014 reading a pooled dataset without feeding it is what empties it.',
             },
+            market_volumeStats: {
+                id: 'market_volumeStats',
+                label: 'Market: 1d/3d/5d trade stats on the order book',
+                type: 'checkbox',
+                default: true,
+                help: 'Pins a small table to the current-item card on the order book: average price, median price, volume and an estimated buy/sell split over the last 1, 3 and 5 days. Ported from the "交易量显示" (Trade Volume Display) userscript by baozhi & SukiSukiDaiSuki (greasyfork.org/en/scripts/570243, CC-BY-NC-SA-4.0). Reads through the same pooled dataset as "Market: Price history panel" above — this setting does nothing unless that one is also on, since the data comes from the same third-party server.',
+                requires: 'market_pooledHistory',
+            },
             market_historySource: {
                 id: 'market_historySource',
                 label: 'Market: Price history data source',

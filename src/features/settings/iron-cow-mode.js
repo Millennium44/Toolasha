@@ -42,6 +42,7 @@ export const IRON_COW_SETTINGS = new Set([
     'market_showHistoryViewer',
     'market_showPhiloCalculator',
     'market_showQueueLength',
+    'market_volumeStats',
     // Profit / pricing calculations
     'profitCalc_pricingMode',
     'profitCalc_patientTickBuy',

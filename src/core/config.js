@@ -266,6 +266,13 @@ class Config {
                 description: "Calculate expected value of transmuting items into Philosopher's Stones",
                 settingKey: 'market_showPhiloCalculator',
             },
+            market_volumeStats: {
+                enabled: true,
+                name: 'Market Volume Stats',
+                category: 'Market',
+                description: '1d/3d/5d average/median price, volume and estimated buy/sell split on the order book',
+                settingKey: 'market_volumeStats',
+            },
 
             // Action Features
             actionTimeDisplay: {

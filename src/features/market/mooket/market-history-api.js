@@ -254,9 +254,13 @@ class MarketHistoryAPI {
      * @param {string} itemHrid - Item
      * @param {number} enhancementLevel - Enhancement level
      * @param {number} days - How far back
+     * @param {Object} [options]
+     * @param {boolean} [options.force] - Skip the cached answer and ask the pool
+     *   again, e.g. a player-pressed refresh. The fresh answer still overwrites
+     *   the cache entry on success, so the *next* ordinary call benefits from it.
      * @returns {Promise<Array<Object>|null>} Rows, or null when unavailable
      */
-    async fetchHistory(itemHrid, enhancementLevel, days) {
+    async fetchHistory(itemHrid, enhancementLevel, days, { force = false } = {}) {
         if (!this.enabled || !itemHrid) return null;
 
         const source = this.currentSource();
@@ -264,8 +268,10 @@ class MarketHistoryAPI {
         // different answer from a different pool, and switching sources must not
         // read the other one's cached rows.
         const key = `${source.key}:${itemHrid}:${enhancementLevel}:${days}`;
-        const cached = this.cache.get(key);
-        if (cached && Date.now() - cached.at < CACHE_TTL_MS) return cached.rows;
+        if (!force) {
+            const cached = this.cache.get(key);
+            if (cached && Date.now() - cached.at < CACHE_TTL_MS) return cached.rows;
+        }
 
         // A different pool than the one the back-off state is about is a
         // different server's health; it starts clean rather than serving the

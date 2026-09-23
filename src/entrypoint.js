@@ -861,6 +861,13 @@ function registerFeatures() {
             async: false,
         },
         {
+            key: 'marketVolumeStats',
+            name: 'Market Volume Stats',
+            category: 'Market',
+            module: Market.marketVolumeStats,
+            async: true,
+        },
+        {
             key: 'marketOrderTotals',
             name: 'Market Order Totals',
             category: 'Market',
