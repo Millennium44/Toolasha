@@ -15,6 +15,7 @@ import { calculateExperienceMultiplier } from '../../utils/experience-parser.js'
 import { calculateActionsPerHour } from '../../utils/profit-helpers.js';
 import { calculateMultiLevelProgress } from '../../utils/experience-calculator.js';
 import { appendCalibrationBadge } from '../../utils/calibration-badge.js';
+import { describeShopValue } from '../../utils/alchemy-shop-value.js';
 import { PATIENT_TICK_SETTING_KEYS } from '../../utils/patient-tick.js';
 import { IRONCOW_VALUATION_SETTING } from '../../utils/ironcow-valuation.js';
 import { appendMeasuredRate } from './alchemy-measured-rate.js';
@@ -551,6 +552,16 @@ class AlchemyProfitDisplay {
             const note = document.createElement('div');
             note.style.cssText = 'margin-left: 8px; opacity: 0.7;';
             note.textContent = `• No market price for ${names} — revenue and profit are understated.`;
+            revenueDiv.appendChild(note);
+        }
+
+        // A shop-valued output is priced, but not by the market: say where its figure came from
+        const shopValued = Array.isArray(profitData.shopValuedOutputs) ? profitData.shopValuedOutputs : [];
+        for (const entry of shopValued) {
+            const name = dataManager.getItemDetails(entry.itemHrid)?.name || entry.itemHrid;
+            const note = document.createElement('div');
+            note.style.cssText = 'margin-left: 8px; opacity: 0.7;';
+            note.textContent = `• ${name}: ${describeShopValue(entry, (n) => formatLargeNumber(Math.round(n)))}`;
             revenueDiv.appendChild(note);
         }
 

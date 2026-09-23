@@ -28,6 +28,8 @@ const mocks = vi.hoisted(() => ({
     /** Per-`hrid|side` overrides, for a test that needs the buy and sell sides to differ */
     sidePrices: {},
     estimatedItems: new Set(),
+    /** Shop-derived values by hrid, standing in for the Labyrinth Shop conversion */
+    shopValues: {},
 }));
 
 vi.mock('../../core/config.js', () => ({ default: { getSetting: () => true, getSettingValue: (k, f) => f } }));
@@ -51,6 +53,9 @@ vi.mock('../../utils/market-data.js', () => ({
         return Object.hasOwn(mocks.itemPrices, hrid) ? mocks.itemPrices[hrid] : mocks.itemPrice;
     },
     isPriceEstimated: (hrid) => mocks.estimatedItems.has(hrid),
+}));
+vi.mock('../../utils/alchemy-shop-value.js', () => ({
+    getAlchemyOutputShopValue: (hrid) => mocks.shopValues[hrid] ?? null,
 }));
 vi.mock('../../utils/buff-parser.js', () => ({ getAlchemySuccessBonus: () => mocks.alchemyTeaBonus }));
 vi.mock('../../utils/equipment-parser.js', () => ({
@@ -81,6 +86,7 @@ beforeEach(() => {
     mocks.itemPrices = {};
     mocks.sidePrices = {};
     mocks.estimatedItems = new Set();
+    mocks.shopValues = {};
 });
 
 describe('calculateSuccessRateBreakdown', () => {
@@ -879,6 +885,52 @@ describe('official alchemy rules', () => {
             // ...and the drop list carries that branch at the same valuation, not as a zero payout
             const selfReturn = result.dropRevenues.find((d) => d.itemHrid === '/items/cape');
             expect(selfReturn).toMatchObject({ isSelfReturn: true, price: 1_000, dropRate: 0.9, revenuePerHour: 0 });
+        });
+
+        test('decompose values a Labyrinth Token through the shop, untaxed, instead of calling it unpriced', () => {
+            mocks.initClientData.itemDetailMap = {
+                ...mocks.initClientData.itemDetailMap,
+                '/items/seal_of_gathering': {
+                    name: 'Scroll Of Gathering',
+                    alchemyDetail: { decomposeItems: [{ itemHrid: '/items/labyrinth_token', count: 5 }] },
+                },
+            };
+            mocks.itemPrices = {
+                ...BONUS_PRICES,
+                '/items/small_artisans_crate': 10,
+                '/items/seal_of_gathering': 1_000,
+            };
+            const shop = { valuePerUnit: 400, sourceItemHrid: '/items/shard', sourceItemName: 'Shard' };
+            mocks.shopValues = { '/items/labyrinth_token': shop };
+
+            const result = alchemyProfitCalculator.calculateDecomposeProfit('/items/seal_of_gathering', 0);
+
+            expect(result.unpricedOutputs).toEqual([]);
+            expect(result.shopValuedOutputs).toEqual([{ itemHrid: '/items/labyrinth_token', ...shop }]);
+            const token = result.dropRevenues.find((d) => d.itemHrid === '/items/labyrinth_token');
+            // 5 tokens at 400, no market tax, on each success
+            expect(token).toMatchObject({ count: 5, price: 400, isShopValued: true });
+            expect(token.revenuePerAttempt).toBeCloseTo(2_000 * result.successRate, 8);
+        });
+
+        test('a Labyrinth Token the shop cannot value either stays unpriced', () => {
+            mocks.initClientData.itemDetailMap = {
+                ...mocks.initClientData.itemDetailMap,
+                '/items/seal_of_gathering': {
+                    name: 'Scroll Of Gathering',
+                    alchemyDetail: { decomposeItems: [{ itemHrid: '/items/labyrinth_token', count: 5 }] },
+                },
+            };
+            mocks.itemPrices = {
+                ...BONUS_PRICES,
+                '/items/small_artisans_crate': 10,
+                '/items/seal_of_gathering': 1_000,
+            };
+
+            const result = alchemyProfitCalculator.calculateDecomposeProfit('/items/seal_of_gathering', 0);
+
+            expect(result.unpricedOutputs).toEqual(['/items/labyrinth_token']);
+            expect(result.shopValuedOutputs).toEqual([]);
         });
 
         test('a fully priced run reports nothing missing', () => {

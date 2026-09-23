@@ -28,6 +28,7 @@ import {
 import { SECONDS_PER_HOUR, MIN_ACTION_TIME_SECONDS } from '../../utils/profit-constants.js';
 import { getAlchemySuccessBonus } from '../../utils/buff-parser.js';
 import { getAlchemyCoinCost } from '../../utils/alchemy-fees.js';
+import { getAlchemyOutputShopValue } from '../../utils/alchemy-shop-value.js';
 import {
     parseEquipmentSpeedBonuses,
     debugEquipmentSpeedBonuses,
@@ -1096,11 +1097,29 @@ class AlchemyProfitCalculator {
             // bill as a full one.
             const unpricedOutputs = [];
             const estimatedOutputs = [];
+            // Outputs the market never prices but a shop conversion does (Labyrinth Tokens)
+            const shopValuedOutputs = [];
 
             // 1. Base decompose items (always received on success)
             for (const output of itemDetails.alchemyDetail.decomposeItems) {
                 const outputPrice = getItemPrice(output.itemHrid, { context: 'profit', side: 'sell' });
-                if (outputPrice === null) {
+                const shopValue = outputPrice === null ? getAlchemyOutputShopValue(output.itemHrid) : null;
+                if (shopValue) {
+                    // Untaxed: the value is realized in the shop, not on the market
+                    const outputCount = output.count * bulkMultiplier;
+                    const dropValue = shopValue.valuePerUnit * outputCount;
+                    outputValue += dropValue;
+                    shopValuedOutputs.push({ itemHrid: output.itemHrid, ...shopValue });
+                    dropDetails.push({
+                        itemHrid: output.itemHrid,
+                        count: outputCount,
+                        price: shopValue.valuePerUnit,
+                        afterTax: shopValue.valuePerUnit,
+                        isEssence: false,
+                        isShopValued: true,
+                        expectedValue: dropValue,
+                    });
+                } else if (outputPrice === null) {
                     unpricedOutputs.push(output.itemHrid);
                 } else {
                     if (isPriceEstimated(output.itemHrid, { context: 'profit', side: 'sell' })) {
@@ -1272,6 +1291,7 @@ class AlchemyProfitCalculator {
                 price: drop.price,
                 isEssence: drop.isEssence,
                 isRare: false,
+                isShopValued: drop.isShopValued || false,
                 revenuePerAttempt: drop.expectedValue * successRate,
                 revenuePerHour: drop.expectedValue * successRate * actionsPerHourWithEfficiency,
                 dropsPerHour: drop.count * successRate * actionsPerHourWithEfficiency,
@@ -1306,6 +1326,8 @@ class AlchemyProfitCalculator {
                 /** Output hrids left out of the revenue for want of a price */
                 unpricedOutputs: [...unpricedOutputs, ...alchemyBonus.unpricedDrops],
                 estimatedOutputs,
+                /** Outputs valued through a shop conversion: `{itemHrid, valuePerUnit, sourceItemName, ...}` */
+                shopValuedOutputs,
 
                 // Summary totals
                 profitPerHour,

@@ -603,3 +603,45 @@ describe('handlePricingChange', () => {
         expect(logged).toHaveBeenCalled();
     });
 });
+
+describe('createDisplay names where a non-market figure came from', () => {
+    const profitData = (overrides = {}) => ({
+        profitPerHour: 0,
+        profitPerDay: 0,
+        revenuePerHour: 0,
+        materialCostPerHour: 0,
+        catalystCostPerHour: 0,
+        totalTeaCostPerHour: 0,
+        actionsPerHour: 180,
+        actionTime: 20,
+        efficiency: 0,
+        successRate: 0.6,
+        dropRevenues: [],
+        requirementCosts: [],
+        catalystCost: { itemHrid: null, price: 0, costPerAttempt: 0, costPerHour: 0 },
+        consumableCosts: [],
+        pricingMode: 'hybrid',
+        ...overrides,
+    });
+
+    test('a shop-valued Labyrinth Token is explained, not called unpriced', () => {
+        game.initClientData = { itemDetailMap: { '/items/labyrinth_token': { name: 'Labyrinth Token' } } };
+        const container = document.createElement('div');
+        document.body.appendChild(container);
+
+        display.createDisplay(
+            container,
+            profitData({
+                unpricedOutputs: [],
+                shopValuedOutputs: [{ itemHrid: '/items/labyrinth_token', valuePerUnit: 400, sourceItemName: 'Shard' }],
+            }),
+            'decompose',
+            '/items/seal_of_gathering'
+        );
+
+        const text = container.textContent;
+        expect(text).toContain('Labyrinth Token: Not sold on the market');
+        expect(text).toContain('via Shard');
+        expect(text).not.toContain('No market price');
+    });
+});

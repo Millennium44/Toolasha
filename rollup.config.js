@@ -230,6 +230,7 @@ const utilsExternalGlobals = new Map([
     [normalize(join(__dirname, 'src/utils/action-context.js')), 'Toolasha.Utils.actionContext'],
     [normalize(join(__dirname, 'src/utils/adoption-consent.js')), 'Toolasha.Utils.adoptionConsent'],
     [normalize(join(__dirname, 'src/utils/alchemy-fees.js')), 'Toolasha.Utils.alchemyFees'],
+    [normalize(join(__dirname, 'src/utils/alchemy-shop-value.js')), 'Toolasha.Utils.alchemyShopValue'],
     [normalize(join(__dirname, 'src/utils/all-zones-snapshot.js')), 'Toolasha.Utils.allZonesSnapshot'],
     [normalize(join(__dirname, 'src/utils/asset-manifest.js')), 'Toolasha.Utils.assetManifest'],
     [normalize(join(__dirname, 'src/utils/background-work.js')), 'Toolasha.Utils.backgroundWork'],

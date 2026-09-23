@@ -124,6 +124,7 @@ import * as refinedItemCost from '../utils/refined-item-cost.js';
 import * as actionContext from '../utils/action-context.js';
 import * as adoptionConsent from '../utils/adoption-consent.js';
 import * as alchemyFees from '../utils/alchemy-fees.js';
+import * as alchemyShopValue from '../utils/alchemy-shop-value.js';
 import * as allZonesSnapshot from '../utils/all-zones-snapshot.js';
 // Default import on purpose: every consumer default-imports this module, and a
 // default import of an external resolves to the global itself — so the global
@@ -291,6 +292,7 @@ toolashaRoot.Utils = {
     actionContext,
     adoptionConsent,
     alchemyFees,
+    alchemyShopValue,
     allZonesSnapshot,
     assetManifest,
     backgroundWork,
