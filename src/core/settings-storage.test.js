@@ -368,6 +368,41 @@ describe('one-time migration of action and queue time display choices', () => {
         expect(settings.actionBar_showTimeRemaining.value).toBe('absolute');
     });
 
+    test.each([
+        [false, 'none'],
+        [true, 'both'],
+    ])('an older build writing the checkbox %s after the migration ran is read as %s', async (isTrue, expected) => {
+        // The migration record says this map was converted; an older build
+        // loaded on the same profile (or synced from another device) then
+        // wrote its own checkbox shape over the select
+        stored.set(STATE, ALL_MIGRATIONS);
+        stored.set(`json:${KEY}`, {
+            actionBar_showTimeRemaining: { id: 'actionBar_showTimeRemaining', type: 'checkbox', isTrue },
+        });
+
+        const settings = await settingsStorage.loadSettings();
+
+        expect(settings.actionBar_showTimeRemaining.value).toBe(expected);
+        expect(settings.actionBar_showTimeRemaining).not.toHaveProperty('isTrue');
+    });
+
+    test('a choice made after an older build wrote the checkbox survives a reload', async () => {
+        stored.set(STATE, ALL_MIGRATIONS);
+        stored.set(`json:${KEY}`, {
+            actionBar_showTimeRemaining: { id: 'actionBar_showTimeRemaining', type: 'checkbox', isTrue: false },
+        });
+        config.settingsMap = {};
+        config._dirtyKeys = new Set();
+        config.characterSettingsLoaded = false;
+        await config.loadSettings();
+
+        config.setSettingValue('actionBar_showTimeRemaining', 'relative');
+        await new Promise((resolve) => setTimeout(resolve, 0));
+        const reloaded = await settingsStorage.loadSettings();
+
+        expect(reloaded.actionBar_showTimeRemaining.value).toBe('relative');
+    });
+
     test('the short-lived upstream queue key is carried to the Action Queue key', async () => {
         stored.set(`json:${KEY}`, {
             actionBar_completionTimeStyle: {
@@ -1568,8 +1603,9 @@ describe('a saved boolean entry that carries both fields', () => {
         const map = await settingsStorage.loadSettings();
 
         expect(map.actionQueue_valueMode.value).toBe('estimated_value');
-        // The stray boolean rides along exactly as it did before
-        expect(map.actionQueue_valueMode.isTrue).toBe(true);
+        // The stray boolean is dropped: config's setters write whichever field
+        // an entry has, so it would take the next choice in place of `.value`
+        expect(Object.hasOwn(map.actionQueue_valueMode, 'isTrue')).toBe(false);
     });
 });
 

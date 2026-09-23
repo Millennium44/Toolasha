@@ -123,6 +123,19 @@ const SAVE_ALL_KEYS = Symbol('settings.saveAllKeys');
 const DEFAULT_REWRITE_FLAG_KEY = 'settings_default_rewrites';
 
 /**
+ * Checkboxes that became selects, and the select value each boolean stands for.
+ *
+ * Read on every load, not once: an older build loaded on the same profile, or
+ * synced in from another device, keeps writing the bare `.isTrue` shape after
+ * the one-time key migration has run. That write is the newest intent, and
+ * without this the select would fall back to its schema default.
+ */
+const BOOLEAN_TO_SELECT = {
+    actionBar_showTimeRemaining: (isTrue) => (isTrue ? 'both' : 'none'),
+    formatting_useKMBFormat: (isTrue) => (isTrue ? 'compact' : 'full'),
+};
+
+/**
  * Settings replaced by other settings, carried across once.
  *
  * Not a DEFAULT_REWRITES case: no default changed. A setting was split, and a
@@ -156,7 +169,7 @@ const KEY_MIGRATIONS = [
                 actionBar_showTimeRemaining: {
                     id: 'actionBar_showTimeRemaining',
                     type: 'select',
-                    value: old.isTrue ? 'both' : 'none',
+                    value: BOOLEAN_TO_SELECT.actionBar_showTimeRemaining(old.isTrue),
                 },
             };
         },
@@ -424,7 +437,10 @@ const SHARED_SCOPE_CONFLICT_KEY = 'settings_shared_scope_conflicts';
  */
 function mergeStoredEntry(target, savedValue) {
     if (!target || !savedValue || typeof savedValue !== 'object') return;
-    if (Object.hasOwn(savedValue, 'isTrue')) {
+    // A non-boolean setting never keeps `.isTrue`: config's setters write
+    // whichever field an entry already has, so a stray one would take the next
+    // choice and leave `.value` at its default after a reload.
+    if (Object.hasOwn(savedValue, 'isTrue') && isBooleanType(target.type)) {
         target.isTrue = savedValue.isTrue;
     }
     if (Object.hasOwn(savedValue, 'value')) {
@@ -604,10 +620,12 @@ class SettingsStorage {
                 if (settings[settingId]) mergeStoredEntry(settings[settingId], savedValue);
             }
 
-            // Migrate: formatting_useKMBFormat changed from checkbox to select
-            const fmtSaved = saved['formatting_useKMBFormat'];
-            if (fmtSaved && fmtSaved.hasOwnProperty('isTrue') && !fmtSaved.hasOwnProperty('value')) {
-                settings['formatting_useKMBFormat'].value = fmtSaved.isTrue ? 'compact' : 'full';
+            for (const [settingId, fromBoolean] of Object.entries(BOOLEAN_TO_SELECT)) {
+                const entry = saved[settingId];
+                if (!settings[settingId] || !entry || typeof entry !== 'object') continue;
+                if (Object.hasOwn(entry, 'isTrue') && !Object.hasOwn(entry, 'value')) {
+                    settings[settingId].value = fromBoolean(entry.isTrue);
+                }
             }
         }
 
