@@ -458,14 +458,14 @@ describe('calculateRankings row shaping', () => {
         expect(bestItems.calculateRankings('coinify')[0].itemPrice).toBe(0);
     });
 
-    test('an item with no declared level is treated as level 1', () => {
+    test('an item with no declared level earns level-0 experience, as on the action panel', () => {
         game.initClientData.itemDetailMap['/items/cheese'].itemLevel = undefined;
         calculator.coinify.mockReturnValue(profit({ successRate: 1, actionsPerHour: 1 }));
 
         const [row] = bestItems.calculateRankings('coinify');
         expect(row.itemLevel).toBe(1);
-        // level 1 coinify → base 11, full success, ×1 wisdom, 1 action/hr
-        expect(row.xpPerHour).toBeCloseTo(11, 9);
+        // level 0 coinify → base 10, full success, ×1 wisdom, 1 action/hr
+        expect(row.xpPerHour).toBeCloseTo(10, 9);
     });
 });
 
