@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Combat Fury lasts through its refreshed timer
+
+- At five Fury stacks, another hit now keeps the damage and accuracy boosts active through the refreshed expiry time. Other buffs expiring during the streak can no longer remove Fury early and understate combat damage.
+
 ### Queue Monitor settings respond once after reconnecting
 
 - Reconnecting to the same character no longer registers another Queue Monitor settings listener, so toggling the panel does not repeat its setup and teardown work.

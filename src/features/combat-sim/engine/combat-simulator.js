@@ -1585,6 +1585,14 @@ class CombatSimulator {
                 this.simulationTime,
                 FURY_EXPIRE_TIME
             );
+        } else if (newAmount > 0) {
+            // A capped hit refreshes Fury's timer without changing its strength.
+            // Keep the buff timestamps in sync: any unrelated buff expiry calls
+            // removeExpiredBuffs(), which otherwise prunes Fury at its old time.
+            for (const hrid of ['/buff_uniques/fury_accuracy', '/buff_uniques/fury_damage']) {
+                const buff = source.combatBuffs?.[hrid];
+                if (buff) buff.startTime = this.simulationTime;
+            }
         }
     }
 

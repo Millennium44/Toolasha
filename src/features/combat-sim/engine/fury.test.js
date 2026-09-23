@@ -13,6 +13,7 @@ import { describe, test, expect, beforeEach, vi } from 'vitest';
 import CombatSimulator from './combat-simulator.js';
 import EventQueue from './events/event-queue.js';
 import FuryExpirationEvent from './events/fury-expiration-event.js';
+import CombatUnit from './combat-unit.js';
 
 const FURY_EXPIRE = 15_000_000_000;
 
@@ -150,6 +151,39 @@ describe('when the timer runs out', () => {
         expect(source.furyAmount).toBe(0);
         expect(queued(sim)).toHaveLength(0);
     });
+});
+
+test('a capped hit keeps Fury active when another buff expires at the old timer', () => {
+    const { sim } = harness();
+    const source = Object.create(CombatUnit.prototype);
+    source.furyAmount = 0;
+    source.furyExpireTime = 0;
+    source.furyExpirationEvent = null;
+    source.combatBuffs = {};
+    source.buffSources = new Map();
+    source.combatDetails = { combatStats: { fury: 0.05 } };
+    source.updateCombatDetails = vi.fn();
+
+    for (let i = 0; i < 5; i++) sim._processFuryUpdate(source, true);
+    sim.simulationTime = 1e9;
+    sim._processFuryUpdate(source, true);
+
+    // A different buff's expiration runs the shared cleanup at Fury's original deadline.
+    source.addBuff(
+        {
+            uniqueHrid: '/buff_uniques/berserk',
+            typeHrid: '/buff_types/damage',
+            ratioBoost: 0.1,
+            flatBoost: 0,
+            duration: FURY_EXPIRE,
+        },
+        0
+    );
+    source.removeExpiredBuffs(FURY_EXPIRE);
+
+    expect(source.furyAmount).toBe(5);
+    expect(source.combatBuffs['/buff_uniques/fury_damage']?.ratioBoost).toBeCloseTo(0.25);
+    expect(source.combatBuffs['/buff_uniques/fury_accuracy']?.ratioBoost).toBeCloseTo(0.25);
 });
 
 describe('when the fight ends underneath it', () => {
