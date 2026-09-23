@@ -174,6 +174,18 @@ describe('tierTimingForecast — a projection for a trial nobody here joined', (
         expect(timing.currentTier).toBe(20);
     });
 
+    test('an old badge does not credit its elapsed time to a later tier', () => {
+        // The live analysis knows T19 is banked, but the most recent badge
+        // timestamp belongs to T17. The interval since T17 includes T18 and
+        // T19; none of it proves progress in T20.
+        const record = { tierSeenAt: { 16: 0, 17: 100_000 } };
+        const stale = tierTimingForecast(record, { timeLeftMs: 600_000, now: 200_000, bankedTiers: 19 });
+        const fresh = tierTimingForecast(record, { timeLeftMs: 600_000, now: 100_000, bankedTiers: 19 });
+        expect(stale.currentTier).toBe(20);
+        expect(stale.etaMsToNextTier).toBeCloseTo(fresh.etaMsToNextTier, 6);
+        expect(stale.clears).toEqual(fresh.clears);
+    });
+
     test('a trial that has banked the last tier projects nothing past it', () => {
         // T21 is the end of the ladder, so there is no T22 pool to time — and
         // `tierWorkShape` is deliberately unclamped, so one would price itself

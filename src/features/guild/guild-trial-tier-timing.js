@@ -297,7 +297,11 @@ export function tierTimingForecast(
     // only honest estimate is the time since the badge moved spent at the rate
     // this tier is projected to run at — which is exactly the walk's own
     // assumption, applied to the part of the tier that has already happened.
-    const sinceMs = Number.isFinite(newest.at) && Number.isFinite(now) ? Math.max(0, now - newest.at) : 0;
+    // A newer banked count may come from the live analysis while this card's
+    // badge timestamps have missed several clears. Time since the old badge
+    // includes those completed tiers and cannot be assigned to the current one.
+    const sinceMs =
+        banked === newest.tier && Number.isFinite(newest.at) && Number.isFinite(now) ? Math.max(0, now - newest.at) : 0;
     const doneShare = Number.isFinite(shareNow) ? shareNow * sinceMs : 0;
     const remainingShare = Number.isFinite(needNow) ? Math.max(0, needNow - doneShare) : null;
 

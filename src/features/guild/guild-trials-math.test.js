@@ -809,7 +809,19 @@ describe('combatDamageRate', () => {
         expect(combatDamageRate(null).rate).toBeNull();
     });
 
-    test('a boss that only healed is no damage rather than negative damage', () => {
+    test('a boss healing within a tier is not counted as a fresh boss', () => {
+        const measured = combatDamageRate([
+            at(0, 400_000, 618_000),
+            at(10_000, 500_000, 618_000),
+            at(20_000, 490_000, 618_000),
+        ]);
+        expect(measured.boundaries).toBe(0);
+        expect(measured.multiTier).toBe(false);
+        expect(measured.damage).toBe(10_000);
+        expect(measured.rate).toBeCloseTo(0.5, 9);
+    });
+
+    test('a boss with a flat health bar is no damage', () => {
         const measured = combatDamageRate([at(0, 100, 618_000), at(10_000, 100, 618_000)]);
         expect(measured.rate).toBeNull();
         expect(measured.damage).toBe(0);

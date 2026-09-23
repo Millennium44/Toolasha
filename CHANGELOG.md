@@ -6,6 +6,11 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Guild trial pace handles boss heals and stale tier badges
+
+- A trial boss healing within the same tier no longer counts as a fresh boss in measured party damage, preventing an inflated DPS and expected tier.
+- When the live trial has banked tiers newer than the last watched badge, the tier forecast no longer assigns time spent clearing those tiers to progress in the current tier.
+
 ### Combat Fury lasts through its refreshed timer
 
 - At five Fury stacks, another hit now keeps the damage and accuracy boosts active through the refreshed expiry time. Other buffs expiring during the streak can no longer remove Fury early and understate combat damage.

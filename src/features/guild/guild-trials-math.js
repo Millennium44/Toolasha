@@ -1509,8 +1509,9 @@ export function etaMs(remaining, rate) {
  * rate: the classifier looked for a bar that *falls*, and across a tier boundary
  * neither of them does. Damage is therefore accumulated pair by pair:
  *
- * - **Within a tier** — same maximum, health fell: the difference.
- * - **Across a boundary** — the maximum changed, or health rose: what was left
+ * - **Within a tier** — same maximum: count health lost and skip health gained
+ *   from a boss heal.
+ * - **Across a boundary** — the maximum changed: what was left
  *   of the old boss (`before.current`) plus what has already come off the new
  *   one (`after.max - after.current`).
  *
@@ -1548,10 +1549,13 @@ export function combatDamageRate(samples, { growthPerTier = null, windowMs = TRI
     for (let index = 1; index < window.length; index += 1) {
         const before = window[index - 1];
         const after = window[index];
-        const cleared = after.max !== before.max || after.current > before.current;
+        // Each trial tier increases the boss's maximum HP. A rising current HP
+        // with the same maximum is a heal, not a new tier; treating it as a
+        // boundary adds almost an entire boss bar to the measured damage.
+        const cleared = after.max !== before.max;
 
         if (!cleared) {
-            damage += before.current - after.current;
+            damage += Math.max(0, before.current - after.current);
             continue;
         }
 
