@@ -317,6 +317,9 @@ class CoinifyHistoryViewer {
     async openModal() {
         this.sessions = await coinifyHistoryTracker.loadSessions();
         this.includePreFix = await loadIncludePreFix('coinify');
+        // Torn down (character switch, feature off) while loading: drawing now would
+        // leave a modal of the departed character's history no teardown will remove
+        if (!this.isInitialized) return;
         this.profitCache.clear();
         this.cachedDateRange = null;
         this.applyFilters();

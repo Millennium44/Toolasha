@@ -290,6 +290,9 @@ class TransmuteHistoryViewer {
     async openModal() {
         this.sessions = await transmuteHistoryTracker.loadSessions();
         this.includePreFix = await loadIncludePreFix('transmute');
+        // Torn down (character switch, feature off) while loading: drawing now would
+        // leave a modal of the departed character's history no teardown will remove
+        if (!this.isInitialized) return;
         this.cachedDateRange = null;
         this.profitCache.clear();
         this.applyFilters();

@@ -89,3 +89,27 @@ describe.each([
         button.remove();
     });
 });
+
+describe.each([
+    ['transmute', transmuteHistoryViewer],
+    ['decompose', decomposeHistoryViewer],
+    ['coinify', coinifyHistoryViewer],
+])('%s history: opening while being torn down', (_kind, viewer) => {
+    test('draws no modal once the window has been disabled mid-load', async () => {
+        viewer.isInitialized = true;
+        const opening = viewer.openModal();
+        viewer.disable();
+        await opening;
+
+        expect(viewer.modal).toBeNull();
+        expect(document.querySelector('[class$="-history-modal"]')).toBeNull();
+    });
+
+    test('draws the modal when still initialized', async () => {
+        viewer.isInitialized = true;
+        await viewer.openModal();
+
+        expect(viewer.modal).not.toBeNull();
+        viewer.disable();
+    });
+});
