@@ -14,6 +14,7 @@ import { describe, test, expect, afterEach, vi } from 'vitest';
 
 const game = vi.hoisted(() => ({ sessions: {} }));
 const settings = vi.hoisted(() => ({}));
+const prices = vi.hoisted(() => ({}));
 
 vi.mock('./enhancement-tracker.js', () => ({
     default: {
@@ -36,6 +37,7 @@ vi.mock('../../core/config.js', () => ({
     default: {
         Z_FLOATING_PANEL: 1100,
         getSetting: (key) => settings[key],
+        getSettingValue: (key, fallback) => settings[key] ?? fallback,
         onSettingChange: () => {},
         offSettingChange: () => {},
     },
@@ -57,7 +59,7 @@ vi.mock('../../utils/panel-geometry.js', () => ({
     markPanelInteracted: () => {},
 }));
 
-vi.mock('../../utils/market-data.js', () => ({ getItemPrices: () => null }));
+vi.mock('../../utils/market-data.js', () => ({ getItemPrices: (hrid, level) => prices[`${hrid}::${level}`] || null }));
 
 const { default: enhancementUI } = await import('./enhancement-ui.js');
 
@@ -85,12 +87,24 @@ afterEach(() => {
     enhancementUI.cleanup();
     document.body.innerHTML = '';
     game.sessions = {};
+    for (const key of Object.keys(prices)) delete prices[key];
     // enhancementUI is a module-level singleton, so mergeMode/mergeSelected
     // set directly on it by one test (below) survive into whichever test
     // happens to run next - cleanup() does not touch them, since leaving
     // merge mode on between real panel opens is correct behaviour, not a bug.
     enhancementUI.mergeMode = false;
     enhancementUI.mergeSelected = new Set();
+});
+
+describe('worth-it value', () => {
+    test('does not quote a net gain when the base item has no price', () => {
+        prices['/items/foo::3'] = { bid: 10000 };
+
+        const html = enhancementUI.generateWorthItHTML(sessionFixture({ currentLevel: 3 }));
+
+        expect(html).toContain('worth-it unknown');
+        expect(html).not.toContain('Worth it (net');
+    });
 });
 
 describe('header layout', () => {

@@ -93,4 +93,12 @@ describe('valueVsCost', () => {
         expect(v.valueN).toBeNull();
         expect(v.net).toBeNull();
     });
+
+    test('net is unknown when the +0 opportunity value is unpriced', () => {
+        const getPrices = (hrid, level) => (level === 3 ? { bid: 10000 } : null);
+        const v = valueVsCost(session(), getPrices);
+        expect(v.valueN).toBe(10000);
+        expect(v.value0).toBeNull();
+        expect(v.net).toBeNull();
+    });
 });

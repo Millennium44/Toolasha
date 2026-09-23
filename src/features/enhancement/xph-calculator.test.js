@@ -29,6 +29,7 @@ const prices = vi.hoisted(() => ({}));
 
 /** perAttemptMaterialCost()'s answer, mutated per test. */
 const materialCostResult = vi.hoisted(() => ({ cost: 100, hasCost: true, costPartial: false }));
+const baseItemPrice = vi.hoisted(() => ({ value: 200 }));
 
 /** capProfitRate()'s answer, mutated per test. */
 const liquidityResult = vi.hoisted(() => ({ goldPerHour: 0, capped: false, limit: null }));
@@ -69,6 +70,7 @@ vi.mock('./enhancement-params-source.js', () => ({
 
 vi.mock('./tooltip-enhancement.js', () => ({
     getCheapestProtectionPrice: vi.fn(() => ({ itemHrid: null, price: 0 })),
+    getRealisticBaseItemPrice: vi.fn(() => baseItemPrice.value),
     calculatePerAttemptMaterialCost: vi.fn(() => materialCostResult),
     calculateEnhancementPath: vi.fn(),
     buildEnhancementTooltipHTML: vi.fn(),
@@ -135,6 +137,7 @@ beforeEach(() => {
     materialCostResult.cost = 100;
     materialCostResult.hasCost = true;
     materialCostResult.costPartial = false;
+    baseItemPrice.value = 200;
     liquidityResult.goldPerHour = 0;
     liquidityResult.capped = false;
     liquidityResult.limit = null;
@@ -157,8 +160,8 @@ describe('calculateItemXPH', () => {
 
         const result = calculateItemXPH(ITEM, itemDetails, 5, 0, params);
 
-        // 1 item/hr sold at bid (400), net of tax, minus the known cost/hr (100).
-        const expectedProfit = 400 * (1 - MARKET_TAX) - 100;
+        // 1 item/hr sold at bid (400), net of tax, minus the base item and material cost.
+        const expectedProfit = 400 * (1 - MARKET_TAX) - 200 - 100;
         expect(result.profitPerHour).toBeCloseTo(expectedProfit);
         expect(result.profitUnavailableReason).toBeNull();
     });
@@ -168,8 +171,29 @@ describe('calculateItemXPH', () => {
 
         const result = calculateItemXPH(ITEM, itemDetails, 5, 0, params);
 
-        const expectedProfit = 500 * (1 - MARKET_TAX) - 100;
+        const expectedProfit = 500 * (1 - MARKET_TAX) - 200 - 100;
         expect(result.profitPerHour).toBeCloseTo(expectedProfit);
+    });
+
+    test('profit is unavailable when the +0 item has no known acquisition cost', () => {
+        prices[`${ITEM}::5`] = { ask: 500, bid: 400 };
+        baseItemPrice.value = 0;
+
+        const result = calculateItemXPH(ITEM, itemDetails, 5, 0, params);
+
+        expect(result.profitPerHour).toBeNull();
+        expect(result.profitUnavailableReason).toBe('no-base-price');
+    });
+
+    test('hourly cost uses exact run throughput even when displayed XP/hr rounds', () => {
+        engineResult.totalTime = 2700;
+        prices[`${ITEM}::5`] = { ask: 500, bid: 400 };
+
+        const result = calculateItemXPH(ITEM, itemDetails, 5, 0, params);
+
+        expect(result.xph).toBe(13);
+        expect(result.costPerHour).toBeCloseTo(100 * (3600 / 2700));
+        expect(result.profitPerHour).toBeCloseTo((400 * (1 - MARKET_TAX) - 300) * (3600 / 2700));
     });
 
     test('an item whose enhanced form cannot be priced is labelled, not zero or free', () => {

@@ -92,7 +92,7 @@ export function valueVsCost(session, getPrices, sellTax = MARKET_SELL_TAX) {
     const valueN = nPrices?.bid ?? null;
     const value0 = basePrices?.bid ?? null;
 
-    if (valueN == null) return { level, spent, valueN: null, value0, net: null, sellTax };
+    if (valueN == null || value0 == null) return { level, spent, valueN, value0, net: null, sellTax };
     const keep = 1 - sellTax;
-    return { level, spent, valueN, value0, net: valueN * keep - (value0 || 0) * keep - spent, sellTax };
+    return { level, spent, valueN, value0, net: valueN * keep - value0 * keep - spent, sellTax };
 }

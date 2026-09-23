@@ -15,6 +15,7 @@ import { registerFloatingPanel, unregisterFloatingPanel, bringPanelToFront } fro
 import { attachMinimize } from '../../utils/panel-minimize.js';
 import {
     getCheapestProtectionPrice,
+    getRealisticBaseItemPrice,
     calculatePerAttemptMaterialCost,
     calculateEnhancementPath,
     buildEnhancementTooltipHTML,
@@ -88,7 +89,7 @@ export function calculateItemXPH(itemHrid, itemDetails, maxLevel, protectFrom, p
     const hasCost = perAttempt.hasCost;
 
     let goldPerXP = hasCost ? materialCost / totalXP : null;
-    let costPerHour = hasCost ? goldPerXP * xph : null;
+    let costPerHour = hasCost ? materialCost * itemsPerHour : null;
 
     // Protection cost — find cheapest option for this item
     let protectionItemName = null;
@@ -98,7 +99,7 @@ export function calculateItemXPH(itemHrid, itemDetails, maxLevel, protectFrom, p
             const protCost = protectionInfo.price * calc.protectionCount;
             const totalCost = (materialCost || 0) + protCost;
             goldPerXP = totalCost / totalXP;
-            costPerHour = goldPerXP * xph;
+            costPerHour = totalCost * itemsPerHour;
             protectionItemName = dataManager.getInitClientData()?.itemDetailMap[protectionInfo.itemHrid]?.name || null;
         } else {
             costPartial = true;
@@ -106,10 +107,9 @@ export function calculateItemXPH(itemHrid, itemDetails, maxLevel, protectFrom, p
     }
 
     // Profit/hr: what the finished item sells for at the row's own target level, net of
-    // marketplace tax, against the same per-hour cost above (materials, protection — time is
-    // already what both figures are "per hour" of). An item whose enhanced form has no market
-    // quote, or whose run cost is entirely unknown, is never reported as free or break-even —
-    // it says so instead, via `profitUnavailableReason`, and the panel sorts it last.
+    // marketplace tax, against material and protection costs plus the +0 item consumed once
+    // per run. The base item's price uses the same market/production fallback as enhancement
+    // paths. A missing input price is not a free input.
     let profitPerHour = null;
     let profitUnavailableReason = null;
     const enhancedPrice = getItemPrices(itemHrid, maxLevel);
@@ -120,13 +120,16 @@ export function calculateItemXPH(itemHrid, itemDetails, maxLevel, protectFrom, p
               ? enhancedPrice.ask
               : null
         : null;
+    const basePrice = getRealisticBaseItemPrice(itemHrid);
 
     if (sellPrice === null) {
         profitUnavailableReason = 'unpriced';
+    } else if (!(basePrice > 0)) {
+        profitUnavailableReason = 'no-base-price';
     } else if (costPerHour === null) {
         profitUnavailableReason = 'no-cost';
     } else {
-        profitPerHour = calculatePriceAfterTax(sellPrice) * itemsPerHour - costPerHour;
+        profitPerHour = (calculatePriceAfterTax(sellPrice) - basePrice) * itemsPerHour - costPerHour;
     }
 
     return {
@@ -198,7 +201,9 @@ export function profitCellHTML(r) {
         const title =
             r.profitUnavailableReason === 'unpriced'
                 ? 'No market price for the enhanced item at this level'
-                : 'No cost data available for this item';
+                : r.profitUnavailableReason === 'no-base-price'
+                  ? 'No acquisition price for the unenhanced item'
+                  : 'No cost data available for this item';
         return `<span style="color:#444;" title="${title}">${label}</span>`;
     }
 

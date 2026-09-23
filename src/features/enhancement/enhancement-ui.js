@@ -1530,6 +1530,13 @@ class EnhancementUI {
             </div>`;
         }
 
+        if (worth.value0 == null) {
+            return `
+            <div style="margin-top: 6px; font-size: 12px; opacity: 0.6; color: ${STYLE.colors.textSecondary};">
+                💎 No market price for the base +0 item — worth-it unknown.
+            </div>`;
+        }
+
         const color = worth.net >= 0 ? STYLE.colors.success : STYLE.colors.danger;
         const sign = worth.net >= 0 ? '+' : '−';
         const detailsId = `worth-details-${session.id}`;
@@ -1553,7 +1560,7 @@ class EnhancementUI {
         html += `<div id="${detailsId}" style="display: none; margin-left: 10px; margin-top: 3px;">`;
         html += row(`+${worth.level} value (bid)`, this.formatNumber(worth.valueN));
         html += row(`After ${feePct}% sell fee`, this.formatNumber(worth.valueN * keep));
-        html += row('Base +0 value (after fee)', `− ${this.formatNumber((worth.value0 || 0) * keep)}`);
+        html += row('Base +0 value (after fee)', `− ${this.formatNumber(worth.value0 * keep)}`);
         html += row('Spent enhancing', `− ${this.formatNumber(worth.spent)}`);
         html += row('Net', `${sign}${this.formatNumber(Math.abs(worth.net))}`, color);
         html += '</div></div>';
