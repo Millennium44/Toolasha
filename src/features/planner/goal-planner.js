@@ -1041,7 +1041,7 @@ function planEquipmentGoal(goal, context) {
         // this plan buys that separately, so counting it here would charge for
         // it twice.
         // A path may have a finite total even when an ingredient has no market
-        // price: the enhancement calculator omits that ingredient from the bill.
+        // price: the enhancement calculator prices that ingredient at 0.
         // The first base copy is covered by the acquire step, but every other
         // consumed line must have a price before this run has a complete cost.
         const remainingBill = enhancementBillAfterBase(run, itemHrid);
@@ -1052,10 +1052,15 @@ function planEquipmentGoal(goal, context) {
                 `${name} needs ${unpricedInputs.length} enhancement input price${unpricedInputs.length === 1 ? '' : 's'} that could not be read.`
             );
         }
+        // A mirror total carries the primary copy at the price its leaf was costed at, which
+        // is not always the bill's level-0 unit price; the bill is only the older fallback
+        const billBasePrice = (run?.materialBill || []).find(
+            (line) => line.kind === 'base' && line.itemHrid === itemHrid
+        )?.unitPrice;
         const primaryBasePrice = run?.usedMirror
-            ? num(
-                  (run.materialBill || []).find((line) => line.kind === 'base' && line.itemHrid === itemHrid)?.unitPrice
-              )
+            ? Number.isFinite(run.primaryBaseCost)
+                ? run.primaryBaseCost
+                : num(billBasePrice)
             : num(run?.baseCost);
         const runCost = run && Number.isFinite(run.totalCost) ? Math.max(0, num(run.totalCost) - primaryBasePrice) : 0;
         const bill = enhancementShoppingList(run, itemHrid);

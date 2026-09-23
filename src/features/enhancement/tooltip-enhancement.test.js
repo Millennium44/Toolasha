@@ -22,6 +22,8 @@ const REFINED = '/items/test_sword_refined';
 // An enhancement recipe with one material nobody quotes, and one that is quoted
 const PARTLY_PRICED = '/items/test_dagger';
 const UNPRICED_MATERIAL = '/items/unpriced_material';
+// A wide book (ask more than 1.3x the bid): the realistic +0 price is the bid, the path's rows the ask
+const SPREAD = '/items/test_spear';
 
 const prices = {
     [ITEM]: { ask: 100, bid: 90 },
@@ -31,6 +33,7 @@ const prices = {
     [MIRROR]: { ask: 2000, bid: 1900 },
     [PROTECTION]: { ask: 900000, bid: 850000 },
     [PARTLY_PRICED]: { ask: 100, bid: 90 },
+    [SPREAD]: { ask: 200, bid: 100 },
 };
 
 /** Settings the mocked config answers with, reset per test */
@@ -61,6 +64,11 @@ const gameData = {
                 { itemHrid: MATERIAL, count: 1 },
                 { itemHrid: UNPRICED_MATERIAL, count: 2 },
             ],
+        },
+        [SPREAD]: {
+            name: 'Test Spear',
+            itemLevel: 10,
+            enhancementCosts: [{ itemHrid: MATERIAL, count: 1 }],
         },
         [MATERIAL]: { name: 'Test Material', sellPrice: 100 },
         // Deliberately no sellPrice and no market quote: nothing can price it
@@ -641,6 +649,19 @@ describe('mirroring a refined piece', () => {
         expect(bases.find((line) => line.itemHrid === ITEM)?.count).toBe(
             copies.reduce((sum, item) => sum + item.quantity, 0)
         );
+    });
+
+    test('says what the primary copy costs inside the total, even when the +0 quote differs', () => {
+        // Setting off: level 0 is the realistic price (the bid, 100) while every enhanced row
+        // carries the ask (200). The primary leaf is at +1 or higher, so the total holds the ask
+        // for it, and anything taking that copy back out has to take the ask, not the bill's +0
+        const strategy = calculateEnhancementPath(SPREAD, 8, enhancingConfig).optimalStrategy;
+        expect(strategy.usedMirror).toBe(true);
+
+        const traditionalBase = calculateEnhancementPath(SPREAD, 1, enhancingConfig).optimalStrategy.baseCost;
+        expect(traditionalBase).toBe(200);
+        expect(strategy.materialBill.find((line) => line.kind === 'base').unitPrice).toBe(100);
+        expect(strategy.primaryBaseCost).toBe(traditionalBase);
     });
 
     test('a plain item is unchanged: one item, every leaf the same hrid', () => {

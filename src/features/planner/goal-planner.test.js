@@ -835,6 +835,72 @@ describe('an equipment target', () => {
         );
     });
 
+    describe('a mirrored plain item needing three +0 copies', () => {
+        // +10 mirrored at +10 and +9: the primary leaf is +8, the copies a +8 and a +7. Three +0
+        // copies at 1000, 40 crystals at 100 and two mirrors at 500: 3000 + 4000 + 1000
+        const mirroredRun = (overrides = {}) => ({
+            usedMirror: true,
+            baseCost: 0,
+            totalCost: 8000,
+            attempts: 40,
+            totalTimeSeconds: 600,
+            protectFrom: 0,
+            materialBill: [
+                { itemHrid: '/items/enhancement_crystal', count: 40, unitPrice: 100, kind: 'material' },
+                { itemHrid: '/items/philosophers_mirror', count: 2, unitPrice: 500, kind: 'mirror' },
+                { itemHrid: cape, count: 3, unitPrice: 1000, kind: 'base' },
+            ],
+            ...overrides,
+        });
+        const shopped = (plan, hrid) =>
+            step(plan, 'enhance').details.shoppingList.find((line) => line.itemHrid === hrid)?.count;
+
+        test('bought from scratch, each copy is charged exactly once', () => {
+            const plan = planGoal(
+                { type: 'equipment', itemHrid: cape, enhancementLevel: 10 },
+                context({
+                    gold: 1_000_000,
+                    acquire: () => ({ strategy: 'buy', totalCost: 1000 }),
+                    enhance: () => mirroredRun(),
+                })
+            );
+
+            expect(step(plan, 'base').goldDelta).toBe(-1000);
+            expect(step(plan, 'enhance').goldDelta).toBe(-7000);
+            expect(step(plan, 'enhance').costKnown).toBe(true);
+            expect(plan.totals.goldSpend).toBe(8000);
+            expect(plan.totals.costKnown).toBe(true);
+            expect(shopped(plan, cape)).toBe(2);
+            expect(shopped(plan, '/items/philosophers_mirror')).toBe(2);
+        });
+
+        test('with a +0 already held, only the two extra copies are bought', () => {
+            const plan = planGoal(
+                { type: 'equipment', itemHrid: cape, enhancementLevel: 10 },
+                context({ gold: 1_000_000, ownedEnhancementLevel: () => 0, enhance: () => mirroredRun() })
+            );
+
+            expect(step(plan, 'base').done).toBe(true);
+            expect(step(plan, 'enhance').goldDelta).toBe(-7000);
+            expect(plan.totals.goldSpend).toBe(7000);
+            expect(shopped(plan, cape)).toBe(2);
+        });
+
+        test('the primary copy comes out at the price its leaf carries, not the bill +0 price', () => {
+            // The leaves were costed with a 1200 base while the bill quotes +0 at 1000
+            const plan = planGoal(
+                { type: 'equipment', itemHrid: cape, enhancementLevel: 10 },
+                context({
+                    gold: 1_000_000,
+                    ownedEnhancementLevel: () => 0,
+                    enhance: () => mirroredRun({ totalCost: 8600, primaryBaseCost: 1200 }),
+                })
+            );
+
+            expect(step(plan, 'enhance').goldDelta).toBe(-7400);
+        });
+    });
+
     test('costs the enhancement run through the real Markov chain', () => {
         // +0 → +2 at level == item level: E0 = 20/3 attempts, hand-solved in the
         // enhancement calculator's own tests

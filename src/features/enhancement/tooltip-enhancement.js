@@ -679,6 +679,9 @@ function buildMirrorOptimizedResult(
         expectedAttempts: totalAttempts,
         totalTime: totalTime,
         baseCost: 0, // Not applicable for mirror phase
+        // The +0 price inside the primary leaf's cost. That leaf is always +1 or higher, so it is
+        // the traditional rows' base price, which the bill's level-0 unit price need not equal
+        primaryBaseCost: optimalTraditional.baseCost,
         materialCost: 0, // Not applicable for mirror phase
         protectionCost: 0, // Not applicable for mirror phase
         protectionItemHrid: null,

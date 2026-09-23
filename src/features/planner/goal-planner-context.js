@@ -572,6 +572,7 @@ function enhancementRun({ itemHrid, targetLevel, startLevel = 0 }) {
         protectFrom: strategy.protectFrom,
         usedMirror: Boolean(strategy.usedMirror),
         baseCost: strategy.baseCost,
+        primaryBaseCost: strategy.usedMirror ? strategy.primaryBaseCost : null,
         paramsSource: source.kind,
         paramsNote: source.detail,
         xpPerHour: path.xpPerHour,
