@@ -19,8 +19,13 @@ vi.mock('./market-data.js', () => ({
     getItemPrices: (hrid) => game.prices[hrid] ?? null,
 }));
 
-const { labyrinthTokenValue, labyrinthRewardValue, shopPurchasePrice, calculateDungeonTokenValue } =
-    await import('./token-valuation.js');
+const {
+    labyrinthTokenValue,
+    labyrinthTokenValueDetail,
+    labyrinthRewardValue,
+    shopPurchasePrice,
+    calculateDungeonTokenValue,
+} = await import('./token-valuation.js');
 const { nextPriceDown } = await import('./market-values.js');
 
 /**
@@ -50,6 +55,18 @@ describe('labyrinthTokenValue', () => {
     test('nothing priced is nothing rather than a crash', () => {
         expect(labyrinthTokenValue({}, priceOf)).toBe(0);
         expect(labyrinthTokenValue(null, priceOf)).toBe(0);
+    });
+});
+
+describe('labyrinthTokenValueDetail', () => {
+    test('names the shop line that produced the best conversion', () => {
+        expect(labyrinthTokenValueDetail(shopMap, priceOf)).toEqual({ value: 10_000, itemHrid: '/items/essence' });
+    });
+
+    test('null when nothing in the shop is priced', () => {
+        expect(labyrinthTokenValueDetail({ scroll: shopMap.scroll }, priceOf)).toBeNull();
+        expect(labyrinthTokenValueDetail({}, priceOf)).toBeNull();
+        expect(labyrinthTokenValueDetail(null, priceOf)).toBeNull();
     });
 });
 

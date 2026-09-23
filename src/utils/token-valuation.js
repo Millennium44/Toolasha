@@ -184,7 +184,21 @@ export function shopPurchasePrice(itemHrid, shopMaps, priceOf) {
  * @returns {number} Coins per token, or 0 when nothing in the shop is priced
  */
 export function labyrinthTokenValue(shopMap, priceOf) {
-    let best = 0;
+    return labyrinthTokenValueDetail(shopMap, priceOf)?.value || 0;
+}
+
+/**
+ * {@link labyrinthTokenValue}, but also saying which shop line produced the
+ * best conversion — needed anywhere the value has to be explained ("via
+ * Labyrinth Refinement Shard"), not just used.
+ *
+ * @param {Object} shopMap - The game's `labyrinthShopItemDetailMap`
+ * @param {Function} priceOf - `(itemHrid) => number|null`
+ * @returns {{value: number, itemHrid: string}|null} The best per-token value
+ *   and the item it comes from, or null when nothing in the shop is priced
+ */
+export function labyrinthTokenValueDetail(shopMap, priceOf) {
+    let best = null;
 
     for (const line of Object.values(shopMap || {})) {
         const cost = line?.cost?.count || 0;
@@ -195,7 +209,7 @@ export function labyrinthTokenValue(shopMap, priceOf) {
 
         // One token can buy several of something, and the shop says so
         const perToken = (price * (line.outputCount || 1)) / cost;
-        if (perToken > best) best = perToken;
+        if (!best || perToken > best.value) best = { value: perToken, itemHrid: line.itemHrid };
     }
     return best;
 }

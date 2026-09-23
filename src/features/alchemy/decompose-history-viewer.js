@@ -32,6 +32,7 @@ import {
 } from './history-totals-table.js';
 import { renderCatalystColumnHeader, renderCatalystCountCell } from './alchemy-catalyst-columns.js';
 import { computeExpectedSuccesses, formatExpectedSuccesses } from './alchemy-expected-successes.js';
+import { getAlchemyOutputShopValue, describeShopValue } from './alchemy-shop-value.js';
 
 const CATALYST_OF_DECOMPOSITION_HRID = '/items/catalyst_of_decomposition';
 const PRIME_CATALYST_HRID = '/items/prime_catalyst';
@@ -97,6 +98,7 @@ const DECOMPOSE_TOTALS_LEGEND = [
     '† catalyst on some sessions could not be priced — excluded, not zero',
     '‡ catalyst not recorded on some sessions (predates tracking) — excluded, not zero',
     '¶ output unpriced — total is incomplete, not zero-earning; Net and Break-even Input carry the same mark',
+    '§ output valued at its best Labyrinth Shop conversion, not a market price',
     'A "Pooled" row adds up inputs the game data says are the same bet — hover it for the members',
 ];
 
@@ -585,7 +587,8 @@ class DecomposeHistoryViewer {
      *
      * @param {Object} session
      * @returns {{profit: number, revenue: number, inputCost: number, catalystCost: number, coinCost: number,
-     *   netConsumed: number, inputBasis: string|null, inputUnpriced: boolean, revenueUnpriced: boolean}}
+     *   netConsumed: number, inputBasis: string|null, inputUnpriced: boolean, revenueUnpriced: boolean,
+     *   revenueShopValued: boolean}}
      */
     computeSessionProfit(session) {
         const itemDetails = dataManager.getItemDetails(session.inputItemHrid);
@@ -597,9 +600,23 @@ class DecomposeHistoryViewer {
 
         let revenue = 0;
         let revenueUnpriced = false;
-        for (const result of Object.values(session.results || {})) {
+        // A result the market cannot price (Labyrinth Token, from decomposing
+        // scrolls) still has a value — the best conversion its own shop offers.
+        // See alchemy-shop-value.js. No marketplace tax applies to it: it was
+        // never a sale.
+        let revenueShopValued = false;
+        for (const [resultItemHrid, result] of Object.entries(session.results || {})) {
+            if (result.unpriced) {
+                const shopValue = getAlchemyOutputShopValue(resultItemHrid);
+                if (shopValue) {
+                    revenue += shopValue.valuePerUnit * (result.count || 0);
+                    revenueShopValued = true;
+                    continue;
+                }
+                revenueUnpriced = true;
+                continue;
+            }
             revenue += calculatePriceAfterTax(result.totalValue || 0);
-            if (result.unpriced) revenueUnpriced = true;
         }
 
         const netConsumed = attempts * bulkMultiplier;
@@ -657,6 +674,7 @@ class DecomposeHistoryViewer {
             profit: revenue - inputCost - catalystCost - coinCost,
             revenue,
             revenueUnpriced,
+            revenueShopValued,
             inputCost,
             catalystCost,
             catalystUnpriced,
@@ -890,7 +908,8 @@ class DecomposeHistoryViewer {
                 profitCell.textContent =
                     formatKMB(profitDetail.profit, 1) +
                     (profitDetail.inputUnpriced ? '*' : '') +
-                    (profitDetail.revenueUnpriced ? '¶' : '');
+                    (profitDetail.revenueUnpriced ? '¶' : '') +
+                    (profitDetail.revenueShopValued ? '§' : '');
                 profitCell.style.cssText = `
                     padding: 6px 10px;
                     font-weight: bold;
@@ -898,7 +917,8 @@ class DecomposeHistoryViewer {
                 `;
                 profitCell.title =
                     `Output value: ${formatKMB(profitDetail.revenue, 1)}` +
-                    `${profitDetail.revenueUnpriced ? ' (¶ unpriced — incomplete, not zero)' : ''}\n` +
+                    `${profitDetail.revenueUnpriced ? ' (¶ unpriced — incomplete, not zero)' : ''}` +
+                    `${profitDetail.revenueShopValued ? ' (§ includes a shop-derived value — see the result line below)' : ''}\n` +
                     `${formatInputCostLine(profitDetail)}\n` +
                     `Catalysts: −${formatKMB(profitDetail.catalystCost, 1)}\n` +
                     `Alchemy coins: −${formatKMB(profitDetail.coinCost, 1)}`;
@@ -965,11 +985,25 @@ class DecomposeHistoryViewer {
 
             const text = document.createElement('span');
             const name = this.getItemName(itemHrid);
-            const total = formatKMB(result.totalValue || 0, 1);
-            const each = formatKMB(result.priceEach || 0, 1);
-            text.textContent = `${name} x${result.count} = ${total}${result.unpriced ? '¶' : ''} (${each} each)`;
-            if (result.unpriced) {
-                text.title = 'The market could not price this output — this value is incomplete, not zero.';
+
+            // The market cannot price an untradeable output like Labyrinth Token —
+            // the session recorded totalValue: 0 for it — but a game shop may still
+            // convert it to gold. Shown as a shop-derived value, never as the
+            // recorded (zero) market price.
+            const shopValue = result.unpriced ? getAlchemyOutputShopValue(itemHrid) : null;
+            if (shopValue) {
+                const perUnit = shopValue.valuePerUnit;
+                const total = formatKMB(perUnit * (result.count || 0), 1);
+                const each = formatKMB(perUnit, 1);
+                text.textContent = `${name} x${result.count} = ${total}§ (${each} each)`;
+                text.title = describeShopValue(shopValue, (n) => formatKMB(n, 1));
+            } else {
+                const total = formatKMB(result.totalValue || 0, 1);
+                const each = formatKMB(result.priceEach || 0, 1);
+                text.textContent = `${name} x${result.count} = ${total}${result.unpriced ? '¶' : ''} (${each} each)`;
+                if (result.unpriced) {
+                    text.title = 'The market could not price this output — this value is incomplete, not zero.';
+                }
             }
 
             line.appendChild(text);
@@ -1007,6 +1041,7 @@ class DecomposeHistoryViewer {
                 netConsumed: 0,
                 revenue: 0,
                 revenueUnpriced: false,
+                revenueShopValued: false,
                 inputCost: 0,
                 inputUnpriced: false,
                 catalystCost: 0,
@@ -1022,6 +1057,7 @@ class DecomposeHistoryViewer {
                 group.netConsumed += detail.netConsumed;
                 group.revenue += detail.revenue;
                 if (detail.revenueUnpriced) group.revenueUnpriced = true;
+                if (detail.revenueShopValued) group.revenueShopValued = true;
                 group.inputCost += detail.inputCost;
                 if (detail.inputUnpriced) group.inputUnpriced = true;
                 group.catalystCost += detail.catalystCost;
@@ -1089,6 +1125,7 @@ class DecomposeHistoryViewer {
             netConsumed: 0,
             revenue: 0,
             revenueUnpriced: false,
+            revenueShopValued: false,
             inputCost: 0,
             inputUnpriced: false,
             catalystCost: 0,
@@ -1111,6 +1148,7 @@ class DecomposeHistoryViewer {
             pooled.coinCost += group.coinCost;
             pooled.inputUnpriced = pooled.inputUnpriced || group.inputUnpriced;
             pooled.revenueUnpriced = pooled.revenueUnpriced || group.revenueUnpriced;
+            pooled.revenueShopValued = pooled.revenueShopValued || group.revenueShopValued;
             for (const hrid of group.catalystHrids || []) pooled.catalystHrids.add(hrid);
         }
 
@@ -1194,11 +1232,22 @@ class DecomposeHistoryViewer {
         row.appendChild(createTotalsCell(`${group.successes} (${successPct})`));
 
         row.appendChild(
-            createTotalsCell(formatKMB(group.revenue, 1) + (group.revenueUnpriced ? '¶' : ''), {
-                title: group.revenueUnpriced
-                    ? 'At least one session in this group had an output the market could not price — this total is incomplete, not zero-earning.'
-                    : undefined,
-            })
+            createTotalsCell(
+                formatKMB(group.revenue, 1) + (group.revenueUnpriced ? '¶' : '') + (group.revenueShopValued ? '§' : ''),
+                {
+                    title:
+                        [
+                            group.revenueUnpriced
+                                ? 'At least one session in this group had an output the market could not price — this total is incomplete, not zero-earning.'
+                                : null,
+                            group.revenueShopValued
+                                ? 'Includes an output valued at its best Labyrinth Shop conversion, not a market price.'
+                                : null,
+                        ]
+                            .filter(Boolean)
+                            .join(' ') || undefined,
+                }
+            )
         );
         row.appendChild(
             createTotalsCell(formatKMB(group.inputCost, 1) + (group.inputUnpriced ? '*' : ''), {
@@ -1218,22 +1267,30 @@ class DecomposeHistoryViewer {
         // apart from a Net that only looks bad because part of what was earned
         // could not be counted.
         row.appendChild(
-            createTotalsCell(formatKMB(group.net, 1) + (group.revenueUnpriced ? '¶' : ''), {
-                color: group.net >= 0 ? config.COLOR_PROFIT : config.COLOR_LOSS,
-                bold: true,
-                title: group.revenueUnpriced
-                    ? 'Includes an unpriced output — this total is incomplete, not a confirmed figure.'
-                    : undefined,
-            })
+            createTotalsCell(
+                formatKMB(group.net, 1) + (group.revenueUnpriced ? '¶' : '') + (group.revenueShopValued ? '§' : ''),
+                {
+                    color: group.net >= 0 ? config.COLOR_PROFIT : config.COLOR_LOSS,
+                    bold: true,
+                    title: group.revenueUnpriced
+                        ? 'Includes an unpriced output — this total is incomplete, not a confirmed figure.'
+                        : group.revenueShopValued
+                          ? 'Includes an output valued at its best Labyrinth Shop conversion, not a market price.'
+                          : undefined,
+                }
+            )
         );
         row.appendChild(
             createTotalsCell(
                 (group.breakEvenInputValue !== null ? formatKMB(group.breakEvenInputValue, 1) : '—') +
-                    (group.revenueUnpriced ? '¶' : ''),
+                    (group.revenueUnpriced ? '¶' : '') +
+                    (group.revenueShopValued ? '§' : ''),
                 {
                     title: group.revenueUnpriced
                         ? 'Includes an unpriced output — this total is incomplete, not a confirmed figure.'
-                        : undefined,
+                        : group.revenueShopValued
+                          ? 'Includes an output valued at its best Labyrinth Shop conversion, not a market price.'
+                          : undefined,
                 }
             )
         );
@@ -1274,6 +1331,7 @@ class DecomposeHistoryViewer {
                 acc.netConsumed += group.netConsumed;
                 acc.revenue += group.revenue;
                 acc.revenueUnpriced = acc.revenueUnpriced || group.revenueUnpriced;
+                acc.revenueShopValued = acc.revenueShopValued || group.revenueShopValued;
                 acc.inputCost += group.inputCost;
                 acc.catalystCost += group.catalystCost;
                 acc.coinCost += group.coinCost;
@@ -1289,6 +1347,7 @@ class DecomposeHistoryViewer {
                 netConsumed: 0,
                 revenue: 0,
                 revenueUnpriced: false,
+                revenueShopValued: false,
                 inputCost: 0,
                 catalystCost: 0,
                 coinCost: 0,
@@ -1313,12 +1372,25 @@ class DecomposeHistoryViewer {
         const successPct = overall.attempts > 0 ? `${((overall.successes / overall.attempts) * 100).toFixed(1)}%` : '—';
         row.appendChild(createTotalsCell(`${overall.successes} (${successPct})`, { bold: true }));
         row.appendChild(
-            createTotalsCell(formatKMB(overall.revenue, 1) + (overall.revenueUnpriced ? '¶' : ''), {
-                bold: true,
-                title: overall.revenueUnpriced
-                    ? 'At least one session had an output the market could not price — this total is incomplete, not zero-earning.'
-                    : undefined,
-            })
+            createTotalsCell(
+                formatKMB(overall.revenue, 1) +
+                    (overall.revenueUnpriced ? '¶' : '') +
+                    (overall.revenueShopValued ? '§' : ''),
+                {
+                    bold: true,
+                    title:
+                        [
+                            overall.revenueUnpriced
+                                ? 'At least one session had an output the market could not price — this total is incomplete, not zero-earning.'
+                                : null,
+                            overall.revenueShopValued
+                                ? 'Includes an output valued at its best Labyrinth Shop conversion, not a market price.'
+                                : null,
+                        ]
+                            .filter(Boolean)
+                            .join(' ') || undefined,
+                }
+            )
         );
         row.appendChild(
             createTotalsCell(formatKMB(overall.inputCost, 1) + (overall.inputUnpriced ? '*' : ''), { bold: true })
@@ -1331,13 +1403,18 @@ class DecomposeHistoryViewer {
 
         const net = overall.revenue - overall.inputCost - overall.catalystCost - overall.coinCost;
         row.appendChild(
-            createTotalsCell(formatKMB(net, 1) + (overall.revenueUnpriced ? '¶' : ''), {
-                bold: true,
-                color: net >= 0 ? config.COLOR_PROFIT : config.COLOR_LOSS,
-                title: overall.revenueUnpriced
-                    ? 'Includes an unpriced output — this total is incomplete, not a confirmed figure.'
-                    : undefined,
-            })
+            createTotalsCell(
+                formatKMB(net, 1) + (overall.revenueUnpriced ? '¶' : '') + (overall.revenueShopValued ? '§' : ''),
+                {
+                    bold: true,
+                    color: net >= 0 ? config.COLOR_PROFIT : config.COLOR_LOSS,
+                    title: overall.revenueUnpriced
+                        ? 'Includes an unpriced output — this total is incomplete, not a confirmed figure.'
+                        : overall.revenueShopValued
+                          ? 'Includes an output valued at its best Labyrinth Shop conversion, not a market price.'
+                          : undefined,
+                }
+            )
         );
 
         // Mixed input items — a single break-even input value across different

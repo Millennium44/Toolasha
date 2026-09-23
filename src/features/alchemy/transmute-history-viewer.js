@@ -32,6 +32,7 @@ import {
 } from './history-totals-table.js';
 import { renderCatalystColumnHeader, renderCatalystCountCell } from './alchemy-catalyst-columns.js';
 import { computeExpectedSuccesses, formatExpectedSuccesses } from './alchemy-expected-successes.js';
+import { getAlchemyOutputShopValue, describeShopValue } from './alchemy-shop-value.js';
 
 const CATALYST_OF_TRANSMUTATION_HRID = '/items/catalyst_of_transmutation';
 const PRIME_CATALYST_HRID = '/items/prime_catalyst';
@@ -100,6 +101,7 @@ const TRANSMUTE_TOTALS_LEGEND = [
     '‡ catalyst not recorded on some sessions (predates tracking) — excluded, not zero',
     '◇ catalyst estimated on some sessions, not measured',
     '¶ output unpriced — total is incomplete, not zero-earning; Net and Break-even Input carry the same mark',
+    '‖ output valued at its best Labyrinth Shop conversion, not a market price',
     'A "Pooled" row adds up inputs the game data says are the same bet — hover it for the members',
     '§ self-return counts on some sessions were derived from the recorded successes, not observed — ' +
         'and that success count is itself approximate on these sessions (recorded through the same batching ' +
@@ -722,7 +724,8 @@ class TransmuteHistoryViewer {
                 profitCell.textContent =
                     formatKMB(profitDetail.profit, 1) +
                     (profitDetail.inputUnpriced ? '*' : '') +
-                    (profitDetail.revenueUnpriced ? '¶' : '');
+                    (profitDetail.revenueUnpriced ? '¶' : '') +
+                    (profitDetail.revenueShopValued ? '‖' : '');
                 profitCell.style.cssText = `
                     padding: 6px 10px;
                     font-weight: bold;
@@ -730,7 +733,8 @@ class TransmuteHistoryViewer {
                 `;
                 profitCell.title =
                     `Output value: ${formatKMB(profitDetail.revenue, 1)}` +
-                    `${profitDetail.revenueUnpriced ? ' (¶ unpriced — incomplete, not zero)' : ''}\n` +
+                    `${profitDetail.revenueUnpriced ? ' (¶ unpriced — incomplete, not zero)' : ''}` +
+                    `${profitDetail.revenueShopValued ? ' (‖ includes a shop-derived value — see the result line below)' : ''}\n` +
                     `${formatInputCostLine(profitDetail)}\n` +
                     `Transmute coins: −${formatKMB(profitDetail.coinCost, 1)}\n` +
                     `${this.formatCatalystLine(profitDetail)} (see totals row below)\n` +
@@ -807,6 +811,7 @@ class TransmuteHistoryViewer {
                 nonSelfReturnOutputs: 0,
                 revenue: 0,
                 revenueUnpriced: false,
+                revenueShopValued: false,
                 inputCost: 0,
                 inputUnpriced: false,
                 coinCost: 0,
@@ -828,6 +833,7 @@ class TransmuteHistoryViewer {
                 group.nonSelfReturnOutputs += detail.nonSelfReturnOutputs;
                 group.revenue += detail.revenue;
                 if (detail.revenueUnpriced) group.revenueUnpriced = true;
+                if (detail.revenueShopValued) group.revenueShopValued = true;
                 group.inputCost += detail.inputCost;
                 if (detail.inputUnpriced) group.inputUnpriced = true;
                 group.coinCost += detail.coinCost;
@@ -953,6 +959,7 @@ class TransmuteHistoryViewer {
             nonSelfReturnOutputs: 0,
             revenue: 0,
             revenueUnpriced: false,
+            revenueShopValued: false,
             inputCost: 0,
             inputUnpriced: false,
             coinCost: 0,
@@ -985,6 +992,7 @@ class TransmuteHistoryViewer {
             pooled.unreliableSessions += group.unreliableSessions;
             pooled.inputUnpriced = pooled.inputUnpriced || group.inputUnpriced;
             pooled.revenueUnpriced = pooled.revenueUnpriced || group.revenueUnpriced;
+            pooled.revenueShopValued = pooled.revenueShopValued || group.revenueShopValued;
             pooled.impossible = pooled.impossible || group.impossible;
             for (const hrid of group.catalystHrids || []) pooled.catalystHrids.add(hrid);
         }
@@ -1115,11 +1123,22 @@ class TransmuteHistoryViewer {
         );
 
         row.appendChild(
-            this.createTotalsCell(formatKMB(group.revenue, 1) + (group.revenueUnpriced ? '¶' : ''), {
-                title: group.revenueUnpriced
-                    ? 'At least one session in this group had an output the market could not price — this total is incomplete, not zero-earning.'
-                    : undefined,
-            })
+            this.createTotalsCell(
+                formatKMB(group.revenue, 1) + (group.revenueUnpriced ? '¶' : '') + (group.revenueShopValued ? '‖' : ''),
+                {
+                    title:
+                        [
+                            group.revenueUnpriced
+                                ? 'At least one session in this group had an output the market could not price — this total is incomplete, not zero-earning.'
+                                : null,
+                            group.revenueShopValued
+                                ? 'Includes an output valued at its best Labyrinth Shop conversion, not a market price.'
+                                : null,
+                        ]
+                            .filter(Boolean)
+                            .join(' ') || undefined,
+                }
+            )
         );
         row.appendChild(
             this.createTotalsCell(
@@ -1145,7 +1164,9 @@ class TransmuteHistoryViewer {
         // could not be counted.
         row.appendChild(
             this.createTotalsCell(
-                (group.impossible ? '—' : formatKMB(group.net, 1)) + (group.revenueUnpriced ? '¶' : ''),
+                (group.impossible ? '—' : formatKMB(group.net, 1)) +
+                    (group.revenueUnpriced ? '¶' : '') +
+                    (group.revenueShopValued ? '‖' : ''),
                 {
                     color: group.impossible ? '#fbbf24' : group.net >= 0 ? config.COLOR_PROFIT : config.COLOR_LOSS,
                     bold: true,
@@ -1153,7 +1174,9 @@ class TransmuteHistoryViewer {
                         ? impossibleTitle
                         : group.revenueUnpriced
                           ? 'Includes an unpriced output — this total is incomplete, not a confirmed figure.'
-                          : undefined,
+                          : group.revenueShopValued
+                            ? 'Includes an output valued at its best Labyrinth Shop conversion, not a market price.'
+                            : undefined,
                 }
             )
         );
@@ -1216,6 +1239,7 @@ class TransmuteHistoryViewer {
                 acc.successes += group.successes;
                 acc.revenue += group.revenue;
                 acc.revenueUnpriced = acc.revenueUnpriced || group.revenueUnpriced;
+                acc.revenueShopValued = acc.revenueShopValued || group.revenueShopValued;
                 acc.inputCost += group.inputCost;
                 acc.coinCost += group.coinCost;
                 acc.catalystCost += group.catalystCost;
@@ -1237,6 +1261,7 @@ class TransmuteHistoryViewer {
                 successes: 0,
                 revenue: 0,
                 revenueUnpriced: false,
+                revenueShopValued: false,
                 inputCost: 0,
                 coinCost: 0,
                 catalystCost: 0,
@@ -1287,12 +1312,25 @@ class TransmuteHistoryViewer {
             })
         );
         row.appendChild(
-            this.createTotalsCell(formatKMB(overall.revenue, 1) + (overall.revenueUnpriced ? '¶' : ''), {
-                bold: true,
-                title: overall.revenueUnpriced
-                    ? 'At least one session had an output the market could not price — this total is incomplete, not zero-earning.'
-                    : undefined,
-            })
+            this.createTotalsCell(
+                formatKMB(overall.revenue, 1) +
+                    (overall.revenueUnpriced ? '¶' : '') +
+                    (overall.revenueShopValued ? '‖' : ''),
+                {
+                    bold: true,
+                    title:
+                        [
+                            overall.revenueUnpriced
+                                ? 'At least one session had an output the market could not price — this total is incomplete, not zero-earning.'
+                                : null,
+                            overall.revenueShopValued
+                                ? 'Includes an output valued at its best Labyrinth Shop conversion, not a market price.'
+                                : null,
+                        ]
+                            .filter(Boolean)
+                            .join(' ') || undefined,
+                }
+            )
         );
         row.appendChild(
             this.createTotalsCell(
@@ -1309,7 +1347,9 @@ class TransmuteHistoryViewer {
         const net = overall.revenue - overall.inputCost - overall.catalystCost - overall.coinCost;
         row.appendChild(
             this.createTotalsCell(
-                (overall.hasImpossibleGroup ? '—' : formatKMB(net, 1)) + (overall.revenueUnpriced ? '¶' : ''),
+                (overall.hasImpossibleGroup ? '—' : formatKMB(net, 1)) +
+                    (overall.revenueUnpriced ? '¶' : '') +
+                    (overall.revenueShopValued ? '‖' : ''),
                 {
                     bold: true,
                     color: overall.hasImpossibleGroup ? '#fbbf24' : net >= 0 ? config.COLOR_PROFIT : config.COLOR_LOSS,
@@ -1317,7 +1357,9 @@ class TransmuteHistoryViewer {
                         ? overallImpossibleTitle
                         : overall.revenueUnpriced
                           ? 'Includes an unpriced output — this total is incomplete, not a confirmed figure.'
-                          : undefined,
+                          : overall.revenueShopValued
+                            ? 'Includes an output valued at its best Labyrinth Shop conversion, not a market price.'
+                            : undefined,
                 }
             )
         );
@@ -1488,14 +1530,28 @@ class TransmuteHistoryViewer {
         let revenueUnpriced = false;
         let selfReturned = 0;
         let nonSelfReturnOutputs = 0;
-        for (const result of Object.values(session.results || {})) {
+        // A result the market cannot price still may have a value — see
+        // alchemy-shop-value.js. Currently only covers Labyrinth Token, which
+        // transmute's own drop tables do not produce, but the check is cheap
+        // and keeps this in step with decompose should that ever change.
+        let revenueShopValued = false;
+        for (const [resultItemHrid, result] of Object.entries(session.results || {})) {
             if (result.isSelfReturn) {
                 selfReturned += result.count || 0;
-            } else {
-                revenue += calculatePriceAfterTax(result.totalValue || 0);
-                if (result.unpriced) revenueUnpriced = true;
-                nonSelfReturnOutputs += result.count || 0;
+                continue;
             }
+            nonSelfReturnOutputs += result.count || 0;
+            if (result.unpriced) {
+                const shopValue = getAlchemyOutputShopValue(resultItemHrid);
+                if (shopValue) {
+                    revenue += shopValue.valuePerUnit * (result.count || 0);
+                    revenueShopValued = true;
+                    continue;
+                }
+                revenueUnpriced = true;
+                continue;
+            }
+            revenue += calculatePriceAfterTax(result.totalValue || 0);
         }
 
         const attempts = session.totalAttempts || 0;
@@ -1521,6 +1577,7 @@ class TransmuteHistoryViewer {
             profit: revenue - inputCost - coinCost,
             revenue,
             revenueUnpriced,
+            revenueShopValued,
             inputCost,
             coinCost,
             netConsumed,
@@ -1660,11 +1717,20 @@ class TransmuteHistoryViewer {
                 }
                 text.style.color = '#888';
             } else {
-                const total = formatKMB(result.totalValue || 0, 1);
-                const each = formatKMB(result.priceEach || 0, 1);
-                text.textContent = `${name} x${result.count} = ${total}${result.unpriced ? '¶' : ''} (${each} each)`;
-                if (result.unpriced) {
-                    text.title = 'The market could not price this output — this value is incomplete, not zero.';
+                const shopValue = result.unpriced ? getAlchemyOutputShopValue(itemHrid) : null;
+                if (shopValue) {
+                    const perUnit = shopValue.valuePerUnit;
+                    const total = formatKMB(perUnit * (result.count || 0), 1);
+                    const each = formatKMB(perUnit, 1);
+                    text.textContent = `${name} x${result.count} = ${total}‖ (${each} each)`;
+                    text.title = describeShopValue(shopValue, (n) => formatKMB(n, 1));
+                } else {
+                    const total = formatKMB(result.totalValue || 0, 1);
+                    const each = formatKMB(result.priceEach || 0, 1);
+                    text.textContent = `${name} x${result.count} = ${total}${result.unpriced ? '¶' : ''} (${each} each)`;
+                    if (result.unpriced) {
+                        text.title = 'The market could not price this output — this value is incomplete, not zero.';
+                    }
                 }
             }
 
