@@ -39,6 +39,19 @@ import { ALCHEMY_TYPES, rankAlchemyType, getAlchemyBaseXP, calcXpPerAction } fro
 // where other files still import them from.
 export { getAlchemyBaseXP, calcXpPerAction };
 
+/**
+ * The same warning the action panel prints when an output could not be priced,
+ * so a Best Items row does not read as a complete figure when it is a partial one.
+ * @param {Object|null} profitData - The calculator's result for the row
+ * @returns {string|null} The warning, or null when every output was priced
+ */
+export function unpricedOutputNote(profitData) {
+    const unpriced = Array.isArray(profitData?.unpricedOutputs) ? profitData.unpricedOutputs : [];
+    if (unpriced.length === 0) return null;
+    const names = unpriced.map((hrid) => dataManager.getItemDetails(hrid)?.name || hrid).join(', ');
+    return `No market price for ${names} — revenue and profit are understated.`;
+}
+
 const CATALYST_LABELS = {
     '/items/catalyst_of_coinification': 'Coinify',
     '/items/catalyst_of_decomposition': 'Decompose',
@@ -815,6 +828,15 @@ class AlchemyBestItems {
             } else if (item.liquidityLimit) {
                 profitTd.insertAdjacentHTML('beforeend', liquidityMarkerHtml(item.liquidityLimit, { compact: true }));
             }
+            const unpricedNote = unpricedOutputNote(item.profitData);
+            if (unpricedNote) {
+                const marker = document.createElement('span');
+                marker.setAttribute('data-mwi-unpriced', 'true');
+                marker.title = unpricedNote;
+                marker.textContent = 'unpriced';
+                marker.style.cssText = 'font-size:0.85em; margin-left:4px; color:#fbbf24;';
+                profitTd.appendChild(marker);
+            }
             row.appendChild(profitTd);
 
             // XP/hr
@@ -906,6 +928,14 @@ class AlchemyBestItems {
                 .reduce((sum, d) => sum + d.revenuePerHour, 0);
             revenueHeader.textContent = `Revenue: ${formatKMB(Math.round(totalRevenue))}/hr`;
             container.appendChild(revenueHeader);
+
+            const unpricedNote = unpricedOutputNote(profitData);
+            if (unpricedNote) {
+                const note = document.createElement('div');
+                note.style.cssText = 'margin-left: 8px; color: #fbbf24;';
+                note.textContent = `• ${unpricedNote}`;
+                container.appendChild(note);
+            }
 
             for (const drop of profitData.dropRevenues) {
                 const itemDetails = dataManager.getItemDetails(drop.itemHrid);

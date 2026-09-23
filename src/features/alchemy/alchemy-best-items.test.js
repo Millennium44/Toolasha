@@ -497,6 +497,17 @@ describe('renderTable filtering and sorting', () => {
         profitData: null,
     });
 
+    test('a row with an unpriced output says so, as the action panel does', () => {
+        const partial = { ...row('partial', 100, 0), profitData: { unpricedOutputs: ['/items/labyrinth_token'] } };
+        const full = { ...row('full', 50, 0), profitData: { unpricedOutputs: [] } };
+        render([partial, full]);
+
+        const markers = bestItems.modal.querySelectorAll('[data-mwi-unpriced]');
+        expect(markers).toHaveLength(1);
+        expect(markers[0].title).toContain('No market price for /items/labyrinth_token');
+        expect(markers[0].closest('tr').children[1].textContent).toBe('partial');
+    });
+
     test('the default sort is profit descending', () => {
         render([row('low', 100, 0), row('high', 900, 0), row('mid', 500, 0)]);
 
