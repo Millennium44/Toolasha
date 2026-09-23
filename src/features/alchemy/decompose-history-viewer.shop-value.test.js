@@ -119,6 +119,32 @@ describe('decompose history: Labyrinth Token is valued through the shop, not pri
         expect(shopValued.revenue).toBeCloseTo(marketPriced.revenue, 6);
     });
 
+    test('the CSV export shows the shop value it charged, not the recorded zero, and says so', () => {
+        state.shardPrice = 5500;
+        decomposeHistoryViewer.sessions = [{ ...sessionWithTokenResult(), startTime: Date.UTC(2026, 8, 20) }];
+        decomposeHistoryViewer.profitCache.clear();
+        let csv = null;
+        const OriginalBlob = globalThis.Blob;
+        const spy = vi.spyOn(globalThis, 'Blob').mockImplementation(
+            class {
+                constructor(parts, opts) {
+                    csv = parts[0];
+                    return new OriginalBlob(parts, opts);
+                }
+            }
+        );
+        vi.spyOn(URL, 'createObjectURL').mockReturnValue('blob:mock');
+        vi.spyOn(URL, 'revokeObjectURL').mockImplementation(() => {});
+        vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(() => {});
+        decomposeHistoryViewer.exportHistory();
+        spy.mockRestore();
+
+        const row = csv.split('\n')[1];
+        expect(row).toContain('x90 = 495.0K (5.5K each, Labyrinth Shop value)');
+        expect(row).toContain('valued at its best Labyrinth Shop conversion');
+        expect(row).not.toMatch(/NaN|undefined|Infinity/);
+    });
+
     test('stays unpriced (not zero) when the shop itself has nothing priced', () => {
         state.shardPrice = 0;
         const detail = decomposeHistoryViewer.computeSessionProfit(sessionWithTokenResult());

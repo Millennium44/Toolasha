@@ -36,6 +36,7 @@ import {
     appendPreFixMarker,
     createPreFixToggle,
     loadIncludePreFix,
+    preFixDataNote,
     preFixLegend,
     saveIncludePreFix,
     totalsSessions,
@@ -2200,16 +2201,27 @@ class DecomposeHistoryViewer {
     }
 
     /**
-     * The Data Note cell for a session's CSV export row: the same qualification
-     * the on-screen Profit column marks with `*`, spelled out in readable text —
-     * a spreadsheet reader has no legend for the symbol, so a qualified row
-     * exported as a plain number reads more confident than the same row on
-     * screen. Empty when nothing qualifies the row.
+     * The Data Note cell for a session's CSV export row: every qualification
+     * the on-screen row marks with a symbol (* † ‡ ¶ § ◷), spelled out in
+     * readable text — a spreadsheet reader has no legend for the symbols, so a
+     * qualified row exported as a plain number reads more confident than the
+     * same row on screen. Empty when nothing qualifies the row.
      * @param {Object} detail - A `computeSessionProfit` result
-     * @returns {string} The note, or ''
+     * @param {Object|null} [session] - The session, for the pre-fix note
+     * @returns {string} Semicolon-joined notes, or ''
      */
-    buildDataNote(detail) {
-        return detail.inputUnpriced ? 'input unpriced — total is incomplete' : '';
+    buildDataNote(detail, session = null) {
+        const notes = [];
+        if (detail.inputUnpriced) notes.push('input unpriced — total is incomplete');
+        if (detail.catalystUnpriced) notes.push('catalyst could not be priced — excluded, not zero');
+        if (detail.catalystUnrecorded) notes.push('catalyst not recorded (predates tracking) — excluded, not zero');
+        if (detail.revenueUnpriced) notes.push('output unpriced — revenue is incomplete, not zero-earning');
+        if (detail.revenueShopValued) {
+            notes.push('output valued at its best Labyrinth Shop conversion, not a market price');
+        }
+        const preFix = session ? preFixDataNote(session, 'decompose') : '';
+        if (preFix) notes.push(preFix);
+        return notes.join('; ');
     }
 
     /**
@@ -2246,9 +2258,17 @@ class DecomposeHistoryViewer {
                 .sort(([, a], [, b]) => (b.totalValue || 0) - (a.totalValue || 0))
                 .map(([hrid, result]) => {
                     const name = this.getItemName(hrid);
+                    // The figure the Profit column used, not the recorded zero of an untradeable output
+                    const shopValue =
+                        result.unpriced || !(result.totalValue > 0) ? getAlchemyOutputShopValue(hrid) : null;
+                    if (shopValue) {
+                        const total = formatKMB(shopValue.valuePerUnit * (result.count || 0), 1);
+                        const each = formatKMB(shopValue.valuePerUnit, 1);
+                        return `${name} x${result.count} = ${total} (${each} each, Labyrinth Shop value)`;
+                    }
                     const total = formatKMB(result.totalValue || 0, 1);
                     const each = formatKMB(result.priceEach || 0, 1);
-                    return `${name} x${result.count} = ${total} (${each} each)`;
+                    return `${name} x${result.count} = ${total} (${each} each${result.unpriced ? ', unpriced' : ''})`;
                 });
 
             const detail = this.profitCache.get(session.id) || this.computeSessionProfit(session);
@@ -2265,7 +2285,7 @@ class DecomposeHistoryViewer {
                 session.catalystOfDecompositionUsed || 0,
                 session.primeCatalystUsed || 0,
                 Math.round(detail.profit),
-                this.buildDataNote(detail),
+                this.buildDataNote(detail, session),
             ]
                 .map(escape)
                 .join(',');

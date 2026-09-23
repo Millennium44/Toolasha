@@ -53,6 +53,7 @@ const { coinifyHistoryViewer } = await import('./coinify-history-viewer.js');
 
 const session = () => ({
     id: 's1',
+    trackerVersion: 2,
     inputItemHrid: INPUT_HRID,
     bulkMultiplier: 1,
     totalAttempts: 10,

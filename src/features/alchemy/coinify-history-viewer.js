@@ -33,6 +33,7 @@ import {
     appendPreFixMarker,
     createPreFixToggle,
     loadIncludePreFix,
+    preFixDataNote,
     preFixLegend,
     saveIncludePreFix,
     totalsSessions,
@@ -1778,16 +1779,23 @@ class CoinifyHistoryViewer {
     }
 
     /**
-     * The Data Note cell for a session's CSV export row: the same qualification
-     * the on-screen Profit column marks with `*`, spelled out in readable text —
-     * a spreadsheet reader has no legend for the symbol, so a qualified row
-     * exported as a plain number reads more confident than the same row on
-     * screen. Empty when nothing qualifies the row.
+     * The Data Note cell for a session's CSV export row: every qualification
+     * the on-screen row marks with a symbol (* † ‡ ◷), spelled out in readable
+     * text — a spreadsheet reader has no legend for the symbols, so a
+     * qualified row exported as a plain number reads more confident than the
+     * same row on screen. Empty when nothing qualifies the row.
      * @param {Object} detail - A `computeSessionProfit` result
-     * @returns {string} The note, or ''
+     * @param {Object|null} [session] - The session, for the pre-fix note
+     * @returns {string} Semicolon-joined notes, or ''
      */
-    buildDataNote(detail) {
-        return detail.inputUnpriced ? 'input unpriced — total is incomplete' : '';
+    buildDataNote(detail, session = null) {
+        const notes = [];
+        if (detail.inputUnpriced) notes.push('input unpriced — total is incomplete');
+        if (detail.catalystUnpriced) notes.push('catalyst could not be priced — excluded, not zero');
+        if (detail.catalystUnrecorded) notes.push('catalyst not recorded (predates tracking) — excluded, not zero');
+        const preFix = session ? preFixDataNote(session, 'coinify') : '';
+        if (preFix) notes.push(preFix);
+        return notes.join('; ');
     }
 
     /**
@@ -1833,7 +1841,7 @@ class CoinifyHistoryViewer {
                 session.catalystOfCoinificationUsed || 0,
                 session.primeCatalystUsed || 0,
                 Math.round(detail.profit),
-                this.buildDataNote(detail),
+                this.buildDataNote(detail, session),
             ]
                 .map(escape)
                 .join(',');

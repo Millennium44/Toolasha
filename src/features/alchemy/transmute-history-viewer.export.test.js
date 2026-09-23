@@ -63,6 +63,7 @@ const PRIME = '/items/prime_catalyst';
  */
 const session = (overrides = {}) => ({
     id: 'transmute_1',
+    trackerVersion: 2,
     startTime: 1,
     inputItemHrid: GEM,
     totalAttempts: 100,
@@ -129,6 +130,17 @@ describe('buildDataNote', () => {
         const note = transmuteHistoryViewer.buildDataNote(s, detail);
         expect(note).toContain('Self-return count repaired');
         expect(note).not.toContain('⚠');
+    });
+
+    test('an unpriced output and a pre-fix session land in the note', () => {
+        const s = session({
+            trackerVersion: undefined,
+            results: { [SHARD]: { count: 80, totalValue: 0, priceEach: 0, unpriced: true } },
+        });
+        const detail = transmuteHistoryViewer.computeSessionProfit(s);
+        const note = transmuteHistoryViewer.buildDataNote(s, detail);
+        expect(note).toContain('output unpriced — revenue is incomplete');
+        expect(note).toContain('recorded before the 2026-09-23 tracker fix');
     });
 
     test('several qualifications on one session all land in the note', () => {

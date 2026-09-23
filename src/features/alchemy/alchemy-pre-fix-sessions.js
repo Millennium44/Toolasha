@@ -50,6 +50,17 @@ export function preFixLegend(kind) {
 }
 
 /**
+ * The CSV Data Note text for a pre-fix session, or '' for one recorded after the fix.
+ * @param {Object} session - The exported session
+ * @param {'coinify'|'decompose'|'transmute'} kind - The window
+ * @returns {string}
+ */
+export function preFixDataNote(session, kind) {
+    if (!isPreFixSession(session)) return '';
+    return `recorded before the 2026-09-23 tracker fix — ${PRE_FIX_EFFECT[kind] || 'its counts may be off'}`;
+}
+
+/**
  * The sessions a totals table sums: every filtered session, or only those
  * recorded after the fix when pre-fix sessions are excluded.
  * @param {Array<Object>} sessions - The window's filtered sessions

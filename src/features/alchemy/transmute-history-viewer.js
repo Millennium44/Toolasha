@@ -36,6 +36,7 @@ import {
     appendPreFixMarker,
     createPreFixToggle,
     loadIncludePreFix,
+    preFixDataNote,
     preFixLegend,
     saveIncludePreFix,
     totalsSessions,
@@ -2499,7 +2500,7 @@ class TransmuteHistoryViewer {
 
     /**
      * The Data Note cell for a session's CSV/text export row: every qualification
-     * the on-screen table marks with a symbol (*†‡◇§), spelled out in readable
+     * the on-screen table marks with a symbol (*†‡◇¶‖§◷), spelled out in readable
      * text — a spreadsheet reader has no legend for the symbols, so a qualified
      * row exported as plain numbers reads more confident than the same row on
      * screen. Empty when nothing qualifies the row.
@@ -2513,8 +2514,14 @@ class TransmuteHistoryViewer {
         if (detail.catalystUnpriced) notes.push('catalyst could not be priced — excluded, not zero');
         if (detail.catalystUnrecorded) notes.push('catalyst not recorded (predates tracking) — excluded, not zero');
         if (detail.catalystEstimated) notes.push('catalyst estimated, not measured');
+        if (detail.revenueUnpriced) notes.push('output unpriced — revenue is incomplete, not zero-earning');
+        if (detail.revenueShopValued) {
+            notes.push('output valued at its best Labyrinth Shop conversion, not a market price');
+        }
         const repair = this.formatRepairLine(session).trim().replace(/^⚠\s*/, '');
         if (repair) notes.push(repair);
+        const preFix = preFixDataNote(session, 'transmute');
+        if (preFix) notes.push(preFix);
         return notes.join('; ');
     }
 
@@ -2553,9 +2560,17 @@ class TransmuteHistoryViewer {
                             ? `${name} x${result.count} (self-return, derived from ${result.recordedCount})`
                             : `${name} x${result.count} (self-return)`;
                     }
+                    // The figure the Profit column used, not the recorded zero of an untradeable output
+                    const shopValue =
+                        result.unpriced || !(result.totalValue > 0) ? getAlchemyOutputShopValue(hrid) : null;
+                    if (shopValue) {
+                        const total = formatKMB(shopValue.valuePerUnit * (result.count || 0), 1);
+                        const each = formatKMB(shopValue.valuePerUnit, 1);
+                        return `${name} x${result.count} = ${total} (${each} each, Labyrinth Shop value)`;
+                    }
                     const total = formatKMB(result.totalValue || 0, 1);
                     const each = formatKMB(result.priceEach || 0, 1);
-                    return `${name} x${result.count} = ${total} (${each} each)`;
+                    return `${name} x${result.count} = ${total} (${each} each${result.unpriced ? ', unpriced' : ''})`;
                 });
 
             const detail = this.profitCache.get(session.id) || this.computeSessionProfit(session);

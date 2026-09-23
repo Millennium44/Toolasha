@@ -53,6 +53,7 @@ const { decomposeHistoryViewer } = await import('./decompose-history-viewer.js')
 
 const session = () => ({
     id: 's1',
+    trackerVersion: 2,
     inputItemHrid: INPUT_HRID,
     bulkMultiplier: 1,
     totalAttempts: 10,
@@ -122,5 +123,23 @@ describe('exportHistory', () => {
         decomposeHistoryViewer.sessions = [session()];
         const csv = captureCsv();
         expect(csv.split('\n')[1].trimEnd()).toMatch(/,""$/);
+    });
+
+    test('an unpriced output is named in Results and the note, not exported as a plain zero', () => {
+        decomposeHistoryViewer.sessions = [
+            { ...session(), results: { '/items/fiber': { count: 8, totalValue: 0, priceEach: 0, unpriced: true } } },
+        ];
+        const row = captureCsv().split('\n')[1];
+        expect(row).toContain('fiber x8 = 0 (0 each, unpriced)');
+        expect(row).toContain('output unpriced — revenue is incomplete');
+    });
+
+    test('an unrecorded catalyst and a pre-fix session are both carried into the note', () => {
+        const legacy = { ...session(), catalystOfDecompositionUsed: undefined, primeCatalystUsed: undefined };
+        delete legacy.trackerVersion;
+        decomposeHistoryViewer.sessions = [legacy];
+        const row = captureCsv().split('\n')[1];
+        expect(row).toContain('catalyst not recorded (predates tracking)');
+        expect(row).toContain('recorded before the 2026-09-23 tracker fix');
     });
 });
