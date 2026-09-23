@@ -56,15 +56,17 @@ export default {
         // looking at the panel, so it is gated on its own setting only
         queueAlerts.initialize();
 
-        unregisterSettingChange = config.onSettingChange('queueMonitor', (enabled) => {
-            if (enabled) {
-                queueMonitorUI.initialize();
-                registerQueueCommand();
-            } else {
-                queueMonitorUI.disable();
-                unregisterCommand(QUEUE_COMMAND);
-            }
-        });
+        if (!unregisterSettingChange) {
+            unregisterSettingChange = config.onSettingChange('queueMonitor', (enabled) => {
+                if (enabled) {
+                    queueMonitorUI.initialize();
+                    registerQueueCommand();
+                } else {
+                    queueMonitorUI.disable();
+                    unregisterCommand(QUEUE_COMMAND);
+                }
+            });
+        }
 
         if (!idleSettingHandler) {
             idleSettingHandler = (enabled) => {

@@ -1,11 +1,11 @@
-import { describe, test, expect, beforeEach, vi } from 'vitest';
+import { describe, test, expect, beforeEach, afterEach, vi } from 'vitest';
 
 const game = vi.hoisted(() => ({ settings: { queueMonitor: false, notifications_otherCharacterIdle: false } }));
 
 vi.mock('../../core/config.js', () => ({
     default: {
         getSetting: (key) => game.settings[key],
-        onSettingChange: vi.fn(),
+        onSettingChange: vi.fn(() => vi.fn()),
         offSettingChange: vi.fn(),
     },
 }));
@@ -21,8 +21,13 @@ const queueMonitor = (await import('./queue-monitor.js')).default;
 
 describe('queue monitor initialize', () => {
     beforeEach(() => {
+        queueMonitor.disable();
         vi.clearAllMocks();
         game.settings = { queueMonitor: false, notifications_otherCharacterIdle: false };
+    });
+
+    afterEach(() => {
+        queueMonitor.disable();
     });
 
     test('the snapshot listener and the idle alert always start, panel setting or not', () => {
@@ -38,6 +43,17 @@ describe('queue monitor initialize', () => {
         queueMonitor.initialize();
 
         expect(queueMonitorUI.initialize).toHaveBeenCalled();
+    });
+
+    test('a reconnect registers only one panel setting callback', () => {
+        queueMonitor.initialize();
+        queueMonitor.initialize();
+
+        const callbacks = config.onSettingChange.mock.calls.filter(([key]) => key === 'queueMonitor');
+        expect(callbacks).toHaveLength(1);
+
+        callbacks[0][1](true);
+        expect(queueMonitorUI.initialize).toHaveBeenCalledTimes(1);
     });
 
     test('toggling the panel setting on and off drives the panel', () => {

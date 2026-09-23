@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Queue Monitor settings respond once after reconnecting
+
+- Reconnecting to the same character no longer registers another Queue Monitor settings listener, so toggling the panel does not repeat its setup and teardown work.
+
 ### Combat sims show how old each party profile is
 
 - The Combat Sim shows each party member's cached profile age and warns when a member has no gear (a hidden profile) or no cached profile at all; exports to external sims list the same warnings instead of silently sending a gearless member.
