@@ -195,6 +195,41 @@ describe('Metz combat export', () => {
         expect(character.hasMooPass).toBe(true);
     });
 
+    test('dates bridged inventory by when the game tab wrote it, not by when it was imported', async () => {
+        mocks.characterData = baseCharacter({
+            characterItems: [
+                {
+                    itemHrid: '/items/plate_body',
+                    enhancementLevel: 6,
+                    itemLocationHrid: '/item_locations/inventory',
+                    count: 1,
+                },
+            ],
+        });
+        mocks.itemDetailMap = {
+            '/items/plate_body': {
+                equipmentDetail: { type: '/equipment_types/body', combatStats: { armor: 12 } },
+            },
+        };
+        mocks.onGamePage = false;
+        const writtenAt = Date.parse('2026-09-20T08:00:00.000Z');
+        vi.stubGlobal(
+            'GM_getValue',
+            vi.fn((key, fallback) =>
+                key === 'toolasha_init_character_data_meta'
+                    ? JSON.stringify({ characterId: 'self-1', writtenAt })
+                    : fallback
+            )
+        );
+
+        try {
+            const character = await constructMetzCharacterExport();
+            expect(character.owned.capturedAt).toBe('2026-09-20T08:00:00.000Z');
+        } finally {
+            vi.unstubAllGlobals();
+        }
+    });
+
     test('does not claim non-combat speed pieces as combat inventory', async () => {
         mocks.itemDetailMap = {
             '/items/enhancers_top': {

@@ -24,6 +24,22 @@ function sameCharacterId(left, right) {
     return left != null && right != null && String(left) === String(right);
 }
 
+/**
+ * When the game tab wrote the bridged character snapshot, as an ISO string.
+ * The snapshot can be hours or days old when the simulator tab is reloaded, and the owned
+ * inventory is only as current as that write.
+ * @returns {string|null} ISO timestamp, or null when no readable stamp exists
+ */
+function bridgedSnapshotTime() {
+    if (typeof GM_getValue === 'undefined') return null;
+    try {
+        const writtenAt = JSON.parse(GM_getValue('toolasha_init_character_data_meta', null) || 'null')?.writtenAt;
+        return typeof writtenAt === 'number' && Number.isFinite(writtenAt) ? new Date(writtenAt).toISOString() : null;
+    } catch {
+        return null;
+    }
+}
+
 function dropBlankSlots(slots, hridField) {
     return (slots || []).filter((slot) => slot?.[hridField]);
 }
@@ -207,7 +223,7 @@ function buildSelfMetzCharacter(characterObj, clientObj) {
             itemDetailMap,
             characterAbilities: characterObj.characterAbilities,
             equippedAbilityHrids,
-            capturedAt: hasLiveData ? new Date().toISOString() : null,
+            capturedAt: hasLiveData ? new Date().toISOString() : bridgedSnapshotTime(),
         }),
     });
 }
