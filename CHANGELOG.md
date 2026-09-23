@@ -6,6 +6,14 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Drop rates follow the game's tier rules
+
+- Dungeon reward chances now include the game's 10%-per-tier boost, so a refinement chest is 33% at T1 and guaranteed at T2, matching the game's own reward list. Rare monster drops are no longer boosted by tier, since the game shows them at their base rate.
+
+### Unknown prices stay unknown further down
+
+- A Goal Planner goal planned after one with an unpriced cost now shows its coin figures as a bound and names the goal that causes it, and Task Statistics treats an unpriced Purple's Gift as a lower bound instead of free.
+
 ### Gathering output counts gear with a gathering bonus
 
 - Gathering profit, items per hour and Processing estimates now include gathering quantity from equipment, which was left out, so anyone wearing gathering gear saw noticeably less output than they get. The breakdown shows an Equipment line.
