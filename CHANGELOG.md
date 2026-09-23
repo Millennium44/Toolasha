@@ -6,6 +6,14 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Gathering output counts gear with a gathering bonus
+
+- Gathering profit, items per hour and Processing estimates now include gathering quantity from equipment, which was left out, so anyone wearing gathering gear saw noticeably less output than they get. The breakdown shows an Equipment line.
+
+### Dungeon tracker hides when another action takes over
+
+- Pressing Start Now on another action while a dungeon runs now hides the dungeon tracker instead of leaving it up with its clock still counting; if the dungeon comes back, the panel returns, and the game restarting the dungeon starts a new run.
+
 ### Audit round: enhancement "Worth it" counted the levels you started with as profit
 
 - An enhancement session that started above +0 now nets its result against the item's value at the starting level, not at +0, so it no longer counts the levels already held as profit.
