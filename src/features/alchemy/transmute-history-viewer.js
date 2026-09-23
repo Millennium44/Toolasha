@@ -7,7 +7,7 @@
 import config from '../../core/config.js';
 import dataManager from '../../core/data-manager.js';
 import { transmuteHistoryTracker } from './transmute-history-tracker.js';
-import { getItemPrice } from '../../utils/market-data.js';
+import { getItemPrice, getItemPriceInfo } from '../../utils/market-data.js';
 import { formatKMB, formatDateTime } from '../../utils/formatters.js';
 import { formatInputCostLine, priceInputWithRefinementFallback } from '../../utils/refined-item-cost.js';
 import { createMutationWatcher } from '../../utils/dom-observer-helpers.js';
@@ -1590,10 +1590,15 @@ class TransmuteHistoryViewer {
         // A refined (★) cape is untradable, so the market prices it at nothing;
         // charging the transmute 0 for it left the coin fee as the whole loss.
         // See utils/refined-item-cost.js.
-        const marketPrice = getItemPrice(session.inputItemHrid, { context: 'profit', side: 'buy' });
+        // The price's source goes along with it: an Iron Cow character's vendor or
+        // coinify valuation of a refined cape is what it could be dumped for, not
+        // what one costs, and must not beat the refinement craft cost
+        const inputPriceInfo = getItemPriceInfo(session.inputItemHrid, { context: 'profit', side: 'buy' });
+        const marketPrice = inputPriceInfo.price > 0 ? inputPriceInfo.price : 0;
         const { price: inputPrice, basis: inputBasis } = priceInputWithRefinementFallback(
             session.inputItemHrid,
-            marketPrice
+            marketPrice,
+            { marketSource: inputPriceInfo.source }
         );
         const inputCost = netConsumed * inputPrice;
         const inputUnpriced = inputBasis === null && netConsumed > 0;

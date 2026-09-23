@@ -13,6 +13,7 @@ const BASE_CAPE_HRID = '/items/gatherer_cape';
 
 const mocks = vi.hoisted(() => ({
     prices: {},
+    sources: {},
     refineAction: null,
     capeTradable: false,
 }));
@@ -36,7 +37,7 @@ vi.mock('../../utils/market-data.js', () => {
         getItemPrice: (itemHrid) => priceOf(itemHrid),
         getItemPriceInfo: (itemHrid) => {
             const price = priceOf(itemHrid);
-            return { price, source: price === null ? null : 'book', estimated: false };
+            return { price, source: price === null ? null : mocks.sources[itemHrid] || 'book', estimated: false };
         },
         getItemPrices: (itemHrid) => {
             const price = priceOf(itemHrid);
@@ -85,6 +86,7 @@ const session = () => ({
 describe('transmute history: an untradable refined input', () => {
     beforeEach(() => {
         mocks.prices = { [SHARD_HRID]: 892_000 };
+        mocks.sources = {};
         mocks.capeTradable = false;
         mocks.refineAction = {
             type: '/action_types/enhancing',
@@ -114,6 +116,18 @@ describe('transmute history: an untradable refined input', () => {
 
         expect(detail.inputCost).toBe(1_000_000);
         expect(detail.inputBasis).toBe('current buy');
+    });
+
+    test("an Iron Cow character's vendor valuation of the cape does not replace its craft cost", () => {
+        // Decompose and coinify already passed the price's source; transmute, whose main
+        // inputs are refined capes, charged the destroyed cape its vendor dump price
+        mocks.prices[CAPE_HRID] = 25_000;
+        mocks.sources[CAPE_HRID] = 'vendor';
+
+        const detail = transmuteHistoryViewer.computeSessionProfit(session());
+
+        expect(detail.inputCost).toBeCloseTo(100 * 892_000, 6);
+        expect(detail.inputBasis).toBe('refinement craft cost');
     });
 
     test('a tradable base adds its own acquisition cost to the craft', () => {
