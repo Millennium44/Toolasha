@@ -1470,8 +1470,23 @@ class AlchemyProfitCalculator {
                 if (outputPrice === null) {
                     // A self-return is credited at the input's buy price through the
                     // material cost above and never enters the revenue, so a missing
-                    // resale price leaves nothing understated
-                    if (!isSelfReturn) unpricedOutputs.push(drop.itemHrid);
+                    // resale price leaves nothing understated. It stays in the drop list at
+                    // that same buy price, or a reader of dropRevenues (the risk model) would
+                    // see the branch pay nothing.
+                    if (isSelfReturn) {
+                        dropDetails.push({
+                            itemHrid: drop.itemHrid,
+                            dropRate: drop.dropRate,
+                            minCount: drop.minCount,
+                            maxCount: drop.maxCount,
+                            averageCount,
+                            price: inputPrice,
+                            expectedValue: 0,
+                            isSelfReturn,
+                        });
+                    } else {
+                        unpricedOutputs.push(drop.itemHrid);
+                    }
                 } else {
                     if (!isSelfReturn && isPriceEstimated(drop.itemHrid, { context: 'profit', side: 'sell' })) {
                         estimatedOutputs.push(drop.itemHrid);

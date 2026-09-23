@@ -876,6 +876,9 @@ describe('official alchemy rules', () => {
             expect(result.unpricedOutputs).toEqual([]);
             // 90% of successes return the cape, credited at its 1,000 buy price
             expect(result.selfReturnValue).toBeCloseTo(1_000 * 0.9 * result.successRate, 8);
+            // ...and the drop list carries that branch at the same valuation, not as a zero payout
+            const selfReturn = result.dropRevenues.find((d) => d.itemHrid === '/items/cape');
+            expect(selfReturn).toMatchObject({ isSelfReturn: true, price: 1_000, dropRate: 0.9, revenuePerHour: 0 });
         });
 
         test('a fully priced run reports nothing missing', () => {
