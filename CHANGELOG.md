@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Upgrade Advisor keeps unpriced equipment swaps out of cost rankings
+
+- When the base item for an enhanced swap has no known purchase price, Upgrade Advisor now leaves the swap cost unknown instead of charging only enhancement materials and potentially presenting it as a profitable sale.
+
 ### Task Statistics waits for token prices before totaling rewards
 
 - When Task Shop prices are unavailable, Task Statistics now leaves the combined board value and its net of rerolls unavailable instead of showing a coin-only amount as the full total. When a token is valued through a chest with unpriced contents, those totals now show that they are lower bounds.

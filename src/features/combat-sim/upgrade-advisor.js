@@ -2799,14 +2799,17 @@ function resolveUpgradeBuyPrice(itemHrid, enhancementLevel, gameData) {
         }
 
         // No listing at the target level: base item price + enhancement cost
-        const basePrice = resolveItemPrice(itemHrid, { side: 'buy', enhancementLevel: 0 }).price ?? 0;
+        const basePrice = resolveItemPrice(itemHrid, { side: 'buy', enhancementLevel: 0 }).price;
+        // Enhancement materials do not buy the base item. If that piece has no
+        // price, its completed version cannot be priced from the sweep alone.
+        if (!(basePrice > 0)) return { price: null, source: null };
         const enhanceCost = calculateDirectEnhancementCost(itemHrid, 0, enhancementLevel, gameData);
         // Unknown enhancement cost must stay unknown — pricing the item as a
         // bare +0 craft would understate an enhanced buy by the whole enhance path
         if (enhanceCost == null) {
             return { price: null, source: null };
         }
-        const total = Math.max(0, basePrice) + Math.max(0, enhanceCost);
+        const total = basePrice + Math.max(0, enhanceCost);
         // The sweep is half this figure, so whose bench it ran on is part of
         // what the row is quoting — see `enhancementSweepParams`
         return total > 0

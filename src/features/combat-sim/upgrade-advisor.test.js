@@ -3262,6 +3262,47 @@ describe('calculateUpgradeCost for items without high-level listings', () => {
         expect(cost).toBeNull();
     });
 
+    test('does not price an enhanced tier swap from materials alone when its base item is unpriced', () => {
+        getItemPrices.mockReturnValue(null);
+        resolveItemPrice.mockImplementation((_hrid, { side }) => ({ price: side === 'sell' ? 1_000_000 : null }));
+        calculateEnhancement.mockReturnValue({ attempts: 3, protectionCount: 0 });
+        getCheapestProtectionPrice.mockReturnValue({ price: 0 });
+        perAttemptMaterialCost.mockReturnValue({ cost: 100_000, hasCost: true, hasMissingPrices: false });
+        getEnhancingParams.mockReturnValue({
+            enhancingLevel: 100,
+            toolBonus: 0,
+            speedBonus: 0,
+            teas: {},
+            guzzlingBonus: 1,
+        });
+
+        const gameData = buildGameData();
+        gameData.itemDetailMap['/items/regal_sword_refined'].enhancementCosts = [
+            { itemHrid: '/items/enhance_mat', count: 1 },
+        ];
+        const candidate = {
+            type: 'tier',
+            slot: MAIN_HAND,
+            currentHrid: '/items/fine_sword',
+            currentLevel: 10,
+            upgradeHrid: '/items/regal_sword_refined',
+            upgradeLevel: 10,
+        };
+
+        expect(calculateUpgradeCost(candidate, gameData)).toBeNull();
+        expect(explainUpgradeCost(candidate, gameData).unpriced).toEqual(['Regal Sword (R)']);
+        expect(
+            calculateUpgradeCost(
+                {
+                    type: 'cross_slot',
+                    addedSlots: { '/equipment_types/two_hand': { hrid: candidate.upgradeHrid, enhancementLevel: 10 } },
+                    removedItems: [{ hrid: candidate.currentHrid, enhancementLevel: 10 }],
+                },
+                gameData
+            )
+        ).toBeNull();
+    });
+
     test('enhancement candidates report unknown when the enhance path cannot be priced', () => {
         getItemPrices.mockReturnValue(null);
         resolveItemPrice.mockImplementation(() => ({ price: 0 }));
