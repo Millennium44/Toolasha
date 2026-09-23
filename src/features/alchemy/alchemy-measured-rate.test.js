@@ -94,6 +94,13 @@ describe('describeMeasuredRate', () => {
         expect(line.title).toContain('Current displayed forecast is 71%');
     });
 
+    test('says how many of the sessions were recorded before the first-batch fixes', () => {
+        expect(describeMeasuredRate(combo({ preFixSessions: 3 })).title).toContain(
+            '3 of these sessions were recorded before the first-batch fixes'
+        );
+        expect(describeMeasuredRate(combo()).title).not.toContain('first-batch');
+    });
+
     test('falls back to the combination’s own weighted prediction when none is passed', () => {
         const line = describeMeasuredRate(combo({ predicted: 0.5 }));
         expect(line.text).toMatch(/^predicted 50%/);

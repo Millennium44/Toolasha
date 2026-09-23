@@ -190,3 +190,33 @@ describe('summarizeAlchemyCalibration', () => {
         expect(summarizeAlchemyCalibration({}).kinds).toEqual([]);
     });
 });
+
+describe('the ends of the interval', () => {
+    test('a forecast of 100% is consistent with a sample that never failed', () => {
+        // Wilson's upper bound comes out at 0.9999999999999999 for 10 of 10
+        expect(compareSuccessRate(10, 10, 1, { minAttempts: 1 }).verdict).toBe('consistent');
+        expect(compareSuccessRate(250, 250, 1).high).toBe(1);
+    });
+
+    test('a forecast of 100% is still called too high once an attempt fails', () => {
+        expect(compareSuccessRate(240, 250, 1).verdict).toBe('sim too high');
+    });
+
+    test('an all-failure sample reaches down to zero', () => {
+        expect(compareSuccessRate(0, 250, 0.001).low).toBe(0);
+    });
+});
+
+describe('sessions recorded before the first-batch fixes', () => {
+    test('are pooled with the rest and counted, per kind and per combo', () => {
+        const group = summarizeKind('coinify', [
+            session({ id: 'old', attempts: 300, successes: 225, predictedRate: 0.742 }),
+            { ...session({ id: 'new', attempts: 300, successes: 222, predictedRate: 0.742 }), trackerVersion: 2 },
+        ]);
+
+        expect(group.attempts).toBe(600);
+        expect(group.preFixSessions).toBe(1);
+        expect(group.preFixAttempts).toBe(300);
+        expect(group.combos[0].preFixSessions).toBe(1);
+    });
+});

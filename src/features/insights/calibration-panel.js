@@ -788,13 +788,30 @@ function drawAlchemy(body, summary) {
                 'Verdict',
                 group.text,
                 decided ? (off ? ROW_COLORS.bad : ROW_COLORS.good) : ROW_COLORS.dim,
-                decided
-                    ? 'The prediction sits outside the interval the observed attempts allow for, so the ' +
-                          'sample is saying something the model does not.'
-                    : `${group.attempts} attempts is too few to contradict a prediction. Below that a run of ` +
+                !decided
+                    ? `${group.attempts} attempts is too few to contradict a prediction. Below that a run of ` +
                           'bad luck and a wrong model look the same.'
+                    : off
+                      ? 'The prediction sits outside the interval the observed attempts allow for, so the ' +
+                        'sample is saying something the model does not.'
+                      : 'The prediction sits inside the interval the observed attempts allow for, so the ' +
+                        'sample is consistent with the model.'
             )
         );
+
+        if (group.preFixSessions) {
+            card.appendChild(
+                panelLine(
+                    'Before fix',
+                    `${group.preFixSessions} session${group.preFixSessions === 1 ? '' : 's'} included`,
+                    ROW_COLORS.dim,
+                    'Sessions recorded before the first-batch fixes, which read the first batched message of ' +
+                        'a run short: coinify and decompose as one attempt, transmute with its self-returns as ' +
+                        'failures. Every later message was measured properly, so a long run is barely moved; ' +
+                        'they are counted here as they are in the history totals.'
+                )
+            );
+        }
 
         if (group.unstamped) {
             card.appendChild(

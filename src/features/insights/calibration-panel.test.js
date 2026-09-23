@@ -392,6 +392,21 @@ describe('the alchemy success cards', () => {
         expect(text()).toContain('Consistent');
     });
 
+    test('a consistent verdict is explained as consistent, and pre-fix sessions are named', async () => {
+        store.alchemy.coinify = [
+            alchemySession({ id: 'c1', rate: 0.7, attempts: 1000, successes: 700 }),
+            { ...alchemySession({ id: 'c2', rate: 0.7, attempts: 1000, successes: 700 }), trackerVersion: 2 },
+        ];
+
+        await openWithAlchemy();
+
+        const titles = [...document.querySelectorAll('[title]')].map((el) => el.title);
+        expect(text()).toContain('Consistent');
+        expect(titles.some((t) => t.includes('sits inside the interval'))).toBe(true);
+        expect(titles.some((t) => t.includes('sits outside the interval'))).toBe(false);
+        expect(text()).toContain('1 session included');
+    });
+
     test('breaks a kind down by item and catalyst once opened', async () => {
         store.alchemy.transmute = [
             alchemySession({ id: 'a', item: '/items/gem', rate: 0.5, attempts: 1000, successes: 500 }),

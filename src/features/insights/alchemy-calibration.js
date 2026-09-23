@@ -32,9 +32,28 @@
  * table rate, a flat 60% and a flat 70% — sharing only the tea and catalyst
  * terms. Pooling them would let a wrong transmute table hide inside two correct
  * flat rates, which is precisely the failure this is built to catch.
+ *
+ * ## Why sessions with different predictions share one test
+ *
+ * A combo's sessions can have been stamped with different rates — a tea
+ * swapped, a level gained. Their pooled successes then have the attempt-
+ * weighted mean prediction as their expectation, and a variance no larger
+ * than a single rate at that mean would give, so testing the pool against the
+ * weighted mean is exact in expectation and conservative in spread.
+ *
+ * ## Sessions recorded before the first-batch fixes are counted, and flagged
+ *
+ * Those sessions read their first batched message short: coinify and decompose
+ * as one attempt with at most one success (a bias towards success of under
+ * 0.4 successes per session), transmute with its self-returns as failures (a
+ * bias against). Every later message in them was measured properly, so for
+ * the runs of hundreds of attempts alchemy produces the bias is far inside the
+ * interval; only many very short sessions could move a verdict. They stay in,
+ * as they do in the history totals, and each group says how many there are.
  */
 
 import { wilsonInterval } from '../combat-sim/engine/wilson.js';
+import { isPreFixSession } from '../alchemy/alchemy-tracker-version.js';
 
 /**
  * Attempts a rate needs before the sample can contradict a prediction.
@@ -91,7 +110,12 @@ export function compareSuccessRate(successes, attempts, predicted, options = {})
         return { observed: wins / n, low: null, high: null, attempts: n, verdict: 'unstamped' };
     }
 
-    const { low, high } = interval(wins, n);
+    const bounds = interval(wins, n);
+    // The interval's own arithmetic lands a hair inside 0 and 1 at the ends
+    // (0.9999999999999999 at n of n), which would call a 100% forecast "too
+    // high" over a sample that never failed
+    const low = wins === 0 ? 0 : bounds.low;
+    const high = wins === n ? 1 : bounds.high;
     const p = Math.min(1, Math.max(0, predicted));
     let verdict = 'consistent';
     if (p < low) verdict = 'sim too low';
@@ -141,20 +165,33 @@ export function comboKey(session) {
  * predicted, any more than they do in what happened.
  *
  * @param {Array<Object>} sessions - Stamped sessions
- * @returns {{attempts: number, successes: number, predicted: number|null}}
+ * @returns {{attempts: number, successes: number, predicted: number|null, preFixSessions: number,
+ *   preFixAttempts: number}}
  */
 function pool(sessions) {
     let attempts = 0;
     let successes = 0;
     let weighted = 0;
+    let preFixSessions = 0;
+    let preFixAttempts = 0;
     for (const session of sessions) {
         const n = Math.max(0, Math.floor(Number(session.totalAttempts) || 0));
         if (n <= 0) continue;
         attempts += n;
         successes += Math.min(Math.max(0, Math.floor(Number(session.totalSuccesses) || 0)), n);
         weighted += session.predictedRate * n;
+        if (isPreFixSession(session)) {
+            preFixSessions += 1;
+            preFixAttempts += n;
+        }
     }
-    return { attempts, successes, predicted: attempts > 0 ? weighted / attempts : null };
+    return {
+        attempts,
+        successes,
+        predicted: attempts > 0 ? weighted / attempts : null,
+        preFixSessions,
+        preFixAttempts,
+    };
 }
 
 /**

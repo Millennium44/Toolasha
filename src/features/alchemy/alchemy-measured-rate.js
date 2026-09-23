@@ -180,6 +180,11 @@ export function describeMeasuredRate(combo, { predicted = null, minAttempts = MI
         ? `\nCurrent displayed forecast is ${ratePercent(predicted)}. These attempts were stamped with a different ` +
           'prediction, so their verdict applies to the recorded prediction.'
         : '';
+    const preFix = Math.max(0, Math.floor(Number(combo.preFixSessions) || 0));
+    const preFixNote = preFix
+        ? `\n${countText(preFix)} of these sessions were recorded before the first-batch fixes, which read ` +
+          'the first batched message of a run short; later messages in them were measured properly.'
+        : '';
 
     return {
         text,
@@ -188,7 +193,7 @@ export function describeMeasuredRate(combo, { predicted = null, minAttempts = MI
         title:
             `Measured over ${countText(attempts)} recorded attempts on this exact item, catalyst and ` +
             `enhancement level, against the rate that was stamped on those sessions when they ran.${interval}\n` +
-            `${meaning}${currentNote}\n` +
+            `${meaning}${currentNote}${preFixNote}\n` +
             'This is shown, never used: the profit and the ranking are computed from the forecast alone. ' +
             'Scoring an item by its own measured rate would sink an unlucky item out of the ranking, stop it ' +
             'being run, and leave it no way to earn the attempts that would clear its name.',
