@@ -25,6 +25,8 @@ const mocks = vi.hoisted(() => ({
     itemPrice: 0,
     /** Per-hrid price overrides, so a test can make catalysts cheap and drops valuable */
     itemPrices: {},
+    /** Per-`hrid|side` overrides, for a test that needs the buy and sell sides to differ */
+    sidePrices: {},
     estimatedItems: new Set(),
 }));
 
@@ -43,7 +45,11 @@ vi.mock('../../core/data-manager.js', () => ({
 }));
 vi.mock('../../utils/tea-parser.js', () => ({ getDrinkConcentration: () => mocks.drinkConcentration }));
 vi.mock('../../utils/market-data.js', () => ({
-    getItemPrice: (hrid) => (Object.hasOwn(mocks.itemPrices, hrid) ? mocks.itemPrices[hrid] : mocks.itemPrice),
+    getItemPrice: (hrid, options) => {
+        const sideKey = `${hrid}|${options?.side}`;
+        if (Object.hasOwn(mocks.sidePrices, sideKey)) return mocks.sidePrices[sideKey];
+        return Object.hasOwn(mocks.itemPrices, hrid) ? mocks.itemPrices[hrid] : mocks.itemPrice;
+    },
     isPriceEstimated: (hrid) => mocks.estimatedItems.has(hrid),
 }));
 vi.mock('../../utils/buff-parser.js', () => ({ getAlchemySuccessBonus: () => mocks.alchemyTeaBonus }));
@@ -73,6 +79,7 @@ beforeEach(() => {
     mocks.skills = [];
     mocks.itemPrice = 0;
     mocks.itemPrices = {};
+    mocks.sidePrices = {};
     mocks.estimatedItems = new Set();
 });
 
@@ -778,6 +785,34 @@ describe('official alchemy rules', () => {
             const result = alchemyProfitCalculator.calculateTransmuteProfit('/items/milk');
 
             expect(result.unpricedOutputs).toEqual(['/items/cheese']);
+        });
+
+        test('transmute does not call its own self-return unpriced — it is credited at the buy price', () => {
+            mocks.initClientData.itemDetailMap = {
+                ...mocks.initClientData.itemDetailMap,
+                '/items/cape': {
+                    name: 'Cape',
+                    itemLevel: 50,
+                    sellPrice: 100_000,
+                    alchemyDetail: {
+                        transmuteSuccessRate: 0.5,
+                        bulkMultiplier: 1,
+                        transmuteDropTable: [
+                            { itemHrid: '/items/cape', dropRate: 0.9, minCount: 1, maxCount: 1 },
+                            { itemHrid: '/items/cheese', dropRate: 0.1, minCount: 1, maxCount: 1 },
+                        ],
+                    },
+                },
+            };
+            // The cape has an ask to buy at but no sell-side price
+            mocks.itemPrices = { ...BONUS_PRICES, '/items/cheese': 50 };
+            mocks.sidePrices = { '/items/cape|buy': 1_000, '/items/cape|sell': null };
+
+            const result = alchemyProfitCalculator.calculateTransmuteProfit('/items/cape');
+
+            expect(result.unpricedOutputs).toEqual([]);
+            // 90% of successes return the cape, credited at its 1,000 buy price
+            expect(result.selfReturnValue).toBeCloseTo(1_000 * 0.9 * result.successRate, 8);
         });
 
         test('a fully priced run reports nothing missing', () => {

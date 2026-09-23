@@ -1442,9 +1442,10 @@ class AlchemyProfitCalculator {
 
                 const outputPrice = getItemPrice(drop.itemHrid, { context: 'profit', side: 'sell' });
                 if (outputPrice === null) {
-                    // A self-return that cannot be priced still adjusts the material
-                    // cost above; it is only its resale value that is unknown
-                    unpricedOutputs.push(drop.itemHrid);
+                    // A self-return is credited at the input's buy price through the
+                    // material cost above and never enters the revenue, so a missing
+                    // resale price leaves nothing understated
+                    if (!isSelfReturn) unpricedOutputs.push(drop.itemHrid);
                 } else {
                     if (!isSelfReturn && isPriceEstimated(drop.itemHrid, { context: 'profit', side: 'sell' })) {
                         estimatedOutputs.push(drop.itemHrid);
