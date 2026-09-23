@@ -6,6 +6,11 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Alchemy history values Labyrinth Tokens and shows expected successes
+
+- Decomposing scrolls no longer shows as a pure loss: the Labyrinth Tokens it yields are valued at the best Labyrinth Shop conversion (marked §), including sessions recorded earlier.
+- Every alchemy history window has an Expected column (attempts × the success rate predicted when the session started) next to actual successes, and Transmute History now shows catalyst counts like Decompose and Coinify.
+
 ### Coinify and decompose history count a run's first batch
 
 - A coinify or decompose run's first message usually covers several attempts; it was recorded as one attempt with at most one success, undercounting coins, outputs and catalysts. Every attempt in it is now counted. Sessions already recorded keep their old figures.
