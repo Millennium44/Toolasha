@@ -19,6 +19,7 @@ import { calculateBonusRevenue } from './bonus-revenue-calculator.js';
 import { MARKET_TAX } from './profit-constants.js';
 import alchemyProfitCalculator from '../features/market/alchemy-profit-calculator.js';
 import { runningAction } from './combat-actions.js';
+import { expectedProcessedItems } from './gathering-processing.js';
 
 /**
  * Skill name to action type mapping.
@@ -362,7 +363,7 @@ function calculateGatheringGoldPerHour(actionDetails, buffs, playerLevel, otherE
     const gatheringBonus = 1 + buffs.gathering + (otherEfficiency.gathering || 0);
 
     for (const drop of dropTable) {
-        const dropRate = drop.dropRate || 1;
+        const dropRate = drop.dropRate ?? 1;
         const minCount = drop.minCount || 1;
         const maxCount = drop.maxCount || minCount;
         const avgCount = (minCount + maxCount) / 2;
@@ -381,19 +382,19 @@ function calculateGatheringGoldPerHour(actionDetails, buffs, playerLevel, otherE
                     getItemPrice(processedData.outputItemHrid, { context: 'profit', side: 'sell' }) || 0;
                 const conversionRatio = processedData.conversionRatio;
 
-                // Processing Tea check happens per action:
-                // If procs (processingBonus% chance): Convert to processed
-                const processedIfProcs = Math.floor(avgAmountPerAction / conversionRatio);
-
-                // Expected processed items per action
-                const processedPerAction = buffs.processing * processedIfProcs;
+                // Processing converts the whole stack after efficiency repeats.
+                const processedPerCompletion =
+                    buffs.processing *
+                    expectedProcessedItems(
+                        { ...drop, dropRate, minCount, maxCount },
+                        conversionRatio,
+                        gatheringBonus - 1,
+                        efficiencyMultiplier
+                    );
 
                 // Net processing bonus = processed value - cost of raw converted
                 const processingNetValue =
-                    actionsPerHour *
-                    dropRate *
-                    efficiencyMultiplier *
-                    (processedPerAction * (processedPrice - conversionRatio * rawPrice));
+                    actionsPerHour * processedPerCompletion * (processedPrice - conversionRatio * rawPrice);
 
                 // Total = base raw revenue + processing net gain
                 const baseRawItemsPerHour = actionsPerHour * dropRate * avgAmountPerAction * efficiencyMultiplier;

@@ -103,6 +103,13 @@ const SINGLE_COPY_FEATURES = new Set([
 
 const ALLOWLIST = new Map([
     [
+        'src/utils/gathering-processing.js',
+        // Processing estimates are pure arithmetic over one drop-table row and
+        // its bonuses. Actions and market bundle copies share the same source
+        // and cannot diverge through module state.
+        'stateless whole-stack processing estimator; no module state to share',
+    ],
+    [
         'src/utils/ironcow-valuation.js',
         // Constants and pure functions that read the setting and the current
         // character from config and dataManager (both shared globals) at call

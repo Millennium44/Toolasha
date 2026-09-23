@@ -8,6 +8,7 @@
  * being re-mocked wholesale here.
  */
 import { describe, test, expect, vi, beforeEach } from 'vitest';
+import { MARKET_TAX } from './profit-constants.js';
 
 const state = vi.hoisted(() => ({ gameData: null, skills: [], houseRooms: new Map(), actions: [] }));
 const prices = vi.hoisted(() => ({ byHrid: {}, estimated: new Set() }));
@@ -156,6 +157,67 @@ describe('getRelevantTeas', () => {
     test('wisdom tea is always included regardless of goal', () => {
         expect(getRelevantTeas('milking', 'xp').generalTeas).toContain('/items/wisdom_tea');
         expect(getRelevantTeas('milking', 'gold').generalTeas).toContain('/items/wisdom_tea');
+    });
+});
+
+describe('calculateSkillPerformance — gathering Processing', () => {
+    test('prices whole Milk-to-Cheese conversions after efficiency repeats', () => {
+        state.gameData = {
+            itemDetailMap: {
+                '/items/milk': { name: 'Milk' },
+                '/items/cheese': { name: 'Cheese' },
+                '/items/processing_tea': {
+                    consumableDetail: { buffs: [{ typeHrid: '/buff_types/processing', flatBoost: 1 }] },
+                },
+                '/items/efficiency_tea': {
+                    consumableDetail: { buffs: [{ typeHrid: '/buff_types/efficiency', flatBoost: 1 }] },
+                },
+            },
+            actionDetailMap: {
+                '/actions/milking/cow': {
+                    type: '/action_types/milking',
+                    baseTimeCost: 10e9,
+                    levelRequirement: { level: 1 },
+                    dropTable: [{ itemHrid: '/items/milk', dropRate: 1, minCount: 1, maxCount: 3 }],
+                },
+                '/actions/cheesesmithing/cheese': {
+                    type: '/action_types/cheesesmithing',
+                    inputItems: [{ itemHrid: '/items/milk', count: 2 }],
+                    outputItems: [{ itemHrid: '/items/cheese', count: 1 }],
+                },
+            },
+        };
+        prices.byHrid = {
+            '/items/milk': 100,
+            '/items/cheese': 250,
+            '/items/processing_tea': 0,
+            '/items/efficiency_tea': 0,
+        };
+
+        const result = calculateSkillPerformance(
+            'milking',
+            new Map(),
+            ['/items/processing_tea', '/items/efficiency_tea'],
+            1
+        );
+
+        // 360 completions/hour, each with two 1–3 Milk rolls: 4 raw Milk and
+        // 16/9 whole Cheese on average. Cheese replaces two Milk each.
+        const expectedGold = (360 * 4 * 100 + (360 * 16 * 50) / 9) * (1 - MARKET_TAX);
+        expect(result.goldPerHour).toBeCloseTo(expectedGold, 6);
+
+        const recommendation = findOptimalTeas(
+            'milking',
+            'gold',
+            null,
+            null,
+            { pinned: new Set(['/items/processing_tea', '/items/efficiency_tea']), banned: new Set() },
+            null,
+            new Map(),
+            null,
+            1
+        );
+        expect(recommendation.optimal.avgScore).toBeCloseTo(expectedGold, 6);
     });
 });
 
