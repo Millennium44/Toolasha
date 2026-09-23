@@ -37,8 +37,13 @@ vi.mock('../market/expected-value-calculator.js', () => ({
         get isInitialized() {
             return market.evInitialized;
         },
-        calculateExpectedValue: (hrid) =>
-            market.expectedValues[hrid] === undefined ? null : { expectedValue: market.expectedValues[hrid] },
+        calculateExpectedValue: (hrid) => {
+            const entry = market.expectedValues[hrid];
+            if (entry === undefined) return null;
+            // A test that cares about isPartial/missingCount passes the whole object;
+            // everything else passes a plain number, wrapped here as before
+            return typeof entry === 'object' ? entry : { expectedValue: entry };
+        },
     },
 }));
 
@@ -172,6 +177,36 @@ describe("Purple's Gift accrual", () => {
         expect(valuation.giftPerTask).toBe(500000 / 50);
         // There is no pre-added per-token figure to multiply a gift by
         expect(valuation.totalPerToken).toBeUndefined();
+    });
+
+    test('a gift with unpriced contents is flagged partial, not silently priced clean', () => {
+        market.expectedValues['/items/purples_gift'] = { expectedValue: 400000, missingCount: 2, isPartial: true };
+
+        const valuation = calculateTaskTokenValue();
+
+        expect(valuation.giftPerTask).toBe(400000 / 50);
+        expect(valuation.giftIsPartial).toBe(true);
+        expect(valuation.giftPartialDrops).toBe(2);
+        // A partial gift must not also flip the unrelated shop-line flag
+        expect(valuation.isPartial).toBe(false);
+    });
+
+    test('a gift with no expected value at all is unknown, not free', () => {
+        delete market.expectedValues['/items/purples_gift'];
+
+        const valuation = calculateTaskTokenValue();
+
+        // Nothing to price it with, so it contributes nothing to the sum...
+        expect(valuation.giftPerTask).toBe(0);
+        // ...but the sum is marked a floor rather than presented as exact
+        expect(valuation.giftIsPartial).toBe(true);
+        expect(valuation.giftPartialDrops).toBeGreaterThan(0);
+    });
+
+    test('a fully priced gift is not flagged partial', () => {
+        const valuation = calculateTaskTokenValue();
+        expect(valuation.giftIsPartial).toBe(false);
+        expect(valuation.giftPartialDrops).toBe(0);
     });
 });
 

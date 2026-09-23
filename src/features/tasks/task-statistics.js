@@ -29,6 +29,29 @@ import { TOOLASHA } from '../../utils/selectors.js';
 /** formatKMB, on a rounded figure — the shape every money row in this panel uses. */
 const roundedKMB = (value) => formatKMB(Math.round(value));
 
+/**
+ * Whether a figure that sums coins, task tokens and Purple's Gift is a lower bound,
+ * and how many unpriced items to say so.
+ *
+ * The Task Shop's best line is priced whether or not this board has any tokens on
+ * it — the best line is a property of the shop, not of the board — so its own
+ * `isPartial` is only relevant to a total that actually includes token value. A
+ * board with zero tokens received must not show "≥" over a partial line it never
+ * multiplied in. Purple's Gift has no such gate: it accrues per claimed task, so
+ * it is relevant whenever the total covers at least one task.
+ *
+ * @param {Object|null} tokenValue - From {@link calculateTaskTokenValue}
+ * @param {number} tokensReceived - Task tokens actually counted into this total
+ * @returns {{isPartial: boolean, partialDrops: number}}
+ */
+function rewardTotalPartial(tokenValue, tokensReceived) {
+    const tokenPartial = tokensReceived > 0 && Boolean(tokenValue?.isPartial);
+    const giftPartial = Boolean(tokenValue?.giftIsPartial);
+    const partialDrops =
+        (tokenPartial ? tokenValue.partialDrops || 0 : 0) + (giftPartial ? tokenValue.giftPartialDrops || 0 : 0);
+    return { isPartial: tokenPartial || giftPartial, partialDrops };
+}
+
 class TaskStatistics {
     constructor() {
         this.isInitialized = false;
@@ -855,17 +878,24 @@ class TaskStatistics {
             const partial = rewards.tokenValue;
             const tokenValueStr = `${formatTokenFigure(rewards.rewardValue.breakdown.tokenValue, partial, roundedKMB)} each`;
             section.appendChild(this.createRow('Token Value', tokenValueStr, config.COLOR_TEXT_SECONDARY));
+            // Unlike the per-token figure above, this one scales by tokens actually
+            // received — with none received it is an exact 0, not a floor, however
+            // partial the shop line the per-token figure came from is
+            const tokensReceivedPartial = rewards.totalTokens > 0 ? partial : null;
             section.appendChild(
                 this.createRow(
                     'Tokens Value',
-                    formatTokenFigure(rewards.rewardValue.taskTokens, partial, roundedKMB),
+                    formatTokenFigure(rewards.rewardValue.taskTokens, tokensReceivedPartial, roundedKMB),
                     config.COLOR_PROFIT
                 )
             );
+            // Priced independently of the Task Shop line above — a shop line that priced
+            // cleanly says nothing about whether the gift's own contents did
+            const giftPartial = { isPartial: partial?.giftIsPartial, partialDrops: partial?.giftPartialDrops };
             section.appendChild(
                 this.createRow(
                     "Purple's Gift",
-                    formatKMB(Math.round(rewards.rewardValue.purpleGift)),
+                    formatTokenFigure(rewards.rewardValue.purpleGift, giftPartial, roundedKMB),
                     config.COLOR_ESSENCE
                 )
             );
@@ -878,7 +908,11 @@ class TaskStatistics {
             section.appendChild(
                 this.createRow(
                     'Total Reward Value',
-                    formatTokenFigure(rewards.rewardValue.total, partial, roundedKMB),
+                    formatTokenFigure(
+                        rewards.rewardValue.total,
+                        rewardTotalPartial(rewards.tokenValue, rewards.totalTokens),
+                        roundedKMB
+                    ),
                     config.COLOR_ACCENT
                 )
             );
@@ -923,12 +957,11 @@ class TaskStatistics {
         // A total missing an unpriceable task is a floor, and says so with the
         // same "≥" the token valuation uses rather than passing for a firm figure
         const unpriced = rewards.unpricedActionTasks || 0;
-        const partialSuffix = unpriced > 0 ? ` (${unpriced} unpriced)` : '';
-        const combinedIsPartial = unpriced > 0 || rewards.tokenValue?.isPartial;
+        const actionSuffix = unpriced > 0 ? ` (${unpriced} unpriced)` : '';
         const totalStr =
             rewards.totalActionProfit !== null
-                ? `${unpriced > 0 ? '≥ ' : ''}${formatKMB(Math.round(rewards.totalActionProfit))}${partialSuffix}`
-                : `N/A${unpriced > 0 ? ` (${unpriced} unpriced)` : ''}`;
+                ? `${unpriced > 0 ? '≥ ' : ''}${formatKMB(Math.round(rewards.totalActionProfit))}${actionSuffix}`
+                : `N/A${actionSuffix}`;
         const totalColor =
             rewards.totalActionProfit !== null && rewards.totalActionProfit >= 0
                 ? config.COLOR_PROFIT
@@ -938,7 +971,14 @@ class TaskStatistics {
 
         section.appendChild(this.createRow('Total Action Profit', totalStr, totalColor));
 
-        // Combined total
+        // Combined total — carries token and gift value on top of the unpriced action
+        // tasks above, so it can be a floor for reasons Total Action Profit never is.
+        // The reason always carries a count, so a "≥" here never appears without one.
+        const rewardPartial = rewardTotalPartial(rewards.tokenValue, rewards.totalTokens);
+        const combinedUnpriced = unpriced + rewardPartial.partialDrops;
+        const combinedSuffix = combinedUnpriced > 0 ? ` (${combinedUnpriced} unpriced)` : '';
+        const combinedIsPartial = unpriced > 0 || rewardPartial.isPartial;
+
         const separator2 = document.createElement('div');
         separator2.style.cssText = 'border-top: 1px solid #3a3a3a; margin: 6px 0;';
         section.appendChild(separator2);
@@ -946,7 +986,7 @@ class TaskStatistics {
         const combinedStr =
             rewards.combinedTotal === null
                 ? 'N/A (token value unavailable)'
-                : `${combinedIsPartial ? '≥ ' : ''}${formatKMB(Math.round(rewards.combinedTotal))}${partialSuffix}`;
+                : `${combinedIsPartial ? '≥ ' : ''}${formatKMB(Math.round(rewards.combinedTotal))}${combinedSuffix}`;
         section.appendChild(this.createRow('Combined Total', combinedStr, config.COLOR_ACCENT));
 
         // Reroll spend already sunk into this board, and the total net of it
@@ -981,7 +1021,7 @@ class TaskStatistics {
                     'Net of Rerolls',
                     rewards.netTotal === null
                         ? 'N/A (token value unavailable)'
-                        : `${combinedIsPartial ? '≥ ' : ''}${formatKMB(Math.round(rewards.netTotal))}${partialSuffix}`,
+                        : `${combinedIsPartial ? '≥ ' : ''}${formatKMB(Math.round(rewards.netTotal))}${combinedSuffix}`,
                     netColor
                 )
             );
@@ -1051,8 +1091,12 @@ class TaskStatistics {
                 this.createRow(
                     'Net Task Income',
                     // Priced through the same token valuation, so it carries the
-                    // same floor when that valuation has one
-                    formatTokenFigure(completions.netValue, completions.tokenValuation, roundedKMB),
+                    // same floor when that valuation (or the gift folded into it) has one
+                    formatTokenFigure(
+                        completions.netValue,
+                        rewardTotalPartial(completions.tokenValuation, week.tokens),
+                        roundedKMB
+                    ),
                     completions.netValue >= 0 ? config.COLOR_PROFIT : config.COLOR_LOSS
                 )
             );

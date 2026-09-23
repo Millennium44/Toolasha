@@ -68,7 +68,10 @@ vi.mock('../../core/data-manager.js', () => ({
 // tested for. `valueTaskRewards` is the one piece kept real — it is the
 // arithmetic under test.
 vi.mock('./task-profit-calculator.js', () => ({
-    formatTokenFigure: (value) => String(Math.round(value)),
+    // Real enough to test the "≥" wiring this file is about, without pulling in
+    // the real module's own rounding/pluralisation — that belongs to its test file.
+    formatTokenFigure: (value, tokenData) =>
+        tokenData?.isPartial ? `≥ ${Math.round(value)}` : String(Math.round(value)),
     valueTaskRewards: (tokenData, { coins = 0, tokens = 0, taskCount = 0 } = {}) => {
         if (!tokenData || tokenData.error || !Number.isFinite(tokenData.tokenValue)) return null;
         const giftPerTask = Number.isFinite(tokenData.giftPerTask) ? tokenData.giftPerTask : 0;
@@ -290,6 +293,69 @@ describe('an action nobody can price', () => {
 
         expect(section.textContent).toContain('Combined Total≥');
         expect(section.textContent).toContain('Net of Rerolls≥');
+    });
+
+    test('a partial Task Shop line does not float a board with no tokens on it', async () => {
+        // The shop's best line is a partial chest, but this board claimed no
+        // tokens at all — the partial line never enters the combined total
+        game.valuation = { tokenValue: 2000, giftPerTask: 10000, isPartial: true, partialDrops: 1, error: null };
+        game.quests = [task({ id: 1, coins: 1000, tokens: 0, actionHrid: '/actions/foraging/egg' })];
+        game.actionProfits['Foraging - Egg'] = { totalValue: 30000, hasMissingPrices: false };
+
+        const rewards = await taskStatistics.calculateRewardsSummary();
+        rewards.rerollSpend = { gold: 0, cowbells: 0, cowbellValue: 200000, totalValue: 0 };
+        const section = taskStatistics.createActionProfitSection(rewards);
+
+        expect(section.textContent).not.toContain('Combined Total≥');
+        expect(section.textContent).not.toContain('unpriced');
+    });
+
+    test("an unpriced Purple's Gift floors the combined total even with no tokens on the board", async () => {
+        game.valuation = { tokenValue: 2000, giftPerTask: 0, giftIsPartial: true, giftPartialDrops: 1, error: null };
+        game.quests = [task({ id: 1, coins: 1000, tokens: 0, actionHrid: '/actions/foraging/egg' })];
+        game.actionProfits['Foraging - Egg'] = { totalValue: 30000, hasMissingPrices: false };
+
+        const rewards = await taskStatistics.calculateRewardsSummary();
+        rewards.rerollSpend = { gold: 0, cowbells: 0, cowbellValue: 200000, totalValue: 0 };
+        const section = taskStatistics.createActionProfitSection(rewards);
+
+        // The "≥" must carry a reason — never a bare bound with nothing named
+        expect(section.textContent).toContain('Combined Total≥');
+        expect(section.textContent).toContain('1 unpriced');
+    });
+});
+
+describe('the Expected Rewards section', () => {
+    test("an unpriced Purple's Gift is marked a floor on its own row", async () => {
+        game.valuation = { tokenValue: 2000, giftPerTask: 0, giftIsPartial: true, giftPartialDrops: 1, error: null };
+        game.quests = [task({ id: 1, coins: 1000, tokens: 0, actionHrid: '/actions/foraging/egg' })];
+
+        const rewards = await taskStatistics.calculateRewardsSummary();
+        const section = taskStatistics.createRewardsSection(rewards, '#fff');
+
+        expect(section.textContent).toContain("Purple's Gift≥");
+    });
+
+    test('a fully priced gift carries no floor marker on its own row', async () => {
+        game.quests = [task({ id: 1, coins: 1000, tokens: 0, actionHrid: '/actions/foraging/egg' })];
+
+        const rewards = await taskStatistics.calculateRewardsSummary();
+        const section = taskStatistics.createRewardsSection(rewards, '#fff');
+
+        expect(section.textContent).not.toContain("Purple's Gift≥");
+    });
+
+    test('a partial shop line does not float the tokens-received row when none were received', async () => {
+        game.valuation = { tokenValue: 2000, giftPerTask: 10000, isPartial: true, partialDrops: 1, error: null };
+        game.quests = [task({ id: 1, coins: 1000, tokens: 0, actionHrid: '/actions/foraging/egg' })];
+
+        const rewards = await taskStatistics.calculateRewardsSummary();
+        const section = taskStatistics.createRewardsSection(rewards, '#fff');
+
+        // The per-token figure is still shown as a floor — that row is not about
+        // how many were received — but the received-tokens row is exactly 0
+        expect(section.textContent).toContain('Token Value≥');
+        expect(section.textContent).not.toContain('Tokens Value≥');
     });
 });
 

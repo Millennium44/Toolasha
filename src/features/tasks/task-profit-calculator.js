@@ -144,7 +144,10 @@ export function findBestTaskShopValue() {
  * They did — a five-token task was credited five gifts. {@link valueTaskRewards}
  * is the way to put them together.
  *
- * @returns {Object} Token value breakdown or error state
+ * @returns {{tokenValue: number|null, giftPerTask: number|null, bestShopItemHrid?: string,
+ *   bestShopTokenCost?: number, partialDrops?: number, isPartial?: boolean,
+ *   giftPartialDrops?: number, giftIsPartial?: boolean, error: string|null}} Token value
+ *   breakdown or error state
  */
 export function calculateTaskTokenValue() {
     // Return error state if expected value calculator isn't ready
@@ -172,7 +175,12 @@ export function calculateTaskTokenValue() {
     if (!giftResult) {
         console.warn('[TaskProfit] Expected value returned null for /items/purples_gift');
     }
-    const giftValue = giftResult?.expectedValue || 0;
+    // A missing result is the whole gift unpriced, not a gift worth nothing — counted as
+    // one unpriced item of its own so a "≥" derived from it always has a reason to point to,
+    // the same way an unpriceable drop inside a container counts as one missing item there.
+    const giftIsPartial = giftResult ? Boolean(giftResult.isPartial) : true;
+    const giftPartialDrops = giftResult ? giftResult.missingCount || 0 : 1;
+    const giftValue = giftResult?.expectedValue ?? 0;
     const giftPerTask = giftValue / TASKS_PER_PURPLES_GIFT;
 
     return {
@@ -184,6 +192,10 @@ export function calculateTaskTokenValue() {
         // the token value is a floor
         partialDrops: best.partialDrops || 0,
         isPartial: (best.partialDrops || 0) > 0,
+        // Purple's Gift is priced independently of the Task Shop line above — a shop line
+        // that priced cleanly does not mean the gift's own contents did.
+        giftPartialDrops,
+        giftIsPartial,
         error: null,
     };
 }
