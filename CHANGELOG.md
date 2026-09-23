@@ -6,6 +6,8 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+<!-- shipped in 3.58.1 -->
+
 ### Fix: 3.58.0 stopped loading halfway
 
 - 3.58.0 loaded only its first four libraries, leaving most features missing, because the Skilling Optimizer pulled in a piece of the Combat library that had not loaded yet. The optimizer now uses its own copy of the enhancement-cost helper, and the build refuses to produce a release where any library reads one that loads after it.
@@ -3656,6 +3658,12 @@ The marketplace layout change gave the price row its own "Max" button and put it
 ### Combat sim nets the market sale tax off drop revenue
 
 The simulator valued every drop at its gross market price, so profit ignored the sale tax entirely — which is why the rise to 5% never moved it. Every drop-revenue path now nets the tax off each non-coin drop, cowbell bags at their own 18%: the Results summary, the Drops table's Gold columns, and the comparison and upgrade rows. Coin drops stay whole.
+
+## [3.58.1](https://github.com/Millennium44/Toolasha/compare/v3.58.0...v3.58.1) (2026-09-23)
+
+### Bug Fixes
+
+- load every library again by keeping combat out of the actions bundle ([3d40d84](https://github.com/Millennium44/Toolasha/commit/3d40d8480353cb4fd2f3e78dc170288193c6948f))
 
 ## [3.58.0](https://github.com/Millennium44/Toolasha/compare/v3.57.1...v3.58.0) (2026-09-22)
 
