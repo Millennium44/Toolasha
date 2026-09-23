@@ -155,9 +155,12 @@ describe('Marketplace Action dropdown portal', () => {
 
         toggle.click();
         expect(marketplaceShortcuts.portalObserver).not.toBeNull();
+        expect(marketplaceShortcuts.scrollHandler).not.toBeNull();
 
         toggle.click();
         expect(marketplaceShortcuts.portalObserver).toBeNull();
+        expect(marketplaceShortcuts.scrollHandler).toBeNull();
+        expect(marketplaceShortcuts.resizeHandler).toBeNull();
 
         toggle.click();
         document.body.dispatchEvent(new MouseEvent('click', { bubbles: true }));
@@ -168,6 +171,57 @@ describe('Marketplace Action dropdown portal', () => {
         menu.remove();
         await new Promise((resolve) => setTimeout(resolve, 0));
         expect(marketplaceShortcuts.portalObserver).toBeNull();
+    });
+
+    test('a toggle near the bottom of the viewport opens the panel above it', () => {
+        const menu = actionMenu();
+        const dropdown = marketplaceShortcuts.buildDropdown(menu, '/items/cheese', 0);
+        menu.appendChild(dropdown);
+        const toggle = dropdown.querySelector('.mwi-marketplace-dropdown-toggle');
+        const bottom = window.innerHeight - 10;
+        vi.spyOn(toggle, 'getBoundingClientRect').mockReturnValue({
+            left: 80,
+            top: bottom - 30,
+            bottom,
+            width: 220,
+        });
+        vi.spyOn(dropdown._dropdownPanel, 'getBoundingClientRect').mockReturnValue({ height: 140 });
+
+        toggle.click();
+
+        expect(dropdown._dropdownPanel.style.top).toBe(`${bottom - 30 - 4 - 140}px`);
+    });
+
+    test('a toggle near the right edge keeps the panel inside the viewport', () => {
+        const menu = actionMenu();
+        const dropdown = marketplaceShortcuts.buildDropdown(menu, '/items/cheese', 0);
+        menu.appendChild(dropdown);
+        const toggle = dropdown.querySelector('.mwi-marketplace-dropdown-toggle');
+        vi.spyOn(toggle, 'getBoundingClientRect').mockReturnValue({
+            left: window.innerWidth - 100,
+            top: 100,
+            bottom: 130,
+            width: 220,
+        });
+
+        toggle.click();
+
+        expect(dropdown._dropdownPanel.style.left).toBe(`${window.innerWidth - 220}px`);
+    });
+
+    test('scrolling the menu that holds the toggle closes the panel, other scrolling does not', () => {
+        const menu = actionMenu();
+        const dropdown = marketplaceShortcuts.buildDropdown(menu, '/items/cheese', 0);
+        menu.appendChild(dropdown);
+        const chat = document.createElement('div');
+        document.body.appendChild(chat);
+        dropdown.querySelector('.mwi-marketplace-dropdown-toggle').click();
+
+        chat.dispatchEvent(new Event('scroll'));
+        expect(dropdown._dropdownPanel.style.display).toBe('flex');
+
+        menu.dispatchEvent(new Event('scroll'));
+        expect(dropdown._dropdownPanel.style.display).toBe('none');
     });
 
     test("removing the game's item menu removes its portaled panel", async () => {

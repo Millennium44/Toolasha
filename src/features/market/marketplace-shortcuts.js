@@ -29,6 +29,8 @@ class MarketplaceShortcuts {
         this.closeHandler = null;
         this.escapeHandler = null;
         this.portalObserver = null;
+        this.scrollHandler = null;
+        this.resizeHandler = null;
         this.dropdowns = new Set();
         this.pendingQuantity = null;
         this.addMode = false;
@@ -84,6 +86,59 @@ class MarketplaceShortcuts {
             this.stopWatchingPortalsIfIdle();
         });
         this.portalObserver.observe(document.body, { childList: true, subtree: true });
+
+        // A fixed panel does not follow its toggle. Only a scroll that moves the toggle
+        // closes it: the game scrolls unrelated boxes (chat) on its own.
+        this.scrollHandler = (event) => this.closeDropdownsScrolledBy(event.target);
+        document.addEventListener('scroll', this.scrollHandler, true);
+        this.resizeHandler = () => this.closeAllDropdowns();
+        window.addEventListener('resize', this.resizeHandler);
+    }
+
+    /**
+     * Close the open panels whose toggle a scroll just moved.
+     * @param {EventTarget} target - The element (or document) that scrolled
+     */
+    closeDropdownsScrolledBy(target) {
+        const pageScrolled = target === document || target === document.documentElement || target === document.body;
+        this.dropdowns.forEach((wrapper) => {
+            if (!wrapper._isDropdownOpen?.()) return;
+            if (pageScrolled || (target instanceof Node && target.contains(wrapper))) wrapper._closeDropdown?.();
+        });
+    }
+
+    /** Remove the listeners that exist only while a panel is open. */
+    removeOpenPortalListeners() {
+        this.portalObserver?.disconnect();
+        this.portalObserver = null;
+        if (this.scrollHandler) document.removeEventListener('scroll', this.scrollHandler, true);
+        this.scrollHandler = null;
+        if (this.resizeHandler) window.removeEventListener('resize', this.resizeHandler);
+        this.resizeHandler = null;
+    }
+
+    /**
+     * Place an open panel under its toggle, or above it when the viewport has no room below,
+     * and keep it horizontally inside the viewport.
+     * @param {HTMLElement} toggle - The Marketplace Action button
+     * @param {HTMLElement} panel - Its portaled panel, already displayed so it can be measured
+     */
+    positionPanel(toggle, panel) {
+        const GAP = 4;
+        const rect = toggle.getBoundingClientRect();
+        const viewportWidth = window.innerWidth || document.documentElement.clientWidth;
+        const viewportHeight = window.innerHeight || document.documentElement.clientHeight;
+
+        panel.style.width = `${rect.width}px`;
+        panel.style.left = `${Math.max(0, Math.min(rect.left, viewportWidth - rect.width))}px`;
+
+        const height = panel.getBoundingClientRect().height || 0;
+        let top = rect.bottom + GAP;
+        if (top + height > viewportHeight) {
+            const above = (rect.top ?? rect.bottom) - GAP - height;
+            top = above >= 0 ? above : Math.max(0, viewportHeight - height);
+        }
+        panel.style.top = `${top}px`;
     }
 
     /** Disconnect the portal observer once no panel is open. */
@@ -91,8 +146,7 @@ class MarketplaceShortcuts {
         for (const wrapper of this.dropdowns) {
             if (wrapper._isDropdownOpen?.()) return;
         }
-        this.portalObserver?.disconnect();
-        this.portalObserver = null;
+        this.removeOpenPortalListeners();
     }
 
     /**
@@ -298,13 +352,8 @@ class MarketplaceShortcuts {
             const nextOpen = !open;
             if (nextOpen) this.closeAllDropdowns(wrapper);
             open = nextOpen;
-            if (open) {
-                const rect = toggle.getBoundingClientRect();
-                panel.style.top = `${rect.bottom + 4}px`;
-                panel.style.left = `${rect.left}px`;
-                panel.style.width = `${rect.width}px`;
-            }
             panel.style.display = open ? 'flex' : 'none';
+            if (open) this.positionPanel(toggle, panel);
             const chevron = toggle.querySelector('.mwi-mp-chevron');
             if (chevron) chevron.style.transform = open ? 'rotate(180deg)' : '';
             if (open) this.watchOpenPortals();
@@ -917,10 +966,7 @@ class MarketplaceShortcuts {
             document.removeEventListener('keydown', this.escapeHandler);
             this.escapeHandler = null;
         }
-        if (this.portalObserver) {
-            this.portalObserver.disconnect();
-            this.portalObserver = null;
-        }
+        this.removeOpenPortalListeners();
 
         this.timerRegistry.clearAll();
 
