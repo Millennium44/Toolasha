@@ -656,6 +656,36 @@ describe('official alchemy rules', () => {
         expect(result.catalystCost.costPerSuccess).toBe(100);
     });
 
+    test('a forced prime catalyst with no price leaves transmute risk economics unavailable', () => {
+        mocks.itemPrices['/items/prime_catalyst'] = null;
+
+        expect(alchemyProfitCalculator.calculateTransmuteProfit('/items/milk', false, 0, 'prime')).toBeNull();
+    });
+
+    test.each([
+        [
+            'coinify',
+            '/items/catalyst_of_coinification',
+            (calc) => calc.calculateCoinifyProfit('/items/cheese', 0, true),
+        ],
+        [
+            'decompose',
+            '/items/catalyst_of_decomposition',
+            (calc) => calc.calculateDecomposeProfit('/items/cheese_hat', 0, true),
+        ],
+        ['transmute', '/items/catalyst_of_transmutation', (calc) => calc.calculateTransmuteProfit('/items/milk', true)],
+    ])('%s: an equipped catalyst with no price does not appear free in live profit', (_name, catalyst, run) => {
+        mocks.itemPrices[catalyst] = null;
+        const icon = { getAttribute: (name) => (name === 'href' ? `#${catalyst.split('/').at(-1)}` : null) };
+        vi.stubGlobal('document', { querySelector: () => icon });
+
+        try {
+            expect(run(alchemyProfitCalculator)).toBeNull();
+        } finally {
+            vi.unstubAllGlobals();
+        }
+    });
+
     test('decompose enhancing-essence yield doubles with each enhancement level', () => {
         const essence = (level) =>
             alchemyProfitCalculator
@@ -838,6 +868,12 @@ describe('_forcedCatalystCombo', () => {
         );
 
         expect(combo.catalystHrid).toBeNull();
+    });
+
+    test('a forced catalyst with no market price cannot become a free catalyst', () => {
+        mocks.itemPrices['/items/prime_catalyst'] = null;
+
+        expect(alchemyProfitCalculator._forcedCatalystCombo(baseParams({ catalystChoice: 'prime' }))).toBeNull();
     });
 });
 

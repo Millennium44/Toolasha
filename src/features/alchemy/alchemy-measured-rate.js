@@ -131,9 +131,9 @@ function countText(n) {
  *
  * @param {Object|null} combo - One entry from `summarizeKind`'s `combos`
  * @param {Object} [options] - Overrides
- * @param {number} [options.predicted] - The rate the surface is quoting, 0..1.
- *   Falls back to the combination's own attempt-weighted prediction; passing
- *   the live one is better, because it is what the reader is looking at.
+ * @param {number} [options.predicted] - The current rate the surface is quoting,
+ *   0..1. When it differs from the stamped rate, the line labels the recorded
+ *   prediction instead, because that is the rate the verdict tested.
  * @param {number} [options.minAttempts] - The floor, injectable for tests
  * @returns {{text: string, tone: 'consistent'|'off'|'pending', color: string,
  *   title: string, enough: boolean, attempts: number}|null} Null when there is
@@ -144,7 +144,8 @@ export function describeMeasuredRate(combo, { predicted = null, minAttempts = MI
     // Never run, or never stamped: no reading and no progress towards one
     if (!combo || attempts <= 0) return null;
 
-    const forecast = Number.isFinite(predicted) ? predicted : combo.predicted;
+    const forecast = Number.isFinite(combo.predicted) ? combo.predicted : predicted;
+    const changedForecast = Number.isFinite(predicted) && ratePercent(predicted) !== ratePercent(forecast);
 
     if (attempts < Math.max(1, minAttempts)) {
         return {
@@ -163,7 +164,8 @@ export function describeMeasuredRate(combo, { predicted = null, minAttempts = MI
 
     const off = combo.verdict === 'sim too high' || combo.verdict === 'sim too low';
     const text =
-        `predicted ${ratePercent(forecast)} · measured ${ratePercent(combo.observed)} ` +
+        `${changedForecast ? 'historical prediction' : 'predicted'} ${ratePercent(forecast)} · ` +
+        `measured ${ratePercent(combo.observed)} ` +
         `(n=${countText(attempts)}, ${off ? verdictText(combo).toLowerCase() : 'consistent'})`;
 
     const interval =
@@ -174,6 +176,10 @@ export function describeMeasuredRate(combo, { predicted = null, minAttempts = MI
         ? `The forecast sits outside that interval, so these ${countText(attempts)} attempts are saying something ` +
           'the model does not allow for.'
         : 'The forecast sits inside that interval — the attempts so far are consistent with it.';
+    const currentNote = changedForecast
+        ? `\nCurrent displayed forecast is ${ratePercent(predicted)}. These attempts were stamped with a different ` +
+          'prediction, so their verdict applies to the recorded prediction.'
+        : '';
 
     return {
         text,
@@ -182,7 +188,7 @@ export function describeMeasuredRate(combo, { predicted = null, minAttempts = MI
         title:
             `Measured over ${countText(attempts)} recorded attempts on this exact item, catalyst and ` +
             `enhancement level, against the rate that was stamped on those sessions when they ran.${interval}\n` +
-            `${meaning}\n` +
+            `${meaning}${currentNote}\n` +
             'This is shown, never used: the profit and the ranking are computed from the forecast alone. ' +
             'Scoring an item by its own measured rate would sink an unlucky item out of the ranking, stop it ' +
             'being run, and leave it no way to earn the attempts that would clear its name.',

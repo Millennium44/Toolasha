@@ -88,9 +88,10 @@ describe('describeMeasuredRate', () => {
         expect(line.tone).toBe('consistent');
     });
 
-    test('quotes the predicted rate the surface is showing, not the stamped average', () => {
-        const line = describeMeasuredRate(combo({ predicted: 0.5 }), { predicted: 0.71 });
-        expect(line.text).toMatch(/^predicted 71%/);
+    test('uses the stamped prediction when the current forecast differs, so the verdict describes those attempts', () => {
+        const line = describeMeasuredRate(combo({ predicted: 0.58, verdict: 'consistent' }), { predicted: 0.71 });
+        expect(line.text).toMatch(/^historical prediction 58% · measured 58% \(n=2,140, consistent\)/);
+        expect(line.title).toContain('Current displayed forecast is 71%');
     });
 
     test('falls back to the combination’s own weighted prediction when none is passed', () => {

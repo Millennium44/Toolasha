@@ -6,6 +6,11 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Alchemy forecasts account for unknown catalysts and recorded setups
+
+- Coinify, Decompose, and Transmute no longer show a live profit with a free catalyst when its market price is unavailable. An explicitly selected catalyst in Transmute risk estimates also requires a known price.
+- Measured Alchemy success rates now label the prediction recorded with those attempts when the current forecast differs, so a historical verdict cannot appear to judge today's success rate.
+
 ### Guild trial pace handles boss heals and stale tier badges
 
 - A trial boss healing within the same tier no longer counts as a fresh boss in measured party damage, preventing an inflated DPS and expected tier.

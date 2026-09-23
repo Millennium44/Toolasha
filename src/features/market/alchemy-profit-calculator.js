@@ -602,7 +602,8 @@ class AlchemyProfitCalculator {
             catalystHrid = liveCatalystHrid;
         }
         if (catalystHrid) {
-            catalystPrice = getItemPrice(catalystHrid, { context: 'profit', side: 'buy' }) ?? 0;
+            catalystPrice = getItemPrice(catalystHrid, { context: 'profit', side: 'buy' });
+            if (catalystPrice === null) return null;
         }
 
         const successRateBreakdown = this.calculateSuccessRateBreakdown(
@@ -669,7 +670,8 @@ class AlchemyProfitCalculator {
             catalystHrid = CATALYST_HRIDS.prime;
         }
         if (catalystHrid) {
-            catalystPrice = getItemPrice(catalystHrid, { context: 'profit', side: 'buy' }) ?? 0;
+            catalystPrice = getItemPrice(catalystHrid, { context: 'profit', side: 'buy' });
+            if (catalystPrice === null) return null;
         }
 
         const successRateBreakdown = this.calculateSuccessRateBreakdown(
@@ -829,6 +831,7 @@ class AlchemyProfitCalculator {
                 hasMissingTeaPrices: teaCostData.hasMissingPrices,
                 noTeaEconomics,
             });
+            if (!combo) return null;
 
             if (!combo.usesTea && noTeaEconomics) {
                 actionTime = noTeaEconomics.actionTime;
@@ -1167,6 +1170,7 @@ class AlchemyProfitCalculator {
                 hasMissingTeaPrices: teaCostData.hasMissingPrices,
                 noTeaEconomics,
             });
+            if (!combo) return null;
 
             if (!combo.usesTea && noTeaEconomics) {
                 actionTime = noTeaEconomics.actionTime;
@@ -1521,6 +1525,7 @@ class AlchemyProfitCalculator {
                 hasMissingTeaPrices: teaCostData.hasMissingPrices,
                 noTeaEconomics,
             });
+            if (!combo) return null;
 
             if (!combo.usesTea && noTeaEconomics) {
                 actionTime = noTeaEconomics.actionTime;
