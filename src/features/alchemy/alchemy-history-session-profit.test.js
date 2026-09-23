@@ -188,3 +188,50 @@ describe.each([
         expect(cell).not.toMatch(/[†‡]/);
     });
 });
+
+describe('Break-even Input says when it is only a bound', () => {
+    /**
+     * @param {Object} viewer
+     * @param {string} kind
+     * @param {Array<Object>} sessions
+     * @returns {string} The first totals row's Break-even Input cell text
+     */
+    function breakEvenCell(viewer, kind, sessions) {
+        profitCells(viewer, kind, sessions);
+        const row = viewer.modal.querySelector(`.mwi-${kind}-history-totals-container tbody tr`);
+        return row.cells[row.cells.length - 1].textContent;
+    }
+
+    test('transmute: an unpriced output gives a lower bound', () => {
+        const text = breakEvenCell(transmuteHistoryViewer, 'transmute', [
+            session({ results: { [OUTPUT_HRID]: { count: 8, totalValue: 0, priceEach: 0, unpriced: true } } }),
+        ]);
+        expect(text.startsWith('≥')).toBe(true);
+        expect(text).toContain('¶');
+    });
+
+    test('decompose: an unpriced catalyst gives an upper bound', () => {
+        mocks.prices[PRIME_HRID] = null;
+        expect(breakEvenCell(decomposeHistoryViewer, 'decompose', [session()]).startsWith('≤')).toBe(true);
+    });
+
+    test('decompose: both gaps together give no figure at all', () => {
+        mocks.prices[PRIME_HRID] = null;
+        const text = breakEvenCell(decomposeHistoryViewer, 'decompose', [
+            session({ results: { [OUTPUT_HRID]: { count: 8, totalValue: 0, priceEach: 0, unpriced: true } } }),
+        ]);
+        expect(text).toBe('—¶');
+    });
+
+    test('coinify: complete data is a plain figure', () => {
+        const text = breakEvenCell(coinifyHistoryViewer, 'coinify', [session()]);
+        expect(text).not.toMatch(/[≥≤—]|NaN|undefined|Infinity/);
+    });
+
+    test('transmute legend explains ⚠ and the bounds', () => {
+        profitCells(transmuteHistoryViewer, 'transmute', [session()]);
+        const text = transmuteHistoryViewer.modal.querySelector('.mwi-transmute-history-totals-container').textContent;
+        expect(text).toContain('⚠ recorded counts are internally impossible');
+        expect(text).toContain('≥ / ≤ on Break-even Input');
+    });
+});

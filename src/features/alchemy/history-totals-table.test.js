@@ -12,6 +12,7 @@
 import { describe, test, expect } from 'vitest';
 import {
     HISTORY_TYPE_SCALE,
+    breakEvenBound,
     createTotalsCell,
     groupSessionsByInputItem,
     poolEquivalentGroups,
@@ -206,5 +207,47 @@ describe('totalsRowStyle', () => {
 
     test('a flagged row wins over the pooled tint — the warning must not be lost', () => {
         expect(totalsRowStyle(0, { pooled: true, flagged: true })).toContain('rgba(251,191,36,0.08)');
+    });
+});
+
+describe('breakEvenBound', () => {
+    test('complete data carries no prefix', () => {
+        expect(breakEvenBound({ revenueUnpriced: false, catalystUnpricedSessions: 0 })).toEqual({
+            prefix: '',
+            noBound: false,
+            title: undefined,
+        });
+    });
+
+    test('an unpriced output makes the figure a lower bound', () => {
+        expect(breakEvenBound({ revenueUnpriced: true }).prefix).toBe('≥');
+    });
+
+    test('an unpriced or unrecorded catalyst makes it an upper bound', () => {
+        expect(breakEvenBound({ catalystUnpricedSessions: 1 }).prefix).toBe('≤');
+        expect(breakEvenBound({ catalystUnrecordedSessions: 2 }).prefix).toBe('≤');
+    });
+
+    test('both together leave no bound', () => {
+        const bound = breakEvenBound({ revenueUnpriced: true, catalystUnrecordedSessions: 1 });
+        expect(bound.noBound).toBe(true);
+        expect(bound.title).toContain('no bound');
+    });
+});
+
+describe('renderTotalsSection with no rows', () => {
+    test('draws nothing without an empty text', () => {
+        const container = document.createElement('div');
+        expect(renderTotalsSection(container, { heading: 'T', columns: [], rows: [] })).toBeNull();
+        expect(container.childNodes).toHaveLength(0);
+    });
+
+    test('keeps the heading, the controls and an empty line when given an empty text', () => {
+        const container = document.createElement('div');
+        const controls = document.createElement('label');
+        controls.textContent = 'toggle';
+        renderTotalsSection(container, { heading: 'T', columns: [], rows: [], controls, emptyText: 'nothing' });
+        expect(container.textContent).toBe('Ttogglenothing');
+        expect(container.querySelector('table')).toBeNull();
     });
 });

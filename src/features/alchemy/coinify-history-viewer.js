@@ -21,7 +21,9 @@ import {
     planAlchemyImportMerge,
 } from './alchemy-session-import.js';
 import {
+    BREAK_EVEN_BOUND_LEGEND,
     HISTORY_TYPE_SCALE,
+    breakEvenBound,
     createTotalsCell,
     groupSessionsByInputItem,
     renderTotalsSection,
@@ -99,6 +101,7 @@ const COINIFY_TOTALS_LEGEND = [
     '* input unpriced — total is incomplete',
     '† catalyst on some sessions could not be priced — excluded, not zero',
     '‡ catalyst not recorded on some sessions (predates tracking) — excluded, not zero',
+    BREAK_EVEN_BOUND_LEGEND,
 ];
 
 /**
@@ -1023,8 +1026,14 @@ class CoinifyHistoryViewer {
                 bold: true,
             })
         );
+        const bound = breakEvenBound(group);
         row.appendChild(
-            createTotalsCell(group.breakEvenInputValue !== null ? formatKMB(group.breakEvenInputValue, 1) : '—')
+            createTotalsCell(
+                group.breakEvenInputValue !== null && !bound.noBound
+                    ? bound.prefix + formatKMB(group.breakEvenInputValue, 1)
+                    : '—',
+                { title: bound.title }
+            )
         );
 
         return row;

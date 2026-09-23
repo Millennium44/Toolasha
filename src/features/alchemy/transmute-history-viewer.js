@@ -23,7 +23,9 @@ import {
     planAlchemyImportMerge,
 } from './alchemy-session-import.js';
 import {
+    BREAK_EVEN_BOUND_LEGEND,
     HISTORY_TYPE_SCALE,
+    breakEvenBound,
     createTotalsCell,
     groupSessionsByInputItem,
     poolEquivalentGroups,
@@ -112,6 +114,9 @@ const TRANSMUTE_TOTALS_LEGEND = [
     '¶ output unpriced — total is incomplete, not zero-earning; Net and Break-even Input carry the same mark',
     '‖ output valued at its best Labyrinth Shop conversion, not a market price',
     'A "Pooled" row adds up inputs the game data says are the same bet — hover it for the members',
+    '⚠ recorded counts are internally impossible (the self-return batching bug) — figures built on them are ' +
+        'hidden; hover the row for why',
+    BREAK_EVEN_BOUND_LEGEND,
     '§ self-return counts on some sessions were derived from the recorded successes, not observed — ' +
         'and that success count is itself approximate on these sessions (recorded through the same batching ' +
         'bug), so input cost on them is likely understated, not just approximate',
@@ -1219,15 +1224,25 @@ class TransmuteHistoryViewer {
                 !group.impossible && group.inputsPerOutput !== null ? group.inputsPerOutput.toFixed(2) : '—'
             )
         );
+        const bound = breakEvenBound(group);
         row.appendChild(
             this.createTotalsCell(
-                (!group.impossible && group.breakEvenInputValue !== null
-                    ? formatKMB(group.breakEvenInputValue, 1)
-                    : '—') + (group.revenueUnpriced ? '¶' : ''),
+                (!group.impossible && group.breakEvenInputValue !== null && !bound.noBound
+                    ? bound.prefix + formatKMB(group.breakEvenInputValue, 1)
+                    : '—') +
+                    (group.revenueUnpriced ? '¶' : '') +
+                    (group.revenueShopValued ? '‖' : ''),
                 {
-                    title: group.revenueUnpriced
-                        ? 'Includes an unpriced output — this total is incomplete, not a confirmed figure.'
-                        : undefined,
+                    title: group.impossible
+                        ? impossibleTitle
+                        : [
+                              bound.title,
+                              group.revenueShopValued
+                                  ? 'Includes an output valued at its best Labyrinth Shop conversion, not a market price.'
+                                  : null,
+                          ]
+                              .filter(Boolean)
+                              .join(' ') || undefined,
                 }
             )
         );

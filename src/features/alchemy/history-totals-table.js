@@ -107,6 +107,52 @@ export function poolEquivalentGroups(totals, { getKey, buildPooled, getSortName 
     return pooled;
 }
 
+/** Legend line for the bound prefixes {@link breakEvenBound} puts on Break-even Input. */
+export const BREAK_EVEN_BOUND_LEGEND =
+    '≥ / ≤ on Break-even Input: a bound, not a figure — ≥ when an output went unpriced (the true value is at ' +
+    'least this), ≤ when a catalyst went uncounted (at most this)';
+
+/**
+ * How far a group's Break-even Input can be trusted, as a prefix and a tooltip.
+ *
+ * Break-even is (revenue − catalyst − coin cost) / consumed. An output the
+ * market could not price leaves revenue short, so the true break-even is at
+ * least the figure shown; a catalyst that was unpriced or never recorded
+ * leaves catalyst cost short, so it is at most the figure shown. One gap is a
+ * bound; both together pull opposite ways and leave no bound at all.
+ *
+ * @param {{revenueUnpriced?: boolean, catalystUnpricedSessions?: number, catalystUnrecordedSessions?: number}} group
+ * @returns {{prefix: string, noBound: boolean, title: string|undefined}}
+ */
+export function breakEvenBound(group) {
+    const revenueShort = !!group.revenueUnpriced;
+    const catalystShort = (group.catalystUnpricedSessions || 0) > 0 || (group.catalystUnrecordedSessions || 0) > 0;
+    if (revenueShort && catalystShort) {
+        return {
+            prefix: '',
+            noBound: true,
+            title:
+                'An unpriced output and an uncounted catalyst pull this figure in opposite directions — ' +
+                'no bound can be given.',
+        };
+    }
+    if (revenueShort) {
+        return {
+            prefix: '≥',
+            noBound: false,
+            title: 'An output could not be priced, so revenue is short — the true break-even is at least this.',
+        };
+    }
+    if (catalystShort) {
+        return {
+            prefix: '≤',
+            noBound: false,
+            title: 'A catalyst was unpriced or not recorded, so its cost is short — the true break-even is at most this.',
+        };
+    }
+    return { prefix: '', noBound: false, title: undefined };
+}
+
 /**
  * Create a plain totals-table `<td>` with the shared styling.
  * @param {string} text

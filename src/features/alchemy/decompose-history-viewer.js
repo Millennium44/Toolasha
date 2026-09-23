@@ -23,7 +23,9 @@ import {
     planAlchemyImportMerge,
 } from './alchemy-session-import.js';
 import {
+    BREAK_EVEN_BOUND_LEGEND,
     HISTORY_TYPE_SCALE,
+    breakEvenBound,
     createTotalsCell,
     groupSessionsByInputItem,
     poolEquivalentGroups,
@@ -109,6 +111,7 @@ const DECOMPOSE_TOTALS_LEGEND = [
     '¶ output unpriced — total is incomplete, not zero-earning; Net and Break-even Input carry the same mark',
     '§ output valued at its best Labyrinth Shop conversion, not a market price',
     'A "Pooled" row adds up inputs the game data says are the same bet — hover it for the members',
+    BREAK_EVEN_BOUND_LEGEND,
 ];
 
 /**
@@ -1326,17 +1329,24 @@ class DecomposeHistoryViewer {
                 }
             )
         );
+        const bound = breakEvenBound(group);
         row.appendChild(
             createTotalsCell(
-                (group.breakEvenInputValue !== null ? formatKMB(group.breakEvenInputValue, 1) : '—') +
+                (group.breakEvenInputValue !== null && !bound.noBound
+                    ? bound.prefix + formatKMB(group.breakEvenInputValue, 1)
+                    : '—') +
                     (group.revenueUnpriced ? '¶' : '') +
                     (group.revenueShopValued ? '§' : ''),
                 {
-                    title: group.revenueUnpriced
-                        ? 'Includes an unpriced output — this total is incomplete, not a confirmed figure.'
-                        : group.revenueShopValued
-                          ? 'Includes an output valued at its best Labyrinth Shop conversion, not a market price.'
-                          : undefined,
+                    title:
+                        [
+                            bound.title,
+                            group.revenueShopValued
+                                ? 'Includes an output valued at its best Labyrinth Shop conversion, not a market price.'
+                                : null,
+                        ]
+                            .filter(Boolean)
+                            .join(' ') || undefined,
                 }
             )
         );
