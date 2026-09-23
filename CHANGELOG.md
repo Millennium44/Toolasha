@@ -18,6 +18,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 - Automatic recommendations now reject an invalid running Alchemy item and action pair instead of presenting a result for a combination the game cannot perform. Selecting a different Alchemy action also prevents the optimizer from scoring the wrong item action.
 
+### Alchemy tooltip skips drinks with unknown prices
+
+- Coinify, Decompose, and Transmute tooltip recommendations no longer treat an unpriced equipped tea as free. Optional tea searches use the no-tea setup until a drink price is available.
+
 ### Combat sims show how old each party profile is
 
 - The Combat Sim shows each party member's cached profile age and warns when a member has no gear (a hidden profile) or no cached profile at all; exports to external sims list the same warnings instead of silently sending a gearless member.

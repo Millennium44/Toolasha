@@ -43,7 +43,7 @@ vi.mock('../../core/data-manager.js', () => ({
 }));
 vi.mock('../../utils/tea-parser.js', () => ({ getDrinkConcentration: () => mocks.drinkConcentration }));
 vi.mock('../../utils/market-data.js', () => ({
-    getItemPrice: (hrid) => mocks.itemPrices[hrid] ?? mocks.itemPrice,
+    getItemPrice: (hrid) => (Object.hasOwn(mocks.itemPrices, hrid) ? mocks.itemPrices[hrid] : mocks.itemPrice),
     isPriceEstimated: (hrid) => mocks.estimatedItems.has(hrid),
 }));
 vi.mock('../../utils/buff-parser.js', () => ({ getAlchemySuccessBonus: () => mocks.alchemyTeaBonus }));
@@ -430,6 +430,21 @@ describe('tea speed is applied on every alchemy path', () => {
                 result.totalTeaCostPerHour,
             6
         );
+    });
+
+    test.each(paths.slice(0, 3))('%s: an unpriced tea cannot win the optional tooltip search', (_name, run) => {
+        mocks.drinkSlots = [{ itemHrid: '/items/alchemy_tea' }];
+        mocks.itemPrices['/items/alchemy_tea'] = null;
+        mocks.itemPrices['/items/cheese'] = 100;
+        mocks.itemPrices['/items/cheese_hat'] = 100;
+        mocks.itemPrices['/items/milk'] = 100;
+
+        const result = run(alchemyProfitCalculator);
+
+        expect(result).not.toBeNull();
+        expect(result.winningTeaUsed).toBe(false);
+        expect(result.actionSpeedBreakdown.tea).toBe(0);
+        expect(result.consumableCosts).toEqual([]);
     });
 
     test.each(paths.slice(0, 3))('%s: a no-tea tooltip winner does not retain tea efficiency', (_name, run) => {

@@ -464,6 +464,7 @@ class AlchemyProfitCalculator {
      * @param {Function} params.computeTeaCost - fn(teaBonus) => totalTeaCostPerHour
      * @param {number} [params.levelPenalty=0] - Under-level penalty for transmute
      * @param {boolean} [params.fixedTeaSelection=false] - Keep the supplied drinks in every catalyst candidate
+     * @param {boolean} [params.hasMissingTeaPrices=false] - Exclude unpriced drinks from optional searches
      * @returns {Object} { catalystBonus, catalystHrid, catalystPrice, teaBonus, teaCostPerHour, successRateBreakdown }
      */
     _bestCatalystCombo({
@@ -478,6 +479,7 @@ class AlchemyProfitCalculator {
         levelPenalty = 0,
         teaBonusOverride = null,
         fixedTeaSelection = false,
+        hasMissingTeaPrices = false,
         noTeaEconomics = null,
     }) {
         const liveTeaBonus = teaBonusOverride !== null ? teaBonusOverride : getAlchemySuccessBonus();
@@ -509,10 +511,12 @@ class AlchemyProfitCalculator {
         ];
         const teaChoices = fixedTeaSelection
             ? [{ teaBonus: liveTeaBonus, usesTea: true }]
-            : [
-                  { teaBonus: liveTeaBonus, usesTea: true },
-                  { teaBonus: 0, usesTea: false },
-              ];
+            : hasMissingTeaPrices
+              ? [{ teaBonus: 0, usesTea: false }]
+              : [
+                    { teaBonus: liveTeaBonus, usesTea: true },
+                    { teaBonus: 0, usesTea: false },
+                ];
         const combinations = catalystChoices.flatMap((catalyst) => teaChoices.map((tea) => ({ ...catalyst, ...tea })));
 
         let best = null;
@@ -822,6 +826,7 @@ class AlchemyProfitCalculator {
                 computeTeaCost: () => teaCostData.totalCostPerHour,
                 teaBonusOverride,
                 fixedTeaSelection: actionContext?.fixedTeaSelection === true,
+                hasMissingTeaPrices: teaCostData.hasMissingPrices,
                 noTeaEconomics,
             });
 
@@ -1159,6 +1164,7 @@ class AlchemyProfitCalculator {
                 computeTeaCost: () => teaCostData.totalCostPerHour,
                 teaBonusOverride,
                 fixedTeaSelection: actionContext?.fixedTeaSelection === true,
+                hasMissingTeaPrices: teaCostData.hasMissingPrices,
                 noTeaEconomics,
             });
 
@@ -1512,6 +1518,7 @@ class AlchemyProfitCalculator {
                 teaBonusOverride,
                 catalystChoice,
                 fixedTeaSelection: actionContext?.fixedTeaSelection === true,
+                hasMissingTeaPrices: teaCostData.hasMissingPrices,
                 noTeaEconomics,
             });
 
