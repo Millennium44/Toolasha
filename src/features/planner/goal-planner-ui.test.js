@@ -263,6 +263,24 @@ describe('drawing a plan', () => {
         expect(text()).toContain('Observatory 8');
     });
 
+    test('an unavailable material price renders as unknown rather than free', async () => {
+        store.data.goalPlannerGoals_char1 = [
+            { id: 'g-obs', type: 'house', roomHrid: '/house_rooms/observatory', targetLevel: 8 },
+        ];
+        plannerContext.value.houseCost = () => ({
+            coins: 1000,
+            materials: [{ itemHrid: '/items/log', name: 'Log', count: 500, marketPrice: 0, totalValue: 0 }],
+        });
+
+        goalPlannerPanel.show();
+        await goalPlannerPanel.load();
+        await goalPlannerPanel.refresh();
+
+        expect(text()).not.toContain('could not be drawn');
+        expect(text()).toContain('price unknown');
+        expect(text()).toContain('≤');
+    });
+
     test('the steps of a plan are on screen, in order, with their bill', async () => {
         goalPlannerPanel.show();
         await goalPlannerPanel.load();

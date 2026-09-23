@@ -6,6 +6,11 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Goal Planner shows unknown purchases as unknown
+
+- Goal Planner now marks unpriced house materials, equipment acquisitions, and enhancement runs as unknown rather than quoting them as free. Its coin total shows a bound when a required price is missing, so goals no longer look cheaper than they are.
+- Mirrored enhancement plans now keep every extra base copy on the shopping list and charge the acquired primary copy only once.
+
 ### Crafting estimates require complete recipe prices
 
 - An unlisted crafted item no longer gets a sale estimate from only some of its ingredients; missing prices now leave its profit unavailable. Coin inputs count at face value, and recipes sharing an output use the recipe the player selected for the estimate.

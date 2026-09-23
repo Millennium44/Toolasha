@@ -179,6 +179,7 @@ function makeStep(spec) {
         kind: spec.kind,
         description: spec.description,
         goldDelta: num(spec.goldDelta),
+        costKnown: spec.costKnown !== false,
         timeHours: spec.timeHours === null ? null : num(spec.timeHours),
         prerequisites: Array.isArray(spec.prerequisites) ? [...spec.prerequisites] : [],
         details: spec.details || {},
@@ -252,6 +253,7 @@ export function summarize(steps) {
     let goldSpend = 0;
     let timeHours = 0;
     let timeKnown = true;
+    let costKnown = true;
     let stepsDone = 0;
 
     for (const step of list) {
@@ -261,6 +263,7 @@ export function summarize(steps) {
         }
         if (step.goldDelta > 0) goldEarn += step.goldDelta;
         else goldSpend += -step.goldDelta;
+        if (step.costKnown === false) costKnown = false;
         if (step.timeHours === null) timeKnown = false;
         else timeHours += step.timeHours;
     }
@@ -271,6 +274,7 @@ export function summarize(steps) {
         netGold: goldEarn - goldSpend,
         timeHours,
         timeKnown,
+        costKnown,
         stepsDone,
         stepCount: list.length,
     };
@@ -854,7 +858,7 @@ function planGoldGoal(goal, context) {
 const COIN_HRID = '/items/coin';
 
 /**
- * What an enhancement run would have you buy, as a list somebody can shop from.
+ * The enhancement bill after its first goal item is already acquired.
  *
  * The path optimiser's bill is an *expectation*: the counts come out of the same
  * Markov chain the cost does, so they are the mean of a distribution rather than
@@ -867,15 +871,37 @@ const COIN_HRID = '/items/coin';
  * the extras belong.
  *
  * @param {Object|null} run - An enhancement run from the `enhance` provider
- * @returns {Array<{itemHrid: string, name: string, count: number}>} What to buy, or an empty list
+ * @param {string} itemHrid - The goal item acquired by the plan's base step
+ * @returns {Array<Object>} The bill with only that first base copy removed
  */
-function enhancementShoppingList(run) {
+function enhancementBillAfterBase(run, itemHrid) {
     const bill = Array.isArray(run?.materialBill) ? run.materialBill : [];
+    let coveredBase = 1;
+
+    return bill.map((line) => {
+        let count = num(line.count);
+        if (line.kind === 'base' && line.itemHrid === itemHrid && coveredBase > 0) {
+            const covered = Math.min(count, coveredBase);
+            count -= covered;
+            coveredBase -= covered;
+        }
+        return { ...line, count };
+    });
+}
+
+/**
+ * What an enhancement run would have you buy, as a list somebody can shop from.
+ * @param {Object|null} run - Enhancement path with a material bill
+ * @param {string} itemHrid - Goal item, whose first base copy is acquired separately
+ * @returns {Array<{itemHrid: string, name: string, count: number}>} Purchases for the run
+ */
+function enhancementShoppingList(run, itemHrid) {
+    const bill = enhancementBillAfterBase(run, itemHrid);
 
     const list = [];
     for (const line of bill) {
         if (!line?.itemHrid || line.itemHrid === COIN_HRID) continue;
-        const count = line.kind === 'base' ? num(line.count) - 1 : num(line.count);
+        const count = num(line.count);
         if (!(count > 0)) continue;
         list.push({
             itemHrid: line.itemHrid,
@@ -963,7 +989,8 @@ function planEquipmentGoal(goal, context) {
     }
 
     if (!haveBase) {
-        const cost = num(acquisition?.totalCost, num(acquisition?.unitCost));
+        const costKnown = acquisition != null && Number.isFinite(acquisition.totalCost);
+        const cost = costKnown ? num(acquisition.totalCost) : 0;
         const strategy = acquisition?.strategy === 'craft' ? 'Craft' : 'Buy';
         const rival =
             acquisition?.strategy === 'craft'
@@ -978,9 +1005,12 @@ function planEquipmentGoal(goal, context) {
             makeStep({
                 id: 'base',
                 kind: 'acquire',
-                description: `${strategy} ${name} for ${coins(cost)} — ${rival}`,
+                description: costKnown
+                    ? `${strategy} ${name} for ${coins(cost)} — ${rival}`
+                    : `Acquire ${name} — cost unknown`,
                 goldDelta: -cost,
-                timeHours: num(acquisition?.timeHours),
+                costKnown,
+                timeHours: costKnown ? num(acquisition?.timeHours) : null,
                 prerequisites: trainIds,
                 // The name rides along so anything that offers to go and buy
                 // this can say what it is buying without re-deriving it
@@ -1010,18 +1040,36 @@ function planEquipmentGoal(goal, context) {
         // The path calculator quotes a total that already contains a base item;
         // this plan buys that separately, so counting it here would charge for
         // it twice.
-        const runCost = Math.max(0, num(run?.totalCost) - num(run?.baseCost));
-        const bill = enhancementShoppingList(run);
+        // A path may have a finite total even when an ingredient has no market
+        // price: the enhancement calculator omits that ingredient from the bill.
+        // The first base copy is covered by the acquire step, but every other
+        // consumed line must have a price before this run has a complete cost.
+        const remainingBill = enhancementBillAfterBase(run, itemHrid);
+        const unpricedInputs = remainingBill.filter((line) => line.count > 0 && !(num(line.unitPrice) > 0));
+        const runCostKnown = run != null && Number.isFinite(run.totalCost) && unpricedInputs.length === 0;
+        if (unpricedInputs.length) {
+            warnings.push(
+                `${name} needs ${unpricedInputs.length} enhancement input price${unpricedInputs.length === 1 ? '' : 's'} that could not be read.`
+            );
+        }
+        const primaryBasePrice = run?.usedMirror
+            ? num(
+                  (run.materialBill || []).find((line) => line.kind === 'base' && line.itemHrid === itemHrid)?.unitPrice
+              )
+            : num(run?.baseCost);
+        const runCost = run && Number.isFinite(run.totalCost) ? Math.max(0, num(run.totalCost) - primaryBasePrice) : 0;
+        const bill = enhancementShoppingList(run, itemHrid);
         steps.push(
             makeStep({
                 id: 'enhance',
                 kind: 'enhance',
-                description: run
+                description: runCostKnown
                     ? `Enhance ${name} +${startLevel} → +${target} — ${Math.round(num(run.attempts))} attempts, ` +
                       `${coins(runCost)} in materials${run.protectFrom > 0 ? ` (protect from +${run.protectFrom})` : ''}`
-                    : `Enhance ${name} +${startLevel} → +${target}`,
+                    : `Enhance ${name} +${startLevel} → +${target} — cost unknown`,
                 goldDelta: -runCost,
-                timeHours: run ? num(run.totalTimeSeconds) / 3600 : null,
+                costKnown: runCostKnown,
+                timeHours: run && Number.isFinite(run.totalTimeSeconds) ? run.totalTimeSeconds / 3600 : null,
                 prerequisites: ['base'],
                 details: { itemHrid, startLevel, targetLevel: target, ...(run || {}), shoppingList: bill },
             })
@@ -1202,11 +1250,18 @@ function planHouseGoal(goal, context) {
                 const held = num(ask(context, 'owned', [material.itemHrid, goal.id], 0));
                 const missing = Math.max(0, num(material.count) - held);
                 const unit = num(material.marketPrice, num(material.totalValue) / Math.max(1, num(material.count)));
-                return { ...material, held, missing, missingValue: missing * unit };
+                return { ...material, held, missing, missingValue: missing * unit, costKnown: unit > 0 };
             })
             .filter((material) => material.missing > 0);
 
         const missingValue = shortfall.reduce((sum, material) => sum + material.missingValue, 0);
+        const unknownMaterials = shortfall.filter((material) => !material.costKnown);
+        if (unknownMaterials.length) {
+            warnings.push(
+                `${unknownMaterials.length} required material${unknownMaterials.length === 1 ? '' : 's'} for ${name} ` +
+                    'have no market or vendor price; the displayed coin total is only a lower bound.'
+            );
+        }
 
         // A bag that looks full and a plan that says it is short is a mystery
         // unless the plan says who took the stock
@@ -1223,9 +1278,10 @@ function planHouseGoal(goal, context) {
                 kind: 'acquire',
                 description: shortfall.length
                     ? `Buy ${shortfall.length} material${shortfall.length === 1 ? '' : 's'} for ${name} ` +
-                      `${level} → ${target} — ${coins(missingValue)}`
+                      `${level} → ${target} — ${unknownMaterials.length ? `${coins(missingValue)}+ (price unknown)` : coins(missingValue)}`
                     : `Materials for ${name} ${level} → ${target} are already held`,
                 goldDelta: -missingValue,
+                costKnown: unknownMaterials.length === 0,
                 done: shortfall.length === 0,
                 details: { roomHrid, materials: shortfall, allMaterials: materials, fullValue: materialValue },
             })
@@ -1236,8 +1292,12 @@ function planHouseGoal(goal, context) {
         makeStep({
             id: 'build',
             kind: 'build',
-            description: `Upgrade ${name} ${level} → ${target} — ${coins(coinCost)} in coins`,
+            description: cost
+                ? `Upgrade ${name} ${level} → ${target} — ${coins(coinCost)} in coins`
+                : `Upgrade ${name} ${level} → ${target} — cost unknown`,
             goldDelta: -coinCost,
+            costKnown: Boolean(cost),
+            timeHours: cost ? 0 : null,
             prerequisites: materials.length ? ['materials'] : [],
             details: {
                 roomHrid,
@@ -1329,6 +1389,11 @@ export function planGoal(rawGoal, context = {}) {
     }
 
     const steps = orderSteps(result.steps);
+    if (steps.some((step) => !step.done && step.costKnown === false)) {
+        result.warnings.push('The full funding requirement is unknown until the missing prices are available.');
+        const funding = steps.find((step) => step.kind === 'earn' && step.id === 'fund');
+        if (funding) funding.description = funding.description.replace(/^Earn /, 'Earn at least ');
+    }
     const totals = summarize(steps);
 
     return {

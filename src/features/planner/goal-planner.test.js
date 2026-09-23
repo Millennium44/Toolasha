@@ -757,6 +757,84 @@ describe('an equipment target', () => {
         expect(step(plan, 'base').goldDelta).toBe(-900);
     });
 
+    test('does not quote a free base item when neither market nor recipe can price it', () => {
+        const plan = planFor(null);
+
+        expect(step(plan, 'base').description).toContain('cost unknown');
+        expect(step(plan, 'base').costKnown).toBe(false);
+        expect(plan.totals.costKnown).toBe(false);
+        expect(plan.totals.timeKnown).toBe(false);
+    });
+
+    test('does not quote a free enhancement when its path cannot be calculated', () => {
+        const plan = planGoal(
+            { type: 'equipment', itemHrid: cape, enhancementLevel: 5 },
+            context({ acquire: () => ({ strategy: 'buy', totalCost: 1000 }), enhance: () => null })
+        );
+
+        expect(step(plan, 'enhance').costKnown).toBe(false);
+        expect(plan.totals.costKnown).toBe(false);
+    });
+
+    test('a finite enhancement quote is still incomplete when one required material has no price', () => {
+        const plan = planGoal(
+            { type: 'equipment', itemHrid: cape, enhancementLevel: 5 },
+            context({
+                acquire: () => ({ strategy: 'buy', totalCost: 1000 }),
+                enhance: () => ({
+                    totalCost: 1400,
+                    baseCost: 1000,
+                    attempts: 10,
+                    totalTimeSeconds: 120,
+                    materialBill: [
+                        { itemHrid: '/items/enhancement_crystal', count: 4, unitPrice: 100, kind: 'material' },
+                        { itemHrid: '/items/mystical_charm', count: 10, unitPrice: 0, kind: 'material' },
+                    ],
+                }),
+            })
+        );
+
+        expect(step(plan, 'enhance').description).toContain('cost unknown');
+        expect(step(plan, 'enhance').goldDelta).toBe(-400);
+        expect(plan.totals.costKnown).toBe(false);
+    });
+
+    test('a mirrored refined cape keeps an unpriced plain copy in its bill', () => {
+        const refinedCape = '/items/chance_cape_refined';
+        const plainCape = '/items/chance_cape';
+        const plan = planGoal(
+            { type: 'equipment', itemHrid: refinedCape, enhancementLevel: 10 },
+            context({
+                acquire: () => ({ strategy: 'craft', totalCost: 1000 }),
+                enhance: () => ({
+                    usedMirror: true,
+                    totalCost: 2500,
+                    baseCost: 0,
+                    attempts: 20,
+                    totalTimeSeconds: 240,
+                    materialBill: [
+                        { itemHrid: refinedCape, count: 1, unitPrice: 1000, kind: 'base' },
+                        { itemHrid: plainCape, count: 1, unitPrice: 0, kind: 'base' },
+                        { itemHrid: '/items/mystical_charm', count: 5, unitPrice: 300, kind: 'material' },
+                    ],
+                }),
+            })
+        );
+
+        expect(step(plan, 'enhance').details.shoppingList).toContainEqual({
+            itemHrid: plainCape,
+            name: 'chance_cape',
+            count: 1,
+        });
+        expect(step(plan, 'enhance').costKnown).toBe(false);
+        expect(step(plan, 'enhance').goldDelta).toBe(-1500);
+        expect(plan.totals.goldSpend).toBe(2500);
+        expect(step(plan, 'fund').description).toContain('Earn at least');
+        expect(plan.warnings).toContain(
+            'The full funding requirement is unknown until the missing prices are available.'
+        );
+    });
+
     test('costs the enhancement run through the real Markov chain', () => {
         // +0 → +2 at level == item level: E0 = 20/3 attempts, hand-solved in the
         // enhancement calculator's own tests
@@ -1008,6 +1086,35 @@ describe('a house room target', () => {
 
         expect(plan.satisfied).toBe(true);
         expect(step(plan, 'build').done).toBe(true);
+    });
+
+    test('marks a missing house cost as unknown instead of a free upgrade', () => {
+        const plan = planGoal(
+            { type: 'house', roomHrid: observatory, targetLevel: 7 },
+            context({ houseLevel: () => 6, houseCost: () => null })
+        );
+
+        expect(step(plan, 'build').description).toContain('cost unknown');
+        expect(plan.totals.costKnown).toBe(false);
+    });
+
+    test('treats an unlisted house material with no vendor price as an unknown purchase', () => {
+        const plan = planGoal(
+            { type: 'house', roomHrid: observatory, targetLevel: 7 },
+            context({
+                houseLevel: () => 6,
+                owned: () => 0,
+                houseCost: () => ({
+                    coins: 1000,
+                    materials: [{ itemHrid: '/items/plank', count: 20, marketPrice: 0, totalValue: 0 }],
+                }),
+            })
+        );
+
+        expect(step(plan, 'materials').costKnown).toBe(false);
+        expect(step(plan, 'materials').description).toContain('price unknown');
+        expect(plan.totals.goldSpend).toBe(1000);
+        expect(plan.totals.costKnown).toBe(false);
     });
 });
 

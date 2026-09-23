@@ -1176,9 +1176,16 @@ class GoalPlannerPanel {
         row.appendChild(label);
 
         row.appendChild(
-            span(step.done ? '' : signedCoins(step.goldDelta), {
+            span(step.done ? '' : step.costKnown === false ? '?' : signedCoins(step.goldDelta), {
                 textAlign: 'right',
-                color: step.goldDelta > 0 ? COLORS.good : step.goldDelta < 0 ? COLORS.bad : COLORS.textDim,
+                color:
+                    step.costKnown === false
+                        ? COLORS.textDim
+                        : step.goldDelta > 0
+                          ? COLORS.good
+                          : step.goldDelta < 0
+                            ? COLORS.bad
+                            : COLORS.textDim,
             })
         );
         row.appendChild(
@@ -1353,7 +1360,7 @@ class GoalPlannerPanel {
             fontWeight: 'bold',
         });
 
-        const { goldEarn, goldSpend, netGold, timeKnown, timeHours } = plan.totals;
+        const { goldEarn, goldSpend, netGold, timeKnown, timeHours, costKnown } = plan.totals;
         const breakdown =
             goldEarn > 0 && goldSpend > 0
                 ? ` — earn ${formatKMB(Math.round(goldEarn))}, spend ${formatKMB(Math.round(goldSpend))}`
@@ -1369,11 +1376,14 @@ class GoalPlannerPanel {
               'A negative net is what finishing this goal costs you overall, not a debt.';
         row.appendChild(label);
 
-        const net = span(signedCoins(netGold), {
+        const net = span(costKnown === false ? `≤${signedCoins(netGold)}` : signedCoins(netGold), {
             textAlign: 'right',
-            color: netGold >= 0 ? COLORS.good : COLORS.bad,
+            color: costKnown === false ? COLORS.textDim : netGold >= 0 ? COLORS.good : COLORS.bad,
         });
-        net.title = `Net change in coins: ${signedCoins(netGold)}`;
+        net.title =
+            costKnown === false
+                ? `Known coin change: ${signedCoins(netGold)}. Some required costs could not be priced.`
+                : `Net change in coins: ${signedCoins(netGold)}`;
         row.appendChild(net);
 
         row.appendChild(
