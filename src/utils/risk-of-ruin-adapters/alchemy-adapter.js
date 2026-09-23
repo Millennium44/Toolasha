@@ -25,6 +25,10 @@
  * Catalyst is consumed only on success (per alchemy-profit-display.js's own label: "consumed
  * only on success"), so it is charged on every success branch, never on failure. Materials —
  * including any direct coin cost — are consumed on every attempt regardless of outcome.
+ *
+ * Tea is drunk by the hour, not by the attempt, but the success rate and pace the model runs at
+ * include what the tea gives, so its hourly cost is spread over the attempts an hour buys and
+ * charged on every attempt. Leaving it out would bank the tea's bonus without paying for it.
  */
 
 import alchemyProfitCalculator from '../../features/market/alchemy-profit-calculator.js';
@@ -122,6 +126,7 @@ function buildOutcomeDistribution(profit, attemptCost, catalystCostOnSuccess) {
  *     successRate: number,
  *     materialCost: number,
  *     coinCost: number,
+ *     teaCostPerAttempt: number,
  *     catalystHrid: string|null,
  *     catalystCostOnSuccess: number,
  *     netOnFail: number,
@@ -135,7 +140,11 @@ export function buildAlchemyTransmuteModel(itemHrid, { useLiveSetup = false, cat
     if (!profit || !(profit.successRate > 0)) return null;
 
     const coinCost = profit.requirementCosts.find((r) => r.itemHrid === '/items/coin')?.costPerAction ?? 0;
-    const attemptCost = profit.grossMaterialCost + coinCost;
+    const teaCostPerAttempt =
+        profit.totalTeaCostPerHour > 0 && profit.actionsPerHour > 0
+            ? profit.totalTeaCostPerHour / profit.actionsPerHour
+            : 0;
+    const attemptCost = profit.grossMaterialCost + coinCost + teaCostPerAttempt;
     const catalystCostOnSuccess = profit.catalystPrice || 0;
     const netOnFail = -attemptCost;
 
@@ -170,6 +179,7 @@ export function buildAlchemyTransmuteModel(itemHrid, { useLiveSetup = false, cat
             successRate: profit.successRate,
             materialCost: profit.grossMaterialCost,
             coinCost,
+            teaCostPerAttempt,
             catalystHrid: profit.catalystPrice ? profit.catalystCost?.itemHrid || null : null,
             catalystCostOnSuccess,
             netOnFail,

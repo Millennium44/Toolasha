@@ -641,7 +641,11 @@ class RiskOfRuinUI {
                 // A resolved item with no model is unpriced, not unknown: an explicitly chosen
                 // catalyst with no market price is refused rather than counted as free.
                 let message = 'Enter a valid transmutable item name.';
-                if (hrid) {
+                // A raw hrid typed in is resolved without the transmutable list's filter
+                const transmutable = hrid
+                    ? dataManager.getItemDetails(hrid)?.alchemyDetail?.transmuteDropTable?.length > 0
+                    : false;
+                if (transmutable) {
                     message =
                         catalystChoice && catalystChoice !== 'none'
                             ? 'This transmute cannot be priced with the selected catalyst; it or an input or ' +
@@ -998,6 +1002,9 @@ class RiskOfRuinUI {
         ];
         if (breakdown.coinCost > 0) {
             rows.push(`<div>Coin cost (paid every attempt): ${fmtGold(breakdown.coinCost)}</div>`);
+        }
+        if (breakdown.teaCostPerAttempt > 0) {
+            rows.push(`<div>Tea (hourly cost spread per attempt): ${fmtGold(breakdown.teaCostPerAttempt)}</div>`);
         }
         rows.push(
             catalystName

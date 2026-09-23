@@ -316,12 +316,39 @@ describe('RiskOfRuinUI transmute that cannot be priced', () => {
     afterEach(() => {
         riskOfRuinUI.disable();
         dataManager.getInitClientData.mockImplementation(() => ({ itemDetailMap: {} }));
+        dataManager.getItemDetails.mockImplementation(() => null);
+    });
+
+    /** Serve one item detail map through both of the data manager's doors */
+    function serveItems(itemDetailMap) {
+        dataManager.getInitClientData.mockImplementation(() => ({ itemDetailMap }));
+        dataManager.getItemDetails.mockImplementation((hrid) => itemDetailMap[hrid] ?? null);
+    }
+
+    test('a raw hrid for an item that cannot be transmuted asks for a transmutable item', async () => {
+        serveItems({ '/items/milk': { name: 'Milk' } });
+        riskOfRuinUI.initialize();
+        const root = panel();
+        root.querySelector('#mwi-ror-mode').value = 'alchemy';
+        riskOfRuinUI._renderModeInputs();
+        root.querySelector('#mwi-ror-item').value = '/items/milk';
+
+        await riskOfRuinUI._compute();
+
+        expect(root.querySelector('#mwi-ror-status').textContent).toBe('Enter a valid transmutable item name.');
     });
 
     test('a known item with an unpriced chosen catalyst is not called an invalid item', async () => {
-        dataManager.getInitClientData.mockImplementation(() => ({
-            itemDetailMap: { '/items/cheese': { name: 'Cheese' } },
-        }));
+        serveItems({
+            '/items/cheese': {
+                name: 'Cheese',
+                alchemyDetail: {
+                    bulkMultiplier: 1,
+                    transmuteSuccessRate: 0.5,
+                    transmuteDropTable: [{ itemHrid: '/items/milk', dropRate: 1, minCount: 1, maxCount: 1 }],
+                },
+            },
+        });
         riskOfRuinUI.initialize();
         const root = panel();
         root.querySelector('#mwi-ror-mode').value = 'alchemy';

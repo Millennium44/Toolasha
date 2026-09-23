@@ -241,4 +241,22 @@ describe('buildAlchemyTransmuteModel', () => {
 
         expect(calculateTransmuteProfit).toHaveBeenCalledWith('/items/widget', false, null, 'prime');
     });
+
+    test('charges the tea the success rate was quoted with, spread over the attempts an hour buys', () => {
+        // 1,800 coins of tea an hour over 360 attempts an hour is 5 coins an attempt
+        mockProfit = baseProfit({
+            successRate: 1,
+            totalTeaCostPerHour: 1800,
+            actionsPerHour: 360,
+            dropRevenues: [
+                { itemHrid: '/items/output_a', dropRate: 1, revenuePerAttempt: 2000, isEssence: false, isRare: false },
+            ],
+        });
+
+        const model = buildAlchemyTransmuteModel('/items/widget');
+
+        expect(model.cost).toBe(1005);
+        expect(model.breakdown.teaCostPerAttempt).toBe(5);
+        expect(model.outcomeDistribution).toEqual([{ prob: 1, net: 2000 - 1005 }]);
+    });
 });
