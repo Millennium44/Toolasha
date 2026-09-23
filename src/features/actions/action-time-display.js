@@ -39,7 +39,6 @@ import {
     parseGatheringBonus,
     parseGourmetBonus,
 } from '../../utils/tea-parser.js';
-import { getAlchemySuccessBonus } from '../../utils/buff-parser.js';
 import { getItemPrices } from '../../utils/market-data.js';
 import { resolveActionContext } from '../../utils/action-context.js';
 import { affordableActions } from '../../utils/material-calculator.js';
@@ -140,6 +139,9 @@ export function buildActionTimeText(mode, relativeText, absoluteText) {
 // The one protection item that is spent on every attempt rather than only on a failure: it
 // guarantees the enhancement, so both the attempt count and its cost are exact.
 const PHILOSOPHERS_MIRROR_HRID = '/items/philosophers_mirror';
+
+/** The one catalyst that is not type-specific */
+const PRIME_CATALYST_HRID = '/items/prime_catalyst';
 
 const QUEUE_EDIT_MENU_MARKER_CLASS = 'toolasha-queue-edit-menu-enhanced';
 const QUEUE_EDIT_MENU_STYLE_ID = 'toolasha-queue-edit-menu-width-styles';
@@ -1286,7 +1288,7 @@ class ActionTimeDisplay {
     queueXpFigures(xp) {
         if (!this.queueXpApplies() || !xp) return null;
         const perHour = Number.isFinite(xp.perHour) ? xp.perHour : null;
-        if (perHour === null) return { text: QUEUE_XP_UNKNOWN_TEXT, unknown: true };
+        if (perHour === null) return { text: QUEUE_XP_UNKNOWN_TEXT, unknown: true, reason: xp.reason || null };
         const total = Number.isFinite(xp.total) ? xp.total : null;
         const amount = (value) => formatLargeNumber(Math.round(value));
         return {
@@ -1360,13 +1362,22 @@ class ActionTimeDisplay {
      *
      * @param {Object|null} actionObj - The queued alchemy action
      * @param {number} count - Attempts this row will perform, 0 when it is endless
-     * @returns {{perHour: number|null, total: number|null}}
+     * @returns {{perHour: number|null, total: number|null, reason?: string}} `reason` names why
+     *   a row has no figure, for its tooltip
      */
     alchemyRowXp(actionObj, count) {
         const none = { perHour: null, total: null };
         if (!actionObj?.primaryItemHash) return none;
         const { itemHrid } = this.parseItemHash(actionObj.primaryItemHash);
         const alchemyType = getAlchemyTypeFromActionHrid(actionObj.actionHrid);
+        if (alchemyType === 'unrefine') {
+            return {
+                ...none,
+                reason:
+                    'No experience figure: Unrefine’s experience has no known formula — the coinify, ' +
+                    'decompose and transmute formulas do not cover it.',
+            };
+        }
         const profitData = this.calculateAlchemyProfitForAction(actionObj);
         if (!itemHrid || !alchemyType || !profitData) return none;
         if (!Number.isFinite(profitData.successRate) || !Number.isFinite(profitData.actionsPerHour)) return none;
@@ -1407,8 +1418,9 @@ class ActionTimeDisplay {
                 ? `XP: ${figures.text}`
                 : `XP: <span style="color: ${color};">${figures.text}</span>`;
             xpDiv.title = figures.unknown
-                ? 'No experience figure: this row’s XP could not be worked out — a fight whose stored ' +
-                  'simulation predates the field, or an action the game grants no experience value for.'
+                ? figures.reason ||
+                  'No experience figure: this row’s XP could not be worked out — a fight whose stored ' +
+                      'simulation predates the field, or an action the game grants no experience value for.'
                 : 'Estimated, not measured: experience for this row, summed across every skill it trains, ' +
                   'with wisdom, Charm Experience and efficiency repeats included.';
             const container = actionDiv.querySelector('[class*="QueuedActions_actionText"]');
@@ -2195,7 +2207,7 @@ class ActionTimeDisplay {
                 totalTime = Infinity;
             }
         } else {
-            const timeData = this.calculateActionTime(actionDetails, actionObj.actionHrid);
+            const timeData = this.calculateActionTime(actionDetails, actionObj.actionHrid, actionObj);
             if (!timeData) {
                 return {
                     totalTime: 0,
@@ -2804,7 +2816,9 @@ class ActionTimeDisplay {
             const artisanBonus = this.getArtisanBonusForAction(actionDetails);
 
             // Calculate max actions based on materials and costs
-            const limitResult = this.calculateMaterialLimit(actionDetails, inventoryLookup, artisanBonus, action);
+            const limitResult = this.calculateMaterialLimit(actionDetails, inventoryLookup, artisanBonus, action, {
+                countSelfReturns: false,
+            });
             if (limitResult) {
                 materialLimit = limitResult.maxActions;
                 limitType = limitResult.limitType;
@@ -2867,38 +2881,25 @@ class ActionTimeDisplay {
         );
         const totalTimeSeconds = Math.max(0, baseActionsNeeded * actionTime - elapsedInCurrentUnit);
 
-        // Calculate transmute recycle time estimate
+        // Transmute recycle estimate: how much longer the input lasts once its expected
+        // self-returns are fed back in. Only while the input is what ends the run — a counted
+        // run performs its count however many copies come back, and a run ended by catalysts
+        // or coins is not stretched by returned inputs.
         let recycleTimeSeconds = null;
         if (
             actionDetails.hrid?.includes('transmute') &&
             actionDetails.type === '/action_types/alchemy' &&
             action.primaryItemHash &&
+            !action.hasMaxCount &&
             config.getSetting('actionBar_showRecycleTime')
         ) {
             const { itemHrid: transmuteItemHrid } = this.parseItemHash(action.primaryItemHash);
-            if (transmuteItemHrid) {
-                const transmuteItemDetails = itemDetailMap[transmuteItemHrid];
-                const dropTable = transmuteItemDetails?.alchemyDetail?.transmuteDropTable;
-                if (dropTable) {
-                    const selfReturn = dropTable.find((d) => d.itemHrid === transmuteItemHrid);
-                    if (selfReturn && selfReturn.dropRate > 0) {
-                        const baseSuccessRate = transmuteItemDetails.alchemyDetail.transmuteSuccessRate || 0;
-                        let catalystBonus = 0;
-                        if (action.secondaryItemHash) {
-                            const { itemHrid: catHrid } = this.parseItemHash(action.secondaryItemHash);
-                            if (catHrid?.includes('prime_catalyst')) {
-                                catalystBonus = 0.25;
-                            } else if (catHrid?.includes('catalyst_of_transmutation')) {
-                                catalystBonus = 0.15;
-                            }
-                        }
-                        const teaBonus = getAlchemySuccessBonus();
-                        const successRate = Math.min(1.0, baseSuccessRate * (1 + catalystBonus + teaBonus));
-                        const recycleRate = selfReturn.dropRate * successRate;
-                        if (recycleRate > 0 && recycleRate < 1) {
-                            recycleTimeSeconds = totalTimeSeconds / (1 - recycleRate);
-                        }
-                    }
+            if (transmuteItemHrid && limitType === `material:${transmuteItemHrid}`) {
+                const transmuteItemDetails = itemDetailMap[transmuteItemHrid] ?? null;
+                const net = this.getAlchemyNetInputPerAction(actionDetails, transmuteItemDetails, action);
+                const bulkMultiplier = transmuteItemDetails?.alchemyDetail?.bulkMultiplier || 1;
+                if (net.isEstimated && net.perAction > 0) {
+                    recycleTimeSeconds = (totalTimeSeconds * bulkMultiplier) / net.perAction;
                 }
             }
         }
@@ -3594,9 +3595,11 @@ class ActionTimeDisplay {
      * Calculate action time for a given action
      * @param {Object} actionDetails - Action details from data manager
      * @param {string} actionHrid - Action HRID for task detection (optional)
+     * @param {Object|null} [actionObj] - The queued action; an alchemy action's level efficiency
+     *   is measured against the item it alchemizes, which only its primaryItemHash names
      * @returns {Object} {actionTime, totalEfficiency} or null if calculation fails
      */
-    calculateActionTime(actionDetails, actionHrid = null) {
+    calculateActionTime(actionDetails, actionHrid = null, actionObj = null) {
         const skills = dataManager.getSkills();
         const equipment = dataManager.getEquipment();
         const itemDetailMap = dataManager.getInitClientData()?.itemDetailMap || {};
@@ -3609,7 +3612,26 @@ class ActionTimeDisplay {
             actionHrid, // Pass action HRID for task detection
             includeCommunityBuff: true,
             includeBreakdown: false,
+            levelRequirementOverride: this.alchemyLevelRequirement(actionDetails, actionObj, itemDetailMap),
         });
+    }
+
+    /**
+     * The level an alchemy action's level efficiency is measured from: the alchemized item's
+     * level, not the action's own requirement (1 for every alchemy action). The action bar and
+     * the alchemy profit calculator both measure it this way; a queued row that did not would
+     * credit an alchemist the whole of their level as efficiency.
+     * @param {Object} actionDetails - Action details
+     * @param {Object|null} actionObj - The queued action, carrying primaryItemHash
+     * @param {Object} [itemDetailMap] - Item details by hrid
+     * @returns {number|undefined} The item level, or undefined for anything else
+     */
+    alchemyLevelRequirement(actionDetails, actionObj, itemDetailMap = null) {
+        if (actionDetails?.type !== '/action_types/alchemy' || !actionObj?.primaryItemHash) return undefined;
+        const { itemHrid } = this.parseItemHash(actionObj.primaryItemHash);
+        if (!itemHrid) return undefined;
+        const itemLevel = (itemDetailMap?.[itemHrid] ?? dataManager.getItemDetails(itemHrid))?.itemLevel;
+        return itemLevel || undefined;
     }
 
     /**
@@ -3747,9 +3769,14 @@ class ActionTimeDisplay {
      * @param {Object|Array} inventoryLookup - Inventory lookup maps or raw inventory array
      * @param {number} artisanBonus - Artisan material reduction (0-1 decimal)
      * @param {Object} actionObj - Character action object (for primaryItemHash)
+     * @param {Object} [options] - Rules
+     * @param {boolean} [options.countSelfReturns=true] - Whether a transmute's expected
+     *   self-returns stretch its input into more attempts. The action bar passes false: it shows
+     *   the input-count floor and states the self-return estimate on its own line.
      * @returns {Object|null} {maxActions: number, limitType: string, isEstimated: boolean} or null if unlimited
      */
-    calculateMaterialLimit(actionDetails, inventoryLookup, artisanBonus, actionObj = null) {
+    calculateMaterialLimit(actionDetails, inventoryLookup, artisanBonus, actionObj = null, options = {}) {
+        const { countSelfReturns = true } = options;
         if (!actionDetails || !inventoryLookup) {
             return null;
         }
@@ -3828,8 +3855,14 @@ class ActionTimeDisplay {
                 const enhancedKey = `${alchItemHrid}::${enhancementLevel}`;
                 const availableCount = byEnhancedKey[enhancedKey] || 0;
                 const alchItemDetails = dataManager.getItemDetails(alchItemHrid);
-                const bulkMultiplier = alchItemDetails?.alchemyDetail?.bulkMultiplier || 1;
-                const maxFromItem = Math.floor(availableCount / bulkMultiplier);
+                // Net of self-returns: a transmute that hands its own input back keeps going on
+                // the returned copies until the stack runs dry, so the stack buys more attempts
+                // than it holds (five capes lasted twenty attempts live). An expected figure.
+                const inputPerAction = countSelfReturns
+                    ? this.getAlchemyNetInputPerAction(actionDetails, alchItemDetails, actionObj)
+                    : { perAction: alchItemDetails?.alchemyDetail?.bulkMultiplier || 1, isEstimated: false };
+                if (inputPerAction.isEstimated) usedEstimate = true;
+                const maxFromItem = Math.floor(availableCount / inputPerAction.perAction);
                 if (maxFromItem < minLimit) {
                     minLimit = maxFromItem;
                     limitType = `material:${alchItemHrid}`;
@@ -3857,9 +3890,9 @@ class ActionTimeDisplay {
                     if (catalystHrid) {
                         noteProvenance(catalystHrid);
                         const availableCatalyst = byHrid[catalystHrid] || 0;
-                        const baseSuccessRate = this.getAlchemyCatalystRate(actionDetails, alchItemDetails);
-                        if (baseSuccessRate > 0) {
-                            const maxFromCatalyst = Math.floor(availableCatalyst / baseSuccessRate);
+                        const successRate = this.getAlchemyQueuedSuccessRate(actionDetails, alchItemDetails, actionObj);
+                        if (successRate > 0) {
+                            const maxFromCatalyst = Math.floor(availableCatalyst / successRate);
                             if (maxFromCatalyst < minLimit) {
                                 minLimit = maxFromCatalyst;
                                 limitType = `material:${catalystHrid}`;
@@ -3959,6 +3992,71 @@ class ActionTimeDisplay {
             return alchItemDetails?.alchemyDetail?.transmuteSuccessRate || 0.5;
         }
         return 0.7;
+    }
+
+    /**
+     * Input copies one alchemy attempt uses up, net of what it hands back.
+     *
+     * Every attempt consumes `bulkMultiplier` copies; a successful transmute that rolls its own
+     * input returns the drop's average count of them per bulk unit. For anything but a transmute
+     * with a self-return branch this is the bulk multiplier exactly.
+     *
+     * @param {Object} actionDetails - Action detail object
+     * @param {Object|null} alchItemDetails - Item details for the item being alchemized
+     * @param {Object|null} actionObj - The queued action, for its item and catalyst hashes
+     * @returns {{perAction: number, isEstimated: boolean}} Copies per attempt, and whether that
+     *   rests on an expected self-return
+     */
+    getAlchemyNetInputPerAction(actionDetails, alchItemDetails, actionObj) {
+        const bulkMultiplier = alchItemDetails?.alchemyDetail?.bulkMultiplier || 1;
+        const exact = { perAction: bulkMultiplier, isEstimated: false };
+        if (getAlchemyTypeFromActionHrid(actionDetails?.hrid) !== 'transmute') return exact;
+        const { itemHrid } = this.parseItemHash(actionObj?.primaryItemHash || '');
+        const selfDrop = (alchItemDetails?.alchemyDetail?.transmuteDropTable || []).find(
+            (drop) => drop?.itemHrid === itemHrid
+        );
+        const dropRate = Number(selfDrop?.dropRate);
+        if (!itemHrid || !(dropRate > 0)) return exact;
+        const successRate = this.getAlchemyQueuedSuccessRate(actionDetails, alchItemDetails, actionObj);
+        const returned = successRate * dropRate * this.getDropAverageCount(selfDrop);
+        // A return rate at or past one attempt's consumption would never run dry; the input
+        // count is then the only honest bound
+        if (!(returned > 0) || returned >= 1) return exact;
+        return { perAction: bulkMultiplier * (1 - returned), isEstimated: true };
+    }
+
+    /**
+     * The success rate a queued alchemy action will actually run at: the base rate raised by
+     * its own catalyst and the live tea, lowered by the under-level penalty — the calculator's
+     * formula, the one the game's panel shows (Mooberry Donut coinify 74.2%, 91.7% with Prime).
+     *
+     * A catalyst is spent on every success, so this is its draw per attempt; the base rate
+     * alone under-reads a Prime Catalyst's draw by a quarter and lets the catalyst limit claim
+     * attempts the stack cannot pay for. Falls back to the base rate when the calculator
+     * cannot answer.
+     *
+     * @param {Object} actionDetails - Action detail object
+     * @param {Object|null} alchItemDetails - Item details for the item being alchemized
+     * @param {Object|null} actionObj - The queued action, for its secondaryItemHash
+     * @returns {number} Success rate 0..1
+     */
+    getAlchemyQueuedSuccessRate(actionDetails, alchItemDetails, actionObj) {
+        const fallback = this.getAlchemyCatalystRate(actionDetails, alchItemDetails);
+        try {
+            const alchemyType = getAlchemyTypeFromActionHrid(actionDetails?.hrid);
+            const calc = alchemyProfitCalculator;
+            if (typeof calc?.calculateSuccessRateBreakdown !== 'function') return fallback;
+            const baseRate = calc.baseSuccessRateFor?.(alchemyType, alchItemDetails);
+            if (!(baseRate > 0)) return fallback;
+            const { itemHrid: catalystHrid } = this.parseItemHash(actionObj?.secondaryItemHash || '');
+            const catalystBonus = calc.catalystSuccessBonus?.(catalystHrid || null) || 0;
+            const levelPenalty = calc.getUnderLevelPenalty?.(alchItemDetails?.itemLevel || 1) || 0;
+            const rate = calc.calculateSuccessRateBreakdown(baseRate, catalystBonus, null, levelPenalty)?.total;
+            return Number.isFinite(rate) && rate > 0 ? rate : fallback;
+        } catch (error) {
+            console.error('[ActionTimeDisplay] Working out a queued alchemy success rate failed:', error);
+            return fallback;
+        }
     }
 
     /**
@@ -4064,10 +4162,9 @@ class ActionTimeDisplay {
             if (!alchemyDetail) return outputs;
 
             const bulkMultiplier = alchemyDetail.bulkMultiplier || 1;
-            // The same base success rate the catalyst draw is costed at, so the two sides of
-            // one attempt cannot disagree. A catalyst or tea raises it, which makes the
-            // credit an underestimate rather than an overestimate.
-            const successRate = this.getAlchemyCatalystRate(actionDetails, alchItemDetails);
+            // The same success rate the catalyst draw is costed at, so the two sides of one
+            // attempt cannot disagree
+            const successRate = this.getAlchemyQueuedSuccessRate(actionDetails, alchItemDetails, actionObj);
             const alchemyType = getAlchemyTypeFromActionHrid(actionDetails.hrid);
 
             if (alchemyType === 'coinify') {
@@ -4076,7 +4173,14 @@ class ActionTimeDisplay {
                     count: (alchItemDetails.sellPrice || 0) * bulkMultiplier * 5 * successRate,
                 });
             } else if (alchemyType === 'transmute') {
+                // The self-return is netted out of the input spend instead
+                const netsSelfReturn = this.getAlchemyNetInputPerAction(
+                    actionDetails,
+                    alchItemDetails,
+                    actionObj
+                ).isEstimated;
                 for (const drop of alchemyDetail.transmuteDropTable || []) {
+                    if (netsSelfReturn && drop.itemHrid === itemHrid) continue;
                     outputs.estimated.push({
                         itemHrid: drop.itemHrid,
                         count: (drop.dropRate ?? 1) * this.getDropAverageCount(drop) * bulkMultiplier * successRate,
@@ -4238,7 +4342,10 @@ class ActionTimeDisplay {
             const { itemHrid, level } = this.parseItemHash(actionObj.primaryItemHash);
             if (itemHrid) {
                 const alchItemDetails = dataManager.getItemDetails(itemHrid);
-                spend(itemHrid, performed * (alchItemDetails?.alchemyDetail?.bulkMultiplier || 1), level);
+                // Net of self-returns, which the output credit leaves out, so the limit that
+                // counted them and the spend that pays for them agree
+                const inputPerAction = this.getAlchemyNetInputPerAction(actionDetails, alchItemDetails, actionObj);
+                spend(itemHrid, performed * inputPerAction.perAction, level);
 
                 // The fee is absent from the game's action data; utils/alchemy-fees.js is the
                 // one place that states it, and the limit is computed from the same call.
@@ -4249,7 +4356,10 @@ class ActionTimeDisplay {
 
                 if (actionObj.secondaryItemHash) {
                     const { itemHrid: catalystHrid } = this.parseItemHash(actionObj.secondaryItemHash);
-                    spend(catalystHrid, performed * this.getAlchemyCatalystRate(actionDetails, alchItemDetails));
+                    spend(
+                        catalystHrid,
+                        performed * this.getAlchemyQueuedSuccessRate(actionDetails, alchItemDetails, actionObj)
+                    );
                 }
                 return credit();
             }
@@ -4537,7 +4647,11 @@ class ActionTimeDisplay {
                         const artisanBonus = this.getArtisanBonusForAction(actionDetails);
 
                         // Calculate action stats to get efficiency
-                        const timeData = this.calculateActionTime(actionDetails, currentAction.actionHrid);
+                        const timeData = this.calculateActionTime(
+                            actionDetails,
+                            currentAction.actionHrid,
+                            currentAction
+                        );
                         if (timeData) {
                             const { actionTime, totalEfficiency } = timeData;
                             const limitResult = this.calculateMaterialLimit(
@@ -4601,7 +4715,11 @@ class ActionTimeDisplay {
                             hasEstimate = true;
                             hasMaterialLimitEstimate = true;
                         }
-                        const timeData = this.calculateActionTime(actionDetails, currentAction.actionHrid);
+                        const timeData = this.calculateActionTime(
+                            actionDetails,
+                            currentAction.actionHrid,
+                            currentAction
+                        );
                         if (timeData) {
                             const { actionTime, totalEfficiency } = timeData;
 
@@ -4788,7 +4906,7 @@ class ActionTimeDisplay {
                 } else {
                     // Non-enhancing: use standard calculation
                     // Calculate action time first to get efficiency
-                    const timeData = this.calculateActionTime(actionDetails, actionObj.actionHrid);
+                    const timeData = this.calculateActionTime(actionDetails, actionObj.actionHrid, actionObj);
                     if (!timeData) continue;
 
                     const { actionTime, totalEfficiency } = timeData;
@@ -5266,8 +5384,25 @@ class ActionTimeDisplay {
     }
 
     /**
+     * The catalyst a queued alchemy action carries, as the calculator's catalyst choice.
+     *
+     * Read from the action's own secondaryItemHash. The calculator's "live setup" reads the
+     * catalyst slot of whichever alchemy panel happens to be open, which for a queued row is
+     * another action's catalyst, or none at all when no alchemy panel is showing.
+     *
+     * @param {Object} action - The queued action
+     * @returns {'none'|'typeSpecific'|'prime'} The catalyst choice
+     */
+    queuedCatalystChoice(action) {
+        const { itemHrid } = this.parseItemHash(action?.secondaryItemHash || '');
+        if (!itemHrid) return 'none';
+        if (itemHrid === PRIME_CATALYST_HRID) return 'prime';
+        return itemHrid.startsWith('/items/catalyst_of_') ? 'typeSpecific' : 'none';
+    }
+
+    /**
      * Calculate alchemy profit for a queued action using the alchemy profit calculator.
-     * @param {Object} action - Action object with {actionHrid, primaryItemHash}
+     * @param {Object} action - Action object with {actionHrid, primaryItemHash, secondaryItemHash}
      * @returns {Object|null} Profit data with profitPerHour and actionsPerHour, or null
      */
     calculateAlchemyProfitForAction(action) {
@@ -5275,13 +5410,34 @@ class ActionTimeDisplay {
         if (!itemHrid) return null;
 
         const actionHrid = action.actionHrid;
+        const catalystChoice = this.queuedCatalystChoice(action);
 
+        // Tea still comes from the live drink slots, which is what the queued action will
+        // drink; the catalyst is the queued action's own. Coinify and decompose receive the
+        // choice as their sixth argument, mirroring transmute's catalystChoice; a calculator
+        // that does not read it falls back to the open panel's catalyst.
         if (actionHrid === '/actions/alchemy/coinify') {
-            return alchemyProfitCalculator.calculateCoinifyProfit(itemHrid, enhancementLevel || 0, true);
+            return alchemyProfitCalculator.calculateCoinifyProfit(
+                itemHrid,
+                enhancementLevel || 0,
+                true,
+                null,
+                null,
+                catalystChoice
+            );
         } else if (actionHrid === '/actions/alchemy/transmute') {
-            return alchemyProfitCalculator.calculateTransmuteProfit(itemHrid, true);
+            return alchemyProfitCalculator.calculateTransmuteProfit(itemHrid, true, null, catalystChoice);
         } else if (actionHrid === '/actions/alchemy/decompose') {
-            return alchemyProfitCalculator.calculateDecomposeProfit(itemHrid, enhancementLevel || 0, true);
+            return alchemyProfitCalculator.calculateDecomposeProfit(
+                itemHrid,
+                enhancementLevel || 0,
+                true,
+                null,
+                null,
+                catalystChoice
+            );
+        } else if (actionHrid === '/actions/alchemy/unrefine') {
+            return alchemyProfitCalculator.calculateUnrefineProfit?.(itemHrid, enhancementLevel || 0, true) ?? null;
         }
 
         return null;
