@@ -6,6 +6,14 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Audit round: queued alchemy showed no experience, and simulator imports used login-time skills and food
+
+- Queued Coinify, Decompose and Transmute rows now show the experience they teach instead of "no xp figure".
+- The Metz and in-game combat sim exports now use levels, food, drinks, guild shrine levels and party members as they are now, not as they were at login.
+- The Skilling Optimizer no longer prices an unlisted enhanced upgrade as a bare +0 craft, and its gear picker locks gear at the planned level rather than the current one.
+- An action-bar time choice written back by an older build is respected, and the next choice made afterward no longer reverts on reload.
+- Open game tabs now take turns on the market refresh instead of each fetching, and the Marketplace Action panel opens above the button near the bottom of the screen and closes when its menu scrolls.
+
 ### Quieter startup console
 
 - The debug note about features with no on/off switch of their own is now one line listing them all, instead of about fifty lines that Firefox shows by default.
