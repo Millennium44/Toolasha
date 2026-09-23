@@ -44,6 +44,10 @@ vi.mock('../../utils/combat-drop-model.js', () => ({
     buildCombatSession: () => ({}),
     lootValue: () => 100,
     sessionMean: () => 100,
+    // `dungeon-chest-luck.js` reaches through this for its guaranteed-chest
+    // check, so it needs the same formula as the real module.
+    scaledDropRate: (rate, perTier = 0, tier = 0) =>
+        Math.min(Math.max((1 + 0.1 * tier) * ((rate || 0) + (perTier || 0) * tier), 0), 1),
 }));
 vi.mock('../../utils/drop-luck.js', () => ({ sessionLuck: () => ({ percentile: 0.5 }) }));
 vi.mock('./party-luck.js', () => ({ partyLuck: () => ({ players: [] }) }));

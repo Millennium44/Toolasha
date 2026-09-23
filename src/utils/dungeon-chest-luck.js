@@ -36,6 +36,8 @@
  * choice `spawn-expectation.js` makes for the same reason.
  */
 
+import { scaledDropRate } from './combat-drop-model.js';
+
 /** What one completion pays before the quantity bonus, split across the party */
 const CHESTS_PER_COMPLETION = 5;
 
@@ -81,7 +83,7 @@ export function dungeonChestItems(actionDetail, difficultyTier = 0) {
 
     const guaranteed = new Set();
     for (const drop of table) {
-        const rate = (drop?.dropRate || 0) + (drop?.dropRatePerDifficultyTier ?? 0) * difficultyTier;
+        const rate = scaledDropRate(drop?.dropRate, drop?.dropRatePerDifficultyTier, difficultyTier);
         if (rate >= 1 && drop?.itemHrid && !isRefinementChest(drop.itemHrid)) guaranteed.add(drop.itemHrid);
     }
     return guaranteed.size ? guaranteed : DUNGEON_CHESTS;

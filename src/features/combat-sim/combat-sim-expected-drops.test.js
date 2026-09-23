@@ -148,12 +148,18 @@ describe('a drop rate cannot pass certainty', () => {
 });
 
 describe('tiered rare-drop rewards', () => {
-    test('a tier raises a rare rate by its own step and the combat-tier multiplier', () => {
+    test('a rare rate does not move with tier, only a regular one does', () => {
+        // The client's monster tooltip scales `dropTable` by tier but reads
+        // `rareDropTable` at its raw rate - no `getScaledDropRate` call at all.
+        // A per-tier step is included on the rare entry only to prove it is
+        // ignored; the tier *gate* (`minDifficultyTier`) still applies to both.
         const tieredData = {
             ...zoneGameData,
             combatMonsterDetailMap: {
                 [MONSTER]: {
-                    dropTable: [],
+                    dropTable: [
+                        { itemHrid: COMMON, dropRate: 0.2, dropRatePerDifficultyTier: 0.05, minCount: 1, maxCount: 1 },
+                    ],
                     rareDropTable: [
                         { itemHrid: RARE, dropRate: 0.2, dropRatePerDifficultyTier: 0.05, minCount: 1, maxCount: 1 },
                     ],
@@ -161,6 +167,42 @@ describe('tiered rare-drop rewards', () => {
             },
         };
         const drops = calculateExpectedDrops(zoneResult({ difficultyTier: 2 }), tieredData);
-        expect(drops.get(RARE)).toBeCloseTo(100 * (0.2 + 2 * 0.05) * 1.2);
+        expect(drops.get(COMMON)).toBeCloseTo(100 * (0.2 + 2 * 0.05) * 1.2);
+        expect(drops.get(RARE)).toBeCloseTo(100 * 0.2);
+    });
+});
+
+describe('dungeon reward tier scaling', () => {
+    test('a refinement chest step is raised by the tenth-per-tier multiplier too', () => {
+        // Regression for the dungeon reward path having applied only the flat
+        // per-tier step and missing the client's `(1 + 0.1 * tier)` factor
+        // (`getScaledDropRate`) that both the monster tooltip and the dungeon
+        // reward display apply.
+        const step = 0.1;
+        const tieredDungeonData = {
+            combatMonsterDetailMap: {},
+            actionDetailMap: {
+                [DEN]: {
+                    combatZoneInfo: {
+                        dungeonInfo: {
+                            rewardDropTable: [
+                                {
+                                    itemHrid: '/items/chimerical_refinement_chest',
+                                    dropRate: 0,
+                                    dropRatePerDifficultyTier: step,
+                                    minCount: 1,
+                                    maxCount: 1,
+                                },
+                            ],
+                        },
+                    },
+                },
+            },
+        };
+        const drops = calculateExpectedDrops(
+            dungeonResult({ dungeonsCompleted: 1, difficultyTier: 2 }),
+            tieredDungeonData
+        );
+        expect(drops.get('/items/chimerical_refinement_chest')).toBeCloseTo(1.2 * 2 * step);
     });
 });

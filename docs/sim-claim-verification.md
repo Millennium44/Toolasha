@@ -249,3 +249,37 @@ Direction of the correction: slightly **less** player damage in any run where pl
 the engine was giving them swings the game does not. Runs without stun are unchanged, which is why the
 golden run's pinned totals did not move — neither side of that fixture has an ability, and an ability
 effect is the only thing in the engine that applies a stun.
+
+## 8. Rare drops do not scale by difficulty tier; dungeon rewards need the tenth-per-tier factor too
+
+Where: `src/utils/combat-drop-model.js` (`effectiveDropRate`, `scaledDropRate`), the dungeon-reward and
+per-monster branches of `calculateExpectedDrops` in `src/features/combat-sim/combat-sim-adapter.js`, and
+`dungeonChestItems` in `src/utils/dungeon-chest-luck.js`.
+
+**Status: settled from source**, read directly out of the live client bundle
+(`test.milkywayidle.com`, main chunk, 2026-09-23):
+
+- The client's tier-scaling function is
+  `getScaledDropRate(rate, perTier = 0, tier = 0) { const m = 1 + 0.1 * tier; return Math.min(1, m * (rate + perTier * tier)); }`.
+- The monster tooltip calls it on `dropTable` entries — `getScaledDropRate(e.dropRate, e.dropRatePerDifficultyTier, tier)`
+  — and on `combatZoneInfo.dungeonInfo.rewardDropTable` entries the same way.
+- The monster tooltip does **not** call it on `rareDropTable` entries; those render at their raw
+  `e.dropRate`. In the game's own data, all 87 `rareDropTable` entries across every monster carry only
+  `itemHrid`/`dropRate`/`minCount`/`maxCount` — none has a `dropRatePerDifficultyTier` to begin with.
+
+Two things followed from this and both are now fixed:
+
+1. `effectiveDropRate` and the sim adapter's rare-drop branch previously scaled `rareDropTable` rates by
+   the same `(1 + 0.1 * tier)` factor and per-tier step as common drops (added in commit `c54558a1c`). That
+   was wrong — reverted, so a rare drop is read at its raw `dropRate` at every tier. Rare Find still applies
+   on top; only the tier scaling was rare-specific and wrong. The tier _gate_
+   (`minDifficultyTier > difficultyTier` skips the entry) from the same commit was correct and is kept, for
+   both tables.
+2. The dungeon-reward path (`rewardDropTable`) previously applied only the flat per-tier step
+   (`dropRate + perTier * tier`), missing the `(1 + 0.1 * tier)` multiplier entirely. It now goes through
+   the same `scaledDropRate` helper as the monster tooltip's common-drop path, matching the client. This
+   also fixed `dungeonChestItems`' guaranteed-chest check in `dungeon-chest-luck.js`, which used the same
+   incomplete formula to decide whether a reward table entry is a guaranteed (rate ≥ 1) chest.
+
+The `chestsPerCompletion` logic this touches (claim 4's level-gap assumption on dungeon chests) is
+unchanged — only the rate formula feeding into it moved.

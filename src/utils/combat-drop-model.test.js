@@ -59,6 +59,17 @@ describe('effectiveDropRate', () => {
         expect(effectiveDropRate({ dropRate: 0.9 }, 0, { combatDropRate: 5 })).toBe(1);
         expect(effectiveDropRate({ dropRate: -1 }, 0)).toBe(0);
     });
+
+    test('a rare drop is read at its raw rate at every tier', () => {
+        // The monster tooltip renders `rareDropTable` entries at their raw
+        // `dropRate` with no call through the client's tier-scaling function -
+        // unlike `dropTable`, which the tooltip does scale. A per-tier step is
+        // included here only to prove it is ignored too: real rare tables never
+        // carry one.
+        const drop = { dropRate: 0.2, dropRatePerDifficultyTier: 0.05, isRare: true };
+        expect(effectiveDropRate(drop, 2)).toBeCloseTo(0.2, 12);
+        expect(effectiveDropRate(drop, 0)).toBeCloseTo(0.2, 12);
+    });
 });
 
 describe('dropQuantityMultiplier', () => {

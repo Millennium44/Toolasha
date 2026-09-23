@@ -5,9 +5,11 @@
  *
  * Kept apart from the feature that displays the result because this is where
  * being wrong is invisible. A drop rate read straight out of the data is not the
- * rate you experience: difficulty tier can unlock it and raises its rate, your combat drop stats raise it
- * again, party size divides the quantity, and a rare drop scales by a different
- * stat than a common one. Get any of those wrong and the luck percentile is still
+ * rate you experience: difficulty tier can unlock it and raises a *common*
+ * drop's rate (a rare drop's does not move with tier at all — see
+ * `effectiveDropRate`), your combat drop stats raise it again, party size
+ * divides the quantity, and a rare drop scales by a different stat than a
+ * common one. Get any of those wrong and the luck percentile is still
  * a plausible-looking number — it just quietly says everyone with drop-rate gear
  * is permanently lucky. So the arithmetic lives here, on its own, with tests.
  *
@@ -42,13 +44,36 @@ export const DEFAULT_BATTLES_PER_BOSS = 10;
 const DUNGEON_QUANTITY_MULTIPLIER = 5;
 
 /**
+ * The client's own tier scaling for a drop rate — `getScaledDropRate` in the
+ * game bundle: `(1 + 0.1 * tier) * (rate + perTier * tier)`, capped at
+ * certainty and floored at zero. The monster tooltip and the dungeon reward
+ * display both call it on their tables; the monster tooltip does **not** call
+ * it on `rareDropTable`, which is why `effectiveDropRate` below only reaches
+ * for this on the common side.
+ *
+ * @param {number} rate - Base rate (`dropRate`)
+ * @param {number} [perTier] - Flat step per tier (`dropRatePerDifficultyTier`)
+ * @param {number} [tier] - Difficulty tier
+ * @returns {number} Rate in [0, 1]
+ */
+export function scaledDropRate(rate, perTier = 0, tier = 0) {
+    const multiplier = 1 + 0.1 * tier;
+    const raw = multiplier * ((rate || 0) + (perTier || 0) * tier);
+    return Math.min(Math.max(raw, 0), 1);
+}
+
+/**
  * The rate a drop actually lands at, for one player in one zone.
  *
- * Difficulty raises a drop's rate twice over: once by a flat per-tier step the
- * drop itself carries, and again by a tenth of the base for every tier. Drop-rate
- * gear then multiplies what is left — but rare drops answer to `combatRareFind`
- * and common ones to `combatDropRate`, so a rare-find build looks unlucky on
- * common drops and lucky on rares if the two are mixed up.
+ * Difficulty tier only ever raises a *common* drop's rate — by a flat per-tier
+ * step the drop itself carries, and again by a tenth of the base for every
+ * tier, exactly as the client's `getScaledDropRate` does. A rare drop is read
+ * at its raw `dropRate` and never scaled by tier: the monster tooltip shows
+ * `rareDropTable` entries unscaled, and none of the game's rare tables carry a
+ * `dropRatePerDifficultyTier` to begin with. Drop-rate gear then multiplies
+ * what is left — but rare drops answer to `combatRareFind` and common ones to
+ * `combatDropRate`, so a rare-find build looks unlucky on common drops and
+ * lucky on rares if the two are mixed up.
  *
  * @param {Object} drop - `{ dropRate, dropRatePerDifficultyTier, isRare }`
  * @param {number} tier - Difficulty tier
@@ -57,10 +82,11 @@ const DUNGEON_QUANTITY_MULTIPLIER = 5;
  */
 export function effectiveDropRate(drop, tier, bonuses = NO_DROP_BONUSES) {
     const base = drop.dropRate || 0;
-    const perTier = drop.dropRatePerDifficultyTier || 0;
     const finder = drop.isRare ? bonuses.combatRareFind || 0 : bonuses.combatDropRate || 0;
 
-    const rate = (base + tier * perTier) * (1 + tier * 0.1) * (1 + finder);
+    const rate = drop.isRare
+        ? base * (1 + finder)
+        : scaledDropRate(base, drop.dropRatePerDifficultyTier, tier) * (1 + finder);
     return Math.min(Math.max(rate, 0), 1);
 }
 

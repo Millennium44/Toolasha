@@ -14,6 +14,7 @@ import bundledExpectedValueCalculator from '../market/expected-value-calculator.
 import { DUNGEON_CHEST_ENTRY_KEYS, DUNGEON_CHEST_CHEST_KEYS } from '../../utils/dungeon-keys.js';
 import { partyLevelGaps } from '../../utils/dungeon-level-gap.js';
 import { chestsPerCompletion } from '../../utils/dungeon-chest-luck.js';
+import { scaledDropRate } from '../../utils/combat-drop-model.js';
 import { combatLevel } from '../../utils/combat-level.js';
 import { runningCombatAction } from '../../utils/combat-actions.js';
 import { sharedProfileStatus } from '../../utils/shared-profile-status.js';
@@ -1325,8 +1326,10 @@ export function calculateExpectedDrops(simResult, gameData, playerHrid = 'player
                 });
 
                 for (const drop of rewardDropTable) {
-                    const baseRate = drop.dropRate + (drop.dropRatePerDifficultyTier ?? 0) * difficultyTier;
-                    const adjustedRate = Math.min(1.0, Math.max(0, baseRate));
+                    // Same tier scaling the client applies to `rewardDropTable`
+                    // itself (`getScaledDropRate`): a tenth-per-tier multiplier
+                    // on top of the flat per-tier step, not just the step alone.
+                    const adjustedRate = scaledDropRate(drop.dropRate, drop.dropRatePerDifficultyTier, difficultyTier);
                     if (adjustedRate <= 0) continue;
 
                     const avgCount = (drop.minCount + drop.maxCount) / 2;
@@ -1356,9 +1359,8 @@ export function calculateExpectedDrops(simResult, gameData, playerHrid = 'player
                 for (const drop of monsterData.dropTable) {
                     if (drop.minDifficultyTier > difficultyTier) continue;
 
-                    const tierMultiplier = 1.0 + 0.1 * difficultyTier;
-                    const baseRate = drop.dropRate + (drop.dropRatePerDifficultyTier ?? 0) * difficultyTier;
-                    const adjustedRate = Math.min(1.0, tierMultiplier * baseRate * dropRateMultiplier);
+                    const tieredRate = scaledDropRate(drop.dropRate, drop.dropRatePerDifficultyTier, difficultyTier);
+                    const adjustedRate = Math.min(1.0, tieredRate * dropRateMultiplier);
                     if (adjustedRate <= 0) continue;
 
                     const avgCount = (drop.minCount + drop.maxCount) / 2;
@@ -1375,8 +1377,12 @@ export function calculateExpectedDrops(simResult, gameData, playerHrid = 'player
                 for (const drop of monsterData.rareDropTable) {
                     if (drop.minDifficultyTier > difficultyTier) continue;
 
-                    const tierMultiplier = 1.0 + 0.1 * difficultyTier;
-                    const baseRate = drop.dropRate + (drop.dropRatePerDifficultyTier ?? 0) * difficultyTier;
+                    // Unlike the regular-drop path above, a rare drop's rate does
+                    // not move with tier: the monster tooltip renders
+                    // `rareDropTable` entries at their raw `dropRate`, with no
+                    // call through the client's tier-scaling function at all.
+                    // Only the tier *gate* above (`minDifficultyTier`) applies.
+                    //
                     // Capped at certainty, the same way the regular-drop path
                     // above and `effectiveDropRate` in combat-drop-model.js
                     // both cap. A drop rate is the chance of one Bernoulli
@@ -1394,7 +1400,7 @@ export function calculateExpectedDrops(simResult, gameData, playerHrid = 'player
                     // already in force on both of the other two paths, and it
                     // is the one reading that holds whichever way the guide is
                     // meant: a probability cannot exceed certainty either way.
-                    const adjustedRate = Math.min(1.0, tierMultiplier * baseRate * rareFindMultiplier);
+                    const adjustedRate = Math.min(1.0, (drop.dropRate || 0) * rareFindMultiplier);
                     if (adjustedRate <= 0) continue;
                     const avgCount = (drop.minCount + (drop.maxCount ?? drop.minCount)) / 2;
                     const expected =
