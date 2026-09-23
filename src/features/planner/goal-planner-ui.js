@@ -1360,7 +1360,8 @@ class GoalPlannerPanel {
             fontWeight: 'bold',
         });
 
-        const { goldEarn, goldSpend, netGold, timeKnown, timeHours, costKnown } = plan.totals;
+        const { goldEarn, goldSpend, netGold, timeKnown, timeHours, costKnown, fundingBound, fundingBoundBecause } =
+            plan.totals;
         const breakdown =
             goldEarn > 0 && goldSpend > 0
                 ? ` — earn ${formatKMB(Math.round(goldEarn))}, spend ${formatKMB(Math.round(goldSpend))}`
@@ -1376,14 +1377,24 @@ class GoalPlannerPanel {
               'A negative net is what finishing this goal costs you overall, not a debt.';
         row.appendChild(label);
 
-        const net = span(costKnown === false ? `≤${signedCoins(netGold)}` : signedCoins(netGold), {
+        // A goal's own totals can be exact and still not be the whole story: a
+        // goal planned after one with an unpriced cost was planned against free
+        // coins that are an upper bound, not a fact (see `fundingBound` in
+        // goal-planner.js), so its net is a bound too even though nothing about
+        // this goal itself failed to price.
+        const bound = costKnown === false || fundingBound;
+        const net = span(bound ? `≤${signedCoins(netGold)}` : signedCoins(netGold), {
             textAlign: 'right',
-            color: costKnown === false ? COLORS.textDim : netGold >= 0 ? COLORS.good : COLORS.bad,
+            color: bound ? COLORS.textDim : netGold >= 0 ? COLORS.good : COLORS.bad,
         });
+        const who = (fundingBoundBecause || []).map((title) => `'${title}'`).join(' and ');
         net.title =
             costKnown === false
                 ? `Known coin change: ${signedCoins(netGold)}. Some required costs could not be priced.`
-                : `Net change in coins: ${signedCoins(netGold)}`;
+                : fundingBound
+                  ? `Known coin change: ${signedCoins(netGold)}. ${who} has a coin cost that could not be fully ` +
+                    `priced, so the free coins this goal was planned against may be overstated.`
+                  : `Net change in coins: ${signedCoins(netGold)}`;
         row.appendChild(net);
 
         row.appendChild(

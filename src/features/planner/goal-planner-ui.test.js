@@ -281,6 +281,29 @@ describe('drawing a plan', () => {
         expect(text()).toContain('≤');
     });
 
+    test('a goal planned after an unpriced one shows its own free coins as a bound', async () => {
+        store.data.goalPlannerGoals_char1 = [
+            { id: 'g-obs', type: 'house', roomHrid: '/house_rooms/observatory', targetLevel: 8 },
+            { id: 'g-gold', type: 'gold', amount: 100_000_000 },
+        ];
+        plannerContext.value.houseCost = () => ({
+            coins: 1000,
+            materials: [{ itemHrid: '/items/log', name: 'Log', count: 500, marketPrice: 0, totalValue: 0 }],
+        });
+
+        goalPlannerPanel.show();
+        await goalPlannerPanel.load();
+        await goalPlannerPanel.refresh();
+
+        expect(text()).not.toContain('could not be drawn');
+        const [obsPlan, goldPlan] = goalPlannerPanel.plans;
+        expect(obsPlan.totals.costKnown).toBe(false);
+        expect(goldPlan.totals.costKnown).not.toBe(false);
+        expect(goldPlan.totals.fundingBound).toBe(true);
+        expect(goldPlan.totals.fundingBoundBecause).toEqual([obsPlan.title]);
+        expect(goldPlan.warnings.join(' ')).toContain(obsPlan.title);
+    });
+
     test('the steps of a plan are on screen, in order, with their bill', async () => {
         goalPlannerPanel.show();
         await goalPlannerPanel.load();

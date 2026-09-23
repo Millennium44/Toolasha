@@ -412,6 +412,8 @@ export function createResourceLedger(startingGold = 0) {
     /** @type {Array<{title: string, gold: number}>} coins committed, and to what */
     const goldClaims = [];
     let goldClaimed = 0;
+    /** @type {Array<string>} titles of goals whose coin spend could not be fully priced, in claim order */
+    const unknownCostGoals = [];
 
     /**
      * The same rate, with what earlier goals took already gone from its ceiling.
@@ -512,6 +514,11 @@ export function createResourceLedger(startingGold = 0) {
                         goals: [...claim.goals],
                     })),
                 goldClaims: () => goldClaims.map((claim) => ({ ...claim })),
+                // Names of earlier goals whose coin spend could not be fully priced.
+                // A non-empty list means the "gold" above is an upper bound: it is
+                // what is left after everything *known* was reserved, not after
+                // everything actually needed.
+                fundingUncertainBecause: () => [...unknownCostGoals],
             };
         },
 
@@ -558,6 +565,13 @@ export function createResourceLedger(startingGold = 0) {
             if (used > 0) {
                 goldClaimed += used;
                 goldClaims.push({ title: plan.title, gold: used });
+            }
+
+            // Reserved only what was priced (`wanted` above), so a goal with an
+            // unpriced spend leaves the rest of its real cost unclaimed. Every
+            // goal planned after it inherits that gap.
+            if (plan.totals?.costKnown === false && !unknownCostGoals.includes(plan.title)) {
+                unknownCostGoals.push(plan.title);
             }
         },
     };
@@ -1394,12 +1408,32 @@ export function planGoal(rawGoal, context = {}) {
     }
 
     const steps = orderSteps(result.steps);
-    if (steps.some((step) => !step.done && step.costKnown === false)) {
+    const ownCostUnknown = steps.some((step) => !step.done && step.costKnown === false);
+    if (ownCostUnknown) {
         result.warnings.push('The full funding requirement is unknown until the missing prices are available.');
         const funding = steps.find((step) => step.kind === 'earn' && step.id === 'fund');
         if (funding) funding.description = funding.description.replace(/^Earn /, 'Earn at least ');
     }
     const totals = summarize(steps);
+
+    // A goal planned after one whose cost could not be fully priced sees more
+    // free coins than it really has: the ledger only reserves what it could
+    // price (see `record`), so the "have" this goal was planned against is an
+    // upper bound, not a fact. Its own totals lean on that "have" through the
+    // funding step, so they are a bound too, even though every step of this
+    // goal itself priced cleanly.
+    const fundingBoundBecause = ask(context, 'fundingUncertainBecause', [], []) || [];
+    totals.fundingBound = fundingBoundBecause.length > 0;
+    totals.fundingBoundBecause = fundingBoundBecause;
+    if (totals.fundingBound && !ownCostUnknown) {
+        const funding = steps.find((step) => step.kind === 'earn' && step.id === 'fund');
+        if (funding) funding.description = funding.description.replace(/^Earn /, 'Earn at least ');
+        const who = fundingBoundBecause.map((title) => `'${title}'`).join(' and ');
+        result.warnings.push(
+            `Free coins may be overstated: ${who} has a coin cost that could not be fully priced, so it has not ` +
+                `all been reserved yet.`
+        );
+    }
 
     return {
         goalId: goal.id,

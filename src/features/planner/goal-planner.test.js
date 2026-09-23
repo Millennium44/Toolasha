@@ -562,6 +562,62 @@ describe('one bagful, shared between the goals', () => {
     });
 });
 
+describe('an unpriced goal casts a bound on the goals below it', () => {
+    const milking = { label: 'Milk a Cow', kind: 'gathering', goldPerHour: 10_000_000 };
+
+    test('a goal with an unpriced step marks a later goal as a bound, naming it', () => {
+        const plans = planGoals(
+            [
+                { id: 'a', type: 'equipment', itemHrid: '/items/cape', enhancementLevel: 0 },
+                { id: 'b', type: 'gold', amount: 100_000_000 },
+            ],
+            context({ gold: 0, acquire: () => null, goldRates: () => [milking] })
+        );
+
+        expect(plans[0].totals.costKnown).toBe(false);
+        // The unpriced goal is the first of its kind, so nothing reaches back onto it
+        expect(plans[0].totals.fundingBound).toBe(false);
+
+        // b priced cleanly on its own, but its free coins lean on a over-generous
+        // "have" the ledger could not fully reserve out of
+        expect(plans[1].totals.costKnown).not.toBe(false);
+        expect(plans[1].totals.fundingBound).toBe(true);
+        expect(plans[1].totals.fundingBoundBecause).toEqual(['Own cape']);
+        expect(plans[1].warnings.join(' ')).toContain("'Own cape'");
+    });
+
+    test('once the earlier goal prices cleanly, the next goal is exact again', () => {
+        const plans = planGoals(
+            [
+                { id: 'a', type: 'equipment', itemHrid: '/items/cape', enhancementLevel: 0 },
+                { id: 'b', type: 'gold', amount: 100_000_000 },
+            ],
+            context({
+                gold: 0,
+                acquire: () => ({ strategy: 'buy', totalCost: 1000, buyPrice: 1000, requires: [] }),
+                goldRates: () => [milking],
+            })
+        );
+
+        expect(plans[0].totals.costKnown).toBe(true);
+        expect(plans[1].totals.fundingBound).toBe(false);
+        expect(plans[1].totals.fundingBoundBecause).toEqual([]);
+    });
+
+    test('an unpriced goal never reaches back onto a goal planned before it', () => {
+        const plans = planGoals(
+            [
+                { id: 'b', type: 'gold', amount: 100_000_000 },
+                { id: 'a', type: 'equipment', itemHrid: '/items/cape', enhancementLevel: 0 },
+            ],
+            context({ gold: 0, acquire: () => null, goldRates: () => [milking] })
+        );
+
+        expect(plans[0].totals.fundingBound).toBe(false);
+        expect(plans[1].totals.costKnown).toBe(false);
+    });
+});
+
 describe('a method you cannot start is not a recommendation', () => {
     const transmute = {
         label: 'Transmute Ore',
