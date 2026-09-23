@@ -3698,3 +3698,315 @@ describe('not paying for a restore that cannot help', () => {
         expect(mockStorage.reads[1].keys).toEqual([`${IN_PROGRESS}_iron456`, IN_PROGRESS]);
     });
 });
+
+describe('a dungeon displaced by "Start Now"', () => {
+    // Observed live on the test server: Chimerical Den at wave 12 of 50, then
+    // "Start Now" on a milking action. Milking became the running action, the
+    // dungeon stayed queued behind it with its wave kept, and the panel stayed up
+    // with "Elapsed" counting, because only an `isDone` dungeon ever ended a run.
+    const MILK = '/actions/milking/unicow';
+    const T0 = Date.parse('2026-09-23T10:00:00.000Z');
+    const PAUSED_AT = T0 + 300_000;
+    const GAP = 10 * 60_000;
+    const SOLO = [{ character: { name: 'Marketcow' } }];
+
+    /** The queue as read live right after "Start Now": the new action takes the lowest ordinal. */
+    const den = (overrides = {}) => ({
+        id: 501,
+        actionHrid: DEN,
+        difficultyTier: 0,
+        ordinal: -4,
+        isDone: false,
+        wave: 12,
+        currentCount: 60,
+        partyID: 0,
+        ...overrides,
+    });
+    const milking = (overrides = {}) => ({
+        id: 502,
+        actionHrid: MILK,
+        difficultyTier: 0,
+        ordinal: -5,
+        isDone: false,
+        wave: 0,
+        currentCount: 0,
+        partyID: 0,
+        ...overrides,
+    });
+    const zone = (overrides = {}) => ({
+        id: 503,
+        actionHrid: FLY,
+        difficultyTier: 0,
+        ordinal: -3,
+        isDone: false,
+        wave: 0,
+        partyID: 0,
+        ...overrides,
+    });
+
+    /** Twelve waves into a solo 50-wave Den, eleven of them timed at 25s. */
+    function midDen() {
+        game.dungeonInfo[DEN] = { name: 'Chimerical Den', maxWaves: 50 };
+        vi.useFakeTimers();
+        vi.setSystemTime(PAUSED_AT);
+        game.actions = [den(), zone()];
+        beTracking({
+            dungeonHrid: DEN,
+            startTime: T0,
+            currentWave: 12,
+            maxWaves: 50,
+            wavesCompleted: 11,
+            waveTimes: Array(11).fill(25_000),
+            partyNames: ['Marketcow'],
+        });
+        tracker.lastWaveEndTime = T0 + 275_000;
+        tracker.waveStartTime = new Date(T0 + 280_000);
+    }
+
+    /** "Start Now" on milking: the server sends the new action, and it takes the front. */
+    function startMilkingNow() {
+        game.actions = [milking(), den(), zone()];
+        tracker.onActionsUpdated({ endCharacterActions: [milking()] });
+    }
+
+    test('pauses the run and hides it, keeping its waves', async () => {
+        midDen();
+        const seen = [];
+        tracker.onUpdate((run) => seen.push(run));
+
+        startMilkingNow();
+        await flush();
+
+        expect(tracker.isTracking).toBe(true);
+        expect(tracker.isPaused()).toBe(true);
+        // What the panel and its one-second loop read: nothing, so it hides and idles
+        expect(tracker.getCurrentRun()).toBeNull();
+        expect(tracker.getPendingDungeon()).toBeNull();
+        expect(seen.at(-1)).toBeNull();
+        expect(tracker.currentRun.wavesCompleted).toBe(11);
+        expect(tracker.waveTimes).toHaveLength(11);
+        expect(stored()).toMatchObject({ pausedAt: PAUSED_AT, currentWave: 12, wavesCompleted: 11 });
+    });
+
+    test('resuming shows the run again with the pause left out of elapsed and the next wave', async () => {
+        midDen();
+        startMilkingNow();
+        await flush();
+
+        // Milking finishes. Its `action_completed` does not drop it from the cached
+        // queue, so it can still sit at the front when the Den's battle arrives.
+        vi.setSystemTime(PAUSED_AT + GAP);
+        game.actions = [milking(), den(), zone()];
+        await tracker.onNewBattle({ wave: 12, battleId: 77, players: SOLO });
+        await flush();
+
+        expect(tracker.isPaused()).toBe(false);
+        const run = tracker.getCurrentRun();
+        expect(run).not.toBeNull();
+        expect(run.currentWave).toBe(12);
+        expect(run.wavesCompleted).toBe(11);
+        // 300s of dungeon before the pause, none of the ten minutes of milking
+        expect(run.totalElapsed).toBe(300_000);
+        expect(run.currentWaveElapsed).toBe(0);
+
+        // Wave 12 finishes 20s after the resume. Its time is the 25s of wave 12
+        // before the pause (from wave 11's end) plus the 20s after, not the gap.
+        vi.setSystemTime(PAUSED_AT + GAP + 20_000);
+        tracker.onActionCompleted({ endCharacterAction: den({ wave: 12 }) });
+        expect(tracker.waveTimes.at(-1)).toBe(25_000 + 20_000);
+        expect(tracker.getCurrentRun().avgWaveTime).toBe((11 * 25_000 + 45_000) / 12);
+        expect(tracker.getCurrentRun().totalElapsed).toBe(320_000);
+        expect(stored()).toMatchObject({ pausedAt: null, pausedMs: GAP });
+    });
+
+    test('the Den taking the front again over actions_updated resumes it too', async () => {
+        midDen();
+        startMilkingNow();
+        await flush();
+
+        // Milking canceled: the server sends it done, and the Den is the front again
+        vi.setSystemTime(PAUSED_AT + GAP);
+        game.actions = [den(), zone()];
+        tracker.onActionsUpdated({ endCharacterActions: [milking({ isDone: true })] });
+        await flush();
+
+        expect(tracker.isPaused()).toBe(false);
+        expect(tracker.getCurrentRun().totalElapsed).toBe(300_000);
+    });
+
+    test('a banked run leaves the pause out of its duration', async () => {
+        midDen();
+        game.dungeonInfo[DEN] = { name: 'Chimerical Den', maxWaves: 12 };
+        tracker.currentRun.maxWaves = 12;
+        startMilkingNow();
+        await flush();
+
+        vi.setSystemTime(PAUSED_AT + GAP);
+        game.actions = [den(), zone()];
+        await tracker.onNewBattle({ wave: 12, battleId: 77, players: SOLO });
+        vi.setSystemTime(PAUSED_AT + GAP + 20_000);
+        tracker.onActionCompleted({ endCharacterAction: den({ wave: 0, isDone: true }) });
+        await flush();
+
+        expect(game.savedRuns).toHaveLength(1);
+        expect(game.savedRuns[0].run.duration).toBe(320_000);
+        expect(game.savedRuns[0].run.waveTimes.at(-1)).toBe(45_000);
+    });
+
+    test('a normal zone started ahead of the Den is not fed into the run', async () => {
+        midDen();
+        game.actions = [zone({ ordinal: -6 }), den()];
+        tracker.onActionsUpdated({ endCharacterActions: [zone({ ordinal: -6 })] });
+        await tracker.onNewBattle({ wave: 3, battleId: 90 });
+        await flush();
+
+        expect(tracker.isPaused()).toBe(true);
+        expect(tracker.currentRun.currentWave).toBe(12);
+        expect(tracker.currentBattleId).toBe(42);
+    });
+
+    test('a zone battle arriving before its actions_updated pauses the run as well', async () => {
+        midDen();
+        game.actions = [zone({ ordinal: -6 }), den()];
+        await tracker.onNewBattle({ wave: 3, battleId: 90 });
+        await flush();
+
+        expect(tracker.isPaused()).toBe(true);
+        expect(tracker.currentRun.currentWave).toBe(12);
+    });
+
+    test('a stale front the message did not send does not pause a running Den', async () => {
+        midDen();
+        // A finished milking action still cached at the front; this message only
+        // appends something to the back of the queue
+        const appended = milking({ id: 600, ordinal: 9 });
+        game.actions = [milking(), den(), zone(), appended];
+        tracker.onActionsUpdated({ endCharacterActions: [appended] });
+        await flush();
+
+        expect(tracker.isPaused()).toBe(false);
+        expect(tracker.getCurrentRun()).not.toBeNull();
+    });
+
+    test('the Den removed from the queue while paused ends the run as an interruption', async () => {
+        midDen();
+        startMilkingNow();
+        await flush();
+
+        game.actions = [milking(), zone()];
+        tracker.onActionsUpdated({ endCharacterActions: [den({ isDone: true })] });
+        await flush();
+
+        expect(tracker.isTracking).toBe(false);
+        expect(tracker.currentRun).toBeNull();
+        expect(game.savedRuns).toHaveLength(0);
+        expect(stored()).toBeUndefined();
+    });
+
+    test('the Den vanishing without a done flag while paused ends the run too', async () => {
+        midDen();
+        startMilkingNow();
+        await flush();
+
+        game.actions = [milking(), zone()];
+        tracker.onActionsUpdated({ endCharacterActions: [milking({ currentCount: 3 })] });
+        await flush();
+
+        expect(tracker.isTracking).toBe(false);
+        expect(stored()).toBeUndefined();
+    });
+
+    test('the Den coming back at a lower wave is a new run, not this one resumed', async () => {
+        midDen();
+        startMilkingNow();
+        await flush();
+
+        vi.setSystemTime(PAUSED_AT + GAP);
+        game.actions = [den({ wave: 1 }), zone()];
+        await tracker.onNewBattle({ wave: 1, battleId: 78, players: SOLO });
+        await flush();
+
+        expect(tracker.isPaused()).toBe(false);
+        expect(tracker.currentRun.currentWave).toBe(1);
+        expect(tracker.currentRun.wavesCompleted).toBe(0);
+        expect(tracker.currentRun.startTime).toBe(PAUSED_AT + GAP);
+        expect(tracker.waveTimes).toEqual([]);
+        expect(tracker.joinedMidRun).toBe(false);
+    });
+
+    test('a character switch while paused discards the run', async () => {
+        midDen();
+        startMilkingNow();
+        await flush();
+
+        await tracker.cleanup();
+
+        expect(tracker.isTracking).toBe(false);
+        expect(tracker.currentRun).toBeNull();
+        expect(stored()).toBeUndefined();
+    });
+
+    describe('a reload while paused', () => {
+        /** The page comes back: memory is gone, the paused record is not. */
+        async function reload() {
+            resetTracker();
+            await tracker.checkForActiveDungeon();
+        }
+
+        test('does not show the panel while the Den waits', async () => {
+            midDen();
+            startMilkingNow();
+            await flush();
+
+            await reload();
+
+            expect(tracker.isTracking).toBe(false);
+            expect(tracker.getCurrentRun()).toBeNull();
+            expect(tracker.getPendingDungeon()).toBeNull();
+            expect(stored()).toMatchObject({ pausedAt: PAUSED_AT });
+        });
+
+        test('restores the run when the Den resumes, however long the pause and whatever its battle id', async () => {
+            midDen();
+            startMilkingNow();
+            await flush();
+            await reload();
+
+            // Well past the ten-minute staleness bound an ordinary record gets
+            vi.setSystemTime(PAUSED_AT + 3 * GAP);
+            game.actions = [milking(), den(), zone()];
+            await tracker.onNewBattle({ wave: 12, battleId: 91, players: SOLO });
+            await flush();
+
+            expect(tracker.isTracking).toBe(true);
+            expect(tracker.isPaused()).toBe(false);
+            const run = tracker.getCurrentRun();
+            expect(run.wavesCompleted).toBe(11);
+            expect(run.waveTimes).toHaveLength(11);
+            expect(run.totalElapsed).toBe(300_000);
+            expect(run.currentWaveElapsed).toBe(0);
+            expect(stored()).toMatchObject({ pausedAt: null, pausedMs: 3 * GAP, battleId: 42 });
+
+            vi.setSystemTime(PAUSED_AT + 3 * GAP + 20_000);
+            tracker.onActionCompleted({ endCharacterAction: den({ wave: 12 }) });
+            expect(tracker.waveTimes.at(-1)).toBe(45_000);
+        });
+
+        test('a Den started over after the reload does not inherit the paused run', async () => {
+            midDen();
+            startMilkingNow();
+            await flush();
+            await reload();
+
+            vi.setSystemTime(PAUSED_AT + GAP);
+            game.actions = [den({ wave: 1 }), zone()];
+            await tracker.onNewBattle({ wave: 1, battleId: 92, players: SOLO });
+            await flush();
+
+            expect(tracker.currentRun.wavesCompleted).toBe(0);
+            expect(tracker.waveTimes).toEqual([]);
+            expect(tracker.restoredMidRun).toBe(false);
+            expect(stored()).toMatchObject({ battleId: 92, pausedAt: null });
+        });
+    });
+});

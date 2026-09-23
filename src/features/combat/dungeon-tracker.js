@@ -15,7 +15,7 @@ import {
 } from '../../utils/game-text.js';
 import { createTimerRegistry } from '../../utils/timer-registry.js';
 import { characterKey, readScopedFrom, writeScoped } from '../../utils/character-key.js';
-import { runningCombatAction } from '../../utils/combat-actions.js';
+import { runningAction, runningCombatAction } from '../../utils/combat-actions.js';
 import { assessRecoveredStart, RECOVERY_FALLBACK_MAX_MS } from './dungeon-pace.js';
 import { parseGameNumber, gameDigitsSource } from '../../utils/number-parser.js';
 import { chatStampToDate } from '../../utils/locale-date-order.js';
@@ -107,6 +107,49 @@ const LOST_TIME_BEAT_MS = 1000;
  * long enough that waves ran, or a whole run finished, unobserved.
  */
 const LOST_TIME_SLEEP_MS = 120_000;
+
+/**
+ * Whether an action is a combat action.
+ * @param {Object|null} action - Queue entry
+ * @returns {boolean} True for `/actions/combat/` hrids
+ */
+function isCombatAction(action) {
+    return String(action?.actionHrid || '').startsWith('/actions/combat/');
+}
+
+/**
+ * The combat action a `new_battle` belongs to.
+ *
+ * Normally the running combat action. But `dataManager` drops a finished action
+ * only when an `actions_updated` says so — an `action_completed` carrying
+ * `isDone: true` leaves its cached copy in place, unfinished — so the milking
+ * action that displaced a dungeon can still sit at the front of the cached
+ * queue when the dungeon's next battle arrives. A battle is proof that combat
+ * is running, so when the front is not combat the battle is the front combat
+ * action's. Only for that case is the queue narrowed before picking; see
+ * `runningAction` for why narrowing first is wrong everywhere else.
+ *
+ * @param {Array<Object>|undefined} actions - The character action queue
+ * @returns {Object|null} The combat action the battle belongs to, or null
+ */
+function battleCombatAction(actions) {
+    if (!Array.isArray(actions)) return null;
+    const running = runningCombatAction(actions);
+    if (running) return running;
+    const front = runningAction(actions);
+    if (!front || isCombatAction(front)) return null;
+    return runningCombatAction(actions.filter(isCombatAction));
+}
+
+/**
+ * Whether an unfinished copy of a dungeon is still in the queue.
+ * @param {Array<Object>} actions - The character action queue
+ * @param {string} dungeonHrid - Dungeon action hrid
+ * @returns {boolean} True when the dungeon is still queued
+ */
+function isQueued(actions, dungeonHrid) {
+    return actions.some((action) => action && !action.isDone && action.actionHrid === dungeonHrid);
+}
 
 /**
  * Who the in-progress record belongs to.
@@ -321,6 +364,9 @@ class DungeonTracker {
             recoveredStartTime: this.currentRun.recoveredStartTime ?? null,
             // Who the server said was fighting; see `battlePartyNames`
             partyNames: this.currentRun.partyNames ?? null,
+            // Set while another action has displaced the dungeon; see `pauseRun`
+            pausedAt: this.currentRun.pausedAt ?? null,
+            pausedMs: this.currentRun.pausedMs ?? 0,
         };
 
         // There is a record now, so "nothing saved" is no longer the answer for
@@ -338,10 +384,22 @@ class DungeonTracker {
      * it names a battle (and the one being joined, when there is one to match), and it
      * is recent enough to still describe the run in front of us.
      * @param {Object|null} saved - Saved in-progress record
+     *
+     * A paused record (see `pauseRun`) is held to a different test. Its last write
+     * was the pause, so its age is the length of whatever displaced the dungeon —
+     * hours of milking, legitimately — and the battle the dungeon comes back on is
+     * not known to keep its id. What identifies it instead is the wave: the game
+     * keeps a displaced dungeon's wave on the queued action and resumes from it, so
+     * a battle at or past the saved wave is the same run carrying on, and one
+     * below it is the dungeon started over.
+     *
+     * @param {Object|null} saved - Saved in-progress record
      * @param {number|null} [expectedBattleId] - Battle ID to match, or null to accept the record's own
+     * @param {Object} [options]
+     * @param {number|null} [options.resumeWave] - Wave of the battle a paused record would resume on
      * @returns {boolean} True when the record may be restored
      */
-    canRestoreRecord(saved, expectedBattleId = null) {
+    canRestoreRecord(saved, expectedBattleId = null, { resumeWave = null } = {}) {
         if (!saved) {
             return false;
         }
@@ -354,6 +412,10 @@ class DungeonTracker {
         // A record with no battle to tie it to cannot be verified against anything
         if (saved.battleId === undefined || saved.battleId === null) {
             return false;
+        }
+
+        if (Number.isFinite(saved.pausedAt)) {
+            return Number.isFinite(resumeWave) && resumeWave >= saved.currentWave;
         }
 
         // Verify battleId matches (same run)
@@ -372,9 +434,10 @@ class DungeonTracker {
     /**
      * Restore in-progress run from IndexedDB
      * @param {number} currentBattleId - Current battle ID from new_battle message
+     * @param {number|null} [wave] - Wave of that battle; a paused record resumes only on its own wave or later
      * @returns {Promise<boolean>} True if restored successfully
      */
-    async restoreInProgressRun(currentBattleId) {
+    async restoreInProgressRun(currentBattleId, wave = null) {
         // Whose record this is, fixed before the read. `readScoped` builds the
         // key now but the restore happens a storage round trip later, and the
         // feature's own `character_switching` → `cleanup()` cannot cancel a read
@@ -416,7 +479,8 @@ class DungeonTracker {
             return false; // No saved state
         }
 
-        if (!this.canRestoreRecord(saved, currentBattleId)) {
+        const pausedRecord = Number.isFinite(saved.pausedAt);
+        if (!this.canRestoreRecord(saved, currentBattleId, { resumeWave: wave })) {
             await this.clearInProgressRun();
             return false;
         }
@@ -426,7 +490,10 @@ class DungeonTracker {
         // one merely queued behind the fight in progress — restoring on that
         // resurrects a finished run, or attributes this fight to a dungeon the
         // character has not entered.
-        const running = runningCombatAction(dataManager.getCurrentActions());
+        // A paused record comes back when the displacing action has just finished,
+        // which is exactly when that action can still be cached at the front.
+        const actions = dataManager.getCurrentActions();
+        const running = pausedRecord ? battleCombatAction(actions) : runningCombatAction(actions);
 
         if (!running || !this.isDungeonAction(running.actionHrid) || running.actionHrid !== saved.dungeonHrid) {
             await this.clearInProgressRun();
@@ -473,7 +540,20 @@ class DungeonTracker {
             startRecovered: saved.startRecovered === true,
             recoveredStartTime: saved.recoveredStartTime ?? null,
             partyNames: Array.isArray(saved.partyNames) ? [...saved.partyNames] : null,
+            pausedAt: pausedRecord ? saved.pausedAt : null,
+            pausedMs: Number.isFinite(saved.pausedMs) ? saved.pausedMs : 0,
         };
+
+        // Only a battle of this dungeon at or past the saved wave gets here, so the
+        // pause is over: everything since `pausedAt`, the reload included, is gap.
+        if (pausedRecord) {
+            this.resumeRun();
+            if (Number.isFinite(wave)) {
+                this.currentRun.currentWave = wave;
+                this.waveStartTime = new Date();
+            }
+            this.saveInProgressRun();
+        }
 
         this.notifyUpdate();
         return true;
@@ -554,7 +634,8 @@ class DungeonTracker {
             const lostMs = now - this._lastBeatAt - LOST_TIME_BEAT_MS;
             this._lastBeatAt = now;
 
-            if (lostMs < LOST_TIME_SLEEP_MS || !this.isTracking) {
+            // A sleep while paused falls inside the gap `resumeRun` drops anyway
+            if (lostMs < LOST_TIME_SLEEP_MS || !this.isTracking || this.isPaused()) {
                 return;
             }
 
@@ -974,6 +1055,147 @@ class DungeonTracker {
                 }
             }
         }
+
+        this.reconcileQueue(data);
+    }
+
+    /**
+     * Whether the run is paused because another action displaced its dungeon.
+     * @returns {boolean} True while a tracked run waits behind another action
+     */
+    isPaused() {
+        return Boolean(this.isTracking && this.currentRun && Number.isFinite(this.currentRun.pausedAt));
+    }
+
+    /**
+     * Pause the run: another action has taken the front of the queue while the
+     * dungeon waits behind it, unfinished.
+     *
+     * "Start Now" on a skilling action does exactly this mid-run. The game does
+     * not end the dungeon: it keeps the wave on the queued action and picks the
+     * run back up when the dungeon reaches the front again. So neither does the
+     * tracker: waves, wave times and anchors are kept, and only the clock stops.
+     * `getCurrentRun` reports nothing while paused, which is what hides the panel
+     * and idles its one-second loop.
+     *
+     * @param {number} [now] - When the dungeon was displaced
+     */
+    pauseRun(now = Date.now()) {
+        if (!this.isTracking || !this.currentRun || this.isPaused()) return;
+        this.currentRun.pausedAt = now;
+        this.notifyUpdate();
+        this.saveInProgressRun();
+    }
+
+    /**
+     * Resume a paused run, leaving the pause out of every figure it produces.
+     *
+     * Every duration the tracker reports or banks is a difference against one of
+     * these anchors (elapsed against the run's start or the party chat anchor, a
+     * wave against the previous wave's end, the live wave against its start), so
+     * moving each of them forward by the gap drops it from elapsed, wave times,
+     * averages, pace and the banked run alike. The chat anchors move with the
+     * rest, or a party duration would still span the pause.
+     *
+     * Does not notify or save; callers do both once the run is settled.
+     *
+     * @param {number} [now] - When the dungeon took the front again
+     */
+    resumeRun(now = Date.now()) {
+        const run = this.currentRun;
+        if (!run || !Number.isFinite(run.pausedAt)) return;
+
+        const gap = Math.max(0, now - run.pausedAt);
+        const shift = (value) => (Number.isFinite(value) ? value + gap : value);
+
+        run.startTime = shift(run.startTime);
+        run.recoveredStartTime = shift(run.recoveredStartTime);
+        this.waveStartTime = this.waveStartTime ? new Date(this.waveStartTime.getTime() + gap) : null;
+        this.lastWaveEndTime = shift(this.lastWaveEndTime);
+        this.firstKeyCountTimestamp = shift(this.firstKeyCountTimestamp);
+        this.lastKeyCountTimestamp = shift(this.lastKeyCountTimestamp);
+
+        run.pausedAt = null;
+        run.pausedMs = (run.pausedMs || 0) + gap;
+    }
+
+    /**
+     * Pause, resume or end the run to match the queue after an `actions_updated`.
+     *
+     * The displacing action must be one this message delivered. `dataManager`
+     * leaves an action finished by `action_completed` cached as unfinished until
+     * an `actions_updated` removes it, so a stale entry can sit at the front of a
+     * queue the game is really running the dungeon from; only an action the
+     * server has just sent is known to have taken the front.
+     *
+     * @param {Object} data - actions_updated message data
+     */
+    reconcileQueue(data) {
+        if (!this.isTracking || !this.currentRun?.dungeonHrid) return;
+        const actions = dataManager.getCurrentActions?.();
+        if (!Array.isArray(actions)) return;
+
+        const dungeonHrid = this.currentRun.dungeonHrid;
+        const front = runningAction(actions);
+
+        if (front?.actionHrid === dungeonHrid) {
+            if (!this.isPaused()) return;
+            // The game started the dungeon over rather than carrying the run on
+            if (Number.isFinite(front.wave) && front.wave < this.currentRun.currentWave) {
+                this.resetTracking();
+                return;
+            }
+            this.resumeRun();
+            this.notifyUpdate();
+            this.saveInProgressRun();
+            return;
+        }
+
+        if (this.isPaused()) {
+            // Dropped from the queue while it waited: an interruption, like a flee
+            if (!isQueued(actions, dungeonHrid)) this.resetTracking();
+            return;
+        }
+
+        if (!front || !isQueued(actions, dungeonHrid)) return;
+        const delivered = (data?.endCharacterActions || []).some(
+            (action) => action && !action.isDone && action.id === front.id && action.actionHrid === front.actionHrid
+        );
+        if (delivered) this.pauseRun();
+    }
+
+    /**
+     * Settle a paused or displaced run against an arriving `new_battle`.
+     *
+     * @param {number|undefined} wave - The battle's wave
+     * @returns {'continue'|'ignore'|'reset'} `continue` to handle the battle as
+     *   usual (a resumed run carries on from here), `ignore` when the battle is
+     *   not this run's and the run waits on, `reset` when the run is over
+     */
+    reconcileBattle(wave) {
+        if (!this.isTracking || !this.currentRun?.dungeonHrid) return 'continue';
+        const actions = dataManager.getCurrentActions?.();
+        const battleAction = battleCombatAction(actions);
+        const dungeonHrid = this.currentRun.dungeonHrid;
+        const paused = this.isPaused();
+
+        if (battleAction?.actionHrid === dungeonHrid) {
+            if (!paused) return 'continue';
+            if (Number.isFinite(wave) && wave < this.currentRun.currentWave) return 'reset';
+            this.resumeRun();
+            return 'continue';
+        }
+
+        if (!battleAction) return paused ? 'ignore' : 'continue';
+
+        // Another dungeon: the switch branch in onNewBattle moves a live run onto
+        // it. A paused run has nothing to hand over and simply ends.
+        if (this.isDungeonAction(battleAction.actionHrid)) return paused ? 'reset' : 'continue';
+
+        // A normal zone's battle, which carries a wave number like a dungeon's
+        if (!isQueued(actions, dungeonHrid)) return 'reset';
+        this.pauseRun();
+        return 'ignore';
     }
 
     /**
@@ -1290,6 +1512,18 @@ class DungeonTracker {
         // it went away with the (correct) guard that stops a *different* dungeon
         // going done from destroying a live run.
         const running = runningCombatAction(dataManager.getCurrentActions?.());
+
+        // A run whose dungeon was displaced (by "Start Now" on another action)
+        // waits, and resumes when a battle of its own dungeon arrives.
+        const verdict = this.reconcileBattle(data.wave);
+        if (verdict === 'ignore') {
+            return;
+        }
+        if (verdict === 'reset') {
+            await this.resetTracking();
+            if (currentOwner() !== owner) return;
+        }
+
         if (
             this.isTracking &&
             this.currentRun?.dungeonHrid &&
@@ -1347,7 +1581,7 @@ class DungeonTracker {
                 // this battle is that zone's, there is nothing of ours to pick
                 // up, and `startDungeon` is about to bail on the same check.
                 if (!this.isNonDungeonBattle(running)) {
-                    const restored = await this.restoreInProgressRun(battleId);
+                    const restored = await this.restoreInProgressRun(battleId, data.wave);
                     if (currentOwner() !== owner) return;
                     if (restored) {
                         this.learnPartyNames(data);
@@ -1373,7 +1607,7 @@ class DungeonTracker {
             }
 
             // Mid-dungeon start - try to restore first
-            const restored = await this.restoreInProgressRun(battleId);
+            const restored = await this.restoreInProgressRun(battleId, data.wave);
             // `restoreInProgressRun` stands itself down on a switch and reports
             // `false`, which reads here as "nothing to restore" — so without
             // this check the guard in the callee would *cause* the departing
@@ -1930,7 +2164,8 @@ class DungeonTracker {
      * @returns {Object|null} Current run state or null
      */
     getCurrentRun() {
-        if (!this.isTracking || !this.currentRun) {
+        // A paused run is kept, not shown: its dungeon is waiting behind another action
+        if (!this.isTracking || !this.currentRun || this.isPaused()) {
             return null;
         }
 
