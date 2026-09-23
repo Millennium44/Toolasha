@@ -1541,13 +1541,16 @@ class TransmuteHistoryViewer {
                 continue;
             }
             nonSelfReturnOutputs += result.count || 0;
+            // A session recorded before results carried the unpriced flag stores an untradeable
+            // output as priced at 0; the market can never price it, so no real value means shop value.
+            const shopValue =
+                result.unpriced || !(result.totalValue > 0) ? getAlchemyOutputShopValue(resultItemHrid) : null;
+            if (shopValue) {
+                revenue += shopValue.valuePerUnit * (result.count || 0);
+                revenueShopValued = true;
+                continue;
+            }
             if (result.unpriced) {
-                const shopValue = getAlchemyOutputShopValue(resultItemHrid);
-                if (shopValue) {
-                    revenue += shopValue.valuePerUnit * (result.count || 0);
-                    revenueShopValued = true;
-                    continue;
-                }
                 revenueUnpriced = true;
                 continue;
             }
@@ -1717,7 +1720,8 @@ class TransmuteHistoryViewer {
                 }
                 text.style.color = '#888';
             } else {
-                const shopValue = result.unpriced ? getAlchemyOutputShopValue(itemHrid) : null;
+                const shopValue =
+                    result.unpriced || !(result.totalValue > 0) ? getAlchemyOutputShopValue(itemHrid) : null;
                 if (shopValue) {
                     const perUnit = shopValue.valuePerUnit;
                     const total = formatKMB(perUnit * (result.count || 0), 1);

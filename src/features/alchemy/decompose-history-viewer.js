@@ -606,13 +606,16 @@ class DecomposeHistoryViewer {
         // never a sale.
         let revenueShopValued = false;
         for (const [resultItemHrid, result] of Object.entries(session.results || {})) {
+            // A session recorded before results carried the unpriced flag stores an untradeable
+            // output as priced at 0; the market can never price it, so no real value means shop value.
+            const shopValue =
+                result.unpriced || !(result.totalValue > 0) ? getAlchemyOutputShopValue(resultItemHrid) : null;
+            if (shopValue) {
+                revenue += shopValue.valuePerUnit * (result.count || 0);
+                revenueShopValued = true;
+                continue;
+            }
             if (result.unpriced) {
-                const shopValue = getAlchemyOutputShopValue(resultItemHrid);
-                if (shopValue) {
-                    revenue += shopValue.valuePerUnit * (result.count || 0);
-                    revenueShopValued = true;
-                    continue;
-                }
                 revenueUnpriced = true;
                 continue;
             }
@@ -990,7 +993,7 @@ class DecomposeHistoryViewer {
             // the session recorded totalValue: 0 for it — but a game shop may still
             // convert it to gold. Shown as a shop-derived value, never as the
             // recorded (zero) market price.
-            const shopValue = result.unpriced ? getAlchemyOutputShopValue(itemHrid) : null;
+            const shopValue = result.unpriced || !(result.totalValue > 0) ? getAlchemyOutputShopValue(itemHrid) : null;
             if (shopValue) {
                 const perUnit = shopValue.valuePerUnit;
                 const total = formatKMB(perUnit * (result.count || 0), 1);

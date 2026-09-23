@@ -91,6 +91,19 @@ describe('decompose history: Labyrinth Token is valued through the shop, not pri
         expect(detail.revenueUnpriced).toBe(false);
     });
 
+    test('a session recorded before the unpriced flag (token stored as priced at 0) takes the shop value too', () => {
+        state.shardPrice = 5500;
+        const legacy = sessionWithTokenResult();
+        legacy.results[TOKEN_HRID] = { totalValue: 0, priceEach: 0, unpriced: false, count: 90 };
+        const detail = decomposeHistoryViewer.computeSessionProfit(legacy);
+        expect(detail.revenue).toBe(90 * 5500);
+        expect(detail.revenueShopValued).toBe(true);
+
+        const cell = document.createElement('td');
+        decomposeHistoryViewer.renderResultsCell(cell, legacy);
+        expect(cell.textContent).toContain('§');
+    });
+
     test('stays unpriced (not zero) when the shop itself has nothing priced', () => {
         state.shardPrice = 0;
         const detail = decomposeHistoryViewer.computeSessionProfit(sessionWithTokenResult());
