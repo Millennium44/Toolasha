@@ -63,6 +63,9 @@ const { calculateGatheringProfit } = await import('./gathering-profit.js');
 const MILK = '/items/milk';
 const CHEESE = '/items/cheese';
 const COW = '/actions/milking/cow';
+const VERDANT_COW = '/actions/milking/verdant_cow';
+const VERDANT_MILK = '/items/verdant_milk';
+const VERDANT_CHEESE = '/items/verdant_cheese';
 
 /**
  * The action detail map every test shares.
@@ -80,11 +83,21 @@ function actionDetailMap(overrides = {}) {
             dropTable: [{ itemHrid: MILK, dropRate: 1, minCount: 1, maxCount: 1 }],
             ...overrides,
         },
+        [VERDANT_COW]: {
+            type: '/action_types/milking',
+            baseTimeCost: 8e9,
+            dropTable: [{ itemHrid: VERDANT_MILK, dropRate: 1, minCount: 1, maxCount: 3 }],
+        },
         // Gives the processing cache its Milk → Cheese entry (1 milk per cheese)
         '/actions/cheesesmithing/cheese': {
             type: '/action_types/cheesesmithing',
             inputItems: [{ itemHrid: MILK, count: 1 }],
             outputItems: [{ itemHrid: CHEESE, count: 1 }],
+        },
+        '/actions/cheesesmithing/verdant_cheese': {
+            type: '/action_types/cheesesmithing',
+            inputItems: [{ itemHrid: VERDANT_MILK, count: 2 }],
+            outputItems: [{ itemHrid: VERDANT_CHEESE, count: 1 }],
         },
         // Production action: not a gathering type, so the calculator declines it
         '/actions/brewing/efficiency_tea': {
@@ -143,11 +156,13 @@ beforeEach(() => {
         itemDetailMap: {
             [MILK]: { name: 'Milk' },
             [CHEESE]: { name: 'Cheese' },
+            [VERDANT_MILK]: { name: 'Verdant Milk' },
+            [VERDANT_CHEESE]: { name: 'Verdant Cheese' },
             '/items/efficiency_tea': { name: 'Efficiency Tea' },
             '/items/gathering_tea': { name: 'Gathering Tea' },
         },
     };
-    market.prices = { [MILK]: 100, [CHEESE]: 250 };
+    market.prices = { [MILK]: 100, [CHEESE]: 250, [VERDANT_MILK]: 100, [VERDANT_CHEESE]: 250 };
     buffs.context = efficiencyContext();
     buffs.bonusRevenue = noBonusRevenue();
     settings.values = { profitCalc_pricingMode: 'hybrid' };
@@ -317,6 +332,31 @@ describe('calculateGatheringProfit — drink costs', () => {
 });
 
 describe('calculateGatheringProfit — Processing Tea', () => {
+    test.each([
+        [1, 2 / 3],
+        [2, 16 / 9],
+    ])('converts whole 1–3 milk stacks at %ix efficiency before averaging', async (efficiencyMultiplier, expected) => {
+        buffs.context = efficiencyContext({ processingBonus: 1, efficiencyMultiplier });
+
+        const result = await calculateGatheringProfit(VERDANT_COW);
+
+        // One roll converts 0, 1, 1 cheese; two independent rolls sum to 2–6
+        // milk and yield 16/9 cheese on average after floor(total / 2).
+        expect(result.processingConversions[0].conversionsPerHour).toBeCloseTo(360 * expected, 8);
+        expect(result.processingRevenueBonus).toBeCloseTo(360 * expected * 50, 8);
+    });
+
+    test('gathering quantity can supply the second milk needed for one cheese', async () => {
+        game.initClientData.actionDetailMap[VERDANT_COW].dropTable[0].maxCount = 1;
+        buffs.context = efficiencyContext({ processingBonus: 1, totalGathering: 0.25 });
+
+        const result = await calculateGatheringProfit(VERDANT_COW);
+
+        // The first milk is guaranteed; gathering quantity adds another 25%
+        // of the time. A two-milk recipe therefore converts 0.25 cheese/action.
+        expect(result.processingConversions[0].conversionsPerHour).toBeCloseTo(90, 8);
+        expect(result.processingRevenueBonus).toBeCloseTo(4500, 8);
+    });
     test('adds only the net value gained by converting milk to cheese', async () => {
         // 15% proc chance, 1 milk → 1 cheese
         buffs.context = efficiencyContext({ processingBonus: 0.15 });

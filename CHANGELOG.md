@@ -19,6 +19,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 - The Profit/hr ranking now charges for each unenhanced item used in a finished run and leaves unpriceable starting items unranked, so expensive base gear no longer appears artificially profitable. Hourly cost and profit use exact run throughput instead of rounded displayed XP/hr.
 - The enhancement session's worth-it value now stays unknown when the base item's sale price is missing, instead of treating that item as free and overstating the gain.
 
+### Gathering Processing estimates whole stacks correctly
+
+- Gathering profit now counts whole Milk-to-Cheese conversions across the actual 1–3 Milk rolls and efficiency repeats. Processing Tea estimates no longer overstate the cheese gained from a cow.
+
 ### Queue Monitor settings respond once after reconnecting
 
 - Reconnecting to the same character no longer registers another Queue Monitor settings listener, so toggling the panel does not repeat its setup and teardown work.
