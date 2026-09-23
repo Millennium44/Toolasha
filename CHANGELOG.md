@@ -6,6 +6,13 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Audit round: alchemy history counted market trades and lost the batch that finished during a reload
+
+- Coins collected from a listing or items bought mid-run were being counted as alchemy output (one coinify success recorded as three). Reloading mid-run no longer loses the batch that finished while the page was away, or splits the run into two rows. Restarting the same item, a catalyst running out, and Enhancing Essence from enhanced decomposes are also counted correctly now.
+- History windows mark sessions recorded before these fixes with ◷ and can leave them out of the totals. Session Profit now includes catalyst cost so rows add up to the totals, Break-even shows ≥/≤ when it is only a bound, CSV exports keep the table's warnings, and shop-valued Labyrinth Tokens pay the market cut in both the history and the live panel.
+- The live alchemy panel prices the Unrefine tab as an unrefine, bills a scroll decompose the game's 50 coins instead of 55, names unpriced essences and crates, values Labyrinth Tokens through the shop, and agrees with Best Items and the tea optimizer on XP.
+- Queued alchemy rows are timed at the item's level and priced with their own catalyst, the Philosopher's Stone alert keeps working after you sell a stone, Risk of Ruin charges for the tea its success rate assumes, and calibration accepts a 100% forecast.
+
 ### Alchemy history values Labyrinth Tokens and shows expected successes
 
 - Decomposing scrolls no longer shows as a pure loss: the Labyrinth Tokens it yields are valued at the best Labyrinth Shop conversion (marked §), including sessions recorded earlier.
