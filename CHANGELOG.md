@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Quieter startup console
+
+- The debug note about features with no on/off switch of their own is now one line listing them all, instead of about fifty lines that Firefox shows by default.
+
 <!-- shipped in 3.58.1 -->
 
 ### Fix: 3.58.0 stopped loading halfway

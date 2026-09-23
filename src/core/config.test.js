@@ -160,6 +160,7 @@ describe('Config.isFeatureEnabled', () => {
         realFeatures = config.features;
         config.settingsMap = {};
         config._unswitchedFeatureKeys = null;
+        config._pendingUnswitchedKeys = null;
     });
 
     afterEach(() => {
@@ -200,14 +201,35 @@ describe('Config.isFeatureEnabled', () => {
     });
 
     test('a key in neither the map nor the schema stays enabled, and says so once', () => {
+        vi.useFakeTimers();
         const debug = vi.spyOn(console, 'debug').mockImplementation(() => {});
         try {
             expect(config.isFeatureEnabled('canaryNoSuchThing')).toBe(true);
             expect(config.isFeatureEnabled('canaryNoSuchThing')).toBe(true);
+            vi.advanceTimersByTime(3000);
             expect(debug).toHaveBeenCalledTimes(1);
             expect(debug.mock.calls[0][0]).toContain('canaryNoSuchThing');
         } finally {
             debug.mockRestore();
+            vi.useRealTimers();
+        }
+    });
+
+    test('unswitched keys asked about together are reported on one line', () => {
+        vi.useFakeTimers();
+        const debug = vi.spyOn(console, 'debug').mockImplementation(() => {});
+        try {
+            config.isFeatureEnabled('canaryOne');
+            config.isFeatureEnabled('canaryTwo');
+            config.isFeatureEnabled('canaryThree');
+            expect(debug).not.toHaveBeenCalled();
+            vi.advanceTimersByTime(3000);
+            expect(debug).toHaveBeenCalledTimes(1);
+            expect(debug.mock.calls[0][0]).toContain('3 feature key(s)');
+            expect(debug.mock.calls[0][0]).toContain('canaryOne, canaryTwo, canaryThree');
+        } finally {
+            debug.mockRestore();
+            vi.useRealTimers();
         }
     });
 });

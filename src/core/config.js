@@ -1393,6 +1393,10 @@ class Config {
      * switch is a sub-setting checked inside the module). The one that matters
      * is a key that used to have a setting and lost it in a rename: that used
      * to be invisible, and is now one filtered console line away.
+     *
+     * Startup asks about ~50 of the deliberate ones, and Firefox shows debug
+     * lines by default, so the keys are gathered and reported together as one
+     * line a moment after the last new one arrives, not one line apiece.
      * @param {string} featureKey - The key with no switch behind it
      * @returns {void}
      * @private
@@ -1401,9 +1405,19 @@ class Config {
         this._unswitchedFeatureKeys ??= new Set();
         if (this._unswitchedFeatureKeys.has(featureKey)) return;
         this._unswitchedFeatureKeys.add(featureKey);
-        console.debug(
-            `[Config] Feature key '${featureKey}' is in neither the features map nor the settings schema — treating it as enabled`
-        );
+        this._pendingUnswitchedKeys ??= [];
+        this._pendingUnswitchedKeys.push(featureKey);
+        clearTimeout(this._unswitchedReportTimer);
+        this._unswitchedReportTimer = setTimeout(() => {
+            const keys = this._pendingUnswitchedKeys || [];
+            this._pendingUnswitchedKeys = [];
+            this._unswitchedReportTimer = null;
+            if (keys.length === 0) return;
+            console.debug(
+                `[Config] ${keys.length} feature key(s) are in neither the features map nor the settings schema — ` +
+                    `treating them as enabled: ${keys.join(', ')}`
+            );
+        }, 3000);
     }
 
     /**
