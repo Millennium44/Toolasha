@@ -1105,16 +1105,18 @@ class AlchemyProfitCalculator {
                 const outputPrice = getItemPrice(output.itemHrid, { context: 'profit', side: 'sell' });
                 const shopValue = outputPrice === null ? getAlchemyOutputShopValue(output.itemHrid) : null;
                 if (shopValue) {
-                    // Untaxed: the value is realized in the shop, not on the market
+                    // Taxed: the shop value is the market sell price of what the shop converts the
+                    // token into, so turning it into gold is a market sale — matches the history windows
                     const outputCount = output.count * bulkMultiplier;
-                    const dropValue = shopValue.valuePerUnit * outputCount;
+                    const afterTax = calculatePriceAfterTax(shopValue.valuePerUnit);
+                    const dropValue = afterTax * outputCount;
                     outputValue += dropValue;
                     shopValuedOutputs.push({ itemHrid: output.itemHrid, ...shopValue });
                     dropDetails.push({
                         itemHrid: output.itemHrid,
                         count: outputCount,
                         price: shopValue.valuePerUnit,
-                        afterTax: shopValue.valuePerUnit,
+                        afterTax,
                         isEssence: false,
                         isShopValued: true,
                         expectedValue: dropValue,

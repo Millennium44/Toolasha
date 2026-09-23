@@ -887,7 +887,8 @@ describe('official alchemy rules', () => {
             expect(selfReturn).toMatchObject({ isSelfReturn: true, price: 1_000, dropRate: 0.9, revenuePerHour: 0 });
         });
 
-        test('decompose values a Labyrinth Token through the shop, untaxed, instead of calling it unpriced', () => {
+        test('decompose values a Labyrinth Token through the shop, after the market cut, instead of calling it unpriced', async () => {
+            const { calculatePriceAfterTax } = await import('../../utils/profit-helpers.js');
             mocks.initClientData.itemDetailMap = {
                 ...mocks.initClientData.itemDetailMap,
                 '/items/seal_of_gathering': {
@@ -908,9 +909,9 @@ describe('official alchemy rules', () => {
             expect(result.unpricedOutputs).toEqual([]);
             expect(result.shopValuedOutputs).toEqual([{ itemHrid: '/items/labyrinth_token', ...shop }]);
             const token = result.dropRevenues.find((d) => d.itemHrid === '/items/labyrinth_token');
-            // 5 tokens at 400, no market tax, on each success
+            // 5 tokens at 400 less the market cut (realizing the shop item is a market sale), on each success
             expect(token).toMatchObject({ count: 5, price: 400, isShopValued: true });
-            expect(token.revenuePerAttempt).toBeCloseTo(2_000 * result.successRate, 8);
+            expect(token.revenuePerAttempt).toBeCloseTo(5 * calculatePriceAfterTax(400) * result.successRate, 8);
         });
 
         test('a Labyrinth Token the shop cannot value either stays unpriced', () => {
