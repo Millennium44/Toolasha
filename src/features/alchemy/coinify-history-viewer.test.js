@@ -38,8 +38,8 @@ describe('coinify history viewer - icon-only header accessibility', () => {
 
         const headers = Array.from(coinifyHistoryViewer.modal.querySelectorAll('thead th'));
         // Column order: Session Start, Input Item, Enh. Level, Attempts, Successes,
-        // Success Rate, Coins Earned, Catalyst of Coinification, Prime Catalyst, Profit, (delete)
-        const catalystHeader = headers[7];
+        // Success Rate, Expected, Coins Earned, Catalyst of Coinification, Prime Catalyst, Profit, (delete)
+        const catalystHeader = headers[8];
 
         expect(catalystHeader.getAttribute('aria-label')).toBe('Catalyst of Coinification');
         expect(catalystHeader.title).toBe('Catalyst of Coinification');
@@ -50,7 +50,7 @@ describe('coinify history viewer - icon-only header accessibility', () => {
         coinifyHistoryViewer.renderTable();
 
         const headers = Array.from(coinifyHistoryViewer.modal.querySelectorAll('thead th'));
-        const primeCatalystHeader = headers[8];
+        const primeCatalystHeader = headers[9];
 
         expect(primeCatalystHeader.getAttribute('aria-label')).toBe('Prime Catalyst');
         expect(primeCatalystHeader.title).toBe('Prime Catalyst');

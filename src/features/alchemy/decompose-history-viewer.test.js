@@ -39,8 +39,8 @@ describe('decompose history viewer - icon-only header accessibility', () => {
 
         const headers = Array.from(decomposeHistoryViewer.modal.querySelectorAll('thead th'));
         // Column order: Session Start, Input Item, Enh. Level, Attempts, Successes,
-        // Success Rate, Results, Catalyst of Decomposition, Prime Catalyst, Profit, (delete)
-        const catalystHeader = headers[7];
+        // Success Rate, Expected, Results, Catalyst of Decomposition, Prime Catalyst, Profit, (delete)
+        const catalystHeader = headers[8];
 
         expect(catalystHeader.getAttribute('aria-label')).toBe('Catalyst of Decomposition');
         expect(catalystHeader.title).toBe('Catalyst of Decomposition');
@@ -53,7 +53,7 @@ describe('decompose history viewer - icon-only header accessibility', () => {
         decomposeHistoryViewer.renderTable();
 
         const headers = Array.from(decomposeHistoryViewer.modal.querySelectorAll('thead th'));
-        const primeCatalystHeader = headers[8];
+        const primeCatalystHeader = headers[9];
 
         expect(primeCatalystHeader.getAttribute('aria-label')).toBe('Prime Catalyst');
         expect(primeCatalystHeader.title).toBe('Prime Catalyst');

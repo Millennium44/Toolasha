@@ -27,6 +27,8 @@ import {
     renderTotalsSection,
     totalsRowStyle,
 } from './history-totals-table.js';
+import { renderCatalystColumnHeader, renderCatalystCountCell } from './alchemy-catalyst-columns.js';
+import { computeExpectedSuccesses, formatExpectedSuccesses } from './alchemy-expected-successes.js';
 
 const CATALYST_OF_COINIFICATION_HRID = '/items/catalyst_of_coinification';
 const PRIME_CATALYST_HRID = '/items/prime_catalyst';
@@ -631,6 +633,7 @@ class CoinifyHistoryViewer {
             { key: 'totalAttempts', label: 'Attempts', filterable: false },
             { key: 'totalSuccesses', label: 'Successes', filterable: false },
             { key: '_successRate', label: 'Success Rate', filterable: false },
+            { key: '_expected', label: 'Expected', filterable: false },
             { key: 'totalCoinsEarned', label: 'Coins Earned', filterable: false },
             { key: '_catalystOfCoinification', label: 'Catalyst of Coinification', filterable: false },
             { key: '_primeCatalyst', label: 'Prime Catalyst', filterable: false },
@@ -675,15 +678,11 @@ class CoinifyHistoryViewer {
                     this.renderTable();
                 });
             } else if (isCatalystCol) {
-                // Render icon as header with item name as tooltip and accessible name;
-                // the icon carries no text, so the label lives on title/aria-label instead
                 const hrid =
                     col.key === '_catalystOfCoinification' ? CATALYST_OF_COINIFICATION_HRID : PRIME_CATALYST_HRID;
-                labelSpan.title = col.label;
-                labelSpan.style.cursor = 'default';
-                th.title = col.label;
-                th.setAttribute('aria-label', col.label);
-                this.appendItemIcon(labelSpan, hrid, 20);
+                renderCatalystColumnHeader(th, labelSpan, col.label, hrid, (el, h, size) =>
+                    this.appendItemIcon(el, h, size)
+                );
             } else {
                 labelSpan.textContent = col.label;
                 labelSpan.style.cursor = 'default';
@@ -783,6 +782,17 @@ class CoinifyHistoryViewer {
                 rateCell.textContent = session.totalAttempts > 0 ? `${rate}%` : '—';
                 rateCell.style.padding = '6px 10px';
                 row.appendChild(rateCell);
+
+                // Expected — attempts × the success rate predicted when the session started
+                const expectedCell = document.createElement('td');
+                const expected = computeExpectedSuccesses(session);
+                expectedCell.textContent = formatExpectedSuccesses(expected);
+                expectedCell.style.cssText = 'padding: 6px 10px;';
+                if (!expected) {
+                    expectedCell.title = 'This session predates the predicted-rate stamp — nothing to compare against.';
+                    expectedCell.style.color = '#888';
+                }
+                row.appendChild(expectedCell);
 
                 // Coins Earned
                 const earnedCell = document.createElement('td');
@@ -1054,24 +1064,7 @@ class CoinifyHistoryViewer {
      * @param {number} count
      */
     renderCatalystCell(cell, catalystHrid, count) {
-        if (count === 0) {
-            const dash = document.createElement('span');
-            dash.textContent = '—';
-            dash.style.color = '#888';
-            cell.appendChild(dash);
-            return;
-        }
-
-        const wrapper = document.createElement('div');
-        wrapper.style.cssText = 'display: flex; align-items: center; gap: 4px;';
-
-        this.appendItemIcon(wrapper, catalystHrid, 18);
-
-        const countSpan = document.createElement('span');
-        countSpan.textContent = count.toLocaleString();
-        wrapper.appendChild(countSpan);
-
-        cell.appendChild(wrapper);
+        renderCatalystCountCell(cell, catalystHrid, count, (el, hrid, size) => this.appendItemIcon(el, hrid, size));
     }
 
     /**

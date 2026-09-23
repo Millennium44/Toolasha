@@ -30,6 +30,11 @@ import {
     renderTotalsSection,
     totalsRowStyle,
 } from './history-totals-table.js';
+import { renderCatalystColumnHeader, renderCatalystCountCell } from './alchemy-catalyst-columns.js';
+import { computeExpectedSuccesses, formatExpectedSuccesses } from './alchemy-expected-successes.js';
+
+const CATALYST_OF_TRANSMUTATION_HRID = '/items/catalyst_of_transmutation';
+const PRIME_CATALYST_HRID = '/items/prime_catalyst';
 
 /**
  * Check whether any mutation added nodes that are, contain, or sit under a tablist.
@@ -534,7 +539,15 @@ class TransmuteHistoryViewer {
             { key: 'inputItemHrid', label: 'Input Item', filterable: true },
             { key: 'totalAttempts', label: 'Attempts', filterable: false },
             { key: 'totalSuccesses', label: 'Successes', filterable: false },
+            {
+                key: '_expected',
+                label: 'Expected',
+                filterable: false,
+                title: 'Attempts × the success rate predicted when the session started, and how far actual successes landed from it.',
+            },
             { key: 'results', label: 'Results', filterable: true },
+            { key: '_catalystOfTransmutation', label: 'Catalyst of Transmutation', filterable: false },
+            { key: '_primeCatalyst', label: 'Prime Catalyst', filterable: false },
             { key: '_profit', label: 'Profit', filterable: false },
             { key: '_delete', label: '', filterable: false },
         ];
@@ -555,7 +568,11 @@ class TransmuteHistoryViewer {
             const labelSpan = document.createElement('span');
             labelSpan.style.cursor = 'pointer';
 
-            const isSortable = col.key !== 'results';
+            const isCatalystCol = col.key === '_catalystOfTransmutation' || col.key === '_primeCatalyst';
+            // 'results' holds an object with no meaningful sort order; the new icon-headed
+            // catalyst columns and the Expected column have no field of their own to sort by
+            const isSortable = col.key !== 'results' && !isCatalystCol && col.key !== '_expected';
+
             if (isSortable) {
                 if (this.sortColumn === col.key) {
                     labelSpan.textContent = col.label + (this.sortDirection === 'asc' ? ' ▲' : ' ▼');
@@ -572,9 +589,19 @@ class TransmuteHistoryViewer {
                     this.applyFilters();
                     this.renderTable();
                 });
+            } else if (isCatalystCol) {
+                const hrid =
+                    col.key === '_catalystOfTransmutation' ? CATALYST_OF_TRANSMUTATION_HRID : PRIME_CATALYST_HRID;
+                renderCatalystColumnHeader(th, labelSpan, col.label, hrid, (el, h, size) =>
+                    this.appendItemIcon(el, h, size)
+                );
             } else {
                 labelSpan.textContent = col.label;
                 labelSpan.style.cursor = 'default';
+                if (col.title) {
+                    labelSpan.title = col.title;
+                    th.title = col.title;
+                }
             }
 
             headerContent.appendChild(labelSpan);
@@ -656,11 +683,34 @@ class TransmuteHistoryViewer {
                 `;
                 row.appendChild(successCell);
 
+                // Expected — attempts × the rate predicted when the session started
+                const expectedCell = document.createElement('td');
+                const expected = computeExpectedSuccesses(session);
+                expectedCell.textContent = formatExpectedSuccesses(expected);
+                expectedCell.style.cssText = 'padding: 6px 10px;';
+                if (!expected) {
+                    expectedCell.title = 'This session predates the predicted-rate stamp — nothing to compare against.';
+                    expectedCell.style.color = '#888';
+                }
+                row.appendChild(expectedCell);
+
                 // Results
                 const resultsCell = document.createElement('td');
                 resultsCell.style.cssText = 'padding: 6px 10px;';
                 this.renderResultsCell(resultsCell, session);
                 row.appendChild(resultsCell);
+
+                // Catalyst of Transmutation / Prime Catalyst
+                const profitDetailForCatalysts = this.profitCache.get(session.id) || this.computeSessionProfit(session);
+                const catCell = document.createElement('td');
+                catCell.style.cssText = 'padding: 6px 10px; text-align: center;';
+                this.renderTransmuteCatalystCell(catCell, profitDetailForCatalysts, CATALYST_OF_TRANSMUTATION_HRID);
+                row.appendChild(catCell);
+
+                const pcCell = document.createElement('td');
+                pcCell.style.cssText = 'padding: 6px 10px; text-align: center;';
+                this.renderTransmuteCatalystCell(pcCell, profitDetailForCatalysts, PRIME_CATALYST_HRID);
+                row.appendChild(pcCell);
 
                 // Profit
                 const profitCell = document.createElement('td');
@@ -1533,6 +1583,31 @@ class TransmuteHistoryViewer {
             catalystEstimated: !hasRecorded && catalystEntries.length > 0,
             catalystEntries,
         };
+    }
+
+    /**
+     * Render one session's per-catalyst cell (Catalyst of Transmutation or
+     * Prime Catalyst) from its `computeSessionProfit` detail.
+     *
+     * Unlike decompose and coinify, transmute records catalyst use as a map —
+     * a session can swap catalysts mid-run — so the count for a specific
+     * catalyst hrid is read out of `catalystEntries` rather than a dedicated
+     * field. A session with no entries at all and `catalystUnrecorded` set
+     * predates catalyst tracking; that is "unknown", not "zero used", and gets
+     * the same dash-with-tooltip treatment `renderCatalystCountCell` gives a
+     * decompose or coinify session in the same state.
+     *
+     * @param {HTMLElement} cell
+     * @param {Object} detail - A `computeSessionProfit` result
+     * @param {string} catalystHrid
+     */
+    renderTransmuteCatalystCell(cell, detail, catalystHrid) {
+        const entry = detail.catalystEntries?.find((e) => e.hrid === catalystHrid);
+        const count = entry?.count || 0;
+        renderCatalystCountCell(cell, catalystHrid, count, (el, hrid, size) => this.appendItemIcon(el, hrid, size), {
+            unrecorded: detail.catalystUnrecorded,
+            estimated: detail.catalystEstimated && !!entry,
+        });
     }
 
     /**
