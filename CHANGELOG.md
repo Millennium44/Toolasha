@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Coinify and decompose history count a run's first batch
+
+- A coinify or decompose run's first message usually covers several attempts; it was recorded as one attempt with at most one success, undercounting coins, outputs and catalysts. Every attempt in it is now counted. Sessions already recorded keep their old figures.
+
 ### Trade stats on the order book
 
 - With Price History on, the order book shows an item's average and median traded price, volume, estimated bought/sold split and min/max over 1, 3 and 5 days, with a ⚙ menu to choose columns. Ported and translated from the "交易量显示" (Trade Volume Display) userscript by baozhi & SukiSukiDaiSuki (CC-BY-NC-SA-4.0).
