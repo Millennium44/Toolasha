@@ -169,7 +169,7 @@ export function renderTotalsSection(container, { heading, columns, rows, legendP
     container.appendChild(headingEl);
 
     const table = document.createElement('table');
-    table.style.cssText = `width: max-content; border-collapse: collapse; color: #fff; white-space: nowrap; font-size: ${HISTORY_TYPE_SCALE.body};`;
+    table.style.cssText = `width: 100%; min-width: max-content; border-collapse: collapse; color: #fff; white-space: nowrap; font-size: ${HISTORY_TYPE_SCALE.body};`;
 
     const thead = document.createElement('thead');
     const headerRow = document.createElement('tr');
@@ -191,7 +191,9 @@ export function renderTotalsSection(container, { heading, columns, rows, legendP
 
     if (legendParts.length > 0) {
         const legend = document.createElement('div');
-        legend.style.cssText = `color: #888; font-size: ${HISTORY_TYPE_SCALE.note}; margin-top: 6px;`;
+        // contain: inline-size keeps this long paragraph from sizing the fit-content modal; it wraps to
+        // the tables' width instead of stretching the modal to 95vw.
+        legend.style.cssText = `color: #888; font-size: ${HISTORY_TYPE_SCALE.note}; margin-top: 6px; contain: inline-size;`;
         legend.textContent = legendParts.join('    ');
         container.appendChild(legend);
     }

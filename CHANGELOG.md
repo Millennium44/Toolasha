@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Alchemy history windows line up
+
+- The session table, the totals table and the footnote in the Transmute, Coinify and Decompose history windows now share one width, instead of the footnote stretching the window past both tables.
+
 ### Transmute history counts a first-attempt self-return
 
 - A transmute run whose first attempt handed the item back no longer records that attempt as a failure, which had charged the input twice (one refined cape showed as a two-cape loss). Sessions already recorded keep their old figures.

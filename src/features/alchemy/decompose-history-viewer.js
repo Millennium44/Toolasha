@@ -668,7 +668,7 @@ class DecomposeHistoryViewer {
         while (tableContainer.firstChild) tableContainer.removeChild(tableContainer.firstChild);
 
         const table = document.createElement('table');
-        table.style.cssText = `width: max-content; border-collapse: collapse; color: #fff; white-space: nowrap; font-size: ${HISTORY_TYPE_SCALE.body};`;
+        table.style.cssText = `width: 100%; min-width: max-content; border-collapse: collapse; color: #fff; white-space: nowrap; font-size: ${HISTORY_TYPE_SCALE.body};`;
 
         // Header
         const thead = document.createElement('thead');
