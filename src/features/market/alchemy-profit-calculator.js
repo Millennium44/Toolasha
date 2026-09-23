@@ -716,6 +716,10 @@ class AlchemyProfitCalculator {
     /**
      * @param {string} itemHrid - Item HRID
      * @param {number} enhancementLevel - Enhancement level (default 0)
+     * @param {boolean} [useLiveSetup] - Read the live panel's catalyst/tea. Ignored when catalystChoice is given.
+     * @param {number|null} [teaBonusOverride]
+     * @param {Object|null} [actionContext]
+     * @param {'none'|'typeSpecific'|'prime'|null} [catalystChoice] - Force a catalyst, as for transmute
      * @returns {Object|null} Detailed profit data or null if not coinifiable
      */
     calculateCoinifyProfit(
@@ -723,7 +727,8 @@ class AlchemyProfitCalculator {
         enhancementLevel = 0,
         useLiveSetup = false,
         teaBonusOverride = null,
-        actionContext = null
+        actionContext = null,
+        catalystChoice = null
     ) {
         try {
             const gameData = dataManager.getInitClientData();
@@ -807,7 +812,10 @@ class AlchemyProfitCalculator {
                 gameData.itemDetailMap
             );
             const noTeaEconomics =
-                !useLiveSetup && !actionContext?.fixedTeaSelection && drinkSlots?.some((drink) => drink?.itemHrid)
+                !catalystChoice &&
+                !useLiveSetup &&
+                !actionContext?.fixedTeaSelection &&
+                drinkSlots?.some((drink) => drink?.itemHrid)
                     ? calculateNoTeaEconomics(actionDetails, {
                           equipment,
                           skills,
@@ -825,7 +833,11 @@ class AlchemyProfitCalculator {
             });
 
             // Find the best catalyst+tea combination (tooltip) or use live setup (action page)
-            const _comboFn = useLiveSetup ? this._liveSetupCombo.bind(this) : this._bestCatalystCombo.bind(this);
+            const _comboFn = catalystChoice
+                ? this._forcedCatalystCombo.bind(this)
+                : useLiveSetup
+                  ? this._liveSetupCombo.bind(this)
+                  : this._bestCatalystCombo.bind(this);
             const combo = _comboFn({
                 actionType: 'coinify',
                 baseSuccessRate: BASE_SUCCESS_RATES.COINIFY,
@@ -837,6 +849,7 @@ class AlchemyProfitCalculator {
                 computeNetProfit: (successRate) => coinsProduced * successRate - (materialCost + coinCost),
                 computeTeaCost: () => teaCostData.totalCostPerHour,
                 teaBonusOverride,
+                catalystChoice,
                 fixedTeaSelection: actionContext?.fixedTeaSelection === true,
                 hasMissingTeaPrices: teaCostData.hasMissingPrices,
                 noTeaEconomics,
@@ -999,6 +1012,10 @@ class AlchemyProfitCalculator {
      * Calculate Decompose profit for an item with full detailed breakdown
      * @param {string} itemHrid - Item HRID
      * @param {number} enhancementLevel - Enhancement level (default 0)
+     * @param {boolean} [useLiveSetup] - Read the live panel's catalyst/tea. Ignored when catalystChoice is given.
+     * @param {number|null} [teaBonusOverride]
+     * @param {Object|null} [actionContext]
+     * @param {'none'|'typeSpecific'|'prime'|null} [catalystChoice] - Force a catalyst, as for transmute
      * @returns {Object|null} Profit data or null if not decomposable
      */
     calculateDecomposeProfit(
@@ -1006,7 +1023,8 @@ class AlchemyProfitCalculator {
         enhancementLevel = 0,
         useLiveSetup = false,
         teaBonusOverride = null,
-        actionContext = null
+        actionContext = null,
+        catalystChoice = null
     ) {
         try {
             const gameData = dataManager.getInitClientData();
@@ -1148,7 +1166,10 @@ class AlchemyProfitCalculator {
                 gameData.itemDetailMap
             );
             const noTeaEconomics =
-                !useLiveSetup && !actionContext?.fixedTeaSelection && drinkSlots?.some((drink) => drink?.itemHrid)
+                !catalystChoice &&
+                !useLiveSetup &&
+                !actionContext?.fixedTeaSelection &&
+                drinkSlots?.some((drink) => drink?.itemHrid)
                     ? calculateNoTeaEconomics(actionDetails, {
                           equipment,
                           skills,
@@ -1166,7 +1187,11 @@ class AlchemyProfitCalculator {
             });
 
             // Find the best catalyst+tea combination (tooltip) or use live setup (action page)
-            const _comboFn = useLiveSetup ? this._liveSetupCombo.bind(this) : this._bestCatalystCombo.bind(this);
+            const _comboFn = catalystChoice
+                ? this._forcedCatalystCombo.bind(this)
+                : useLiveSetup
+                  ? this._liveSetupCombo.bind(this)
+                  : this._bestCatalystCombo.bind(this);
             const combo = _comboFn({
                 actionType: 'decompose',
                 baseSuccessRate: BASE_SUCCESS_RATES.DECOMPOSE,
@@ -1178,6 +1203,7 @@ class AlchemyProfitCalculator {
                 computeNetProfit: (successRate) => outputValue * successRate - (inputPrice + coinCost),
                 computeTeaCost: () => teaCostData.totalCostPerHour,
                 teaBonusOverride,
+                catalystChoice,
                 fixedTeaSelection: actionContext?.fixedTeaSelection === true,
                 hasMissingTeaPrices: teaCostData.hasMissingPrices,
                 noTeaEconomics,

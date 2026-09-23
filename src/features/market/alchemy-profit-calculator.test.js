@@ -6,7 +6,7 @@
  * and the six-combination search that picks the best catalyst+tea setup.
  */
 
-import { describe, test, expect, beforeEach, vi } from 'vitest';
+import { describe, test, expect, beforeEach, afterEach, vi } from 'vitest';
 
 const mocks = vi.hoisted(() => ({
     alchemyTeaBonus: 0,
@@ -693,6 +693,69 @@ describe('official alchemy rules', () => {
         } finally {
             vi.unstubAllGlobals();
         }
+    });
+
+    describe('a forced catalyst choice, as a queued action carries its own catalyst', () => {
+        const forced = [
+            [
+                'coinify',
+                0.7,
+                '/items/catalyst_of_coinification',
+                (calc, choice) => calc.calculateCoinifyProfit('/items/cheese', 0, true, null, null, choice),
+            ],
+            [
+                'decompose',
+                0.6,
+                '/items/catalyst_of_decomposition',
+                (calc, choice) => calc.calculateDecomposeProfit('/items/cheese_hat', 0, true, null, null, choice),
+            ],
+            [
+                'transmute',
+                0.5,
+                '/items/catalyst_of_transmutation',
+                (calc, choice) => calc.calculateTransmuteProfit('/items/milk', true, null, choice),
+            ],
+        ];
+
+        beforeEach(() => {
+            mocks.itemPrices = {
+                '/items/catalyst_of_coinification': 100,
+                '/items/catalyst_of_decomposition': 100,
+                '/items/catalyst_of_transmutation': 100,
+                '/items/prime_catalyst': 300,
+            };
+            // The open panel shows a Prime Catalyst; a forced choice must not read it
+            const icon = { getAttribute: (name) => (name === 'href' ? '#prime_catalyst' : null) };
+            vi.stubGlobal('document', { querySelector: () => icon });
+        });
+
+        afterEach(() => {
+            vi.unstubAllGlobals();
+        });
+
+        test.each(forced)('%s: "prime" charges the prime catalyst at its rate', (_n, base, _type, run) => {
+            const result = run(alchemyProfitCalculator, 'prime');
+            expect(result.catalystCost.itemHrid).toBe('/items/prime_catalyst');
+            expect(result.successRate).toBeCloseTo(base * 1.25, 10);
+            expect(result.catalystCost.costPerAttempt).toBeCloseTo(300 * base * 1.25, 8);
+        });
+
+        test.each(forced)('%s: "typeSpecific" picks the catalyst for that kind', (_n, base, type, run) => {
+            const result = run(alchemyProfitCalculator, 'typeSpecific');
+            expect(result.catalystCost.itemHrid).toBe(type);
+            expect(result.successRate).toBeCloseTo(base * 1.15, 10);
+        });
+
+        test.each(forced)('%s: "none" ignores the catalyst in the open panel', (_n, base, _type, run) => {
+            const result = run(alchemyProfitCalculator, 'none');
+            expect(result.catalystCost.itemHrid).toBeNull();
+            expect(result.successRate).toBeCloseTo(base, 10);
+        });
+
+        test.each(forced)('%s: a forced catalyst with no price gives no result', (_n, _base, _type, run) => {
+            mocks.itemPrices['/items/prime_catalyst'] = null;
+            expect(run(alchemyProfitCalculator, 'prime')).toBeNull();
+        });
     });
 
     test('decompose enhancing-essence yield doubles with each enhancement level', () => {
