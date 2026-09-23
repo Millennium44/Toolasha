@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Alchemy history backup and import
+
+- The Transmute, Coinify and Decompose history windows can save a full JSON backup and import one back. An imported session replaces the stored session with the same id and new ones are added, after a confirmation showing what will change, so a corrected session can be put back.
+
 ### Alchemy history windows line up
 
 - The session table, the totals table and the footnote in the Transmute, Coinify and Decompose history windows now share one width, instead of the footnote stretching the window past both tables.
