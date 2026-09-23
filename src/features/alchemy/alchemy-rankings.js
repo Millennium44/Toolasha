@@ -258,7 +258,8 @@ export function rankAlchemyType(type) {
         if (!profitData) continue;
 
         const itemLevel = itemDetails.itemLevel || 1;
-        const xpPerAction = calcXpPerAction(type, itemLevel, profitData.successRate);
+        // XP reads a level-less item at 0, as the action panel and the queue rows do
+        const xpPerAction = calcXpPerAction(type, itemDetails.itemLevel || 0, profitData.successRate);
 
         results.push({
             action: type,

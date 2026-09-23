@@ -281,6 +281,34 @@ describe('rankAlchemyType', () => {
         expect(row.xpPerHour).toBeCloseTo(ACTIONS_PER_HOUR * perAction, 6);
     });
 
+    test('a level-less item earns level-0 experience, as on the action panel and queue rows', () => {
+        mocks.initClientData = gameData({
+            '/items/seal_of_gathering': {
+                name: 'Scroll Of Gathering',
+                sellPrice: 0,
+                alchemyDetail: { decomposeItems: [{ itemHrid: '/items/whey', count: 1 }], bulkMultiplier: 1 },
+            },
+        });
+        const row = rankAlchemyType('decompose').find((r) => r.itemHrid === '/items/seal_of_gathering');
+        // decompose base XP at level 0 is 14; 60% success, 10% on failure
+        expect(row.xpPerHour).toBeCloseTo(ACTIONS_PER_HOUR * (0.6 * 14 + 0.4 * 1.4), 6);
+    });
+
+    test('a transmute table at a 0% success rate is not ranked at all', () => {
+        mocks.initClientData = gameData({
+            '/items/ore': {
+                name: 'Ore',
+                itemLevel: 30,
+                sellPrice: 500,
+                alchemyDetail: {
+                    transmuteSuccessRate: 0,
+                    transmuteDropTable: [{ itemHrid: '/items/gem', dropRate: 1, minCount: 1, maxCount: 1 }],
+                },
+            },
+        });
+        expect(rankAlchemyType('transmute')).toEqual([]);
+    });
+
     test('says nothing at all when there is no game data', () => {
         mocks.initClientData = null;
         expect(rankAlchemyType('coinify')).toEqual([]);

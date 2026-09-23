@@ -653,6 +653,45 @@ describe('calculateSkillPerformance — alchemy', () => {
         expect(result.xpPerHour).toBeCloseTo(180 * xpPerAction, 8);
     });
 
+    test('a transmute table at a 0% success rate earns no XP, not the 10% failure award', () => {
+        state.gameData.itemDetailMap['/items/dud'] = {
+            itemLevel: 20,
+            alchemyDetail: {
+                transmuteSuccessRate: 0,
+                transmuteDropTable: [{ itemHrid: '/items/cheese', dropRate: 1, minCount: 1, maxCount: 1 }],
+            },
+        };
+        state.gameData.actionDetailMap['/actions/alchemy/transmute'] = {
+            type: '/action_types/alchemy',
+            name: 'Transmute',
+            baseTimeCost: 20e9,
+            levelRequirement: { level: 1 },
+        };
+        alchemyCalc.transmute = () => null;
+
+        const result = calculateSkillPerformance('alchemy', new Map(), [], 20, null, {
+            alchemyContext: { actionType: 'transmute', itemHrid: '/items/dud', enhancementLevel: 0 },
+        });
+
+        expect(result.xpPerHour).toBe(0);
+    });
+
+    test('a level-less input (a Labyrinth scroll) earns level-0 XP rather than none', () => {
+        state.gameData.itemDetailMap['/items/seal_of_gathering'] = {
+            alchemyDetail: { decomposeItems: [{ itemHrid: '/items/labyrinth_token', count: 5 }] },
+        };
+        state.gameData.actionDetailMap['/actions/alchemy/decompose'].baseTimeCost = 20e9;
+        alchemyCalc.decompose = () => ({ profitPerHour: 1 });
+
+        const result = calculateSkillPerformance('alchemy', new Map(), [], 20, null, {
+            alchemyContext: { actionType: 'decompose', itemHrid: '/items/seal_of_gathering', enhancementLevel: 0 },
+        });
+
+        // 180 actions/hr at 20 s, +20% level efficiency (level 20 over level 0); decompose at
+        // level 0 is 14 XP, 60% success, 10% on failure
+        expect(result.xpPerHour).toBeCloseTo(180 * 1.2 * (0.6 * 14 + 0.4 * 1.4), 6);
+    });
+
     test('an explicit item selection overrides a different running Alchemy action', () => {
         state.gameData.itemDetailMap['/items/refined_plate'] = {
             alchemyDetail: { unrefineDetail: { baseItemHrid: '/items/base_plate' } },

@@ -612,10 +612,11 @@ function calculateAlchemyXpPerHour(alchemyContext, buffs, playerLevel, otherEffi
     if (!actionDetails) return 0;
 
     const itemDetails = gameData.itemDetailMap?.[itemHrid];
-    if (!itemDetails?.itemLevel) return 0;
+    if (!itemDetails) return 0;
 
-    // Base XP from alchemy formula (depends on action type + item level)
-    const itemLevel = itemDetails.itemLevel;
+    // Base XP from alchemy formula (depends on action type + item level). A level-less input
+    // (Labyrinth scrolls) is level 0, as on the action panel and the queue rows.
+    const itemLevel = itemDetails.itemLevel || 0;
     let baseXP;
     switch (actionType) {
         case 'coinify':
@@ -639,6 +640,9 @@ function calculateAlchemyXpPerHour(alchemyContext, buffs, playerLevel, otherEffi
     else if (actionType === 'decompose') baseSuccessRate = 0.6;
     else if (actionType === 'unrefine') baseSuccessRate = 1;
     else baseSuccessRate = itemDetails.alchemyDetail?.transmuteSuccessRate || 0;
+    // A transmute table at a 0% rate cannot be run; the calculator refuses it, and the
+    // 10%-on-failure term below would otherwise award XP for an action that never happens
+    if (!(baseSuccessRate > 0)) return 0;
 
     // Coinify, Decompose and Transmute all use the item's level for the same
     // under-level penalty. Catalytic Tea is additive with that penalty inside
