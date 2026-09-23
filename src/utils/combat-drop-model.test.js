@@ -150,6 +150,25 @@ describe('buildCombatSession', () => {
         expect(common.maxCount).toBeCloseTo(6, 12);
     });
 
+    test('tier-locked monster drops are absent until the selected difficulty', () => {
+        const tieredMonsters = {
+            '/monsters/grunt': {
+                dropTable: [{ itemHrid: '/items/a', dropRate: 1, minCount: 1, maxCount: 1, minDifficultyTier: 2 }],
+                rareDropTable: [
+                    { itemHrid: '/items/rare', dropRate: 1, minCount: 1, maxCount: 1, minDifficultyTier: 1 },
+                ],
+            },
+        };
+
+        const tier0 = build({ monsterDetailMap: tieredMonsters, difficultyTier: 0 });
+        const tier1 = build({ monsterDetailMap: tieredMonsters, difficultyTier: 1 });
+        const tier2 = build({ monsterDetailMap: tieredMonsters, difficultyTier: 2 });
+
+        expect(tier0.monsterDrops['/monsters/grunt']).toEqual([]);
+        expect(tier1.monsterDrops['/monsters/grunt'].map((drop) => drop.itemHrid)).toEqual(['/items/rare']);
+        expect(tier2.monsterDrops['/monsters/grunt'].map((drop) => drop.itemHrid)).toEqual(['/items/a', '/items/rare']);
+    });
+
     test('refuses a dungeon rather than modelling it wrong', () => {
         // Dungeons pay from a reward table on completion, not per monster
         const dungeon = { combatZoneInfo: { ...zone.combatZoneInfo, isDungeon: true } };

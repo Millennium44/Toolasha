@@ -1375,6 +1375,8 @@ export function calculateExpectedDrops(simResult, gameData, playerHrid = 'player
                 for (const drop of monsterData.rareDropTable) {
                     if (drop.minDifficultyTier > difficultyTier) continue;
 
+                    const tierMultiplier = 1.0 + 0.1 * difficultyTier;
+                    const baseRate = drop.dropRate + (drop.dropRatePerDifficultyTier ?? 0) * difficultyTier;
                     // Capped at certainty, the same way the regular-drop path
                     // above and `effectiveDropRate` in combat-drop-model.js
                     // both cap. A drop rate is the chance of one Bernoulli
@@ -1392,7 +1394,8 @@ export function calculateExpectedDrops(simResult, gameData, playerHrid = 'player
                     // already in force on both of the other two paths, and it
                     // is the one reading that holds whichever way the guide is
                     // meant: a probability cannot exceed certainty either way.
-                    const adjustedRate = Math.min(1.0, drop.dropRate * rareFindMultiplier);
+                    const adjustedRate = Math.min(1.0, tierMultiplier * baseRate * rareFindMultiplier);
+                    if (adjustedRate <= 0) continue;
                     const avgCount = (drop.minCount + (drop.maxCount ?? drop.minCount)) / 2;
                     const expected =
                         (killCount * adjustedRate * avgCount * (1 + debuffOnLevelGap) * (1 + combatDropQuantity)) /

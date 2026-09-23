@@ -146,3 +146,21 @@ describe('a drop rate cannot pass certainty', () => {
         expect(overshot.get(COMMON)).toBeCloseTo(100);
     });
 });
+
+describe('tiered rare-drop rewards', () => {
+    test('a tier raises a rare rate by its own step and the combat-tier multiplier', () => {
+        const tieredData = {
+            ...zoneGameData,
+            combatMonsterDetailMap: {
+                [MONSTER]: {
+                    dropTable: [],
+                    rareDropTable: [
+                        { itemHrid: RARE, dropRate: 0.2, dropRatePerDifficultyTier: 0.05, minCount: 1, maxCount: 1 },
+                    ],
+                },
+            },
+        };
+        const drops = calculateExpectedDrops(zoneResult({ difficultyTier: 2 }), tieredData);
+        expect(drops.get(RARE)).toBeCloseTo(100 * (0.2 + 2 * 0.05) * 1.2);
+    });
+});

@@ -6,6 +6,11 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Combat drop estimates respect difficulty tiers
+
+- Drop Luck now excludes monster items that are locked until a higher difficulty tier, so low-tier runs are compared with rewards they can actually earn.
+- Combat Simulator revenue now applies difficulty-tier rate increases to rare drops as well as common drops, so higher-tier rare rewards are included in expected profit.
+
 ### Alchemy forecasts account for unknown catalysts and recorded setups
 
 - Coinify, Decompose, and Transmute no longer show a live profit with a free catalyst when its market price is unavailable. An explicitly selected catalyst in Transmute risk estimates also requires a known price.

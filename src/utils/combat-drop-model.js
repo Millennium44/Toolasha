@@ -5,7 +5,7 @@
  *
  * Kept apart from the feature that displays the result because this is where
  * being wrong is invisible. A drop rate read straight out of the data is not the
- * rate you experience: difficulty tier raises it, your combat drop stats raise it
+ * rate you experience: difficulty tier can unlock it and raises its rate, your combat drop stats raise it
  * again, party size divides the quantity, and a rare drop scales by a different
  * stat than a common one. Get any of those wrong and the luck percentile is still
  * a plausible-looking number — it just quietly says everyone with drop-rate gear
@@ -153,6 +153,10 @@ export function buildCombatSession({
     const quantity = dropQuantityMultiplier(bonuses, partySize, false);
 
     const priceDrop = (drop) => {
+        // Tier-gated rewards do not exist in lower-tier loot tables, even when
+        // their base rate is positive. Including them inflates the expected
+        // value and makes an ordinary run look unlucky.
+        if ((drop.minDifficultyTier || 0) > difficultyTier) return null;
         const price = priceOf(drop.itemHrid);
         if (!(price > 0)) return null;
 
