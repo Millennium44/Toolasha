@@ -4,7 +4,7 @@
     "description": "Toolasha - Enhanced tools for Milky Way Idle",
     "type": "module",
     "scripts": {
-        "build": "node scripts/check-bundle-sharing.mjs && BUILD_MODE=production rollup -c",
+        "build": "node scripts/check-bundle-sharing.mjs && BUILD_MODE=production rollup -c && node scripts/check-bundle-load-order.mjs",
         "check:sharing": "node scripts/check-bundle-sharing.mjs",
         "build:dev": "BUILD_TARGET=dev-standalone rollup -c",
         "build:enhancement": "rollup -c rollup.config.enhancement.js",

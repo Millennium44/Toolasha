@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Fix: 3.58.0 stopped loading halfway
+
+- 3.58.0 loaded only its first four libraries, leaving most features missing, because the Skilling Optimizer pulled in a piece of the Combat library that had not loaded yet. The optimizer now uses its own copy of the enhancement-cost helper, and the build refuses to produce a release where any library reads one that loads after it.
+
 <!-- shipped in 3.58.0 -->
 
 ### Arrange My Listings by dragging

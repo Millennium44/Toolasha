@@ -69,7 +69,7 @@ vi.mock('../../utils/profit-helpers.js', () => ({
         return { price, missing: false, estimated: false, custom: false };
     },
 }));
-vi.mock('../combat-sim/upgrade-advisor.js', () => ({
+vi.mock('../combat-sim/direct-enhancement-cost.js', () => ({
     calculateDirectEnhancementCost: (itemHrid, startLevel, targetLevel, gameData) => {
         enhancementPricing.calls.push({ itemHrid, startLevel, targetLevel, gameData });
         return enhancementPricing.cost;

@@ -16,7 +16,7 @@ import {
     isAlchemyContextApplicable,
 } from '../../utils/tea-optimizer.js';
 import { resolveItemPrice } from '../../utils/profit-helpers.js';
-import { calculateDirectEnhancementCost } from '../combat-sim/upgrade-advisor.js';
+import { calculateDirectEnhancementCost } from '../combat-sim/direct-enhancement-cost.js';
 
 export { getSkillActionsForDisplay, calculateSkillPerformance, findOptimalTeas, resolveActiveAlchemyItemContext };
 

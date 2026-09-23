@@ -30,6 +30,7 @@ BUILD_TARGET=dev-standalone npx rollup -c 2>&1 | tail -1
 step 'Build: production (includes bundle-sharing check)'
 BUILD_MODE=production npx rollup -c 2>&1 | tail -1
 node scripts/check-bundle-sharing.mjs
+node scripts/check-bundle-load-order.mjs
 
 step 'Bundle sizes (2097152-byte @require ceiling)'
 limit=2097152
