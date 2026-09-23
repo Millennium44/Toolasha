@@ -40,7 +40,6 @@ export const IRON_COW_SETTINGS = new Set([
     // means disable() skips them in any snapshot an older build already wrote.
     'market_showOrderTotals',
     'market_showHistoryViewer',
-    'market_historyClock',
     'market_showPhiloCalculator',
     'market_showQueueLength',
     // Profit / pricing calculations

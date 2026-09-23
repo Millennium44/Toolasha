@@ -22,7 +22,6 @@ import listingMarkers, { markerStateFor } from './listing-markers.js';
 /** Rows here are finished trades, not working orders. Markers are told so. */
 const HISTORY_SURFACE = { surface: 'history' };
 import estimatedListingAge from './estimated-listing-age.js';
-import { MarketClockPanel } from './market-clock-view.js';
 
 class MarketHistoryViewer {
     constructor() {
@@ -62,9 +61,6 @@ class MarketHistoryViewer {
 
         // Performance optimization: cache item names to avoid repeated lookups
         this.itemNameCache = new Map();
-
-        /** The open "When it trades" section, or null */
-        this.clockPanel = null;
     }
 
     /**
@@ -618,76 +614,6 @@ class MarketHistoryViewer {
         if (this.modal) {
             this.modal.style.display = 'none';
         }
-        // Its item list is this opening's listings; the next opening may be another character's
-        this.closeClockPanel();
-    }
-
-    /**
-     * Items the "When it trades" section can look up: each item and level in
-     * the loaded listings once, by name.
-     * @returns {Array<{itemHrid: string, enhancementLevel: number, name: string}>}
-     */
-    clockItems() {
-        const seen = new Map();
-        for (const listing of this.listings) {
-            if (!listing?.itemHrid) continue;
-            const enhancementLevel = Number(listing.enhancementLevel) || 0;
-            const key = `${listing.itemHrid}:${enhancementLevel}`;
-            if (!seen.has(key)) {
-                seen.set(key, {
-                    itemHrid: listing.itemHrid,
-                    enhancementLevel,
-                    name: this.getItemName(listing.itemHrid),
-                });
-            }
-        }
-        return [...seen.values()].sort(
-            (a, b) => a.name.localeCompare(b.name) || a.enhancementLevel - b.enhancementLevel
-        );
-    }
-
-    /**
-     * The item the section opens on: the one the item filter narrows to, else
-     * the most recently listed.
-     * @returns {{itemHrid: string, enhancementLevel: number}|null}
-     */
-    clockInitialItem() {
-        if (this.filters.selectedItems.length === 1) {
-            const itemHrid = this.filters.selectedItems[0];
-            const levels = this.filters.selectedEnhLevels;
-            return { itemHrid, enhancementLevel: levels.length === 1 ? Number(levels[0]) || 0 : 0 };
-        }
-        let latest = null;
-        let latestTime = -Infinity;
-        for (const listing of this.listings) {
-            const time = Number(listing?.timestamp) || 0;
-            if (listing?.itemHrid && time > latestTime) {
-                latest = listing;
-                latestTime = time;
-            }
-        }
-        return latest ? { itemHrid: latest.itemHrid, enhancementLevel: Number(latest.enhancementLevel) || 0 } : null;
-    }
-
-    /**
-     * Open or close the "When it trades" section above the table.
-     */
-    toggleClockPanel() {
-        if (this.clockPanel) {
-            this.closeClockPanel();
-            return;
-        }
-        const tableContainer = this.modal?.querySelector('.mwi-market-history-table-container');
-        if (!tableContainer) return;
-        this.clockPanel = new MarketClockPanel({ items: this.clockItems(), initial: this.clockInitialItem() });
-        tableContainer.parentNode.insertBefore(this.clockPanel.element, tableContainer);
-        this.clockPanel.load();
-    }
-
-    closeClockPanel() {
-        if (!this.clockPanel) return;
-        this.clockPanel.destroy();
-        this.clockPanel = null;
     }
 
     /**
@@ -980,22 +906,6 @@ class MarketHistoryViewer {
         });
         clearBtn.addEventListener('click', () => this.clearHistory());
 
-        if (config.getSetting('market_historyClock')) {
-            const clockBtn = document.createElement('button');
-            clockBtn.textContent = 'When it trades';
-            clockBtn.className = 'mwi-market-clock-button';
-            clockBtn.title = "An item's price and volume by hour of day and day of week, from the pooled price history";
-            clockBtn.style.cssText = `
-            padding: 6px 12px;
-            background: #16a085;
-            color: white;
-            border: none;
-            border-radius: 4px;
-            cursor: pointer;
-        `;
-            clockBtn.addEventListener('click', () => this.toggleClockPanel());
-            actionGroup.appendChild(clockBtn);
-        }
         actionGroup.appendChild(exportBtn);
         actionGroup.appendChild(importBtn);
         actionGroup.appendChild(clearBtn);
@@ -3069,8 +2979,6 @@ class MarketHistoryViewer {
             }
 
             this.timerRegistry.clearAll();
-
-            this.closeClockPanel();
 
             // Remove modal and all its event listeners
             if (this.modal) {

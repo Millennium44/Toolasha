@@ -6,10 +6,6 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
-### Market History shows when an item trades
-
-- A new "When it trades" view shows an item's ask, bid and volume by hour of your day and day of your week, from the pooled price history, so you can see when it is usually cheapest to buy, dearest to sell and busiest. Hours or days with too few samples are greyed out rather than shown as patterns.
-
 ### Combat sims show how old each party profile is
 
 - The Combat Sim shows each party member's cached profile age and warns when a member has no gear (a hidden profile) or no cached profile at all; exports to external sims list the same warnings instead of silently sending a gearless member.

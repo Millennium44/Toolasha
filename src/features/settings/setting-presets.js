@@ -182,7 +182,6 @@ const MARKET_EXTRAS = [
     'market_tradeHistory',
     'market_showOrderTotals',
     'market_showHistoryViewer',
-    'market_historyClock',
     'market_showPhiloCalculator',
     'market_showQueueLength',
     // Pricing & profit

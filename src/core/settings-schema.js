@@ -1693,14 +1693,6 @@ export const settingsGroups = {
                 default: true,
                 help: 'Adds "View Market History" button to settings panel for viewing and exporting all market listing history',
             },
-            market_historyClock: {
-                id: 'market_historyClock',
-                label: 'Market: "When it trades" view in market history',
-                type: 'checkbox',
-                default: true,
-                help: 'Adds a "When it trades" button to the Market History viewer: an item’s ask, bid and traded volume by hour of your day and day of your week, so you can see when it is usually cheapest to buy, dearest to sell and busiest. Prices are measured against their own day or week, so a price trend does not show up as a pattern, and hours or days with too few samples are greyed out. It reads the same pooled price history as "Market: Price history panel" and needs that turned on; with it off, this fetches nothing.',
-                requires: 'market_showHistoryViewer',
-            },
             market_showPhiloCalculator: {
                 id: 'market_showPhiloCalculator',
                 label: 'Market: Show Philo Gamba calculator button in settings',
