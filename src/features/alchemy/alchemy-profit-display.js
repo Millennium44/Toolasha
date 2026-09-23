@@ -330,12 +330,17 @@ class AlchemyProfitDisplay {
             let isCoinify = false;
             let isTransmute = false;
             let isDecompose = false;
+            // Unrefine has its own tab and its own calculator; without this flag the tab fell
+            // through to the decompose branch and priced the refined item as a decompose
+            let isUnrefine = false;
 
             const tabContainer = document.querySelector('[class*="AlchemyPanel_tabsComponentContainer"]');
             const selectedTab = tabContainer?.querySelector('[role="tab"][aria-selected="true"]');
             const tabText = selectedTab?.textContent?.trim()?.toLowerCase() || '';
 
-            if (tabText.includes('coinify')) {
+            if (tabText.includes('unrefine')) {
+                isUnrefine = true;
+            } else if (tabText.includes('coinify')) {
                 isCoinify = true;
             } else if (tabText.includes('transmute')) {
                 isTransmute = true;
@@ -345,6 +350,7 @@ class AlchemyProfitDisplay {
                 isCoinify = actionHrid === '/actions/alchemy/coinify';
                 isTransmute = actionHrid === '/actions/alchemy/transmute';
                 isDecompose = actionHrid === '/actions/alchemy/decompose';
+                isUnrefine = actionHrid === '/actions/alchemy/unrefine';
             } else {
                 // Final fallback: use drop/item data heuristics
                 isCoinify = drops.length > 0 && drops[0].itemHrid === '/items/coin';
@@ -365,7 +371,13 @@ class AlchemyProfitDisplay {
                 }
             }
 
-            if (isCoinify) {
+            if (isUnrefine) {
+                if (requirements && requirements.length > 0) {
+                    const itemHrid = requirements[0].itemHrid;
+                    const enhancementLevel = requirements[0].enhancementLevel || 0;
+                    profitData = alchemyProfitCalculator.calculateUnrefineProfit(itemHrid, enhancementLevel, true);
+                }
+            } else if (isCoinify) {
                 // Use unified calculator for coinify
                 if (requirements && requirements.length > 0) {
                     const itemHrid = requirements[0].itemHrid;
@@ -401,6 +413,7 @@ class AlchemyProfitDisplay {
             if (isCoinify) actionType = 'coinify';
             else if (isDecompose) actionType = 'decompose';
             else if (isTransmute) actionType = 'transmute';
+            else if (isUnrefine) actionType = 'unrefine';
 
             // Get item HRID from requirements
             const itemHrid = requirements && requirements.length > 0 ? requirements[0].itemHrid : null;

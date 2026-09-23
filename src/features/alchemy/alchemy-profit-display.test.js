@@ -35,6 +35,7 @@ const calculator = vi.hoisted(() => ({
     coinify: vi.fn(),
     decompose: vi.fn(),
     transmute: vi.fn(),
+    unrefine: vi.fn(),
 }));
 
 vi.mock('../../core/config.js', () => ({
@@ -78,6 +79,7 @@ vi.mock('../market/alchemy-profit-calculator.js', () => ({
         calculateCoinifyProfit: (...args) => calculator.coinify(...args),
         calculateDecomposeProfit: (...args) => calculator.decompose(...args),
         calculateTransmuteProfit: (...args) => calculator.transmute(...args),
+        calculateUnrefineProfit: (...args) => calculator.unrefine(...args),
     },
 }));
 
@@ -101,6 +103,7 @@ beforeEach(() => {
     calculator.coinify.mockReset().mockReturnValue(someProfit());
     calculator.decompose.mockReset().mockReturnValue(someProfit());
     calculator.transmute.mockReset().mockReturnValue(someProfit());
+    calculator.unrefine.mockReset().mockReturnValue(someProfit());
 });
 
 afterEach(() => {
@@ -227,6 +230,27 @@ describe('updateDisplay routes to the right calculator', () => {
 
         expect(calculator.transmute).toHaveBeenCalledWith('/items/cheese', true);
         expect(created.mock.calls[0][2]).toBe('transmute');
+    });
+
+    test('the Unrefine tab prices an unrefine, not a decompose of the refined item', async () => {
+        selectTab('Unrefine');
+        panel.requirements = [{ itemHrid: '/items/gatherer_cape_refined', enhancementLevel: 3 }];
+
+        await display.updateDisplay(document.createElement('div'));
+
+        expect(calculator.unrefine).toHaveBeenCalledWith('/items/gatherer_cape_refined', 3, true);
+        expect(calculator.decompose).not.toHaveBeenCalled();
+        expect(created.mock.calls[0][2]).toBe('unrefine');
+    });
+
+    test('with no tab bar a running unrefine routes to the unrefine calculator', async () => {
+        selectTab(null);
+        panel.actionHrid = '/actions/alchemy/unrefine';
+
+        await display.updateDisplay(document.createElement('div'));
+
+        expect(calculator.unrefine).toHaveBeenCalledWith('/items/cheese', 0, true);
+        expect(calculator.decompose).not.toHaveBeenCalled();
     });
 
     test('a missing enhancement level is treated as +0', async () => {
