@@ -738,6 +738,9 @@ class TransmuteHistoryViewer {
                 profitCell.textContent =
                     formatKMB(profitDetail.profit, 1) +
                     (profitDetail.inputUnpriced ? '*' : '') +
+                    (profitDetail.catalystUnpriced ? '†' : '') +
+                    (profitDetail.catalystUnrecorded ? '‡' : '') +
+                    (profitDetail.catalystEstimated ? '◇' : '') +
                     (profitDetail.revenueUnpriced ? '¶' : '') +
                     (profitDetail.revenueShopValued ? '‖' : '');
                 profitCell.style.cssText = `
@@ -751,7 +754,7 @@ class TransmuteHistoryViewer {
                     `${profitDetail.revenueShopValued ? ' (‖ includes a shop-derived value — see the result line below)' : ''}\n` +
                     `${formatInputCostLine(profitDetail)}\n` +
                     `Transmute coins: −${formatKMB(profitDetail.coinCost, 1)}\n` +
-                    `${this.formatCatalystLine(profitDetail)} (see totals row below)\n` +
+                    `${this.formatCatalystLine(profitDetail)}\n` +
                     `${this.formatRepairLine(session)}` +
                     `Excludes teas`;
                 row.appendChild(profitCell);
@@ -1496,14 +1499,13 @@ class TransmuteHistoryViewer {
 
     /**
      * Compute session profit: recorded output value minus the cost of consumed
-     * inputs (at current buy price — historical input prices were not recorded)
-     * and the transmute coin fee. Teas are not tracked, so they stay excluded
-     * from `profit`. Catalysts ARE now costed — as `catalystCost`, reported
-     * separately rather than folded into `profit` — because a session recorded
-     * before catalyst tracking existed has no way to say whether one was used,
-     * and folding an unknown into the headline profit figure would read as
-     * "free", which is exactly the mistake the input-pricing fallback below
-     * exists to avoid making a second time.
+     * inputs (at current buy price — historical input prices were not recorded),
+     * the transmute coin fee and the catalysts consumed. Teas are not tracked,
+     * so they stay excluded from `profit`. A catalyst that could not be priced
+     * or was never recorded adds nothing to `catalystCost`; the flags below say
+     * so and the Profit cell carries the same † / ‡ / ◇ marks the totals do,
+     * so an unknown cost never reads as a free one. `profit` summed over a
+     * group's sessions equals that group's Net.
      *
      * The recorded output values are RAW sell prices — a record of what the
      * market said, which is what a record should be — while the forecast in
@@ -1610,7 +1612,7 @@ class TransmuteHistoryViewer {
         const catalyst = this.computeCatalystCost(session);
 
         return {
-            profit: revenue - inputCost - coinCost,
+            profit: revenue - inputCost - coinCost - catalyst.catalystCost,
             revenue,
             revenueUnpriced,
             revenueShopValued,

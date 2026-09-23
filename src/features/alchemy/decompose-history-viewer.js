@@ -903,17 +903,27 @@ class DecomposeHistoryViewer {
                 // Catalyst of Decomposition
                 const cocCell = document.createElement('td');
                 cocCell.style.cssText = 'padding: 6px 10px; text-align: center;';
+                // A session predating catalyst tracking has no count at all — its dash
+                // means "unknown", not "none", and says so on hover
+                const catalystUnrecorded = (this.profitCache.get(session.id) || this.computeSessionProfit(session))
+                    .catalystUnrecorded;
                 this.renderCatalystCell(
                     cocCell,
                     CATALYST_OF_DECOMPOSITION_HRID,
-                    session.catalystOfDecompositionUsed || 0
+                    session.catalystOfDecompositionUsed || 0,
+                    catalystUnrecorded
                 );
                 row.appendChild(cocCell);
 
                 // Prime Catalyst
                 const pcCell = document.createElement('td');
                 pcCell.style.cssText = 'padding: 6px 10px; text-align: center;';
-                this.renderCatalystCell(pcCell, PRIME_CATALYST_HRID, session.primeCatalystUsed || 0);
+                this.renderCatalystCell(
+                    pcCell,
+                    PRIME_CATALYST_HRID,
+                    session.primeCatalystUsed || 0,
+                    catalystUnrecorded
+                );
                 row.appendChild(pcCell);
 
                 // Profit
@@ -926,6 +936,8 @@ class DecomposeHistoryViewer {
                 profitCell.textContent =
                     formatKMB(profitDetail.profit, 1) +
                     (profitDetail.inputUnpriced ? '*' : '') +
+                    (profitDetail.catalystUnpriced ? '†' : '') +
+                    (profitDetail.catalystUnrecorded ? '‡' : '') +
                     (profitDetail.revenueUnpriced ? '¶' : '') +
                     (profitDetail.revenueShopValued ? '§' : '');
                 profitCell.style.cssText = `
@@ -1460,9 +1472,12 @@ class DecomposeHistoryViewer {
      * @param {HTMLElement} cell
      * @param {string} catalystHrid
      * @param {number} count
+     * @param {boolean} [unrecorded] - The session predates catalyst tracking
      */
-    renderCatalystCell(cell, catalystHrid, count) {
-        renderCatalystCountCell(cell, catalystHrid, count, (el, hrid, size) => this.appendItemIcon(el, hrid, size));
+    renderCatalystCell(cell, catalystHrid, count, unrecorded = false) {
+        renderCatalystCountCell(cell, catalystHrid, count, (el, hrid, size) => this.appendItemIcon(el, hrid, size), {
+            unrecorded,
+        });
     }
 
     /**

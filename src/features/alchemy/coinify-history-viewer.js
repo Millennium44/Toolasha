@@ -817,17 +817,27 @@ class CoinifyHistoryViewer {
                 // Catalyst of Coinification
                 const cocCell = document.createElement('td');
                 cocCell.style.cssText = 'padding: 6px 10px;';
+                // A session predating catalyst tracking has no count at all — its dash
+                // means "unknown", not "none", and says so on hover
+                const catalystUnrecorded = (this.profitCache.get(session.id) || this.computeSessionProfit(session))
+                    .catalystUnrecorded;
                 this.renderCatalystCell(
                     cocCell,
                     CATALYST_OF_COINIFICATION_HRID,
-                    session.catalystOfCoinificationUsed || 0
+                    session.catalystOfCoinificationUsed || 0,
+                    catalystUnrecorded
                 );
                 row.appendChild(cocCell);
 
                 // Prime Catalyst
                 const pcCell = document.createElement('td');
                 pcCell.style.cssText = 'padding: 6px 10px;';
-                this.renderCatalystCell(pcCell, PRIME_CATALYST_HRID, session.primeCatalystUsed || 0);
+                this.renderCatalystCell(
+                    pcCell,
+                    PRIME_CATALYST_HRID,
+                    session.primeCatalystUsed || 0,
+                    catalystUnrecorded
+                );
                 row.appendChild(pcCell);
 
                 // Profit
@@ -835,7 +845,11 @@ class CoinifyHistoryViewer {
                 const profitDetail = this.profitCache.get(session.id) || this.computeSessionProfit(session);
                 // An unpriced input makes the figure incomplete, not zero-cost —
                 // the asterisk is what tells the two apart at a glance
-                profitCell.textContent = formatKMB(profitDetail.profit, 1) + (profitDetail.inputUnpriced ? '*' : '');
+                profitCell.textContent =
+                    formatKMB(profitDetail.profit, 1) +
+                    (profitDetail.inputUnpriced ? '*' : '') +
+                    (profitDetail.catalystUnpriced ? '†' : '') +
+                    (profitDetail.catalystUnrecorded ? '‡' : '');
                 profitCell.style.cssText = `
                     padding: 6px 10px;
                     font-weight: bold;
@@ -1089,9 +1103,12 @@ class CoinifyHistoryViewer {
      * @param {HTMLElement} cell
      * @param {string} catalystHrid
      * @param {number} count
+     * @param {boolean} [unrecorded] - The session predates catalyst tracking
      */
-    renderCatalystCell(cell, catalystHrid, count) {
-        renderCatalystCountCell(cell, catalystHrid, count, (el, hrid, size) => this.appendItemIcon(el, hrid, size));
+    renderCatalystCell(cell, catalystHrid, count, unrecorded = false) {
+        renderCatalystCountCell(cell, catalystHrid, count, (el, hrid, size) => this.appendItemIcon(el, hrid, size), {
+            unrecorded,
+        });
     }
 
     /**
