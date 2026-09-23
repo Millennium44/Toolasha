@@ -271,6 +271,21 @@ describe('guildCombatBuffLevels in the export', () => {
         expect(player.guildCombatBuffLevels).toEqual({ force: 0, tempo: 0, spirit: 0, rarity: 6, scholar: 0 });
     });
 
+    test('a shrine bought since login outranks the level the login snapshot carried', async () => {
+        dataManagerMock.characterData = selfCharacter({
+            characterGuildBuffMap: {
+                '/guild_buffs/force_combat': { level: 3 },
+                '/guild_buffs/tempo_combat': { level: 2 },
+            },
+        });
+        dataManagerMock.getCharacterGuildBuffLevel = vi.fn((hrid) => (hrid === '/guild_buffs/force_combat' ? 4 : 0));
+
+        const result = await constructExportObject();
+        const player = JSON.parse(result.exportObj[1]);
+
+        expect(player.guildCombatBuffLevels).toEqual({ force: 4, tempo: 2, spirit: 0, rarity: 0, scholar: 0 });
+    });
+
     test('a character whose shrine levels are simply unknown gets no key at all, and nor do blank slots', async () => {
         dataManagerMock.characterData = selfCharacter({ characterGuildBuffMap: {} });
 

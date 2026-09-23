@@ -430,15 +430,16 @@ export function constructSelfPlayer(characterObj, clientObj) {
 
     // Guild shrine levels. The login snapshot carries `characterGuildBuffMap`
     // ({buffHrid: {level}}); on the game page dataManager keeps a fresher copy that also
-    // survives a session where no guild traffic arrived. Either source counts as knowing
-    // the levels — an empty map is not a reading (it is what a character looks like before
-    // guild traffic arrives), and without a reading the block is omitted rather than zeroed.
+    // survives a session where no guild traffic arrived, so a live level outranks the
+    // snapshot's. Either source counts as knowing the levels — an empty map is not a reading
+    // (it is what a character looks like before guild traffic arrives), and without a
+    // reading the block is omitted rather than zeroed.
     const ownBuffMap = characterObj.characterGuildBuffMap;
     const liveLevel = (buffHrid) => dataManager.getCharacterGuildBuffLevel?.(buffHrid) || 0;
     const hasOwnMap = !!ownBuffMap && typeof ownBuffMap === 'object' && Object.keys(ownBuffMap).length > 0;
     if (hasOwnMap || GUILD_COMBAT_BUFF_HRIDS.some((hrid) => liveLevel(hrid) > 0)) {
         playerObj.guildCombatBuffLevels = buildGuildCombatBuffLevels(
-            (buffHrid) => guildBuffEntryLevel(ownBuffMap?.[buffHrid]) || liveLevel(buffHrid),
+            (buffHrid) => liveLevel(buffHrid) || guildBuffEntryLevel(ownBuffMap?.[buffHrid]),
             extraCombatBuffHrids(ownBuffMap)
         );
     }
