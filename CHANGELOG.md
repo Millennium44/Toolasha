@@ -14,6 +14,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 - An open House Targets grid now updates when the skip-skilling-rooms setting changes, while keeping levels entered for rooms that remain visible.
 
+### Alchemy optimizer respects the running item and selected action
+
+- Automatic recommendations now reject an invalid running Alchemy item and action pair instead of presenting a result for a combination the game cannot perform. Selecting a different Alchemy action also prevents the optimizer from scoring the wrong item action.
+
 ### Combat sims show how old each party profile is
 
 - The Combat Sim shows each party member's cached profile age and warns when a member has no gear (a hidden profile) or no cached profile at all; exports to external sims list the same warnings instead of silently sending a gearless member.

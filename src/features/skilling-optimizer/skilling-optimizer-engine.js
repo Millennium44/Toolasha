@@ -460,9 +460,9 @@ export function optimizeSkill(skillName, playerLevel, selectedActionHrids = null
     const alchemyContext =
         skillName.toLowerCase() === 'alchemy' ? alchemyItemOverride || resolveActiveAlchemyItemContext() : null;
     if (
-        skillName.toLowerCase() === 'alchemy' &&
-        alchemyItemOverride &&
-        !isAlchemyContextApplicable(alchemyItemOverride, itemDetailMap)
+        alchemyContext &&
+        (!isAlchemyContextApplicable(alchemyContext, itemDetailMap) ||
+            (selectedActionHrids && !selectedActionHrids.has(`/actions/alchemy/${alchemyContext.actionType}`)))
     ) {
         return null;
     }

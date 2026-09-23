@@ -467,8 +467,8 @@ class SkillingSimulatorUI {
                                 { xpResult: xpAchievable, goldResult: goldAchievable },
                                 loadoutItemMap.size > 0 ? loadoutItemMap : null
                             );
-                        } else if (this.currentSkill === 'Alchemy' && this.alchemyItemOverride) {
-                            resultsArea.textContent = 'That item cannot perform the selected Alchemy action.';
+                        } else if (this.currentSkill === 'Alchemy') {
+                            resultsArea.textContent = 'The Alchemy action and item cannot be optimized together.';
                         }
                     }, 0)
                 );

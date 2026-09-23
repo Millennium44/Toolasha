@@ -211,6 +211,24 @@ describe('optimizeSkill Alchemy item basis', () => {
         expect(scoring.teaCalls.map((call) => call.goal)).toEqual(['xp', 'gold']);
     });
 
+    test('rejects an invalid running action item before displaying an automatic recommendation', () => {
+        scoring.activeAlchemyContext = {
+            actionType: 'coinify',
+            itemHrid: '/items/decompose_only',
+            enhancementLevel: 0,
+        };
+        expect(optimizeSkill('Alchemy', 60)).toBeNull();
+        expect(scoring.calls).toHaveLength(0);
+        expect(scoring.teaCalls).toHaveLength(0);
+    });
+
+    test('does not score an item action excluded by the selected Alchemy actions', () => {
+        const selected = new Set(['/actions/alchemy/decompose']);
+        expect(optimizeSkill('Alchemy', 60, selected, context)).toBeNull();
+        expect(scoring.calls).toHaveLength(0);
+        expect(scoring.teaCalls).toHaveLength(0);
+    });
+
     test('a saved Alchemy item choice does not block optimizing another skill', () => {
         const stale = { actionType: 'coinify', itemHrid: '/items/decompose_only', enhancementLevel: 0 };
         expect(optimizeSkill('Cheesesmithing', 60, null, stale)).not.toBeNull();
