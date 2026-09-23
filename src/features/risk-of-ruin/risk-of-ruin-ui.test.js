@@ -71,6 +71,11 @@ vi.mock('../../utils/panel-geometry.js', () => ({
     }),
 }));
 
+// The transmute model is priced elsewhere; these tests only read what the panel says about it.
+vi.mock('../../utils/risk-of-ruin-adapters/alchemy-adapter.js', () => ({
+    buildAlchemyTransmuteModel: vi.fn(() => null),
+}));
+
 const { PANEL_ID, LAUNCHER_ID, TAB_ID, PANEL_KEY } = vi.hoisted(() => ({
     PANEL_ID: 'mwi-risk-of-ruin-panel',
     LAUNCHER_ID: 'mwi-risk-of-ruin-launcher',
@@ -79,6 +84,7 @@ const { PANEL_ID, LAUNCHER_ID, TAB_ID, PANEL_KEY } = vi.hoisted(() => ({
 }));
 
 import config from '../../core/config.js';
+import dataManager from '../../core/data-manager.js';
 import { reopenIfLeftOpen } from '../../utils/panel-geometry.js';
 import riskOfRuinUI from './risk-of-ruin-ui.js';
 
@@ -296,5 +302,49 @@ describe('RiskOfRuinUI tab against a twin from another module copy', () => {
 
         expect(document.querySelectorAll(`#${TAB_ID}`)).toHaveLength(1);
         expect(document.getElementById(TAB_ID)).toBe(twin);
+    });
+});
+
+describe('RiskOfRuinUI transmute that cannot be priced', () => {
+    beforeEach(() => {
+        mocks.settings = { riskOfRuin: true, riskOfRuin_showLauncher: true };
+        mocks.openState = {};
+        document.body.innerHTML = '';
+        riskOfRuinUI.disable();
+    });
+
+    afterEach(() => {
+        riskOfRuinUI.disable();
+        dataManager.getInitClientData.mockImplementation(() => ({ itemDetailMap: {} }));
+    });
+
+    test('a known item with an unpriced chosen catalyst is not called an invalid item', async () => {
+        dataManager.getInitClientData.mockImplementation(() => ({
+            itemDetailMap: { '/items/cheese': { name: 'Cheese' } },
+        }));
+        riskOfRuinUI.initialize();
+        const root = panel();
+        root.querySelector('#mwi-ror-mode').value = 'alchemy';
+        riskOfRuinUI._renderModeInputs();
+        root.querySelector('#mwi-ror-item').value = '/items/cheese';
+        root.querySelector('#mwi-ror-catalyst').value = 'prime';
+
+        await riskOfRuinUI._compute();
+
+        const status = root.querySelector('#mwi-ror-status').textContent;
+        expect(status).not.toBe('Enter a valid transmutable item name.');
+        expect(status).toContain('selected catalyst');
+    });
+
+    test('an unknown item still asks for a valid name', async () => {
+        riskOfRuinUI.initialize();
+        const root = panel();
+        root.querySelector('#mwi-ror-mode').value = 'alchemy';
+        riskOfRuinUI._renderModeInputs();
+        root.querySelector('#mwi-ror-item').value = 'Not An Item';
+
+        await riskOfRuinUI._compute();
+
+        expect(root.querySelector('#mwi-ror-status').textContent).toBe('Enter a valid transmutable item name.');
     });
 });

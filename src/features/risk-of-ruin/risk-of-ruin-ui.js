@@ -638,7 +638,17 @@ class RiskOfRuinUI {
             const catalystChoice = catalystSelection === 'best' ? null : catalystSelection;
             const alchemyModel = hrid ? buildAlchemyTransmuteModel(hrid, { catalystChoice }) : null;
             if (!alchemyModel) {
-                status.textContent = 'Enter a valid transmutable item name.';
+                // A resolved item with no model is unpriced, not unknown: an explicitly chosen
+                // catalyst with no market price is refused rather than counted as free.
+                let message = 'Enter a valid transmutable item name.';
+                if (hrid) {
+                    message =
+                        catalystChoice && catalystChoice !== 'none'
+                            ? 'This transmute cannot be priced with the selected catalyst; it or an input or ' +
+                              'output may have no market price.'
+                            : 'This transmute cannot be priced: an input or output has no market price.';
+                }
+                status.textContent = message;
                 return;
             }
             maxSinglePossibleLoss = alchemyModel.maxSinglePossibleLoss;
