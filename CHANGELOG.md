@@ -6,6 +6,8 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+<!-- shipped in 3.58.1 -->
+
 ### Fix: 3.58.0 stopped loading halfway
 
 - 3.58.0 loaded only its first four libraries, leaving most features missing, because the Skilling Optimizer pulled in a piece of the Combat library that had not loaded yet. The optimizer now uses its own copy of the enhancement-cost helper, and the build refuses to produce a release where any library reads one that loads after it.
@@ -3659,10 +3661,9 @@ The simulator valued every drop at its gross market price, so profit ignored the
 
 ## [3.58.1](https://github.com/Millennium44/Toolasha/compare/v3.58.0...v3.58.1) (2026-09-23)
 
-
 ### Bug Fixes
 
-* load every library again by keeping combat out of the actions bundle ([3d40d84](https://github.com/Millennium44/Toolasha/commit/3d40d8480353cb4fd2f3e78dc170288193c6948f))
+- load every library again by keeping combat out of the actions bundle ([3d40d84](https://github.com/Millennium44/Toolasha/commit/3d40d8480353cb4fd2f3e78dc170288193c6948f))
 
 ## [3.58.0](https://github.com/Millennium44/Toolasha/compare/v3.57.1...v3.58.0) (2026-09-22)
 
