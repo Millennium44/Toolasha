@@ -298,6 +298,32 @@ describe('getItemsForSlot', () => {
         expect(items.find((i) => i.hrid === CHEESE_TOOL).available).toBe(true);
     });
 
+    test('availability follows the planned level of the skill, not the live one', () => {
+        game.skills = [
+            { skillHrid: '/skills/cheesesmithing', level: 20 },
+            { skillHrid: '/skills/cooking', level: 5 },
+        ];
+
+        const planned = getItemsForSlot('/item_locations/cheesesmithing_tool', 'Cheesesmithing', 50);
+        expect(planned.find((i) => i.hrid === VERDANT_TOOL).available).toBe(true);
+
+        const plannedLower = getItemsForSlot('/item_locations/cheesesmithing_tool', 'Cheesesmithing', 5);
+        expect(plannedLower.find((i) => i.hrid === CHEESE_TOOL).available).toBe(false);
+
+        // Another skill's requirement is still read at that skill's live level
+        game.initClientData.itemDetailMap['/items/cross_skill_brush'] = {
+            name: 'Cross-Skill Brush',
+            itemLevel: 30,
+            equipmentDetail: {
+                type: '/equipment_types/cheesesmithing_tool',
+                noncombatStats: { cheesesmithingSpeed: 0.3 },
+                levelRequirements: [{ skillHrid: '/skills/cooking', level: 30 }],
+            },
+        };
+        const crossSkill = getItemsForSlot('/item_locations/cheesesmithing_tool', 'Cheesesmithing', 200);
+        expect(crossSkill.find((i) => i.hrid === '/items/cross_skill_brush').available).toBe(false);
+    });
+
     test('a head item that only helps cooking is invisible to cheesesmithing', () => {
         expect(getItemsForSlot('/item_locations/head', 'Cheesesmithing')).toEqual([]);
         expect(getItemsForSlot('/item_locations/head', 'Cooking').map((i) => i.hrid)).toEqual([HAT]);

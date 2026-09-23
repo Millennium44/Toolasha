@@ -807,7 +807,7 @@ class SkillingSimulatorUI {
                 this._closePicker();
                 return;
             }
-            const items = getItemsForSlot(locationHrid, this.currentSkill);
+            const items = getItemsForSlot(locationHrid, this.currentSkill, this.currentLevel);
             this._openItemPicker(nameBtn, items, this.equipment.get(locationHrid)?.itemHrid || null, (hrid) => {
                 if (hrid) {
                     this.equipment.set(locationHrid, { itemHrid: hrid, enhancementLevel: 0 });

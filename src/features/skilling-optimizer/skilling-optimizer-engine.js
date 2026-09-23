@@ -264,12 +264,14 @@ function getRelevantStatsForSkill(skillName) {
 
 /**
  * Get all equippable items for a slot that have stats relevant to the given skill.
- * Availability is based on the player's actual skill levels.
+ * Availability is based on the player's skill levels, with the planned skill at its planned
+ * level when one is given — the same levels the simulator scores at.
  * @param {string} locationHrid
  * @param {string} skillName
+ * @param {number|null} [plannedLevel] - Level of `skillName` being planned; null uses the live level
  * @returns {Array<{ hrid, name, available, maxReq, itemLevel }>} Sorted by itemLevel descending
  */
-export function getItemsForSlot(locationHrid, skillName) {
+export function getItemsForSlot(locationHrid, skillName, plannedLevel = null) {
     const gameData = dataManager.getInitClientData();
     if (!gameData?.itemDetailMap) return [];
 
@@ -277,7 +279,9 @@ export function getItemsForSlot(locationHrid, skillName) {
     if (!validEqTypes.size) return [];
 
     const skills = dataManager.getSkills() || [];
-    const playerLevels = new Map(skills.map((s) => [s.skillHrid, s.level]));
+    const playerLevels = Number.isFinite(plannedLevel)
+        ? buildPlayerLevelMap(skillName, plannedLevel)
+        : new Map(skills.map((s) => [s.skillHrid, s.level]));
     const relevantStats = getRelevantStatsForSkill(skillName);
 
     const result = [];
