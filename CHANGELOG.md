@@ -10,6 +10,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 - At five Fury stacks, another hit now keeps the damage and accuracy boosts active through the refreshed expiry time. Other buffs expiring during the streak can no longer remove Fury early and understate combat damage.
 
+### Dungeon ROI does not price unknown consumables as free
+
+- When a consumed food or drink has no price, Dungeon ROI leaves its measured consumable cost unknown and uses a simulated estimate if one is available. Profit stays blank when neither cost can be priced.
+
 ### Queue Monitor settings respond once after reconnecting
 
 - Reconnecting to the same character no longer registers another Queue Monitor settings listener, so toggling the panel does not repeat its setup and teardown work.

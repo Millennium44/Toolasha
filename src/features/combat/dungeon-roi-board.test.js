@@ -213,6 +213,25 @@ describe('measured sessions and the sim snapshot', () => {
         expect(rates.xpPerHour).toBeCloseTo(12_000);
     });
 
+    test('an unpriced consumed item leaves measured food cost unknown', () => {
+        const sessions = [
+            {
+                actionHrid: DEN,
+                durationSeconds: 1800,
+                players: [
+                    {
+                        isCurrentPlayer: true,
+                        consumables: [{ itemHrid: '/items/coffee', consumed: 10 }],
+                        experience: { attack: 6000 },
+                    },
+                ],
+            },
+        ];
+        const rates = measuredSessionRates(sessions, DEN, () => null);
+        expect(rates.consumableCostPerHour).toBeNull();
+        expect(rates.xpPerHour).toBe(12_000);
+    });
+
     test('the snapshot gives a clear time only when its dungeon figures are there', () => {
         const snapshot = {
             zones: [
@@ -391,6 +410,70 @@ describe('buildDungeonRoiRows', () => {
         expect(cove0.xpPerHour).toBe(90_000);
         // Clear time is still the sim's — sessions carry no completions
         expect(cove0.clearSource).toBe('sim');
+    });
+
+    test('an unpriced consumed item cannot produce a net profit without a sim food estimate', () => {
+        const sessions = [
+            {
+                actionHrid: COVE,
+                durationSeconds: 3600,
+                players: [
+                    {
+                        isCurrentPlayer: true,
+                        consumables: [{ itemHrid: '/items/coffee', consumed: 5 }],
+                        experience: { attack: 90_000 },
+                    },
+                ],
+            },
+        ];
+        const unknownFoodSnapshot = {
+            zones: [
+                {
+                    zoneHrid: COVE,
+                    difficultyTier: 0,
+                    dungeon: { completions: 10, simHours: 5, partySize: 1, consumableCostPerHour: null },
+                },
+            ],
+        };
+        const rows = buildDungeonRoiRows({
+            dungeons,
+            runs: [],
+            sessions,
+            snapshot: unknownFoodSnapshot,
+            pricing: { ...pricing, consumablePrice: () => null },
+        });
+        const cove0 = rows.find((row) => row.key === `${COVE}::T0`);
+        expect(cove0.clearSeconds).toBe(1800);
+        expect(cove0.consumableCostPerHour).toBeNull();
+        expect(cove0.costGap).toBe('consumables');
+        expect(cove0.netPerRun).toBeNull();
+    });
+
+    test('an unpriced consumed item uses the sim food estimate when available', () => {
+        const sessions = [
+            {
+                actionHrid: COVE,
+                durationSeconds: 3600,
+                players: [
+                    {
+                        isCurrentPlayer: true,
+                        consumables: [{ itemHrid: '/items/coffee', consumed: 5 }],
+                        experience: {},
+                    },
+                ],
+            },
+        ];
+        const rows = buildDungeonRoiRows({
+            dungeons,
+            runs: [],
+            sessions,
+            snapshot,
+            pricing: { ...pricing, consumablePrice: () => null },
+        });
+        const cove0 = rows.find((row) => row.key === `${COVE}::T0`);
+        expect(cove0.consumableSource).toBe('sim');
+        expect(cove0.consumableCostPerHour).toBe(3_600);
+        expect(cove0.costComplete).toBe(true);
     });
 
     test('the tier filter keeps only that tier; the party filter narrows runs and reprices the split', () => {

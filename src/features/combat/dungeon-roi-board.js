@@ -174,6 +174,7 @@ export function groupRunsByDungeonTier(runs) {
 export function measuredSessionRates(sessions, dungeonHrid, consumablePrice) {
     let seconds = 0;
     let cost = 0;
+    let costKnown = true;
     let xp = 0;
     let count = 0;
 
@@ -189,15 +190,19 @@ export function measuredSessionRates(sessions, dungeonHrid, consumablePrice) {
         for (const consumable of me.consumables || []) {
             const consumed = Number(consumable?.consumed) || 0;
             if (consumed <= 0) continue;
-            const price = Number(consumablePrice(consumable.itemHrid)) || 0;
-            cost += consumed * price;
+            const price = consumablePrice(consumable.itemHrid);
+            if (price === null || price === undefined || !Number.isFinite(Number(price)) || Number(price) < 0) {
+                costKnown = false;
+            } else {
+                cost += consumed * Number(price);
+            }
         }
         for (const value of Object.values(me.experience || {})) xp += Number(value) || 0;
     }
 
     if (!(seconds > 0)) return null;
     const hours = seconds / 3600;
-    return { hours, consumableCostPerHour: cost / hours, xpPerHour: xp / hours, sessions: count };
+    return { hours, consumableCostPerHour: costKnown ? cost / hours : null, xpPerHour: xp / hours, sessions: count };
 }
 
 /**
