@@ -1098,11 +1098,13 @@ export function upgradeRowPurchase(result) {
     const buyLine = (result?.costDetail?.buys || []).find(
         (line) => line?.hrid === itemHrid && (line.enhancementLevel || 0) === enhancementLevel
     );
-    const watchCost = Number.isFinite(buyLine?.price)
-        ? buyLine.price
-        : Number.isFinite(result?.costDetail?.gross)
-          ? result.costDetail.gross
-          : cost;
+    const watchCost = result?.costDetail?.enhancementPath
+        ? (result.costDetail.targetAsk ?? null)
+        : Number.isFinite(buyLine?.price)
+          ? buyLine.price
+          : Number.isFinite(result?.costDetail?.gross)
+            ? result.costDetail.gross
+            : cost;
 
     return {
         itemHrid,
@@ -8178,7 +8180,9 @@ class CombatSimUI {
             );
         }
 
-        if (detail && (detail.gross != null || detail.credit)) {
+        if (detail?.enhancementPath && detail.gross != null) {
+            parts.push(`<span style="color:#888;">Enhances for ${formatKMB(detail.gross)}.</span>`);
+        } else if (detail && (detail.gross != null || detail.credit)) {
             const gross = detail.gross == null ? 'no price' : formatKMB(detail.gross);
             parts.push(
                 `<span style="color:#888;">Buys ${gross}, resale credit ${formatKMB(detail.credit || 0)}.</span>`

@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Upgrade Advisor shows the actual enhancement spend
+
+- When an equipped item is enhanced through a simulated path, its cost detail now shows the incremental enhancement spend instead of implying the player buys a second item and sells the one they own. Price watches no longer pin that material spend as the finished item's market ask.
+
 ### Upgrade Advisor keeps unpriced equipment swaps out of cost rankings
 
 - When the base item for an enhanced swap has no known purchase price, Upgrade Advisor now leaves the swap cost unknown instead of charging only enhancement materials and potentially presenting it as a profitable sale.

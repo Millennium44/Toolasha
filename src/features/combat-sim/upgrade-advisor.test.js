@@ -3949,6 +3949,59 @@ describe('explainUpgradeCost', () => {
         };
     }
 
+    test('an unlisted enhancement explains the incremental path charged by the row', () => {
+        getItemPrices.mockReturnValue(null);
+        resolveItemPrice.mockImplementation((_hrid, { side }) => ({ price: side === 'sell' ? 1_000_000 : 5_000_000 }));
+        calculateEnhancement.mockReturnValue({ attempts: 3, protectionCount: 0 });
+        getCheapestProtectionPrice.mockReturnValue({ price: 0 });
+        perAttemptMaterialCost.mockReturnValue({ cost: 100_000, hasCost: true, hasMissingPrices: false });
+        getEnhancingParams.mockReturnValue({
+            enhancingLevel: 100,
+            toolBonus: 0,
+            speedBonus: 0,
+            teas: {},
+            guzzlingBonus: 1,
+        });
+        const gameData = costGameData();
+        gameData.itemDetailMap['/items/fire_top'].enhancementCosts = [{ itemHrid: '/items/enhance_mat', count: 1 }];
+        const candidate = {
+            type: 'enhancement',
+            slot: BODY,
+            currentHrid: '/items/fire_top',
+            currentLevel: 4,
+            upgradeHrid: '/items/fire_top',
+            upgradeLevel: 7,
+        };
+
+        const cost = calculateUpgradeCost(candidate, gameData);
+        const detail = explainUpgradeCost(candidate, gameData);
+        expect(cost).toBeGreaterThan(0);
+        expect(detail).toMatchObject({ net: cost, gross: cost, credit: 0, source: 'sim', enhancementPath: true });
+        expect(detail.buys).toEqual([]);
+        expect(detail.credits).toEqual([]);
+    });
+
+    test('a listed enhancement breakdown uses the same ask and bid as its ranked cost', () => {
+        getItemPrices.mockImplementation((_hrid, level) =>
+            level === 7 ? { ask: 5_000_000, bid: 4_500_000 } : { ask: 3_000_000, bid: 2_000_000 }
+        );
+        // Production fallbacks and the tester shop may differ from the order
+        // book, but the enhancement row is ranked on the two listings above.
+        resolveItemPrice.mockReturnValue({ price: 500_000 });
+        const candidate = {
+            type: 'enhancement',
+            slot: BODY,
+            currentHrid: '/items/fire_top',
+            currentLevel: 4,
+            upgradeHrid: '/items/fire_top',
+            upgradeLevel: 7,
+        };
+
+        const detail = explainUpgradeCost(candidate, costGameData());
+        expect(detail).toMatchObject({ gross: 5_000_000, credit: 2_000_000, net: 3_000_000, source: 'market' });
+        expect(detail.net).toBe(calculateUpgradeCost(candidate, costGameData()));
+    });
+
     test('itemises every purchase in a multi-slot swap', () => {
         resolveItemPrice.mockImplementation(() => ({ price: 1_000_000 }));
         getItemPrices.mockReturnValue({ ask: 5_000_000, bid: 4_000_000 });

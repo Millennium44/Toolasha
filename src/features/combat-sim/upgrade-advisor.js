@@ -2733,8 +2733,8 @@ export const COST_SOURCES = {
     sim: {
         label: 'sim',
         title:
-            'No listing at this enhancement level, so the price is the base item plus a simulated ' +
-            'enhancement path — an expected cost over a random process, not a quote.',
+            'No usable pair of listings at these enhancement levels, so the price uses a simulated ' +
+            'enhancement path. New gear also includes its base item price; this is an estimate, not a quote.',
     },
     craft: {
         label: 'craft',
@@ -3004,6 +3004,55 @@ export function explainUpgradeCost(candidate, gameData, isSelf = true) {
 
     const nameOf = (hrid) => gameData?.itemDetailMap?.[hrid]?.name || hrid?.split('/').pop().replace(/_/g, ' ') || '?';
 
+    if (candidate.type === 'enhancement') {
+        const upgraded = getItemPrices(candidate.currentHrid, candidate.upgradeLevel);
+        const current = getItemPrices(candidate.currentHrid, candidate.currentLevel);
+        if (upgraded?.ask > 0 && current?.bid > 0) {
+            const name = nameOf(candidate.currentHrid);
+            return {
+                buys: [
+                    {
+                        hrid: candidate.currentHrid,
+                        name,
+                        enhancementLevel: candidate.upgradeLevel,
+                        price: upgraded.ask,
+                        source: 'market',
+                    },
+                ],
+                credits: [
+                    { hrid: candidate.currentHrid, name, enhancementLevel: candidate.currentLevel, price: current.bid },
+                ],
+                gross: upgraded.ask,
+                credit: current.bid,
+                net: upgraded.ask - current.bid,
+                unpriced: [],
+                creditApplied: true,
+                source: 'market',
+                enhanceSource: null,
+            };
+        } else {
+            const cost = calculateDirectEnhancementCost(
+                candidate.currentHrid,
+                candidate.currentLevel,
+                candidate.upgradeLevel,
+                gameData
+            );
+            return {
+                buys: [],
+                credits: [],
+                gross: cost,
+                credit: 0,
+                net: cost,
+                unpriced: cost == null ? [nameOf(candidate.currentHrid)] : [],
+                creditApplied: false,
+                source: 'sim',
+                enhanceSource: describeEnhancementSource(enhancementSweepParams(candidate.currentHrid)),
+                enhancementPath: true,
+                targetAsk: upgraded?.ask > 0 ? upgraded.ask : null,
+            };
+        }
+    }
+
     const buys = [];
     if (candidate.addedSlots) {
         for (const item of Object.values(candidate.addedSlots)) {
@@ -3051,22 +3100,10 @@ export function explainUpgradeCost(candidate, gameData, isSelf = true) {
     const gross = unpriced.length > 0 ? null : buys.reduce((sum, buy) => sum + buy.price, 0);
     const credit = credits.reduce((sum, entry) => sum + entry.price, 0);
 
-    // An enhancement candidate buys nothing new: it is a market delta between
-    // two levels of one item where both are listed, and the enhance path
-    // otherwise. Nothing above sees that, so name it here
-    let source = weakestCostSource(buys.map((buy) => buy.source));
     // Whose enhancing stats a sweep behind this figure ran on. A total is as
     // shaky as its shakiest part, so the first sweep found stands for the row
-    let enhanceSource = buys.find((buy) => buy.enhanceSource)?.enhanceSource || null;
-    if (candidate.type === 'enhancement') {
-        const upgraded = getItemPrices(candidate.currentHrid, candidate.upgradeLevel);
-        const current = getItemPrices(candidate.currentHrid, candidate.currentLevel);
-        source = upgraded?.ask > 0 && current?.bid > 0 ? 'market' : 'sim';
-        // A market delta between two listed levels runs no sweep at all; the
-        // fallback path in `calculateUpgradeCost` is nothing but one
-        enhanceSource =
-            source === 'sim' ? describeEnhancementSource(enhancementSweepParams(candidate.currentHrid)) : null;
-    }
+    const enhanceSource = buys.find((buy) => buy.enhanceSource)?.enhanceSource || null;
+    const source = weakestCostSource(buys.map((buy) => buy.source));
 
     return {
         buys,

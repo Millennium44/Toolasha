@@ -2655,6 +2655,43 @@ describe('upgrade row handoff', () => {
         expect(mocks.saved[0].quote.cost).toBe(1_000_000);
     });
 
+    test('a simulated enhancement path does not pin its material cost as a finished-item ask', () => {
+        const container = document.createElement('div');
+        container.innerHTML = upgradeRowActionsHtml({
+            cost: 300_000,
+            costDetail: { gross: 300_000, enhancementPath: true, buys: [] },
+            candidate: {
+                description: 'Plate +4 → +7',
+                upgradeHrid: '/items/plate',
+                upgradeLevel: 7,
+                type: 'enhancement',
+            },
+        });
+        wireUpgradeRowActions(container);
+        container.querySelector('[data-buy-action="watch"]').click();
+
+        expect(mocks.seededTargets).toHaveLength(0);
+        expect(mocks.watched).toEqual([{ itemHrid: '/items/plate', enhancementLevel: 7 }]);
+    });
+
+    test('a target-level ask can still be pinned when only the current-level bid is missing', () => {
+        const container = document.createElement('div');
+        container.innerHTML = upgradeRowActionsHtml({
+            cost: 300_000,
+            costDetail: { gross: 300_000, enhancementPath: true, targetAsk: 5_000_000, buys: [] },
+            candidate: {
+                description: 'Plate +4 → +7',
+                upgradeHrid: '/items/plate',
+                upgradeLevel: 7,
+                type: 'enhancement',
+            },
+        });
+        wireUpgradeRowActions(container);
+        container.querySelector('[data-buy-action="watch"]').click();
+
+        expect(mocks.seededTargets).toEqual([{ itemHrid: '/items/plate', enhancementLevel: 7, cost: 5_000_000 }]);
+    });
+
     test('an unpriced row seeds no target', () => {
         const container = document.createElement('div');
         container.innerHTML = upgradeRowActionsHtml(
@@ -5707,6 +5744,18 @@ describe('remembered-run banner', () => {
 });
 
 describe('the cost basis detail', () => {
+    test('an incremental enhancement path does not describe buying and reselling the same item', () => {
+        const html = ui._renderUpgradeCostBasis({
+            costSource: 'sim',
+            costDetail: { gross: 300_000, credit: 0, enhancementPath: true },
+            candidate: { type: 'enhancement' },
+        });
+
+        expect(html).toContain('Enhances for');
+        expect(html).not.toContain('Buys');
+        expect(html).not.toContain('resale credit');
+    });
+
     test('a sweep-priced row names whose enhancing stats it ran on', () => {
         // Not a new column: the missing half of the sentence the basis line
         // already gives about "an expected cost over a random process"
