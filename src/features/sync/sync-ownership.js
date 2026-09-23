@@ -224,6 +224,7 @@ export const OWNED_KEY_PREFIXES = [
     'taskReroll',
 
     // Alchemy, enhancement, networth, goals, briefing, notices
+    'alchemyHistory_includePreFix_',
     'alchemyItemPins',
     'alchemyProtectedCategories_',
     'enhancementItemPins',
