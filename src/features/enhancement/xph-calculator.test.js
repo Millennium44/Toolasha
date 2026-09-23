@@ -214,6 +214,21 @@ describe('calculateItemXPH', () => {
         expect(result.profitUnavailableReason).toBe('no-cost');
     });
 
+    test('a priced protection does not stand in for unpriced materials', async () => {
+        prices[`${ITEM}::5`] = { ask: 500, bid: 400 };
+        materialCostResult.hasCost = false;
+        engineResult.protectionCount = 2;
+        const { getCheapestProtectionPrice } = await import('./tooltip-enhancement.js');
+        getCheapestProtectionPrice.mockReturnValueOnce({ itemHrid: '/items/mirror_of_protection', price: 50 });
+
+        const result = calculateItemXPH(ITEM, itemDetails, 5, 3, params);
+
+        expect(result.costPerHour).toBeNull();
+        expect(result.goldPerXP).toBeNull();
+        expect(result.profitPerHour).toBeNull();
+        expect(result.profitUnavailableReason).toBe('no-cost');
+    });
+
     test('a partially-priced cost still produces a profit figure, flagged partial', () => {
         prices[`${ITEM}::5`] = { ask: 500, bid: 400 };
         materialCostResult.costPartial = true;

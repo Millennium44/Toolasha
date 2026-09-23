@@ -91,13 +91,15 @@ export function calculateItemXPH(itemHrid, itemDetails, maxLevel, protectFrom, p
     let goldPerXP = hasCost ? materialCost / totalXP : null;
     let costPerHour = hasCost ? materialCost * itemsPerHour : null;
 
-    // Protection cost — find cheapest option for this item
+    // Protection cost — find cheapest option for this item. Only on top of a
+    // known material cost: with no material priced, a protection-only figure
+    // would read as the whole run cost and rank materials as free.
     let protectionItemName = null;
-    if (protectFrom > 0 && calc.protectionCount > 0) {
+    if (hasCost && protectFrom > 0 && calc.protectionCount > 0) {
         const protectionInfo = getCheapestProtectionPrice(itemHrid);
         if (protectionInfo.price > 0) {
             const protCost = protectionInfo.price * calc.protectionCount;
-            const totalCost = (materialCost || 0) + protCost;
+            const totalCost = materialCost + protCost;
             goldPerXP = totalCost / totalXP;
             costPerHour = totalCost * itemsPerHour;
             protectionItemName = dataManager.getInitClientData()?.itemDetailMap[protectionInfo.itemHrid]?.name || null;
