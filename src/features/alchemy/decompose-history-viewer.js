@@ -223,6 +223,8 @@ class DecomposeHistoryViewer {
      * Disable the viewer
      */
     disable() {
+        // The filter popup and its document click listener live outside the modal
+        this.closeActiveFilterPopup();
         if (this.tabWatcher) {
             this.tabWatcher();
             this.tabWatcher = null;
