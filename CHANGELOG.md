@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Crafting estimates require complete recipe prices
+
+- An unlisted crafted item no longer gets a sale estimate from only some of its ingredients; missing prices now leave its profit unavailable. Coin inputs count at face value, and recipes sharing an output use the recipe the player selected for the estimate.
+
 ### Upgrade Advisor shows the actual enhancement spend
 
 - When an equipped item is enhanced through a simulated path, its cost detail now shows the incremental enhancement spend instead of implying the player buys a second item and sells the one they own. Price watches no longer pin that material spend as the finished item's market ask.

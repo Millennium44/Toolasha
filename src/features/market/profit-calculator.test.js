@@ -14,6 +14,7 @@ const mocks = vi.hoisted(() => ({
     itemDetails: {},
     resolvedPrices: {},
     itemPrices: {},
+    marketPrices: {},
     productionCosts: {},
     chainTimes: {},
     skills: null,
@@ -40,7 +41,7 @@ vi.mock('../enhancement/tooltip-enhancement.js', () => ({
     getProductionChainTime: (hrid) => mocks.chainTimes[hrid] ?? 0,
 }));
 vi.mock('../../utils/market-data.js', () => ({
-    getItemPrice: () => null,
+    getItemPrice: (hrid) => mocks.marketPrices[hrid] ?? null,
     getItemPrices: (hrid) => mocks.itemPrices?.[hrid] ?? null,
 }));
 vi.mock('../../utils/profit-constants.js', () => ({ MARKET_TAX: 0.02 }));
@@ -65,6 +66,7 @@ beforeEach(() => {
     mocks.itemDetails = {};
     mocks.resolvedPrices = {};
     mocks.itemPrices = {};
+    mocks.marketPrices = {};
     mocks.productionCosts = {};
     mocks.chainTimes = {};
     mocks.skills = [];
@@ -306,6 +308,56 @@ describe('calculateCraftingCostFallback', () => {
         mocks.initData.actionDetailMap = {};
         expect(profitCalculator.calculateCraftingCostFallback('/items/nothing', () => 0)).toBe(0);
     });
+
+    test('does not derive an output value from only the priced subset of required inputs', () => {
+        mocks.initData.actionDetailMap = {
+            '/actions/cheesesmithing/cheese': {
+                inputItems: [
+                    { itemHrid: '/items/milk', count: 2 },
+                    { itemHrid: '/items/unpriced_culture', count: 1 },
+                ],
+                outputItems: [{ itemHrid: '/items/cheese', count: 1 }],
+            },
+        };
+
+        expect(
+            profitCalculator.calculateCraftingCostFallback('/items/cheese', (hrid) =>
+                hrid === '/items/milk' ? 100 : null
+            )
+        ).toBe(0);
+    });
+
+    test('values coin inputs at face value when estimating an unlisted output', () => {
+        mocks.initData.actionDetailMap = {
+            '/actions/cheesesmithing/cheese': {
+                inputItems: [{ itemHrid: '/items/coin', count: 500 }],
+                outputItems: [{ itemHrid: '/items/cheese', count: 1 }],
+            },
+        };
+
+        expect(profitCalculator.calculateCraftingCostFallback('/items/cheese', () => null)).toBe(500);
+    });
+
+    test('uses the selected recipe when multiple actions produce the unlisted item', () => {
+        mocks.initData.actionDetailMap = {
+            '/actions/cheesesmithing/expensive_cheese': {
+                inputItems: [{ itemHrid: '/items/milk', count: 10 }],
+                outputItems: [{ itemHrid: '/items/cheese', count: 1 }],
+            },
+            '/actions/cheesesmithing/cheap_cheese': {
+                inputItems: [{ itemHrid: '/items/milk', count: 2 }],
+                outputItems: [{ itemHrid: '/items/cheese', count: 1 }],
+            },
+        };
+
+        expect(
+            profitCalculator.calculateCraftingCostFallback(
+                '/items/cheese',
+                () => 100,
+                '/actions/cheesesmithing/cheap_cheese'
+            )
+        ).toBe(200);
+    });
 });
 
 describe('calculateProfit — upgrade-item crafting chain time', () => {
@@ -459,6 +511,52 @@ describe('calculateProfit — itemPrice reconciliation', () => {
         const result = await profitCalculator.calculateProfit('/items/cheese');
 
         expect(result.itemPrice).toEqual({ ask: 0, bid: 0 });
+    });
+
+    test('a partly priced recipe cannot turn an unlisted output into an estimated sale', async () => {
+        simpleRecipe();
+        mocks.initData.actionDetailMap['/actions/cheesesmithing/cheese'].inputItems.push({
+            itemHrid: '/items/unpriced_culture',
+            count: 1,
+        });
+        mocks.itemDetails['/items/unpriced_culture'] = { name: 'Unpriced Culture' };
+        mocks.marketPrices['/items/milk'] = 10;
+        delete mocks.resolvedPrices['/items/cheese'];
+
+        const result = await profitCalculator.calculateProfit('/items/cheese');
+
+        expect(result.outputPrice).toBe(0);
+        expect(result.outputPriceMissing).toBe(true);
+        expect(result.outputPriceEstimated).toBe(false);
+        expect(result.hasMissingPrices).toBe(true);
+    });
+
+    test('an unlisted output uses the specifically requested recipe for its cost estimate', async () => {
+        simpleRecipe();
+        mocks.initData.actionDetailMap = {
+            '/actions/cheesesmithing/expensive_cheese': {
+                type: '/action_types/cheesesmithing',
+                baseTimeCost: 10e9,
+                inputItems: [{ itemHrid: '/items/milk', count: 10 }],
+                outputItems: [{ itemHrid: '/items/cheese', count: 1 }],
+            },
+            '/actions/cheesesmithing/cheap_cheese': {
+                type: '/action_types/cheesesmithing',
+                baseTimeCost: 10e9,
+                inputItems: [{ itemHrid: '/items/milk', count: 2 }],
+                outputItems: [{ itemHrid: '/items/cheese', count: 1 }],
+            },
+        };
+        mocks.marketPrices['/items/milk'] = 10;
+        delete mocks.resolvedPrices['/items/cheese'];
+
+        const result = await profitCalculator.calculateProfit('/items/cheese', {
+            actionHrid: '/actions/cheesesmithing/cheap_cheese',
+        });
+
+        expect(result.actionHrid).toBe('/actions/cheesesmithing/cheap_cheese');
+        expect(result.outputPrice).toBe(20);
+        expect(result.outputPriceEstimated).toBe(true);
     });
 });
 

@@ -20,7 +20,7 @@ import {
     createPriceCache,
     resolveItemPrice,
 } from '../../utils/profit-helpers.js';
-import { findProducingAction, findProducingActions } from '../../utils/production-index.js';
+import { findProducingActions } from '../../utils/production-index.js';
 
 /**
  * ProfitCalculator class handles profit calculations for production actions
@@ -198,7 +198,9 @@ class ProfitCalculator {
         // Uses 'profit' context with 'sell' side to get correct sell price
         const rawOutputPrice = getCachedPrice(itemHrid, { context: 'profit', side: 'sell' });
         const outputPriceMissing = rawOutputPrice === null;
-        const craftingFallback = outputPriceMissing ? this.calculateCraftingCostFallback(itemHrid, getCachedPrice) : 0;
+        const craftingFallback = outputPriceMissing
+            ? this.calculateCraftingCostFallback(itemHrid, getCachedPrice, action.actionHrid)
+            : 0;
         const outputPriceEstimated = outputPriceMissing && craftingFallback > 0;
         const outputPrice = outputPriceMissing ? craftingFallback : rawOutputPrice;
 
@@ -313,19 +315,26 @@ class ProfitCalculator {
      * Used as a fallback when the item has no market listing (e.g. refined items).
      * @param {string} itemHrid - Item HRID to estimate
      * @param {Function} getCachedPrice - Price lookup function
-     * @returns {number} Estimated price (0 if no crafting action found)
+     * @param {string} [actionHrid] - Recipe used for this profit calculation
+     * @returns {number} Estimated price (0 if no producer or a required input lacks a price)
      */
-    calculateCraftingCostFallback(itemHrid, getCachedPrice) {
-        const producer = findProducingAction(itemHrid, { actionDetailMap: this.getActionDetailMap() });
+    calculateCraftingCostFallback(itemHrid, getCachedPrice, actionHrid) {
+        const producers = findProducingActions(itemHrid, { actionDetailMap: this.getActionDetailMap() });
+        const producer =
+            (actionHrid && producers.find((candidate) => candidate.actionHrid === actionHrid)) || producers[0];
         if (!producer) return 0;
         const { action, output } = producer;
         let totalCost = 0;
+        const priceOf = (hrid) =>
+            hrid === '/items/coin' ? 1 : getCachedPrice(hrid, { context: 'profit', side: 'buy' });
         if (action.upgradeItemHrid) {
-            const price = getCachedPrice(action.upgradeItemHrid, { context: 'profit', side: 'buy' }) ?? 0;
+            const price = priceOf(action.upgradeItemHrid);
+            if (price === null || price === undefined) return 0;
             totalCost += price;
         }
         for (const input of action.inputItems || []) {
-            const price = getCachedPrice(input.itemHrid, { context: 'profit', side: 'buy' }) ?? 0;
+            const price = priceOf(input.itemHrid);
+            if (price === null || price === undefined) return 0;
             totalCost += price * (input.count || 1);
         }
         return totalCost / (output.count || 1);
