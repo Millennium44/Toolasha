@@ -93,7 +93,7 @@ vi.mock('../../core/data-manager.js', () => {
 });
 
 vi.mock('../../api/marketplace.js', () => ({
-    default: { getPrice: () => ({ ask: 200, bid: 180 }) },
+    default: { getPrice: (hrid) => (state.unpricedItems?.includes(hrid) ? null : { ask: 200, bid: 180 }) },
 }));
 
 vi.mock('../market/expected-value-calculator.js', () => ({
@@ -184,6 +184,7 @@ beforeEach(() => {
     state.latestCombat = null;
     state.settings = {};
     state.characterGameMode = 'standard';
+    state.unpricedItems = [];
 });
 
 afterEach(() => {
@@ -327,6 +328,46 @@ describe('drawing', () => {
         const den0 = container.querySelector('.mwi-dt-roi-row');
         const cells = [...den0.children].map((td) => td.textContent);
         expect(cells[7]).toBe('200'); // 1200/hr ÷ 6 runs/hr, no "sim" mark
+    });
+
+    test('an unpriced measured consumable is named as the reason, not "nothing measured"', async () => {
+        state.unpricedItems = ['/items/donut'];
+        state.runs = [run('Chimerical Den', 0, 600_000)];
+        state.sessions = [sessionWithConsumable(6)];
+        const board = new DungeonRoiBoardUI({ filterCharacter: 'mine' });
+        const container = panel();
+
+        await board.render(container);
+
+        const den0 = container.querySelector('.mwi-dt-roi-row');
+        expect(den0.children[7].textContent).toBe('—');
+        expect(den0.children[7].title).toContain('no market price');
+        expect(den0.children[7].title).not.toContain('No measured or simulated consumption');
+        expect(den0.children[8].title).toContain('no market price');
+    });
+
+    test('a sim food bill standing in for an unpriced measured one says why', async () => {
+        state.unpricedItems = ['/items/donut'];
+        state.runs = [run('Chimerical Den', 0, 600_000)];
+        state.sessions = [sessionWithConsumable(6)];
+        state.snapshot = {
+            zones: [
+                {
+                    zoneHrid: DEN,
+                    difficultyTier: 0,
+                    dungeon: { completions: 6, simHours: 1, partySize: 1, consumableCostPerHour: 6_000 },
+                },
+            ],
+        };
+        const board = new DungeonRoiBoardUI({ filterCharacter: 'mine' });
+        const container = panel();
+
+        await board.render(container);
+
+        const den0 = container.querySelector('.mwi-dt-roi-row');
+        expect(den0.children[7].textContent).toBe('1.0K sim');
+        expect(den0.children[7].title).toContain('Simulated');
+        expect(den0.children[7].title).toContain('no market price');
     });
 
     test('an Iron Cow character under vendor prices measured consumables off the vendor value, no tick', async () => {

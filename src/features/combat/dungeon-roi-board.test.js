@@ -445,6 +445,7 @@ describe('buildDungeonRoiRows', () => {
         const cove0 = rows.find((row) => row.key === `${COVE}::T0`);
         expect(cove0.clearSeconds).toBe(1800);
         expect(cove0.consumableCostPerHour).toBeNull();
+        expect(cove0.consumableUnpriced).toBe(true);
         expect(cove0.costGap).toBe('consumables');
         expect(cove0.netPerRun).toBeNull();
     });

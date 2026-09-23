@@ -228,6 +228,9 @@ function gold(value) {
     return formatKMB(value);
 }
 
+/** Why a measured food bill was set aside, when it was */
+const UNPRICED_MEASURED_FOOD = 'something your recorded sessions here consumed has no market price';
+
 /**
  * Why a row has no net figure.
  *
@@ -237,8 +240,11 @@ function gold(value) {
  * @returns {string} Tooltip text
  */
 function costGapNote(row) {
-    return row.costGap === 'keys'
-        ? 'No net: at least one key this run needs has no market price, so the cost is unknown'
+    if (row.costGap === 'keys') {
+        return 'No net: at least one key this run needs has no market price, so the cost is unknown';
+    }
+    return row.consumableUnpriced
+        ? `No net: ${UNPRICED_MEASURED_FOOD}, and there is no simulated consumable cost for this tier`
         : 'No net: no measured or simulated consumable cost for this tier, so the food bill is unknown';
 }
 
@@ -638,8 +644,13 @@ class DungeonRoiBoardUI {
                 row.consumableSource === 'measured'
                     ? `From your archived sessions in this dungeon, ${gold(row.consumableCostPerHour)}/hr`
                     : row.consumableSource === 'sim'
-                      ? `Simulated, ${gold(row.consumableCostPerHour)}/hr`
-                      : 'No measured or simulated consumption',
+                      ? `Simulated, ${gold(row.consumableCostPerHour)}/hr` +
+                        (row.consumableUnpriced
+                            ? ` in place of your sessions' bill, because ${UNPRICED_MEASURED_FOOD}`
+                            : '')
+                      : row.consumableUnpriced
+                        ? `Unknown: ${UNPRICED_MEASURED_FOOD}, and there is no simulated estimate`
+                        : 'No measured or simulated consumption',
             mark: row.consumableSource === 'sim' ? 'sim' : null,
         });
         cell(gold(row.netPerRun), {

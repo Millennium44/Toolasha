@@ -169,7 +169,8 @@ export function groupRunsByDungeonTier(runs) {
  * @param {Array<Object>} sessions - From `combat-session-history`'s `loadSessions`
  * @param {string} dungeonHrid - The dungeon action
  * @param {Function} consumablePrice - `(itemHrid) => number|null`
- * @returns {{hours: number, consumableCostPerHour: number, xpPerHour: number, sessions: number}|null}
+ * @returns {{hours: number, consumableCostPerHour: number|null, xpPerHour: number, sessions: number}|null}
+ *   `consumableCostPerHour` is null when anything consumed has no price
  */
 export function measuredSessionRates(sessions, dungeonHrid, consumablePrice) {
     let seconds = 0;
@@ -468,6 +469,9 @@ export function buildDungeonRoiRows(input) {
                 consumableCostPerHour = sim.consumableCostPerHour;
                 consumableSource = 'sim';
             }
+            // Sessions were recorded here but something they consumed has no
+            // price: the food cell has to say that, not "nothing was measured"
+            const consumableUnpriced = Boolean(measured) && measured.consumableCostPerHour === null;
 
             let xpPerHour = null;
             let xpSource = null;
@@ -523,6 +527,7 @@ export function buildDungeonRoiRows(input) {
                 consumableCostPerHour,
                 consumableCostPerRun,
                 consumableSource,
+                consumableUnpriced,
                 netPerRun,
                 runsPerHour,
                 netPerHour,
