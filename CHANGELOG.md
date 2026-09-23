@@ -6,6 +6,13 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Audit round: enhancement "Worth it" counted the levels you started with as profit
+
+- An enhancement session that started above +0 now nets its result against the item's value at the starting level, not at +0, so it no longer counts the levels already held as profit.
+- Enhancing XP/hr no longer shows a profit built from protection cost alone when no enhancement material has a price.
+- Goal Planner no longer overcharges a mirrored plan by the gap between a base copy's ask and bid.
+- Dungeon ROI says when a food bill is unknown because a consumable has no price, rather than claiming nothing was measured, and Risk of Ruin names an unpriced catalyst instead of calling the item invalid.
+
 ### Goal Planner shows unknown purchases as unknown
 
 - Goal Planner now marks unpriced house materials, equipment acquisitions, and enhancement runs as unknown rather than quoting them as free. Its coin total shows a bound when a required price is missing, so goals no longer look cheaper than they are.
