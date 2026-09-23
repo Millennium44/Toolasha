@@ -9,6 +9,7 @@ import {
     parseEquipmentSpeedBonuses,
     parseEquipmentEfficiencyBonuses,
     parseEquipmentEfficiencyBreakdown,
+    parseGatheringQuantityBonus,
 } from './equipment-parser.js';
 import {
     parseTeaEfficiency,
@@ -228,8 +229,19 @@ export function getActionEfficiencyContext(actionDetails, options = {}) {
             '/buff_types/gathering'
         );
         const personalGathering = dataManager.getPersonalBuffFlatBoost(actionDetails.type, '/buff_types/gathering');
-        totalGathering = gatheringTea + communityGathering + achievementGathering + personalGathering;
-        gatheringDetails = { gatheringTea, communityGathering, achievementGathering, personalGathering };
+        // Gathering tools (e.g. milking gloves) carry a flat gatheringQuantity noncombat stat.
+        // It was missing here even though equipmentEfficiency a few lines up already reads the
+        // same equipment map for the analogous skillingEfficiency stat.
+        const equipmentGathering = parseGatheringQuantityBonus(equipment, itemDetailMap);
+        totalGathering =
+            gatheringTea + communityGathering + achievementGathering + personalGathering + equipmentGathering;
+        gatheringDetails = {
+            gatheringTea,
+            communityGathering,
+            achievementGathering,
+            personalGathering,
+            equipmentGathering,
+        };
     }
 
     // Build efficiency breakdown

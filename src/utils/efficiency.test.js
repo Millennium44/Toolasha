@@ -2,8 +2,40 @@
  * Tests for Efficiency Utilities
  */
 
-import { describe, test, expect } from 'vitest';
-import { calculateEfficiencyBreakdown, calculateEfficiencyMultiplier, stackAdditive } from './efficiency.js';
+import { describe, test, expect, vi, beforeEach } from 'vitest';
+
+const character = vi.hoisted(() => ({
+    skills: [],
+    equipment: new Map(),
+    itemDetailMap: {},
+    achievementBoost: 0,
+    personalBoost: 0,
+}));
+
+vi.mock('../core/data-manager.js', () => ({
+    default: {
+        getSkills: () => character.skills,
+        getInitClientData: () => ({ itemDetailMap: character.itemDetailMap }),
+        getPersonalBuffFlatBoost: () => character.personalBoost,
+        getAchievementBuffFlatBoost: () => character.achievementBoost,
+        characterData: {},
+    },
+}));
+
+vi.mock('./action-context.js', () => ({
+    resolveActionContext: () => ({ equipment: character.equipment, drinks: [] }),
+}));
+
+vi.mock('./community-buffs.js', () => ({
+    getCommunityGatheringQuantity: () => 0,
+}));
+
+vi.mock('./house-efficiency.js', () => ({
+    calculateHouseEfficiency: () => 0,
+}));
+
+const { calculateEfficiencyBreakdown, calculateEfficiencyMultiplier, stackAdditive, getActionEfficiencyContext } =
+    await import('./efficiency.js');
 
 describe('calculateEfficiencyMultiplier', () => {
     test('calculates multiplier from efficiency percentage', () => {
@@ -129,5 +161,65 @@ describe('stackAdditive', () => {
 
     test('handles decimal bonuses', () => {
         expect(stackAdditive(10.5, 20.3, 5.2)).toBeCloseTo(36, 1);
+    });
+});
+
+describe('getActionEfficiencyContext — gathering quantity', () => {
+    const MILKING = {
+        type: '/action_types/milking',
+        baseTimeCost: 10e9,
+        levelRequirement: { level: 1, skillHrid: '/skills/milking' },
+    };
+
+    const gatheringGloves = {
+        name: 'Gathering Gloves',
+        equipmentDetail: {
+            type: '/equipment_types/hands',
+            noncombatStats: { gatheringQuantity: 0.02 },
+        },
+    };
+
+    beforeEach(() => {
+        character.skills = [{ skillHrid: '/skills/milking', level: 1 }];
+        character.equipment = new Map();
+        character.itemDetailMap = { '/items/gathering_gloves': gatheringGloves };
+        character.achievementBoost = 0;
+        character.personalBoost = 0;
+    });
+
+    test('equipment gatheringQuantity is added to totalGathering, not dropped', () => {
+        character.equipment = new Map([['/item_locations/hands', { itemHrid: '/items/gathering_gloves' }]]);
+
+        const ctx = getActionEfficiencyContext(MILKING, { isProduction: false });
+
+        expect(ctx.totalGathering).toBeCloseTo(0.02, 9);
+        expect(ctx.gatheringDetails.equipmentGathering).toBeCloseTo(0.02, 9);
+    });
+
+    test('equipment gathering stacks additively with the other three sources', () => {
+        character.equipment = new Map([['/item_locations/hands', { itemHrid: '/items/gathering_gloves' }]]);
+        character.achievementBoost = 0.02;
+        character.personalBoost = 0.18;
+
+        const ctx = getActionEfficiencyContext(MILKING, { isProduction: false });
+
+        // community mocked to 0, tea empty, achievement 0.02, personal 0.18, equipment 0.02
+        expect(ctx.totalGathering).toBeCloseTo(0.22, 9);
+    });
+
+    test('production actions still ignore gathering entirely (equipment included or not)', () => {
+        character.equipment = new Map([['/item_locations/hands', { itemHrid: '/items/gathering_gloves' }]]);
+
+        const ctx = getActionEfficiencyContext({ ...MILKING, type: '/action_types/cooking' }, { isProduction: true });
+
+        expect(ctx.totalGathering).toBe(0);
+        expect(ctx.gatheringDetails).toBeNull();
+    });
+
+    test('no equipment leaves totalGathering at 0', () => {
+        const ctx = getActionEfficiencyContext(MILKING, { isProduction: false });
+
+        expect(ctx.totalGathering).toBe(0);
+        expect(ctx.gatheringDetails.equipmentGathering).toBe(0);
     });
 });

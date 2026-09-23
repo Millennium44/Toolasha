@@ -483,6 +483,9 @@ async function renderGatheringProfit(panel, actionHrid, dropTableSelector, gathe
         if (profitData.details.gatheringTeaBonus > 0) {
             gatherRows.push(`+${(profitData.details.gatheringTeaBonus * 100).toFixed(2)}% Tea`);
         }
+        if (profitData.details.equipmentGathering > 0) {
+            gatherRows.push(`+${(profitData.details.equipmentGathering * 100).toFixed(2)}% Equipment`);
+        }
         if (profitData.details.achievementGathering > 0) {
             gatherRows.push(`+${(profitData.details.achievementGathering * 100).toFixed(2)}% Achievement`);
         }

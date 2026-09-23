@@ -123,6 +123,7 @@ export async function calculateGatheringProfit(actionHrid) {
         communityGathering = 0,
         achievementGathering = 0,
         personalGathering = 0,
+        equipmentGathering = 0,
     } = gatheringDetails ?? {};
 
     const teaCostData = calculateTeaCostsPerHour({
@@ -301,6 +302,7 @@ export async function calculateGatheringProfit(actionHrid) {
             gatheringTeaBonus: gatheringTea, // Gathering Tea component (as decimal)
             achievementGathering: achievementGathering, // Achievement Tier component (as decimal)
             personalGathering: personalGathering, // Personal buff (seal) component (as decimal)
+            equipmentGathering: equipmentGathering, // Equipment (gathering tool) component (as decimal)
         },
     };
 }

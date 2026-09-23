@@ -261,6 +261,30 @@ describe('calculateGatheringProfit — baseline drop table math', () => {
         expect(result.details.gatheringTeaBonus).toBe(0.05);
     });
 
+    test('equipment gathering quantity is included in the total and surfaced in details', async () => {
+        // Gathering tools (e.g. milking gloves) carry a flat gatheringQuantity noncombat
+        // stat that efficiency.js folds into totalGathering — the same total this
+        // calculator uses to scale drop amounts. Nothing here re-derives it: it only
+        // has to pass the equipmentGathering component through for display.
+        buffs.context = efficiencyContext({
+            totalGathering: 0.24,
+            gatheringDetails: {
+                gatheringTea: 0,
+                communityGathering: 0,
+                achievementGathering: 0,
+                personalGathering: 0,
+                equipmentGathering: 0.24,
+            },
+        });
+
+        // avg count 1 × 1.24 = 1.24 → 360 × 1.24 = 446.4/hour
+        const result = await calculateGatheringProfit(COW);
+
+        expect(result.baseOutputs[0].itemsPerHour).toBeCloseTo(446.4, 6);
+        expect(result.gatheringQuantity).toBe(0.24);
+        expect(result.details.equipmentGathering).toBe(0.24);
+    });
+
     test('averages minCount/maxCount and honours a rare drop rate', async () => {
         game.initClientData.actionDetailMap[COW].dropTable = [
             { itemHrid: MILK, dropRate: 1, minCount: 1, maxCount: 1 },

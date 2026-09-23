@@ -26,6 +26,7 @@ import { calculateActionStats } from '../../utils/action-calculator.js';
 import { getAlchemyCoinCost, getAlchemyTypeFromActionHrid } from '../../utils/alchemy-fees.js';
 import { timeReadable, formatWithSeparator, formatDateTime, formatLargeNumber } from '../../utils/formatters.js';
 import { calculateEfficiencyMultiplier } from '../../utils/efficiency.js';
+import { parseGatheringQuantityBonus } from '../../utils/equipment-parser.js';
 import { calculateExpPerHour } from '../../utils/experience-calculator.js';
 import { getCommunityGatheringQuantity } from '../../utils/community-buffs.js';
 import { createCleanupRegistry } from '../../utils/cleanup-registry.js';
@@ -2757,8 +2758,16 @@ class ActionTimeDisplay {
                 '/buff_types/gathering'
             );
 
+            // Personal buff (Scroll of Gathering)
+            const personalGathering = dataManager.getPersonalBuffFlatBoost(actionDetails.type, '/buff_types/gathering');
+
+            // Equipment (gathering tools carry a flat gatheringQuantity noncombat stat) — same
+            // source and terms as efficiency.js's getActionEfficiencyContext gathering total
+            const equipmentGathering = parseGatheringQuantityBonus(equipment, itemDetailMap);
+
             // Total gathering bonus (all additive)
-            const totalGathering = gatheringTea + communityGathering + achievementGathering;
+            const totalGathering =
+                gatheringTea + communityGathering + achievementGathering + personalGathering + equipmentGathering;
 
             // Apply gathering bonus to average amount
             const avgAmountPerAction = baseAvgAmount * (1 + totalGathering);
