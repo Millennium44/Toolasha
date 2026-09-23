@@ -288,14 +288,17 @@ class MarketVolumeStats {
     }
 
     renderLoading(panel) {
+        this.closeColumnMenu();
         panel.innerHTML = '<span style="color:#AAAAAA;font-size:11px;">Loading trade stats…</span>';
     }
 
     renderStatus(panel, text) {
+        this.closeColumnMenu();
         panel.innerHTML = `<span style="color:#FF6B6B;font-size:11px;">${escapeHtml(text)}</span>`;
     }
 
     renderTable(panel, windows, source) {
+        this.closeColumnMenu();
         const hasAnyData = windows.some(({ stats }) => stats.volume > 0 || stats.avgPrice > 0 || stats.medianPrice > 0);
         if (!hasAnyData) {
             panel.innerHTML = '<span style="color:#AAAAAA;font-size:11px;">No trades in this window</span>';
@@ -355,7 +358,7 @@ class MarketVolumeStats {
     toggleColumnMenu(panel) {
         const existing = panel.querySelector('.mwi-volume-stats-menu');
         if (existing) {
-            existing.remove();
+            this.closeColumnMenu();
             return;
         }
 
@@ -382,6 +385,9 @@ class MarketVolumeStats {
                 }
                 this.saveColumnPrefs();
                 this.rerenderCurrentTable();
+                // The redraw replaced the menu along with the table; reopen it so several
+                // columns can be toggled in a row.
+                if (panel.isConnected) this.toggleColumnMenu(panel);
             });
             label.appendChild(checkbox);
             label.appendChild(document.createTextNode(column.label));
@@ -400,7 +406,7 @@ class MarketVolumeStats {
             'cursor:pointer;font-size:12px;padding:2px 0;';
         refreshItem.addEventListener('click', (event) => {
             event.stopPropagation();
-            menu.remove();
+            this.closeColumnMenu();
             this.refresh();
         });
         menu.appendChild(refreshItem);
@@ -408,10 +414,21 @@ class MarketVolumeStats {
         menu.addEventListener('click', (event) => event.stopPropagation());
         panel.querySelector('div').appendChild(menu);
 
+        // The game's info container is its own stacking context at z-index 1, below the order
+        // book's sticky header (z-index 10), which would otherwise paint over the open menu.
+        const infoContainer = panel.closest('[class*="MarketplacePanel_infoContainer"]');
+        const previousZIndex = infoContainer ? infoContainer.style.zIndex : '';
+        if (infoContainer) infoContainer.style.zIndex = '11';
+
         const closeOnOutsideClick = (event) => {
             if (menu.contains(event.target)) return;
+            this.closeColumnMenu();
+        };
+        this.closeColumnMenu = () => {
             menu.remove();
+            if (infoContainer) infoContainer.style.zIndex = previousZIndex;
             document.removeEventListener('click', closeOnOutsideClick, true);
+            this.closeColumnMenu = () => {};
         };
         // Deferred one tick so the click that opened the menu does not also close it.
         // Registered with the cleanup registry too, so a teardown while the menu
@@ -419,8 +436,14 @@ class MarketVolumeStats {
         setTimeout(() => this.cleanupRegistry.registerListener(document, 'click', closeOnOutsideClick, true), 0);
     }
 
+    /**
+     * Close the ⚙ menu and restore the stacking it raised. Replaced while a menu is open.
+     */
+    closeColumnMenu() {}
+
     disable() {
         noteTeardown(this);
+        this.closeColumnMenu();
         this.removePanel();
         this.cleanupRegistry.cleanupAll();
         this.isInitialized = false;
