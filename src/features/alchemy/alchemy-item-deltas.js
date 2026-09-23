@@ -134,3 +134,56 @@ export function createItemCountLedger() {
 
     return ledger;
 }
+
+/**
+ * Give a ledger a baseline for every inventory stack of these items.
+ *
+ * Only sound between messages — from `actions_updated` — because by the time a
+ * tracker reads an `action_completed`, dataManager has already written that
+ * message's rows into the inventory, and a baseline taken then would read the
+ * message as no change at all.
+ *
+ * Without it a session's first message has no delta for any stack, and a batch
+ * of efficiency repeats packed into it could be read only as a single action.
+ *
+ * @param {{noteEach: Function}} ledger - The session's ledger, freshly reset
+ * @param {Array<Object>|null} inventory - dataManager's cached `characterItems`
+ * @param {Iterable<string|null>} itemHrids - The items to seed; falsy entries are skipped
+ * @returns {Set<string>} The items whose every stack is now in the ledger;
+ *   empty when the inventory is not loaded
+ */
+export function seedLedgerFromInventory(ledger, inventory, itemHrids) {
+    if (!Array.isArray(inventory)) return new Set();
+
+    const hrids = new Set();
+    for (const hrid of itemHrids || []) {
+        if (hrid) hrids.add(hrid);
+    }
+    ledger.noteEach(inventory.filter((row) => hrids.has(row?.itemHrid)));
+    return hrids;
+}
+
+/**
+ * Net change per item across a message's folded ledger entries.
+ *
+ * Summed per item, not per stack: a stack emptied by consumption can come back
+ * under a new id. A stack the ledger has no baseline for is measured from zero
+ * only when its item was seeded — every stack of it was in the ledger at the
+ * start, so this one did not exist then. Otherwise the item's change is
+ * unknown, and null.
+ *
+ * @param {Array<{row: Object, delta: number|null}>} entries - From `noteEach`
+ * @param {Set<string>} seededHrids - From `seedLedgerFromInventory`
+ * @returns {Map<string, number|null>} item hrid → net change, or null when unmeasured
+ */
+export function deltasByItem(entries, seededHrids) {
+    const byHrid = new Map();
+
+    for (const { row, delta } of entries || []) {
+        const measured = delta ?? (seededHrids?.has(row.itemHrid) ? Number(row.count) : null);
+        const previous = byHrid.has(row.itemHrid) ? byHrid.get(row.itemHrid) : 0;
+        byHrid.set(row.itemHrid, previous === null || measured === null ? null : previous + measured);
+    }
+
+    return byHrid;
+}

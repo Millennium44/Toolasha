@@ -25,7 +25,7 @@ import dataManager from '../../core/data-manager.js';
 import { getItemPrice } from '../../utils/market-data.js';
 import { createAlchemySessionStore, NO_CHARACTER } from './alchemy-session-store.js';
 import { predictedSuccessStamp } from './alchemy-success-stamp.js';
-import { createItemCountLedger } from './alchemy-item-deltas.js';
+import { createItemCountLedger, deltasByItem, seedLedgerFromInventory } from './alchemy-item-deltas.js';
 import { recordCatalystUse } from './alchemy-catalyst-use.js';
 import { runningAlchemyAction } from './alchemy-running-action.js';
 import { mergeReloadSplitSessions, expandKeptSessions } from './alchemy-session-merge.js';
@@ -238,14 +238,7 @@ class TransmuteHistoryTracker {
         // Deltas are summed per item, not per stack: a stack emptied by the
         // consumption can come back under a new id, and the self-return
         // arithmetic below must see the item's net change, applied once.
-        const deltaByHrid = new Map();
-        for (const { row, delta } of outputRows) {
-            // A stack of an item whose every stack was seeded at session start
-            // and that the ledger has not seen did not exist then: its baseline is 0
-            const measured = delta ?? (this.seededHrids.has(row.itemHrid) ? Number(row.count) : null);
-            const previous = deltaByHrid.has(row.itemHrid) ? deltaByHrid.get(row.itemHrid) : 0;
-            deltaByHrid.set(row.itemHrid, previous === null || measured === null ? null : previous + measured);
-        }
+        const deltaByHrid = deltasByItem(outputRows, this.seededHrids);
 
         // Every attempt consumes the input, so a message that moved items but
         // not an input stack known to exist is one where every consumed input
@@ -479,10 +472,9 @@ class TransmuteHistoryTracker {
         for (const entry of itemDetails?.alchemyDetail?.transmuteDropTable || []) {
             if (entry?.itemHrid && entry.itemHrid !== COIN_ITEM_HRID) hrids.add(entry.itemHrid);
         }
-        const rows = inventory.filter((row) => hrids.has(row?.itemHrid));
-        this.itemCounts.noteEach(rows);
-        this.inputStackKnown = rows.some((row) => row.itemHrid === inputItemHrid);
-        return hrids;
+        const seeded = seedLedgerFromInventory(this.itemCounts, inventory, hrids);
+        this.inputStackKnown = inventory.some((row) => row?.itemHrid === inputItemHrid);
+        return seeded;
     }
 
     /**

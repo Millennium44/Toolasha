@@ -16,6 +16,8 @@
  *   together, so each output row's delta is an independent estimate of the
  *   same success count; the largest of them is used rather than the sum,
  *   which would multiply-count one batch once per output item.
+ * - Read against a baseline seeded from the inventory when the session starts
+ *   from the queue, so the first message of a run is measured like every other
  * - Failure: no items from decomposeItems appear in endCharacterItems
  * - Incidental drops (essences, artisan's crates) are excluded
  *   because they are not listed in the input item's decomposeItems
@@ -27,7 +29,7 @@ import dataManager from '../../core/data-manager.js';
 import { getItemPrice } from '../../utils/market-data.js';
 import { createAlchemySessionStore, NO_CHARACTER } from './alchemy-session-store.js';
 import { predictedSuccessStamp } from './alchemy-success-stamp.js';
-import { createItemCountLedger } from './alchemy-item-deltas.js';
+import { createItemCountLedger, deltasByItem, seedLedgerFromInventory } from './alchemy-item-deltas.js';
 import { recordCatalystUse } from './alchemy-catalyst-use.js';
 import { runningAlchemyAction } from './alchemy-running-action.js';
 import { mergeReloadSplitSessions, expandKeptSessions } from './alchemy-session-merge.js';
@@ -65,6 +67,8 @@ class DecomposeHistoryTracker {
         // changed stack — not one row per success. A count delta is the only
         // thing in the message that scales with a batch.
         this.itemCounts = createItemCountLedger();
+        // Items whose every stack the ledger was seeded with at session start
+        this.seededHrids = new Set();
         this.handlers = {
             actionsUpdated: () => this.handleActionsUpdated(),
             actionCompleted: (data) => this.handleActionCompleted(data),
@@ -157,16 +161,22 @@ class DecomposeHistoryTracker {
                 return;
             }
 
+            // Read between messages, so the cached inventory and the action's
+            // count are exactly what the next action_completed moves away from
+            const baseline = {
+                currentCount: decomposeAction.currentCount,
+                catalystHrid: this.extractItemHrid(decomposeAction.secondaryItemHash),
+            };
             if (!this.activeSession) {
                 // No active session — start one
-                await this.startSession(inputItemHrid, enhancementLevel, Date.now());
+                await this.startSession(inputItemHrid, enhancementLevel, Date.now(), baseline);
             } else if (
                 this.activeSession.inputItemHrid !== inputItemHrid ||
                 this.activeSession.enhancementLevel !== enhancementLevel
             ) {
                 // Different item or enhancement level — end current session and start new one
                 await this.endSession();
-                await this.startSession(inputItemHrid, enhancementLevel, Date.now());
+                await this.startSession(inputItemHrid, enhancementLevel, Date.now(), baseline);
             } else {
                 // Same item and level, same session — the player restarted the
                 // action, so nothing about the record changes except that it
@@ -244,12 +254,12 @@ class DecomposeHistoryTracker {
         // Every decompose success yields every entry in decomposeItems
         // together, so each output row's own delta is an independent estimate
         // of the same success count — the largest is used rather than the
-        // sum, which would multiply-count one batch once per output item. A
-        // row with no baseline yet (the first message of a session) reads as
-        // "at least one".
+        // sum, which would multiply-count one batch once per output item. An
+        // item with no baseline (the first message of a session that did not
+        // start from the queue) reads as "at least one".
         let successCount = 0;
-        for (const { row, delta } of outputRows) {
-            const expectedCount = expectedCountMap[row.itemHrid] || 1;
+        for (const [outputItemHrid, delta] of deltasByItem(outputRows, this.seededHrids)) {
+            const expectedCount = expectedCountMap[outputItemHrid] || 1;
             const perActionYield = bulkMultiplier * expectedCount;
             let actions;
             if (delta === null) {
@@ -343,8 +353,11 @@ class DecomposeHistoryTracker {
      * @param {string} inputItemHrid - Input item HRID
      * @param {number} enhancementLevel - Enhancement level of input item
      * @param {number} timestamp - Start timestamp in ms
+     * @param {{currentCount: number, catalystHrid: string|null}|null} [baseline] - Present
+     *   only when the session starts from the queue, between messages, so the
+     *   cached inventory and the action's count predate every message it will read
      */
-    async startSession(inputItemHrid, enhancementLevel, timestamp) {
+    async startSession(inputItemHrid, enhancementLevel, timestamp, baseline = null) {
         // Recorded, not recomputed at read time: the coin fee that was actually
         // billed scales with the bulk size the item had while the session ran,
         // and a later game change to that number would otherwise silently
@@ -383,8 +396,19 @@ class DecomposeHistoryTracker {
             predictedCatalystHrid: stamp?.predictedCatalystHrid ?? null,
             results: {},
         };
-        this.lastCurrentCount = null;
         this.itemCounts.reset();
+        const startCount = Number(baseline?.currentCount);
+        this.lastCurrentCount = baseline && Number.isFinite(startCount) ? startCount : null;
+        // The outputs' stacks are where the successes are read and the
+        // catalyst's stack is where its spend is; without their baselines a first
+        // message packing several actions was recorded as one attempt and one success
+        const outputHrids = (itemDetails?.alchemyDetail?.decomposeItems || []).map((entry) => entry?.itemHrid);
+        this.seededHrids = baseline
+            ? seedLedgerFromInventory(this.itemCounts, dataManager.characterItems, [
+                  ...outputHrids.filter((hrid) => hrid !== COIN_ITEM_HRID),
+                  baseline.catalystHrid,
+              ])
+            : new Set();
     }
 
     /**

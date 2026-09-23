@@ -10,7 +10,9 @@
  * Result detection:
  * - Success: coins gained, read as a delta on the coin stack's total — one
  *   message can carry a batch of attempts, and coins are a single stack, so the
- *   presence of a coin row says only "at least one", never how many
+ *   presence of a coin row says only "at least one", never how many. Read
+ *   against a baseline seeded from the inventory when the session starts from
+ *   the queue, so the first message of a run is measured like every other
  * - Failure: no coins gained
  *
  * Coins earned per success: itemDetails.sellPrice * 5 * bulkMultiplier
@@ -21,7 +23,7 @@ import webSocketHook from '../../core/websocket.js';
 import dataManager from '../../core/data-manager.js';
 import { createAlchemySessionStore, NO_CHARACTER } from './alchemy-session-store.js';
 import { predictedSuccessStamp } from './alchemy-success-stamp.js';
-import { createItemCountLedger } from './alchemy-item-deltas.js';
+import { createItemCountLedger, deltasByItem, seedLedgerFromInventory } from './alchemy-item-deltas.js';
 import { recordCatalystUse } from './alchemy-catalyst-use.js';
 import { runningAlchemyAction } from './alchemy-running-action.js';
 import { mergeReloadSplitSessions, expandKeptSessions } from './alchemy-session-merge.js';
@@ -59,6 +61,8 @@ class CoinifyHistoryTracker {
         // changed stack — not one row per action. A count delta is the only
         // thing in the message that scales with a batch.
         this.itemCounts = createItemCountLedger();
+        // Items whose every stack the ledger was seeded with at session start
+        this.seededHrids = new Set();
         this.handlers = {
             actionsUpdated: () => this.handleActionsUpdated(),
             actionCompleted: (data) => this.handleActionCompleted(data),
@@ -151,16 +155,22 @@ class CoinifyHistoryTracker {
                 return;
             }
 
+            // Read between messages, so the cached inventory and the action's
+            // count are exactly what the next action_completed moves away from
+            const baseline = {
+                currentCount: coinifyAction.currentCount,
+                catalystHrid: this.extractItemHrid(coinifyAction.secondaryItemHash),
+            };
             if (!this.activeSession) {
                 // No active session — start one
-                await this.startSession(inputItemHrid, enhancementLevel, Date.now());
+                await this.startSession(inputItemHrid, enhancementLevel, Date.now(), baseline);
             } else if (
                 this.activeSession.inputItemHrid !== inputItemHrid ||
                 this.activeSession.enhancementLevel !== enhancementLevel
             ) {
                 // Different item or enhancement level — end current session and start new one
                 await this.endSession();
-                await this.startSession(inputItemHrid, enhancementLevel, Date.now());
+                await this.startSession(inputItemHrid, enhancementLevel, Date.now(), baseline);
             } else {
                 // Same item and level, same session — the player restarted the
                 // action, so nothing about the record changes except that it
@@ -209,17 +219,14 @@ class CoinifyHistoryTracker {
         // per changed stack however many actions the message packed.
         const noted = this.itemCounts.noteEach(data.endCharacterItems || []);
         const coinEntries = noted.filter(({ row }) => row.itemHrid === COIN_ITEM_HRID);
-        let coinsGained = null;
-        for (const { delta } of coinEntries) {
-            if (delta === null) continue;
-            coinsGained = (coinsGained ?? 0) + delta;
-        }
+        const coinsGained = deltasByItem(coinEntries, this.seededHrids).get(COIN_ITEM_HRID) ?? null;
 
         let attemptCount;
         if (this.lastCurrentCount !== null && currentCount > this.lastCurrentCount) {
             attemptCount = currentCount - this.lastCurrentCount;
         } else {
-            // First tick or counter reset — one attempt is the least it can have been
+            // No baseline (a session first seen through action_completed) or a
+            // counter reset — one attempt is the least it can have been
             attemptCount = 1;
         }
         this.lastCurrentCount = currentCount;
@@ -232,9 +239,10 @@ class CoinifyHistoryTracker {
         //
         // Coinify has no coin fee (see utils/alchemy-fees.js), so the gain is
         // exactly successes x coinsPerSuccess. Without a baseline for the coin
-        // stack — the first message of a session — there is no delta to read and
-        // the stack count is all there is; it is a floor, and marked as one by
-        // being capped at the attempts it cannot exceed.
+        // stack — the first message of a session that did not start from the
+        // queue — there is no delta to read and the row itself is all there is;
+        // it is a floor, and marked as one by being capped at the attempts it
+        // cannot exceed.
         const coinsPerSuccess = this.activeSession.coinsPerSuccess;
         let successCount;
         if (coinsGained !== null && coinsPerSuccess > 0) {
@@ -291,8 +299,11 @@ class CoinifyHistoryTracker {
      * @param {string} inputItemHrid - Input item HRID
      * @param {number} enhancementLevel - Enhancement level of input item
      * @param {number} timestamp - Start timestamp in ms
+     * @param {{currentCount: number, catalystHrid: string|null}|null} [baseline] - Present
+     *   only when the session starts from the queue, between messages, so the
+     *   cached inventory and the action's count predate every message it will read
      */
-    async startSession(inputItemHrid, enhancementLevel, timestamp) {
+    async startSession(inputItemHrid, enhancementLevel, timestamp, baseline = null) {
         const itemDetails = dataManager.getItemDetails(inputItemHrid);
 
         if (!itemDetails?.alchemyDetail?.bulkMultiplier) {
@@ -341,8 +352,18 @@ class CoinifyHistoryTracker {
             predictedAt: stamp?.predictedAt ?? null,
             predictedCatalystHrid: stamp?.predictedCatalystHrid ?? null,
         };
-        this.lastCurrentCount = null;
         this.itemCounts.reset();
+        const startCount = Number(baseline?.currentCount);
+        this.lastCurrentCount = baseline && Number.isFinite(startCount) ? startCount : null;
+        // The coin stack is where the successes are read and the catalyst's
+        // stack is where its spend is; without their baselines a first message
+        // packing several actions was recorded as one attempt and one success
+        this.seededHrids = baseline
+            ? seedLedgerFromInventory(this.itemCounts, dataManager.characterItems, [
+                  COIN_ITEM_HRID,
+                  baseline.catalystHrid,
+              ])
+            : new Set();
     }
 
     /**
