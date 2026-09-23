@@ -26,15 +26,21 @@ const game = vi.hoisted(() => ({
     characterId: 'char1',
     /** What `calculateExpPerHour` answers for a skilling action, or null for one it cannot */
     expData: { expPerHour: 36_000, modifiedXP: 100 },
+    inventory: [],
+    itemDetailMap: {},
+    /** What the alchemy calculator answers for a queued alchemy row, or null for none */
+    alchemyProfit: null,
+    /** Wisdom and Charm Experience together, as a multiplier on base XP */
+    xpMultiplier: 1,
 }));
 
 vi.mock('../../core/data-manager.js', () => ({
     default: {
         getCurrentActions: () => game.currentActions,
         getActionDetails: (hrid) => game.actionDetails[hrid] ?? null,
-        getItemDetails: () => null,
-        getInventory: () => [],
-        getInitClientData: () => ({ itemDetailMap: {} }),
+        getItemDetails: (hrid) => game.itemDetailMap[hrid] ?? null,
+        getInventory: () => game.inventory,
+        getInitClientData: () => ({ itemDetailMap: game.itemDetailMap }),
         getActionDrinkSlots: () => [],
         getElapsedSecondsInCurrentUnit: () => 0,
         getSkills: () => [],
@@ -77,7 +83,17 @@ vi.mock('../../api/marketplace.js', () => ({
 
 vi.mock('./gathering-profit.js', () => ({ calculateGatheringProfit: async () => null }));
 vi.mock('../market/profit-calculator.js', () => ({ default: { calculate: async () => null } }));
-vi.mock('../market/alchemy-profit-calculator.js', () => ({ default: { calculate: async () => null } }));
+vi.mock('../market/alchemy-profit-calculator.js', () => ({
+    default: {
+        calculate: async () => null,
+        calculateCoinifyProfit: () => game.alchemyProfit,
+        calculateDecomposeProfit: () => game.alchemyProfit,
+        calculateTransmuteProfit: () => game.alchemyProfit,
+    },
+}));
+vi.mock('../../utils/experience-parser.js', () => ({
+    calculateExperienceMultiplier: () => ({ totalMultiplier: game.xpMultiplier }),
+}));
 vi.mock('../enhancement/enhancement-xp.js', () => ({ calculateEnhancementPredictions: () => null }));
 
 vi.mock('../../utils/all-zones-snapshot.js', async (importOriginal) => ({
@@ -93,6 +109,28 @@ const HOUR = 60 * 60 * 1000;
 const MILK = '/actions/milking/cow';
 const GOBO = '/actions/combat/gobo_planet';
 const COMBAT_ID = 41704;
+
+const DECOMPOSE = '/actions/alchemy/decompose';
+const COINIFY = '/actions/alchemy/coinify';
+/** Alchemy actions carry no experienceGain: what they teach comes from the item alchemized */
+const decompose = { hrid: DECOMPOSE, name: 'Decompose', type: '/action_types/alchemy', inputItems: [] };
+const coinify = { hrid: COINIFY, name: 'Coinify', type: '/action_types/alchemy', inputItems: [] };
+const STAR_FRUIT = '/items/star_fruit';
+const FORAGING_ESSENCE = '/items/foraging_essence';
+
+/** An alchemy row as the game queues it: the item rides in primaryItemHash. */
+function alchemyAction(id, actionHrid, itemHrid, maxCount = 0) {
+    return {
+        id,
+        ordinal: id,
+        actionHrid,
+        primaryItemHash: `161296::/item_locations/inventory::${itemHrid}::0`,
+        secondaryItemHash: '',
+        hasMaxCount: maxCount > 0,
+        maxCount,
+        currentCount: 0,
+    };
+}
 
 const gobo = { hrid: GOBO, name: 'Gobo Planet', type: '/action_types/combat', combatZoneInfo: { isDungeon: false } };
 
@@ -227,6 +265,10 @@ describe('the Queued Actions panel shows what the queue is expected to teach', (
         game.rates = {};
         game.showXp = true;
         game.expData = { expPerHour: 36_000, modifiedXP: 100 };
+        game.inventory = [];
+        game.itemDetailMap = {};
+        game.alchemyProfit = null;
+        game.xpMultiplier = 1;
         await actionTimeDisplay.refreshCombatSnapshot();
     });
 
@@ -357,6 +399,42 @@ describe('the Queued Actions panel shows what the queue is expected to teach', (
         expect(totalText()).toContain('Total time: [∞]');
         expect(totalText()).not.toContain('Total XP: 50.00K');
         expect(xpLines(menu)).toEqual(['XP: 50.00K (36.00K/hr)']);
+    });
+
+    test('queued alchemy rows read the XP their item grants, not "no xp figure"', async () => {
+        // Base XP comes from the item's level: decompose 1.4 x level + 14, coinify level + 10.
+        // A failed attempt teaches a tenth of a success.
+        game.itemDetailMap = {
+            [STAR_FRUIT]: { hrid: STAR_FRUIT, itemLevel: 40, alchemyDetail: { bulkMultiplier: 1 } },
+            [FORAGING_ESSENCE]: { hrid: FORAGING_ESSENCE, itemLevel: 20, alchemyDetail: { bulkMultiplier: 1 } },
+        };
+        game.actionDetails = { ...game.actionDetails, [DECOMPOSE]: decompose, [COINIFY]: coinify };
+        game.inventory = [
+            { itemHrid: STAR_FRUIT, itemLocationHrid: '/item_locations/inventory', enhancementLevel: 0, count: 500 },
+            {
+                itemHrid: FORAGING_ESSENCE,
+                itemLocationHrid: '/item_locations/inventory',
+                enhancementLevel: 0,
+                count: 50,
+            },
+            { itemHrid: '/items/coin', itemLocationHrid: '/item_locations/inventory', enhancementLevel: 0, count: 1e9 },
+        ];
+        game.alchemyProfit = { successRate: 0.5, actionsPerHour: 100, profitPerHour: 0 };
+        game.xpMultiplier = 1.2;
+        game.currentActions = [
+            alchemyAction(1, DECOMPOSE, STAR_FRUIT),
+            alchemyAction(2, COINIFY, FORAGING_ESSENCE, 10),
+        ];
+        const menu = queueMenu(['Decompose: Star Fruit', 'Coinify: Foraging Essence']);
+        actionTimeDisplay.injectQueueTimes(menu);
+        await flush();
+
+        // Decompose: (1.4 x 40 + 14) x 1.2 = 84 per success, 0.5 x 84 + 0.5 x 8.4 = 46.2 per
+        // attempt, 4,620 an hour; Repeat-∞, but the 500 Star Fruit bound it. Coinify: 30 x 1.2
+        // = 36, 19.8 per attempt, 198 over ten.
+        expect(xpLines(menu)).toEqual(['XP: 23.10K (4.62K/hr)', 'XP: 198 (1.98K/hr)']);
+        expect(totalText()).toContain('Total XP: 23.30K');
+        expect(menu.textContent).not.toContain('no xp figure');
     });
 
     test('with the setting off nothing is drawn at all', async () => {

@@ -51,6 +51,7 @@ import {
     calculateEffectiveActionsPerHour,
 } from '../../utils/profit-helpers.js';
 import { calculateEnhancementPredictions } from '../enhancement/enhancement-xp.js';
+import { calcXpPerAction } from '../alchemy/alchemy-rankings.js';
 import { BASE_SUCCESS_RATES } from '../../utils/enhancement-calculator.js';
 import { parseGameNumber, gameDigitsSource } from '../../utils/number-parser.js';
 import { compareActionQueueOrder, runningAction } from '../../utils/combat-actions.js';
@@ -1320,20 +1321,24 @@ class ActionTimeDisplay {
      * {@link calculateExpPerHour} is the repo's one answer to "what does this action teach": base
      * `experienceGain`, every wisdom source (equipment, house rooms, community buff, drinks,
      * achievements, Moo Pass, personal and guild buffs) plus skill-specific Charm Experience, over
-     * an action time and efficiency that already carry their own buffs. An action the game grants
-     * no `experienceGain` for — alchemy and enhancing, whose XP comes from the item rather than
-     * the action — has no figure here, and says so instead of reading as zero.
+     * an action time and efficiency that already carry their own buffs. Alchemy carries no
+     * `experienceGain`: its XP comes from the queued item, see {@link alchemyRowXp}. An action with
+     * no figure either way (enhancing) says so instead of reading as zero.
      *
      * The row's count is completions, the same figure the profit pass spends, so the total is the
      * per-action XP times it.
      *
      * @param {string} actionHrid - The queued action
      * @param {number} count - Completions this row will perform, 0 when it is endless
+     * @param {Object} [actionObj] - The queued action itself; alchemy needs its primaryItemHash
      * @returns {{perHour: number|null, total: number|null}} Never null: a skilling row always
      *   shows a line, even when that line is the admission that it has no figure
      */
-    skillingRowXp(actionHrid, count) {
+    skillingRowXp(actionHrid, count, actionObj = null) {
         try {
+            if (dataManager.getActionDetails(actionHrid)?.type === '/action_types/alchemy') {
+                return this.alchemyRowXp(actionObj, count);
+            }
             const expData = calculateExpPerHour(actionHrid);
             if (!expData || !Number.isFinite(expData.modifiedXP)) return { perHour: null, total: null };
             const perHour = Number.isFinite(expData.expPerHour) ? expData.expPerHour : null;
@@ -1343,6 +1348,36 @@ class ActionTimeDisplay {
             console.error('[ActionTimeDisplay] Working out a queued row’s experience failed:', error);
             return { perHour: null, total: null };
         }
+    }
+
+    /**
+     * A queued alchemy row's experience, from the item it alchemizes.
+     *
+     * The alchemy panel's own figure: base XP from the item's level and the alchemy type, times
+     * wisdom and Charm Experience, with a failed attempt teaching a tenth. The success rate and
+     * the efficiency-inclusive attempts per hour are the ones the row's profit line uses.
+     *
+     * @param {Object|null} actionObj - The queued alchemy action
+     * @param {number} count - Attempts this row will perform, 0 when it is endless
+     * @returns {{perHour: number|null, total: number|null}}
+     */
+    alchemyRowXp(actionObj, count) {
+        const none = { perHour: null, total: null };
+        if (!actionObj?.primaryItemHash) return none;
+        const { itemHrid } = this.parseItemHash(actionObj.primaryItemHash);
+        const alchemyType = getAlchemyTypeFromActionHrid(actionObj.actionHrid);
+        const profitData = this.calculateAlchemyProfitForAction(actionObj);
+        if (!itemHrid || !alchemyType || !profitData) return none;
+        if (!Number.isFinite(profitData.successRate) || !Number.isFinite(profitData.actionsPerHour)) return none;
+
+        const itemLevel = dataManager.getItemDetails(itemHrid)?.itemLevel || 0;
+        const xpPerAction = calcXpPerAction(alchemyType, itemLevel, profitData.successRate);
+        if (!(xpPerAction > 0)) return none;
+        const attempts = Number.isFinite(count) ? count : 0;
+        return {
+            perHour: xpPerAction * profitData.actionsPerHour,
+            total: attempts > 0 ? xpPerAction * attempts : null,
+        };
     }
 
     /**
@@ -4593,7 +4628,7 @@ class ActionTimeDisplay {
                     // The running action has no row of its own in the edit menu, but it is part of
                     // every total the footer prints, so its experience is folded in here. A count
                     // of 0 — endless and unbounded — has no total, and marks the tally short.
-                    this.addQueueXp(xpTally, this.skillingRowXp(currentAction.actionHrid, count));
+                    this.addQueueXp(xpTally, this.skillingRowXp(currentAction.actionHrid, count, currentAction));
 
                     // Store action for profit calculation (done async after UI renders)
                     // Skip enhancing actions — no profit applies
@@ -4931,7 +4966,7 @@ class ActionTimeDisplay {
                 // never ends has a rate but no total, and marks the footer short the way its
                 // profit line already does.
                 if (!isCombatRow) {
-                    const skillXp = this.skillingRowXp(actionObj.actionHrid, isTrulyInfinite ? 0 : count);
+                    const skillXp = this.skillingRowXp(actionObj.actionHrid, isTrulyInfinite ? 0 : count, actionObj);
                     this.appendQueueRowXp(actionDiv, skillXp);
                     if (isReachable) this.addQueueXp(xpTally, skillXp);
                 }
