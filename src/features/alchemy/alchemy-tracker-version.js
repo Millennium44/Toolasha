@@ -32,6 +32,11 @@
  *   Essence; the predicted-rate stamp takes the catalyst from the running
  *   action rather than the open panel; and a message with no baseline is
  *   floored at one attempt per visible success rather than one per changed stack.
+ * - 4 — reload resume. Each session carries a `resumePoint` (queue action id,
+ *   `currentCount`, measured stack totals); a page loaded while the same queue
+ *   action is still running resumes that session and reads the gap — batches
+ *   the game completed while no socket was open — against it, so a reload no
+ *   longer splits the run or drops the batch in the gap.
  *
  * The stamp is carried through a JSON backup and import untouched. A read-time
  * reload merge keeps it only when every part carries it, at the lowest
@@ -39,13 +44,16 @@
  */
 
 /** The version the trackers stamp on every session they start now. */
-export const ALCHEMY_TRACKER_VERSION = 3;
+export const ALCHEMY_TRACKER_VERSION = 4;
 
 /** The first version whose sessions count a run's first message correctly. */
 export const FIRST_MESSAGE_FIX_VERSION = 2;
 
 /** The first version whose sessions carry the session-boundary fixes. */
 export const SESSION_BOUNDARY_FIX_VERSION = 3;
+
+/** The first version whose sessions resume across a page reload. */
+export const RELOAD_RESUME_VERSION = 4;
 
 /**
  * The version a session was recorded under.
@@ -88,6 +96,7 @@ export default {
     ALCHEMY_TRACKER_VERSION,
     FIRST_MESSAGE_FIX_VERSION,
     SESSION_BOUNDARY_FIX_VERSION,
+    RELOAD_RESUME_VERSION,
     sessionTrackerVersion,
     isPreFixSession,
     mergedTrackerVersion,

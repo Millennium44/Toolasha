@@ -33,6 +33,7 @@ import { createItemCountLedger, deltasByItem, seedLedgerFromInventory } from './
 import { recordCatalystUse } from './alchemy-catalyst-use.js';
 import { runningAlchemyAction } from './alchemy-running-action.js';
 import { mergeReloadSplitSessions, expandKeptSessions } from './alchemy-session-merge.js';
+import { captureResumePoint, findResumableSession, gapRows } from './alchemy-session-resume.js';
 import { ALCHEMY_TRACKER_VERSION } from './alchemy-tracker-version.js';
 
 const DECOMPOSE_ACTION_HRID = '/actions/alchemy/decompose';
@@ -150,10 +151,84 @@ class DecomposeHistoryTracker {
      */
     async seedFromQueue() {
         try {
-            if (!this.activeSession) await this.handleActionsUpdated();
+            if (!this.activeSession) await this.handleActionsUpdated({ allowResume: true });
         } catch (error) {
             console.error('[DecomposeHistoryTracker] Could not start a session from the queue:', error);
         }
+    }
+
+    /**
+     * Carry on the stored session a reload interrupted, if it is the same run.
+     *
+     * The game kept acting while the page reloaded, and a batch completed in
+     * that gap is never delivered as a message; the new page's snapshot already
+     * holds it. Resuming reads the gap against the session's stored resume
+     * point, as one more message, so the run stays one record and the batch is
+     * counted. See `alchemy-session-resume.js` for when this is not attempted.
+     *
+     * @param {Object} running - The queue action running when the page started
+     * @param {string} inputItemHrid - Its input item
+     * @param {number} [enhancementLevel] - Its input's enhancement level
+     * @returns {Promise<boolean>} True when a session is now open (resumed, or
+     *   opened by a message while the history was being read)
+     */
+    async resumeSession(running, inputItemHrid, enhancementLevel) {
+        const stored = await this.loadStoredSessions();
+        // A message may have opened a session while the history was read
+        if (this.activeSession) return true;
+
+        // Read again after the await: the pair must describe the same instant
+        const current = runningAlchemyAction(dataManager.getCurrentActions(), DECOMPOSE_ACTION_HRID);
+        if (!current || current.id !== running.id) return false;
+
+        const session = findResumableSession(stored, {
+            actionId: current.id,
+            currentCount: current.currentCount,
+            inputItemHrid,
+            enhancementLevel,
+        });
+        if (!session) return false;
+
+        const point = session.resumePoint;
+        this.activeSession = session;
+        this.itemCounts.reset();
+        this.itemCounts.noteEach(point.stacks);
+        this.seededHrids = new Set(point.hrids);
+        this.lastCurrentCount = point.currentCount;
+        this.trackedActionId = point.actionId;
+
+        if (Number(current.currentCount) > point.currentCount) {
+            await this.handleActionCompleted({
+                type: 'action_completed',
+                endCharacterAction: current,
+                endCharacterItems: gapRows(point, dataManager.characterItems),
+            });
+        } else {
+            session.lastActivityTime = Date.now();
+            this.rebaseline({
+                actionId: current.id,
+                currentCount: current.currentCount,
+                catalystHrid: this.extractItemHrid(current.secondaryItemHash),
+            });
+        }
+        return true;
+    }
+
+    /**
+     * The items whose stacks this tracker measures for a session: the
+     * outputs, an enhanced input's Enhancing Essence, and the catalyst.
+     * @param {Object} session - The session
+     * @param {string|null} catalystHrid - The catalyst in the action's slot
+     * @returns {Array<string>} Item hrids
+     */
+    relevantHrids(session, catalystHrid) {
+        const itemDetails = dataManager.getItemDetails(session.inputItemHrid);
+        const outputHrids = (itemDetails?.alchemyDetail?.decomposeItems || []).map((entry) => entry?.itemHrid);
+        return [
+            ...outputHrids.filter((hrid) => hrid !== COIN_ITEM_HRID),
+            session.enhancementLevel > 0 ? ENHANCING_ESSENCE_HRID : null,
+            catalystHrid,
+        ].filter(Boolean);
     }
 
     /**
@@ -208,8 +283,10 @@ class DecomposeHistoryTracker {
      * actions that changed, so it cannot say on its own whether the decompose
      * is still the one running. See `alchemy-running-action.js` for why, and
      * `initialize()` for why this is safe to read synchronously here.
+     *
+     * @param {{allowResume?: boolean}} [options] - `allowResume` only on a fresh page, see `resumeSession`
      */
-    async handleActionsUpdated() {
+    async handleActionsUpdated(options = {}) {
         const decomposeAction = runningAlchemyAction(dataManager.getCurrentActions(), DECOMPOSE_ACTION_HRID);
 
         if (decomposeAction) {
@@ -228,7 +305,14 @@ class DecomposeHistoryTracker {
                 catalystHrid: this.extractItemHrid(decomposeAction.secondaryItemHash),
             };
             if (!this.activeSession) {
-                // No active session — start one
+                // No active session — carry on the run a reload interrupted, or start one
+                if (
+                    options.allowResume &&
+                    (await this.resumeSession(decomposeAction, inputItemHrid, enhancementLevel))
+                ) {
+                    return;
+                }
+                if (this.activeSession) return;
                 await this.startSession(inputItemHrid, enhancementLevel, Date.now(), baseline);
             } else if (
                 this.activeSession.inputItemHrid !== inputItemHrid ||
@@ -372,6 +456,14 @@ class DecomposeHistoryTracker {
             legacyFields: LEGACY_CATALYST_FIELDS,
             stackKnown: this.seededHrids.has(catalystHrid),
         });
+
+        // Where the next message — or the gap a reload leaves — is measured from
+        session.resumePoint = captureResumePoint(
+            dataManager.characterItems,
+            this.relevantHrids(session, catalystHrid),
+            action.id,
+            currentCount
+        );
 
         await this.saveSession(session);
     }
@@ -542,14 +634,11 @@ class DecomposeHistoryTracker {
         const startCount = Number(baseline.currentCount);
         this.lastCurrentCount = Number.isFinite(startCount) ? startCount : null;
         this.trackedActionId = baseline.actionId;
-        const { inputItemHrid, enhancementLevel } = this.activeSession;
-        const itemDetails = dataManager.getItemDetails(inputItemHrid);
-        const outputHrids = (itemDetails?.alchemyDetail?.decomposeItems || []).map((entry) => entry?.itemHrid);
-        const seeded = seedLedgerFromInventory(this.itemCounts, dataManager.characterItems, [
-            ...outputHrids.filter((hrid) => hrid !== COIN_ITEM_HRID),
-            enhancementLevel > 0 ? ENHANCING_ESSENCE_HRID : null,
-            baseline.catalystHrid,
-        ]);
+        const seeded = seedLedgerFromInventory(
+            this.itemCounts,
+            dataManager.characterItems,
+            this.relevantHrids(this.activeSession, baseline.catalystHrid)
+        );
         this.seededHrids = new Set([...this.seededHrids, ...seeded]);
     }
 

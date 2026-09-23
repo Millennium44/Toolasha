@@ -29,6 +29,7 @@ import { createItemCountLedger, deltasByItem, seedLedgerFromInventory } from './
 import { recordCatalystUse } from './alchemy-catalyst-use.js';
 import { runningAlchemyAction } from './alchemy-running-action.js';
 import { mergeReloadSplitSessions, expandKeptSessions } from './alchemy-session-merge.js';
+import { captureResumePoint, findResumableSession, gapRows } from './alchemy-session-resume.js';
 import { ALCHEMY_TRACKER_VERSION } from './alchemy-tracker-version.js';
 import { ensureSessionsRepaired } from './transmute-session-repair.js';
 
@@ -133,10 +134,83 @@ class TransmuteHistoryTracker {
      */
     async seedFromQueue() {
         try {
-            if (!this.activeSession) await this.handleActionsUpdated();
+            if (!this.activeSession) await this.handleActionsUpdated({ allowResume: true });
         } catch (error) {
             console.error('[TransmuteHistoryTracker] Could not start a session from the queue:', error);
         }
+    }
+
+    /**
+     * Carry on the stored session a reload interrupted, if it is the same run.
+     *
+     * The game kept acting while the page reloaded, and a batch completed in
+     * that gap is never delivered as a message; the new page's snapshot already
+     * holds it. Resuming reads the gap against the session's stored resume
+     * point, as one more message, so the run stays one record and the batch is
+     * counted. See `alchemy-session-resume.js` for when this is not attempted.
+     *
+     * @param {Object} running - The queue action running when the page started
+     * @param {string} inputItemHrid - Its input item
+     * @param {number} [enhancementLevel] - Its input's enhancement level
+     * @returns {Promise<boolean>} True when a session is now open (resumed, or
+     *   opened by a message while the history was being read)
+     */
+    async resumeSession(running, inputItemHrid, enhancementLevel) {
+        const stored = await this.loadStoredSessions();
+        // A message may have opened a session while the history was read
+        if (this.activeSession) return true;
+
+        // Read again after the await: the pair must describe the same instant
+        const current = runningAlchemyAction(dataManager.getCurrentActions(), TRANSMUTE_ACTION_HRID);
+        if (!current || current.id !== running.id) return false;
+
+        const session = findResumableSession(stored, {
+            actionId: current.id,
+            currentCount: current.currentCount,
+            inputItemHrid,
+            enhancementLevel,
+        });
+        if (!session) return false;
+
+        const point = session.resumePoint;
+        this.activeSession = session;
+        this.itemCounts.reset();
+        this.itemCounts.noteEach(point.stacks);
+        this.seededHrids = new Set(point.hrids);
+        this.lastCurrentCount = point.currentCount;
+        this.trackedActionId = point.actionId;
+        this.inputStackKnown = point.stacks.some((stack) => stack.itemHrid === inputItemHrid);
+
+        if (Number(current.currentCount) > point.currentCount) {
+            await this.handleActionCompleted({
+                type: 'action_completed',
+                endCharacterAction: current,
+                endCharacterItems: gapRows(point, dataManager.characterItems),
+            });
+        } else {
+            session.lastActivityTime = Date.now();
+            this.rebaseline({
+                actionId: current.id,
+                currentCount: current.currentCount,
+                catalystHrid: this.extractItemHrid(current.secondaryItemHash),
+            });
+        }
+        return true;
+    }
+
+    /**
+     * The items whose stacks this tracker measures for a session.
+     * @param {Object} session - The session
+     * @param {string|null} catalystHrid - The catalyst in the action's slot
+     * @returns {Array<string>} Item hrids
+     */
+    relevantHrids(session, catalystHrid) {
+        const itemDetails = dataManager.getItemDetails(session.inputItemHrid);
+        const hrids = [session.inputItemHrid, catalystHrid];
+        for (const entry of itemDetails?.alchemyDetail?.transmuteDropTable || []) {
+            if (entry?.itemHrid && entry.itemHrid !== COIN_ITEM_HRID) hrids.push(entry.itemHrid);
+        }
+        return hrids.filter(Boolean);
     }
 
     /**
@@ -191,8 +265,10 @@ class TransmuteHistoryTracker {
      * actions that changed, so it cannot say on its own whether the transmute
      * is still the one running. See `alchemy-running-action.js` for why, and
      * `initialize()` for why this is safe to read synchronously here.
+     *
+     * @param {{allowResume?: boolean}} [options] - `allowResume` only on a fresh page, see `resumeSession`
      */
-    async handleActionsUpdated() {
+    async handleActionsUpdated(options = {}) {
         const transmuteAction = runningAlchemyAction(dataManager.getCurrentActions(), TRANSMUTE_ACTION_HRID);
 
         if (transmuteAction) {
@@ -209,7 +285,9 @@ class TransmuteHistoryTracker {
                 catalystHrid: this.extractItemHrid(transmuteAction.secondaryItemHash),
             };
             if (!this.activeSession) {
-                // No active session — start one
+                // No active session — carry on the run a reload interrupted, or start one
+                if (options.allowResume && (await this.resumeSession(transmuteAction, inputItemHrid))) return;
+                if (this.activeSession) return;
                 await this.startSession(inputItemHrid, Date.now(), baseline);
             } else if (this.activeSession.inputItemHrid !== inputItemHrid) {
                 // Different item — end current session and start new one
@@ -426,6 +504,14 @@ class TransmuteHistoryTracker {
         // Failure — totalAttempts already incremented, nothing more to record
 
         this.recordCatalystUse(session, action, noted, successCount, attemptCount);
+
+        // Where the next message — or the gap a reload leaves — is measured from
+        session.resumePoint = captureResumePoint(
+            dataManager.characterItems,
+            this.relevantHrids(session, this.extractItemHrid(action.secondaryItemHash)),
+            action.id,
+            currentCount
+        );
 
         await this.saveSession(session);
     }
