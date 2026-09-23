@@ -16,6 +16,7 @@ import { partyLevelGaps } from '../../utils/dungeon-level-gap.js';
 import { chestsPerCompletion } from '../../utils/dungeon-chest-luck.js';
 import { combatLevel } from '../../utils/combat-level.js';
 import { runningCombatAction } from '../../utils/combat-actions.js';
+import { sharedProfileStatus } from '../../utils/shared-profile-status.js';
 import { COMBAT_SCROLL_BUFF_TYPES } from '../../utils/combat-scroll-buffs.js';
 import { manualAchievementCombatBuffs, deriveAchievementCombatBuffs } from '../../utils/achievement-combat-buffs.js';
 import { MARKET_TAX, COWBELL_BAG_HRID, COWBELL_BAG_TAX } from '../../utils/profit-constants.js';
@@ -907,14 +908,22 @@ function calcCombatLevel(dto) {
 /**
  * Build player DTOs for all party members (or solo if not in a party).
  * Auto-detects party from characterData and loads cached profiles.
- * @returns {Promise<{players: Array, playerNames: Array<string>, missingMembers: Array<string>}>}
+ *
+ * `profileStatus` has one entry per other party member, in party order, saying how old their
+ * cached profile is and whether it carries any gear — see `shared-profile-status.js`. A member
+ * with no cached profile has `hrid: null` and is also named in `missingMembers`.
+ *
+ * @returns {Promise<{players: Array, playerInfo: Array<{hrid: string, name: string}>, selfHrid: string,
+ *   missingMembers: Array<string>, profileStatus: Array<Object>}>} Empty when the character
+ *   changed while the cached profiles were being read
  */
 export async function buildAllPlayerDTOs() {
     const characterData = dataManager.characterData;
     const clientData = dataManager.getInitClientData();
+    const empty = { players: [], playerInfo: [], selfHrid: 'player1', missingMembers: [], profileStatus: [] };
 
     if (!characterData) {
-        return { players: [], playerInfo: [], selfHrid: 'player1', missingMembers: [] };
+        return empty;
     }
 
     // Not `partyInfo.partySlotMap` directly: that map is frozen at page load and
@@ -929,14 +938,19 @@ export async function buildAllPlayerDTOs() {
     if (partyMembers.length < 2) {
         // Solo mode
         const selfDTO = buildPlayerDTO();
-        if (!selfDTO) return { players: [], playerInfo: [], selfHrid: 'player1', missingMembers: [] };
+        if (!selfDTO) return empty;
         return {
             players: [selfDTO],
             playerInfo: [{ hrid: selfDTO.hrid, name: characterData.character?.name || 'Player 1' }],
             selfHrid: selfDTO.hrid,
             missingMembers: [],
+            profileStatus: [],
         };
     }
+
+    // The party and self were read from this character; the self DTO below is built live after
+    // the await, so a switch landing inside it would pair one character's party with another's gear
+    const ownerId = characterData.character?.id;
 
     // Party mode — load profile list from IndexedDB
     let profileList = [];
@@ -945,6 +959,9 @@ export async function buildAllPlayerDTOs() {
     } catch (error) {
         console.error('[CombatSimAdapter] Failed to load profile list:', error);
     }
+    if (!Array.isArray(profileList)) profileList = [];
+    if (String(dataManager.characterData?.character?.id) !== String(ownerId)) return empty;
+    const now = Date.now();
 
     // Get battle data for consumable detection
     const battleData = dataManager.battleData || null;
@@ -952,11 +969,12 @@ export async function buildAllPlayerDTOs() {
     const players = [];
     const playerNames = [];
     const missingMembers = [];
+    const profileStatus = [];
     let selfHrid = null;
     let slotIndex = 1;
 
     for (const member of partyMembers) {
-        if (member.characterID === characterData.character.id) {
+        if (String(member.characterID) === String(ownerId)) {
             // Self
             const selfDTO = buildPlayerDTO();
             if (selfDTO) {
@@ -967,15 +985,19 @@ export async function buildAllPlayerDTOs() {
             }
         } else {
             // Party member — look up in profile list (IndexedDB, cross-session)
-            const profile = profileList.find((p) => p.characterID === member.characterID);
+            const profile = profileList.find((p) => String(p?.characterID) === String(member.characterID));
 
             if (profile) {
                 const memberDTO = buildPartyMemberDTO(profile, clientData, battleData);
                 memberDTO.hrid = 'player' + slotIndex;
                 players.push(memberDTO);
-                playerNames.push(profile.characterName || 'Player ' + slotIndex);
+                const name = profile.characterName || 'Player ' + slotIndex;
+                playerNames.push(name);
+                profileStatus.push({ hrid: memberDTO.hrid, name, ...sharedProfileStatus(profile, now) });
             } else {
-                missingMembers.push(member.characterName || 'Unknown');
+                const name = member.characterName || 'Unknown';
+                missingMembers.push(name);
+                profileStatus.push({ hrid: null, name, ...sharedProfileStatus(null, now) });
             }
         }
         slotIndex++;
@@ -993,7 +1015,13 @@ export async function buildAllPlayerDTOs() {
     // Build playerInfo: hrid → name mapping in player order, for tab rendering
     const playerInfo = players.map((p, i) => ({ hrid: p.hrid, name: playerNames[i] }));
 
-    return { players, playerInfo, selfHrid: selfHrid || players[0]?.hrid || 'player1', missingMembers };
+    return {
+        players,
+        playerInfo,
+        selfHrid: selfHrid || players[0]?.hrid || 'player1',
+        missingMembers,
+        profileStatus,
+    };
 }
 
 /**

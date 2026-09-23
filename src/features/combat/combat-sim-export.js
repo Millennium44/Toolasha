@@ -8,6 +8,7 @@
 import dataManager from '../../core/data-manager.js';
 import storage from '../../core/storage.js';
 import { runningCombatAction } from '../../utils/combat-actions.js';
+import { sharedProfileStatus, sharedProfileWarning } from '../../utils/shared-profile-status.js';
 
 /**
  * Warn (not block) when a GM-bridged value is older than this. No user-facing setting — a
@@ -626,20 +627,56 @@ export function constructPartyPlayer(profile, clientObj, battleObj) {
 }
 
 /**
+ * The warning, if any, a cached party profile should carry into an export.
+ *
+ * A gearless member is exported anyway, at their real levels, rather than dropped: party size
+ * decides how monsters spread their attacks, how the level-gap debuff and the loot split fall,
+ * and which zones a party can enter, so a missing body changes the whole fight while a naked one
+ * changes only their own share of it — and the warning tells the reader to fix that share.
+ *
+ * @param {string} name - Member's display name
+ * @param {Object|null} profile - Their `profile_list` entry, or null when none is cached
+ * @param {Array<{name: string, level: string, text: string}>} warnings - Collector to append to
+ */
+function noteProfileWarning(name, profile, warnings) {
+    const warning = sharedProfileWarning(name, sharedProfileStatus(profile));
+    if (warning) warnings.push({ name, ...warning });
+}
+
+/**
+ * Whether the character an export started from is still the one this tab plays.
+ *
+ * Only meaningful on the game page: the export reads the character before awaiting the cached
+ * profiles, and a switch landing inside that await would hand the sim the departing character's
+ * party. On an external simulator page there is no live character, so nothing can move.
+ * @param {string|number|null|undefined} characterId - Id read before the await
+ * @returns {boolean}
+ */
+function stillSameCharacter(characterId) {
+    const live = dataManager.characterData;
+    return !live || sameCharacterId(live.character?.id, characterId);
+}
+
+/**
  * Construct full export object (solo or party)
  * @param {string|null} externalProfileId - Optional profile ID (for viewing other players' profiles)
  * @param {boolean} singlePlayerFormat - If true, returns player object instead of multi-player format
- * @returns {Object} Export object with player data, IDs, positions, and zone info
+ * @returns {Object} Export object with player data, IDs, positions, and zone info, plus
+ *   `profileWarnings` ({name, level, text} per party member whose cached profile is missing,
+ *   gearless or old); null when the character changed while cached profiles were read
  */
 export async function constructExportObject(externalProfileId = null, singlePlayerFormat = false) {
     const characterObj = getCharacterData();
     if (!characterObj) {
         return null;
     }
+    const ownerId = characterObj.character?.id;
 
     const clientObj = getClientData();
     const battleObj = getBattleData();
     const profileList = await getProfileList();
+    if (!stillSameCharacter(ownerId)) return null;
+    const profileWarnings = [];
 
     // Blank player template (as string, like MCS)
     const BLANK =
@@ -656,6 +693,7 @@ export async function constructExportObject(externalProfileId = null, singlePlay
 
         // Construct the player object
         const playerObj = constructPartyPlayer(profile, clientObj, battleObj);
+        noteProfileWarning(profile.characterName, profile, profileWarnings);
 
         // If single-player format requested, return player object directly
         if (singlePlayerFormat) {
@@ -671,6 +709,7 @@ export async function constructExportObject(externalProfileId = null, singlePlay
                 isZoneDungeon: false,
                 difficultyTier: 0,
                 isParty: false,
+                profileWarnings,
             };
         }
 
@@ -691,6 +730,7 @@ export async function constructExportObject(externalProfileId = null, singlePlay
             isZoneDungeon: false,
             difficultyTier: 0,
             isParty: false,
+            profileWarnings,
         };
     }
 
@@ -746,6 +786,11 @@ export async function constructExportObject(externalProfileId = null, singlePlay
                 } else {
                     // Party member - try to get from profile list
                     const profile = profileList.find((p) => sameCharacterId(p.characterID, member.characterID));
+                    noteProfileWarning(
+                        profile?.characterName || member.characterName || 'Unknown',
+                        profile || null,
+                        profileWarnings
+                    );
                     if (profile) {
                         exportObj[slotIndex] = JSON.stringify(constructPartyPlayer(profile, clientObj, battleObj));
                         playerIDs[slotIndex - 1] = profile.characterName;
@@ -794,6 +839,7 @@ export async function constructExportObject(externalProfileId = null, singlePlay
             isZoneDungeon,
             difficultyTier,
             isParty: false, // Single player export is never party format
+            profileWarnings: [],
         };
     }
 
@@ -805,5 +851,6 @@ export async function constructExportObject(externalProfileId = null, singlePlay
         isZoneDungeon,
         difficultyTier,
         isParty,
+        profileWarnings,
     };
 }

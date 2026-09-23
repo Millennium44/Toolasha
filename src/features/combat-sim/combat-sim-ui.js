@@ -78,6 +78,7 @@ import {
 } from '../../utils/party-lint.js';
 import { createEtaTracker } from '../../utils/progress-eta.js';
 import { toCsv, csvFilename, downloadCsv } from '../../utils/csv-export.js';
+import { sharedProfileSummary } from '../../utils/shared-profile-status.js';
 import {
     buildGameDataPayload,
     buildAllPlayerDTOs,
@@ -4592,6 +4593,7 @@ class CombatSimUI {
         // live character's own and overwrite it in storage
         let trueSelfHrid;
         let missingMembers;
+        let profileStatus;
         let editedDTOs;
 
         this._runStarting = true;
@@ -4604,6 +4606,7 @@ class CombatSimUI {
                 trueSelfHrid = this._editor?.getSelfHrid() || null;
                 selfHrid = trueSelfHrid || playerDTOs[0]?.hrid || 'player1';
                 missingMembers = this._editor?.getMissingMembers() || [];
+                profileStatus = this._editor?.getProfileStatus?.() || [];
             } else {
                 const result = await buildAllPlayerDTOs();
                 playerDTOs = result.players;
@@ -4611,6 +4614,7 @@ class CombatSimUI {
                 trueSelfHrid = result.selfHrid;
                 selfHrid = result.selfHrid;
                 missingMembers = result.missingMembers;
+                profileStatus = result.profileStatus || [];
             }
         } catch (error) {
             if (startToken !== this._runStartToken) return;
@@ -4770,8 +4774,10 @@ class CombatSimUI {
             const missingNote = missingMembers.length
                 ? ` | Missing: ${missingMembers.join(', ')} (open their profiles)`
                 : '';
+            const profileSummary = sharedProfileSummary(profileStatus);
+            const profileNote = profileSummary ? ` | ${profileSummary}` : '';
             this._setStatus(
-                `Simulation complete in ${totalElapsed}: ${formatWithSeparator(hours)} hours · ${partyInfo} · Pricing: ${modeLabel}${missingNote}`
+                `Simulation complete in ${totalElapsed}: ${formatWithSeparator(hours)} hours · ${partyInfo} · Pricing: ${modeLabel}${missingNote}${profileNote}`
             );
         } catch (error) {
             if (!this._isCurrentRun(ownerId, startToken)) return;

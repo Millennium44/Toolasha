@@ -6,6 +6,7 @@ import { constructMetzTeamExport } from './combat-sim-export-metz.js';
 
 const timerRegistry = createTimerRegistry();
 const BUTTON_ID = 'toolasha-metz-import-button';
+const WARNINGS_ID = 'toolasha-metz-import-warnings';
 const DEFAULT_LABEL = 'Import from Toolasha';
 let mutationObserver = null;
 let mountTimeout = null;
@@ -38,6 +39,7 @@ export function disable() {
     if (mountTimeout) clearTimeout(mountTimeout);
     mountTimeout = null;
     document.getElementById(BUTTON_ID)?.remove();
+    document.getElementById(WARNINGS_ID)?.remove();
 }
 
 function scheduleMount() {
@@ -59,10 +61,14 @@ function mount() {
     const existing = document.getElementById(BUTTON_ID);
     if (!textarea) {
         existing?.remove();
+        document.getElementById(WARNINGS_ID)?.remove();
         return;
     }
     if (existing) {
         if (existing.previousElementSibling !== textarea) textarea.insertAdjacentElement('afterend', existing);
+        const warnings = document.getElementById(WARNINGS_ID);
+        if (warnings && warnings.previousElementSibling !== existing)
+            existing.insertAdjacentElement('afterend', warnings);
         return;
     }
 
@@ -80,6 +86,28 @@ function mount() {
         importIntoMetz(button);
     });
     textarea.insertAdjacentElement('afterend', button);
+}
+
+/**
+ * Show, under the import button, the party members whose cached profiles the import could not
+ * trust: none cached (left out), no gear (imported naked), or older than a day. Replaced on every
+ * import and removed when there is nothing to say.
+ * @param {Element} button - The import button
+ * @param {Array<{level: string, text: string}>} warnings - From `constructMetzTeamExport`
+ */
+function showProfileWarnings(button, warnings) {
+    document.getElementById(WARNINGS_ID)?.remove();
+    if (!warnings?.length) return;
+    const list = document.createElement('div');
+    list.id = WARNINGS_ID;
+    list.style.cssText = 'margin:0 0 8px; font-size:12px; line-height:1.4;';
+    for (const warning of warnings) {
+        const line = document.createElement('div');
+        line.style.color = warning.level === 'stale' ? '#c9a227' : '#e0703a';
+        line.textContent = `⚠ ${warning.text}`;
+        list.appendChild(line);
+    }
+    button.insertAdjacentElement('afterend', list);
 }
 
 function setButtonStatus(button, label, backgroundColor) {
@@ -110,7 +138,9 @@ async function importIntoMetz(button) {
             alert('Open Metz from the game page so Toolasha knows which character to import.');
             return;
         }
-        const team = await constructMetzTeamExport(expectedCharacterId);
+        const warnings = [];
+        const team = await constructMetzTeamExport(expectedCharacterId, { warnings });
+        showProfileWarnings(button, team ? warnings : []);
         if (!team) {
             setButtonStatus(button, 'Character data mismatch', '#dc3545');
             alert(

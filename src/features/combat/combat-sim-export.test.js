@@ -377,3 +377,107 @@ describe('guildCombatBuffLevels in the export', () => {
         });
     });
 });
+
+describe('party members whose cached profile cannot be trusted', () => {
+    const DAY = 24 * 60 * 60 * 1000;
+
+    /** Game-page character in a four-member party */
+    function partyCharacter() {
+        return {
+            character: { id: 'char-mine', name: 'Me' },
+            characterSkills: [],
+            partyInfo: {
+                party: { actionHrid: '/actions/combat/fly', difficultyTier: 0 },
+                partySlotMap: {
+                    1: { characterID: 'char-mine' },
+                    2: { characterID: 'char-fresh' },
+                    3: { characterID: 'char-shy' },
+                    4: { characterID: 'char-ghost', characterName: 'Ghost' },
+                },
+            },
+        };
+    }
+
+    /** `profile_list` entries in the shape websocket.js stores them */
+    function profiles(now) {
+        return [
+            {
+                characterID: 'char-fresh',
+                characterName: 'Fresh',
+                timestamp: now - 60 * 1000,
+                profile: {
+                    characterSkills: [{ skillHrid: '/skills/attack', level: 90 }],
+                    wearableItemMap: {
+                        '/item_locations/main_hand': {
+                            itemLocationHrid: '/item_locations/main_hand',
+                            itemHrid: '/items/granite_bludgeon',
+                            enhancementLevel: 3,
+                        },
+                    },
+                },
+            },
+            {
+                characterID: 'char-shy',
+                characterName: 'Shy',
+                timestamp: now - 3 * DAY,
+                profile: {
+                    characterSkills: [{ skillHrid: '/skills/stamina', level: 80 }],
+                    hideWearableItems: true,
+                    wearableItemMap: {},
+                },
+            },
+        ];
+    }
+
+    test('a gearless member is still exported at their levels, with a warning; a missing one is named', async () => {
+        const now = Date.now();
+        dataManagerMock.characterData = partyCharacter();
+        globalThis.GM_getValue = vi.fn((key) =>
+            key === 'toolasha_profile_list' ? JSON.stringify(profiles(now)) : null
+        );
+
+        const result = await constructExportObject();
+
+        expect(result.importedPlayerPositions).toEqual([true, true, true, false, false]);
+        const shy = JSON.parse(result.exportObj[3]);
+        expect(shy.player.staminaLevel).toBe(80);
+        expect(shy.player.equipment).toEqual([]);
+        expect(result.profileWarnings).toEqual([
+            expect.objectContaining({ name: 'Shy', level: 'gearless' }),
+            expect.objectContaining({ name: 'Ghost', level: 'missing' }),
+        ]);
+        expect(result.profileWarnings[0].text).toContain('hides equipment');
+    });
+
+    test('an old but geared profile warns without changing what is exported', async () => {
+        const now = Date.now();
+        const list = profiles(now);
+        list[0].timestamp = now - 2 * DAY;
+        dataManagerMock.characterData = {
+            ...partyCharacter(),
+            partyInfo: {
+                party: { actionHrid: '/actions/combat/fly', difficultyTier: 0 },
+                partySlotMap: { 1: { characterID: 'char-mine' }, 2: { characterID: 'char-fresh' } },
+            },
+        };
+        globalThis.GM_getValue = vi.fn((key) => (key === 'toolasha_profile_list' ? JSON.stringify(list) : null));
+
+        const result = await constructExportObject();
+
+        expect(JSON.parse(result.exportObj[2]).player.equipment).toHaveLength(1);
+        expect(result.profileWarnings).toEqual([
+            expect.objectContaining({ name: 'Fresh', level: 'stale', text: expect.stringContaining('2 d old') }),
+        ]);
+    });
+
+    test('a character switch inside the profile read exports nothing', async () => {
+        dataManagerMock.characterData = partyCharacter();
+        globalThis.GM_getValue = vi.fn((key) => {
+            if (key !== 'toolasha_profile_list') return null;
+            dataManagerMock.characterData = { character: { id: 'char-alt', name: 'Alt' }, characterSkills: [] };
+            return JSON.stringify(profiles(Date.now()));
+        });
+
+        expect(await constructExportObject()).toBeNull();
+    });
+});

@@ -15,6 +15,31 @@ import { createCalculatorUI, extractExpRates } from '../combat-sim-integration/s
 
 const timerRegistry = createTimerRegistry();
 const IMPORT_CONTAINER_ID = 'toolasha-import-container';
+const PROFILE_WARNINGS_ID = 'toolasha-import-profile-warnings';
+
+/**
+ * Show, under the import button, the party members whose cached profiles the import could not
+ * trust: none cached (left out), no gear (imported naked), or older than a day. Replaced on every
+ * import and removed when there is nothing to say, so what is on screen is always this import's.
+ * @param {Element} button - The import button, whose container holds the list
+ * @param {Array<{level: string, text: string}>} warnings - From `constructExportObject`
+ */
+function showProfileWarnings(button, warnings) {
+    const container = button.closest(`#${IMPORT_CONTAINER_ID}`) || button.parentElement;
+    container?.querySelector(`#${PROFILE_WARNINGS_ID}`)?.remove();
+    if (!container || !warnings?.length) return;
+
+    const list = document.createElement('div');
+    list.id = PROFILE_WARNINGS_ID;
+    list.style.cssText = 'margin-top:6px; font-size:12px; line-height:1.4;';
+    for (const warning of warnings) {
+        const line = document.createElement('div');
+        line.style.color = warning.level === 'stale' ? '#c9a227' : '#e0703a';
+        line.textContent = `⚠ ${warning.text}`;
+        list.appendChild(line);
+    }
+    container.appendChild(list);
+}
 
 // Skill calculator state
 let calculatorObserver = null;
@@ -155,6 +180,7 @@ async function importDataToSimulator(button) {
 
         const { exportObj, playerIDs, importedPlayerPositions, zone, isZoneDungeon, difficultyTier, isParty } =
             exportData;
+        showProfileWarnings(button, exportData.profileWarnings);
 
         // Step 1: Switch to Group Combat tab
         const groupTab = document.querySelector('a#group-combat-tab');

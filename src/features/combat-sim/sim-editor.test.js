@@ -522,6 +522,66 @@ describe('the panel says how fresh its party is', () => {
     });
 });
 
+describe('party profile ages', () => {
+    const DAY = 24 * 60 * 60 * 1000;
+
+    test('each loaded member shows how old their cached profile is, and a gearless one is called out', async () => {
+        const now = Date.now();
+        game.allPlayers = {
+            ...game.allPlayers,
+            players: [...game.allPlayers.players, { ...emptyDTO('player3'), attackLevel: 60 }],
+            playerInfo: [...game.allPlayers.playerInfo, { hrid: 'player3', name: 'Shy' }],
+            profileStatus: [
+                { hrid: 'player2', name: 'Partner', found: true, capturedAt: now - 3 * DAY, gearless: false },
+                { hrid: 'player3', name: 'Shy', found: true, capturedAt: null, gearless: true, hidden: true },
+            ],
+        };
+        const el = document.createElement('div');
+        const editor = new SimEditor({ editorEl: el });
+        await editor.initEditor();
+
+        expect(el.textContent).toContain('Party profiles:');
+        expect(el.textContent).toContain('Partner 3 d old');
+        expect(el.textContent).toContain('Shy age unknown');
+        expect(el.textContent).toContain('Shy: included with NO gear (their profile hides equipment)');
+        expect(el.querySelector('[data-edit-tab="player2"]').getAttribute('title')).toBe('Profile 3 d old');
+    });
+
+    test('a member removed from the list takes their note with them', async () => {
+        game.allPlayers = {
+            ...game.allPlayers,
+            profileStatus: [
+                { hrid: 'player2', name: 'Partner', found: true, capturedAt: null, gearless: true, hidden: false },
+            ],
+        };
+        const el = document.createElement('div');
+        const editor = new SimEditor({ editorEl: el });
+        await editor.initEditor();
+        expect(el.textContent).toContain('Partner: included with NO gear');
+
+        editor._editedPlayerInfo = editor._editedPlayerInfo.filter((entry) => entry.hrid !== 'player2');
+        delete editor._editedDTOs.player2;
+        editor.renderEditor();
+
+        expect(el.textContent).not.toContain('Party profiles:');
+        expect(editor.getProfileStatus()).toEqual([]);
+    });
+
+    test('resetting to self forgets the party notes', async () => {
+        game.allPlayers = {
+            ...game.allPlayers,
+            profileStatus: [{ hrid: 'player2', name: 'Partner', found: true, capturedAt: Date.now(), gearless: false }],
+        };
+        const el = document.createElement('div');
+        const editor = new SimEditor({ editorEl: el });
+        await editor.initEditor();
+        expect(el.textContent).toContain('Partner 1 min old');
+
+        editor.resetToSelf();
+        expect(el.textContent).not.toContain('Party profiles:');
+    });
+});
+
 describe('community buff levels stop where the game does', () => {
     test('the input offers 20, which is what a maxed buff reads in game', () => {
         const editor = new SimEditor({ editorEl: document.createElement('div'), skillingMode: true });

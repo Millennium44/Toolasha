@@ -24,6 +24,12 @@ import { PANEL_Z_CAP } from '../../utils/panel-z-index.js';
 import { COMBAT_SCROLL_LABELS, COMBAT_SCROLL_BUFF_TYPES } from '../../utils/combat-scroll-buffs.js';
 import { achievementBuffLabel } from '../../utils/achievement-combat-buffs.js';
 import { readScoped, writeScoped } from '../../utils/character-key.js';
+import {
+    formatProfileAge,
+    isProfileStale,
+    profileAgeMs,
+    sharedProfileWarning,
+} from '../../utils/shared-profile-status.js';
 
 const ACCENT = '#4a9eff';
 const ACCENT_BG = 'rgba(74, 158, 255, 0.12)';
@@ -80,6 +86,9 @@ export class SimEditor {
         this._activeEditPlayer = null;
         this._selfHrid = null;
         this._missingMembers = [];
+        // One entry per other party member from the last party load: the cached profile's
+        // capture time and whether it carried gear (see shared-profile-status.js)
+        this._profileStatus = [];
         this._importSkipped = [];
         this._editorInitialized = false;
         this._selectedLoadoutName = '';
@@ -220,6 +229,15 @@ export class SimEditor {
     getMissingMembers() {
         return this._missingMembers;
     }
+    /**
+     * Cached-profile status of the party members still loaded.
+     * @returns {Array<{hrid: string|null, name: string, found: boolean, capturedAt: number|null,
+     *   gearless: boolean, hidden: boolean}>}
+     */
+    getProfileStatus() {
+        const loaded = new Set((this._editedPlayerInfo || []).map((entry) => entry.hrid));
+        return (this._profileStatus || []).filter((entry) => !entry.hrid || loaded.has(entry.hrid));
+    }
     isInitialized() {
         return this._editorInitialized;
     }
@@ -324,7 +342,7 @@ export class SimEditor {
         const owner = dataManager.getCurrentCharacterId?.() ?? null;
 
         try {
-            const { players, playerInfo, selfHrid, missingMembers } = await buildAllPlayerDTOs();
+            const { players, playerInfo, selfHrid, missingMembers, profileStatus } = await buildAllPlayerDTOs();
             if ((dataManager.getCurrentCharacterId?.() ?? null) !== owner) {
                 // Left uninitialised on purpose: the next show()/initEditor
                 // builds the arriving character's own DTOs
@@ -348,6 +366,7 @@ export class SimEditor {
             this._selfHrid = selfHrid;
             this._activeEditPlayer = selfHrid;
             this._missingMembers = missingMembers;
+            this._profileStatus = Array.isArray(profileStatus) ? profileStatus : [];
             this._importSkipped = [];
             this._partyKeyAtLoad = this._partySignature().key;
             this._editorInitialized = true;
@@ -377,6 +396,7 @@ export class SimEditor {
         this._selfHrid = null;
         this._activeEditPlayer = 'player1';
         this._missingMembers = [];
+        this._profileStatus = [];
         this._importSkipped = [];
         this._partyKeyAtLoad = null;
         this._editorInitialized = true;
@@ -414,6 +434,8 @@ export class SimEditor {
         this._activeEditPlayer = this._editedPlayerInfo[this._editedPlayerInfo.length - 1]?.hrid;
         this._selfHrid = this._selfHrid || null;
         this._missingMembers = [];
+        // The loaded members keep their notes; the missing ones went with `_missingMembers`
+        this._profileStatus = (this._profileStatus || []).filter((entry) => entry.hrid);
         // Added to, not replaced: an import *appends* its players to the ones
         // already loaded (`nextSlot` above continues the numbering), so a second
         // import that placed everything would otherwise clear the note about the
@@ -492,6 +514,7 @@ export class SimEditor {
         this._selfHrid = 'player1';
         this._activeEditPlayer = 'player1';
         this._missingMembers = [];
+        this._profileStatus = [];
         this._importSkipped = [];
         this._selectedLoadoutName = '';
         this._partyKeyAtLoad = this._partySignature().key;
@@ -535,6 +558,7 @@ export class SimEditor {
         this._editedPlayerInfo = null;
         this._selfHrid = null;
         this._missingMembers = [];
+        this._profileStatus = [];
         this._importSkipped = [];
         this._selectedLoadoutName = '';
         this._partyKeyAtLoad = null;
@@ -621,6 +645,53 @@ export class SimEditor {
             Not loaded: ${missing.join(', ')} — a party member's loadout comes from their shared profile.
             Open their character card once, then reset again.
         </div>`;
+    }
+
+    /**
+     * How old each loaded party member's cached profile is, and who was loaded with no gear.
+     *
+     * A member's loadout is whatever their profile showed when it was last opened, and nothing
+     * refreshes it on its own, so the age is the reader's only way to tell a build from this
+     * evening from one from last month. Aged at render time, not load time: the panel can sit
+     * open for hours.
+     * @private
+     * @param {number} [now=Date.now()] - Reference time
+     * @returns {string} HTML for the note, or '' when no party member was loaded from a profile
+     */
+    _renderProfileAgeNote(now = Date.now()) {
+        const loaded = this.getProfileStatus().filter((entry) => entry.found && entry.hrid);
+        if (!loaded.length) return '';
+
+        const ages = loaded.map((entry) => {
+            const ageMs = profileAgeMs(entry.capturedAt, now);
+            const color = isProfileStale(ageMs) ? '#c9a227' : '#777';
+            return `<span style="color:${color};">${escapeHtml(entry.name)} ${formatProfileAge(ageMs)}</span>`;
+        });
+        let html = `<div style="color:#666; font-size:11px; margin:-4px 0 8px;"
+            title="Party members are loaded from their cached profiles, captured whenever their profile is opened in game. Older than a day is highlighted.">
+            Party profiles: ${ages.join(' · ')}
+        </div>`;
+
+        const warnings = loaded
+            .map((entry) => sharedProfileWarning(entry.name, entry, now))
+            .filter((warning) => warning?.level === 'gearless');
+        for (const warning of warnings) {
+            html += `<div style="color:#e0703a; font-size:11px; margin:-4px 0 8px;">${escapeHtml(warning.text)}</div>`;
+        }
+        return html;
+    }
+
+    /**
+     * The profile age a member's tab tooltip carries.
+     * @private
+     * @param {string} hrid - Loaded player's hrid
+     * @returns {string} Tooltip text, or '' for a player not loaded from a party profile
+     */
+    _profileTabTitle(hrid) {
+        const entry = (this._profileStatus || []).find((status) => status.hrid === hrid && status.found);
+        if (!entry) return '';
+        const age = formatProfileAge(profileAgeMs(entry.capturedAt));
+        return entry.gearless ? `Profile ${age}, no gear captured` : `Profile ${age}`;
     }
 
     /**
@@ -763,7 +834,8 @@ export class SimEditor {
                 const tabStyle = isActive
                     ? `background:${ACCENT_BG}; border:1px solid ${ACCENT_BORDER}; color:${ACCENT}; font-weight:700;`
                     : 'background:rgba(255,255,255,0.04); border:1px solid #333; color:#aaa;';
-                html += `<button data-edit-tab="${hrid}" style="
+                const tabTitle = this._profileTabTitle(hrid);
+                html += `<button data-edit-tab="${hrid}"${tabTitle ? ` title="${escapeHtml(tabTitle)}"` : ''} style="
                     ${tabStyle}
                     padding:3px 8px; border-radius:5px; font-size:12px; cursor:pointer;
                     font-family:inherit; transition:all 0.1s; position:relative;
@@ -785,6 +857,7 @@ export class SimEditor {
         html += '</div>';
         html += this._renderPartyNote();
         html += this._renderMissingMembersNote();
+        html += this._renderProfileAgeNote();
         html += this._renderImportSkippedNote();
 
         // Import paste area (hidden by default)

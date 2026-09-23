@@ -13,6 +13,7 @@ import {
     constructSelfPlayer,
     constructPartyPlayer,
 } from './combat-sim-export.js';
+import { sharedProfileStatus, sharedProfileWarning } from '../../utils/shared-profile-status.js';
 
 const ENHANCING_TOOL_LOCATION = '/item_locations/enhancing_tool';
 const ALCHEMY_TOOL_LOCATION = '/item_locations/alchemy_tool';
@@ -228,20 +229,44 @@ function buildSelfMetzCharacter(characterObj, clientObj) {
     });
 }
 
-/** Build the intended character and every cached party member in Metz's team shape. */
-export async function constructMetzTeamExport(expectedCharacterId = null) {
+/**
+ * Build the intended character and every cached party member in Metz's team shape.
+ *
+ * A member whose cached profile carries no gear is still exported, at their real levels: the
+ * team's size shapes the whole fight (who monsters hit, the level-gap debuff, the loot split),
+ * where one member's missing gear shapes only their own part of it. A member with no cached
+ * profile has nothing to export and is left out. Both, and any profile older than a day, are
+ * reported through `options.warnings` so the import button can say so.
+ *
+ * @param {string|number|null} [expectedCharacterId] - The character the simulator was opened for
+ * @param {{warnings?: Array<{name: string, level: string, text: string}>}} [options] - `warnings`
+ *   is appended to, one entry per party member whose profile needs attention
+ * @returns {Promise<Array<Object>|null>} null when the character is not (or is no longer) the
+ *   expected one
+ */
+export async function constructMetzTeamExport(expectedCharacterId = null, { warnings = null } = {}) {
     const characterObj = getCharacterData();
     if (!characterObj) return null;
-    if (expectedCharacterId != null && !sameCharacterId(characterObj.character?.id, expectedCharacterId)) return null;
+    const ownerId = characterObj.character?.id;
+    if (expectedCharacterId != null && !sameCharacterId(ownerId, expectedCharacterId)) return null;
 
     const clientObj = getClientData();
     const battleObj = getBattleData();
     const profileList = await getProfileList();
+    // Re-read after the await: another game tab can rewrite the bridged character meanwhile, and
+    // this tab's own character can be switched, either of which would pair one character's
+    // party with another's self
+    if (!sameCharacterId(getCharacterData()?.character?.id, ownerId)) return null;
     const team = [buildSelfMetzCharacter(characterObj, clientObj)];
 
     for (const member of Object.values(characterObj.partyInfo?.partySlotMap || {})) {
-        if (!member.characterID || sameCharacterId(member.characterID, characterObj.character.id)) continue;
-        const profile = profileList.find((entry) => sameCharacterId(entry.characterID, member.characterID));
+        if (!member.characterID || sameCharacterId(member.characterID, ownerId)) continue;
+        const profile = profileList.find((entry) => sameCharacterId(entry?.characterID, member.characterID));
+        if (Array.isArray(warnings)) {
+            const name = profile?.characterName || member.characterName || 'Unknown';
+            const warning = sharedProfileWarning(name, sharedProfileStatus(profile || null));
+            if (warning) warnings.push({ name, ...warning });
+        }
         if (!profile) continue;
         team.push(
             toMetzCharacter(profile.characterName, constructPartyPlayer(profile, clientObj, battleObj), {

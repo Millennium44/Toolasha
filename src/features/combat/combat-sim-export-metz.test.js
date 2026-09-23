@@ -305,6 +305,76 @@ describe('Metz combat export', () => {
         expect(teammate).not.toHaveProperty('hasMooPass');
     });
 
+    test('keeps a gearless member in the team and reports them, and names a member with no profile', async () => {
+        const now = Date.now();
+        mocks.characterData = baseCharacter({
+            partyInfo: {
+                partySlotMap: {
+                    1: { characterID: 'self-1' },
+                    2: { characterID: 'party-1' },
+                    3: { characterID: 'party-2', characterName: 'Ghost' },
+                },
+            },
+        });
+        // Hidden equipment captured outside a shared party: the map arrives empty
+        mocks.profiles = [
+            {
+                characterID: 'party-1',
+                characterName: 'Teammate',
+                timestamp: now - 60 * 1000,
+                profile: { characterSkills: [], hideWearableItems: true, wearableItemMap: {} },
+            },
+        ];
+        const warnings = [];
+
+        const team = await constructMetzTeamExport('self-1', { warnings });
+
+        expect(team.map((entry) => entry.name)).toEqual(['Self', 'Teammate']);
+        expect(warnings).toEqual([
+            expect.objectContaining({ name: 'Teammate', level: 'gearless' }),
+            expect.objectContaining({ name: 'Ghost', level: 'missing' }),
+        ]);
+    });
+
+    test('reports a geared member whose profile is days old', async () => {
+        mocks.characterData = baseCharacter({ partyInfo: { partySlotMap: { 1: { characterID: 'party-1' } } } });
+        mocks.profiles = [
+            {
+                characterID: 'party-1',
+                characterName: 'Teammate',
+                timestamp: Date.now() - 4 * 24 * 60 * 60 * 1000,
+                profile: {
+                    characterSkills: [],
+                    wearableItemMap: {
+                        '/item_locations/head': {
+                            itemLocationHrid: '/item_locations/head',
+                            itemHrid: '/items/rough_hood',
+                            enhancementLevel: 0,
+                        },
+                    },
+                },
+            },
+        ];
+        const warnings = [];
+
+        await constructMetzTeamExport(null, { warnings });
+
+        expect(warnings).toEqual([
+            expect.objectContaining({ level: 'stale', text: expect.stringContaining('4 d old') }),
+        ]);
+    });
+
+    test('refuses a team export when the character changes while cached profiles are read', async () => {
+        mocks.characterData = baseCharacter({ partyInfo: { partySlotMap: { 1: { characterID: 'party-1' } } } });
+        const { getProfileList } = await import('./combat-sim-export.js');
+        getProfileList.mockImplementationOnce(async () => {
+            mocks.characterData = baseCharacter({ character: { id: 'other-2', name: 'Other' } });
+            return [];
+        });
+
+        expect(await constructMetzTeamExport('self-1')).toBeNull();
+    });
+
     test('refuses a team export when another game tab has replaced the intended character', async () => {
         mocks.characterData = baseCharacter({ character: { id: 'other-2', name: 'Other' } });
         expect(await constructMetzTeamExport('self-1')).toBeNull();

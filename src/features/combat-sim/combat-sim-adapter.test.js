@@ -27,6 +27,8 @@ const mocks = vi.hoisted(() => ({
     partyMembers: [],
     /** The shared profiles IndexedDB is holding */
     profileList: [],
+    /** Runs inside the profile read, so a test can land a character switch in it */
+    onProfileRead: null,
 }));
 
 vi.mock('../../core/data-manager.js', () => ({
@@ -60,7 +62,12 @@ vi.mock('../../core/data-manager.js', () => ({
     },
 }));
 vi.mock('../../core/storage.js', () => ({
-    default: { getJSON: async () => mocks.profileList },
+    default: {
+        getJSON: async () => {
+            mocks.onProfileRead?.();
+            return mocks.profileList;
+        },
+    },
 }));
 vi.mock('../../core/config.js', () => ({ default: { getSetting: () => null, getSettingValue: (_k, d) => d } }));
 vi.mock('../combat/loadout-snapshot.js', () => ({ default: {} }));
@@ -117,6 +124,7 @@ describe('the party a sim is built for', () => {
         mocks.clientData = { itemDetailMap: {}, abilityDetailMap: {} };
         mocks.partyMembers = [];
         mocks.profileList = [];
+        mocks.onProfileRead = null;
     });
 
     test('is the roster dataManager reports, not the login slot map', async () => {
@@ -143,6 +151,66 @@ describe('the party a sim is built for', () => {
 
         expect(players).toHaveLength(1);
         expect(missingMembers).toEqual(['Ally']);
+    });
+
+    test('says how old each member profile is and loads a gearless one anyway', async () => {
+        const now = Date.now();
+        mocks.partyMembers = [
+            { characterID: 'me', characterName: 'Milkman' },
+            { characterID: 'ally', characterName: 'Ally' },
+            { characterID: 'shy', characterName: 'Shy' },
+            { characterID: 'ghost', characterName: 'Ghost' },
+        ];
+        mocks.clientData = {
+            itemDetailMap: { '/items/granite_bludgeon': { equipmentDetail: { type: '/equipment_types/two_hand' } } },
+            abilityDetailMap: {},
+        };
+        // Entries as websocket.js stores them: the parsed profile_shared with its capture stamp
+        mocks.profileList = [
+            {
+                characterID: 'ally',
+                characterName: 'Ally',
+                timestamp: now - 3 * 24 * 60 * 60 * 1000,
+                profile: {
+                    wearableItemMap: {
+                        '/item_locations/two_hand': {
+                            itemLocationHrid: '/item_locations/two_hand',
+                            itemHrid: '/items/granite_bludgeon',
+                            enhancementLevel: 5,
+                        },
+                    },
+                },
+            },
+            // Hidden equipment, captured while not partied: no wearableItemMap entries at all
+            { characterID: 'shy', characterName: 'Shy', profile: { hideWearableItems: true, wearableItemMap: {} } },
+        ];
+
+        const { players, missingMembers, profileStatus } = await buildAllPlayerDTOs();
+
+        expect(players).toHaveLength(3);
+        expect(players[1].equipment['/equipment_types/two_hand'].hrid).toBe('/items/granite_bludgeon');
+        expect(missingMembers).toEqual(['Ghost']);
+        expect(profileStatus).toEqual([
+            expect.objectContaining({ hrid: 'player2', name: 'Ally', found: true, stale: true, gearless: false }),
+            expect.objectContaining({ hrid: 'player3', name: 'Shy', capturedAt: null, gearless: true, hidden: true }),
+            expect.objectContaining({ hrid: null, name: 'Ghost', found: false }),
+        ]);
+    });
+
+    test('a character switch inside the profile read builds nobody rather than a mixed party', async () => {
+        mocks.partyMembers = [
+            { characterID: 'me', characterName: 'Milkman' },
+            { characterID: 'ally', characterName: 'Ally' },
+        ];
+        mocks.profileList = [{ characterID: 'ally', characterName: 'Ally', profile: {} }];
+        mocks.onProfileRead = () => {
+            mocks.characterData = { character: { id: 'alt', name: 'Alt' }, characterSkills: [] };
+        };
+
+        const { players, profileStatus } = await buildAllPlayerDTOs();
+
+        expect(players).toEqual([]);
+        expect(profileStatus).toEqual([]);
     });
 
     test('an emptied slot map is a solo player, not an empty panel', async () => {

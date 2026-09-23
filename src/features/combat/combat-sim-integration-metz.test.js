@@ -2,10 +2,13 @@
 
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
 
-const mocks = vi.hoisted(() => ({ team: [{ name: 'Self', player: { attackLevel: 100 } }] }));
+const mocks = vi.hoisted(() => ({ team: [{ name: 'Self', player: { attackLevel: 100 } }], warnings: [] }));
 
 vi.mock('./combat-sim-export-metz.js', () => ({
-    constructMetzTeamExport: vi.fn(async () => mocks.team),
+    constructMetzTeamExport: vi.fn(async (_id, options) => {
+        options?.warnings?.push(...mocks.warnings);
+        return mocks.team;
+    }),
 }));
 vi.mock('../../core/config.js', () => ({ default: { COLOR_ACCENT: '#123456' } }));
 
@@ -17,6 +20,7 @@ describe('Metz simulator page integration', () => {
         window.history.replaceState(null, '', '?toolashaCharacterId=self-1');
         document.body.innerHTML = '<textarea placeholder="Paste character export"></textarea>';
         mocks.team = [{ name: 'Self', player: { attackLevel: 100 } }];
+        mocks.warnings = [];
     });
 
     afterEach(() => {
@@ -41,9 +45,35 @@ describe('Metz simulator page integration', () => {
         button.click();
         await vi.runAllTimersAsync();
 
-        expect((await import('./combat-sim-export-metz.js')).constructMetzTeamExport).toHaveBeenCalledWith('self-1');
+        expect((await import('./combat-sim-export-metz.js')).constructMetzTeamExport).toHaveBeenCalledWith(
+            'self-1',
+            expect.objectContaining({ warnings: expect.any(Array) })
+        );
+        expect(document.querySelector('#toolasha-metz-import-warnings')).toBeNull();
         expect(JSON.parse(textarea.value)).toEqual(mocks.team);
         expect(inputs).toEqual([JSON.stringify(mocks.team)]);
+    });
+
+    test('lists party members whose cached profiles are gearless or old under the button', async () => {
+        mocks.warnings = [
+            { name: 'Ally', level: 'gearless', text: 'Ally: included with NO gear' },
+            { name: 'Pal', level: 'stale', text: 'Pal: profile 3 d old' },
+        ];
+        initialize();
+        const button = document.querySelector('#toolasha-metz-import-button');
+        button.click();
+        await vi.runAllTimersAsync();
+
+        const list = document.querySelector('#toolasha-metz-import-warnings');
+        expect(list.previousElementSibling).toBe(button);
+        expect(list.textContent).toContain('Ally: included with NO gear');
+        expect(list.textContent).toContain('Pal: profile 3 d old');
+
+        // The next clean import clears it rather than leaving the last one's list up
+        mocks.warnings = [];
+        button.click();
+        await vi.runAllTimersAsync();
+        expect(document.querySelector('#toolasha-metz-import-warnings')).toBeNull();
     });
 
     test('uses the native value setter so a controlled textarea receives the import', async () => {
