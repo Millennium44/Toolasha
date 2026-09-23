@@ -518,6 +518,8 @@ describe('tea speed is applied on every alchemy path', () => {
         mocks.itemPrice = null;
         mocks.itemPrices['/items/cheese_hat_refined'] = 1_000;
         mocks.itemPrices['/items/cheese_hat'] = 700;
+        mocks.itemPrices['/items/alchemy_essence'] = 10;
+        mocks.itemPrices['/items/small_artisans_crate'] = 10;
 
         const result = alchemyProfitCalculator.calculateUnrefineProfit('/items/cheese_hat_refined', 7);
 
@@ -749,12 +751,15 @@ describe('official alchemy rules', () => {
         // Left out of the revenue entirely, which understates the profit rather
         // than overstating it — but the reader has to be told, or a partial total
         // reads as a complete one.
+        // The bonus drops are priced so each test isolates the output it is about
+        const BONUS_PRICES = { '/items/alchemy_essence': 10, '/items/medium_artisans_crate': 10 };
+
         beforeEach(() => {
             mocks.itemPrice = null;
         });
 
         test('decompose names it instead of quoting the shortfall in silence', () => {
-            mocks.itemPrices = { '/items/cheese_hat': 100 };
+            mocks.itemPrices = { ...BONUS_PRICES, '/items/cheese_hat': 100 };
             const result = alchemyProfitCalculator.calculateDecomposeProfit('/items/cheese_hat', 0);
 
             expect(result.unpricedOutputs).toEqual(['/items/cheese']);
@@ -762,24 +767,37 @@ describe('official alchemy rules', () => {
         });
 
         test('decompose counts the enhancing essence it could not price', () => {
-            mocks.itemPrices = { '/items/cheese_hat': 100, '/items/cheese': 50 };
+            mocks.itemPrices = { ...BONUS_PRICES, '/items/cheese_hat': 100, '/items/cheese': 50 };
             const result = alchemyProfitCalculator.calculateDecomposeProfit('/items/cheese_hat', 2);
 
             expect(result.unpricedOutputs).toEqual(['/items/enhancing_essence']);
         });
 
         test('transmute names its unpriced drop', () => {
-            mocks.itemPrices = { '/items/milk': 10 };
+            mocks.itemPrices = { ...BONUS_PRICES, '/items/milk': 10 };
             const result = alchemyProfitCalculator.calculateTransmuteProfit('/items/milk');
 
             expect(result.unpricedOutputs).toEqual(['/items/cheese']);
         });
 
         test('a fully priced run reports nothing missing', () => {
-            mocks.itemPrices = { '/items/cheese_hat': 100, '/items/cheese': 50 };
+            mocks.itemPrices = { ...BONUS_PRICES, '/items/cheese_hat': 100, '/items/cheese': 50 };
             expect(alchemyProfitCalculator.calculateDecomposeProfit('/items/cheese_hat', 0).unpricedOutputs).toEqual(
                 []
             );
+        });
+
+        test.each(paths)('%s names an unpriced alchemy essence and crate instead of counting them at 0', (_n, run) => {
+            // Inputs and base outputs priced; only the bonus drops have no market
+            mocks.itemPrices = { '/items/cheese': 50, '/items/cheese_hat': 100, '/items/milk': 10 };
+
+            const result = run(alchemyProfitCalculator);
+
+            expect(result.unpricedOutputs).toEqual(
+                expect.arrayContaining(['/items/alchemy_essence', '/items/medium_artisans_crate'])
+            );
+            const essence = result.dropRevenues.find((d) => d.itemHrid === '/items/alchemy_essence');
+            expect(essence.revenuePerHour).toBe(0);
         });
     });
 
@@ -796,6 +814,22 @@ describe('official alchemy rules', () => {
         expect(result.unpricedOutputs).toEqual([]);
         expect(result.dropRevenues.find((drop) => drop.itemHrid === '/items/cheese').revenuePerHour).toBeGreaterThan(0);
         expect(result.estimatedOutputs).toEqual(['/items/cheese']);
+    });
+});
+
+describe('success rates the game panel showed (2026-09-23, level 130 alchemist)', () => {
+    // Catalytic Tea 5% at 20% Drink Concentration = +6%, additive with the catalyst
+    const TEA = 0.05 * 1.2;
+    const rate = (base, catalyst) =>
+        alchemyProfitCalculator.calculateSuccessRateBreakdown(base, catalyst, TEA, 0).total;
+
+    test.each([
+        ['refined cape transmute (base 50%)', 0.5, 0.53, 0.655],
+        ['scroll decompose', 0.6, 0.636, 0.786],
+        ['donut coinify', 0.7, 0.742, 0.917],
+    ])('%s: tea alone and tea with Prime Catalyst', (_label, base, withTea, withPrime) => {
+        expect(rate(base, 0)).toBeCloseTo(withTea, 10);
+        expect(rate(base, 0.25)).toBeCloseTo(withPrime, 10);
     });
 });
 

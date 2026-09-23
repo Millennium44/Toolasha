@@ -119,6 +119,9 @@ function calculateAlchemyBonusDrops(itemLevel, actionsPerHour, equipment, itemDe
         guildRareFindBonus;
 
     const bonusDrops = [];
+    // Bonus drops nobody can price still ride in at 0 revenue; the caller lists them beside
+    // its own unpriced outputs so the understatement is shown rather than silent
+    const unpricedDrops = [];
     let totalBonusRevenue = 0;
 
     // Essence drop: Alchemy Essence
@@ -130,8 +133,11 @@ function calculateAlchemyBonusDrops(itemLevel, actionsPerHour, equipment, itemDe
     const essenceItemDetails = itemDetailMap['/items/alchemy_essence'];
     if (essenceItemDetails?.isOpenable) {
         essencePrice = expectedValueCalculator.getCachedValue('/items/alchemy_essence') || 0;
+        if (!(essencePrice > 0)) unpricedDrops.push('/items/alchemy_essence');
     } else {
-        essencePrice = getItemPrice('/items/alchemy_essence', { context: 'profit', side: 'sell' }) || 0;
+        const marketPrice = getItemPrice('/items/alchemy_essence', { context: 'profit', side: 'sell' });
+        if (marketPrice === null || marketPrice === undefined) unpricedDrops.push('/items/alchemy_essence');
+        essencePrice = marketPrice || 0;
     }
 
     const essenceRevenuePerHour = essenceDropsPerHour * essencePrice;
@@ -174,8 +180,11 @@ function calculateAlchemyBonusDrops(itemLevel, actionsPerHour, equipment, itemDe
             expectedValueCalculator.getCachedValue(crateHrid) ||
             expectedValueCalculator.calculateSingleContainer(crateHrid) ||
             0;
+        if (!(cratePrice > 0)) unpricedDrops.push(crateHrid);
     } else {
-        cratePrice = getItemPrice(crateHrid, { context: 'profit', side: 'sell' }) || 0;
+        const marketPrice = getItemPrice(crateHrid, { context: 'profit', side: 'sell' });
+        if (marketPrice === null || marketPrice === undefined) unpricedDrops.push(crateHrid);
+        cratePrice = marketPrice || 0;
     }
 
     const rareRevenuePerHour = rareDropsPerHour * cratePrice;
@@ -195,6 +204,7 @@ function calculateAlchemyBonusDrops(itemLevel, actionsPerHour, equipment, itemDe
 
     return {
         bonusDrops,
+        unpricedDrops,
         totalBonusRevenue,
         essenceFindBonus: totalEssenceFindBonus,
         rareFindBonus,
@@ -930,6 +940,8 @@ class AlchemyProfitCalculator {
                 actionType: 'coinify',
                 itemHrid,
                 enhancementLevel,
+                /** Bonus drops left out of the revenue for want of a price */
+                unpricedOutputs: [...alchemyBonus.unpricedDrops],
 
                 // Summary totals
                 profitPerHour,
@@ -1266,7 +1278,7 @@ class AlchemyProfitCalculator {
                 itemHrid,
                 enhancementLevel,
                 /** Output hrids left out of the revenue for want of a price */
-                unpricedOutputs,
+                unpricedOutputs: [...unpricedOutputs, ...alchemyBonus.unpricedDrops],
                 estimatedOutputs,
 
                 // Summary totals
@@ -1629,7 +1641,7 @@ class AlchemyProfitCalculator {
                 itemHrid,
                 enhancementLevel: 0, // Transmute doesn't care about enhancement
                 /** Output hrids left out of the revenue for want of a price */
-                unpricedOutputs,
+                unpricedOutputs: [...unpricedOutputs, ...alchemyBonus.unpricedDrops],
                 estimatedOutputs,
 
                 // Summary totals
@@ -1878,7 +1890,7 @@ class AlchemyProfitCalculator {
                 actionType: 'unrefine',
                 itemHrid,
                 enhancementLevel,
-                unpricedOutputs,
+                unpricedOutputs: [...unpricedOutputs, ...alchemyBonus.unpricedDrops],
                 estimatedOutputs,
                 profitPerHour,
                 profitPerDay: calculateProfitPerDay(profitPerHour),
