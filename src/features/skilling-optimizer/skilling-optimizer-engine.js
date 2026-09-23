@@ -16,6 +16,7 @@ import {
     isAlchemyContextApplicable,
 } from '../../utils/tea-optimizer.js';
 import { resolveItemPrice } from '../../utils/profit-helpers.js';
+import { getItemPrice } from '../../utils/market-data.js';
 import { calculateDirectEnhancementCost } from '../combat-sim/direct-enhancement-cost.js';
 
 export { getSkillActionsForDisplay, calculateSkillPerformance, findOptimalTeas, resolveActiveAlchemyItemContext };
@@ -389,15 +390,24 @@ export function buildAchievableEquipment(slots, enhancementLevels, loadoutItemMa
 export function calculateSlotUpgradeCost(itemHrid, enhancementLevel, currentEquipped = null) {
     if (!itemHrid) return null;
 
-    const gameData = dataManager.getInitClientData();
-    const buy = resolveItemPrice(itemHrid, { context: 'profit', side: 'buy', enhancementLevel });
-    let buyPrice = buy.price;
-    if ((buy.missing || typeof buyPrice !== 'number') && enhancementLevel > 0) {
-        const base = resolveItemPrice(itemHrid, { context: 'profit', side: 'buy', enhancementLevel: 0 });
-        const enhancementCost = calculateDirectEnhancementCost(itemHrid, 0, enhancementLevel, gameData);
-        if (!base.missing && typeof base.price === 'number' && enhancementCost !== null) {
-            buyPrice = base.price + enhancementCost;
+    let buyPrice = null;
+    if (enhancementLevel > 0) {
+        // Only a quote at the level itself prices an enhanced piece. resolveItemPrice's shop floor
+        // and production-cost fallback ignore the level, so for a craftable item with no +N listing
+        // it would quote the +0 craft as the +N piece and this fallback would never run.
+        buyPrice = getItemPrice(itemHrid, { context: 'profit', side: 'buy', enhancementLevel });
+        if (typeof buyPrice !== 'number') {
+            buyPrice = null;
+            const base = resolveItemPrice(itemHrid, { context: 'profit', side: 'buy', enhancementLevel: 0 });
+            const gameData = dataManager.getInitClientData();
+            const enhancementCost = calculateDirectEnhancementCost(itemHrid, 0, enhancementLevel, gameData);
+            if (!base.missing && typeof base.price === 'number' && enhancementCost !== null) {
+                buyPrice = base.price + enhancementCost;
+            }
         }
+    } else {
+        const buy = resolveItemPrice(itemHrid, { context: 'profit', side: 'buy', enhancementLevel: 0 });
+        if (!buy.missing && typeof buy.price === 'number') buyPrice = buy.price;
     }
     if (typeof buyPrice !== 'number') return null;
 

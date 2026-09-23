@@ -58,15 +58,28 @@ vi.mock('../../utils/tea-optimizer.js', () => ({
 // calculateSlotUpgradeCost is the only consumer. Each entry is keyed by side so a test can
 // state, as data, what each leg of a buy/sell comparison resolves to — including a leg that
 // resolves to nothing at all.
-const priceBook = vi.hoisted(() => ({ entries: {}, calls: [] }));
+//
+// `entries` are quotes at an exact level. `craftCost` is what the real resolveItemPrice falls back
+// to when a level has no quote: the item's production cost, which is the +0 craft whatever level
+// was asked for.
+const priceBook = vi.hoisted(() => ({ entries: {}, craftCost: {}, calls: [] }));
 const enhancementPricing = vi.hoisted(() => ({ cost: null, calls: [] }));
 vi.mock('../../utils/profit-helpers.js', () => ({
     resolveItemPrice: (itemHrid, options = {}) => {
         priceBook.calls.push({ itemHrid, options });
         const { side, enhancementLevel = 0 } = options;
         const price = priceBook.entries[`${side}:${itemHrid}@${enhancementLevel}`];
-        if (typeof price !== 'number') return { price: null, missing: true, estimated: false, custom: false };
-        return { price, missing: false, estimated: false, custom: false };
+        if (typeof price === 'number') return { price, missing: false, estimated: false, custom: false };
+        const craft = priceBook.craftCost[itemHrid];
+        if (typeof craft === 'number') return { price: craft, missing: false, estimated: true, custom: false };
+        return { price: null, missing: true, estimated: false, custom: false };
+    },
+}));
+vi.mock('../../utils/market-data.js', () => ({
+    getItemPrice: (itemHrid, options = {}) => {
+        const { side, enhancementLevel = 0 } = options;
+        const price = priceBook.entries[`${side}:${itemHrid}@${enhancementLevel}`];
+        return typeof price === 'number' ? price : null;
     },
 }));
 vi.mock('../combat-sim/direct-enhancement-cost.js', () => ({
@@ -531,7 +544,10 @@ describe('optimizeSkill', () => {
 describe('calculateSlotUpgradeCost', () => {
     beforeEach(() => {
         priceBook.entries = {};
+        priceBook.craftCost = {};
         priceBook.calls = [];
+        enhancementPricing.cost = null;
+        enhancementPricing.calls = [];
     });
 
     test('with no current item, the cost is the full buy price at the scored enhancement level', () => {
@@ -586,6 +602,23 @@ describe('calculateSlotUpgradeCost', () => {
                 gameData: game.initClientData,
             },
         ]);
+    });
+
+    test('a craftable enhanced upgrade with no listing is not priced as its +0 craft', () => {
+        // No +12 listing: the production-cost fallback would answer 500 for any level asked
+        priceBook.craftCost[VERDANT_TOOL] = 500;
+        enhancementPricing.cost = 1000;
+
+        expect(calculateSlotUpgradeCost(VERDANT_TOOL, 12, null)).toBe(1500);
+    });
+
+    test('a listing at the enhanced level is used as it stands, without an enhancement estimate', () => {
+        priceBook.entries[`buy:${VERDANT_TOOL}@12`] = 4000;
+        priceBook.craftCost[VERDANT_TOOL] = 500;
+        enhancementPricing.cost = 1000;
+
+        expect(calculateSlotUpgradeCost(VERDANT_TOOL, 12, null)).toBe(4000);
+        expect(enhancementPricing.calls).toEqual([]);
     });
 
     test('an enhanced upgrade stays unpriced when its +0 item or enhancement path is unknown', () => {
