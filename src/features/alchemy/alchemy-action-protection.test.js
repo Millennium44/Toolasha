@@ -220,3 +220,36 @@ describe('the action pin and the item-picker pins', () => {
         expect(document.querySelector('.mwi-alchemy-action-pin')).not.toBeNull();
     });
 });
+
+describe('the Unrefine tab is protectable like the others', () => {
+    afterEach(() => {
+        document.body.innerHTML = '';
+        vi.restoreAllMocks();
+    });
+
+    test('an Unrefine tab reads as unrefine, not as no alchemy action', async () => {
+        const { alchemyActionProtection: instance } = await import('./alchemy-action-protection.js');
+        document.body.innerHTML = `<div class="AlchemyPanel_tabsComponentContainer__x">
+            <div role="tab" aria-selected="true">Unrefine</div>
+        </div>`;
+
+        expect(instance._getAlchemyType()).toBe('unrefine');
+    });
+
+    test('refined items are offered as an unrefine category in the config popup', async () => {
+        const { alchemyActionProtection: instance } = await import('./alchemy-action-protection.js');
+        const { default: dataManager } = await import('../../core/data-manager.js');
+        vi.spyOn(dataManager, 'getInitClientData').mockReturnValue({
+            itemDetailMap: {
+                '/items/gatherer_cape_refined': {
+                    categoryHrid: '/item_categories/equipment',
+                    alchemyDetail: { unrefineDetail: { baseItemHrid: '/items/gatherer_cape' } },
+                },
+            },
+        });
+
+        const categories = instance._getAlchemizableCategories();
+
+        expect(categories.unrefine.map((c) => c.hrid)).toEqual(['/item_categories/equipment']);
+    });
+});

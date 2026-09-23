@@ -40,6 +40,7 @@ const DEFAULT_PROTECTION = {
     coinify: [],
     decompose: [],
     transmute: [],
+    unrefine: [],
 };
 
 class AlchemyActionProtection {
@@ -359,6 +360,8 @@ class AlchemyActionProtection {
         const selectedTab = tabContainer?.querySelector('[role="tab"][aria-selected="true"]');
         const tabText = selectedTab?.textContent?.trim()?.toLowerCase() || '';
 
+        // Checked first: an unrefine returns a refined item to its base, and that is worth guarding too
+        if (tabText.includes('unrefine')) return 'unrefine';
         if (tabText.includes('transmute')) return 'transmute';
         if (tabText.includes('decompose')) return 'decompose';
         if (tabText.includes('coinify')) return 'coinify';
@@ -586,7 +589,7 @@ class AlchemyActionProtection {
             'Select which item categories to protect from each alchemy action. Protected items require a 3-second confirmation before the action proceeds.';
         popup.appendChild(desc);
 
-        const alchemyTypes = ['coinify', 'decompose', 'transmute'];
+        const alchemyTypes = ['coinify', 'decompose', 'transmute', 'unrefine'];
         const categories = this._getAlchemizableCategories();
 
         for (const type of alchemyTypes) {
@@ -646,7 +649,7 @@ class AlchemyActionProtection {
         const gameData = dataManager.getInitClientData();
         if (!gameData?.itemDetailMap) return {};
 
-        const result = { transmute: {}, decompose: {}, coinify: {} };
+        const result = { transmute: {}, decompose: {}, coinify: {}, unrefine: {} };
 
         for (const item of Object.values(gameData.itemDetailMap)) {
             if (!item.alchemyDetail || !item.categoryHrid) continue;
@@ -665,6 +668,10 @@ class AlchemyActionProtection {
                 if (!result.coinify[cat]) result.coinify[cat] = 0;
                 result.coinify[cat]++;
             }
+            if (item.alchemyDetail.unrefineDetail) {
+                if (!result.unrefine[cat]) result.unrefine[cat] = 0;
+                result.unrefine[cat]++;
+            }
         }
 
         const format = (catMap) =>
@@ -680,6 +687,7 @@ class AlchemyActionProtection {
             transmute: format(result.transmute),
             decompose: format(result.decompose),
             coinify: format(result.coinify),
+            unrefine: format(result.unrefine),
         };
     }
 
