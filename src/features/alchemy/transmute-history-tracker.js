@@ -11,6 +11,9 @@
  * - Success: a drop-table item's stack total went UP. One message can cover a
  *   batch of attempts and carries one row per changed stack, so the count delta
  *   — not the number of rows — is what says how many actions produced output
+ * - Self-return: the input stack fell by less than the attempts consumed. Read
+ *   against a baseline seeded from the inventory when the session starts from
+ *   the queue, so the first message of a run is measured like every other
  * - Failure: no drop-table item gained
  * - Incidental drops (essences on non-essence transmutes, artisan's crates) are excluded
  *   because they are not listed in the input item's transmuteDropTable
@@ -47,6 +50,10 @@ class TransmuteHistoryTracker {
         // changed stack — not one row per action. A count delta is the only
         // thing in the message that scales with a batch.
         this.itemCounts = createItemCountLedger();
+        // Items whose every stack the ledger was seeded with at session start
+        this.seededHrids = new Set();
+        // Whether the ledger holds a baseline for a stack of the input
+        this.inputStackKnown = false;
         this.handlers = {
             actionsUpdated: () => this.handleActionsUpdated(),
             actionCompleted: (data) => this.handleActionCompleted(data),
@@ -137,13 +144,16 @@ class TransmuteHistoryTracker {
                 return;
             }
 
+            // Read between messages, so the cached inventory and the action's
+            // count are exactly what the next action_completed moves away from
+            const baseline = { currentCount: transmuteAction.currentCount };
             if (!this.activeSession) {
                 // No active session — start one
-                await this.startSession(inputItemHrid, Date.now());
+                await this.startSession(inputItemHrid, Date.now(), baseline);
             } else if (this.activeSession.inputItemHrid !== inputItemHrid) {
                 // Different item — end current session and start new one
                 await this.endSession();
-                await this.startSession(inputItemHrid, Date.now());
+                await this.startSession(inputItemHrid, Date.now(), baseline);
             } else {
                 // Same item, same session — the player restarted the action, so
                 // nothing about the record changes except that it was still
@@ -225,14 +235,36 @@ class TransmuteHistoryTracker {
         // with the batch, and `bulkMultiplier` items arrive per successful
         // action, so the delta divided by it is the number of actions.
         //
+        // Deltas are summed per item, not per stack: a stack emptied by the
+        // consumption can come back under a new id, and the self-return
+        // arithmetic below must see the item's net change, applied once.
+        const deltaByHrid = new Map();
+        for (const { row, delta } of outputRows) {
+            // A stack of an item whose every stack was seeded at session start
+            // and that the ledger has not seen did not exist then: its baseline is 0
+            const measured = delta ?? (this.seededHrids.has(row.itemHrid) ? Number(row.count) : null);
+            const previous = deltaByHrid.has(row.itemHrid) ? deltaByHrid.get(row.itemHrid) : 0;
+            deltaByHrid.set(row.itemHrid, previous === null || measured === null ? null : previous + measured);
+        }
+
+        // Every attempt consumes the input, so a message that moved items but
+        // not an input stack known to exist is one where every consumed input
+        // was handed back. With no known stack, a missing row says nothing.
+        if (deltaByHrid.has(inputItemHrid)) {
+            this.inputStackKnown = true;
+        } else if (this.inputStackKnown && validOutputHrids.has(inputItemHrid) && noted.length > 0) {
+            deltaByHrid.set(inputItemHrid, 0);
+        }
+
         // The input's own row is both consumed and — on a self-return — handed
         // back, so its delta is `(returned - attempts) * bulk`; adding the
-        // attempts back recovers the returns. A row with no baseline yet (the
-        // first message of a session) can only be read the old way, as one
-        // action, and is capped below so it cannot exceed the attempts made.
+        // attempts back recovers the returns. An item with no baseline (the
+        // first message of a session that did not start from the queue) can
+        // only be read the old way, as one action, and is capped below so it
+        // cannot exceed the attempts made.
         const producedActions = new Map();
-        for (const { row, delta } of outputRows) {
-            const isSelfReturn = row.itemHrid === inputItemHrid;
+        for (const [outputItemHrid, delta] of deltaByHrid) {
+            const isSelfReturn = outputItemHrid === inputItemHrid;
             let actions;
             if (delta === null) {
                 // No baseline: the row says "at least one", and nothing more.
@@ -245,7 +277,7 @@ class TransmuteHistoryTracker {
                 actions = Math.round(delta / bulkMultiplier);
             }
             actions = Math.min(Math.max(actions, 0), attemptCount);
-            if (actions > 0) producedActions.set(row.itemHrid, (producedActions.get(row.itemHrid) || 0) + actions);
+            if (actions > 0) producedActions.set(outputItemHrid, actions);
         }
 
         // One action produces one output, so the successes cannot outnumber the
@@ -377,8 +409,11 @@ class TransmuteHistoryTracker {
      * Start a new session
      * @param {string} inputItemHrid - Input item HRID
      * @param {number} timestamp - Start timestamp in ms
+     * @param {{currentCount: number}|null} [baseline] - Present only when the
+     *   session starts from the queue, between messages, so the cached
+     *   inventory and the action's count predate every message it will read
      */
-    async startSession(inputItemHrid, timestamp) {
+    async startSession(inputItemHrid, timestamp, baseline = null) {
         // Recorded, not recomputed at read time: the coin fee that was actually
         // billed scales with the bulk size the item had while the session ran,
         // and a later game change to that number would otherwise silently
@@ -413,8 +448,41 @@ class TransmuteHistoryTracker {
             catalystsUsed: {},
             results: {},
         };
-        this.lastCurrentCount = null;
         this.itemCounts.reset();
+        const startCount = Number(baseline?.currentCount);
+        this.lastCurrentCount = baseline && Number.isFinite(startCount) ? startCount : null;
+        this.inputStackKnown = false;
+        this.seededHrids = baseline ? this.seedItemCounts(inputItemHrid, itemDetails) : new Set();
+    }
+
+    /**
+     * Give the ledger a baseline for the input and every drop-table item.
+     *
+     * Without one, the first message's input row has no delta, and a
+     * self-return there cannot be told apart from plain consumption — a run
+     * begun with a single refined cape recorded its first self-return as a
+     * failure and charged the cape a second time.
+     *
+     * Every stack of these items is seeded, so one the ledger later meets
+     * without a baseline did not exist at the start.
+     *
+     * @param {string} inputItemHrid - Input item HRID
+     * @param {Object|null} itemDetails - The input's item details
+     * @returns {Set<string>} The items whose every stack is now in the ledger;
+     *   empty when the inventory is not loaded
+     */
+    seedItemCounts(inputItemHrid, itemDetails) {
+        const inventory = dataManager.characterItems;
+        if (!Array.isArray(inventory)) return new Set();
+
+        const hrids = new Set([inputItemHrid]);
+        for (const entry of itemDetails?.alchemyDetail?.transmuteDropTable || []) {
+            if (entry?.itemHrid && entry.itemHrid !== COIN_ITEM_HRID) hrids.add(entry.itemHrid);
+        }
+        const rows = inventory.filter((row) => hrids.has(row?.itemHrid));
+        this.itemCounts.noteEach(rows);
+        this.inputStackKnown = rows.some((row) => row.itemHrid === inputItemHrid);
+        return hrids;
     }
 
     /**
