@@ -94,6 +94,23 @@ describe('valueVsCost', () => {
         expect(v.net).toBeNull();
     });
 
+    test('a session picked up at +5 nets against the +5 it started from, not a +0', () => {
+        // The session only spent +5 → +8; the +0 → +5 path is inside the +5
+        // piece, so subtracting a +0 would count that path as profit.
+        const getPrices = (hrid, level) => ({ 0: { bid: 1000 }, 5: { bid: 6000 }, 8: { bid: 20000 } })[level] || null;
+        const v = valueVsCost(session({ startLevel: 5, currentLevel: 8, totalCost: 2000 }), getPrices);
+        expect(v.baseLevel).toBe(5);
+        expect(v.value0).toBe(6000);
+        expect(v.net).toBeCloseTo((20000 - 6000) * (1 - MARKET_SELL_TAX) - 2000, 5);
+    });
+
+    test('net is unknown when the starting level is unpriced even though +0 is listed', () => {
+        const getPrices = (hrid, level) => ({ 0: { bid: 1000 }, 8: { bid: 20000 } })[level] || null;
+        const v = valueVsCost(session({ startLevel: 5, currentLevel: 8 }), getPrices);
+        expect(v.value0).toBeNull();
+        expect(v.net).toBeNull();
+    });
+
     test('net is unknown when the +0 opportunity value is unpriced', () => {
         const getPrices = (hrid, level) => (level === 3 ? { bid: 10000 } : null);
         const v = valueVsCost(session(), getPrices);

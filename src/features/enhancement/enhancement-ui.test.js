@@ -105,6 +105,17 @@ describe('worth-it value', () => {
         expect(html).toContain('worth-it unknown');
         expect(html).not.toContain('Worth it (net');
     });
+
+    test('names the level the session started from as the piece given up', () => {
+        prices['/items/foo::0'] = { bid: 1000 };
+        prices['/items/foo::5'] = { bid: 6000 };
+        prices['/items/foo::8'] = { bid: 20000 };
+
+        const html = enhancementUI.generateWorthItHTML(sessionFixture({ startLevel: 5, currentLevel: 8 }));
+
+        expect(html).toContain('Starting +5 value');
+        expect(html).not.toContain('+0 value');
+    });
 });
 
 describe('header layout', () => {

@@ -71,28 +71,34 @@ export const MARKET_SELL_TAX = MARKET_TAX;
 
 /**
  * Whether the enhanced item is worth more than it cost to make: the +N resale
- * value (after the market sell fee) minus the +0 base given up minus what was
- * spent. Answers "was enhancing this worth it vs just selling the base?".
+ * value (after the market sell fee) minus the piece the session started from
+ * minus what was spent. Answers "was enhancing this worth it vs just selling
+ * what I put on the bench?".
+ *
+ * The piece given up is the one at the session's start level, not +0: a session
+ * that picks up a +5 only spends from +5, so netting that spend against a +0
+ * leaves the +0 to +5 path out of the cost entirely.
  *
  * @param {Object} session - Live enhancement session
  * @param {(hrid: string, level: number) => ({bid:number, ask:number}|null)} getPrices
  *   - Market price lookup (injected for testability)
  * @param {number} [sellTax=MARKET_SELL_TAX] - Fraction taken on a sale
- * @returns {{level:number, spent:number, valueN:number|null, value0:number|null,
- *   net:number|null, sellTax:number}|null}
+ * @returns {{level:number, baseLevel:number, spent:number, valueN:number|null, value0:number|null,
+ *   net:number|null, sellTax:number}|null} `value0` is the bid at `baseLevel`, the session's start level
  */
 export function valueVsCost(session, getPrices, sellTax = MARKET_SELL_TAX) {
     if (!session?.itemHrid) return null;
     const level = session.currentLevel || 0;
     if (level <= 0) return null;
 
+    const baseLevel = Math.max(0, Number(session.startLevel) || 0);
     const spent = session.totalCost || 0;
     const nPrices = getPrices?.(session.itemHrid, level) || null;
-    const basePrices = getPrices?.(session.itemHrid, 0) || null;
+    const basePrices = getPrices?.(session.itemHrid, baseLevel) || null;
     const valueN = nPrices?.bid ?? null;
     const value0 = basePrices?.bid ?? null;
 
-    if (valueN == null || value0 == null) return { level, spent, valueN, value0, net: null, sellTax };
+    if (valueN == null || value0 == null) return { level, baseLevel, spent, valueN, value0, net: null, sellTax };
     const keep = 1 - sellTax;
-    return { level, spent, valueN, value0, net: valueN * keep - value0 * keep - spent, sellTax };
+    return { level, baseLevel, spent, valueN, value0, net: valueN * keep - value0 * keep - spent, sellTax };
 }
