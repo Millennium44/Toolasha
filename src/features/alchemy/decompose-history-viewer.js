@@ -602,8 +602,9 @@ class DecomposeHistoryViewer {
         let revenueUnpriced = false;
         // A result the market cannot price (Labyrinth Token, from decomposing
         // scrolls) still has a value — the best conversion its own shop offers.
-        // See alchemy-shop-value.js. No marketplace tax applies to it: it was
-        // never a sale.
+        // See alchemy-shop-value.js. That value is the market sell price of the
+        // item the shop converts to, so turning it into gold is a market sale and
+        // pays the same cut every other output here does.
         let revenueShopValued = false;
         for (const [resultItemHrid, result] of Object.entries(session.results || {})) {
             // A session recorded before results carried the unpriced flag stores an untradeable
@@ -611,7 +612,7 @@ class DecomposeHistoryViewer {
             const shopValue =
                 result.unpriced || !(result.totalValue > 0) ? getAlchemyOutputShopValue(resultItemHrid) : null;
             if (shopValue) {
-                revenue += shopValue.valuePerUnit * (result.count || 0);
+                revenue += calculatePriceAfterTax(shopValue.valuePerUnit * (result.count || 0));
                 revenueShopValued = true;
                 continue;
             }

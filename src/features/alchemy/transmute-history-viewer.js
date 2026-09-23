@@ -1534,6 +1534,7 @@ class TransmuteHistoryViewer {
         // alchemy-shop-value.js. Currently only covers Labyrinth Token, which
         // transmute's own drop tables do not produce, but the check is cheap
         // and keeps this in step with decompose should that ever change.
+        // Taxed like any other output: the shop value is a market sell price.
         let revenueShopValued = false;
         for (const [resultItemHrid, result] of Object.entries(session.results || {})) {
             if (result.isSelfReturn) {
@@ -1546,7 +1547,7 @@ class TransmuteHistoryViewer {
             const shopValue =
                 result.unpriced || !(result.totalValue > 0) ? getAlchemyOutputShopValue(resultItemHrid) : null;
             if (shopValue) {
-                revenue += shopValue.valuePerUnit * (result.count || 0);
+                revenue += calculatePriceAfterTax(shopValue.valuePerUnit * (result.count || 0));
                 revenueShopValued = true;
                 continue;
             }

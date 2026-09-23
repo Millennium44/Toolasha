@@ -61,6 +61,7 @@ vi.mock('../../utils/market-data.js', () => ({
 }));
 
 const { decomposeHistoryViewer } = await import('./decompose-history-viewer.js');
+const { calculatePriceAfterTax } = await import('../../utils/profit-helpers.js');
 
 const sessionWithTokenResult = () => ({
     id: 's1',
@@ -84,7 +85,7 @@ describe('decompose history: Labyrinth Token is valued through the shop, not pri
         state.shardPrice = 5500;
         const detail = decomposeHistoryViewer.computeSessionProfit(sessionWithTokenResult());
 
-        expect(detail.revenue).toBe(90 * 5500);
+        expect(detail.revenue).toBeCloseTo(calculatePriceAfterTax(90 * 5500), 6);
         expect(detail.revenueShopValued).toBe(true);
         // The shop fallback covered the only unpriced result, so the session is not
         // reported as having any UNRESOLVED unpriced revenue
@@ -96,12 +97,26 @@ describe('decompose history: Labyrinth Token is valued through the shop, not pri
         const legacy = sessionWithTokenResult();
         legacy.results[TOKEN_HRID] = { totalValue: 0, priceEach: 0, unpriced: false, count: 90 };
         const detail = decomposeHistoryViewer.computeSessionProfit(legacy);
-        expect(detail.revenue).toBe(90 * 5500);
+        expect(detail.revenue).toBeCloseTo(calculatePriceAfterTax(90 * 5500), 6);
         expect(detail.revenueShopValued).toBe(true);
 
         const cell = document.createElement('td');
         decomposeHistoryViewer.renderResultsCell(cell, legacy);
         expect(cell.textContent).toContain('§');
+    });
+
+    test('the shop value pays the market cut, the same as a market-priced output of equal value', () => {
+        // Realizing a token as gold means selling what the shop converts it to on the
+        // market; leaving the cut off overstated every scroll session by the tax rate
+        state.shardPrice = 5500;
+        const shopValued = decomposeHistoryViewer.computeSessionProfit(sessionWithTokenResult());
+        const marketPriced = decomposeHistoryViewer.computeSessionProfit({
+            ...sessionWithTokenResult(),
+            results: { [SHARD_HRID]: { totalValue: 90 * 5500, priceEach: 5500, count: 90 } },
+        });
+
+        expect(shopValued.revenue).toBeLessThan(90 * 5500);
+        expect(shopValued.revenue).toBeCloseTo(marketPriced.revenue, 6);
     });
 
     test('stays unpriced (not zero) when the shop itself has nothing priced', () => {
