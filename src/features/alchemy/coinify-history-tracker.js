@@ -455,6 +455,25 @@ class CoinifyHistoryTracker {
     }
 
     /**
+     * Persist a merged sessions array from a JSON backup import (see
+     * `alchemy-session-import.js`). The caller has already computed the merge
+     * against `loadStoredSessions()`'s result, so this writes the merged array
+     * whole, the same way `deleteSessions` writes its expanded kept array.
+     *
+     * @param {Array} sessions - The merged sessions to store
+     * @returns {Promise<boolean>} Whether the write landed
+     */
+    async importSessions(sessions) {
+        try {
+            await sessionStore.save(this.getCharacterScope(), sessions);
+            return true;
+        } catch (error) {
+            console.error('[CoinifyHistoryTracker] Failed to save imported sessions:', error);
+            return false;
+        }
+    }
+
+    /**
      * Extract item HRID from a primaryItemHash string
      * Format: "characterId::/item_locations/inventory::/items/item_name::N"
      * @param {string} hash - Primary item hash

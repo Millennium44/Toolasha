@@ -14,6 +14,14 @@ import { createMutationWatcher } from '../../utils/dom-observer-helpers.js';
 import { createTimerRegistry } from '../../utils/timer-registry.js';
 import { getAlchemyCoinCost } from '../../utils/alchemy-fees.js';
 import { calculatePriceAfterTax } from '../../utils/profit-helpers.js';
+import { downloadFile } from '../../utils/csv-export.js';
+import {
+    buildAlchemyBackupEnvelope,
+    parseAlchemyBackupJson,
+    validateAlchemyBackupEnvelope,
+    validateAlchemySessions,
+    planAlchemyImportMerge,
+} from './alchemy-session-import.js';
 import {
     HISTORY_TYPE_SCALE,
     createTotalsCell,
@@ -164,6 +172,10 @@ class TransmuteHistoryViewer {
         if (this.modal) {
             this.modal.remove();
             this.modal = null;
+        }
+        if (this.importInput) {
+            this.importInput.remove();
+            this.importInput = null;
         }
         this.timerRegistry.clearAll();
         this.isInitialized = false;
@@ -1624,6 +1636,29 @@ class TransmuteHistoryViewer {
         exportBtn.addEventListener('click', () => this.exportHistory());
         rightGroup.appendChild(exportBtn);
 
+        // Backup (JSON) button — lossless, for hand-editing and re-importing
+        const backupBtn = document.createElement('button');
+        backupBtn.textContent = 'Backup';
+        backupBtn.title = 'Download a lossless JSON backup of this history, for hand-editing and re-importing';
+        backupBtn.style.cssText = `
+            padding: 6px 12px; background: #2563eb; color: white;
+            border: none; border-radius: 4px; cursor: pointer;
+        `;
+        backupBtn.addEventListener('click', () => this.exportBackup());
+        rightGroup.appendChild(backupBtn);
+
+        // Import button — restores or merges a JSON backup
+        const importBtn = document.createElement('button');
+        importBtn.textContent = 'Import';
+        importBtn.title =
+            'Restore sessions from a JSON backup — a session id already in your history is replaced, others are added';
+        importBtn.style.cssText = `
+            padding: 6px 12px; background: #16a34a; color: white;
+            border: none; border-radius: 4px; cursor: pointer;
+        `;
+        importBtn.addEventListener('click', () => this.triggerImportBackup());
+        rightGroup.appendChild(importBtn);
+
         // Clear History button
         const clearBtn = document.createElement('button');
         clearBtn.textContent = 'Clear History';
@@ -2374,6 +2409,173 @@ class TransmuteHistoryViewer {
         a.click();
 
         URL.revokeObjectURL(url);
+    }
+
+    /**
+     * Download a lossless JSON backup of the current character's stored
+     * transmute sessions — the exact unmerged records the tracker persists,
+     * wrapped in an envelope `import`/`exportBackup` on the other three
+     * windows also use. See `alchemy-session-import.js` for the envelope
+     * shape and which fields are safe to hand-edit.
+     * @returns {Promise<void>}
+     */
+    async exportBackup() {
+        const characterId = dataManager.getCurrentCharacterId();
+        const stored = await transmuteHistoryTracker.loadStoredSessions();
+        const envelope = buildAlchemyBackupEnvelope({ kind: 'transmute', characterId, sessions: stored });
+        const date = new Date().toISOString().slice(0, 10);
+        downloadFile(
+            `transmute-history-backup-${date}.json`,
+            JSON.stringify(envelope, null, 2),
+            'application/json;charset=utf-8;'
+        );
+    }
+
+    /**
+     * Open a file picker for a JSON backup and import whatever is chosen.
+     *
+     * A single hidden `<input type="file">` is reused across openings rather
+     * than recreated each time, and its value is cleared after every change
+     * so picking the same file twice in a row still fires `change`.
+     */
+    triggerImportBackup() {
+        if (!this.importInput) {
+            const input = document.createElement('input');
+            input.type = 'file';
+            input.accept = '.json,application/json';
+            input.style.display = 'none';
+            input.addEventListener('change', async (event) => {
+                const file = event.target.files?.[0];
+                input.value = '';
+                if (!file) return;
+                await this.importBackupFile(file);
+            });
+            document.body.appendChild(input);
+            this.importInput = input;
+        }
+        this.importInput.click();
+    }
+
+    /**
+     * @param {File} file - The chosen file
+     * @returns {Promise<void>}
+     */
+    async importBackupFile(file) {
+        let text;
+        try {
+            text = await file.text();
+        } catch (error) {
+            alert(`Could not read the file: ${error.message}`);
+            return;
+        }
+        await this.importBackupText(text);
+    }
+
+    /**
+     * Validate and merge a JSON backup's sessions into the stored history,
+     * after a confirmation summary. Nothing is written until the user
+     * confirms, and any refusal below leaves storage untouched.
+     *
+     * **The character-swap race class**: the active character is captured
+     * before the first `await` and re-checked after every one that follows
+     * (the file read already happened by the time this runs; the stored-
+     * sessions load and the confirm dialog are the two awaits/pauses left).
+     * A change anywhere in that window cancels the import rather than
+     * writing a payload built for one character into another's history.
+     *
+     * **Live session guard**: import is refused outright while a session for
+     * this kind is actively recording (`transmuteHistoryTracker.
+     * activeSession`), rather than attempting to merge around it. The active
+     * session's own `saveActiveSession()` can land between this function's
+     * load and its write, and merging blind against that in-flight state
+     * risks the write silently discarding whatever the live session just
+     * saved. Refusing is simple, obviously correct, and costs the user only
+     * as long as it takes to stop the action or let it finish.
+     *
+     * @param {string} text - The file's raw contents
+     * @returns {Promise<void>}
+     */
+    async importBackupText(text) {
+        // Captured before any further await — see the race note above
+        const charIdBefore = dataManager.getCurrentCharacterId();
+        const scopeBefore = transmuteHistoryTracker.getCharacterScope();
+
+        const parsed = parseAlchemyBackupJson(text);
+        if (!parsed.ok) {
+            alert(`Import refused: ${parsed.error}`);
+            return;
+        }
+
+        const envelope = parsed.envelope;
+        const envelopeCheck = validateAlchemyBackupEnvelope(envelope, { kind: 'transmute' });
+        if (!envelopeCheck.ok) {
+            alert(`Import refused: ${envelopeCheck.error}`);
+            return;
+        }
+
+        const sessionsCheck = validateAlchemySessions('transmute', envelope.sessions);
+        if (!sessionsCheck.ok) {
+            alert(`Import refused: ${sessionsCheck.error}\n\nNothing was written.`);
+            return;
+        }
+
+        if (envelope.characterId && envelope.characterId !== charIdBefore) {
+            const proceed = confirm(
+                `This backup was exported from a different character (${envelope.characterId}), ` +
+                    `not the current one (${charIdBefore}).\n\nImport it into the CURRENT character anyway?`
+            );
+            if (!proceed) return;
+        }
+
+        if (transmuteHistoryTracker.activeSession) {
+            alert('A transmute session is actively recording — stop it, then try the import again.');
+            return;
+        }
+
+        const stored = await transmuteHistoryTracker.loadStoredSessions();
+
+        if (
+            dataManager.getCurrentCharacterId() !== charIdBefore ||
+            transmuteHistoryTracker.getCharacterScope() !== scopeBefore
+        ) {
+            alert('The active character changed during import — cancelled to avoid writing to the wrong character.');
+            return;
+        }
+        if (transmuteHistoryTracker.activeSession) {
+            alert('A transmute session started recording during import — cancelled. Try again once it ends.');
+            return;
+        }
+
+        const plan = planAlchemyImportMerge(stored, envelope.sessions);
+
+        const confirmed = confirm(
+            `Import ${envelope.sessions.length} session(s) into Transmute History:\n` +
+                `${plan.replaced} replaced, ${plan.added} added, ${plan.unchanged} unchanged.\n\nContinue?`
+        );
+        if (!confirmed) return;
+
+        if (
+            dataManager.getCurrentCharacterId() !== charIdBefore ||
+            transmuteHistoryTracker.getCharacterScope() !== scopeBefore ||
+            transmuteHistoryTracker.activeSession
+        ) {
+            alert('The active character changed — import cancelled to avoid writing to the wrong character.');
+            return;
+        }
+
+        const written = await transmuteHistoryTracker.importSessions(plan.merged);
+        if (!written) {
+            alert('Import failed: the sessions could not be written to storage. Nothing changed.');
+            return;
+        }
+
+        this.sessions = await transmuteHistoryTracker.loadSessions();
+        this.cachedDateRange = null;
+        this.profitCache.clear();
+        this.applyFilters();
+        if (this.modal) this.renderTable();
+
+        alert(`Import complete: ${plan.replaced} replaced, ${plan.added} added, ${plan.unchanged} unchanged.`);
     }
 
     /**
