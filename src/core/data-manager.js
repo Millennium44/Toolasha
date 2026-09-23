@@ -1538,6 +1538,15 @@ class DataManager {
             if (data.actionTypeDrinkSlotsMap) {
                 this.updateDrinkSlotsMap(data.actionTypeDrinkSlotsMap);
             }
+            // The simulator exports read food and drink off characterData, which is otherwise
+            // the login snapshot; a slot swapped since then must reach them.
+            if (this.characterData) {
+                if (data.actionTypeFoodSlotsMap)
+                    this.characterData.actionTypeFoodSlotsMap = data.actionTypeFoodSlotsMap;
+                if (data.actionTypeDrinkSlotsMap) {
+                    this.characterData.actionTypeDrinkSlotsMap = data.actionTypeDrinkSlotsMap;
+                }
+            }
 
             this.emit('consumables_updated', data);
         });
@@ -1685,6 +1694,9 @@ class DataManager {
             // Update character skills with new levels
             if (data.characterSkills) {
                 this.characterSkills = data.characterSkills;
+                // Keep one array: action_completed levels mutate this.characterSkills in place,
+                // and the simulator exports read characterData.characterSkills.
+                if (this.characterData) this.characterData.characterSkills = data.characterSkills;
             }
 
             this.emit('skills_updated', data);
@@ -2406,6 +2418,20 @@ class DataManager {
         if (Array.isArray(this.characterItems)) snapshot.characterItems = this.characterItems;
         if (this.actionTypeDrinkSlotsMap.size > 0) {
             snapshot.actionTypeDrinkSlotsMap = Object.fromEntries(this.actionTypeDrinkSlotsMap);
+        }
+        // characterData's shrine map is login's and can be empty until guild traffic arrives; the
+        // simulator page has only this snapshot, so an empty map there drops every shrine buff.
+        if (Object.keys(this.characterGuildBuffMap || {}).length > 0) {
+            snapshot.characterGuildBuffMap = this.characterGuildBuffMap;
+        }
+        // partyInfo is frozen at page load. A party named by a fight since then replaces it, so a
+        // member who left is not imported and one who joined is.
+        const party = this.getPartyMembers();
+        if (party.source === 'battle') {
+            snapshot.partyInfo = {
+                ...(snapshot.partyInfo || {}),
+                partySlotMap: Object.fromEntries(party.members.map((member, index) => [String(index + 1), member])),
+            };
         }
         return (
             this.webSocketHook.saveCombatSimSnapshot?.(snapshot, {

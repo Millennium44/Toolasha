@@ -693,6 +693,74 @@ describe('saveSimulatorSnapshot', () => {
         expect(dataManager.characterData.characterItems).toEqual([{ id: 'login', count: 1 }]);
     });
 
+    test('carries skills, food, shrine levels and party changed since login', async () => {
+        const { default: dataManager } = await import('./data-manager.js');
+        const { default: webSocketHook } = await import('./websocket.js');
+        webSocketHook.saveCombatSimSnapshot.mockClear();
+        dataManager.currentCharacterId = 'char-snap';
+        dataManager.currentCharacterName = 'Snap';
+        dataManager.isCharacterSwitching = false;
+        const loginSkills = [{ skillHrid: '/skills/attack', level: 90 }];
+        dataManager.characterSkills = loginSkills;
+        dataManager.characterData = {
+            character: { id: 'char-snap' },
+            characterSkills: loginSkills,
+            actionTypeFoodSlotsMap: { '/action_types/combat': [{ itemHrid: '/items/apple' }] },
+            characterGuildBuffMap: {},
+            partyInfo: {
+                partySlotMap: {
+                    1: { characterID: 'char-snap', characterName: 'Snap' },
+                    2: { characterID: 'char-left', characterName: 'Gone' },
+                },
+            },
+        };
+
+        webSocketHandlers.get('skills_updated')({ characterSkills: [{ skillHrid: '/skills/attack', level: 91 }] });
+        webSocketHandlers.get('action_type_consumable_slots_updated')({
+            actionTypeFoodSlotsMap: { '/action_types/combat': [{ itemHrid: '/items/star_fruit_yogurt' }] },
+            actionTypeDrinkSlotsMap: { '/action_types/combat': [{ itemHrid: '/items/super_power_coffee' }] },
+        });
+        dataManager.characterGuildBuffMap = { '/guild_buffs/force_combat': { level: 5 } };
+        dataManager.battlePartyRoster = {
+            members: [{ characterID: 'char-snap', characterName: 'Snap' }],
+            updatedAt: Date.now(),
+        };
+
+        expect(dataManager.saveSimulatorSnapshot()).toBe(true);
+
+        const [snapshot] = webSocketHook.saveCombatSimSnapshot.mock.calls[0];
+        expect(snapshot.characterSkills).toEqual([{ skillHrid: '/skills/attack', level: 91 }]);
+        expect(snapshot.actionTypeFoodSlotsMap['/action_types/combat']).toEqual([
+            { itemHrid: '/items/star_fruit_yogurt' },
+        ]);
+        expect(snapshot.actionTypeDrinkSlotsMap['/action_types/combat']).toEqual([
+            { itemHrid: '/items/super_power_coffee' },
+        ]);
+        expect(snapshot.characterGuildBuffMap).toEqual({ '/guild_buffs/force_combat': { level: 5 } });
+        expect(Object.values(snapshot.partyInfo.partySlotMap).map((member) => member.characterID)).toEqual([
+            'char-snap',
+        ]);
+        // The login party map on the live object is left as the game sent it
+        expect(Object.keys(dataManager.characterData.partyInfo.partySlotMap)).toHaveLength(2);
+        dataManager.battlePartyRoster = null;
+    });
+
+    test('keeps the login party map when no fight has named the party since', async () => {
+        const { default: dataManager } = await import('./data-manager.js');
+        const { default: webSocketHook } = await import('./websocket.js');
+        webSocketHook.saveCombatSimSnapshot.mockClear();
+        dataManager.currentCharacterId = 'char-snap';
+        dataManager.isCharacterSwitching = false;
+        dataManager.battlePartyRoster = null;
+        const partyInfo = { partySlotMap: { 1: { characterID: 'char-snap' }, 2: { characterID: 'char-mate' } } };
+        dataManager.characterData = { character: { id: 'char-snap' }, partyInfo };
+
+        dataManager.saveSimulatorSnapshot();
+
+        const [snapshot] = webSocketHook.saveCombatSimSnapshot.mock.calls[0];
+        expect(snapshot.partyInfo).toBe(partyInfo);
+    });
+
     test('writes nothing mid character switch', async () => {
         const { default: dataManager } = await import('./data-manager.js');
         const { default: webSocketHook } = await import('./websocket.js');
