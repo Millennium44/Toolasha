@@ -22,6 +22,7 @@ const game = vi.hoisted(() => ({
     dmHandlers: {},
     notified: [],
     notifyResult: { fired: true, channels: ['toast'] },
+    activeSocket: null,
 }));
 
 vi.mock('../../core/config.js', () => ({
@@ -33,6 +34,7 @@ vi.mock('../../core/data-manager.js', () => ({
     default: {
         getInitClientData: () => game.initClientData,
         getInventory: () => game.inventory,
+        isFromActiveSocket: (context) => !game.activeSocket || context?.socket === game.activeSocket,
         on: (event, handler) => {
             game.dmHandlers[event] = handler;
         },
@@ -68,13 +70,13 @@ function philoStack(count) {
 }
 
 /** An `action_completed` for one (or a batched several) transmute attempts */
-function completed({ hrid = TRANSMUTE_ACTION_HRID, philoCount, otherItems = [] } = {}) {
+function completed({ hrid = TRANSMUTE_ACTION_HRID, philoCount, otherItems = [], id = 1, currentCount = 0 } = {}) {
     const endCharacterItems = [...otherItems];
     if (philoCount !== undefined) {
         endCharacterItems.push({ itemHrid: PHILO_HRID, itemLocationHrid: INVENTORY_LOCATION, count: philoCount });
     }
     return {
-        endCharacterAction: { actionHrid: hrid },
+        endCharacterAction: { id, actionHrid: hrid, currentCount },
         endCharacterItems,
     };
 }
@@ -93,6 +95,7 @@ describe('philosophers stone alerts', () => {
         game.dmHandlers = {};
         game.notified = [];
         game.notifyResult = { fired: true, channels: ['toast'] };
+        game.activeSocket = null;
         philoStoneAlerts.disable();
         await philoStoneAlerts.initialize();
     });
@@ -324,5 +327,70 @@ describe('settings schema backs the philosophers stone alert', () => {
         expect(definition.type).toBe('checkbox');
         expect(definition.default).toBe(false);
         expect(definition.help).toMatch(/Transmute History Tracker/i);
+    });
+});
+
+describe('the stack moving outside a transmute', () => {
+    beforeEach(async () => {
+        game.settings = { [MASTER_SETTING]: true };
+        game.initClientData = { itemDetailMap: { [PHILO_HRID]: { name: 'Philosopher’s Stone' } } };
+        game.inventory = [];
+        game.wsHandlers = {};
+        game.dmHandlers = {};
+        game.notified = [];
+        game.notifyResult = { fired: true, channels: ['toast'] };
+        game.activeSocket = null;
+        philoStoneAlerts.disable();
+        await philoStoneAlerts.initialize();
+    });
+
+    afterEach(() => {
+        philoStoneAlerts.disable();
+    });
+    /** An `items_updated` for the stone stack — a sale, a listing, a purchase */
+    const itemsUpdated = (count, context) =>
+        game.wsHandlers.items_updated(
+            { endCharacterItems: [{ itemHrid: PHILO_HRID, itemLocationHrid: INVENTORY_LOCATION, count }] },
+            context
+        );
+
+    test('a stone sold down to zero does not swallow the next stone', () => {
+        send(completed({ philoCount: 1, currentCount: 3 }));
+        itemsUpdated(0);
+        send(completed({ philoCount: 1, currentCount: 40 }));
+
+        expect(game.notified).toHaveLength(2);
+        expect(game.notified[1].message).toBe('Transmuting produced a Philosopher’s Stone!');
+        // Same total as the first, different stone: its own key, not the first one's cooldown
+        expect(game.notified[1].key).not.toBe(game.notified[0].key);
+    });
+
+    test('stones bought on the market are not announced as transmuted', () => {
+        itemsUpdated(2);
+        expect(game.notified).toHaveLength(0);
+
+        send(completed({ philoCount: 3 }));
+        expect(game.notified[0].message).toBe('Transmuting produced a Philosopher’s Stone!');
+    });
+
+    test('a craft that uses a stone moves the baseline without announcing', () => {
+        send(completed({ philoCount: 2 }));
+        send(completed({ hrid: '/actions/crafting/philosophers_necklace', philoCount: 1 }));
+        send(completed({ philoCount: 2, currentCount: 9 }));
+
+        expect(game.notified.map((n) => n.message)).toEqual([
+            'Transmuting produced 2 Philosopher’s Stones!',
+            'Transmuting produced a Philosopher’s Stone!',
+        ]);
+    });
+
+    test('a message from another character’s socket is ignored', () => {
+        game.activeSocket = { name: 'active' };
+        game.wsHandlers.action_completed(completed({ philoCount: 4 }), { socket: { name: 'departing' } });
+        itemsUpdated(9, { socket: { name: 'departing' } });
+
+        expect(game.notified).toHaveLength(0);
+        game.wsHandlers.action_completed(completed({ philoCount: 1 }), { socket: game.activeSocket });
+        expect(game.notified[0].message).toBe('Transmuting produced a Philosopher’s Stone!');
     });
 });

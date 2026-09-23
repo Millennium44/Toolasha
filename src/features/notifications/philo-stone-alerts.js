@@ -56,8 +56,21 @@
  * that covers several successful attempts reports the whole gain in one
  * line rather than pretending it was one stone.
  *
- * Scoped to transmute: coinify and decompose do not produce stones, and this
- * does not listen for their actions at all.
+ * Scoped to transmute: coinify and decompose do not produce stones, and only a
+ * transmute's message can announce one.
+ *
+ * ## Every other stone movement moves the baseline, silently
+ *
+ * A stone sold, listed, bought, used in a craft or opened from a chest moves
+ * the stack outside any transmute. Left out, the baseline goes stale: a stone
+ * sold down to zero leaves it at one, and the next stone — back at one — reads
+ * as no gain and is never announced; a stone bought reads as extra stones on
+ * the next announcement. So a stone row in any other message is taken as the
+ * new baseline without a word.
+ *
+ * Messages from a socket other than the active character's are ignored, as the
+ * data manager ignores them: after a switch they carry the departing
+ * character's stack.
  */
 
 import config from '../../core/config.js';
@@ -144,18 +157,62 @@ class PhiloStoneAlerts {
         }
     }
 
-    /** Listen for finished transmute attempts */
+    /** Listen for finished transmute attempts, and for every other change to the stack */
     registerWebSocketListeners() {
-        const handler = (data) => {
+        const handler = (data, context) => {
             try {
+                if (dataManager.isFromActiveSocket?.(context) === false) return;
                 this.check(data);
             } catch (error) {
                 console.error('[PhiloStoneAlerts] Reading a transmute result failed:', error);
             }
         };
+        const follow = (data, context) => {
+            try {
+                if (dataManager.isFromActiveSocket?.(context) === false) return;
+                this.followStack(data);
+            } catch (error) {
+                console.error('[PhiloStoneAlerts] Following the stone stack failed:', error);
+            }
+        };
 
         webSocketHook.on('action_completed', handler);
         this.unregisterHandlers.push(() => webSocketHook.off('action_completed', handler));
+        for (const type of ['items_updated', 'loot_opened']) {
+            webSocketHook.on(type, follow);
+            this.unregisterHandlers.push(() => webSocketHook.off(type, follow));
+        }
+    }
+
+    /**
+     * The stone stack's new total in one message, or null when the message did
+     * not move it.
+     * @param {Object} data - A message carrying `endCharacterItems`
+     * @returns {number|null}
+     */
+    stoneCountIn(data) {
+        // The LAST matching row, not the first. One message can carry several
+        // snapshots of the same stack as a batch of attempts plays out — a
+        // batch that produced two stones arrives as rows [7, 8] — and only the
+        // last of them is the total the stack ended on.
+        const rows = (data?.endCharacterItems || []).filter(
+            (r) => r?.itemHrid === PHILO_HRID && r?.itemLocationHrid === INVENTORY_LOCATION_HRID
+        );
+        const row = rows[rows.length - 1];
+        if (!row) return null;
+        const count = Number(row.count);
+        return Number.isFinite(count) ? count : null;
+    }
+
+    /**
+     * Take a stone total that moved outside a transmute as the new baseline.
+     * @param {Object} data - A message carrying `endCharacterItems`
+     */
+    followStack(data) {
+        const count = this.stoneCountIn(data);
+        if (count === null) return;
+        this.lastCount = count;
+        this.hasBaseline = true;
     }
 
     /**
@@ -179,22 +236,14 @@ class PhiloStoneAlerts {
      */
     check(data) {
         if (!config.getSetting(MASTER_SETTING)) return;
-        if (data?.endCharacterAction?.actionHrid !== TRANSMUTE_ACTION_HRID) return;
+        if (data?.endCharacterAction?.actionHrid !== TRANSMUTE_ACTION_HRID) {
+            // A craft that uses a stone moves the stack too
+            this.followStack(data);
+            return;
+        }
 
-        // The LAST matching row, not the first. One message can carry several
-        // snapshots of the same stack as a batch of attempts plays out — a
-        // batch that produced two stones arrives as rows [7, 8] — and only the
-        // last of them is the total the stack ended on. Taking the first would
-        // under-report the gain AND leave the baseline low, so the next genuine
-        // stone would read as a gain of two.
-        const rows = (data.endCharacterItems || []).filter(
-            (r) => r?.itemHrid === PHILO_HRID && r?.itemLocationHrid === INVENTORY_LOCATION_HRID
-        );
-        const row = rows[rows.length - 1];
-        if (!row) return;
-
-        const count = Number(row.count);
-        if (!Number.isFinite(count)) return;
+        const count = this.stoneCountIn(data);
+        if (count === null) return;
 
         if (!this.hasBaseline) {
             // Inventory could not be seeded this session — the fallback from
@@ -225,10 +274,12 @@ class PhiloStoneAlerts {
         const name = this.itemName();
         const message = gained === 1 ? `Transmuting produced a ${name}!` : `Transmuting produced ${gained} ${name}s!`;
 
-        // The new absolute total is the key: it only advances on a further
-        // gain, so each stone (or batch of stones) gets its own announcement
-        // rather than being deduplicated against the last one.
-        const result = notificationService.notify(`${EVENT_KEY_PREFIX}:${count}`, message, {
+        // Keyed by the message as well as the total: a stack sold back down can
+        // reach the same total again inside the notification cooldown, and that
+        // later stone is a new one.
+        const action = data.endCharacterAction;
+        const eventKey = `${EVENT_KEY_PREFIX}:${action?.id ?? ''}:${action?.currentCount ?? ''}:${count}`;
+        const result = notificationService.notify(eventKey, message, {
             title: "Philosopher's Stone!",
         });
 
