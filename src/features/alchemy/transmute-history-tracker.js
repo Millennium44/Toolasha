@@ -37,6 +37,15 @@ const COIN_ITEM_HRID = '/items/coin';
 const STORAGE_KEY = 'transmuteSessions';
 
 /**
+ * Whether a message came over this character's current connection.
+ * @param {Object} [context] - Delivery context from the WebSocket hook
+ * @returns {boolean} False only when dataManager can tell the message is stale
+ */
+function isFromActiveSocket(context) {
+    return typeof dataManager.isFromActiveSocket !== 'function' || dataManager.isFromActiveSocket(context);
+}
+
+/**
  * The sessions, one record per day rather than one array rewritten per action.
  * See `alchemy-session-store.js` for what that is worth.
  */
@@ -55,10 +64,17 @@ class TransmuteHistoryTracker {
         this.seededHrids = new Set();
         // Whether the ledger holds a baseline for a stack of the input
         this.inputStackKnown = false;
+        // The queue action `lastCurrentCount` belongs to. A new action for the
+        // same item — the next queued copy, or the player pressing Start again
+        // — counts from its own zero.
+        this.trackedActionId = null;
+        this.lastCurrentCount = null;
         this.handlers = {
             actionsUpdated: () => this.handleActionsUpdated(),
-            actionCompleted: (data) => this.handleActionCompleted(data),
+            actionCompleted: (data, context) => this.handleActionCompleted(data, context),
+            itemsUpdated: (data, context) => this.handleItemsUpdated(data, context),
             initCharacterData: () => this.handleReconnect(),
+            characterInitialized: () => this.seedFromQueue(),
             characterSwitched: (data) => this.handleCharacterSwitched(data),
         };
     }
@@ -96,8 +112,46 @@ class TransmuteHistoryTracker {
         // runs first.
         dataManager.on('actions_updated', this.handlers.actionsUpdated);
         webSocketHook.on('action_completed', this.handlers.actionCompleted);
+        webSocketHook.on('items_updated', this.handlers.itemsUpdated);
         webSocketHook.on('init_character_data', this.handlers.initCharacterData);
+        dataManager.on('character_initialized', this.handlers.characterInitialized);
         dataManager.on('character_switched', this.handlers.characterSwitched);
+
+        // A run already going when the page loads is picked up now, between
+        // messages, so its first message is measured rather than floored
+        this.seedFromQueue();
+    }
+
+    /**
+     * Start a session from the queue if a transmute is running and none is open.
+     *
+     * Sound at any moment outside a message handler: dataManager writes a
+     * message's inventory rows and its action's `currentCount` in the same
+     * handler, so the cached pair always describes the same instant.
+     *
+     * @returns {Promise<void>}
+     */
+    async seedFromQueue() {
+        try {
+            if (!this.activeSession) await this.handleActionsUpdated();
+        } catch (error) {
+            console.error('[TransmuteHistoryTracker] Could not start a session from the queue:', error);
+        }
+    }
+
+    /**
+     * Keep the ledger's baselines on stacks something other than the action moved.
+     *
+     * A market sale, a purchase or a collected listing changes a stack between
+     * two `action_completed`s, and the next message's delta would otherwise
+     * read that change as the action's doing — bought input as self-returns.
+     *
+     * @param {Object} data - `items_updated` message
+     * @param {Object} [context] - Delivery context from the WebSocket hook
+     */
+    handleItemsUpdated(data, context) {
+        if (!this.activeSession || !isFromActiveSocket(context)) return;
+        this.itemCounts.noteEach(data?.endCharacterItems || []);
     }
 
     /**
@@ -115,7 +169,9 @@ class TransmuteHistoryTracker {
     async disable() {
         dataManager.off('actions_updated', this.handlers.actionsUpdated);
         webSocketHook.off('action_completed', this.handlers.actionCompleted);
+        webSocketHook.off('items_updated', this.handlers.itemsUpdated);
         webSocketHook.off('init_character_data', this.handlers.initCharacterData);
+        dataManager.off('character_initialized', this.handlers.characterInitialized);
         dataManager.off('character_switched', this.handlers.characterSwitched);
 
         if (this.activeSession) {
@@ -147,7 +203,11 @@ class TransmuteHistoryTracker {
 
             // Read between messages, so the cached inventory and the action's
             // count are exactly what the next action_completed moves away from
-            const baseline = { currentCount: transmuteAction.currentCount };
+            const baseline = {
+                actionId: transmuteAction.id ?? null,
+                currentCount: transmuteAction.currentCount,
+                catalystHrid: this.extractItemHrid(transmuteAction.secondaryItemHash),
+            };
             if (!this.activeSession) {
                 // No active session — start one
                 await this.startSession(inputItemHrid, Date.now(), baseline);
@@ -156,10 +216,11 @@ class TransmuteHistoryTracker {
                 await this.endSession();
                 await this.startSession(inputItemHrid, Date.now(), baseline);
             } else {
-                // Same item, same session — the player restarted the action, so
-                // nothing about the record changes except that it was still
-                // running at this moment
+                // Same item, same session. A different action — the next
+                // queued copy, or a restart with another catalyst or count —
+                // counts from its own currentCount, and its catalyst needs a baseline
                 this.activeSession.lastActivityTime = Date.now();
+                if (baseline.actionId !== this.trackedActionId) this.rebaseline(baseline);
             }
         } else if (this.activeSession) {
             // No transmute action in the update — end any active session
@@ -171,11 +232,13 @@ class TransmuteHistoryTracker {
      * Handle action_completed — record one attempt result
      * @param {Object} data - WebSocket message data
      */
-    async handleActionCompleted(data) {
+    async handleActionCompleted(data, context) {
         const action = data.endCharacterAction;
         if (!action || action.actionHrid !== TRANSMUTE_ACTION_HRID) {
             return;
         }
+        // A message from a connection that is no longer this character's
+        if (!isFromActiveSocket(context)) return;
 
         const inputItemHrid = this.extractItemHrid(action.primaryItemHash);
         if (!inputItemHrid) {
@@ -184,9 +247,10 @@ class TransmuteHistoryTracker {
 
         // Ensure we have an active session for this item
         if (!this.activeSession || this.activeSession.inputItemHrid !== inputItemHrid) {
-            await this.startSession(inputItemHrid, Date.now());
+            await this.startSession(inputItemHrid, Date.now(), null, action);
         }
-        this.activeSession.lastActivityTime = Date.now();
+        const session = this.activeSession;
+        session.lastActivityTime = Date.now();
 
         // bulkMultiplier defines how many items are consumed and returned per action
         const itemDetailsForBulk = dataManager.getItemDetails(inputItemHrid);
@@ -215,17 +279,33 @@ class TransmuteHistoryTracker {
             ({ row }) => row.itemHrid !== COIN_ITEM_HRID && validOutputHrids.has(row.itemHrid)
         );
 
-        // Derive actual attempt count from currentCount delta (handles batched efficiency procs)
+        // Summed per item, not per stack; see the self-return arithmetic below
+        const deltaByHrid = deltasByItem(outputRows, this.seededHrids);
+
+        // Derive actual attempt count from currentCount delta (handles batched
+        // efficiency procs). A count left by another action says nothing about this one.
         const currentCount = action.currentCount || 0;
+        if (action.id !== undefined && action.id !== this.trackedActionId) {
+            if (this.trackedActionId !== null) this.lastCurrentCount = null;
+            this.trackedActionId = action.id;
+        }
         let attemptCount;
         if (this.lastCurrentCount !== null && currentCount > this.lastCurrentCount) {
             attemptCount = currentCount - this.lastCurrentCount;
         } else {
-            attemptCount = Math.max(outputRows.length, 1);
+            // No baseline: at least one attempt, and at least one per action
+            // that visibly produced something other than the input. The input's
+            // own row is its consumption and says nothing about how many.
+            let produced = 0;
+            for (const [outputItemHrid, delta] of deltaByHrid) {
+                if (outputItemHrid === inputItemHrid) continue;
+                produced += delta === null ? 1 : Math.max(0, Math.round(delta / bulkMultiplier));
+            }
+            attemptCount = Math.max(produced, 1);
         }
         this.lastCurrentCount = currentCount;
 
-        this.activeSession.totalAttempts += attemptCount;
+        session.totalAttempts += attemptCount;
 
         // How many actions produced each output.
         //
@@ -239,7 +319,6 @@ class TransmuteHistoryTracker {
         // Deltas are summed per item, not per stack: a stack emptied by the
         // consumption can come back under a new id, and the self-return
         // arithmetic below must see the item's net change, applied once.
-        const deltaByHrid = deltasByItem(outputRows, this.seededHrids);
 
         // Every attempt consumes the input, so a message that moved items but
         // not an input stack known to exist is one where every consumed input
@@ -302,7 +381,7 @@ class TransmuteHistoryTracker {
         successCount = Math.min(successCount, attemptCount);
 
         if (successCount > 0) {
-            this.activeSession.totalSuccesses += successCount;
+            session.totalSuccesses += successCount;
 
             for (const [outputItemHrid, actions] of producedActions) {
                 // Trimmed away entirely above — nothing to record, and no empty
@@ -310,8 +389,8 @@ class TransmuteHistoryTracker {
                 if (actions <= 0) continue;
                 const isOutputSelfReturn = outputItemHrid === inputItemHrid;
 
-                if (!this.activeSession.results[outputItemHrid]) {
-                    this.activeSession.results[outputItemHrid] = {
+                if (!session.results[outputItemHrid]) {
+                    session.results[outputItemHrid] = {
                         count: 0,
                         totalValue: 0,
                         priceEach: 0,
@@ -322,7 +401,7 @@ class TransmuteHistoryTracker {
 
                 // Each producing action hands over bulkMultiplier items
                 const received = actions * bulkMultiplier;
-                this.activeSession.results[outputItemHrid].count += received;
+                session.results[outputItemHrid].count += received;
 
                 // Record market price at time of result. `null` means the market
                 // cannot price this item at all — folding that into the total as
@@ -336,19 +415,19 @@ class TransmuteHistoryTracker {
                 if (!isOutputSelfReturn) {
                     const price = getItemPrice(outputItemHrid, { context: 'profit', side: 'sell' });
                     if (price === null) {
-                        this.activeSession.results[outputItemHrid].unpriced = true;
+                        session.results[outputItemHrid].unpriced = true;
                     } else {
-                        this.activeSession.results[outputItemHrid].priceEach = price;
-                        this.activeSession.results[outputItemHrid].totalValue += price * received;
+                        session.results[outputItemHrid].priceEach = price;
+                        session.results[outputItemHrid].totalValue += price * received;
                     }
                 }
             }
         }
         // Failure — totalAttempts already incremented, nothing more to record
 
-        this.recordCatalystUse(action, noted, successCount, attemptCount);
+        this.recordCatalystUse(session, action, noted, successCount, attemptCount);
 
-        await this.saveActiveSession();
+        await this.saveSession(session);
     }
 
     /**
@@ -363,18 +442,21 @@ class TransmuteHistoryTracker {
      * `alchemy-catalyst-use.js` for why the observed stack decrement is
      * preferred and why `noted` has to be the folded ledger.
      *
+     * @param {Object} session - The session the message belongs to
      * @param {Object} action - `endCharacterAction` from the message
      * @param {Array<{row: Object, delta: number|null}>} noted - The folded ledger entries
      * @param {number} successCount - Successes this message covered
      * @param {number} attemptCount - Attempts this message covered
      * @returns {void}
      */
-    recordCatalystUse(action, noted, successCount, attemptCount) {
-        recordCatalystUse(this.activeSession, {
-            catalystHrid: this.extractItemHrid(action.secondaryItemHash),
+    recordCatalystUse(session, action, noted, successCount, attemptCount) {
+        const catalystHrid = this.extractItemHrid(action.secondaryItemHash);
+        recordCatalystUse(session, {
+            catalystHrid,
             noted,
             successCount,
             attemptCount,
+            stackKnown: this.seededHrids.has(catalystHrid),
         });
     }
 
@@ -403,22 +485,24 @@ class TransmuteHistoryTracker {
      * Start a new session
      * @param {string} inputItemHrid - Input item HRID
      * @param {number} timestamp - Start timestamp in ms
-     * @param {{currentCount: number}|null} [baseline] - Present only when the
-     *   session starts from the queue, between messages, so the cached
-     *   inventory and the action's count predate every message it will read
+     * @param {{actionId: *, currentCount: number, catalystHrid: string|null}|null} [baseline] - Present
+     *   only when the session starts from the queue, between messages, so the
+     *   cached inventory and the action's count predate every message it will read
+     * @param {Object|null} [action] - The message's action, when the session
+     *   starts from an `action_completed` instead
      */
-    async startSession(inputItemHrid, timestamp, baseline = null) {
+    async startSession(inputItemHrid, timestamp, baseline = null, action = null) {
         // Recorded, not recomputed at read time: the coin fee that was actually
         // billed scales with the bulk size the item had while the session ran,
         // and a later game change to that number would otherwise silently
         // restate every past session's profit.
         const itemDetails = dataManager.getItemDetails(inputItemHrid);
         // What the model says this run will succeed at, taken NOW — the tea,
-        // the catalyst in the slot and the level penalty are the ones this run
-        // is played with, and every one of them will have moved by the time
-        // anybody reads the record back. A session with no stamp is excluded
-        // from calibration rather than judged against a later model.
-        const stamp = predictedSuccessStamp('transmute', inputItemHrid, timestamp);
+        // the catalyst in the action's slot and the level penalty are the ones
+        // this run is played with, and every one of them will have moved by the
+        // time anybody reads the record back. A session with no stamp is
+        // excluded from calibration rather than judged against a later model.
+        const stamp = predictedSuccessStamp('transmute', inputItemHrid, timestamp, this.stampOptions(baseline, action));
         this.activeSession = {
             id: `transmute_${timestamp}`,
             startTime: timestamp,
@@ -445,14 +529,49 @@ class TransmuteHistoryTracker {
             results: {},
         };
         this.itemCounts.reset();
-        const startCount = Number(baseline?.currentCount);
-        this.lastCurrentCount = baseline && Number.isFinite(startCount) ? startCount : null;
         this.inputStackKnown = false;
-        this.seededHrids = baseline ? this.seedItemCounts(inputItemHrid, itemDetails) : new Set();
+        this.seededHrids = new Set();
+        this.lastCurrentCount = null;
+        this.trackedActionId = baseline ? baseline.actionId : (action?.id ?? null);
+        if (baseline) this.rebaseline(baseline);
     }
 
     /**
-     * Give the ledger a baseline for the input and every drop-table item.
+     * The catalyst the run is actually played with, for the success stamp.
+     * @param {{catalystHrid: string|null}|null} baseline - The queued action's slots
+     * @param {Object|null} action - The message's action
+     * @returns {Object} Stamp options; empty, so the action panel is read, when neither is known
+     */
+    stampOptions(baseline, action) {
+        if (baseline) return { catalystHrid: baseline.catalystHrid };
+        if (action) return { catalystHrid: this.extractItemHrid(action.secondaryItemHash) };
+        return {};
+    }
+
+    /**
+     * Measure the next message against the queue as it stands now.
+     *
+     * Only sound between messages. A stack already in the ledger is re-noted at
+     * the total the inventory holds, which is the same value unless something
+     * other than the action moved it.
+     *
+     * @param {{actionId: *, currentCount: number, catalystHrid: string|null}} baseline - The running action
+     */
+    rebaseline(baseline) {
+        const startCount = Number(baseline.currentCount);
+        this.lastCurrentCount = Number.isFinite(startCount) ? startCount : null;
+        this.trackedActionId = baseline.actionId;
+        const inputItemHrid = this.activeSession.inputItemHrid;
+        const seeded = this.seedItemCounts(
+            inputItemHrid,
+            dataManager.getItemDetails(inputItemHrid),
+            baseline.catalystHrid
+        );
+        this.seededHrids = new Set([...this.seededHrids, ...seeded]);
+    }
+
+    /**
+     * Give the ledger a baseline for the input, every drop-table item and the catalyst.
      *
      * Without one, the first message's input row has no delta, and a
      * self-return there cannot be told apart from plain consumption — a run
@@ -464,14 +583,16 @@ class TransmuteHistoryTracker {
      *
      * @param {string} inputItemHrid - Input item HRID
      * @param {Object|null} itemDetails - The input's item details
+     * @param {string|null} [catalystHrid] - The catalyst in the action's slot
      * @returns {Set<string>} The items whose every stack is now in the ledger;
      *   empty when the inventory is not loaded
      */
-    seedItemCounts(inputItemHrid, itemDetails) {
+    seedItemCounts(inputItemHrid, itemDetails, catalystHrid = null) {
         const inventory = dataManager.characterItems;
         if (!Array.isArray(inventory)) return new Set();
 
         const hrids = new Set([inputItemHrid]);
+        if (catalystHrid) hrids.add(catalystHrid);
         for (const entry of itemDetails?.alchemyDetail?.transmuteDropTable || []) {
             if (entry?.itemHrid && entry.itemHrid !== COIN_ITEM_HRID) hrids.add(entry.itemHrid);
         }
@@ -484,12 +605,15 @@ class TransmuteHistoryTracker {
      * End the active session
      */
     async endSession() {
-        if (!this.activeSession) {
+        const session = this.activeSession;
+        if (!session) {
             return;
         }
 
-        await this.saveActiveSession();
+        // Closed before the save is awaited: a session the queue starts while
+        // the save is in flight must not be the one that gets closed
         this.activeSession = null;
+        await this.saveSession(session);
     }
 
     /**
@@ -497,26 +621,40 @@ class TransmuteHistoryTracker {
      * Skips persist if no attempts recorded yet (avoids empty sessions from queue changes).
      */
     async saveActiveSession() {
-        if (!this.activeSession || this.activeSession.totalAttempts === 0) {
+        await this.saveSession(this.activeSession);
+    }
+
+    /**
+     * Save one session (upsert by id) under the character it was recorded for.
+     *
+     * The session and the scope are taken before the load is awaited, so a
+     * session started, or a character switched to, while it is in flight is not
+     * what gets written.
+     *
+     * @param {Object|null} session - The session to save
+     */
+    async saveSession(session) {
+        if (!session || session.totalAttempts === 0) {
             return;
         }
 
+        const scope = this.getCharacterScope();
         try {
             // The UNMERGED history: the reload merge is a reader's view, and
             // upserting into it would write a merged record back over the parts
             // it was made from
-            const sessions = await this.loadStoredSessions();
-            const index = sessions.findIndex((s) => s.id === this.activeSession.id);
+            const sessions = await this.loadStoredSessions(scope);
+            const index = sessions.findIndex((s) => s.id === session.id);
 
             if (index !== -1) {
-                sessions[index] = this.activeSession;
+                sessions[index] = session;
             } else {
-                sessions.push(this.activeSession);
+                sessions.push(session);
             }
 
             // Only the record for the day this session started is written;
             // every earlier day is settled and never touched again
-            await sessionStore.save(this.getCharacterScope(), sessions);
+            await sessionStore.save(scope, sessions);
         } catch (error) {
             console.error('[TransmuteHistoryTracker] Failed to save session:', error);
         }
@@ -531,10 +669,10 @@ class TransmuteHistoryTracker {
      * exists. It is a no-op after the first load of a scope whose write landed;
      * see `transmute-session-repair.js`.
      *
+     * @param {string} [scope] - Whose sessions; the current character's by default
      * @returns {Promise<Array>} Array of session objects
      */
-    async loadStoredSessions() {
-        const scope = this.getCharacterScope();
+    async loadStoredSessions(scope = this.getCharacterScope()) {
         try {
             const sessions = await sessionStore.load(scope);
             return await ensureSessionsRepaired(scope, sessions, (repaired) => sessionStore.save(scope, repaired));

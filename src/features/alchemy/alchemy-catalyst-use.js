@@ -44,9 +44,14 @@
  * @param {number} options.successCount - Successes this message covered
  * @param {number} options.attemptCount - Attempts this message covered
  * @param {Object} [options.legacyFields] - hrid → session field name to keep populated
+ * @param {boolean} [options.stackKnown] - The ledger holds a baseline for every
+ *   stack of this catalyst, so a message with no row for it spent none
  * @returns {number} How many catalysts were recorded as spent
  */
-export function recordCatalystUse(session, { catalystHrid, noted, successCount, attemptCount, legacyFields }) {
+export function recordCatalystUse(
+    session,
+    { catalystHrid, noted, successCount, attemptCount, legacyFields, stackKnown = false }
+) {
     if (!session || !catalystHrid) return 0;
 
     if (!session.catalystsUsed) {
@@ -57,12 +62,18 @@ export function recordCatalystUse(session, { catalystHrid, noted, successCount, 
     // bought or sold catalysts while the run was going — and the successes are
     // the honest answer for that message
     let observed = null;
+    let rowSeen = false;
     for (const { row, delta } of noted || []) {
-        if (row?.itemHrid !== catalystHrid || delta === null) continue;
+        if (row?.itemHrid !== catalystHrid) continue;
+        rowSeen = true;
+        if (delta === null) continue;
         const spent = -delta;
         if (spent < 0 || spent > attemptCount) continue;
         observed = (observed ?? 0) + spent;
     }
+    // Every consumption moves the stack, so a known stack that did not move
+    // was not spent from — the slot still names a catalyst whose stack ran out
+    if (observed === null && !rowSeen && stackKnown) observed = 0;
 
     const consumed = observed ?? successCount;
     session.catalystsUsed[catalystHrid] = (session.catalystsUsed[catalystHrid] || 0) + consumed;

@@ -22,6 +22,16 @@
  *   item ledger from the inventory and its attempt baseline from the queued
  *   action's `currentCount`, so the first message is measured like the rest
  *   (transmute self-return, coinify and decompose first batch).
+ * - 3 — the session-boundary fixes. A new queue action for the same item (the
+ *   next queued copy, or a restart with another catalyst or count) counts its
+ *   first batch from its own `currentCount`; a page loaded mid-run seeds from
+ *   the queue instead of flooring its first message; stacks moved by
+ *   `items_updated` (a market sale or purchase) are re-baselined rather than
+ *   read as the action's output; a seeded catalyst stack that did not move is
+ *   recorded as nothing spent; an enhanced decompose records its Enhancing
+ *   Essence; the predicted-rate stamp takes the catalyst from the running
+ *   action rather than the open panel; and a message with no baseline is
+ *   floored at one attempt per visible success rather than one per changed stack.
  *
  * The stamp is carried through a JSON backup and import untouched. A read-time
  * reload merge keeps it only when every part carries it, at the lowest
@@ -29,10 +39,13 @@
  */
 
 /** The version the trackers stamp on every session they start now. */
-export const ALCHEMY_TRACKER_VERSION = 2;
+export const ALCHEMY_TRACKER_VERSION = 3;
 
 /** The first version whose sessions count a run's first message correctly. */
 export const FIRST_MESSAGE_FIX_VERSION = 2;
+
+/** The first version whose sessions carry the session-boundary fixes. */
+export const SESSION_BOUNDARY_FIX_VERSION = 3;
 
 /**
  * The version a session was recorded under.
@@ -74,6 +87,7 @@ export function mergedTrackerVersion(a, b) {
 export default {
     ALCHEMY_TRACKER_VERSION,
     FIRST_MESSAGE_FIX_VERSION,
+    SESSION_BOUNDARY_FIX_VERSION,
     sessionTrackerVersion,
     isPreFixSession,
     mergedTrackerVersion,

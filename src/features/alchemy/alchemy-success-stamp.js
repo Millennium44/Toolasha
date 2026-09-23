@@ -62,6 +62,16 @@ export function readLiveCatalyst() {
 }
 
 /**
+ * A catalyst hrid, if the calculator pays a bonus for it.
+ * @param {string|null|undefined} hrid - Item in the action's catalyst slot
+ * @returns {string|null} The hrid, or null when it is not a catalyst
+ */
+function knownCatalyst(hrid) {
+    if (!hrid) return null;
+    return alchemyProfitCalculator.catalystSuccessBonus(hrid) > 0 ? hrid : null;
+}
+
+/**
  * The stamp to put on a session that is starting now.
  *
  * Returns null rather than a zero when the rate cannot be computed — an item
@@ -72,15 +82,21 @@ export function readLiveCatalyst() {
  * @param {string} kind - `transmute` | `decompose` | `coinify`
  * @param {string} inputItemHrid - The item being worked on
  * @param {number} [now] - Clock, for the stamp's own timestamp
+ * @param {Object} [options] - What the caller already knows
+ * @param {string|null} [options.catalystHrid] - The catalyst in the running
+ *   action's own slot. When given (null included), it is used instead of the
+ *   action panel: the panel can be closed, or showing another item's setup,
+ *   when a queued run starts or a page loads mid-run.
  * @returns {{predictedRate: number, predictedAt: number, predictedCatalystHrid: string|null}|null}
  */
-export function predictedSuccessStamp(kind, inputItemHrid, now = Date.now()) {
+export function predictedSuccessStamp(kind, inputItemHrid, now = Date.now(), options = {}) {
     try {
         const itemDetails = dataManager.getItemDetails(inputItemHrid);
         const baseRate = alchemyProfitCalculator.baseSuccessRateFor(kind, itemDetails);
         if (!(baseRate > 0)) return null;
 
-        const catalystHrid = readLiveCatalyst();
+        const catalystHrid =
+            options && 'catalystHrid' in options ? knownCatalyst(options.catalystHrid) : readLiveCatalyst();
         // The penalty keys off the ITEM's level, not the action, so all three
         // kinds take it — an under-levelled character is quoted the full base
         // rate without it

@@ -36,6 +36,15 @@ const PRIME_CATALYST_HRID = '/items/prime_catalyst';
 const STORAGE_KEY = 'coinifySessions';
 
 /**
+ * Whether a message came over this character's current connection.
+ * @param {Object} [context] - Delivery context from the WebSocket hook
+ * @returns {boolean} False only when dataManager can tell the message is stale
+ */
+function isFromActiveSocket(context) {
+    return typeof dataManager.isFromActiveSocket !== 'function' || dataManager.isFromActiveSocket(context);
+}
+
+/**
  * The two catalysts this tracker has always had a dedicated field for, kept
  * populated so the viewer and the gold attribution keep reading them. Any OTHER
  * catalyst is still recorded, under its own hrid in `catalystsUsed` — see
@@ -64,10 +73,17 @@ class CoinifyHistoryTracker {
         this.itemCounts = createItemCountLedger();
         // Items whose every stack the ledger was seeded with at session start
         this.seededHrids = new Set();
+        // The queue action `lastCurrentCount` belongs to. A new action for the
+        // same item — the next queued copy, or the player pressing Start again
+        // — counts from its own zero.
+        this.trackedActionId = null;
+        this.lastCurrentCount = null;
         this.handlers = {
             actionsUpdated: () => this.handleActionsUpdated(),
-            actionCompleted: (data) => this.handleActionCompleted(data),
+            actionCompleted: (data, context) => this.handleActionCompleted(data, context),
+            itemsUpdated: (data, context) => this.handleItemsUpdated(data, context),
             initCharacterData: () => this.handleReconnect(),
+            characterInitialized: () => this.seedFromQueue(),
             characterSwitched: (data) => this.handleCharacterSwitched(data),
         };
     }
@@ -105,8 +121,46 @@ class CoinifyHistoryTracker {
         // runs first.
         dataManager.on('actions_updated', this.handlers.actionsUpdated);
         webSocketHook.on('action_completed', this.handlers.actionCompleted);
+        webSocketHook.on('items_updated', this.handlers.itemsUpdated);
         webSocketHook.on('init_character_data', this.handlers.initCharacterData);
+        dataManager.on('character_initialized', this.handlers.characterInitialized);
         dataManager.on('character_switched', this.handlers.characterSwitched);
+
+        // A run already going when the page loads is picked up now, between
+        // messages, so its first message is measured rather than floored
+        this.seedFromQueue();
+    }
+
+    /**
+     * Start a session from the queue if a coinify is running and none is open.
+     *
+     * Sound at any moment outside a message handler: dataManager writes a
+     * message's inventory rows and its action's `currentCount` in the same
+     * handler, so the cached pair always describes the same instant.
+     *
+     * @returns {Promise<void>}
+     */
+    async seedFromQueue() {
+        try {
+            if (!this.activeSession) await this.handleActionsUpdated();
+        } catch (error) {
+            console.error('[CoinifyHistoryTracker] Could not start a session from the queue:', error);
+        }
+    }
+
+    /**
+     * Keep the ledger's baselines on stacks something other than the action moved.
+     *
+     * A market sale, a collected listing or a purchase changes the coin stack
+     * between two `action_completed`s, and the next message's delta would
+     * otherwise read the proceeds as coinify successes.
+     *
+     * @param {Object} data - `items_updated` message
+     * @param {Object} [context] - Delivery context from the WebSocket hook
+     */
+    handleItemsUpdated(data, context) {
+        if (!this.activeSession || !isFromActiveSocket(context)) return;
+        this.itemCounts.noteEach(data?.endCharacterItems || []);
     }
 
     /**
@@ -124,7 +178,9 @@ class CoinifyHistoryTracker {
     async disable() {
         dataManager.off('actions_updated', this.handlers.actionsUpdated);
         webSocketHook.off('action_completed', this.handlers.actionCompleted);
+        webSocketHook.off('items_updated', this.handlers.itemsUpdated);
         webSocketHook.off('init_character_data', this.handlers.initCharacterData);
+        dataManager.off('character_initialized', this.handlers.characterInitialized);
         dataManager.off('character_switched', this.handlers.characterSwitched);
 
         if (this.activeSession) {
@@ -159,6 +215,7 @@ class CoinifyHistoryTracker {
             // Read between messages, so the cached inventory and the action's
             // count are exactly what the next action_completed moves away from
             const baseline = {
+                actionId: coinifyAction.id ?? null,
                 currentCount: coinifyAction.currentCount,
                 catalystHrid: this.extractItemHrid(coinifyAction.secondaryItemHash),
             };
@@ -173,10 +230,11 @@ class CoinifyHistoryTracker {
                 await this.endSession();
                 await this.startSession(inputItemHrid, enhancementLevel, Date.now(), baseline);
             } else {
-                // Same item and level, same session — the player restarted the
-                // action, so nothing about the record changes except that it
-                // was still running at this moment
+                // Same item and level, same session. A different action — the
+                // next queued copy, or a restart with another catalyst or count
+                // — counts from its own currentCount, and its catalyst needs a baseline
                 this.activeSession.lastActivityTime = Date.now();
+                if (baseline.actionId !== this.trackedActionId) this.rebaseline(baseline);
             }
         } else if (this.activeSession) {
             // No coinify action in the update — end any active session
@@ -187,12 +245,15 @@ class CoinifyHistoryTracker {
     /**
      * Handle action_completed — record one attempt result
      * @param {Object} data - WebSocket message data
+     * @param {Object} [context] - Delivery context from the WebSocket hook
      */
-    async handleActionCompleted(data) {
+    async handleActionCompleted(data, context) {
         const action = data.endCharacterAction;
         if (!action || action.actionHrid !== COINIFY_ACTION_HRID) {
             return;
         }
+        // A message from a connection that is no longer this character's
+        if (!isFromActiveSocket(context)) return;
 
         const inputItemHrid = this.extractItemHrid(action.primaryItemHash);
         const enhancementLevel = this.extractEnhancementLevel(action.primaryItemHash);
@@ -207,9 +268,10 @@ class CoinifyHistoryTracker {
             this.activeSession.inputItemHrid !== inputItemHrid ||
             this.activeSession.enhancementLevel !== enhancementLevel
         ) {
-            await this.startSession(inputItemHrid, enhancementLevel, Date.now());
+            await this.startSession(inputItemHrid, enhancementLevel, Date.now(), null, action);
         }
-        this.activeSession.lastActivityTime = Date.now();
+        const session = this.activeSession;
+        session.lastActivityTime = Date.now();
 
         // Derive actual attempt count from currentCount delta (handles batched efficiency procs)
         const currentCount = action.currentCount || 0;
@@ -222,19 +284,9 @@ class CoinifyHistoryTracker {
         const coinEntries = noted.filter(({ row }) => row.itemHrid === COIN_ITEM_HRID);
         const coinsGained = deltasByItem(coinEntries, this.seededHrids).get(COIN_ITEM_HRID) ?? null;
 
-        let attemptCount;
-        if (this.lastCurrentCount !== null && currentCount > this.lastCurrentCount) {
-            attemptCount = currentCount - this.lastCurrentCount;
-        } else {
-            // No baseline (a session first seen through action_completed) or a
-            // counter reset — one attempt is the least it can have been
-            attemptCount = 1;
-        }
-        this.lastCurrentCount = currentCount;
-
         // Successes come from the coins actually gained, not from the number of
         // changed stacks: coins are ONE stack, so counting rows could only ever
-        // answer 0 or 1 while `attemptCount` above exists precisely because the
+        // answer 0 or 1 while the attempt count exists precisely because the
         // game batches several attempts into one message. A batch of five
         // successes was recorded as one, and the session's success rate with it.
         //
@@ -244,34 +296,52 @@ class CoinifyHistoryTracker {
         // queue — there is no delta to read and the row itself is all there is;
         // it is a floor, and marked as one by being capped at the attempts it
         // cannot exceed.
-        const coinsPerSuccess = this.activeSession.coinsPerSuccess;
+        const coinsPerSuccess = session.coinsPerSuccess;
         let successCount;
         if (coinsGained !== null && coinsPerSuccess > 0) {
-            successCount = Math.round(coinsGained / coinsPerSuccess);
+            successCount = Math.max(Math.round(coinsGained / coinsPerSuccess), 0);
         } else {
             successCount = coinEntries.length;
         }
-        successCount = Math.min(Math.max(successCount, 0), attemptCount);
 
-        this.activeSession.totalAttempts += attemptCount;
+        // A count left by another action says nothing about this one
+        if (action.id !== undefined && action.id !== this.trackedActionId) {
+            if (this.trackedActionId !== null) this.lastCurrentCount = null;
+            this.trackedActionId = action.id;
+        }
+        let attemptCount;
+        if (this.lastCurrentCount !== null && currentCount > this.lastCurrentCount) {
+            attemptCount = currentCount - this.lastCurrentCount;
+        } else {
+            // No baseline (a session first seen through action_completed) or a
+            // counter reset: at least one attempt, and at least the successes seen
+            attemptCount = Math.max(successCount, 1);
+        }
+        this.lastCurrentCount = currentCount;
+
+        successCount = Math.min(successCount, attemptCount);
+
+        session.totalAttempts += attemptCount;
 
         if (successCount > 0) {
-            this.activeSession.totalSuccesses += successCount;
-            this.activeSession.totalCoinsEarned += this.activeSession.coinsPerSuccess * successCount;
+            session.totalSuccesses += successCount;
+            session.totalCoinsEarned += session.coinsPerSuccess * successCount;
         }
 
         // What the slot actually spent — whatever catalyst is in it, measured
         // from its own stack where the message gives a baseline to measure
         // against. The two known catalysts keep their dedicated fields.
-        recordCatalystUse(this.activeSession, {
-            catalystHrid: this.extractItemHrid(action.secondaryItemHash),
+        const catalystHrid = this.extractItemHrid(action.secondaryItemHash);
+        recordCatalystUse(session, {
+            catalystHrid,
             noted,
             successCount,
             attemptCount,
             legacyFields: LEGACY_CATALYST_FIELDS,
+            stackKnown: this.seededHrids.has(catalystHrid),
         });
 
-        await this.saveActiveSession();
+        await this.saveSession(session);
     }
 
     /**
@@ -300,11 +370,13 @@ class CoinifyHistoryTracker {
      * @param {string} inputItemHrid - Input item HRID
      * @param {number} enhancementLevel - Enhancement level of input item
      * @param {number} timestamp - Start timestamp in ms
-     * @param {{currentCount: number, catalystHrid: string|null}|null} [baseline] - Present
+     * @param {{actionId: *, currentCount: number, catalystHrid: string|null}|null} [baseline] - Present
      *   only when the session starts from the queue, between messages, so the
      *   cached inventory and the action's count predate every message it will read
+     * @param {Object|null} [action] - The message's action, when the session
+     *   starts from an `action_completed` instead
      */
-    async startSession(inputItemHrid, enhancementLevel, timestamp, baseline = null) {
+    async startSession(inputItemHrid, enhancementLevel, timestamp, baseline = null, action = null) {
         const itemDetails = dataManager.getItemDetails(inputItemHrid);
 
         if (!itemDetails?.alchemyDetail?.bulkMultiplier) {
@@ -323,7 +395,7 @@ class CoinifyHistoryTracker {
         // catalyst in the slot and the under-level penalty are what this run is
         // played with, and all three drift. A session with no stamp is excluded
         // from calibration rather than judged against a model it never saw.
-        const stamp = predictedSuccessStamp('coinify', inputItemHrid, timestamp);
+        const stamp = predictedSuccessStamp('coinify', inputItemHrid, timestamp, this.stampOptions(baseline, action));
 
         this.activeSession = {
             id: `coinify_${timestamp}`,
@@ -356,29 +428,60 @@ class CoinifyHistoryTracker {
             predictedCatalystHrid: stamp?.predictedCatalystHrid ?? null,
         };
         this.itemCounts.reset();
-        const startCount = Number(baseline?.currentCount);
-        this.lastCurrentCount = baseline && Number.isFinite(startCount) ? startCount : null;
-        // The coin stack is where the successes are read and the catalyst's
-        // stack is where its spend is; without their baselines a first message
-        // packing several actions was recorded as one attempt and one success
-        this.seededHrids = baseline
-            ? seedLedgerFromInventory(this.itemCounts, dataManager.characterItems, [
-                  COIN_ITEM_HRID,
-                  baseline.catalystHrid,
-              ])
-            : new Set();
+        this.seededHrids = new Set();
+        this.lastCurrentCount = null;
+        this.trackedActionId = baseline ? baseline.actionId : (action?.id ?? null);
+        if (baseline) this.rebaseline(baseline);
+    }
+
+    /**
+     * The catalyst the run is actually played with, for the success stamp.
+     * @param {{catalystHrid: string|null}|null} baseline - The queued action's slots
+     * @param {Object|null} action - The message's action
+     * @returns {Object} Stamp options; empty, so the action panel is read, when neither is known
+     */
+    stampOptions(baseline, action) {
+        if (baseline) return { catalystHrid: baseline.catalystHrid };
+        if (action) return { catalystHrid: this.extractItemHrid(action.secondaryItemHash) };
+        return {};
+    }
+
+    /**
+     * Measure the next message against the queue as it stands now.
+     *
+     * Only sound between messages. The coin stack is where the successes are
+     * read and the catalyst's stack is where its spend is; without their
+     * baselines a first message packing several actions was recorded as one
+     * attempt and one success. A stack already in the ledger is re-noted at the
+     * total the inventory holds, which is the same value unless something other
+     * than the action moved it.
+     *
+     * @param {{actionId: *, currentCount: number, catalystHrid: string|null}} baseline - The running action
+     */
+    rebaseline(baseline) {
+        const startCount = Number(baseline.currentCount);
+        this.lastCurrentCount = Number.isFinite(startCount) ? startCount : null;
+        this.trackedActionId = baseline.actionId;
+        const seeded = seedLedgerFromInventory(this.itemCounts, dataManager.characterItems, [
+            COIN_ITEM_HRID,
+            baseline.catalystHrid,
+        ]);
+        this.seededHrids = new Set([...this.seededHrids, ...seeded]);
     }
 
     /**
      * End the active session
      */
     async endSession() {
-        if (!this.activeSession) {
+        const session = this.activeSession;
+        if (!session) {
             return;
         }
 
-        await this.saveActiveSession();
+        // Closed before the save is awaited: a session the queue starts while
+        // the save is in flight must not be the one that gets closed
         this.activeSession = null;
+        await this.saveSession(session);
     }
 
     /**
@@ -386,26 +489,40 @@ class CoinifyHistoryTracker {
      * Skips persist if no attempts recorded yet (avoids empty sessions from queue changes).
      */
     async saveActiveSession() {
-        if (!this.activeSession || this.activeSession.totalAttempts === 0) {
+        await this.saveSession(this.activeSession);
+    }
+
+    /**
+     * Save one session (upsert by id) under the character it was recorded for.
+     *
+     * The session and the scope are taken before the load is awaited, so a
+     * session started, or a character switched to, while it is in flight is not
+     * what gets written.
+     *
+     * @param {Object|null} session - The session to save
+     */
+    async saveSession(session) {
+        if (!session || session.totalAttempts === 0) {
             return;
         }
 
+        const scope = this.getCharacterScope();
         try {
             // The UNMERGED history: the reload merge is a reader's view, and
             // upserting into it would write a merged record back over the parts
             // it was made from
-            const sessions = await this.loadStoredSessions();
-            const index = sessions.findIndex((s) => s.id === this.activeSession.id);
+            const sessions = await this.loadStoredSessions(scope);
+            const index = sessions.findIndex((s) => s.id === session.id);
 
             if (index !== -1) {
-                sessions[index] = this.activeSession;
+                sessions[index] = session;
             } else {
-                sessions.push(this.activeSession);
+                sessions.push(session);
             }
 
             // Only the record for the day this session started is written;
             // every earlier day is settled and never touched again
-            await sessionStore.save(this.getCharacterScope(), sessions);
+            await sessionStore.save(scope, sessions);
         } catch (error) {
             console.error('[CoinifyHistoryTracker] Failed to save session:', error);
         }
@@ -413,11 +530,12 @@ class CoinifyHistoryTracker {
 
     /**
      * Load the sessions as they are stored, one record per run as recorded
+     * @param {string} [scope] - Whose sessions; the current character's by default
      * @returns {Promise<Array>} Array of session objects
      */
-    async loadStoredSessions() {
+    async loadStoredSessions(scope = this.getCharacterScope()) {
         try {
-            return await sessionStore.load(this.getCharacterScope());
+            return await sessionStore.load(scope);
         } catch (error) {
             console.error('[CoinifyHistoryTracker] Failed to load sessions:', error);
             return [];

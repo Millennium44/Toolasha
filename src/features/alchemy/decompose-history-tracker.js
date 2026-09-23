@@ -40,6 +40,17 @@ const CATALYST_OF_DECOMPOSITION_HRID = '/items/catalyst_of_decomposition';
 const PRIME_CATALYST_HRID = '/items/prime_catalyst';
 const COIN_ITEM_HRID = '/items/coin';
 const STORAGE_KEY = 'decomposeSessions';
+/** What an enhanced item yields on top of its `decomposeItems` */
+const ENHANCING_ESSENCE_HRID = '/items/enhancing_essence';
+
+/**
+ * Whether a message came over this character's current connection.
+ * @param {Object} [context] - Delivery context from the WebSocket hook
+ * @returns {boolean} False only when dataManager can tell the message is stale
+ */
+function isFromActiveSocket(context) {
+    return typeof dataManager.isFromActiveSocket !== 'function' || dataManager.isFromActiveSocket(context);
+}
 
 /**
  * The two catalysts this tracker has always had a dedicated field for, kept
@@ -70,10 +81,17 @@ class DecomposeHistoryTracker {
         this.itemCounts = createItemCountLedger();
         // Items whose every stack the ledger was seeded with at session start
         this.seededHrids = new Set();
+        // The queue action `lastCurrentCount` belongs to. A new action for the
+        // same item — the next queued copy, or the player pressing Start again
+        // — counts from its own zero.
+        this.trackedActionId = null;
+        this.lastCurrentCount = null;
         this.handlers = {
             actionsUpdated: () => this.handleActionsUpdated(),
-            actionCompleted: (data) => this.handleActionCompleted(data),
+            actionCompleted: (data, context) => this.handleActionCompleted(data, context),
+            itemsUpdated: (data, context) => this.handleItemsUpdated(data, context),
             initCharacterData: () => this.handleReconnect(),
+            characterInitialized: () => this.seedFromQueue(),
             characterSwitched: (data) => this.handleCharacterSwitched(data),
         };
     }
@@ -111,8 +129,46 @@ class DecomposeHistoryTracker {
         // runs first.
         dataManager.on('actions_updated', this.handlers.actionsUpdated);
         webSocketHook.on('action_completed', this.handlers.actionCompleted);
+        webSocketHook.on('items_updated', this.handlers.itemsUpdated);
         webSocketHook.on('init_character_data', this.handlers.initCharacterData);
+        dataManager.on('character_initialized', this.handlers.characterInitialized);
         dataManager.on('character_switched', this.handlers.characterSwitched);
+
+        // A run already going when the page loads is picked up now, between
+        // messages, so its first message is measured rather than floored
+        this.seedFromQueue();
+    }
+
+    /**
+     * Start a session from the queue if a decompose is running and none is open.
+     *
+     * Sound at any moment outside a message handler: dataManager writes a
+     * message's inventory rows and its action's `currentCount` in the same
+     * handler, so the cached pair always describes the same instant.
+     *
+     * @returns {Promise<void>}
+     */
+    async seedFromQueue() {
+        try {
+            if (!this.activeSession) await this.handleActionsUpdated();
+        } catch (error) {
+            console.error('[DecomposeHistoryTracker] Could not start a session from the queue:', error);
+        }
+    }
+
+    /**
+     * Keep the ledger's baselines on stacks something other than the action moved.
+     *
+     * Selling the essences on the market mid-run, or buying more, changes an
+     * output stack between two `action_completed`s, and the next message's
+     * delta would otherwise read that change as the action's doing.
+     *
+     * @param {Object} data - `items_updated` message
+     * @param {Object} [context] - Delivery context from the WebSocket hook
+     */
+    handleItemsUpdated(data, context) {
+        if (!this.activeSession || !isFromActiveSocket(context)) return;
+        this.itemCounts.noteEach(data?.endCharacterItems || []);
     }
 
     /**
@@ -130,7 +186,9 @@ class DecomposeHistoryTracker {
     async disable() {
         dataManager.off('actions_updated', this.handlers.actionsUpdated);
         webSocketHook.off('action_completed', this.handlers.actionCompleted);
+        webSocketHook.off('items_updated', this.handlers.itemsUpdated);
         webSocketHook.off('init_character_data', this.handlers.initCharacterData);
+        dataManager.off('character_initialized', this.handlers.characterInitialized);
         dataManager.off('character_switched', this.handlers.characterSwitched);
 
         if (this.activeSession) {
@@ -165,6 +223,7 @@ class DecomposeHistoryTracker {
             // Read between messages, so the cached inventory and the action's
             // count are exactly what the next action_completed moves away from
             const baseline = {
+                actionId: decomposeAction.id ?? null,
                 currentCount: decomposeAction.currentCount,
                 catalystHrid: this.extractItemHrid(decomposeAction.secondaryItemHash),
             };
@@ -179,10 +238,11 @@ class DecomposeHistoryTracker {
                 await this.endSession();
                 await this.startSession(inputItemHrid, enhancementLevel, Date.now(), baseline);
             } else {
-                // Same item and level, same session — the player restarted the
-                // action, so nothing about the record changes except that it
-                // was still running at this moment
+                // Same item and level, same session. A different action — the
+                // next queued copy, or a restart with another catalyst or count
+                // — counts from its own currentCount, and its catalyst needs a baseline
                 this.activeSession.lastActivityTime = Date.now();
+                if (baseline.actionId !== this.trackedActionId) this.rebaseline(baseline);
             }
         } else if (this.activeSession) {
             // No decompose action in the update — end any active session
@@ -193,12 +253,15 @@ class DecomposeHistoryTracker {
     /**
      * Handle action_completed — record one attempt result
      * @param {Object} data - WebSocket message data
+     * @param {Object} [context] - Delivery context from the WebSocket hook
      */
-    async handleActionCompleted(data) {
+    async handleActionCompleted(data, context) {
         const action = data.endCharacterAction;
         if (!action || action.actionHrid !== DECOMPOSE_ACTION_HRID) {
             return;
         }
+        // A message from a connection that is no longer this character's
+        if (!isFromActiveSocket(context)) return;
 
         const inputItemHrid = this.extractItemHrid(action.primaryItemHash);
         const enhancementLevel = this.extractEnhancementLevel(action.primaryItemHash);
@@ -213,9 +276,10 @@ class DecomposeHistoryTracker {
             this.activeSession.inputItemHrid !== inputItemHrid ||
             this.activeSession.enhancementLevel !== enhancementLevel
         ) {
-            await this.startSession(inputItemHrid, enhancementLevel, Date.now());
+            await this.startSession(inputItemHrid, enhancementLevel, Date.now(), null, action);
         }
-        this.activeSession.lastActivityTime = Date.now();
+        const session = this.activeSession;
+        session.lastActivityTime = Date.now();
 
         const itemDetails = dataManager.getItemDetails(inputItemHrid);
         const bulkMultiplier = itemDetails?.alchemyDetail?.bulkMultiplier ?? 1;
@@ -242,16 +306,6 @@ class DecomposeHistoryTracker {
             ({ row }) => row.itemHrid !== COIN_ITEM_HRID && validOutputHrids.has(row.itemHrid)
         );
 
-        // Derive actual attempt count from currentCount delta (handles batched efficiency procs)
-        const currentCount = action.currentCount || 0;
-        let attemptCount;
-        if (this.lastCurrentCount !== null && currentCount > this.lastCurrentCount) {
-            attemptCount = currentCount - this.lastCurrentCount;
-        } else {
-            attemptCount = Math.max(outputRows.length, 1);
-        }
-        this.lastCurrentCount = currentCount;
-
         // Every decompose success yields every entry in decomposeItems
         // together, so each output row's own delta is an independent estimate
         // of the same success count — the largest is used rather than the
@@ -272,60 +326,111 @@ class DecomposeHistoryTracker {
             }
             successCount = Math.max(successCount, actions);
         }
+
+        // Derive actual attempt count from currentCount delta (handles batched
+        // efficiency procs). A count left by another action says nothing about this one.
+        const currentCount = action.currentCount || 0;
+        if (action.id !== undefined && action.id !== this.trackedActionId) {
+            if (this.trackedActionId !== null) this.lastCurrentCount = null;
+            this.trackedActionId = action.id;
+        }
+        let attemptCount;
+        if (this.lastCurrentCount !== null && currentCount > this.lastCurrentCount) {
+            attemptCount = currentCount - this.lastCurrentCount;
+        } else {
+            // No baseline: at least one attempt, and at least the successes
+            // seen. Not one per output row — one success yields every output.
+            attemptCount = Math.max(successCount, 1);
+        }
+        this.lastCurrentCount = currentCount;
+
         successCount = Math.min(Math.max(successCount, 0), attemptCount);
 
-        this.activeSession.totalAttempts += attemptCount;
+        session.totalAttempts += attemptCount;
 
         if (successCount > 0) {
-            this.activeSession.totalSuccesses += successCount;
+            session.totalSuccesses += successCount;
 
             for (const entry of decomposeItems) {
-                const outputItemHrid = entry.itemHrid;
-                const expectedCount = entry.count || 1;
-
-                if (!this.activeSession.results[outputItemHrid]) {
-                    this.activeSession.results[outputItemHrid] = {
-                        count: 0,
-                        totalValue: 0,
-                        priceEach: 0,
-                        unpriced: false,
-                    };
-                }
-
                 // Each success hands over bulkMultiplier × expectedCount items
-                const received = successCount * bulkMultiplier * expectedCount;
-                this.activeSession.results[outputItemHrid].count += received;
-
-                // Record market price at time of result. `null` means the market
-                // cannot price this item at all — folding that into the total as
-                // 0 would report "earned nothing" for "could not tell what this
-                // was worth", so the tick is excluded from totalValue (there is
-                // no number to add) and the result is marked unpriced instead.
-                // Sticky across the session: once any tick could not be priced,
-                // the total stays incomplete even if a later tick can be.
-                const price = getItemPrice(outputItemHrid, { context: 'profit', side: 'sell' });
-                if (price === null) {
-                    this.activeSession.results[outputItemHrid].unpriced = true;
-                } else {
-                    this.activeSession.results[outputItemHrid].priceEach = price;
-                    this.activeSession.results[outputItemHrid].totalValue += price * received;
-                }
+                this.addResult(session, entry.itemHrid, successCount * bulkMultiplier * (entry.count || 1));
             }
+
+            this.recordEnhancingEssence(session, enhancementLevel, validOutputHrids, noted);
         }
 
         // What the slot actually spent — whatever catalyst is in it, measured
         // from its own stack where the message gives a baseline to measure
         // against. No success guard: a failure shows as a zero decrement, and
         // where there is no baseline the success count is the fallback anyway.
-        recordCatalystUse(this.activeSession, {
-            catalystHrid: this.extractItemHrid(action.secondaryItemHash),
+        const catalystHrid = this.extractItemHrid(action.secondaryItemHash);
+        recordCatalystUse(session, {
+            catalystHrid,
             noted,
             successCount,
             attemptCount,
             legacyFields: LEGACY_CATALYST_FIELDS,
+            stackKnown: this.seededHrids.has(catalystHrid),
         });
 
-        await this.saveActiveSession();
+        await this.saveSession(session);
+    }
+
+    /**
+     * Add received items to a session's results, priced now.
+     *
+     * `null` from the market means the item cannot be priced at all — folding
+     * that into the total as 0 would report "earned nothing" for "could not tell
+     * what this was worth", so the tick is excluded from totalValue and the
+     * result is marked unpriced instead. Sticky across the session: once any
+     * tick could not be priced, the total stays incomplete.
+     *
+     * @param {Object} session - The session, mutated
+     * @param {string} outputItemHrid - The item received
+     * @param {number} received - How many
+     */
+    addResult(session, outputItemHrid, received) {
+        if (!session.results[outputItemHrid]) {
+            session.results[outputItemHrid] = {
+                count: 0,
+                totalValue: 0,
+                priceEach: 0,
+                unpriced: false,
+            };
+        }
+        const result = session.results[outputItemHrid];
+        result.count += received;
+
+        const price = getItemPrice(outputItemHrid, { context: 'profit', side: 'sell' });
+        if (price === null) {
+            result.unpriced = true;
+        } else {
+            result.priceEach = price;
+            result.totalValue += price * received;
+        }
+    }
+
+    /**
+     * Record the Enhancing Essence an enhanced item's decompose yields.
+     *
+     * It is not in `decomposeItems` — the amount scales with the enhancement
+     * level — so the output filter above never sees it, and a +10 decompose
+     * whose essence is most of its value was recorded as if it yielded only
+     * the base outputs. Read from the essence stack's own delta, and only where
+     * the ledger has a baseline for it: with none, the gain cannot be told apart
+     * from the stack's whole total.
+     *
+     * @param {Object} session - The session, mutated
+     * @param {number} enhancementLevel - The input's enhancement level
+     * @param {Set<string>} validOutputHrids - The item's `decomposeItems`
+     * @param {Array<{row: Object, delta: number|null}>} noted - The folded ledger entries
+     */
+    recordEnhancingEssence(session, enhancementLevel, validOutputHrids, noted) {
+        if (!(enhancementLevel > 0) || validOutputHrids.has(ENHANCING_ESSENCE_HRID)) return;
+        const entries = noted.filter(({ row }) => row.itemHrid === ENHANCING_ESSENCE_HRID);
+        const gained = deltasByItem(entries, this.seededHrids).get(ENHANCING_ESSENCE_HRID) ?? null;
+        if (gained === null || gained <= 0) return;
+        this.addResult(session, ENHANCING_ESSENCE_HRID, gained);
     }
 
     /**
@@ -354,11 +459,13 @@ class DecomposeHistoryTracker {
      * @param {string} inputItemHrid - Input item HRID
      * @param {number} enhancementLevel - Enhancement level of input item
      * @param {number} timestamp - Start timestamp in ms
-     * @param {{currentCount: number, catalystHrid: string|null}|null} [baseline] - Present
+     * @param {{actionId: *, currentCount: number, catalystHrid: string|null}|null} [baseline] - Present
      *   only when the session starts from the queue, between messages, so the
      *   cached inventory and the action's count predate every message it will read
+     * @param {Object|null} [action] - The message's action, when the session
+     *   starts from an `action_completed` instead
      */
-    async startSession(inputItemHrid, enhancementLevel, timestamp, baseline = null) {
+    async startSession(inputItemHrid, enhancementLevel, timestamp, baseline = null, action = null) {
         // Recorded, not recomputed at read time: the coin fee that was actually
         // billed scales with the bulk size the item had while the session ran,
         // and a later game change to that number would otherwise silently
@@ -369,7 +476,7 @@ class DecomposeHistoryTracker {
         // tea, catalyst and level penalty behind it will all have moved by the
         // time the record is read. Unstamped sessions are excluded, never
         // retro-stamped.
-        const stamp = predictedSuccessStamp('decompose', inputItemHrid, timestamp);
+        const stamp = predictedSuccessStamp('decompose', inputItemHrid, timestamp, this.stampOptions(baseline, action));
         this.activeSession = {
             id: `decompose_${timestamp}`,
             startTime: timestamp,
@@ -400,30 +507,65 @@ class DecomposeHistoryTracker {
             results: {},
         };
         this.itemCounts.reset();
-        const startCount = Number(baseline?.currentCount);
-        this.lastCurrentCount = baseline && Number.isFinite(startCount) ? startCount : null;
-        // The outputs' stacks are where the successes are read and the
-        // catalyst's stack is where its spend is; without their baselines a first
-        // message packing several actions was recorded as one attempt and one success
+        this.seededHrids = new Set();
+        this.lastCurrentCount = null;
+        this.trackedActionId = baseline ? baseline.actionId : (action?.id ?? null);
+        if (baseline) this.rebaseline(baseline);
+    }
+
+    /**
+     * The catalyst the run is actually played with, for the success stamp.
+     * @param {{catalystHrid: string|null}|null} baseline - The queued action's slots
+     * @param {Object|null} action - The message's action
+     * @returns {Object} Stamp options; empty, so the action panel is read, when neither is known
+     */
+    stampOptions(baseline, action) {
+        if (baseline) return { catalystHrid: baseline.catalystHrid };
+        if (action) return { catalystHrid: this.extractItemHrid(action.secondaryItemHash) };
+        return {};
+    }
+
+    /**
+     * Measure the next message against the queue as it stands now.
+     *
+     * Only sound between messages. The outputs' stacks are where the successes
+     * are read, the catalyst's stack is where its spend is, and an enhanced
+     * input's Enhancing Essence stack is where that yield is; without their
+     * baselines a first message packing several actions was recorded as one
+     * attempt and one success. A stack already in the ledger is re-noted at the
+     * total the inventory holds, which is the same value unless something other
+     * than the action moved it.
+     *
+     * @param {{actionId: *, currentCount: number, catalystHrid: string|null}} baseline - The running action
+     */
+    rebaseline(baseline) {
+        const startCount = Number(baseline.currentCount);
+        this.lastCurrentCount = Number.isFinite(startCount) ? startCount : null;
+        this.trackedActionId = baseline.actionId;
+        const { inputItemHrid, enhancementLevel } = this.activeSession;
+        const itemDetails = dataManager.getItemDetails(inputItemHrid);
         const outputHrids = (itemDetails?.alchemyDetail?.decomposeItems || []).map((entry) => entry?.itemHrid);
-        this.seededHrids = baseline
-            ? seedLedgerFromInventory(this.itemCounts, dataManager.characterItems, [
-                  ...outputHrids.filter((hrid) => hrid !== COIN_ITEM_HRID),
-                  baseline.catalystHrid,
-              ])
-            : new Set();
+        const seeded = seedLedgerFromInventory(this.itemCounts, dataManager.characterItems, [
+            ...outputHrids.filter((hrid) => hrid !== COIN_ITEM_HRID),
+            enhancementLevel > 0 ? ENHANCING_ESSENCE_HRID : null,
+            baseline.catalystHrid,
+        ]);
+        this.seededHrids = new Set([...this.seededHrids, ...seeded]);
     }
 
     /**
      * End the active session
      */
     async endSession() {
-        if (!this.activeSession) {
+        const session = this.activeSession;
+        if (!session) {
             return;
         }
 
-        await this.saveActiveSession();
+        // Closed before the save is awaited: a session the queue starts while
+        // the save is in flight must not be the one that gets closed
         this.activeSession = null;
+        await this.saveSession(session);
     }
 
     /**
@@ -431,26 +573,40 @@ class DecomposeHistoryTracker {
      * Skips persist if no attempts recorded yet (avoids empty sessions from queue changes).
      */
     async saveActiveSession() {
-        if (!this.activeSession || this.activeSession.totalAttempts === 0) {
+        await this.saveSession(this.activeSession);
+    }
+
+    /**
+     * Save one session (upsert by id) under the character it was recorded for.
+     *
+     * The session and the scope are taken before the load is awaited, so a
+     * session started, or a character switched to, while it is in flight is not
+     * what gets written.
+     *
+     * @param {Object|null} session - The session to save
+     */
+    async saveSession(session) {
+        if (!session || session.totalAttempts === 0) {
             return;
         }
 
+        const scope = this.getCharacterScope();
         try {
             // The UNMERGED history: the reload merge is a reader's view, and
             // upserting into it would write a merged record back over the parts
             // it was made from
-            const sessions = await this.loadStoredSessions();
-            const index = sessions.findIndex((s) => s.id === this.activeSession.id);
+            const sessions = await this.loadStoredSessions(scope);
+            const index = sessions.findIndex((s) => s.id === session.id);
 
             if (index !== -1) {
-                sessions[index] = this.activeSession;
+                sessions[index] = session;
             } else {
-                sessions.push(this.activeSession);
+                sessions.push(session);
             }
 
             // Only the record for the day this session started is written;
             // every earlier day is settled and never touched again
-            await sessionStore.save(this.getCharacterScope(), sessions);
+            await sessionStore.save(scope, sessions);
         } catch (error) {
             console.error('[DecomposeHistoryTracker] Failed to save session:', error);
         }
@@ -458,11 +614,12 @@ class DecomposeHistoryTracker {
 
     /**
      * Load the sessions as they are stored, one record per run as recorded
+     * @param {string} [scope] - Whose sessions; the current character's by default
      * @returns {Promise<Array>} Array of session objects
      */
-    async loadStoredSessions() {
+    async loadStoredSessions(scope = this.getCharacterScope()) {
         try {
-            return await sessionStore.load(this.getCharacterScope());
+            return await sessionStore.load(scope);
         } catch (error) {
             console.error('[DecomposeHistoryTracker] Failed to load sessions:', error);
             return [];

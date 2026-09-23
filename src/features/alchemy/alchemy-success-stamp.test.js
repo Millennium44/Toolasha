@@ -166,6 +166,33 @@ describe('stamping a session', () => {
         expect(write.sessions.at(-1).predictedRate).toBeCloseTo(0.625);
     });
 
+    test('takes the catalyst from the running action, not from whatever panel is open', async () => {
+        game.teaBonus = 0.1;
+        // The panel shows another item's setup with an empty slot while the
+        // queued transmute that starts now carries the catalyst
+        setCatalystSlot(null);
+
+        await transmuteHistoryTracker.startSession('/items/gem', 6_000, {
+            actionId: 41,
+            currentCount: 0,
+            catalystHrid: '/items/catalyst_of_transmutation',
+        });
+
+        // 0.5 x (1 + 0.15 + 0.1)
+        expect(transmuteHistoryTracker.activeSession.predictedRate).toBeCloseTo(0.625);
+        expect(transmuteHistoryTracker.activeSession.predictedCatalystHrid).toBe('/items/catalyst_of_transmutation');
+
+        // And an empty action slot is no catalyst, whatever the panel shows
+        setCatalystSlot('prime_catalyst');
+        await transmuteHistoryTracker.startSession('/items/gem', 7_000, {
+            actionId: 42,
+            currentCount: 0,
+            catalystHrid: null,
+        });
+        expect(transmuteHistoryTracker.activeSession.predictedCatalystHrid).toBeNull();
+        expect(transmuteHistoryTracker.activeSession.predictedRate).toBeCloseTo(0.55);
+    });
+
     test('leaves a session that has no stamp without one, forever', async () => {
         // A session from before stamping existed, already on disk
         store.stored = [
