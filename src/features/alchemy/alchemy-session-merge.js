@@ -55,6 +55,8 @@
  * single-row delete is mapped back onto the stored records.
  */
 
+import { mergedTrackerVersion } from './alchemy-tracker-version.js';
+
 /**
  * @param {*} value - Anything
  * @returns {number} The finite number in it, or 0
@@ -266,6 +268,12 @@ function foldSession(accumulated, next) {
         merged.predictedAt = null;
         merged.predictedCatalystHrid = null;
     }
+
+    // A merged record is counted under the oldest rules among its parts, and
+    // a part with no stamp predates the stamp entirely
+    const trackerVersion = mergedTrackerVersion(accumulated, next);
+    if (trackerVersion === null) delete merged.trackerVersion;
+    else merged.trackerVersion = trackerVersion;
 
     merged.mergedFrom = [...(accumulated.mergedFrom || [accumulated.id]), next.id];
 

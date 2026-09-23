@@ -277,6 +277,12 @@ export function validateAlchemySession(kind, session) {
     ) {
         return { ok: false, error: `Session ${label} has a non-numeric bulkMultiplier.` };
     }
+    if (
+        session.trackerVersion !== undefined &&
+        (!Number.isInteger(session.trackerVersion) || session.trackerVersion <= 0)
+    ) {
+        return { ok: false, error: `Session ${label} has a trackerVersion that is not a positive whole number.` };
+    }
     if (session.catalystsUsed !== undefined) {
         if (!isPlainObject(session.catalystsUsed)) {
             return { ok: false, error: `Session ${label} has a non-object catalystsUsed.` };

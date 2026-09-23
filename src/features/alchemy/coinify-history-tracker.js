@@ -27,6 +27,7 @@ import { createItemCountLedger, deltasByItem, seedLedgerFromInventory } from './
 import { recordCatalystUse } from './alchemy-catalyst-use.js';
 import { runningAlchemyAction } from './alchemy-running-action.js';
 import { mergeReloadSplitSessions, expandKeptSessions } from './alchemy-session-merge.js';
+import { ALCHEMY_TRACKER_VERSION } from './alchemy-tracker-version.js';
 
 const COINIFY_ACTION_HRID = '/actions/alchemy/coinify';
 const COIN_ITEM_HRID = '/items/coin';
@@ -327,6 +328,8 @@ class CoinifyHistoryTracker {
         this.activeSession = {
             id: `coinify_${timestamp}`,
             startTime: timestamp,
+            // Which counting rules produced this record; see alchemy-tracker-version.js
+            trackerVersion: ALCHEMY_TRACKER_VERSION,
             // The last moment this run was seen acting. A multi-day AFK grind
             // is one session, and the gold attribution spreads its net over
             // [startTime, lastActivityTime] rather than dropping the lot on the

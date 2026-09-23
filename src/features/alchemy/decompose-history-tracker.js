@@ -33,6 +33,7 @@ import { createItemCountLedger, deltasByItem, seedLedgerFromInventory } from './
 import { recordCatalystUse } from './alchemy-catalyst-use.js';
 import { runningAlchemyAction } from './alchemy-running-action.js';
 import { mergeReloadSplitSessions, expandKeptSessions } from './alchemy-session-merge.js';
+import { ALCHEMY_TRACKER_VERSION } from './alchemy-tracker-version.js';
 
 const DECOMPOSE_ACTION_HRID = '/actions/alchemy/decompose';
 const CATALYST_OF_DECOMPOSITION_HRID = '/items/catalyst_of_decomposition';
@@ -372,6 +373,8 @@ class DecomposeHistoryTracker {
         this.activeSession = {
             id: `decompose_${timestamp}`,
             startTime: timestamp,
+            // Which counting rules produced this record; see alchemy-tracker-version.js
+            trackerVersion: ALCHEMY_TRACKER_VERSION,
             // The last moment this run was seen acting. A multi-day AFK grind
             // is one session, and the gold attribution spreads its net over
             // [startTime, lastActivityTime] rather than dropping the lot on the

@@ -29,6 +29,7 @@ import { createItemCountLedger, deltasByItem, seedLedgerFromInventory } from './
 import { recordCatalystUse } from './alchemy-catalyst-use.js';
 import { runningAlchemyAction } from './alchemy-running-action.js';
 import { mergeReloadSplitSessions, expandKeptSessions } from './alchemy-session-merge.js';
+import { ALCHEMY_TRACKER_VERSION } from './alchemy-tracker-version.js';
 import { ensureSessionsRepaired } from './transmute-session-repair.js';
 
 const TRANSMUTE_ACTION_HRID = '/actions/alchemy/transmute';
@@ -421,6 +422,8 @@ class TransmuteHistoryTracker {
         this.activeSession = {
             id: `transmute_${timestamp}`,
             startTime: timestamp,
+            // Which counting rules produced this record; see alchemy-tracker-version.js
+            trackerVersion: ALCHEMY_TRACKER_VERSION,
             // The last moment this run was seen acting. A multi-day AFK grind
             // is one session, and the gold attribution spreads its net over
             // [startTime, lastActivityTime] rather than dropping the lot on the
