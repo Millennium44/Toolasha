@@ -26,6 +26,7 @@ import webSocketHook from '../../core/websocket.js';
 import dataManager from '../../core/data-manager.js';
 import marketAPI from '../../api/marketplace.js';
 import { getItemPrice, getPricingMode } from '../../utils/market-data.js';
+import { isIronCowCharacter } from '../../utils/ironcow-valuation.js';
 import {
     recordOpening,
     resetTally,
@@ -932,7 +933,8 @@ class TreasureTracker {
      *
      * Cowbells are not tradable; bags of ten are. So the value of one is a bag's
      * price less the tax you pay selling it, split ten ways — the same route
-     * `expected-value-calculator.js` takes.
+     * `expected-value-calculator.js` takes, including its Iron Cow exemption:
+     * a character with no market access pays no bag tax.
      *
      * @returns {number|null} Coins per cowbell, or null when they are not counted
      */
@@ -941,7 +943,8 @@ class TreasureTracker {
 
         const bag = getItemPrice(COWBELL_BAG_HRID, { context: 'profit', side: 'sell' });
         if (!(bag > 0)) return null;
-        return (bag * (1 - COWBELL_BAG_TAX)) / COWBELLS_PER_BAG;
+        const tax = isIronCowCharacter() ? 0 : COWBELL_BAG_TAX;
+        return (bag * (1 - tax)) / COWBELLS_PER_BAG;
     }
 
     /**

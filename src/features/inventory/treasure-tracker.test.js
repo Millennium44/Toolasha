@@ -85,6 +85,8 @@ const dm = vi.hoisted(() => ({
     shop: {},
     labyrinthShop: {},
     characterId: 'char-1',
+    /** The current character's game mode; 'ironcow' for the bag-tax exemption test */
+    gameMode: 'standard',
     // Categories as the live client has them (measured 2026-09-17): every
     // openable with a drop table is loot, and the scrolls are their own category
     items: {
@@ -108,7 +110,7 @@ vi.mock('../../core/data-manager.js', () => ({
         }),
         getCurrentCharacterId: () => dm.characterId,
         isFromActiveSocket: () => true,
-        getCurrentCharacterGameMode: () => 'standard',
+        getCurrentCharacterGameMode: () => dm.gameMode ?? 'standard',
         on: () => {},
         off: () => {},
     },
@@ -1280,5 +1282,27 @@ describe('the Treasure tile summarises its own inputs', () => {
 
         treasureTracker.settings = { ...treasureTracker.settings, capeValue: 'mirror' };
         expect(version()).not.toBe(before);
+    });
+});
+
+describe('a cowbell is worth a bag less the bag tax', () => {
+    // The market-data mock prices every item, the bag included, at 1
+    beforeEach(() => {
+        treasureTracker.settings = { ...treasureTracker.settings, valueCowbells: true };
+    });
+
+    afterEach(() => {
+        dm.gameMode = 'standard';
+    });
+
+    test('a market character pays the 18% bag tax', () => {
+        expect(treasureTracker._cowbellValue()).toBeCloseTo(0.082, 10);
+    });
+
+    test('an Iron Cow character, with no market to pay it on, does not', () => {
+        // The expected-value calculator's cowbell value already drops the tax here;
+        // the two views must not price the same cowbell differently
+        dm.gameMode = 'ironcow';
+        expect(treasureTracker._cowbellValue()).toBeCloseTo(0.1, 10);
     });
 });
