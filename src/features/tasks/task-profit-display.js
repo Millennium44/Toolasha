@@ -648,7 +648,8 @@ class TaskProfitDisplay {
             !config.getSetting('taskGoMerge') &&
             !config.getSetting('taskQueuedIndicator') &&
             !config.getSetting('taskMaterialsIndicator') &&
-            !config.getSetting('taskEfficiencyRating')
+            !config.getSetting('taskEfficiencyRating') &&
+            !config.getSetting('taskCombatEstimate')
         ) {
             return;
         }
