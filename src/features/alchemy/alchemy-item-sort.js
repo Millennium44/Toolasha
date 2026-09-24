@@ -24,6 +24,24 @@
  * `ItemSelector_menu` event) finds its own desired order already in place and
  * writes nothing.
  *
+ * ## Restoring Game order
+ *
+ * The game gives the tiles no order of its own to read back later — once
+ * Profit/hr has moved them, the DOM order *is* whatever this module wrote. So
+ * every tile is stamped, the first time it is seen each render, with its
+ * position at that moment (`stampGameOrder`) — before this module's own
+ * dispatch runs for that render. A fresh render (the Item Filter redraws
+ * every tile as a new element) gets a fresh stamp; a tile that survives a
+ * mode switch keeps the stamp it already has, so switching back to Game
+ * cannot bake a Profit/hr-sorted position in as "the game's order". Switching
+ * to Game also strips every Profit/hr label — nothing about switching away
+ * from Profit/hr used to undo either half of what it did.
+ *
+ * Game order does not bucket pins itself: it puts every tile back where it
+ * was and lets `alchemy-item-pins.js`'s own pass do exactly what it would do
+ * if this module did not exist. Building the pin bucket a second time here
+ * would only make Game order fight the tile pins actually moved.
+ *
  * ## Profit source
  *
  * The number is `alchemy-profit-calculator.js`'s own `profitPerHour` — the
@@ -61,6 +79,8 @@ const BTN_CLASS = 'mwi-alchemy-sort-btn';
 const ACTIVE_CLASS = 'mwi-alchemy-sort-btn-active';
 const TILE_CLASS = 'mwi-alchemy-sort-tile';
 const RATE_CLASS = 'mwi-alchemy-sort-rate';
+/** Where each tile's pre-move position is stamped, in `tile.dataset` */
+const GAME_ORDER_ATTR = 'mwiGameOrder';
 
 /** How long a reorder pass may run before yielding back to the browser and resuming */
 const YIELD_BUDGET_MS = 8;
@@ -270,6 +290,11 @@ class AlchemyItemSort {
         this.ensureToggle(menu, grid, action);
         if (!grid || !tiles.length) return;
 
+        // Stamp before this pass's own dispatch touches anything, so a tile's
+        // stamp is always its pre-move position — see the module doc on why a
+        // tile pins already moved by the time this runs is fine.
+        this.stampGameOrder(tiles);
+
         // A different tab than the one the cache was built for: its prices
         // answer a different question, so they cannot be reused
         if (action !== this.openAction) {
@@ -277,8 +302,85 @@ class AlchemyItemSort {
             this.openAction = action;
         }
 
-        if ((this.order[action] || 'game') !== 'profit') return;
-        this.reorderByProfit(menu, grid, tiles, action);
+        if ((this.order[action] || 'game') === 'profit') {
+            this.reorderByProfit(menu, grid, tiles, action);
+            return;
+        }
+        this.applyGameOrder(grid, tiles);
+    }
+
+    /**
+     * Stamp every tile that has not already been stamped with its current
+     * position, before this pass moves anything. A tile the game just drew
+     * (the Item Filter replaces every tile on each keystroke) has no stamp
+     * yet and gets one; a tile carried over from a previous pass — including
+     * one this module itself moved — keeps the stamp it already has.
+     * @param {HTMLElement[]} tiles - The menu's current tiles, in DOM order
+     */
+    stampGameOrder(tiles) {
+        tiles.forEach((tile, index) => {
+            if (tile.dataset[GAME_ORDER_ATTR] === undefined) tile.dataset[GAME_ORDER_ATTR] = String(index);
+        });
+    }
+
+    /**
+     * A tile's stamped pre-move position, for sorting Game order back in.
+     * @param {HTMLElement} tile - An item tile
+     * @returns {number} The stamped index, or the largest safe integer for one never stamped
+     */
+    gameOrderOf(tile) {
+        const raw = Number(tile.dataset[GAME_ORDER_ATTR]);
+        return Number.isFinite(raw) ? raw : Number.MAX_SAFE_INTEGER;
+    }
+
+    /**
+     * Restore the game's own order: every tile back to its stamped pre-move
+     * position, with no pin bucketing of its own (see the module doc). Also
+     * strips any Profit/hr label — Game order carries no ranking to label.
+     * @param {HTMLElement} grid - The tile grid
+     * @param {HTMLElement[]} tiles - The menu's current tiles
+     */
+    applyGameOrder(grid, tiles) {
+        this.clearLabels(tiles);
+
+        const desired = [...tiles].sort((a, b) => this.gameOrderOf(a) - this.gameOrderOf(b));
+        this.moveTiles(grid, tiles, desired);
+    }
+
+    /**
+     * Strip every Profit/hr label — used for Game order, which carries no
+     * ranking to label.
+     * @param {HTMLElement[]} tiles - The menu's current tiles
+     */
+    clearLabels(tiles) {
+        for (const tile of tiles) {
+            tile.querySelector(`.${RATE_CLASS}`)?.remove();
+            tile.classList.remove(TILE_CLASS);
+        }
+    }
+
+    /**
+     * Move the grid's tiles into the given order, doing nothing when they are
+     * already in it — reordering the DOM is itself a mutation, and this
+     * module's own watcher would otherwise react to its own writes forever.
+     * @param {HTMLElement} grid - The tile grid
+     * @param {HTMLElement[]} tiles - The menu's current tiles
+     * @param {HTMLElement[]} desired - The tiles, in the order they should end up
+     */
+    moveTiles(grid, tiles, desired) {
+        if (sameOrder(tiles, desired)) return;
+
+        this.applying = true;
+        try {
+            const marker = document.createComment('mwi-alchemy-sort');
+            grid.insertBefore(marker, tiles[0]);
+            const fragment = document.createDocumentFragment();
+            for (const tile of desired) fragment.appendChild(tile);
+            grid.insertBefore(fragment, marker);
+            marker.remove();
+        } finally {
+            this.applying = false;
+        }
     }
 
     /**
@@ -449,20 +551,7 @@ class AlchemyItemSort {
 
         this.paintRates(tiles);
 
-        const desired = [...fixed, ...front, ...priced, ...unpriced];
-        if (sameOrder(tiles, desired)) return;
-
-        this.applying = true;
-        try {
-            const marker = document.createComment('mwi-alchemy-sort');
-            grid.insertBefore(marker, tiles[0]);
-            const fragment = document.createDocumentFragment();
-            for (const tile of desired) fragment.appendChild(tile);
-            grid.insertBefore(fragment, marker);
-            marker.remove();
-        } finally {
-            this.applying = false;
-        }
+        this.moveTiles(grid, tiles, [...fixed, ...front, ...priced, ...unpriced]);
     }
 
     /**

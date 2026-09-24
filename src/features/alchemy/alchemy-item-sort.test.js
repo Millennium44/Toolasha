@@ -295,4 +295,98 @@ describe('alchemy item sort', () => {
         expect(document.getElementById('mwi-alchemy-sort-style')).toBeNull();
         expect(alchemyItemSort.isInitialized).toBe(false);
     });
+
+    test('Profit -> Game restores the exact original sequence and removes labels', () => {
+        buildTabs('coinify');
+        profitAnswers.set('coinify:/items/a:0', { profitPerHour: 5 });
+        profitAnswers.set('coinify:/items/b:0', { profitPerHour: 500 });
+        profitAnswers.set('coinify:/items/c:0', { profitPerHour: 50 });
+        const { menu, grid } = buildPicker([
+            ['/items/a', 0],
+            ['/items/b', 0],
+            ['/items/c', 0],
+        ]);
+        alchemyItemSort.apply();
+        const original = tileHrids(grid);
+
+        menu.querySelector('[data-mwi-sort-mode="profit"]').click();
+        expect(tileHrids(grid)).toEqual(['/items/b', '/items/c', '/items/a']);
+        expect(menu.querySelectorAll(RATE_SELECTOR).length).toBe(3);
+
+        menu.querySelector('[data-mwi-sort-mode="game"]').click();
+
+        expect(tileHrids(grid)).toEqual(original);
+        expect(menu.querySelectorAll(RATE_SELECTOR).length).toBe(0);
+        expect(
+            menu.querySelector('[data-mwi-sort-mode="game"]').classList.contains('mwi-alchemy-sort-btn-active')
+        ).toBe(true);
+    });
+
+    test('toggling repeatedly between Game and Profit is stable', () => {
+        buildTabs('coinify');
+        profitAnswers.set('coinify:/items/a:0', { profitPerHour: 5 });
+        profitAnswers.set('coinify:/items/b:0', { profitPerHour: 500 });
+        const { menu, grid } = buildPicker([
+            ['/items/a', 0],
+            ['/items/b', 0],
+        ]);
+        alchemyItemSort.apply();
+        const original = tileHrids(grid);
+
+        for (let i = 0; i < 3; i++) {
+            menu.querySelector('[data-mwi-sort-mode="profit"]').click();
+            expect(tileHrids(grid)).toEqual(['/items/b', '/items/a']);
+            menu.querySelector('[data-mwi-sort-mode="game"]').click();
+            expect(tileHrids(grid)).toEqual(original);
+            expect(menu.querySelectorAll(RATE_SELECTOR).length).toBe(0);
+        }
+    });
+
+    test('game mode after a game redraw still does not price or label tiles', () => {
+        // Regression: switching to Game must stop applying immediately, not just stop
+        // ranking a stale tile set — a later game redraw (Item Filter keystroke) must
+        // not trip the profit branch back on for brand-new tiles either.
+        buildTabs('coinify');
+        profitAnswers.set('coinify:/items/a:0', { profitPerHour: 5 });
+        profitAnswers.set('coinify:/items/b:0', { profitPerHour: 500 });
+        const { menu, grid } = buildPicker([
+            ['/items/a', 0],
+            ['/items/b', 0],
+        ]);
+        alchemyItemSort.apply();
+        menu.querySelector('[data-mwi-sort-mode="profit"]').click();
+        menu.querySelector('[data-mwi-sort-mode="game"]').click();
+        calculatorMock.calculateCoinifyProfit.mockClear();
+
+        // The game's own filter redraws the tiles as brand-new elements
+        grid.innerHTML = '';
+        grid.appendChild(buildTile('/items/b', 0));
+        grid.appendChild(buildTile('/items/a', 0));
+        alchemyItemSort.apply();
+
+        expect(tileHrids(grid)).toEqual(['/items/b', '/items/a']); // this render's own order, untouched
+        expect(menu.querySelectorAll(RATE_SELECTOR).length).toBe(0);
+        expect(calculatorMock.calculateCoinifyProfit).not.toHaveBeenCalled();
+    });
+
+    test('Game order does not bucket pins itself — a pinned tile lands back where the game had it', () => {
+        // alchemy-item-pins.js is mocked out here (only pinnedFor() is stubbed), so
+        // nothing actually pulls the pinned tile to the front in this test — which is
+        // the point: Game order must not do that job a second time.
+        buildTabs('coinify');
+        pinsMock.pinnedFor.mockReturnValue(['/items/pinned']);
+        profitAnswers.set('coinify:/items/a:0', { profitPerHour: 5 });
+        profitAnswers.set('coinify:/items/pinned:0', { profitPerHour: 1 });
+        profitAnswers.set('coinify:/items/b:0', { profitPerHour: 500 });
+        const { menu, grid } = buildPicker([
+            ['/items/a', 0],
+            ['/items/pinned', 0],
+            ['/items/b', 0],
+        ]);
+        alchemyItemSort.apply();
+        menu.querySelector('[data-mwi-sort-mode="profit"]').click();
+        menu.querySelector('[data-mwi-sort-mode="game"]').click();
+
+        expect(tileHrids(grid)).toEqual(['/items/a', '/items/pinned', '/items/b']);
+    });
 });
