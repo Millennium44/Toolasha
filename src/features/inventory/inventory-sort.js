@@ -27,6 +27,7 @@ class InventorySort {
         this.warnedItems = new Set(); // Track items we've already warned about
         this.isCalculating = false; // Guard flag to prevent recursive calls
         this.isInitialized = false;
+        this.initPromise = null;
         this.itemsUpdatedHandler = null;
         this.itemsUpdatedDebounceTimer = null; // Debounce timer for items_updated events
         this.priceUpdateHandler = null; // Handler for market price updates
@@ -65,8 +66,30 @@ class InventorySort {
 
     /**
      * Initialize inventory sort feature
+     *
+     * The re-entry guard (`unregisterHandlers`) only fills after the settings
+     * read, so a second call inside that read — this module's own `invSort`
+     * listener and the feature registry's live start both answer the same
+     * switch-on — shares the first one's promise instead of registering again.
+     * @returns {Promise<void>}
      */
     async initialize() {
+        if (this.initPromise) return this.initPromise;
+        const pending = this._initialize();
+        this.initPromise = pending;
+        try {
+            await pending;
+        } finally {
+            if (this.initPromise === pending) this.initPromise = null;
+        }
+    }
+
+    /**
+     * The body of `initialize()`.
+     * @returns {Promise<void>}
+     * @private
+     */
+    async _initialize() {
         if (!config.getSetting('invSort')) {
             return;
         }
@@ -528,6 +551,7 @@ class InventorySort {
      */
     disable() {
         noteTeardown(this);
+        this.initPromise = null;
         try {
             // Clear debounce timers
             clearTimeout(this.itemsUpdatedDebounceTimer);

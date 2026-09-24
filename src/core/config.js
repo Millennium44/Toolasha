@@ -120,6 +120,15 @@ class Config {
         // per-character settings have arrived. See onSettingsLoaded().
         this.settingsLoadedCallbacks = [];
 
+        // Callbacks fired for a change to any key — see onAnySettingChange().
+        this.anySettingChangeCallbacks = [];
+
+        // Above zero while a change is being replayed or held rather than made:
+        // a settings load's diff and held-write replay, or a write held while
+        // the map is empty. The any-key channel stays quiet for those — see
+        // onAnySettingChange().
+        this._anySettingChangeHeld = 0;
+
         // Writes made while `settingsMap` is empty, applied once loadSettings()
         // refills it. A character switch clears the map and only reloads it
         // several awaits later; a settings-panel toggle in that window found no
@@ -628,23 +637,28 @@ class Config {
             this._mirrorReloadRecoverySetting(this.getSetting(RELOAD_RECOVERY_SETTING_KEY));
         }
 
-        // Apply anything written while the map was empty, before either fan-out
-        // below: the write is the newer intent, and a settings-loaded subscriber
-        // reading the key must see the value the player just set rather than the
-        // one that came off storage. Each replayed write saves and notifies for
-        // itself.
-        this._flushPendingWrites();
+        this._anySettingChangeHeld += 1;
+        try {
+            // Apply anything written while the map was empty, before either fan-out
+            // below: the write is the newer intent, and a settings-loaded subscriber
+            // reading the key must see the value the player just set rather than the
+            // one that came off storage. Each replayed write saves and notifies for
+            // itself.
+            this._flushPendingWrites();
 
-        // Fire change callbacks for settings that differ from what was previously loaded
-        for (const key of Object.keys(this.settingChangeCallbacks)) {
-            const prev = previousMap[key];
-            const curr = this.settingsMap[key];
-            if (!prev || !curr) continue;
-            const prevVal = prev.hasOwnProperty('value') ? prev.value : prev.isTrue;
-            const currVal = curr.hasOwnProperty('value') ? curr.value : curr.isTrue;
-            if (prevVal !== currVal) {
-                this._notifySettingChange(key, currVal);
+            // Fire change callbacks for settings that differ from what was previously loaded
+            for (const key of Object.keys(this.settingChangeCallbacks)) {
+                const prev = previousMap[key];
+                const curr = this.settingsMap[key];
+                if (!prev || !curr) continue;
+                const prevVal = prev.hasOwnProperty('value') ? prev.value : prev.isTrue;
+                const currVal = curr.hasOwnProperty('value') ? curr.value : curr.isTrue;
+                if (prevVal !== currVal) {
+                    this._notifySettingChange(key, currVal);
+                }
             }
+        } finally {
+            this._anySettingChangeHeld -= 1;
         }
 
         // Fire the settings-loaded channel unconditionally: the map has just been
@@ -1052,7 +1066,12 @@ class Config {
         // its own; a character switch that never settles leaves it cleared), so
         // read and write have to agree for as long as it lasts.
         this._pendingValues[key] = value;
-        this._notifySettingChange(key, value);
+        this._anySettingChangeHeld += 1;
+        try {
+            this._notifySettingChange(key, value);
+        } finally {
+            this._anySettingChangeHeld -= 1;
+        }
         return true;
     }
 
@@ -1134,14 +1153,41 @@ class Config {
      */
     _notifySettingChange(key, value) {
         const callbacks = this.settingChangeCallbacks[key];
-        if (!callbacks) return;
-        for (const cb of callbacks) {
+        for (const cb of callbacks || []) {
             try {
                 cb(value);
             } catch (error) {
                 console.error(`[Config] Setting-change listener for '${key}' failed:`, error);
             }
         }
+
+        if (this._anySettingChangeHeld > 0) return;
+        for (const cb of this.anySettingChangeCallbacks) {
+            try {
+                cb(key, value);
+            } catch (error) {
+                console.error(`[Config] Any-setting-change listener failed for '${key}':`, error);
+            }
+        }
+    }
+
+    /**
+     * Register a callback fired when any single setting is changed.
+     *
+     * Fires for a change made through `setSetting`/`setSettingValue` against a
+     * loaded map. It does not fire for a settings load (its diff fan-out or the
+     * replay of writes held while the map was empty) nor for a write held during
+     * that window: those happen during a character switch or a reload, when the
+     * map is being replaced wholesale and features are brought up from it anyway,
+     * and a subscriber reading other keys mid-window would see schema defaults.
+     * @param {Function} callback - Called with `(key, value)`
+     * @returns {Function} Unregister function; safe to call more than once
+     */
+    onAnySettingChange(callback) {
+        this.anySettingChangeCallbacks.push(callback);
+        return () => {
+            this.anySettingChangeCallbacks = this.anySettingChangeCallbacks.filter((cb) => cb !== callback);
+        };
     }
 
     /**

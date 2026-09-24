@@ -68,6 +68,8 @@ beforeEach(() => {
     config.characterSettingsLoaded = false;
     config.settingChangeCallbacks = {};
     config.settingsLoadedCallbacks = [];
+    config.anySettingChangeCallbacks = [];
+    config._anySettingChangeHeld = 0;
 
     // The hoisted mocks are shared by the whole file too, and the describes
     // below reach into them: one clears the character id (which makes
@@ -665,6 +667,85 @@ describe('setting-change listener dispatch', () => {
         config.setSetting('probe', true);
 
         expect(third).toHaveBeenCalledWith(true);
+    });
+});
+
+/**
+ * The any-key channel the feature registry starts features from. It has to
+ * fire for a player's change and stay quiet while a load replaces the map:
+ * mid-load, a subscriber reading other keys would be answered from defaults.
+ */
+describe('Config.onAnySettingChange', () => {
+    beforeEach(() => {
+        config.settingsMap = { probe: { isTrue: false }, probeValue: { value: 1 } };
+    });
+
+    test('fires with the key and value for setSetting and setSettingValue, including unwatched keys', () => {
+        const cb = vi.fn();
+        config.onAnySettingChange(cb);
+
+        config.setSetting('probe', true);
+        config.setSettingValue('probeValue', 7);
+
+        expect(cb.mock.calls).toEqual([
+            ['probe', true],
+            ['probeValue', 7],
+        ]);
+    });
+
+    test('hands back an unregister function', () => {
+        const cb = vi.fn();
+        const unregister = config.onAnySettingChange(cb);
+        unregister();
+        unregister();
+
+        config.setSetting('probe', true);
+
+        expect(cb).not.toHaveBeenCalled();
+    });
+
+    test('a throwing listener does not starve the ones behind it', () => {
+        const spy = vi.spyOn(console, 'error').mockImplementation(() => {});
+        config.onAnySettingChange(() => {
+            throw new Error('boom');
+        });
+        const second = vi.fn();
+        config.onAnySettingChange(second);
+
+        expect(() => config.setSetting('probe', true)).not.toThrow();
+
+        expect(second).toHaveBeenCalledWith('probe', true);
+        spy.mockRestore();
+    });
+
+    test('stays quiet for a load that changes a watched key', async () => {
+        const perKey = vi.fn();
+        const any = vi.fn();
+        config.onSettingChange('probe', perKey);
+        config.onAnySettingChange(any);
+        settingsStorageMock.loadSettings.mockResolvedValueOnce({ probe: { isTrue: true } });
+
+        await config.loadSettings();
+
+        expect(perKey).toHaveBeenCalledWith(true);
+        expect(any).not.toHaveBeenCalled();
+    });
+
+    test('stays quiet for a write held while the map is empty, and for its replay by the load', async () => {
+        const any = vi.fn();
+        config.onAnySettingChange(any);
+        config.clearSettingsCache();
+
+        config.setSetting('probe', true);
+        settingsStorageMock.loadSettings.mockResolvedValueOnce({ probe: { isTrue: false } });
+        await config.loadSettings();
+
+        expect(config.getSetting('probe')).toBe(true);
+        expect(any).not.toHaveBeenCalled();
+
+        // …and is live again once the load is done
+        config.setSetting('probe', false);
+        expect(any).toHaveBeenCalledWith('probe', false);
     });
 });
 

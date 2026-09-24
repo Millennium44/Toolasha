@@ -57,6 +57,42 @@ let batchesInFlight = 0;
 const startupWaiters = [];
 
 /**
+ * Keys whose `initialize()` the registry has called since the feature layer last
+ * came up — at startup, on a switch's re-init, or by a live start. Cleared by
+ * `disableAllFeatures()`, which takes every one of them down.
+ *
+ * Only the registry's own calls are counted: a module that stops itself on its
+ * own setting and starts itself again on the same listener is not the
+ * registry's business. A feature whose module stops itself *without* a matching
+ * restart declares `isRunning` on its entry instead — see `isFeatureRunning`.
+ * @type {Set<string>}
+ */
+const startedKeys = new Set();
+
+/** Keys a live start is initializing right now, so no second pass starts them again. */
+const liveStartsInFlight = new Set();
+
+/**
+ * Whether a character switch has taken the feature layer down and not yet
+ * brought it back up. Owned by `setupCharacterSwitchHandler`; read by live starts,
+ * which must not initialize anything into a layer the switch is about to rebuild
+ * — `getIsCharacterSwitching()` drops back to false before the rebuild starts.
+ */
+let layerTornDown = false;
+
+/** A live-start pass is queued and has not begun. Coalesces bursts of changes. */
+let liveStartQueued = false;
+
+/** A pass found the layer mid-switch and stood down; the switch's re-init reruns it. */
+let liveStartDeferredBySwitch = false;
+
+/** Recovery routine for what a live start fails to bring up — see `setupLiveFeatureStart`. */
+let liveStartFailureHandler = null;
+
+/** Unregisters the any-setting listener `setupLiveFeatureStart` installed. */
+let unregisterLiveStart = null;
+
+/**
  * Resolve everyone waiting, if the gate is open right now.
  * @returns {void}
  */
@@ -217,6 +253,7 @@ async function runFeatureInitialization() {
             continue;
         }
 
+        startedKeys.add(feature.key);
         const slot = { key: feature.key, name: feature.name, reason: null };
         slots.push(slot);
 
@@ -394,6 +431,7 @@ function getDisableFailures() {
 async function disableAllFeatures() {
     const cleanupPromises = [];
     disableFailures.clear();
+    startedKeys.clear();
     for (const feature of featureRegistry) {
         try {
             const featureInstance = getFeatureInstance(feature.key);
@@ -475,10 +513,11 @@ function setupCharacterSwitchHandler(onInitFailures, onBeforeSettingsLoad) {
     };
 
     // Whether this chain has torn the feature layer down and not yet brought it
-    // back up. Starts false: at boot the layer is up (entrypoint initialises it
-    // before this handler can ever fire), so the first switch of the session
-    // does a real teardown.
-    let tornDown = false;
+    // back up (`layerTornDown`, module scope so live starts can see it). Starts
+    // false: at boot the layer is up (entrypoint initialises it before this
+    // handler can ever fire), so the first switch of the session does a real
+    // teardown.
+    layerTornDown = false;
 
     // Cleanup phase
     dataManager.on('character_switching', () => {
@@ -510,8 +549,8 @@ function setupCharacterSwitchHandler(onInitFailures, onBeforeSettingsLoad) {
             // is a no-op — a hundred of them per switch is the storm the old
             // rapid-switch guard was defending against. Skip, and let the
             // settling switch bring the layer back up for whoever is current.
-            if (tornDown) return;
-            tornDown = true;
+            if (layerTornDown) return;
+            layerTornDown = true;
             await disableAllFeatures();
         });
     });
@@ -532,8 +571,8 @@ function setupCharacterSwitchHandler(onInitFailures, onBeforeSettingsLoad) {
             // behind this step: `initializeFeatures()` refuses during a switch
             // regardless, so all this could contribute is a settings reload and
             // a settle delay holding up the character the player is actually
-            // looking at. Leave `tornDown` set, so the switch that settles is
-            // the one that brings the layer back up.
+            // looking at. Leave `layerTornDown` set, so the switch that settles
+            // is the one that brings the layer back up.
             if (dataManager.getIsCharacterSwitching()) return;
 
             // Offer a settings-mirror restore for the arriving character
@@ -564,13 +603,148 @@ function setupCharacterSwitchHandler(onInitFailures, onBeforeSettingsLoad) {
             const initFailures = await initializeFeatures();
             // The layer is up again for the character that is current now, so
             // the next switch owes a real teardown.
-            tornDown = false;
+            layerTornDown = false;
 
             if (typeof onInitFailures === 'function') {
                 onInitFailures(initFailures);
             }
+
+            // A setting changed while the layer was down, or while this re-init
+            // was running, was stood down for it and is picked up here.
+            if (liveStartDeferredBySwitch) {
+                liveStartDeferredBySwitch = false;
+                scheduleLiveStart();
+            }
         });
     });
+}
+
+/**
+ * Whether a feature's gate is open right now.
+ * @param {Object} feature - Registry entry
+ * @returns {boolean} True when its customCheck (or its config switch) says it should run
+ */
+function isGateOpen(feature) {
+    try {
+        return Boolean(feature.customCheck ? feature.customCheck() : config.isFeatureEnabled(feature.key));
+    } catch (error) {
+        console.error(`[Toolasha] Enabled check for ${feature.name} threw:`, error);
+        return false;
+    }
+}
+
+/**
+ * Whether a feature is up, as far as a live start is concerned.
+ *
+ * Normally: whether the registry has initialized it since the layer last came
+ * up. An entry can answer for itself with `isRunning()` when its module stops
+ * itself on its own setting but relies on the registry to start it again —
+ * without that, the second switch-on of a session would find the key still
+ * recorded as started and do nothing. A throwing `isRunning` counts as running:
+ * starting a feature twice is worse than leaving one down until a reload.
+ * @param {Object} feature - Registry entry
+ * @returns {boolean} True when a live start should leave it alone
+ */
+function isFeatureRunning(feature) {
+    if (typeof feature.isRunning !== 'function') return startedKeys.has(feature.key);
+    try {
+        return Boolean(feature.isRunning());
+    } catch (error) {
+        console.error(`[FeatureRegistry] isRunning for ${feature.name} threw:`, error);
+        return true;
+    }
+}
+
+/**
+ * Whether a live start may initialize anything right now: startup has finished,
+ * no switch batch is running, and no switch has the layer down.
+ * @returns {boolean} True when it is safe to start a feature
+ */
+function liveStartAllowed() {
+    return isStartupComplete() && !layerTornDown && !dataManager.getIsCharacterSwitching();
+}
+
+/**
+ * Start every feature whose gate is open but which is not running.
+ *
+ * Starts only. A feature whose gate has closed is left to its own module, which
+ * owns any teardown on its own keys. Serial, in registry order, without the
+ * startup batch's `concurrent` overlap — a pass normally starts one feature.
+ * What fails goes to the same recovery routine a startup failure does.
+ * @returns {Promise<void>}
+ */
+async function runLiveStarts() {
+    const failures = [];
+
+    for (const feature of featureRegistry) {
+        // Rechecked per feature: a switch can begin while an earlier one awaits
+        if (!liveStartAllowed()) {
+            liveStartDeferredBySwitch = true;
+            break;
+        }
+        if (liveStartsInFlight.has(feature.key) || isFeatureRunning(feature) || !isGateOpen(feature)) continue;
+
+        startedKeys.add(feature.key);
+        liveStartsInFlight.add(feature.key);
+        try {
+            await feature.initialize();
+        } catch (error) {
+            console.error(`[Toolasha] Failed to initialize ${feature.name} after a setting change:`, error);
+            failures.push({ key: feature.key, name: feature.name, reason: `Initialization threw: ${error?.message}` });
+        } finally {
+            liveStartsInFlight.delete(feature.key);
+        }
+    }
+
+    if (failures.length > 0 && typeof liveStartFailureHandler === 'function') {
+        liveStartFailureHandler(failures);
+    }
+}
+
+/**
+ * Queue one live-start pass, coalescing every change made before it runs.
+ *
+ * Deferred to a microtask so settings saved together (a preset, a panel that
+ * writes several keys) make one pass, and held until startup has finished: a
+ * change made during startup is read by the startup batch itself, or by this
+ * pass if the batch had already gone past the feature.
+ * @returns {void}
+ */
+function scheduleLiveStart() {
+    if (liveStartQueued) return;
+    liveStartQueued = true;
+    queueMicrotask(async () => {
+        try {
+            await whenStartupComplete();
+            liveStartQueued = false;
+            await runLiveStarts();
+        } catch (error) {
+            liveStartQueued = false;
+            console.error('[FeatureRegistry] Live feature start failed:', error);
+        }
+    });
+}
+
+/**
+ * Start features whose gate a setting change opens mid-session.
+ *
+ * The registry otherwise evaluates gates only at startup and on a character
+ * switch, so a feature whose settings were all off at page load stayed off
+ * until a reload however it was switched on. Installed once, by the entrypoint.
+ * @param {Function} [onInitFailures] - Called with what a live start failed to
+ *   bring up, shaped like `initializeFeatures()`'s return — the entrypoint passes
+ *   the same health-check/retry/report routine boot and a switch use.
+ * @returns {Function} Uninstall function
+ */
+function setupLiveFeatureStart(onInitFailures) {
+    unregisterLiveStart?.();
+    liveStartFailureHandler = onInitFailures ?? null;
+    unregisterLiveStart = config.onAnySettingChange(() => scheduleLiveStart());
+    return () => {
+        unregisterLiveStart?.();
+        unregisterLiveStart = null;
+        liveStartFailureHandler = null;
+    };
 }
 
 /**
@@ -657,6 +831,7 @@ export default {
     disableAllFeatures,
     getDisableFailures,
     setupCharacterSwitchHandler,
+    setupLiveFeatureStart,
     checkFeatureHealth,
     retryFailedFeatures,
     getFeature,

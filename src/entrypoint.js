@@ -1656,6 +1656,10 @@ function registerFeatures() {
             category: 'Combat',
             module: Combat.monsterStatCheckUI,
             async: false,
+            // Its module takes itself down when the switch goes off but leaves
+            // switching back on to the registry, so the registry has to ask
+            // rather than remember that it once started it
+            isRunning: () => Combat.monsterStatCheckUI.isRunning(),
         },
         {
             key: 'labyrinthRoomLogs',
@@ -1840,6 +1844,10 @@ function registerFeatures() {
             category: 'Interface',
             module: UI.overlayTabButton,
             async: false,
+            // Its own switch is the gate, but the module also refuses to start
+            // while the overlay is off — so a start refused at page load is
+            // retried when the overlay is switched on, rather than counted
+            isRunning: () => UI.overlayTabButton.initialized === true,
             // The button is a switch for the overlay and the module refuses to
             // draw one when the overlay itself is off
             healthCheck: () =>
@@ -2538,6 +2546,7 @@ function registerFeatures() {
             // initializers are async.)
             concurrent: feature.concurrent || undefined,
             customCheck: feature.customCheck || undefined,
+            isRunning: feature.isRunning || undefined,
             // Without this the checks above would be dropped on the way into the
             // registry, and `checkFeatureHealth` would go on finding nothing
             healthCheck: feature.healthCheck || undefined,
@@ -2683,6 +2692,10 @@ if (combatSimulatorSite === 'metz') {
     featureRegistry.setupCharacterSwitchHandler(scheduleFailedFeatureRecovery, (characterId, characterName) =>
         UI.settingsMirrorRestore.maybeOffer(characterId, characterName)
     );
+
+    // A setting switched on mid-session starts the features its gate opens,
+    // with the same recovery for what fails to come up.
+    featureRegistry.setupLiveFeatureStart(scheduleFailedFeatureRecovery);
 
     // Whether the one-time startup block below has already run this page load.
     //

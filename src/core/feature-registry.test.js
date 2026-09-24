@@ -9,6 +9,7 @@ const state = vi.hoisted(() => ({
     currentCharacterId: null,
     handlers: {},
     calls: [],
+    anySettingListeners: [],
 }));
 
 vi.mock('./config.js', () => ({
@@ -17,6 +18,12 @@ vi.mock('./config.js', () => ({
         clearSettingsCache: () => state.calls.push('clearCache'),
         loadSettings: async () => state.calls.push('loadSettings'),
         applyColorSettings: () => state.calls.push('applyColors'),
+        onAnySettingChange: (callback) => {
+            state.anySettingListeners.push(callback);
+            return () => {
+                state.anySettingListeners = state.anySettingListeners.filter((cb) => cb !== callback);
+            };
+        },
     },
 }));
 
@@ -46,6 +53,7 @@ beforeEach(() => {
     state.currentCharacterId = null;
     state.handlers = {};
     state.calls = [];
+    state.anySettingListeners = [];
     featureRegistry.replaceFeatures([]);
 });
 
@@ -684,5 +692,303 @@ describe('the startup-complete signal', () => {
 
         expect(fresh.isStartupComplete()).toBe(true);
         expect(await hasResolved(fresh.whenStartupComplete())).toBe(true);
+    });
+});
+
+describe('a setting switched on mid-session', () => {
+    /**
+     * A registry nobody else in this file has started. Startup is left to the test.
+     * @returns {Promise<Object>} A fresh feature-registry default export
+     */
+    const freshRegistry = async () => {
+        vi.resetModules();
+        const fresh = (await import('./feature-registry.js')).default;
+        fresh.replaceFeatures([]);
+        return fresh;
+    };
+
+    /**
+     * What config does when the player changes a setting: tell every any-key listener.
+     * @param {string} key - Setting key, doubling as the feature key it gates
+     * @param {boolean} enabled - New value
+     * @returns {void}
+     */
+    const changeSetting = (key, enabled) => {
+        if (enabled) state.enabledFeatures.add(key);
+        else state.enabledFeatures.delete(key);
+        for (const listener of [...state.anySettingListeners]) listener(key, enabled);
+    };
+
+    /**
+     * Let the queued pass, and anything it awaits, run out.
+     * @returns {Promise<void>}
+     */
+    const settle = () => new Promise((resolve) => setTimeout(resolve, 0));
+
+    test('starts a feature whose gate was closed at startup', async () => {
+        const fresh = await freshRegistry();
+        const initialize = vi.fn();
+        fresh.replaceFeatures([{ key: 'late', name: 'Late', initialize }]);
+        fresh.setupLiveFeatureStart();
+        await fresh.initializeFeatures();
+        expect(initialize).not.toHaveBeenCalled();
+
+        changeSetting('late', true);
+        await settle();
+
+        expect(initialize).toHaveBeenCalledTimes(1);
+    });
+
+    test('several changes in one tick start it once', async () => {
+        const fresh = await freshRegistry();
+        const initialize = vi.fn();
+        fresh.replaceFeatures([
+            { key: 'late', name: 'Late', initialize, customCheck: () => state.enabledFeatures.has('a') },
+        ]);
+        fresh.setupLiveFeatureStart();
+        await fresh.initializeFeatures();
+
+        changeSetting('a', true);
+        changeSetting('b', true);
+        changeSetting('c', true);
+        await settle();
+
+        expect(initialize).toHaveBeenCalledTimes(1);
+    });
+
+    test('a change landing while a slow start is in flight does not start it a second time', async () => {
+        const fresh = await freshRegistry();
+        let release;
+        const initialize = vi.fn(
+            () =>
+                new Promise((resolve) => {
+                    release = resolve;
+                })
+        );
+        fresh.replaceFeatures([{ key: 'slow', name: 'Slow', initialize }]);
+        fresh.setupLiveFeatureStart();
+        await fresh.initializeFeatures();
+
+        changeSetting('slow', true);
+        await settle();
+        changeSetting('unrelated', true);
+        await settle();
+        release();
+        await settle();
+
+        expect(initialize).toHaveBeenCalledTimes(1);
+    });
+
+    test('leaves a running feature alone on an unrelated change', async () => {
+        const fresh = await freshRegistry();
+        const initialize = vi.fn();
+        state.enabledFeatures = new Set(['running']);
+        fresh.replaceFeatures([{ key: 'running', name: 'Running', initialize }]);
+        fresh.setupLiveFeatureStart();
+        await fresh.initializeFeatures();
+        expect(initialize).toHaveBeenCalledTimes(1);
+
+        changeSetting('unrelated', true);
+        await settle();
+
+        expect(initialize).toHaveBeenCalledTimes(1);
+    });
+
+    test('does not disable a feature whose gate closes', async () => {
+        const fresh = await freshRegistry();
+        const disable = vi.fn();
+        state.enabledFeatures = new Set(['running']);
+        fresh.replaceFeatures([{ key: 'running', name: 'Running', initialize: vi.fn(), disable }]);
+        fresh.setupLiveFeatureStart();
+        await fresh.initializeFeatures();
+
+        changeSetting('running', false);
+        await settle();
+
+        expect(disable).not.toHaveBeenCalled();
+    });
+
+    test('starts nothing before startup has completed, and startup does not then start it twice', async () => {
+        const fresh = await freshRegistry();
+        const initialize = vi.fn();
+        fresh.replaceFeatures([{ key: 'late', name: 'Late', initialize }]);
+        fresh.setupLiveFeatureStart();
+
+        changeSetting('late', true);
+        await settle();
+        expect(initialize).not.toHaveBeenCalled();
+
+        await fresh.initializeFeatures();
+        await settle();
+
+        expect(initialize).toHaveBeenCalledTimes(1);
+    });
+
+    test('starts nothing while a character switch is in progress', async () => {
+        const fresh = await freshRegistry();
+        const initialize = vi.fn();
+        fresh.replaceFeatures([{ key: 'late', name: 'Late', initialize }]);
+        fresh.setupLiveFeatureStart();
+        await fresh.initializeFeatures();
+
+        state.isCharacterSwitching = true;
+        changeSetting('late', true);
+        await settle();
+
+        expect(initialize).not.toHaveBeenCalled();
+    });
+
+    test('starts nothing while a switch has the layer down, and the re-init starts it once', async () => {
+        vi.useFakeTimers();
+        const fresh = await freshRegistry();
+        state.currentCharacterId = 'B';
+        const initialize = vi.fn();
+        fresh.replaceFeatures([{ key: 'late', name: 'Late', initialize }]);
+        fresh.setupCharacterSwitchHandler();
+        fresh.setupLiveFeatureStart();
+        await fresh.initializeFeatures();
+
+        // Teardown done and data-manager's switching flag already down; the
+        // re-init is still waiting out its settle delay
+        await state.handlers.character_switching();
+        state.handlers.character_switched({ newId: 'B' });
+        changeSetting('late', true);
+        await vi.advanceTimersByTimeAsync(0);
+        expect(initialize).not.toHaveBeenCalled();
+
+        await vi.advanceTimersByTimeAsync(100);
+
+        expect(initialize).toHaveBeenCalledTimes(1);
+        vi.useRealTimers();
+    });
+
+    test('a change that lands while the re-init is past its feature is picked up once it finishes', async () => {
+        vi.useFakeTimers();
+        const fresh = await freshRegistry();
+        state.currentCharacterId = 'B';
+        const late = vi.fn();
+        let release;
+        fresh.replaceFeatures([
+            { key: 'late', name: 'Late', initialize: late },
+            {
+                key: 'slow',
+                name: 'Slow',
+                initialize: () =>
+                    new Promise((resolve) => {
+                        release = resolve;
+                    }),
+            },
+        ]);
+        state.enabledFeatures = new Set(['slow']);
+        fresh.setupCharacterSwitchHandler();
+        fresh.setupLiveFeatureStart();
+        const boot = fresh.initializeFeatures();
+        release();
+        await boot;
+
+        // The re-init has gone past `late` (off) and is parked on `slow`
+        state.handlers.character_switching();
+        state.handlers.character_switched({ newId: 'B' });
+        await vi.advanceTimersByTimeAsync(100);
+        changeSetting('late', true);
+        await vi.advanceTimersByTimeAsync(0);
+        expect(late).not.toHaveBeenCalled();
+
+        release();
+        await vi.advanceTimersByTimeAsync(0);
+
+        expect(late).toHaveBeenCalledTimes(1);
+        vi.useRealTimers();
+    });
+
+    test('after a switch has taken the layer down, a change can start a feature again', async () => {
+        vi.useFakeTimers();
+        const fresh = await freshRegistry();
+        state.currentCharacterId = 'B';
+        const initialize = vi.fn();
+        fresh.replaceFeatures([{ key: 'late', name: 'Late', initialize, disable: vi.fn() }]);
+        fresh.setupCharacterSwitchHandler();
+        fresh.setupLiveFeatureStart();
+        await fresh.initializeFeatures();
+
+        // Off across the switch, so the re-init leaves it down
+        state.handlers.character_switching();
+        state.handlers.character_switched({ newId: 'B' });
+        await vi.advanceTimersByTimeAsync(100);
+        expect(initialize).not.toHaveBeenCalled();
+
+        changeSetting('late', true);
+        await vi.advanceTimersByTimeAsync(0);
+
+        expect(initialize).toHaveBeenCalledTimes(1);
+        vi.useRealTimers();
+    });
+
+    test('an entry with isRunning is started again after its module stopped itself', async () => {
+        const fresh = await freshRegistry();
+        let running = false;
+        const initialize = vi.fn(() => {
+            running = true;
+        });
+        state.enabledFeatures = new Set(['selfStopping']);
+        fresh.replaceFeatures([{ key: 'selfStopping', name: 'Self-stopping', initialize, isRunning: () => running }]);
+        fresh.setupLiveFeatureStart();
+        await fresh.initializeFeatures();
+
+        // The module's own listener takes it down when its switch goes off
+        running = false;
+        changeSetting('selfStopping', false);
+        await settle();
+        expect(initialize).toHaveBeenCalledTimes(1);
+
+        changeSetting('selfStopping', true);
+        await settle();
+        changeSetting('unrelated', true);
+        await settle();
+
+        expect(initialize).toHaveBeenCalledTimes(2);
+    });
+
+    test('reports a failed start to the recovery routine, shaped like a startup failure', async () => {
+        vi.spyOn(console, 'error').mockImplementation(() => {});
+        const fresh = await freshRegistry();
+        fresh.replaceFeatures([
+            {
+                key: 'broken',
+                name: 'Broken',
+                initialize: async () => {
+                    throw new Error('late init failed');
+                },
+            },
+        ]);
+        const onInitFailures = vi.fn();
+        fresh.setupLiveFeatureStart(onInitFailures);
+        await fresh.initializeFeatures();
+
+        changeSetting('broken', true);
+        await settle();
+
+        expect(onInitFailures).toHaveBeenCalledWith([
+            { key: 'broken', name: 'Broken', reason: 'Initialization threw: late init failed' },
+        ]);
+        // Recorded as started, like a startup failure: retrying is the recovery
+        // routine's job, not every later setting change's
+        changeSetting('unrelated', true);
+        await settle();
+        expect(onInitFailures).toHaveBeenCalledTimes(1);
+    });
+
+    test('uninstalling stops it listening', async () => {
+        const fresh = await freshRegistry();
+        const initialize = vi.fn();
+        fresh.replaceFeatures([{ key: 'late', name: 'Late', initialize }]);
+        const uninstall = fresh.setupLiveFeatureStart();
+        await fresh.initializeFeatures();
+        uninstall();
+
+        changeSetting('late', true);
+        await settle();
+
+        expect(initialize).not.toHaveBeenCalled();
     });
 });

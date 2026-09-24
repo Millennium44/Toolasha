@@ -6,6 +6,9 @@
  * in the codebase that would notice.
  */
 
+import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
+import process from 'node:process';
 import { describe, test, expect } from 'vitest';
 import { getSettingDefinition } from './settings-schema.js';
 
@@ -163,10 +166,12 @@ describe('listing age and value badge defaults', () => {
 
 describe('the switches whose only reader is the feature-registry gate', () => {
     /**
-     * Keys nothing reads but `config.isFeatureEnabled`, which the feature
-     * registry consults at start-up and on a character switch — and nowhere
-     * else. None of these modules watches its own key from module scope, so
-     * the registry's answer is the only one that is ever taken.
+     * Keys read by nothing but the feature registry's gate. The registry
+     * re-checks gates on every setting change and starts what a change opens
+     * (`setupLiveFeatureStart` — see feature-registry.test.js, "a setting
+     * switched on mid-session"), so switching any of these on takes effect at
+     * once. Switching one off is a different matter: the registry only ever
+     * starts, and a module with no teardown on its own switch stays running.
      */
     const REGISTRY_GATED_ONLY = [
         'goalPlanner',
@@ -179,14 +184,30 @@ describe('the switches whose only reader is the feature-registry gate', () => {
         'labyrinthMonsterStatCheck',
     ];
 
-    test('each one says it needs a reload, because switching it on mid-session starts nothing', () => {
-        // Until these keys were honoured at all they did nothing either way, so
-        // the omission cost nothing. Now that the gate reads them, a player who
-        // ticks one and watches for the feature is owed the reload tag: the
-        // registry will not run again until the page does. Five of the eight
-        // shipped without the flag.
+    /**
+     * The ones that still need a reload, and what for. Switching on is live for
+     * all of them; each reason is about something the live start cannot do.
+     */
+    const STILL_NEEDS_RELOAD = {
+        goalPlanner: 'switching off leaves its panel and palette entry in place',
+        damageTracker: 'switching off leaves its websocket handlers recording',
+        damageTakenTracker: 'switching off leaves its websocket handlers recording',
+        taskInventoryHighlighter: 'switching off leaves the button on the tasks panel',
+        sessionBriefing: 'it draws only when the game opens its Welcome Back window',
+        ironCowFarm: 'switching off leaves its panel and palette entry in place',
+        overlayTabButton: 'switching off leaves the tab drawn',
+    };
+
+    test('each one is gated by its own registry entry, which a setting change now re-checks', () => {
+        const entrypoint = readFileSync(resolve(process.cwd(), 'src/entrypoint.js'), 'utf8');
         for (const id of REGISTRY_GATED_ONLY) {
-            expect(getSettingDefinition(id)?.requiresRefresh, id).toBe(true);
+            expect(entrypoint, id).toContain(`key: '${id}',`);
+        }
+    });
+
+    test('only the ones whose switch-off is not live still say they need a reload', () => {
+        for (const id of REGISTRY_GATED_ONLY) {
+            expect(Boolean(getSettingDefinition(id)?.requiresRefresh), id).toBe(id in STILL_NEEDS_RELOAD);
         }
     });
 });

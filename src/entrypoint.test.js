@@ -213,6 +213,7 @@ beforeAll(async () => {
                     registered = features;
                 },
                 setupCharacterSwitchHandler: () => {},
+                setupLiveFeatureStart: () => () => {},
                 checkFeatureHealth: () => [],
                 retryFailedFeatures: async () => [],
                 initializeFeatures: async () => {

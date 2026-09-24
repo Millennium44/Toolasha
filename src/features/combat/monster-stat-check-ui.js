@@ -1994,6 +1994,15 @@ function disable() {
     panel.teardown();
 }
 
+/**
+ * Whether the diagnostic is attached. `disable()` runs on its own switch going
+ * off, so the registry cannot tell from having started it once.
+ * @returns {boolean} True while the websocket handlers are registered
+ */
+function isRunning() {
+    return fetchHandler !== null;
+}
+
 /** Console: dump the last comparison as a table. Exposed on Toolasha.Debug. */
 function dumpLast() {
     return panel.dump();
@@ -2008,6 +2017,7 @@ export default {
     name: 'Monster Stat Check',
     initialize,
     disable,
+    isRunning,
     dumpLast,
     logEntries,
 };
