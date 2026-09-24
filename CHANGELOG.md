@@ -6,6 +6,11 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Audit round: pinning an item in the Alchemize picker could freeze the tab
+
+- With the picker on Game order, pinning an item made the order and pins fight over the tile forever and froze the tab; Game order now keeps pinned items first. Items that appear while the picker is sorted go back to their right place under Game order, prices refresh each time the picker opens, and turning the feature off restores the game's order.
+- The treasure tracker no longer takes the bag tax off cowbells for an Iron Cow character, matching the other profit figures.
+
 ### Alchemize Item picker can sort by profit
 
 - The item picker on each Alchemy tab has an Order toggle (Game / Profit/hr / XP/hr), remembered per tab. Profit/hr and XP/hr rank items by that action's best figure per hour with a small label on each tile, keep pinned items first and put unpriced items last; Game puts the game's own order back and removes the labels.
