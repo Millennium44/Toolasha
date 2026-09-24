@@ -653,6 +653,76 @@ describe('calculateSkillPerformance — alchemy', () => {
         expect(result.xpPerHour).toBeCloseTo(180 * xpPerAction, 8);
     });
 
+    test('an Alchemy Tea in the candidate combo relieves the under-level penalty for XP, matching the boosted level efficiency already gets', () => {
+        // Base level 10, +50 from Alchemy Tea puts the boosted level at 60 — still under the
+        // item's level 100, so the level-efficiency term (which floors at the requirement) stays
+        // 0 and actionsPerHour is unaffected: this isolates the penalty term from the efficiency
+        // term the pre-fix code already handled.
+        state.skills = [{ skillHrid: '/skills/alchemy', level: 10 }];
+        state.gameData.itemDetailMap['/items/moon_ore'] = { alchemyDetail: { isCoinifiable: true }, itemLevel: 100 };
+        state.gameData.itemDetailMap['/items/alchemy_tea'] = {
+            consumableDetail: { buffs: [{ typeHrid: '/buff_types/alchemy_level', flatBoost: 50 }] },
+        };
+        state.gameData.actionDetailMap['/actions/alchemy/coinify'] = {
+            type: '/action_types/alchemy',
+            name: 'Coinify',
+            baseTimeCost: 20e9,
+            levelRequirement: { level: 1 },
+        };
+        state.actions = [
+            {
+                actionHrid: '/actions/alchemy/coinify',
+                primaryItemHash: 'character::/item_locations/inventory::/items/moon_ore::7',
+                ordinal: 1,
+                partyID: 0,
+                isDone: false,
+            },
+        ];
+        alchemyCalc.coinify = () => ({ profitPerHour: 777 });
+
+        const result = calculateSkillPerformance('alchemy', new Map(), ['/items/alchemy_tea'], 10);
+
+        // Boosted level 60 vs item level 100: -0.36 penalty, not the unboosted -0.81.
+        const successRate = 0.7 * (1 - 0.36);
+        const xpPerAction = successRate * 110 + (1 - successRate) * 11;
+        expect(result.xpPerHour).toBeCloseTo(180 * xpPerAction, 8);
+    });
+
+    test('an Alchemy Tea in the candidate combo relieves the under-level penalty for XP, matching the boosted level efficiency already gets', () => {
+        // Base level 10, +50 from Alchemy Tea puts the boosted level at 60 — still under the
+        // item's level 100, so the level-efficiency term (which floors at the requirement) stays
+        // 0 and actionsPerHour is unaffected: this isolates the penalty term from the efficiency
+        // term the pre-fix code already handled.
+        state.skills = [{ skillHrid: '/skills/alchemy', level: 10 }];
+        state.gameData.itemDetailMap['/items/moon_ore'] = { alchemyDetail: { isCoinifiable: true }, itemLevel: 100 };
+        state.gameData.itemDetailMap['/items/alchemy_tea'] = {
+            consumableDetail: { buffs: [{ typeHrid: '/buff_types/alchemy_level', flatBoost: 50 }] },
+        };
+        state.gameData.actionDetailMap['/actions/alchemy/coinify'] = {
+            type: '/action_types/alchemy',
+            name: 'Coinify',
+            baseTimeCost: 20e9,
+            levelRequirement: { level: 1 },
+        };
+        state.actions = [
+            {
+                actionHrid: '/actions/alchemy/coinify',
+                primaryItemHash: 'character::/item_locations/inventory::/items/moon_ore::7',
+                ordinal: 1,
+                partyID: 0,
+                isDone: false,
+            },
+        ];
+        alchemyCalc.coinify = () => ({ profitPerHour: 777 });
+
+        const result = calculateSkillPerformance('alchemy', new Map(), ['/items/alchemy_tea'], 10);
+
+        // Boosted level 60 vs item level 100: -0.36 penalty, not the unboosted -0.81.
+        const successRate = 0.7 * (1 - 0.36);
+        const xpPerAction = successRate * 110 + (1 - successRate) * 11;
+        expect(result.xpPerHour).toBeCloseTo(180 * xpPerAction, 8);
+    });
+
     test('a transmute table at a 0% success rate earns no XP, not the 10% failure award', () => {
         state.gameData.itemDetailMap['/items/dud'] = {
             itemLevel: 20,
