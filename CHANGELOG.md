@@ -6,6 +6,18 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Settings that silently depended on another setting now work on their own
+
+- Every setting was checked for this. Profile abilities & triggers had stopped showing with gear score off (since 3.54.0); it shows again.
+- These now work with the setting they used to depend on switched off:
+    - the queued-actions times, value, XP and sim button (no longer need the action bar display);
+    - the guild idle list, trial signup list and extra member columns (no longer need guild XP/hr stats);
+    - action speed & time and level progress (no longer need the quick input buttons);
+    - key icon zone index (no longer needs equipment level on icons);
+    - skilling-tile collection badges (no longer need the Collections filters);
+    - the combat task estimate (no longer needs another task card setting);
+    - loot log history (no longer needs Loot Log Statistics).
+
 ### Skill tooltip time to level is back
 
 - Since 3.54.0, turning off "Left sidebar: Show XP/hr rate on skill bars" also removed the skill tooltip's time till next level, even with that setting on. Each now follows its own checkbox again. Likewise, turning off the Guild Shop credit table no longer removes the trial tier badges on guild tiles or the trial signup Copy List button.
