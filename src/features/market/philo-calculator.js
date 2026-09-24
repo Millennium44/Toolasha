@@ -12,6 +12,7 @@ import alchemyProfitCalculator from './alchemy-profit-calculator.js';
 import { formatLargeNumber, formatPercentage, timeReadable } from '../../utils/formatters.js';
 import { getEnhancementMultiplier } from '../../utils/enhancement-multipliers.js';
 import { calculateActionStats } from '../../utils/action-calculator.js';
+import { resolveActionContext } from '../../utils/action-context.js';
 import { SECONDS_PER_HOUR } from '../../utils/profit-constants.js';
 import { getAlchemyCoinCost } from '../../utils/alchemy-fees.js';
 import {
@@ -644,9 +645,12 @@ class PhiloCalculator {
             const gameData = dataManager.getInitClientData();
             const actionDetails = gameData?.actionDetailMap?.[TRANSMUTE_ACTION_HRID];
             if (actionDetails?.baseTimeCost) {
+                // Equipment and drinks from one context, as alchemy-profit-calculator.js reads them
+                const actionContext = resolveActionContext('/action_types/alchemy');
                 const actionStats = calculateActionStats(actionDetails, {
                     skills: dataManager.getSkills(),
-                    equipment: dataManager.getEquipment(),
+                    equipment: actionContext.equipment,
+                    actionContext,
                     itemDetailMap: gameData.itemDetailMap,
                     includeCommunityBuff: true,
                     levelRequirementOverride: level,

@@ -149,7 +149,10 @@ vi.mock('./alchemy-profit-calculator.js', () => ({
 }));
 
 vi.mock('../../utils/action-calculator.js', () => ({
-    calculateActionStats: () => mocks.actionStats,
+    calculateActionStats: (...args) => {
+        mocks.actionStatsCalls.push(args);
+        return mocks.actionStats;
+    },
 }));
 
 const { PhiloCalculator, formatRowValue, rowsToTsv } = await import('./philo-calculator.js');
@@ -188,6 +191,7 @@ beforeEach(() => {
     };
     mocks.skills = [{ skillHrid: '/skills/alchemy', level: 100 }];
     mocks.actionStats = { actionTime: 8, totalEfficiency: 50 };
+    mocks.actionStatsCalls = [];
     mocks.bonusDrops = [];
     mocks.globalPricingMode = 'hybrid';
     mocks.patientTickBuy = false;
@@ -270,6 +274,15 @@ describe('action time', () => {
         expect(row.actionsPerHour).toBeCloseTo(675, 6);
         expect(row.timePerPhiloSeconds).toBeCloseTo((row.actionsPerPhilo / 675) * 3600, 6);
         expect(row.profitPerHour).toBeCloseTo((row.ev - row.transmuteCost) * 675, 6);
+    });
+
+    test('equipment and drinks come from one resolved context, not raw equipment beside resolved drinks', () => {
+        calc._actionStatsCache.clear();
+        calc.getActionStats(50);
+
+        const [, options] = mocks.actionStatsCalls[0];
+        expect(options.actionContext).toBeDefined();
+        expect(options.equipment).toBe(options.actionContext.equipment);
     });
 
     test('falls back to an estimate when the game data is not loaded', () => {
