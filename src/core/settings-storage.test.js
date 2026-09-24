@@ -1511,6 +1511,26 @@ describe('a save keeps setting ids this build does not know about', () => {
         expect(written.futureFeature_enabled).toEqual({ isTrue: false });
     });
 
+    test('two scoped saves in flight together both land', async () => {
+        // Ticking two checkboxes in quick succession: each save reads the
+        // stored map before the other has written, and the later write used to
+        // put the earlier one's change back
+        stored.set('json:script_settingsMap_alice', {
+            chatCommands: { isTrue: true },
+            whatsNew_showPopup: { isTrue: true },
+        });
+        const map = { chatCommands: { isTrue: false }, whatsNew_showPopup: { isTrue: false } };
+
+        await Promise.all([
+            settingsStorage.saveSettings(map, new Set(['chatCommands'])),
+            settingsStorage.saveSettings(map, new Set(['whatsNew_showPopup'])),
+        ]);
+
+        const written = stored.get('json:script_settingsMap_alice');
+        expect(written.chatCommands).toEqual({ isTrue: false });
+        expect(written.whatsNew_showPopup).toEqual({ isTrue: false });
+    });
+
     test('the caller wins for every id it does mention', async () => {
         stored.set('json:script_settingsMap_alice', { chatCommands: { isTrue: true } });
 

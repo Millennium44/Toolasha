@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Settings changed in quick succession all stick
+
+- Changing two settings within a moment of each other could quietly undo the first on the next reload, because both saves read the stored settings before either had written. Saves now run one after another.
+
 ### Settings that silently depended on another setting now work on their own
 
 - Every setting was checked for this. Profile abilities & triggers had stopped showing with gear score off (since 3.54.0); it shows again.

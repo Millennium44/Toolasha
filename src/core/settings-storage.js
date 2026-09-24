@@ -474,6 +474,8 @@ class SettingsStorage {
         this.currentCharacterId = null;
         this.currentCharacterName = null;
         this.knownCharactersKey = 'known_character_ids';
+        /** Tail of the settings-write queue; see `_serializeWrite` */
+        this._writeQueue = Promise.resolve();
         /**
          * Whether the last `loadSettings()` could actually read the store.
          * `storage.getJSON` answers a read that could not be made with the
@@ -1162,8 +1164,42 @@ class SettingsStorage {
      *   or null for a caller with no dirty tracking (writes whole, as it always did)
      * @returns {Promise<boolean>} Whether both the character and shared writes landed
      */
-    async saveSettings(settings, dirtyKeys = null) {
+    saveSettings(settings, dirtyKeys = null) {
+        // The key is taken now, not when the queued write runs — see
+        // setSetting's character-switch test
         const characterKey = this.getCharacterStorageKey();
+        return this._serializeWrite(() => this._saveSettingsTo(characterKey, settings, dirtyKeys));
+    }
+
+    /**
+     * Run a read-modify-write of the settings store after every one queued
+     * before it.
+     *
+     * Each save reads the stored map, lays its own ids over it and writes the
+     * result. Two saves in flight together both read the same stored map, so
+     * the second write put back what the first had changed: tick two checkboxes
+     * in quick succession and the first reverted on the next reload, though
+     * the panel showed it on until then.
+     *
+     * @param {function(): Promise<*>} write - The whole read-modify-write
+     * @returns {Promise<*>} What the write resolves to
+     * @private
+     */
+    _serializeWrite(write) {
+        const run = this._writeQueue.then(() => write());
+        this._writeQueue = run.catch(() => {});
+        return run;
+    }
+
+    /**
+     * The body of {@link saveSettings}, against a key fixed by the caller.
+     * @param {string} characterKey - Storage key captured when the save was asked for
+     * @param {Object} settings - Settings map
+     * @param {Iterable<string>|symbol|null} dirtyKeys - As for saveSettings
+     * @returns {Promise<boolean>} Whether both the character and shared writes landed
+     * @private
+     */
+    async _saveSettingsTo(characterKey, settings, dirtyKeys) {
         const probed = await storage.tryGet(characterKey, this.storageArea);
 
         let stored = probed?.found ? probed.value : null;
@@ -1229,8 +1265,19 @@ class SettingsStorage {
      * @param {Object} settings - Settings map, as `loadSettings()` shapes it
      * @returns {Promise<boolean>} Whether a write landed
      */
-    async saveSettingsKeepingStored(settings) {
+    saveSettingsKeepingStored(settings) {
         const characterKey = this.getCharacterStorageKey();
+        return this._serializeWrite(() => this._saveKeepingStoredTo(characterKey, settings));
+    }
+
+    /**
+     * The body of {@link saveSettingsKeepingStored}, against a key fixed by the caller.
+     * @param {string} characterKey - Storage key captured when the save was asked for
+     * @param {Object} settings - Settings map
+     * @returns {Promise<boolean>} Whether a write landed
+     * @private
+     */
+    async _saveKeepingStoredTo(characterKey, settings) {
         const probed = await storage.tryGet(characterKey, this.storageArea);
         if (probed === null) {
             console.warn(`[SettingsStorage] Settings not saved: ${characterKey} could not be read first`);
