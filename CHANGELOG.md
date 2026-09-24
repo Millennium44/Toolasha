@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Alchemize Item picker can sort by profit
+
+- The item picker on each Alchemy tab has an Order toggle (Game / Profit/hr), remembered per tab. Profit/hr ranks items by that action's best profit per hour with a small label on each tile, keeps pinned items first and puts unpriced items last.
+
 ### Coinify shows the coins it pays
 
 - Queued Coinify rows and the action bar show a Cash line with the coins the step actually pays, next to Profit, which is lower because it subtracts the value of what is coinified. An optional setting, off by default, also shows that cash as Cowbells at the market price of a Bag of 10 Cowbells.
