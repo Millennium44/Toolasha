@@ -29,6 +29,19 @@ export function tileItemHrid(tile) {
 }
 
 /**
+ * A tile's `+N` enhancement badge, for the pickers (Alchemize Item, Enhance
+ * Item) that can show several copies of the same item at different
+ * enhancement levels as separate tiles.
+ * @param {HTMLElement} tile - An item tile
+ * @returns {number} The level, or 0 for an unenhanced tile or one with none
+ */
+export function tileEnhancementLevel(tile) {
+    const text = tile?.querySelector?.('[class*="Item_enhancementLevel"]')?.textContent || '';
+    const level = parseInt(text.replace(/\D/g, ''), 10);
+    return Number.isFinite(level) ? level : 0;
+}
+
+/**
  * The item tiles in a menu, and the element they all sit in.
  *
  * Returns the elements that can actually be **moved**, which are not always the
@@ -67,4 +80,4 @@ export function menuTiles(menu) {
     return { grid, tiles };
 }
 
-export default { MENU_SELECTOR, TILE_SELECTOR, tileItemHrid, menuTiles };
+export default { MENU_SELECTOR, TILE_SELECTOR, tileItemHrid, tileEnhancementLevel, menuTiles };

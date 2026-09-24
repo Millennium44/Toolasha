@@ -216,6 +216,7 @@ const MARKET_EXTRAS = [
     'alchemy_profitDisplay',
     'alchemy_bestItems',
     'alchemyItemPins',
+    'alchemyItemSort',
     'alchemyItemDimming',
     'alchemy_transmuteHistory',
     'alchemy_coinifyHistory',

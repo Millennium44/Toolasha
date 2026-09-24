@@ -1235,6 +1235,18 @@ function registerFeatures() {
             concurrent: true,
         },
         {
+            key: 'alchemyItemSort',
+            name: 'Alchemy Item Sort',
+            category: 'Alchemy',
+            module: Actions.alchemyItemSort,
+            async: true,
+            // Waits only on its own order-choice record, same shape as
+            // Alchemy Item Pins above; the two share the picker but each owns
+            // its own reorder pass, so registration order between them does
+            // not matter either.
+            concurrent: true,
+        },
+        {
             key: 'teaRecommendation',
             name: 'Tea Recommendation',
             category: 'Actions',

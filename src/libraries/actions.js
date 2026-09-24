@@ -43,6 +43,7 @@ import { buffBoardPanel } from '../features/actions/buff-board.js';
 import alchemyProfitDisplay from '../features/alchemy/alchemy-profit-display.js';
 import alchemyBestItems from '../features/alchemy/alchemy-best-items.js';
 import alchemyItemPins from '../features/alchemy/alchemy-item-pins.js';
+import alchemyItemSort from '../features/alchemy/alchemy-item-sort.js';
 import { describeAlchemyMenus } from '../features/alchemy/alchemy-item-selector.js';
 
 // Skilling optimizer
@@ -101,6 +102,7 @@ toolashaRoot.Actions = {
     alchemyProfitDisplay,
     alchemyBestItems,
     alchemyItemPins,
+    alchemyItemSort,
     teaRecommendation,
     inventoryCountDisplay,
     pinnedActionsPage,

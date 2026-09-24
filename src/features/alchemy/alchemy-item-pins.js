@@ -294,6 +294,19 @@ class AlchemyItemPins {
     }
 
     /**
+     * This action's pinned items, in pin order.
+     *
+     * Read-only, for `alchemy-item-sort.js`: profit order still has to put
+     * pinned items first, and asking here rather than keeping a second copy
+     * is the only way the two features cannot disagree about what is pinned.
+     * @param {string} action - An alchemy action
+     * @returns {string[]} Pinned item hrids, in pin order
+     */
+    pinnedFor(action) {
+        return [...(this.pins[action] || [])];
+    }
+
+    /**
      * Pin or unpin the item a tile stands for.
      * @param {HTMLElement} tile - Item tile
      */

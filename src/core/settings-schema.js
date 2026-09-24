@@ -473,6 +473,13 @@ export const settingsGroups = {
                 default: true,
                 help: 'Adds a 📌 to each item in the Alchemize Item list that moves it to the front. Kept per action, since what is worth coinifying is rarely what is worth decomposing. Pins reorder but do not exempt: a pinned item that does not match the filter box stays hidden',
             },
+            alchemyItemSort: {
+                id: 'alchemyItemSort',
+                label: 'Alchemy panel: Sort item picker by profit',
+                type: 'checkbox',
+                default: true,
+                help: "Adds a Game / Profit/hr toggle to the Alchemize Item picker, remembered per tab. Off (Game) by default, so the picker's order never changes until a tab is switched to Profit/hr.",
+            },
             alchemy_transmuteHistory: {
                 id: 'alchemy_transmuteHistory',
                 label: 'Alchemy panel: Track and view transmute session history',
