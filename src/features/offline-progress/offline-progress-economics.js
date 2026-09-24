@@ -11,9 +11,9 @@
  * Items that could not be priced are named, not silently folded into the total as zero.
  *
  * Experience is the one figure on this block that is not sourced that way: the payload behind
- * `offlineItems` carries no experience total, so it is read off the native modal's own text
- * instead (`parseExperience`, moved here from the retired welcome-back-value.js one-liner this
- * block replaced). It is summed per skill the way the modal lists it, and rated per hour against
+ * `offlineItems` carries no experience total, so it is read off the native modal's per-skill
+ * experience cells instead (`readExperience`; the retired welcome-back-value.js one-liner this
+ * block replaced scraped the text and misread item counts as experience). It is summed per skill the way the modal lists it, and rated per hour against
  * the same `durationSeconds` the Revenue/Cost/Profit per-day figures use — the full time away,
  * not the offline-hour-capped portion — so the rate on this row means the same "per hour offline"
  * as everywhere else in the block.
@@ -28,7 +28,7 @@ import { formatKMB } from '../../utils/formatters.js';
 import { createMutationWatcher } from '../../utils/dom-observer-helpers.js';
 import { PATIENT_TICK_SETTING_KEYS } from '../../utils/patient-tick.js';
 import { IRONCOW_VALUATION_SETTING } from '../../utils/ironcow-valuation.js';
-import { parseItemCount, gameDigitsSource } from '../../utils/number-parser.js';
+import { parseItemCount } from '../../utils/number-parser.js';
 
 const UI_ID = 'mwi-offline-economics';
 const MODAL_ANCHOR_CLASS = 'OfflineProgressModal_offlineProgress';
@@ -241,7 +241,7 @@ class OfflineProgressEconomics {
 
     /**
      * Calculate the Revenue/Cost/Profit economics and thread in the one figure they cannot
-     * carry: offline experience, read off the modal's own native text (see `parseExperience`)
+     * carry: offline experience, read off the modal's own per-skill cells (see `readExperience`)
      * since `offlineItems` has no experience field of its own.
      * @param {Object} offlineData - Cached offline session payload
      * @param {Element|null} modalContentNode - The modal content element to read experience from
@@ -249,10 +249,7 @@ class OfflineProgressEconomics {
      */
     computeEconomics(offlineData, modalContentNode) {
         const economics = calculateOfflineEconomics(offlineData);
-        // readNativeSignature excludes this block's own subtree, so a recompute against an
-        // already-injected block never re-counts this block's own numbers as offline XP.
-        const nativeText = modalContentNode ? readNativeSignature(modalContentNode) : '';
-        const experience = parseExperience(nativeText);
+        const experience = readExperience(modalContentNode);
         return {
             ...economics,
             experience,
@@ -417,25 +414,27 @@ export function readNativeSignature(root) {
 }
 
 /**
- * Total experience named anywhere in the native modal's own text.
+ * Total experience the native modal lists under "Experience gained".
  *
- * Summed rather than taken from one place: the modal lists experience per skill, and an idle
- * night is usually more than one skill. This is the same scrape the retired welcome-back-value.js
- * one-liner used to compute its own XP/hr figure — moved here because it is the only source for
- * offline experience there is; `offlineItems` carries none.
+ * Read from the game's own per-skill cells (`OfflineProgressModal_expList` holding one
+ * `OfflineProgressModal_skillExperience` per skill: an icon and a bare number), not from the
+ * modal's text. The text has no separators between elements, so the item counts above run
+ * straight into the "Experience gained" heading — "…131Experience" — and a text scrape read
+ * the item counts as experience (1.7M XP from a 45K session). `offlineItems` carries no
+ * experience, so the modal is the only source there is.
  *
- * @param {string} text - Native modal text (see `readNativeSignature`)
+ * @param {Element|null} root - The native modal content element
  * @returns {number} Experience, zero when none was found
  */
-export function parseExperience(text) {
-    if (typeof text !== 'string') return 0;
+export function readExperience(root) {
+    if (!root || typeof root.querySelectorAll !== 'function') return 0;
 
     let total = 0;
-    // Grouped by the game's current locale rather than a hardcoded comma/period union: a plain
-    // union already tolerates en-US/de-DE, but not a space-grouping locale such as fr-FR.
-    const pattern = new RegExp(`(${gameDigitsSource()}\\s*[KMB]?)\\s*(?:XP|EXP|experience)\\b`, 'gi');
-    for (const match of text.matchAll(pattern)) {
-        const value = parseItemCount(match[1], 0);
+    for (const cell of root.querySelectorAll(
+        '[class*="OfflineProgressModal_expList"] [class*="OfflineProgressModal_skillExperience"]'
+    )) {
+        if (cell.closest(`#${UI_ID}`)) continue;
+        const value = parseItemCount(cell.textContent.trim(), 0);
         if (Number.isFinite(value) && value > 0) total += value;
     }
     return total;

@@ -82,7 +82,7 @@ vi.mock('../../utils/dom-observer-helpers.js', () => ({
     }),
 }));
 
-import offlineProgressEconomics, { buildBlock, parseExperience } from './offline-progress-economics.js';
+import offlineProgressEconomics, { buildBlock, readExperience } from './offline-progress-economics.js';
 
 function buildModalNode() {
     const modalContent = document.createElement('div');
@@ -494,7 +494,8 @@ describe('offline-progress-economics', () => {
         triggerCharacterInitialized();
 
         const modalNode = buildModalNode();
-        modalNode.innerHTML += '<div>Milking: 12,000 XP</div>';
+        modalNode.innerHTML +=
+            '<div class="OfflineProgressModal_expList__1jrSd"><div class="OfflineProgressModal_label__2HwFG">Experience gained</div><div class="OfflineProgressModal_skillExperience__2em_L"><svg></svg>12000</div></div>';
         mockOnClass.mock.calls[0][2](modalNode);
 
         const text = document.querySelector('#mwi-offline-economics').textContent;
@@ -518,7 +519,8 @@ describe('offline-progress-economics', () => {
         triggerCharacterInitialized();
 
         const modalNode = buildModalNode();
-        modalNode.innerHTML += '<div>Milking: 12,000 XP</div>';
+        modalNode.innerHTML +=
+            '<div class="OfflineProgressModal_expList__1jrSd"><div class="OfflineProgressModal_label__2HwFG">Experience gained</div><div class="OfflineProgressModal_skillExperience__2em_L"><svg></svg>12000</div></div>';
         mockOnClass.mock.calls[0][2](modalNode);
 
         mockCalculateOfflineEconomics.mockReturnValue({ ...SAMPLE_ECONOMICS, revenue: 999 });
@@ -530,22 +532,36 @@ describe('offline-progress-economics', () => {
     });
 });
 
-describe('parseExperience', () => {
-    test('sums XP named across multiple skills', () => {
-        expect(parseExperience('Milking: 1,000 XP Foraging: 2,000 XP')).toBe(3000);
+describe('readExperience', () => {
+    /** The shape the game draws (captured from the test server, 2026-09-24): item counts, then XP cells */
+    const modal = (xpCells) => {
+        const root = document.createElement('div');
+        root.innerHTML =
+            '<div class="OfflineProgressModal_itemList__26h-Y"><div class="OfflineProgressModal_label__2HwFG">Items gained</div>' +
+            '<div>117K</div><div>17</div><div>27</div><div>131</div></div>' +
+            '<div class="OfflineProgressModal_expList__1jrSd"><div class="OfflineProgressModal_label__2HwFG">Experience gained</div>' +
+            xpCells
+                .map((n) => `<div class="OfflineProgressModal_skillExperience__2em_L"><svg></svg>${n}</div>`)
+                .join('') +
+            '</div>';
+        return root;
+    };
+
+    test('sums the per-skill cells and never reads the item counts before them', () => {
+        // The text scrape joined "…27" "131" "Experience" into 1,727,131 XP for this session
+        expect(readExperience(modal(['10291', '35540']))).toBe(45831);
     });
 
-    test('parses K/M/B suffixed figures', () => {
-        expect(parseExperience('12.5K XP')).toBe(12500);
+    test('reads grouped and suffixed figures', () => {
+        expect(readExperience(modal(['1,000', '12.5K']))).toBe(13500);
     });
 
-    test('returns 0 when nothing mentions XP/EXP/experience', () => {
-        expect(parseExperience('Away 3h 0m')).toBe(0);
+    test('returns 0 when the modal lists no experience', () => {
+        expect(readExperience(modal([]))).toBe(0);
     });
 
-    test('returns 0 for non-string input', () => {
-        expect(parseExperience(null)).toBe(0);
-        expect(parseExperience(undefined)).toBe(0);
+    test('returns 0 without a modal', () => {
+        expect(readExperience(null)).toBe(0);
     });
 });
 
