@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Coinify shows the coins it pays
+
+- Queued Coinify rows and the action bar show a Cash line with the coins the step actually pays, next to Profit, which is lower because it subtracts the value of what is coinified. An optional setting, off by default, also shows that cash as Cowbells at the market price of a Bag of 10 Cowbells.
+
 ### Iron Cow profits no longer pay a market tax
 
 - An Iron Cow character can't use the market, so its vendor, coinify and fallback values are no longer cut by the 5% market tax in gathering, production, alchemy, combat loot, enhancing and the alchemy history; profits were understated by that much.
