@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Profile sim export offers Shykai again
+
+- The profile panel's sim export button has a ▾ to choose Metz or Shykai format (Shykai also works in the szerra shrine sim); picking one exports straight away and it is remembered for next time.
+
 ### Welcome Back shows one offline total, with XP/hr
 
 - The gold one-line summary at the bottom of Welcome Back is gone: it valued the haul differently from the Offline Economics box above it (no market tax, no caches), so the two disagreed. The box gains an Experience row with XP and XP/hr instead.
