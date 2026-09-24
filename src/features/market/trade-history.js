@@ -118,6 +118,7 @@ class TradeHistory {
         this.marketUpdateHandler = null; // Store handler reference for cleanup
         this._saveChain = null;
         this._saveTimer = null;
+        this.initPromise = null;
     }
 
     /**
@@ -162,14 +163,36 @@ class TradeHistory {
     }
 
     /**
-     * Initialize trade history tracking
+     * Initialize trade history tracking.
+     *
+     * `isInitialized` is only set after the storage read, so a second call
+     * landing in that window — the setting listener and a settings-loaded
+     * re-check can both answer the same switch-on — shares the first one's
+     * promise instead of registering a second `market_listings_updated`
+     * handler.
+     * @returns {Promise<void>}
      */
     async initialize() {
-        // Guard FIRST (before feature check)
         if (this.isInitialized) {
             return;
         }
+        if (this.initPromise) return this.initPromise;
 
+        const pending = this._initialize();
+        this.initPromise = pending;
+        try {
+            await pending;
+        } finally {
+            if (this.initPromise === pending) this.initPromise = null;
+        }
+    }
+
+    /**
+     * The body of `initialize()`.
+     * @returns {Promise<void>}
+     * @private
+     */
+    async _initialize() {
         if (!config.getSetting('market_tradeHistory')) {
             return;
         }
@@ -394,6 +417,7 @@ class TradeHistory {
      */
     disable() {
         noteTeardown(this);
+        this.initPromise = null;
         try {
             if (this.marketUpdateHandler) {
                 dataManager.off('market_listings_updated', this.marketUpdateHandler);
