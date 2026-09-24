@@ -649,8 +649,16 @@ function calculateAlchemyXpPerHour(alchemyContext, buffs, playerLevel, otherEffi
     // the success multiplier, matching calculateSuccessRateBreakdown in the
     // profit calculator; multiplying the two terms makes the XP and Gold
     // recommendations disagree about the exact same action.
+    //
+    // The penalty reads the BOOSTED alchemy level — base level plus this candidate's own
+    // Alchemy Tea skill-level buff — the same level the efficiency term below uses. Reading
+    // the base level here would let a candidate's Alchemy Tea raise its efficiency while its
+    // success rate still quoted the pre-tea level.
+    const boostedPlayerLevel = playerLevel + (buffs.skillLevels['alchemy'] || 0);
     const levelPenalty =
-        actionType !== 'unrefine' && playerLevel < itemLevel ? (0.9 / itemLevel) * (playerLevel - itemLevel) : 0;
+        actionType !== 'unrefine' && boostedPlayerLevel < itemLevel
+            ? (0.9 / itemLevel) * (boostedPlayerLevel - itemLevel)
+            : 0;
 
     const successRate = Math.max(0, Math.min(1.0, baseSuccessRate * (1 + levelPenalty + teaBonusOverride)));
 

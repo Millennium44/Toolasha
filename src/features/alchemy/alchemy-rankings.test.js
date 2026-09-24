@@ -62,7 +62,12 @@ vi.mock('../../core/data-manager.js', () => ({
         getHouseRooms: () => mocks.houseRooms,
     },
 }));
-vi.mock('../../utils/tea-parser.js', () => ({ getDrinkConcentration: () => 0 }));
+// drinkSlots defaults to [], so the real parseTeaSkillLevelBonus (unmocked below) would also
+// answer 0 — it is stubbed only so this file need not import the real tea-parser.js.
+vi.mock('../../utils/tea-parser.js', () => ({
+    getDrinkConcentration: () => 0,
+    parseTeaSkillLevelBonus: () => 0,
+}));
 vi.mock('../../utils/market-data.js', () => ({
     getItemPrice: (hrid) => mocks.itemPrices[hrid] ?? mocks.itemPrice,
     isPriceEstimated: () => false,

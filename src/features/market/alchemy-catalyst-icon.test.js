@@ -37,7 +37,10 @@ vi.mock('../../core/data-manager.js', () => ({
         getPersonalBuffFlatBoost: () => 0,
     },
 }));
-vi.mock('../../utils/tea-parser.js', () => ({ getDrinkConcentration: () => mocks.drinkConcentration }));
+vi.mock('../../utils/tea-parser.js', () => ({
+    getDrinkConcentration: () => mocks.drinkConcentration,
+    parseTeaSkillLevelBonus: () => 0,
+}));
 vi.mock('../../utils/market-data.js', () => ({ getItemPrice: (hrid) => mocks.itemPrices[hrid] ?? mocks.itemPrice }));
 vi.mock('../../utils/buff-parser.js', () => ({ getAlchemySuccessBonus: () => mocks.alchemyTeaBonus }));
 vi.mock('../../utils/equipment-parser.js', () => ({

@@ -32,6 +32,10 @@ vi.mock('../../core/data-manager.js', () => ({
         getInitClientData: () => ({ itemDetailMap: game.items }),
         getSkills: () => [{ skillHrid: '/skills/alchemy', level: game.alchemyLevel }],
         getCurrentCharacterId: () => 'char-1',
+        // getUnderLevelPenalty reads these for the boosted-level (tea) case; no test here
+        // plans an Alchemy Tea, so empty slots/equipment leave the boost at 0.
+        getActionDrinkSlots: () => [],
+        getEquipment: () => new Map(),
         on: () => {},
         off: () => {},
     },

@@ -21,6 +21,8 @@ const mocks = vi.hoisted(() => ({
     actionStats: {},
     /** Character skills, so a test can under-level the alchemist */
     skills: [],
+    /** Boosted alchemy level from tea (parseTeaSkillLevelBonus), so a test can plan an Alchemy Tea */
+    teaSkillLevelBonus: 0,
     /** Default price for getItemPrice() lookups */
     itemPrice: 0,
     /** Per-hrid price overrides, so a test can make catalysts cheap and drops valuable */
@@ -45,7 +47,11 @@ vi.mock('../../core/data-manager.js', () => ({
         getPersonalBuffFlatBoost: () => 0,
     },
 }));
-vi.mock('../../utils/tea-parser.js', () => ({ getDrinkConcentration: () => mocks.drinkConcentration }));
+vi.mock('../../utils/tea-parser.js', () => ({
+    getDrinkConcentration: () => mocks.drinkConcentration,
+    parseTeaSkillLevelBonus: (...args) =>
+        typeof mocks.teaSkillLevelBonus === 'function' ? mocks.teaSkillLevelBonus(...args) : mocks.teaSkillLevelBonus,
+}));
 vi.mock('../../utils/market-data.js', () => ({
     getItemPrice: (hrid, options) => {
         const sideKey = `${hrid}|${options?.side}`;
@@ -82,6 +88,7 @@ beforeEach(() => {
     mocks.equipmentSpeed = 0;
     mocks.actionStats = {};
     mocks.skills = [];
+    mocks.teaSkillLevelBonus = 0;
     mocks.itemPrice = 0;
     mocks.itemPrices = {};
     mocks.sidePrices = {};
@@ -126,6 +133,19 @@ describe('getUnderLevelPenalty', () => {
 
         expect(alchemyProfitCalculator.getUnderLevelPenalty(100, plannedSkills)).toBeCloseTo(-0.81, 10);
         expect(alchemyProfitCalculator.getUnderLevelPenalty(100)).toBeCloseTo(-0.09, 10);
+    });
+
+    test('a boosted level from Alchemy Tea can lift the character above the item level', () => {
+        // Base 128 + Alchemy Tea's +8 boosted level = 136, above item level 130: no penalty.
+        mocks.skills = [{ skillHrid: '/skills/alchemy', level: 128 }];
+        mocks.teaSkillLevelBonus = 8;
+        expect(alchemyProfitCalculator.getUnderLevelPenalty(130)).toBe(0);
+    });
+
+    test('without the boost, the same base level is still under the item level', () => {
+        mocks.skills = [{ skillHrid: '/skills/alchemy', level: 128 }];
+        mocks.teaSkillLevelBonus = 0;
+        expect(alchemyProfitCalculator.getUnderLevelPenalty(130)).toBeCloseTo((0.9 / 130) * (128 - 130), 10);
     });
 });
 

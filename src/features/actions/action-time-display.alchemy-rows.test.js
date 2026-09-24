@@ -58,6 +58,21 @@ vi.mock('../../api/marketplace.js', () => ({
     default: { isLoaded: () => true, getPrice: () => null, on: () => () => {} },
 }));
 
+// Real calcXpPerAction pulls in the full wisdom chain (experience-parser -> action-context ->
+// loadout-snapshot), which this file has no fixtures for — it is not what these row-timing and
+// row-pricing tests are about. A same-shape stand-in (no wisdom multiplier, so successRate is the
+// only variable) keeps the Unrefine XP assertion below predictable.
+vi.mock('../alchemy/alchemy-rankings.js', () => ({
+    calcXpPerAction: (actionType, itemLevel, successRate) => {
+        let baseXP;
+        if (actionType === 'coinify') baseXP = itemLevel + 10;
+        else if (actionType === 'decompose' || actionType === 'unrefine') baseXP = itemLevel * 1.4 + 14;
+        else if (actionType === 'transmute') baseXP = itemLevel * 1.6 + 16;
+        else return 0;
+        return successRate * baseXP + (1 - successRate) * baseXP * 0.1;
+    },
+}));
+
 vi.mock('./gathering-profit.js', () => ({ calculateGatheringProfit: async () => null }));
 vi.mock('../market/profit-calculator.js', () => ({ default: { calculate: async () => null } }));
 vi.mock('../enhancement/enhancement-xp.js', () => ({ calculateEnhancementPredictions: () => null }));
@@ -220,10 +235,13 @@ describe('a queued alchemy row is priced with its own catalyst', () => {
         expect(profit.profitPerHour).toBe(36_000);
     });
 
-    test('an Unrefine row says why it has no experience figure', () => {
+    test('an Unrefine row is priced with the same XP formula as Decompose (1.4x), not left blank', () => {
+        // CAPE is itemLevel 90; calculateUnrefineProfit's mock answers actionsPerHour: 360,
+        // successRate: 1 — unrefine always succeeds, so the 10%-on-failure term never applies.
         const xp = actionTimeDisplay.alchemyRowXp(queued(1, UNREFINE, CAPE), 10);
-        expect(xp.perHour).toBeNull();
-        expect(xp.reason).toContain('Unrefine');
+        const expectedXpPerAction = 90 * 1.4 + 14;
+        expect(xp.perHour).toBeCloseTo(expectedXpPerAction * 360, 6);
+        expect(xp.total).toBeCloseTo(expectedXpPerAction * 10, 6);
     });
 });
 

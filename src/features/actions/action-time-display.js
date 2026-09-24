@@ -1370,14 +1370,6 @@ class ActionTimeDisplay {
         if (!actionObj?.primaryItemHash) return none;
         const { itemHrid } = this.parseItemHash(actionObj.primaryItemHash);
         const alchemyType = getAlchemyTypeFromActionHrid(actionObj.actionHrid);
-        if (alchemyType === 'unrefine') {
-            return {
-                ...none,
-                reason:
-                    'No experience figure: Unrefine’s experience has no known formula — the coinify, ' +
-                    'decompose and transmute formulas do not cover it.',
-            };
-        }
         const profitData = this.calculateAlchemyProfitForAction(actionObj);
         if (!itemHrid || !alchemyType || !profitData) return none;
         if (!Number.isFinite(profitData.successRate) || !Number.isFinite(profitData.actionsPerHour)) return none;

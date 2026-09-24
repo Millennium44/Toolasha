@@ -37,10 +37,6 @@ const CATALYTIC_TEA_BUFF_TYPE = '/buff_types/alchemy_success';
 // Only used when actionDetailMap is unavailable (offline/no init data) — the
 // real time comes from actionDetails.baseTimeCost, scaled by speed/efficiency.
 const FALLBACK_ACTION_TIME_SECONDS = 20;
-// Under-level transmute penalty: perLevel × (alchemyLevel − itemLevel).
-// Matches alchemy-profit-calculator.js.
-const LEVEL_PENALTY_NUMERATOR = 0.9;
-
 /**
  * Which side of the book each pricing mode buys and sells at.
  * Mirrors the profitCalc_pricingMode options in settings-schema.js.
@@ -618,15 +614,16 @@ class PhiloCalculator {
     /**
      * Under-level transmute success penalty.
      * perLevel = 0.9 / itemLevel, applied only when below the item's level.
+     *
+     * Delegates to the canonical calculator instead of re-deriving the alchemy level, so an
+     * Alchemy Tea in the live slots lifts this table's penalty the same way it lifts the
+     * transmute panel's — reimplementing it here previously read only the base skill level.
+     *
      * @param {number} itemLevel - Item level being transmuted
      * @returns {number} Negative penalty term, or 0 when at/above level
      */
     getLevelPenalty(itemLevel) {
-        const level = itemLevel || 1;
-        const skills = dataManager.getSkills();
-        const alchemySkill = skills?.find((s) => s.skillHrid === '/skills/alchemy');
-        const alchemyLevel = alchemySkill?.level || 1;
-        return alchemyLevel < level ? (LEVEL_PENALTY_NUMERATOR / level) * (alchemyLevel - level) : 0;
+        return alchemyProfitCalculator.getUnderLevelPenalty(itemLevel || 1);
     }
 
     /**

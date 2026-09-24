@@ -90,7 +90,7 @@ vi.mock('../../utils/market-data.js', () => ({
 }));
 
 // --- what the alchemy calculator stands on -------------------------------
-vi.mock('../../utils/tea-parser.js', () => ({ getDrinkConcentration: () => 0 }));
+vi.mock('../../utils/tea-parser.js', () => ({ getDrinkConcentration: () => 0, parseTeaSkillLevelBonus: () => 0 }));
 vi.mock('../../utils/buff-parser.js', () => ({ getAlchemySuccessBonus: () => buffs.alchemyTeaBonus }));
 vi.mock('../../utils/equipment-parser.js', () => ({
     parseEquipmentSpeedBonuses: () => 0,

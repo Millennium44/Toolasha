@@ -1178,7 +1178,11 @@ class AlchemyProfitDisplay {
 
     /**
      * Calculate alchemy base XP based on action type and item level
-     * @param {string} actionType - 'coinify', 'decompose', or 'transmute'
+     *
+     * Unrefine shares Decompose's 1.4× multiplier (the game's AlchemyExpMultiplierMap gives
+     * both the same value) — see `alchemy-rankings.js`'s copy of this formula for the fuller note.
+     *
+     * @param {string} actionType - 'coinify', 'decompose', 'transmute', or 'unrefine'
      * @param {number} itemLevel - Item level from itemDetailMap
      * @returns {number} Base XP before wisdom multiplier
      */
@@ -1187,6 +1191,7 @@ class AlchemyProfitDisplay {
             case 'coinify':
                 return itemLevel + 10;
             case 'decompose':
+            case 'unrefine':
                 return itemLevel * 1.4 + 14;
             case 'transmute':
                 return itemLevel * 1.6 + 16;

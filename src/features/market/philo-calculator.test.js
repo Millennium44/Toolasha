@@ -138,6 +138,13 @@ vi.mock('../../utils/adoption-consent.js', () => ({
 vi.mock('./alchemy-profit-calculator.js', () => ({
     default: {
         calculateTransmuteProfit: () => ({ dropRevenues: mocks.bonusDrops }),
+        // Mirrors the real getUnderLevelPenalty's formula against mocks.skills, so this
+        // suite still drives the under-level scenarios without pulling in the full calculator.
+        getUnderLevelPenalty: (itemLevel) => {
+            const level = itemLevel || 1;
+            const alchemyLevel = mocks.skills?.find((s) => s.skillHrid === '/skills/alchemy')?.level || 1;
+            return alchemyLevel < level ? (0.9 / level) * (alchemyLevel - level) : 0;
+        },
     },
 }));
 

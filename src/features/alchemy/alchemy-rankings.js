@@ -116,7 +116,12 @@ let rateCache = { fingerprint: null, rates: null };
 /**
  * Get base XP for an alchemy action type and item level
  * (the same copy `alchemy-profit-display.js` shows on the panel)
- * @param {string} actionType - 'coinify', 'decompose', or 'transmute'
+ *
+ * Unrefine shares Decompose's 1.4× multiplier — the game's AlchemyExpMultiplierMap gives both
+ * the same value — even though it always succeeds and pays no level penalty; {@link calcXpPerAction}
+ * still applies the success/failure blend below it, which is a no-op at successRate 1.
+ *
+ * @param {string} actionType - 'coinify', 'decompose', 'transmute', or 'unrefine'
  * @param {number} itemLevel - Item level from itemDetailMap
  * @returns {number} Base XP before the wisdom multiplier
  */
@@ -125,6 +130,7 @@ export function getAlchemyBaseXP(actionType, itemLevel) {
         case 'coinify':
             return itemLevel + 10;
         case 'decompose':
+        case 'unrefine':
             return itemLevel * 1.4 + 14;
         case 'transmute':
             return itemLevel * 1.6 + 16;
@@ -135,9 +141,9 @@ export function getAlchemyBaseXP(actionType, itemLevel) {
 
 /**
  * Calculate expected XP per action for an item
- * @param {string} actionType - 'coinify', 'decompose', or 'transmute'
+ * @param {string} actionType - 'coinify', 'decompose', 'transmute', or 'unrefine'
  * @param {number} itemLevel - Item level from itemDetailMap
- * @param {number} successRate - Success rate as a decimal in [0, 1]
+ * @param {number} successRate - Success rate as a decimal in [0, 1] (always 1 for unrefine)
  * @returns {number} Expected XP per action, blending the full and failed-action awards
  */
 export function calcXpPerAction(actionType, itemLevel, successRate) {
