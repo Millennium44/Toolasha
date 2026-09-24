@@ -80,6 +80,11 @@ vi.mock('../../utils/equipment-parser.js', () => ({
     parseRareFindBonus: () => 0,
 }));
 vi.mock('../../utils/action-calculator.js', () => ({ calculateActionStats: () => mocks.actionStats }));
+// alchemy-profit-calculator.js resolves this itself when no actionContext is passed; mirror the
+// raw dataManager mocks above so it behaves exactly as the un-mocked resolver would here.
+vi.mock('../../utils/action-context.js', () => ({
+    resolveActionContext: () => ({ equipment: new Map(), drinks: mocks.drinkSlots }),
+}));
 vi.mock('../../utils/house-efficiency.js', () => ({ calculateHouseRareFind: () => 0 }));
 vi.mock('../../api/marketplace.js', () => ({ default: { getPrice: () => null, on: () => () => {} } }));
 vi.mock('../market/expected-value-calculator.js', () => ({

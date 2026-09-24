@@ -32,6 +32,11 @@ const mocks = vi.hoisted(() => ({
     estimatedItems: new Set(),
     /** Shop-derived values by hrid, standing in for the Labyrinth Shop conversion */
     shopValues: {},
+    /** What resolveActionContext() resolves to when a test wants it to diverge from the raw
+     *  dataManager.getActionDrinkSlots()/getEquipment() mocks above — null falls back to
+     *  mirroring those, so existing tests that never touch this are unaffected. */
+    resolvedDrinks: null,
+    resolvedEquipment: null,
 }));
 
 vi.mock('../../core/config.js', () => ({ default: { getSetting: () => true, getSettingValue: (k, f) => f } }));
@@ -74,6 +79,15 @@ vi.mock('../../utils/action-calculator.js', () => ({
     calculateActionStats: (...args) =>
         typeof mocks.actionStats === 'function' ? mocks.actionStats(...args) : mocks.actionStats,
 }));
+// Mirrors the dataManager.getEquipment()/getActionDrinkSlots() mocks above by default, so a
+// test only needs to set mocks.resolvedDrinks/resolvedEquipment when it wants the resolved
+// (loadout-snapshot-aware) context to diverge from what's raw-slotted.
+vi.mock('../../utils/action-context.js', () => ({
+    resolveActionContext: () => ({
+        equipment: mocks.resolvedEquipment ?? new Map(),
+        drinks: mocks.resolvedDrinks ?? mocks.drinkSlots,
+    }),
+}));
 vi.mock('../../utils/house-efficiency.js', () => ({ calculateHouseRareFind: () => 0 }));
 vi.mock('../../api/marketplace.js', () => ({ default: { getPrice: () => null, on: () => () => {} } }));
 vi.mock('./expected-value-calculator.js', () => ({ default: { getCachedValue: () => null, isInitialized: false } }));
@@ -94,6 +108,8 @@ beforeEach(() => {
     mocks.sidePrices = {};
     mocks.estimatedItems = new Set();
     mocks.shopValues = {};
+    mocks.resolvedDrinks = null;
+    mocks.resolvedEquipment = null;
 });
 
 describe('calculateSuccessRateBreakdown', () => {
@@ -588,6 +604,87 @@ describe('tea speed is applied on every alchemy path', () => {
         expect(result.actionSpeedBreakdown.tea).toBe(0);
         expect(result.totalTeaCostPerHour).toBe(0);
         expect(result.consumableCosts).toEqual([]);
+    });
+});
+
+describe('with no actionContext, drinks resolve through one path for every term', () => {
+    // Raw dataManager.getActionDrinkSlots() and the resolveActionContext() mock (which stands
+    // in for the loadout-snapshot-aware, stock/buff-filtered resolver) are set independently
+    // here so a test can prove the calculator reads only the resolved one, never a mix.
+    const ITEM_DETAIL_MAP = {
+        '/items/alchemy_tea': { name: 'Alchemy Tea' },
+        '/items/loadout_tea': { name: 'Loadout Tea' },
+        '/items/relic': {
+            name: 'Relic',
+            itemLevel: 130,
+            sellPrice: 1000,
+            alchemyDetail: { isCoinifiable: true, bulkMultiplier: 1 },
+        },
+    };
+    const alchemyAction = { type: '/action_types/alchemy', baseTimeCost: 20 * 1e9 };
+
+    beforeEach(() => {
+        mocks.initClientData = {
+            itemDetailMap: ITEM_DETAIL_MAP,
+            actionDetailMap: { '/actions/alchemy/coinify': alchemyAction },
+        };
+        mocks.skills = [{ skillHrid: '/skills/alchemy', level: 122 }];
+        mocks.equipmentSpeed = 0;
+        mocks.drinkConcentration = 0;
+        mocks.actionStats = { actionTime: 20, totalEfficiency: 0, efficiencyBreakdown: {} };
+        // +8 boosted alchemy level, but only when a boosting tea (either fixture) is among the
+        // drinks actually fed to the penalty/efficiency calc — so the test can tell which set won.
+        mocks.teaSkillLevelBonus = (_actionType, drinks) =>
+            (drinks || []).some((d) => d?.itemHrid === '/items/alchemy_tea' || d?.itemHrid === '/items/loadout_tea')
+                ? 8
+                : 0;
+    });
+
+    test('a slotted tea with zero stock and no running buff is neither charged nor relieves the under-level penalty', () => {
+        // Physically slotted (raw), but resolveActionContext drops it — out of stock, buff expired.
+        mocks.drinkSlots = [{ itemHrid: '/items/alchemy_tea' }];
+        mocks.itemPrices = { '/items/relic': 0, '/items/alchemy_tea': 500 };
+        mocks.resolvedDrinks = [];
+
+        const result = alchemyProfitCalculator.calculateCoinifyProfit('/items/relic');
+
+        expect(result).not.toBeNull();
+        expect(result.totalTeaCostPerHour).toBe(0);
+        // Level 122 alchemist vs item level 130, no tea-boosted level: full, unrelieved penalty.
+        expect(result.successRateBreakdown.levelPenalty).toBeCloseTo((0.9 / 130) * (122 - 130), 10);
+    });
+
+    test('a saved loadout snapshot whose drinks differ from the slotted ones prices the snapshot drinks', () => {
+        mocks.drinkSlots = [{ itemHrid: '/items/alchemy_tea' }]; // what is physically slotted
+        mocks.resolvedDrinks = [{ itemHrid: '/items/loadout_tea' }]; // what the saved loadout drinks
+        mocks.alchemyTeaBonus = 0.2; // makes drinking clearly worth the (cheap) tea cost
+        mocks.itemPrices = { '/items/relic': 0, '/items/alchemy_tea': 1, '/items/loadout_tea': 1 };
+
+        const result = alchemyProfitCalculator.calculateCoinifyProfit('/items/relic');
+
+        expect(result).not.toBeNull();
+        expect(result.winningTeaUsed).toBe(true);
+        expect(result.consumableCosts.map((c) => c.itemHrid)).toEqual(['/items/loadout_tea']);
+        // The under-level penalty is relieved too — the same resolved drinks feed both terms.
+        expect(result.successRateBreakdown.levelPenalty).toBe(0);
+    });
+
+    test('an explicit actionContext is used as-is, ignoring both the raw slots and the resolved snapshot', () => {
+        mocks.drinkSlots = [{ itemHrid: '/items/alchemy_tea' }];
+        mocks.resolvedDrinks = [{ itemHrid: '/items/loadout_tea' }];
+        mocks.alchemyTeaBonus = 0.2;
+        mocks.itemPrices = { '/items/relic': 0, '/items/alchemy_tea': 1, '/items/loadout_tea': 1 };
+        const explicitContext = {
+            equipment: new Map(),
+            drinks: [{ itemHrid: '/items/alchemy_tea' }],
+            skills: mocks.skills,
+            fixedTeaSelection: true,
+        };
+
+        const result = alchemyProfitCalculator.calculateCoinifyProfit('/items/relic', 0, false, null, explicitContext);
+
+        expect(result).not.toBeNull();
+        expect(result.consumableCosts.map((c) => c.itemHrid)).toEqual(['/items/alchemy_tea']);
     });
 });
 

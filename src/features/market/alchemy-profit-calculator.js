@@ -36,6 +36,7 @@ import {
     parseRareFindBonus,
 } from '../../utils/equipment-parser.js';
 import { calculateActionStats } from '../../utils/action-calculator.js';
+import { resolveActionContext } from '../../utils/action-context.js';
 import { calculateHouseRareFind } from '../../utils/house-efficiency.js';
 import expectedValueCalculator from './expected-value-calculator.js';
 import {
@@ -399,8 +400,15 @@ class AlchemyProfitCalculator {
         const baseAlchemyLevel = alchemySkill?.level || 1;
 
         const itemDetailMap = teaContext.itemDetailMap ?? this.getItemDetailMap();
-        const drinkSlots = teaContext.drinkSlots ?? dataManager.getActionDrinkSlots('/action_types/alchemy');
-        const equipment = teaContext.equipment ?? dataManager.getEquipment();
+        // drinkSlots and equipment are resolved together (never one raw, one loadout-aware) —
+        // a caller that supplies neither gets the same resolveActionContext pair every other
+        // undefaulted alchemy term uses, not an independent raw read of each.
+        const resolved =
+            teaContext.drinkSlots !== undefined && teaContext.equipment !== undefined
+                ? null
+                : resolveActionContext('/action_types/alchemy');
+        const drinkSlots = teaContext.drinkSlots ?? resolved.drinks;
+        const equipment = teaContext.equipment ?? resolved.equipment;
         const drinkConcentration = getDrinkConcentration(equipment, itemDetailMap);
         const teaSkillLevelBonus = parseTeaSkillLevelBonus(
             '/action_types/alchemy',
@@ -777,13 +785,20 @@ class AlchemyProfitCalculator {
 
             // Calculate action stats (time + efficiency) using shared helper
             // Alchemy uses item level (not action requirement) for efficiency calculation
-            const equipment = actionContext?.equipment ?? dataManager.getEquipment();
-            const drinkSlots = actionContext?.drinks ?? dataManager.getActionDrinkSlots('/action_types/alchemy');
+            // A caller-supplied actionContext (tea optimizer combos, a queued row's own
+            // context) is used exactly as given. With none, resolveActionContext is called
+            // ONCE and that same equipment/drinks pair feeds every term below — tea cost,
+            // action speed, the under-level penalty and calculateActionStats' efficiency —
+            // so a slotted tea that is out of stock, or a saved loadout that differs from
+            // what's slotted, can't be charged by one term and ignored by another.
+            const resolvedContext = actionContext ?? resolveActionContext('/action_types/alchemy');
+            const equipment = resolvedContext.equipment ?? dataManager.getEquipment();
+            const drinkSlots = resolvedContext.drinks ?? dataManager.getActionDrinkSlots('/action_types/alchemy');
             const skills = actionContext?.skills ?? dataManager.getSkills();
             const actionStats = calculateActionStats(actionDetails, {
                 skills,
                 equipment,
-                actionContext,
+                actionContext: resolvedContext,
                 itemDetailMap: gameData.itemDetailMap,
                 includeCommunityBuff: true,
                 includeBreakdown: true,
@@ -1077,13 +1092,20 @@ class AlchemyProfitCalculator {
 
             // Calculate action stats (time + efficiency) using shared helper
             // Alchemy uses item level (not action requirement) for efficiency calculation
-            const equipment = actionContext?.equipment ?? dataManager.getEquipment();
-            const drinkSlots = actionContext?.drinks ?? dataManager.getActionDrinkSlots('/action_types/alchemy');
+            // A caller-supplied actionContext (tea optimizer combos, a queued row's own
+            // context) is used exactly as given. With none, resolveActionContext is called
+            // ONCE and that same equipment/drinks pair feeds every term below — tea cost,
+            // action speed, the under-level penalty and calculateActionStats' efficiency —
+            // so a slotted tea that is out of stock, or a saved loadout that differs from
+            // what's slotted, can't be charged by one term and ignored by another.
+            const resolvedContext = actionContext ?? resolveActionContext('/action_types/alchemy');
+            const equipment = resolvedContext.equipment ?? dataManager.getEquipment();
+            const drinkSlots = resolvedContext.drinks ?? dataManager.getActionDrinkSlots('/action_types/alchemy');
             const skills = actionContext?.skills ?? dataManager.getSkills();
             const actionStats = calculateActionStats(actionDetails, {
                 skills,
                 equipment,
-                actionContext,
+                actionContext: resolvedContext,
                 itemDetailMap: gameData.itemDetailMap,
                 includeCommunityBuff: true,
                 includeBreakdown: true,
@@ -1450,9 +1472,16 @@ class AlchemyProfitCalculator {
             }
 
             const itemLevel = itemDetails.itemLevel || 1;
+            // A caller-supplied actionContext (tea optimizer combos, a queued row's own
+            // context) is used exactly as given. With none, resolveActionContext is called
+            // ONCE and that same equipment/drinks pair feeds every term below — tea cost,
+            // action speed, the under-level penalty and calculateActionStats' efficiency —
+            // so a slotted tea that is out of stock, or a saved loadout that differs from
+            // what's slotted, can't be charged by one term and ignored by another.
+            const resolvedContext = actionContext ?? resolveActionContext('/action_types/alchemy');
             const skills = actionContext?.skills ?? dataManager.getSkills();
-            const equipment = actionContext?.equipment ?? dataManager.getEquipment();
-            const drinkSlots = actionContext?.drinks ?? dataManager.getActionDrinkSlots('/action_types/alchemy');
+            const equipment = resolvedContext.equipment ?? dataManager.getEquipment();
+            const drinkSlots = resolvedContext.drinks ?? dataManager.getActionDrinkSlots('/action_types/alchemy');
             const levelPenalty = this.getUnderLevelPenalty(itemLevel, skills, {
                 drinkSlots,
                 itemDetailMap: gameData.itemDetailMap,
@@ -1473,7 +1502,7 @@ class AlchemyProfitCalculator {
             const actionStats = calculateActionStats(actionDetails, {
                 skills,
                 equipment,
-                actionContext,
+                actionContext: resolvedContext,
                 itemDetailMap: gameData.itemDetailMap,
                 includeCommunityBuff: true,
                 includeBreakdown: true,
@@ -1823,13 +1852,17 @@ class AlchemyProfitCalculator {
             const actionDetails = gameData?.actionDetailMap?.['/actions/alchemy/unrefine'];
             if (!itemDetails || !unrefineDetail?.baseItemHrid || !actionDetails) return null;
 
-            const equipment = actionContext?.equipment ?? dataManager.getEquipment();
-            const drinkSlots = actionContext?.drinks ?? dataManager.getActionDrinkSlots('/action_types/alchemy');
+            // A caller-supplied actionContext is used exactly as given. With none,
+            // resolveActionContext is called ONCE and that same equipment/drinks pair
+            // feeds every term below, matching the other three alchemy actions.
+            const resolvedContext = actionContext ?? resolveActionContext('/action_types/alchemy');
+            const equipment = resolvedContext.equipment ?? dataManager.getEquipment();
+            const drinkSlots = resolvedContext.drinks ?? dataManager.getActionDrinkSlots('/action_types/alchemy');
             const skills = actionContext?.skills ?? dataManager.getSkills();
             const actionStats = calculateActionStats(actionDetails, {
                 skills,
                 equipment,
-                actionContext,
+                actionContext: resolvedContext,
                 itemDetailMap: gameData.itemDetailMap,
                 includeCommunityBuff: true,
                 includeBreakdown: true,
