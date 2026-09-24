@@ -419,6 +419,13 @@ export const settingsGroups = {
                 ],
                 help: 'Choose how to calculate the total value for queued actions. Profit shows net earnings after materials and drinks. Estimated Value shows gross revenue after market tax (always positive).',
             },
+            actionQueue_coinifyCashAsCowbells: {
+                id: 'actionQueue_coinifyCashAsCowbells',
+                label: 'Coinify cash in Cowbells',
+                type: 'checkbox',
+                default: false,
+                help: "Also show a coinify row's cash as the number of Cowbells it would buy, at the market price of a Bag of 10 Cowbells ÷ 10. Omitted when that price is unavailable.",
+            },
             actionQueue_showXp: {
                 id: 'actionQueue_showXp',
                 label: 'Queued actions: Show XP for queued actions',

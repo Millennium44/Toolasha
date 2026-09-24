@@ -39,7 +39,7 @@ import {
     parseGatheringBonus,
     parseGourmetBonus,
 } from '../../utils/tea-parser.js';
-import { getItemPrices } from '../../utils/market-data.js';
+import { getItemPrices, getRawMarketAskPrice } from '../../utils/market-data.js';
 import { resolveActionContext } from '../../utils/action-context.js';
 import { affordableActions } from '../../utils/material-calculator.js';
 import { capProfitData, liquidityMarkerHtml } from '../../utils/liquidity-cap.js';
@@ -142,6 +142,12 @@ const PHILOSOPHERS_MIRROR_HRID = '/items/philosophers_mirror';
 
 /** The one catalyst that is not type-specific */
 const PRIME_CATALYST_HRID = '/items/prime_catalyst';
+
+/** Coinify's action hrid — the only alchemy action whose "Cash" line this file draws */
+const COINIFY_ACTION_HRID = '/actions/alchemy/coinify';
+
+/** What the optional Cowbells line prices a coinify row's cash against */
+const BAG_OF_10_COWBELLS_HRID = '/items/bag_of_10_cowbells';
 
 const QUEUE_EDIT_MENU_MARKER_CLASS = 'toolasha-queue-edit-menu-enhanced';
 const QUEUE_EDIT_MENU_STYLE_ID = 'toolasha-queue-edit-menu-width-styles';
@@ -5245,7 +5251,9 @@ class ActionTimeDisplay {
                             // A minus, not a bare number: the colour alone carried the sign, and a
                             // loss read as a gain to anyone who could not tell the two reds apart
                             const profitSign = actionProfit >= 0 ? '+' : '-';
-                            profitDiv.innerHTML = `Profit: <span style="color: ${profitColor};">${profitSign}${formatLargeNumber(Math.abs(Math.round(actionProfit)))}</span>`;
+                            let html = `Profit: <span style="color: ${profitColor};">${profitSign}${formatLargeNumber(Math.abs(Math.round(actionProfit)))}</span>`;
+                            html += this.buildQueueCoinifyCashLine(action);
+                            profitDiv.innerHTML = html;
                         }
                     }
                 }
@@ -5433,6 +5441,67 @@ class ActionTimeDisplay {
         }
 
         return null;
+    }
+
+    /**
+     * The Cowbells line under a coinify Cash figure, when the setting is on and the bag has a
+     * live price. Reads the market's raw ask — never the Iron Cow valuation `getItemPrice`
+     * would substitute on an IC character — because this converts a coin total into units of a
+     * tradable good, not into another value estimate.
+     * @param {number} cash - Coins the row is expected to pay out (a total, or a rate — the
+     *   suffix on the number is the caller's, this only names the unit it converts into)
+     * @param {string} [suffix=''] - Appended after "Cowbells", e.g. '/hr' to match a rate line
+     * @returns {string} HTML fragment, or empty when the setting is off or the bag is unpriced
+     */
+    buildCoinifyCowbellsLine(cash, suffix = '') {
+        if (!config.getSettingValue('actionQueue_coinifyCashAsCowbells', false)) return '';
+        const bagPrice = getRawMarketAskPrice(BAG_OF_10_COWBELLS_HRID);
+        if (typeof bagPrice !== 'number' || bagPrice <= 0) return '';
+        const cowbellPrice = bagPrice / 10;
+        const cowbells = cash / cowbellPrice;
+        return ` <span style="color:#888;">(≈ ${formatLargeNumber(Math.round(cowbells))} Cowbells${suffix})</span>`;
+    }
+
+    /**
+     * "Cash" for a coinify action: the coins the coinify step itself pays out, as opposed to
+     * Profit, which nets that against the value of the items coinified. Coins are never taxed,
+     * so this is just the row's own success rate (the same catalyst/tea combo Profit already
+     * used) times its coins-per-success figure, over however many attempts the row covers.
+     * @param {Object} profitData - What `calculateCoinifyProfit` returned for this row
+     * @param {number} attempts - Attempts the row covers — a counted/material-limited row's
+     *   total, or (for a per-hour figure) its `actionsPerHour`
+     * @returns {number|null} Coins, or null when the calculator gave no per-attempt figure
+     */
+    coinifyCashFor(profitData, attempts) {
+        if (!profitData || typeof profitData.incomePerAttempt !== 'number') return null;
+        if (typeof attempts !== 'number' || !Number.isFinite(attempts)) return null;
+        return profitData.incomePerAttempt * attempts;
+    }
+
+    /**
+     * The "Cash" line (plus its optional Cowbells line) for a queued coinify row, appended after
+     * the row's own Profit line. Empty for every other action type, or when the row's calculator
+     * call could not price an attempt (no market data for the item, no coinify recipe, etc).
+     * @param {Object} action - Queued action with {actionHrid, primaryItemHash, count}
+     * @returns {string} HTML fragment (possibly empty)
+     */
+    buildQueueCoinifyCashLine(action) {
+        if (action.actionHrid !== COINIFY_ACTION_HRID || !action.primaryItemHash) return '';
+        const actionsCount = action.count ?? 0;
+        if (!actionsCount) return '';
+
+        const profitData = this.calculateAlchemyProfitForAction(action);
+        const cashTotal = this.coinifyCashFor(profitData, actionsCount);
+        if (cashTotal === null) return '';
+
+        const cashColor = config.getSettingValue('color_profit', '#4ade80');
+        const tooltip =
+            'Coins the coinify step pays out. Profit is lower because it subtracts the value of the items coinified.';
+        let html =
+            `<br><span style="color:#888;" title="${tooltip}">Cash:</span> ` +
+            `<span style="color: ${cashColor};" title="${tooltip}">+${formatLargeNumber(Math.round(cashTotal))}</span>`;
+        html += this.buildCoinifyCowbellsLine(cashTotal);
+        return html;
     }
 
     /**
@@ -5673,6 +5742,21 @@ class ActionTimeDisplay {
                         : config.getSettingValue('color_loss', '#f87171');
                 const remSign = remainingProfit >= 0 ? '+' : '';
                 html += ` <span style="color:#888;">·</span> <span style="color:#888;">remaining</span> <span style="color:${remColor}; font-weight:600;">${remSign}${formatLargeNumber(Math.abs(Math.round(remainingProfit)))}</span>`;
+            }
+
+            // Coinify's own cash rate, alongside Profit rather than in place of it — Profit
+            // nets out what went in, Cash is what the coinify step alone pays out
+            if (actionHrid === COINIFY_ACTION_HRID) {
+                const cashPerHour = this.coinifyCashFor(profitData, profitData.actionsPerHour);
+                if (cashPerHour !== null) {
+                    const cashColor = config.getSettingValue('color_profit', '#4ade80');
+                    const tooltip =
+                        'Coins the coinify step pays out. Profit is lower because it subtracts the value of the items coinified.';
+                    html +=
+                        `<br><span style="color:#888;" title="${tooltip}">Cash:</span> ` +
+                        `<span style="color:${cashColor}; font-weight:600;" title="${tooltip}">+${formatLargeNumber(Math.round(cashPerHour))}/hr</span>`;
+                    html += this.buildCoinifyCowbellsLine(cashPerHour, '/hr');
+                }
             }
 
             if (this.activeBarProfitId !== calcId) return;

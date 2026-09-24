@@ -216,6 +216,28 @@ export function isPriceOverridden(itemHrid, enhancementLevel = 0, side = 'sell')
 }
 
 /**
+ * A pure market ask price, bypassing custom overrides and Iron Cow valuation.
+ *
+ * `getItemPrice` deliberately returns an Iron Cow character's off-market valuation instead of
+ * the book price — right for profit math, wrong for "what would this cost to buy on the
+ * market". A display that converts a coin figure into units of a tradable good (e.g. Cowbells)
+ * wants the real ask on any character, IC included.
+ *
+ * @param {string} itemHrid - Item HRID
+ * @param {number} [enhancementLevel=0] - Enhancement level
+ * @returns {number|null} The reconciled market ask price, or null if unpriced
+ */
+export function getRawMarketAskPrice(itemHrid, enhancementLevel = 0) {
+    if (!itemHrid || typeof itemHrid !== 'string') {
+        return null;
+    }
+    refreshMarketValues();
+    const priceData = marketAPI.getPrice(itemHrid, enhancementLevel);
+    const { ask } = reconcileBook(priceData?.ask ?? null, priceData?.bid ?? null, itemHrid, enhancementLevel);
+    return typeof ask === 'number' && ask >= 0 ? ask : null;
+}
+
+/**
  * Get a short, human-readable description of how stale the current market price data is.
  * Backed by marketAPI's fetch timestamp (data is refreshed at most every CACHE_DURATION).
  * @returns {string|null} e.g. "prices 4m old", "prices updated just now", or null if no data loaded yet
