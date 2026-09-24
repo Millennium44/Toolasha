@@ -48,6 +48,7 @@ vi.mock('../../utils/profit-constants.js', () => ({ MARKET_TAX: 0.02 }));
 vi.mock('../../utils/profit-helpers.js', () => ({
     calculateActionsPerHour: (t) => (t > 0 ? 3600 / Math.max(3, t) : 0),
     calculatePriceAfterTax: (price, tax = 0.02) => price * (1 - tax),
+    outputTaxRate: (tax = 0.02) => tax,
     calculateProfitPerAction: (perHour, actionsPerHour) => (actionsPerHour > 0 ? perHour / actionsPerHour : 0),
     calculateProfitPerDay: (perHour) => perHour * 24,
     calculateTeaCostsPerHour: () => ({ costs: [], totalCostPerHour: 0, hasMissingPrices: false }),

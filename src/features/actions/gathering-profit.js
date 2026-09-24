@@ -16,6 +16,7 @@ import { getItemPrice } from '../../utils/market-data.js';
 import { GATHERING_TYPES, MARKET_TAX } from '../../utils/profit-constants.js';
 import { getActionEfficiencyContext } from '../../utils/efficiency.js';
 import { expectedProcessedItems } from '../../utils/gathering-processing.js';
+import { isIronCowCharacter } from '../../utils/ironcow-valuation.js';
 import {
     calculateProfitPerAction,
     calculateProfitPerDay,
@@ -259,8 +260,10 @@ export async function calculateGatheringProfit(actionHrid) {
         processingConversions.some((conversion) => conversion.missingPrice) ||
         (bonusRevenue?.hasMissingPrices ?? false);
 
-    // Calculate market tax
-    const marketTax = revenuePerHour * MARKET_TAX;
+    // Calculate market tax — an Iron Cow character never pays it: it cannot use the
+    // market at all, so its revenue (vendor sale, coinify, or the value-map fallback
+    // for an item with neither) is never actually taxed.
+    const marketTax = isIronCowCharacter() ? 0 : revenuePerHour * MARKET_TAX;
 
     // Calculate net profit (revenue - market tax - drink costs)
     const profitPerHour = revenuePerHour - marketTax - drinkCostPerHour;

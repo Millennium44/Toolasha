@@ -19,7 +19,7 @@ import { DUNGEON_CHEST_CHEST_KEYS } from '../../utils/dungeon-keys.js';
 import { getKeyUnitCost } from '../../utils/key-cost.js';
 import { createMutationWatcher } from '../../utils/dom-observer-helpers.js';
 import { yieldToEventLoop } from '../../utils/background-work.js';
-import { ironCowBook } from '../../utils/ironcow-valuation.js';
+import { ironCowBook, isIronCowCharacter } from '../../utils/ironcow-valuation.js';
 
 // How long the per-item pricing loop may run before handing the thread back.
 // High-enhancement equipment runs calculateEnhancementPath (100+ ms per +20
@@ -534,8 +534,10 @@ class InventoryBadgeManager {
                 }
             }
 
-            // Apply market tax if setting is enabled
-            if (config.getSetting('invSort_netOfTax')) {
+            // Apply market tax if setting is enabled — never for an Iron Cow character,
+            // which has no market access to pay it on regardless of where the badge's
+            // price came from (vendor, coinify, or the market-price fallback)
+            if (config.getSetting('invSort_netOfTax') && !isIronCowCharacter()) {
                 const taxRate = itemHrid === COWBELL_BAG_HRID ? COWBELL_BAG_TAX : MARKET_TAX;
                 askPrice *= 1 - taxRate;
                 bidPrice *= 1 - taxRate;

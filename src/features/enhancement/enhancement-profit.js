@@ -12,6 +12,7 @@
  */
 
 import { MARKET_TAX } from '../../utils/profit-constants.js';
+import { isIronCowCharacter } from '../../utils/ironcow-valuation.js';
 
 /**
  * Cost this run paid vs the prediction's expected cost, at this run's own unit
@@ -82,11 +83,12 @@ export const MARKET_SELL_TAX = MARKET_TAX;
  * @param {Object} session - Live enhancement session
  * @param {(hrid: string, level: number) => ({bid:number, ask:number}|null)} getPrices
  *   - Market price lookup (injected for testability)
- * @param {number} [sellTax=MARKET_SELL_TAX] - Fraction taken on a sale
+ * @param {number} [sellTax] - Fraction taken on a sale; `MARKET_SELL_TAX`, or `0` for the
+ *   current Iron Cow character, which has no market access to sell an enhanced piece on
  * @returns {{level:number, baseLevel:number, spent:number, valueN:number|null, value0:number|null,
  *   net:number|null, sellTax:number}|null} `value0` is the bid at `baseLevel`, the session's start level
  */
-export function valueVsCost(session, getPrices, sellTax = MARKET_SELL_TAX) {
+export function valueVsCost(session, getPrices, sellTax = isIronCowCharacter() ? 0 : MARKET_SELL_TAX) {
     if (!session?.itemHrid) return null;
     const level = session.currentLevel || 0;
     if (level <= 0) return null;

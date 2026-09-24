@@ -21,6 +21,7 @@ import { getItemPriceInfo, getPricingMode } from './market-data.js';
 import { getCustomPrice } from '../features/settings/custom-price-overrides.js';
 import { getShopCoinCost } from './game-lookups.js';
 import { getProductionCost } from '../features/enhancement/tooltip-enhancement.js';
+import { isIronCowCharacter } from './ironcow-valuation.js';
 
 /**
  * Calculate actions per hour from action time
@@ -219,6 +220,26 @@ export function calculateTeaCostsPerHour({
 }
 
 /**
+ * The tax rate that actually applies to a character's output revenue.
+ *
+ * An Iron Cow character cannot use the marketplace at all, so nothing it
+ * realizes — a vendor sale, a coinify, or the game's own value-map estimate
+ * for an item with neither (the same fallback a market character's empty
+ * order book gets) — ever pays the marketplace fee. The fallback case is
+ * still a proxy for something this character cannot sell on the market
+ * either way, not a sale on it, so it is untaxed for the same reason the
+ * vendor/coinify figures are. The rate is character-wide rather than
+ * per-item so every output-revenue call site gets it for free by going
+ * through {@link calculatePriceAfterTax}.
+ *
+ * @param {number} [taxRate=MARKET_TAX] - The rate that would apply on a market character
+ * @returns {number} `0` for the current Iron Cow character, `taxRate` otherwise
+ */
+export function outputTaxRate(taxRate = MARKET_TAX) {
+    return isIronCowCharacter() ? 0 : taxRate;
+}
+
+/**
  * Calculate price after marketplace tax
  * @param {number} price - Price before tax
  * @param {number} [taxRate=MARKET_TAX] - Tax rate (e.g., 0.05 for 5%)
@@ -228,7 +249,7 @@ export function calculateTeaCostsPerHour({
  * calculatePriceAfterTax(100) // Returns 95 (MARKET_TAX is 5% since the marketplace patch)
  */
 export function calculatePriceAfterTax(price, taxRate = MARKET_TAX) {
-    return price * (1 - taxRate);
+    return price * (1 - outputTaxRate(taxRate));
 }
 
 /**
@@ -313,7 +334,7 @@ export function calculateProductionActionTotalsFromBase({
     const totalGourmetRevenue = totalGourmetItems * outputPrice;
     const totalBonusRevenue = bonusDrops.reduce((sum, drop) => sum + (drop.revenuePerAction || 0) * actionsCount, 0);
     const totalRevenue = totalBaseRevenue + totalGourmetRevenue + totalBonusRevenue;
-    const totalMarketTax = totalRevenue * MARKET_TAX;
+    const totalMarketTax = totalRevenue * outputTaxRate();
     const totalMaterialCost = materialCosts.reduce((sum, material) => sum + material.totalCost * actionsCount, 0);
     const hoursNeeded = calculateHoursForActions(actionsCount, effectiveActionsPerHour);
     const totalTeaCost = totalTeaCostPerHour * hoursNeeded;
@@ -384,7 +405,7 @@ export function calculateGatheringActionTotalsFromBase({
     const totalProcessingRevenue = (processingRevenueBonusPerAction || 0) * actionsCount;
     const totalGourmetRevenue = (gourmetRevenueBonusPerAction || 0) * actionsCount;
     const totalRevenue = totalBaseRevenue + totalGourmetRevenue + totalBonusRevenue + totalProcessingRevenue;
-    const totalMarketTax = totalRevenue * MARKET_TAX;
+    const totalMarketTax = totalRevenue * outputTaxRate();
     const hoursNeeded = calculateHoursForActions(actionsCount, effectiveActionsPerHour);
     const totalDrinkCost = drinkCostPerHour * hoursNeeded;
     const totalCosts = totalDrinkCost + totalMarketTax;
@@ -477,6 +498,7 @@ export default {
     calculateDrinksPerHour,
     calculateTeaCostsPerHour,
     calculatePriceAfterTax,
+    outputTaxRate,
     createPriceCache,
     resolveItemPrice,
 

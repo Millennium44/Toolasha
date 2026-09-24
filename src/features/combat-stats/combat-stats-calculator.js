@@ -11,7 +11,7 @@ import { DUNGEON_CHEST_ENTRY_KEYS, DUNGEON_CHEST_CHEST_KEYS } from '../../utils/
 import { describeKeyCost, resolveKeyPricing } from '../../utils/key-cost.js';
 import { treasureTracker } from '../../utils/bundle-bridge.js';
 import { MARKET_TAX, COWBELL_BAG_HRID, COWBELL_BAG_TAX } from '../../utils/profit-constants.js';
-import { ironCowBook } from '../../utils/ironcow-valuation.js';
+import { ironCowBook, isIronCowCharacter } from '../../utils/ironcow-valuation.js';
 import { salesTaxNetted } from './sales-tax-view.js';
 
 /**
@@ -113,9 +113,11 @@ export function calculateIncome(lootMap) {
                     // what they fetch when the reader has asked for net income.
                     // Coin is handled above (face value, never sold); containers
                     // use an expected value that is already net of the tax. A
-                    // vendor or coinify value is not a market sale and is untaxed.
+                    // vendor or coinify value is not a market sale and is untaxed —
+                    // and neither is a plain market price on an Iron Cow character,
+                    // which has no market access to realize it through either.
                     const mult =
-                        !ironCow && salesTaxNetted()
+                        !ironCow && !isIronCowCharacter() && salesTaxNetted()
                             ? 1 - (loot.itemHrid === COWBELL_BAG_HRID ? COWBELL_BAG_TAX : MARKET_TAX)
                             : 1;
                     totalAsk += prices.ask * itemCount * mult;

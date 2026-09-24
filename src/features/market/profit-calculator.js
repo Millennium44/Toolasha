@@ -14,6 +14,7 @@ import { MARKET_TAX } from '../../utils/profit-constants.js';
 import {
     calculateActionsPerHour,
     calculatePriceAfterTax,
+    outputTaxRate,
     calculateProfitPerAction,
     calculateProfitPerDay,
     calculateTeaCostsPerHour,
@@ -239,8 +240,9 @@ class ProfitCalculator {
         // Apply efficiency multiplier to bonus revenue (efficiency repeats the action, including bonus rolls)
         const efficiencyBoostedBonusRevenue = (bonusRevenue?.totalBonusRevenue || 0) * efficiencyMultiplier;
 
-        // Calculate market tax of gross revenue including bonus revenue
-        const marketTax = (revenuePerHour + efficiencyBoostedBonusRevenue) * MARKET_TAX;
+        // Calculate market tax of gross revenue including bonus revenue — zero for
+        // an Iron Cow character, which never has real market access to pay it on
+        const marketTax = (revenuePerHour + efficiencyBoostedBonusRevenue) * outputTaxRate(MARKET_TAX);
 
         // Total costs per hour (materials + teas + market tax)
         const totalCostPerHour = materialCostPerHour + totalTeaCostPerHour + marketTax;

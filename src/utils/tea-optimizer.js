@@ -13,10 +13,14 @@ import {
     parseEquipmentEfficiencyBonuses,
     parseGatheringQuantityBonus,
 } from './equipment-parser.js';
-import { calculateActionsPerHour, calculateEffectiveActionsPerHour, calculateDrinksPerHour } from './profit-helpers.js';
+import {
+    calculateActionsPerHour,
+    calculateEffectiveActionsPerHour,
+    calculateDrinksPerHour,
+    outputTaxRate,
+} from './profit-helpers.js';
 import { getItemPrice, getItemPriceInfo } from './market-data.js';
 import { calculateBonusRevenue } from './bonus-revenue-calculator.js';
-import { MARKET_TAX } from './profit-constants.js';
 import alchemyProfitCalculator from '../features/market/alchemy-profit-calculator.js';
 import { runningAction } from './combat-actions.js';
 import { expectedProcessedItems } from './gathering-processing.js';
@@ -413,7 +417,7 @@ function calculateGatheringGoldPerHour(actionDetails, buffs, playerLevel, otherE
     const efficiencyBoostedBonusRevenue = bonusRevenue.totalBonusRevenue * efficiencyMultiplier;
     totalRevenue += efficiencyBoostedBonusRevenue;
 
-    const profitPerHour = totalRevenue * (1 - MARKET_TAX);
+    const profitPerHour = totalRevenue * (1 - outputTaxRate());
 
     return profitPerHour;
 }
@@ -513,7 +517,7 @@ function calculateProductionGoldPerHour(actionDetails, buffs, playerLevel, other
 
     // Apply market tax to the revenue portion only (including bonus revenue)
     const revenuePerHour = actionsPerHour * outputRevenue * efficiencyMultiplier;
-    const marketTax = (revenuePerHour + efficiencyBoostedBonusRevenue) * MARKET_TAX;
+    const marketTax = (revenuePerHour + efficiencyBoostedBonusRevenue) * outputTaxRate();
     const netProfitPerHour = grossProfitPerHour + efficiencyBoostedBonusRevenue - marketTax;
 
     return netProfitPerHour;

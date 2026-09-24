@@ -13,7 +13,7 @@ import { calculatePriceAfterTax } from '../../utils/profit-helpers.js';
 import { calculateEVBatch, terminateEVWorkerPool } from '../../utils/ev-worker-manager.js';
 import { MARKET_TAX } from '../../utils/profit-constants.js';
 import { PATIENT_TICK_SETTING_KEYS } from '../../utils/patient-tick.js';
-import { IRONCOW_VALUATION_SETTING } from '../../utils/ironcow-valuation.js';
+import { IRONCOW_VALUATION_SETTING, isIronCowCharacter } from '../../utils/ironcow-valuation.js';
 
 /**
  * ExpectedValueCalculator class handles EV calculations for openable containers
@@ -495,10 +495,13 @@ class ExpectedValueCalculator {
         }
 
         // Regular market item - get price based on pricing mode (sell side - you're selling drops)
+        // getItemPrice already returns an Iron Cow character's own valuation transparently
+        // here (vendor, coinify, or its market-price fallback) — none of which that
+        // character can realize through an actual market sale, so it needs no tax either.
         const dropPrice = getItemPrice(itemHrid, { enhancementLevel, context: 'profit', side: 'sell' });
         if (!(dropPrice > 0)) return null;
         const hasOverride = getCustomPrice(itemHrid, enhancementLevel, 'sell') !== null;
-        return { value: dropPrice, source: hasOverride ? 'custom' : 'market', needsTax: true };
+        return { value: dropPrice, source: hasOverride ? 'custom' : 'market', needsTax: !isIronCowCharacter() };
     }
 
     /**

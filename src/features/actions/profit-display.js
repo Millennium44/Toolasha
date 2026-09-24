@@ -19,6 +19,7 @@ import {
     calculateGatheringActionTotalsFromBase,
 } from '../../utils/profit-helpers.js';
 import { MARKET_TAX } from '../../utils/profit-constants.js';
+import { isIronCowCharacter } from '../../utils/ironcow-valuation.js';
 import bundledLoadoutSnapshot from '../combat/loadout-snapshot.js';
 import { loadoutSnapshot, scrollSimulator } from '../../utils/bundle-bridge.js';
 import bundledScrollSimulator from '../combat/scroll-simulator.js';
@@ -30,6 +31,16 @@ import {
     formatUnlimitedProfitText,
     formatRunningActionProfitText,
 } from './unlimited-action-estimate.js';
+
+/**
+ * The market tax rate to show and apply in these panels: zero for an Iron Cow character,
+ * which has no market access to pay the marketplace fee on regardless of how its output
+ * revenue was valued (vendor, coinify, or the market-price fallback).
+ * @returns {number}
+ */
+function displayMarketTaxRate() {
+    return isIronCowCharacter() ? 0 : MARKET_TAX;
+}
 
 // The only gathering action type whose drop table is a set of mutually exclusive outcomes
 // rather than a guaranteed haul — see the actionPanel_foragingTotal gate in renderGatheringProfit.
@@ -202,7 +213,7 @@ async function renderGatheringProfit(panel, actionHrid, dropTableSelector, gathe
     const efficiencyMultiplier = profitData.efficiencyMultiplier || 1;
     // Revenue is now gross (pre-tax)
     const revenue = Math.round(profitData.revenuePerHour);
-    const marketTax = Math.round(revenue * MARKET_TAX);
+    const marketTax = Math.round(revenue * displayMarketTaxRate());
     const costs = Math.round(profitData.drinkCostPerHour + marketTax);
     // No "| Total profit: 0" here: whether the clause even appears, and what it says, is
     // decided below once we know if there is a Repeat input to read or a running action to
@@ -406,13 +417,13 @@ async function renderGatheringProfit(panel, actionHrid, dropTableSelector, gathe
     const marketTaxLine = document.createElement('div');
     marketTaxLine.style.marginLeft = '8px';
     const marketTaxLabel = marketTaxMissing ? '-- ⚠' : `${formatLargeNumber(marketTax)}/hr`;
-    marketTaxLine.textContent = `• Market Tax: ${Math.round(MARKET_TAX * 100)}% of revenue → ${marketTaxLabel}`;
+    marketTaxLine.textContent = `• Market Tax: ${Math.round(displayMarketTaxRate() * 100)}% of revenue → ${marketTaxLabel}`;
     marketTaxContent.appendChild(marketTaxLine);
 
     const marketTaxHeader = marketTaxMissing ? '-- ⚠' : `${formatLargeNumber(marketTax)}/hr`;
     const marketTaxSection = createCollapsibleSection(
         '',
-        `Market Tax: ${marketTaxHeader} (${Math.round(MARKET_TAX * 100)}%)`,
+        `Market Tax: ${marketTaxHeader} (${Math.round(displayMarketTaxRate() * 100)}%)`,
         null,
         marketTaxContent,
         false,
@@ -849,7 +860,7 @@ async function renderProductionProfit(panel, actionHrid, dropTableSelector, prod
             bonusRevenueTotal * efficiencyMultiplier
     );
     // Calculate market tax
-    const marketTax = Math.round(revenue * MARKET_TAX);
+    const marketTax = Math.round(revenue * displayMarketTaxRate());
     const costs = Math.round(profitData.materialCostPerHour + profitData.totalTeaCostPerHour + marketTax);
     // No "| Total profit: 0" here: see the matching comment in renderGatheringProfit above.
     const summary = netMissing ? '-- ⚠' : `${formatLargeNumber(profit)}/hr, ${formatLargeNumber(profitPerDay)}/day`;
@@ -1064,13 +1075,13 @@ async function renderProductionProfit(panel, actionHrid, dropTableSelector, prod
         : marketTaxEstimated
           ? `${formatLargeNumber(marketTax)}/hr ⚠`
           : `${formatLargeNumber(marketTax)}/hr`;
-    marketTaxLine.textContent = `• Market Tax: ${Math.round(MARKET_TAX * 100)}% of revenue → ${marketTaxLabel}`;
+    marketTaxLine.textContent = `• Market Tax: ${Math.round(displayMarketTaxRate() * 100)}% of revenue → ${marketTaxLabel}`;
     marketTaxContent.appendChild(marketTaxLine);
 
     const marketTaxHeader = marketTaxLabel;
     const marketTaxSection = createCollapsibleSection(
         '',
-        `Market Tax: ${marketTaxHeader} (${Math.round(MARKET_TAX * 100)}%)`,
+        `Market Tax: ${marketTaxHeader} (${Math.round(displayMarketTaxRate() * 100)}%)`,
         null,
         marketTaxContent,
         false,
@@ -1437,7 +1448,7 @@ function buildGatheringPerActionBreakdown(profitData) {
 
     const revenuePerHour = profitData.revenuePerHour;
     const revenuePerAction = revenuePerHour / actionsPerHour;
-    const marketTaxPerHour = revenuePerHour * MARKET_TAX;
+    const marketTaxPerHour = revenuePerHour * displayMarketTaxRate();
     const marketTaxPerAction = marketTaxPerHour / actionsPerHour;
     const drinkCostPerAction = profitData.drinkCostPerHour / actionsPerHour;
     const costsPerAction = drinkCostPerAction + marketTaxPerAction;
@@ -1655,12 +1666,12 @@ function buildGatheringPerActionBreakdown(profitData) {
     const marketTaxLine = document.createElement('div');
     marketTaxLine.style.marginLeft = '8px';
     const marketTaxLabel = formatMissingLabel(marketTaxMissing, `${formatPerAction(marketTaxPerAction)}/action`);
-    marketTaxLine.textContent = `• Market Tax: ${Math.round(MARKET_TAX * 100)}% of revenue → ${marketTaxLabel}`;
+    marketTaxLine.textContent = `• Market Tax: ${Math.round(displayMarketTaxRate() * 100)}% of revenue → ${marketTaxLabel}`;
     marketTaxContent.appendChild(marketTaxLine);
 
     const marketTaxSection = createCollapsibleSection(
         '',
-        `Market Tax: ${marketTaxLabel} (${Math.round(MARKET_TAX * 100)}%)`,
+        `Market Tax: ${marketTaxLabel} (${Math.round(displayMarketTaxRate() * 100)}%)`,
         null,
         marketTaxContent,
         false,
@@ -1732,7 +1743,7 @@ export function buildProductionPerActionBreakdown(profitData) {
     const gourmetRevenuePerAction = gourmetItemsPerAction * profitData.outputPrice;
     const bonusRevenuePerAction = bonusRevenueTotal / actionsPerHour;
     const revenuePerAction = baseRevenuePerAction + gourmetRevenuePerAction + bonusRevenuePerAction;
-    const marketTaxPerAction = revenuePerAction * MARKET_TAX;
+    const marketTaxPerAction = revenuePerAction * displayMarketTaxRate();
     const materialCostPerAction = profitData.totalMaterialCost; // per-action cost is fixed, unaffected by efficiency
     const teaCostPerAction = profitData.totalTeaCostPerHour / actionsPerHour;
     const costsPerAction = materialCostPerAction + teaCostPerAction + marketTaxPerAction;
@@ -1945,12 +1956,12 @@ export function buildProductionPerActionBreakdown(profitData) {
         : marketTaxEstimated
           ? `${formatPerAction(marketTaxPerAction)}/action ⚠`
           : `${formatPerAction(marketTaxPerAction)}/action`;
-    marketTaxLine.textContent = `• Market Tax: ${Math.round(MARKET_TAX * 100)}% of revenue → ${marketTaxLabel}`;
+    marketTaxLine.textContent = `• Market Tax: ${Math.round(displayMarketTaxRate() * 100)}% of revenue → ${marketTaxLabel}`;
     marketTaxContent.appendChild(marketTaxLine);
 
     const marketTaxSection = createCollapsibleSection(
         '',
-        `Market Tax: ${marketTaxLabel} (${Math.round(MARKET_TAX * 100)}%)`,
+        `Market Tax: ${marketTaxLabel} (${Math.round(displayMarketTaxRate() * 100)}%)`,
         null,
         marketTaxContent,
         false,
@@ -2251,13 +2262,13 @@ function buildGatheringActionsBreakdown(profitData, actionsCount) {
     const marketTaxLine = document.createElement('div');
     marketTaxLine.style.marginLeft = '8px';
     const marketTaxLabel = marketTaxMissing ? '-- ⚠' : formatLargeNumber(totalMarketTax);
-    marketTaxLine.textContent = `• Market Tax: ${Math.round(MARKET_TAX * 100)}% of revenue → ${marketTaxLabel}`;
+    marketTaxLine.textContent = `• Market Tax: ${Math.round(displayMarketTaxRate() * 100)}% of revenue → ${marketTaxLabel}`;
     marketTaxContent.appendChild(marketTaxLine);
 
     const marketTaxHeader = marketTaxMissing ? '-- ⚠' : formatLargeNumber(totalMarketTax);
     const marketTaxSection = createCollapsibleSection(
         '',
-        `Market Tax: ${marketTaxHeader} (${Math.round(MARKET_TAX * 100)}%)`,
+        `Market Tax: ${marketTaxHeader} (${Math.round(displayMarketTaxRate() * 100)}%)`,
         null,
         marketTaxContent,
         false,
@@ -2558,13 +2569,13 @@ function buildProductionActionsBreakdown(profitData, actionsCount) {
         : marketTaxEstimated
           ? `${formatLargeNumber(totalMarketTax)} ⚠`
           : formatLargeNumber(totalMarketTax);
-    marketTaxLine.textContent = `• Market Tax: ${Math.round(MARKET_TAX * 100)}% of revenue → ${marketTaxLabel}`;
+    marketTaxLine.textContent = `• Market Tax: ${Math.round(displayMarketTaxRate() * 100)}% of revenue → ${marketTaxLabel}`;
     marketTaxContent.appendChild(marketTaxLine);
 
     const marketTaxHeader = marketTaxLabel;
     const marketTaxSection = createCollapsibleSection(
         '',
-        `Market Tax: ${marketTaxHeader} (${Math.round(MARKET_TAX * 100)}%)`,
+        `Market Tax: ${marketTaxHeader} (${Math.round(displayMarketTaxRate() * 100)}%)`,
         null,
         marketTaxContent,
         false,

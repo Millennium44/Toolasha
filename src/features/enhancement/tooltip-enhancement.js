@@ -34,6 +34,7 @@ import { getItemPrices } from '../../utils/market-data.js';
 import { sweepProtectFrom } from '../../utils/enhancement-protect-sweep.js';
 import { parseItemCount } from '../../utils/number-parser.js';
 import { MARKET_TAX } from '../../utils/profit-constants.js';
+import { isIronCowCharacter } from '../../utils/ironcow-valuation.js';
 // The pricing rules moved to utils so the sim's advisor and the inventory savings card — each
 // in a bundle that cannot reach this module — could stop carrying their own drifted copies.
 // Re-exported below because this module's own callers import them from here.
@@ -753,7 +754,10 @@ export function calculatePerAttemptMaterialCost(itemDetails) {
  */
 export function calculateMinimumSellPrice(totalCost, totalTimeSeconds, hourlyRate, includeTax) {
     const breakeven = totalCost + hourlyRate * (totalTimeSeconds / 3600);
-    return includeTax ? breakeven / (1 - MARKET_TAX) : breakeven;
+    // Nothing to gross up for an Iron Cow character: it has no market access to pay
+    // the seller tax on in the first place.
+    const taxRate = isIronCowCharacter() ? 0 : MARKET_TAX;
+    return includeTax ? breakeven / (1 - taxRate) : breakeven;
 }
 
 /**

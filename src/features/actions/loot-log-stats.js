@@ -13,6 +13,7 @@ import { toCsv, csvFilename, downloadCsv } from '../../utils/csv-export.js';
 import { formatKMB, numberFormatter, formatDateTime } from '../../utils/formatters.js';
 import { createTimerRegistry } from '../../utils/timer-registry.js';
 import { MARKET_TAX } from '../../utils/profit-constants.js';
+import { isIronCowCharacter } from '../../utils/ironcow-valuation.js';
 import { signedPercent } from '../../utils/overlay-format.js';
 import {
     fillChatOrCopy,
@@ -408,7 +409,8 @@ class LootLogStats {
                     return prices ? prices.bid : null;
                 },
                 itemDetails,
-                marketTax: MARKET_TAX,
+                // Untaxed for an Iron Cow character: it has no market access to pay this on.
+                marketTax: isIronCowCharacter() ? 0 : MARKET_TAX,
             });
             if (!summary) return;
 
@@ -729,9 +731,11 @@ class LootLogStats {
         const inputCost = this.calculateInputCost(logData.actionHrid, logData.actionCount);
         if (!inputCost) return null;
 
-        // Revenue after the marketplace tax (coins are untaxed face value)
+        // Revenue after the marketplace tax (coins are untaxed face value; an Iron Cow
+        // character never pays this tax at all — it has no market access to pay it on)
         let askRevenue = 0;
         let bidRevenue = 0;
+        const taxKeep = 1 - (isIronCowCharacter() ? 0 : MARKET_TAX);
         for (const [hrid, count] of Object.entries(logData.drops)) {
             const baseHrid = hrid.replace(/::\d+$/, '');
             if (baseHrid === '/items/coin') {
@@ -740,8 +744,8 @@ class LootLogStats {
                 continue;
             }
             const { askTotal, bidTotal } = this.calculateTotalValue({ [hrid]: count });
-            askRevenue += askTotal * (1 - MARKET_TAX);
-            bidRevenue += bidTotal * (1 - MARKET_TAX);
+            askRevenue += askTotal * taxKeep;
+            bidRevenue += bidTotal * taxKeep;
         }
 
         return {
