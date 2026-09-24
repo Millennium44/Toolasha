@@ -9,6 +9,14 @@
  * deltas — not from the modal's rendered text, and are priced through the same pricing-mode
  * aware stack as every other profit figure in the script (see offline-economics-calculator).
  * Items that could not be priced are named, not silently folded into the total as zero.
+ *
+ * Experience is the one figure on this block that is not sourced that way: the payload behind
+ * `offlineItems` carries no experience total, so it is read off the native modal's own text
+ * instead (`parseExperience`, moved here from the retired welcome-back-value.js one-liner this
+ * block replaced). It is summed per skill the way the modal lists it, and rated per hour against
+ * the same `durationSeconds` the Revenue/Cost/Profit per-day figures use — the full time away,
+ * not the offline-hour-capped portion — so the rate on this row means the same "per hour offline"
+ * as everywhere else in the block.
  */
 
 import config from '../../core/config.js';
@@ -16,9 +24,11 @@ import dataManager from '../../core/data-manager.js';
 import domObserver from '../../core/dom-observer.js';
 import { calculateOfflineEconomics } from '../../utils/offline-economics-calculator.js';
 import { formatPrice } from '../../utils/market-data.js';
+import { formatKMB } from '../../utils/formatters.js';
 import { createMutationWatcher } from '../../utils/dom-observer-helpers.js';
 import { PATIENT_TICK_SETTING_KEYS } from '../../utils/patient-tick.js';
 import { IRONCOW_VALUATION_SETTING } from '../../utils/ironcow-valuation.js';
+import { parseItemCount, gameDigitsSource } from '../../utils/number-parser.js';
 
 const UI_ID = 'mwi-offline-economics';
 const MODAL_ANCHOR_CLASS = 'OfflineProgressModal_offlineProgress';
@@ -194,7 +204,7 @@ class OfflineProgressEconomics {
         this.teardownBlock();
 
         try {
-            const economics = calculateOfflineEconomics(this.currentOfflineData);
+            const economics = this.computeEconomics(this.currentOfflineData, modalContentNode);
             const block = buildBlock(economics);
             wrapper.after(block);
             this.currentBlock = block;
@@ -223,10 +233,34 @@ class OfflineProgressEconomics {
      */
     recompute() {
         if (!this.currentBlockData || !this.currentBlock) return;
-        const economics = calculateOfflineEconomics(this.currentBlockData);
+        const economics = this.computeEconomics(this.currentBlockData, this.currentModalNode);
         const newBlock = buildBlock(economics);
         this.currentBlock.replaceWith(newBlock);
         this.currentBlock = newBlock;
+    }
+
+    /**
+     * Calculate the Revenue/Cost/Profit economics and thread in the one figure they cannot
+     * carry: offline experience, read off the modal's own native text (see `parseExperience`)
+     * since `offlineItems` has no experience field of its own.
+     * @param {Object} offlineData - Cached offline session payload
+     * @param {Element|null} modalContentNode - The modal content element to read experience from
+     * @returns {Object} calculateOfflineEconomics result, plus `experience` and `experiencePerHour`
+     */
+    computeEconomics(offlineData, modalContentNode) {
+        const economics = calculateOfflineEconomics(offlineData);
+        // readNativeSignature excludes this block's own subtree, so a recompute against an
+        // already-injected block never re-counts this block's own numbers as offline XP.
+        const nativeText = modalContentNode ? readNativeSignature(modalContentNode) : '';
+        const experience = parseExperience(nativeText);
+        return {
+            ...economics,
+            experience,
+            experiencePerHour:
+                experience > 0 && economics.durationSeconds > 0
+                    ? (experience * 3600) / economics.durationSeconds
+                    : null,
+        };
     }
 
     /**
@@ -383,6 +417,31 @@ export function readNativeSignature(root) {
 }
 
 /**
+ * Total experience named anywhere in the native modal's own text.
+ *
+ * Summed rather than taken from one place: the modal lists experience per skill, and an idle
+ * night is usually more than one skill. This is the same scrape the retired welcome-back-value.js
+ * one-liner used to compute its own XP/hr figure — moved here because it is the only source for
+ * offline experience there is; `offlineItems` carries none.
+ *
+ * @param {string} text - Native modal text (see `readNativeSignature`)
+ * @returns {number} Experience, zero when none was found
+ */
+export function parseExperience(text) {
+    if (typeof text !== 'string') return 0;
+
+    let total = 0;
+    // Grouped by the game's current locale rather than a hardcoded comma/period union: a plain
+    // union already tolerates en-US/de-DE, but not a space-grouping locale such as fr-FR.
+    const pattern = new RegExp(`(${gameDigitsSource()}\\s*[KMB]?)\\s*(?:XP|EXP|experience)\\b`, 'gi');
+    for (const match of text.matchAll(pattern)) {
+        const value = parseItemCount(match[1], 0);
+        if (Number.isFinite(value) && value > 0) total += value;
+    }
+    return total;
+}
+
+/**
  * Build the heading tooltip: the active pricing mode, plus — when anything went unpriced — the
  * names of the items missing from the total.
  * @param {Object} economics - calculateOfflineEconomics result
@@ -463,6 +522,18 @@ export function buildBlock(economics) {
         )
     );
     container.appendChild(renderRow('Profit', economics.profit, economics.profitPerDay, null, null, null));
+
+    // Only economics.experience carries anything real: an economics result from before this row
+    // existed (an older/mocked shape) or a modal with no XP wording at all leaves it undefined/0,
+    // and a "0 XP (0/hr)" line would be a worse answer than no line, same as the rest of this block.
+    if (economics.experience > 0) {
+        container.appendChild(
+            renderRow('Experience', economics.experience, economics.experiencePerHour, null, null, null, {
+                formatValue: (value) => formatKMB(value, 1),
+                unitLabel: 'hr',
+            })
+        );
+    }
 
     const overrunRow = buildOverrunRow(economics);
     if (overrunRow) container.appendChild(overrunRow);
@@ -585,9 +656,13 @@ function buildUnvaluedDetail(item) {
  * @param {'sell'|'buy'|null} side - Which side this row values, for the per-side pricing tooltip
  * @param {Array|null} lines - Valued line items for this side, or null for a non-expandable row
  * @param {Array|null} unvaluedItems - Unvalued items for this side, or null when non-expandable
+ * @param {Object} [options] - Non-money row formatting overrides
+ * @param {Function} [options.formatValue] - `(value) => string`, defaults to a priced format
+ * @param {string} [options.unitLabel] - Per-value unit shown after the rate, defaults to 'day'
  * @returns {Element} Row wrapper element
  */
-function renderRow(label, value, perDay, side, lines, unvaluedItems) {
+function renderRow(label, value, perDay, side, lines, unvaluedItems, options = {}) {
+    const { formatValue = (v) => formatPrice(v, { decimals: 1 }), unitLabel = 'day' } = options;
     const wrapper = document.createElement('div');
 
     const hasDetails = (lines && lines.length > 0) || (unvaluedItems && unvaluedItems.length > 0);
@@ -611,8 +686,8 @@ function renderRow(label, value, perDay, side, lines, unvaluedItems) {
 
     const valueEl = document.createElement('span');
     const sign = value > 0 && label === 'Profit' ? '+' : '';
-    const perDayText = perDay !== null ? ` (${sign}${formatPrice(perDay, { decimals: 1 })}/day)` : '';
-    valueEl.textContent = `${sign}${formatPrice(value, { decimals: 1 })}${perDayText}`;
+    const perDayText = perDay !== null ? ` (${sign}${formatValue(perDay)}/${unitLabel})` : '';
+    valueEl.textContent = `${sign}${formatValue(value)}${perDayText}`;
     valueEl.style.color = '#e2e8f0';
     valueEl.style.fontVariantNumeric = 'tabular-nums';
 

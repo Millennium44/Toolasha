@@ -82,7 +82,7 @@ vi.mock('../../utils/dom-observer-helpers.js', () => ({
     }),
 }));
 
-import offlineProgressEconomics, { buildBlock } from './offline-progress-economics.js';
+import offlineProgressEconomics, { buildBlock, parseExperience } from './offline-progress-economics.js';
 
 function buildModalNode() {
     const modalContent = document.createElement('div');
@@ -488,6 +488,65 @@ describe('offline-progress-economics', () => {
         expect(fakeDataManager.listenerCount('character_initialized')).toBe(1);
         expect(fakeDataManager.listenerCount('character_switching')).toBe(1);
     });
+
+    test('an Experience row is added when the native modal reports XP, rated against the same duration as the money rows', () => {
+        offlineProgressEconomics.initialize();
+        triggerCharacterInitialized();
+
+        const modalNode = buildModalNode();
+        modalNode.innerHTML += '<div>Milking: 12,000 XP</div>';
+        mockOnClass.mock.calls[0][2](modalNode);
+
+        const text = document.querySelector('#mwi-offline-economics').textContent;
+        expect(text).toContain('Experience');
+        expect(text).toContain('12.0K'); // SAMPLE_ECONOMICS.durationSeconds is 8h -> 1.5K/hr
+        expect(text).toContain('1.5K/hr');
+    });
+
+    test('no Experience row is added when the native modal reports no XP', () => {
+        offlineProgressEconomics.initialize();
+        triggerCharacterInitialized();
+
+        const modalNode = buildModalNode();
+        mockOnClass.mock.calls[0][2](modalNode);
+
+        expect(document.querySelector('#mwi-offline-economics').textContent).not.toContain('Experience');
+    });
+
+    test('a pricing mode recompute re-reads experience from the modal rather than dropping it', () => {
+        offlineProgressEconomics.initialize();
+        triggerCharacterInitialized();
+
+        const modalNode = buildModalNode();
+        modalNode.innerHTML += '<div>Milking: 12,000 XP</div>';
+        mockOnClass.mock.calls[0][2](modalNode);
+
+        mockCalculateOfflineEconomics.mockReturnValue({ ...SAMPLE_ECONOMICS, revenue: 999 });
+        for (const cb of settingChangeCallbacks.get('profitCalc_pricingMode')) cb('optimistic');
+
+        const text = document.querySelector('#mwi-offline-economics').textContent;
+        expect(text).toContain('Experience');
+        expect(text).toContain('1.5K/hr');
+    });
+});
+
+describe('parseExperience', () => {
+    test('sums XP named across multiple skills', () => {
+        expect(parseExperience('Milking: 1,000 XP Foraging: 2,000 XP')).toBe(3000);
+    });
+
+    test('parses K/M/B suffixed figures', () => {
+        expect(parseExperience('12.5K XP')).toBe(12500);
+    });
+
+    test('returns 0 when nothing mentions XP/EXP/experience', () => {
+        expect(parseExperience('Away 3h 0m')).toBe(0);
+    });
+
+    test('returns 0 for non-string input', () => {
+        expect(parseExperience(null)).toBe(0);
+        expect(parseExperience(undefined)).toBe(0);
+    });
 });
 
 const RICH_ECONOMICS = {
@@ -692,5 +751,29 @@ describe('buildBlock - offline cap overrun line', () => {
         const block = buildBlock(SAMPLE_ECONOMICS);
 
         expect(block.textContent).not.toContain('missed');
+    });
+});
+
+describe('buildBlock - Experience row', () => {
+    test('renders Experience with an XP/hr rate when the economics carry any experience', () => {
+        const economics = { ...SAMPLE_ECONOMICS, experience: 12000, experiencePerHour: 1500 };
+        const block = buildBlock(economics);
+
+        expect(block.textContent).toContain('Experience');
+        expect(block.textContent).toContain('12.0K');
+        expect(block.textContent).toContain('1.5K/hr');
+    });
+
+    test('renders no Experience row at all when there is no experience (e.g. an older/mocked shape)', () => {
+        const block = buildBlock(SAMPLE_ECONOMICS);
+
+        expect(block.textContent).not.toContain('Experience');
+    });
+
+    test('renders no Experience row when experience is explicitly zero', () => {
+        const economics = { ...SAMPLE_ECONOMICS, experience: 0, experiencePerHour: null };
+        const block = buildBlock(economics);
+
+        expect(block.textContent).not.toContain('Experience');
     });
 });
