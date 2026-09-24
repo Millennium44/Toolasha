@@ -10,6 +10,7 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 - The gold one-line summary at the bottom of Welcome Back is gone: it valued the haul differently from the Offline Economics box above it (no market tax, no caches), so the two disagreed. The box gains an Experience row with XP and XP/hr instead.
 - The combat sim can record a bounded trace of a run's events, off unless asked for, to help reproduce sim bugs.
+- Switching Trade History off and on again quickly no longer starts it twice.
 
 ### Switching a feature on no longer needs a reload
 
