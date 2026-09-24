@@ -37,10 +37,18 @@
  * Switching to Game also strips every label — nothing about switching away
  * used to undo either half of what it did.
  *
- * Game order does not bucket pins itself: it puts every tile back where it
- * was and lets `alchemy-item-pins.js`'s own pass do exactly what it would do
- * if this module did not exist. Building the pin bucket a second time here
- * would only make Game order fight the tile pins actually moved.
+ * A tile added while the tiles are out of the game's order (an item picked
+ * up, or a filter widened, while Profit/hr is showing) cannot take its DOM
+ * index as its stamp — that index is a position in *this* module's order.
+ * React places a new node directly before the node that follows it in its
+ * own order, so a newcomer is stamped just ahead of its next sibling instead.
+ *
+ * Game order still puts pinned tiles first, in pin order, exactly as
+ * `alchemy-item-pins.js`'s own pass would. Both modules watch the same menu
+ * and each reacts to the other's writes, so the order Game wants must be the
+ * order Pins wants — a Game order that put a pinned tile back at its stamp
+ * would have Pins move it to the front, Game move it back, and so on for as
+ * long as the menu is open, inside one microtask checkpoint.
  *
  * ## Profit and XP sources
  *
@@ -73,7 +81,7 @@ import alchemyProfitCalculator from '../market/alchemy-profit-calculator.js';
 import { calcXpPerAction } from './alchemy-rankings.js';
 import { findAlchemizeMenu, activeAlchemyAction, menuTiles, tileItemHrid } from './alchemy-item-selector.js';
 import alchemyItemPins from './alchemy-item-pins.js';
-import { sameOrder } from '../../utils/item-picker-pins.js';
+import { orderTiles, sameOrder } from '../../utils/item-picker-pins.js';
 import { tileEnhancementLevel } from '../../utils/item-selector-dom.js';
 import { formatKMB } from '../../utils/formatters.js';
 import { createCuratedRecord } from '../../utils/persisted-record.js';
@@ -89,6 +97,9 @@ const TILE_CLASS = 'mwi-alchemy-sort-tile';
 const RATE_CLASS = 'mwi-alchemy-sort-rate';
 /** Where each tile's pre-move position is stamped, in `tile.dataset` */
 const GAME_ORDER_ATTR = 'mwiGameOrder';
+
+/** The modes a tab can be in; anything else read back from storage is treated as Game */
+const MODES = ['game', 'profit', 'xp'];
 
 /** How long a reorder pass may run before yielding back to the browser and resuming */
 const YIELD_BUDGET_MS = 8;
@@ -202,6 +213,9 @@ class AlchemyItemSort {
         try {
             this.unregister?.();
             this.unregister = null;
+            // An open menu left in Profit/hr or XP/hr order would stay that way,
+            // unlabeled, until the game next redrew it
+            this.restoreOpenMenu();
             this.menuObserver?.disconnect();
             this.menuObserver = null;
             this.watchedMenu = null;
@@ -226,6 +240,16 @@ class AlchemyItemSort {
         } finally {
             this.isInitialized = false;
         }
+    }
+
+    /** Put the open menu, if any, back in Game order — for teardown */
+    restoreOpenMenu() {
+        const menu = this.watchedMenu;
+        const action = activeAlchemyAction();
+        if (!menu?.isConnected || !action) return;
+
+        const { grid, tiles } = menuTiles(menu);
+        if (grid && tiles.length) this.applyGameOrder(grid, tiles, action);
     }
 
     /**
@@ -266,6 +290,10 @@ class AlchemyItemSort {
         if (this.watchedMenu === menu && this.menuObserver) return;
 
         this.menuObserver?.disconnect();
+        // A menu closing is never seen here — the watcher is on the menu that
+        // went away — so a new menu is the first sign the last one's prices
+        // (the character's levels, teas and equipment at that time) are over
+        this.priceCache.clear();
         this.watchedMenu = menu;
         this.menuObserver = new MutationObserver(() => this.apply());
         this.menuObserver.observe(menu, { childList: true, subtree: true });
@@ -310,26 +338,59 @@ class AlchemyItemSort {
             this.openAction = action;
         }
 
-        const mode = this.order[action] || 'game';
+        const mode = this.modeFor(action);
         if (mode === 'profit' || mode === 'xp') {
             this.reorderRanked(grid, tiles, action, mode);
             return;
         }
-        this.applyGameOrder(grid, tiles);
+        this.applyGameOrder(grid, tiles, action);
     }
 
     /**
-     * Stamp every tile that has not already been stamped with its current
-     * position, before this pass moves anything. A tile the game just drew
-     * (the Item Filter replaces every tile on each keystroke) has no stamp
-     * yet and gets one; a tile carried over from a previous pass — including
-     * one this module itself moved — keeps the stamp it already has.
+     * A tab's order choice, with anything unrecognized read as Game.
+     * @param {string} action - An alchemy tab
+     * @returns {'game'|'profit'|'xp'} The mode
+     */
+    modeFor(action) {
+        const mode = this.order?.[action];
+        return MODES.includes(mode) ? mode : 'game';
+    }
+
+    /**
+     * Stamp every tile that has not already been stamped with its place in
+     * the game's order, before this pass moves anything. A tile carried over
+     * from a previous pass — including one this module itself moved — keeps
+     * the stamp it already has. When no tile has one (a fresh menu, or the
+     * Item Filter redrawing every tile) the grid is as the game drew it, so
+     * each takes its index. Otherwise a tile without one was added to a grid
+     * whose order may be this module's, so it is stamped between the stamp of
+     * the tile after it and the next stamp below that — see the module doc.
      * @param {HTMLElement[]} tiles - The menu's current tiles, in DOM order
      */
     stampGameOrder(tiles) {
-        tiles.forEach((tile, index) => {
-            if (tile.dataset[GAME_ORDER_ATTR] === undefined) tile.dataset[GAME_ORDER_ATTR] = String(index);
-        });
+        const stamps = [];
+        for (const tile of tiles) {
+            if (tile.dataset[GAME_ORDER_ATTR] !== undefined) stamps.push(this.gameOrderOf(tile));
+        }
+        if (!stamps.length) {
+            tiles.forEach((tile, index) => {
+                tile.dataset[GAME_ORDER_ATTR] = String(index);
+            });
+            return;
+        }
+        if (stamps.length === tiles.length) return;
+
+        stamps.sort((a, b) => a - b);
+        let next = null;
+        for (let i = tiles.length - 1; i >= 0; i--) {
+            const tile = tiles[i];
+            if (tile.dataset[GAME_ORDER_ATTR] === undefined) {
+                const stamp = next === null ? stamps[stamps.length - 1] + 1 : (stampBelow(stamps, next) + next) / 2;
+                tile.dataset[GAME_ORDER_ATTR] = String(stamp);
+                insertSorted(stamps, stamp);
+            }
+            next = this.gameOrderOf(tile);
+        }
     }
 
     /**
@@ -344,16 +405,18 @@ class AlchemyItemSort {
 
     /**
      * Restore the game's own order: every tile back to its stamped pre-move
-     * position, with no pin bucketing of its own (see the module doc). Also
-     * strips any Profit/hr label — Game order carries no ranking to label.
+     * position, then pinned tiles to the front the way `alchemy-item-pins.js`
+     * orders them (see the module doc on why the two must agree). Also strips
+     * any Profit/hr or XP/hr label — Game order carries no ranking to label.
      * @param {HTMLElement} grid - The tile grid
      * @param {HTMLElement[]} tiles - The menu's current tiles
+     * @param {string} action - The open alchemy tab
      */
-    applyGameOrder(grid, tiles) {
+    applyGameOrder(grid, tiles, action) {
         this.clearLabels(tiles);
 
-        const desired = [...tiles].sort((a, b) => this.gameOrderOf(a) - this.gameOrderOf(b));
-        this.moveTiles(grid, tiles, desired);
+        const byStamp = [...tiles].sort((a, b) => this.gameOrderOf(a) - this.gameOrderOf(b));
+        this.moveTiles(grid, tiles, orderTiles(byStamp, alchemyItemPins.pinnedFor(action), tileItemHrid));
     }
 
     /**
@@ -446,7 +509,7 @@ class AlchemyItemSort {
             }
         }
         for (const btn of bar.querySelectorAll(`.${BTN_CLASS}`)) {
-            btn.classList.toggle(ACTIVE_CLASS, btn.dataset.mwiSortMode === (this.order[action] || 'game'));
+            btn.classList.toggle(ACTIVE_CLASS, btn.dataset.mwiSortMode === this.modeFor(action));
         }
     }
 
@@ -456,7 +519,7 @@ class AlchemyItemSort {
      */
     setMode(mode) {
         const action = activeAlchemyAction();
-        if (!action || this.order[action] === mode) return;
+        if (!action || !MODES.includes(mode) || this.modeFor(action) === mode) return;
 
         this.order = { ...this.order, [action]: mode };
         this.saveOrder();
@@ -609,14 +672,21 @@ class AlchemyItemSort {
     writeRanked(grid, tiles, action, mode) {
         const { fixed, front, rest } = this.pinBuckets(tiles, action);
 
+        // Read once per pass: the sort compares each tile many times, and
+        // every read walks the tile for its sprite and enhancement badge
+        const values = new Map(tiles.map((tile) => [tile, this.rankValue(action, mode, tile)]));
+        const byGame = (a, b) => this.gameOrderOf(a) - this.gameOrderOf(b);
+
         const priced = [];
         const unpriced = [];
         for (const tile of rest) {
-            (Number.isFinite(this.rankValue(action, mode, tile)) ? priced : unpriced).push(tile);
+            (Number.isFinite(values.get(tile)) ? priced : unpriced).push(tile);
         }
-        priced.sort((a, b) => this.rankValue(action, mode, b) - this.rankValue(action, mode, a));
+        // Ties and unpriced tiles keep the game's order, not whatever order the last mode left behind
+        priced.sort((a, b) => values.get(b) - values.get(a) || byGame(a, b));
+        unpriced.sort(byGame);
 
-        this.paintValues(tiles, action, mode);
+        this.paintValues(tiles, mode, values);
 
         this.moveTiles(grid, tiles, [...fixed, ...front, ...priced, ...unpriced]);
     }
@@ -635,12 +705,12 @@ class AlchemyItemSort {
      * A small profit/hr or XP/hr label on each priced tile — only drawn in
      * Profit/hr or XP/hr order, since Game order carries no ranking to label.
      * @param {HTMLElement[]} tiles - The menu's current tiles
-     * @param {string} action - The open alchemy tab
      * @param {string} mode - 'profit' | 'xp'
+     * @param {Map<HTMLElement, number|null>} values - Each tile's ranking value, from `rankValue`
      */
-    paintValues(tiles, action, mode) {
+    paintValues(tiles, mode, values) {
         for (const tile of tiles) {
-            const value = this.rankValue(action, mode, tile);
+            const value = values.get(tile);
             let rate = tile.querySelector(`.${RATE_CLASS}`);
 
             if (!Number.isFinite(value)) {
@@ -663,6 +733,32 @@ class AlchemyItemSort {
             rate.style.color = mode === 'xp' ? this.xpColor() : value >= 0 ? '#4ade80' : '#f87171';
         }
     }
+}
+
+/**
+ * The largest stamp below a given one, or one less than it when there is none.
+ * @param {number[]} sorted - Stamps, ascending
+ * @param {number} limit - The stamp to stay below
+ * @returns {number} The stamp to place a newcomer after
+ */
+function stampBelow(sorted, limit) {
+    let below = limit - 1;
+    for (const stamp of sorted) {
+        if (stamp >= limit) break;
+        below = stamp;
+    }
+    return below;
+}
+
+/**
+ * Insert a value into an ascending array, keeping it ascending.
+ * @param {number[]} sorted - Ascending values, modified in place
+ * @param {number} value - The value to insert
+ */
+function insertSorted(sorted, value) {
+    let index = 0;
+    while (index < sorted.length && sorted[index] < value) index += 1;
+    sorted.splice(index, 0, value);
 }
 
 /**

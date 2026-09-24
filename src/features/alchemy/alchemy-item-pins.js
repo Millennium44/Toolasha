@@ -299,10 +299,13 @@ class AlchemyItemPins {
      * Read-only, for `alchemy-item-sort.js`: profit order still has to put
      * pinned items first, and asking here rather than keeping a second copy
      * is the only way the two features cannot disagree about what is pinned.
+     * Empty while this feature is off: the pins stay loaded after `disable()`,
+     * and a sort that kept floating them would be pinning with Pins turned off.
      * @param {string} action - An alchemy action
      * @returns {string[]} Pinned item hrids, in pin order
      */
     pinnedFor(action) {
+        if (!this.isInitialized) return [];
         return [...(this.pins[action] || [])];
     }
 

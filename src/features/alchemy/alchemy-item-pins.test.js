@@ -231,3 +231,16 @@ describe('the stored pins', () => {
         expect(stored()).toEqual({ coinify: ['/items/a'] });
     });
 });
+
+describe('pinnedFor', () => {
+    test('is empty while the feature is off, even with pins still loaded', () => {
+        // alchemy-item-sort.js floats whatever this returns; a disabled Pins
+        // must not keep pinning through it
+        pins.pins = { coinify: ['/items/a'] };
+        pins.isInitialized = true;
+        expect(pins.pinnedFor('coinify')).toEqual(['/items/a']);
+
+        pins.disable();
+        expect(pins.pinnedFor('coinify')).toEqual([]);
+    });
+});

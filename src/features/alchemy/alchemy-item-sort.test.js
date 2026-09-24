@@ -197,8 +197,8 @@ describe('alchemy item sort', () => {
         ]);
         alchemyItemSort.apply();
 
-        // Still Game order until the toggle is switched
-        expect(tileHrids(grid)).toEqual(['/items/low', '/items/unpriced', '/items/pinned', '/items/high']);
+        // Still Game order until the toggle is switched — with the pin first, as Pins itself orders it
+        expect(tileHrids(grid)).toEqual(['/items/pinned', '/items/low', '/items/unpriced', '/items/high']);
 
         menu.querySelector('[data-mwi-sort-mode="profit"]').click();
 
@@ -380,10 +380,9 @@ describe('alchemy item sort', () => {
         expect(calculatorMock.calculateCoinifyProfit).not.toHaveBeenCalled();
     });
 
-    test('Game order does not bucket pins itself — a pinned tile lands back where the game had it', () => {
-        // alchemy-item-pins.js is mocked out here (only pinnedFor() is stubbed), so
-        // nothing actually pulls the pinned tile to the front in this test — which is
-        // the point: Game order must not do that job a second time.
+    test('Game order keeps pinned tiles first, the order alchemy-item-pins.js itself writes', () => {
+        // Anything else and the two modules' menu watchers undo each other's
+        // writes forever — see alchemy-item-sort.pins-interplay.test.js
         buildTabs('coinify');
         pinsMock.pinnedFor.mockReturnValue(['/items/pinned']);
         profitAnswers.set('coinify:/items/a:0', { profitPerHour: 5 });
@@ -398,7 +397,133 @@ describe('alchemy item sort', () => {
         menu.querySelector('[data-mwi-sort-mode="profit"]').click();
         menu.querySelector('[data-mwi-sort-mode="game"]').click();
 
-        expect(tileHrids(grid)).toEqual(['/items/a', '/items/pinned', '/items/b']);
+        expect(tileHrids(grid)).toEqual(['/items/pinned', '/items/a', '/items/b']);
+    });
+
+    test('a tile added while Profit/hr is showing goes back to its own place on Game', () => {
+        buildTabs('coinify');
+        profitAnswers.set('coinify:/items/a:0', { profitPerHour: 1 });
+        profitAnswers.set('coinify:/items/b:0', { profitPerHour: 2 });
+        profitAnswers.set('coinify:/items/c:0', { profitPerHour: 3 });
+        profitAnswers.set('coinify:/items/d:0', { profitPerHour: 4 });
+        profitAnswers.set('coinify:/items/new:0', { profitPerHour: 9 });
+        const { menu, grid } = buildPicker([
+            ['/items/a', 0],
+            ['/items/b', 0],
+            ['/items/c', 0],
+            ['/items/d', 0],
+        ]);
+        alchemyItemSort.apply();
+        menu.querySelector('[data-mwi-sort-mode="profit"]').click();
+        expect(tileHrids(grid)).toEqual(['/items/d', '/items/c', '/items/b', '/items/a']);
+
+        // The game's order is now a, b, c, new, d: React inserts the new node
+        // directly before the node of the item that follows it — d, first in
+        // the sorted grid. Its DOM index, 0, is a's stamp, not its own place.
+        grid.insertBefore(buildTile('/items/new', 0), grid.children[0]);
+        alchemyItemSort.apply();
+        expect(tileHrids(grid)[0]).toBe('/items/new');
+
+        menu.querySelector('[data-mwi-sort-mode="game"]').click();
+        expect(tileHrids(grid)).toEqual(['/items/a', '/items/b', '/items/c', '/items/new', '/items/d']);
+    });
+
+    test('tiles added at the end, and a run added together, keep their own places', () => {
+        buildTabs('coinify');
+        profitAnswers.set('coinify:/items/a:0', { profitPerHour: 5 });
+        profitAnswers.set('coinify:/items/b:0', { profitPerHour: 500 });
+        const { menu, grid } = buildPicker([
+            ['/items/a', 0],
+            ['/items/b', 0],
+        ]);
+        alchemyItemSort.apply();
+        menu.querySelector('[data-mwi-sort-mode="profit"]').click();
+        expect(tileHrids(grid)).toEqual(['/items/b', '/items/a']);
+
+        // Game order a, x, y, b, z: x and y land before b, z is appended
+        const tileB = grid.children[0];
+        grid.insertBefore(buildTile('/items/x', 0), tileB);
+        grid.insertBefore(buildTile('/items/y', 0), tileB);
+        grid.appendChild(buildTile('/items/z', 0));
+        alchemyItemSort.apply();
+
+        menu.querySelector('[data-mwi-sort-mode="game"]').click();
+        expect(tileHrids(grid)).toEqual(['/items/a', '/items/x', '/items/y', '/items/b', '/items/z']);
+    });
+
+    test('an unrecognized stored mode reads as Game and highlights Game', async () => {
+        storageMock.storeFor('settings').set('alchemyItemSortOrder', { coinify: 'value' });
+        alchemyItemSort.disable();
+        await alchemyItemSort.initialize();
+        buildTabs('coinify');
+        profitAnswers.set('coinify:/items/a:0', { profitPerHour: 5 });
+        profitAnswers.set('coinify:/items/b:0', { profitPerHour: 500 });
+        const { menu, grid } = buildPicker([
+            ['/items/a', 0],
+            ['/items/b', 0],
+        ]);
+        alchemyItemSort.apply();
+
+        expect(tileHrids(grid)).toEqual(['/items/a', '/items/b']);
+        expect(
+            menu.querySelector('[data-mwi-sort-mode="game"]').classList.contains('mwi-alchemy-sort-btn-active')
+        ).toBe(true);
+    });
+
+    test("a newly opened menu re-prices rather than reusing the last menu's answers", () => {
+        buildTabs('coinify');
+        profitAnswers.set('coinify:/items/a:0', { profitPerHour: 10 });
+        const first = buildPicker([['/items/a', 0]]);
+        alchemyItemSort.apply();
+        first.menu.querySelector('[data-mwi-sort-mode="profit"]').click();
+        expect(calculatorMock.calculateCoinifyProfit).toHaveBeenCalledTimes(1);
+
+        // Closed and opened again: a different menu element, the same tab
+        first.primary.remove();
+        buildPicker([['/items/a', 0]]);
+        alchemyItemSort.apply();
+
+        expect(calculatorMock.calculateCoinifyProfit).toHaveBeenCalledTimes(2);
+    });
+
+    test('equal values and unpriced tiles keep the game order, whichever mode came before', () => {
+        buildTabs('coinify');
+        dataManagerMock.getInitClientData.mockReturnValue({
+            itemDetailMap: { '/items/c': { itemLevel: 50 } },
+        });
+        profitAnswers.set('coinify:/items/a:0', { profitPerHour: 7, actionsPerHour: 1, successRate: 1 });
+        profitAnswers.set('coinify:/items/b:0', null);
+        profitAnswers.set('coinify:/items/c:0', { profitPerHour: 7, actionsPerHour: 1, successRate: 1 });
+        profitAnswers.set('coinify:/items/d:0', null);
+        const { menu, grid } = buildPicker([
+            ['/items/a', 0],
+            ['/items/b', 0],
+            ['/items/c', 0],
+            ['/items/d', 0],
+        ]);
+        alchemyItemSort.apply();
+        menu.querySelector('[data-mwi-sort-mode="xp"]').click();
+        expect(tileHrids(grid)).toEqual(['/items/c', '/items/a', '/items/b', '/items/d']);
+
+        menu.querySelector('[data-mwi-sort-mode="profit"]').click();
+        expect(tileHrids(grid)).toEqual(['/items/a', '/items/c', '/items/b', '/items/d']);
+    });
+
+    test('turning the feature off puts an open menu back in Game order', () => {
+        buildTabs('coinify');
+        profitAnswers.set('coinify:/items/a:0', { profitPerHour: 5 });
+        profitAnswers.set('coinify:/items/b:0', { profitPerHour: 500 });
+        const { menu, grid } = buildPicker([
+            ['/items/a', 0],
+            ['/items/b', 0],
+        ]);
+        alchemyItemSort.apply();
+        menu.querySelector('[data-mwi-sort-mode="profit"]').click();
+        expect(tileHrids(grid)).toEqual(['/items/b', '/items/a']);
+
+        alchemyItemSort.disable();
+
+        expect(tileHrids(grid)).toEqual(['/items/a', '/items/b']);
     });
 
     test('XP order: pinned first, then highest XP/hr, unknowns last — and no NaN/undefined labels', () => {
