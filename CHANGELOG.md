@@ -6,6 +6,11 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Switching a feature on no longer needs a reload
+
+- A feature whose settings were all off when the page loaded now starts as soon as one of them is switched on, instead of waiting for a reload. The settings still tagged "reload" are the ones that need one to switch off.
+- Net worth sub-settings and Auto All's "exclude seals" are greyed out while their parent is off, and the auto-filled Buy Now price setting says which purchases it applies to.
+
 ### Settings changed in quick succession all stick
 
 - Changing two settings within a moment of each other could quietly undo the first on the next reload, because both saves read the stored settings before either had written. Saves now run one after another.

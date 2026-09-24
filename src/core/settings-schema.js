@@ -2438,7 +2438,7 @@ export const settingsGroups = {
                 label: 'Monster stat check (sim diagnostic)',
                 type: 'checkbox',
                 default: false,
-                help: 'When you click a monster in combat, opens a panel comparing the game’s live buffed stats (armour, resistances, evasion, accuracy) against what the combat sim computes for the same monster — so a modelling gap or an active buff is visible at a glance. Diagnostic; off by default. Takes effect on refresh.',
+                help: 'When you click a monster in combat, opens a panel comparing the game’s live buffed stats (armor, resistances, evasion, accuracy) against what the combat sim computes for the same monster — so a modelling gap or an active buff is visible at a glance. Diagnostic; off by default.',
             },
             labyrinthRecommendTargetRate: {
                 id: 'labyrinthRecommendTargetRate',
