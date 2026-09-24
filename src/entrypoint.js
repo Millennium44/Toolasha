@@ -2200,6 +2200,12 @@ function registerFeatures() {
             category: 'Guild',
             module: Combat.guildXPDisplay,
             async: false,
+            // The key switches only the XP/hr rates, rankings and weekly chart, which the
+            // render paths check themselves. The Overview idle-members list, the Trials-tab
+            // unsigned roster/whisper template, and the Members-table extras (game mode,
+            // joined date, activity) ride on the same module under their own settings, so
+            // gating the module on this key took them away too.
+            customCheck: () => true,
         },
         {
             key: 'guildCreditValue',

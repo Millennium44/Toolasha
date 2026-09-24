@@ -211,7 +211,12 @@ class GuildXPDisplay {
 
     initialize() {
         if (this.initialized) return;
-        if (!config.getSetting('guildXPDisplay', true)) return;
+
+        // No blanket guildXPDisplay gate here: the Overview idle list, the Trials
+        // signup roster/whisper template, and the Members-table extras below are
+        // switched by their own settings and must keep working with the XP/hr
+        // parts (rates, rankings, weekly chart) turned off. Each render path
+        // gates its own XP/hr-only output on guildXPDisplay instead.
 
         // Watch for Guild panel tabs
         const unregOverview = domObserver.onClass('GuildXPDisplay-Overview', 'GuildPanel_dataGrid', (el) =>
@@ -322,15 +327,28 @@ class GuildXPDisplay {
         dataGridEl.querySelectorAll(`.${CSS_PREFIX}`).forEach((el) => el.remove());
 
         const guildName = guildXPTracker.getOwnGuildName();
+        // The idle list is independent of the guild being tracked by name — but
+        // there is currently nothing else to draw without it, so this keeps the
+        // pre-existing behavior rather than changing what each part requires.
         if (!guildName) return;
 
-        const stats = guildXPTracker.getGuildStats(guildName);
+        // The rates, rankings and chart below are the XP/hr parts proper; they
+        // stay off when guildXPDisplay is off, same as before this module's
+        // other settings were decoupled from it.
+        const xpDisplayOn = config.getSetting('guildXPDisplay', true);
 
-        // XP/h stats row
-        const rateLabel = stats.lastHourXPH > 0 ? 'Last hour XP/h' : 'Last XP/h';
-        const rateValue = stats.lastHourXPH > 0 ? stats.lastHourXPH : stats.lastXPH;
+        let statsHTML = '';
+        let chartHTML = '';
+        let archivesHTML = '';
+        let rateValue = 0;
+        if (xpDisplayOn) {
+            const stats = guildXPTracker.getGuildStats(guildName);
 
-        const statsHTML = `
+            // XP/h stats row
+            const rateLabel = stats.lastHourXPH > 0 ? 'Last hour XP/h' : 'Last XP/h';
+            rateValue = stats.lastHourXPH > 0 ? stats.lastHourXPH : stats.lastXPH;
+
+            statsHTML = `
             <div class="GuildPanel_dataBlockGroup__1d2rR ${CSS_PREFIX}">
                 <div class="GuildPanel_dataBlock__3qVhK">
                     <div class="GuildPanel_label__-A63g">${rateLabel}</div>
@@ -342,8 +360,8 @@ class GuildXPDisplay {
                 </div>
             </div>`;
 
-        // Chart row
-        const chartHTML = `
+            // Chart row
+            chartHTML = `
             <div class="GuildPanel_dataBlockGroup__1d2rR ${CSS_PREFIX}" style="grid-column: 1 / 3; max-width: none;">
                 <div class="GuildPanel_dataBlock__3qVhK" style="height: 240px;">
                     <div class="GuildPanel_label__-A63g">Last week XP/h</div>
@@ -351,11 +369,11 @@ class GuildXPDisplay {
                 </div>
             </div>`;
 
+            archivesHTML = this._buildArchivesHTML(rateValue);
+        }
+
         const idleHTML = this._buildIdleHTML();
-        dataGridEl.insertAdjacentHTML(
-            'beforeend',
-            statsHTML + this._buildArchivesHTML(rateValue) + idleHTML + chartHTML
-        );
+        dataGridEl.insertAdjacentHTML('beforeend', statsHTML + archivesHTML + idleHTML + chartHTML);
 
         // Idle names fill "/profile Name" on click, same as chat names do
         dataGridEl.querySelectorAll('[data-idle-member]').forEach((el) => {
@@ -368,7 +386,10 @@ class GuildXPDisplay {
             bar.addEventListener('mouseleave', this._onBarLeave);
         });
 
-        // Time to level
+        if (!xpDisplayOn) return;
+
+        // Time to level and next member slot are both projections off the XP/hr
+        // rate above, so they are XP/hr parts too.
         const timeToLevel = guildXPTracker.getTimeToLevel(guildName);
         const nextSlotHTML = this._buildNextMemberSlotHTML(guildXPTracker.getNextMemberSlotETA(guildName));
         if (timeToLevel !== null || nextSlotHTML) {
@@ -617,8 +638,11 @@ class GuildXPDisplay {
         const gameModes = { standard: 'MC', ironcow: 'IC', legacy_ironcow: 'LC' };
         const showGameMode = config.getSetting('guildMembersShowGameMode', false);
         const showJoined = config.getSetting('guildMembersShowJoined', true);
-        const showLastXPH = config.getSetting('guildMembersShowLastXPH', true);
-        const showLastDayXPH = config.getSetting('guildMembersShowLastDayXPH', true);
+        // Last XP/h and Last day XP/h are XP/hr-rate columns — they stay off with
+        // guildXPDisplay off, independent of their own column setting.
+        const xpDisplayOn = config.getSetting('guildXPDisplay', true);
+        const showLastXPH = xpDisplayOn && config.getSetting('guildMembersShowLastXPH', true);
+        const showLastDayXPH = xpDisplayOn && config.getSetting('guildMembersShowLastDayXPH', true);
         const activityTab = config.getSettingValue('guildMembersActivityTab', 'contributions');
 
         // Joined column — Status tab only
@@ -1027,6 +1051,9 @@ class GuildXPDisplay {
     // ─── Guild Leaderboard tab ───────────────────────────────────────────────
 
     _renderGuildLeaderboard(tableEl) {
+        // Every column this draws is an XP/hr rate or ranking off it — there is
+        // no independent part of the leaderboard injection to keep.
+        if (!config.getSetting('guildXPDisplay', true)) return;
         if (tableEl.querySelector(`th.${CSS_PREFIX}`)) return;
 
         const allHistories = guildXPTracker.getAllGuildHistories();

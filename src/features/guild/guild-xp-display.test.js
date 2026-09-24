@@ -51,7 +51,7 @@ vi.mock('../../core/websocket.js', () => ({
         off: (type) => delete game.wsHandlers[type],
     },
 }));
-vi.mock('../../core/data-manager.js', () => ({ default: {} }));
+vi.mock('../../core/data-manager.js', () => ({ default: { getCurrentCharacterName: () => null } }));
 vi.mock('../../core/storage.js', () => ({
     default: {
         // Resolves a tick late on purpose: the fold preference arrives from
@@ -76,6 +76,13 @@ vi.mock('./guild-xp-tracker.js', () => ({
         getMemberMeta: (id) => game.meta[id] || null,
         getCurrentWeekStartAt: () => game.currentWeek,
         getOwnGuildName: () => 'Milky Way',
+        getOwnGuildID: () => 'guild-1',
+        getGuildStats: () => game.guildStats ?? { lastHourXPH: 0, lastXPH: 0, lastDayXPH: 0, chart: [] },
+        getTimeToLevel: () => game.timeToLevel ?? null,
+        getNextMemberSlotETA: () => game.nextSlotETA ?? null,
+        getMemberStats: (id) => game.memberStats?.[id] ?? { lastXPH: 0, lastDayXPH: 0 },
+        getMemberXP: (id) => game.memberXP?.[id] ?? 0,
+        getAllGuildHistories: () => game.guildHistories ?? {},
     },
 }));
 
@@ -158,6 +165,12 @@ beforeEach(async () => {
     game.members = [];
     game.meta = {};
     game.stored = {};
+    game.guildStats = { lastHourXPH: 0, lastXPH: 0, lastDayXPH: 0, chart: [] };
+    game.timeToLevel = null;
+    game.nextSlotETA = null;
+    game.memberStats = {};
+    game.memberXP = {};
+    game.guildHistories = {};
     guildXPDisplay.initialized = false;
     guildXPDisplay.unregisterObservers = [];
     document.body.innerHTML = '';
@@ -317,6 +330,122 @@ describe('the trial sign-up block', () => {
         game.observers['GuildPanel_tileSummary']();
 
         expect(block()).toBeNull();
+    });
+});
+
+/**
+ * The Overview grid, close enough to the game's real markup for _renderOverview
+ * to find the "Exp to Next Level" block it appends the time-to-level line to.
+ * @returns {Element} The dataGrid root
+ */
+function buildOverviewGrid() {
+    document.body.innerHTML = '';
+    const grid = document.createElement('div');
+    grid.className = 'GuildPanel_dataGrid__x';
+    grid.innerHTML =
+        '<div class="GuildPanel_dataBlock__3qVhK"><div class="GuildPanel_label__-A63g">Exp to Next Level</div></div>';
+    document.body.appendChild(grid);
+    return grid;
+}
+
+describe('guildXPDisplay decoupled from guildIdleDisplay and the member columns', () => {
+    test('idle list renders on Overview with guildXPDisplay off, no XP/hr block does', () => {
+        game.settings = { guildXPDisplay: false, guildIdleDisplay: true };
+        game.members = [{ characterID: 'ada', name: 'Ada', actionType: '', isOnline: true }];
+        guildXPDisplay.initialize();
+
+        const grid = buildOverviewGrid();
+        game.observers['GuildPanel_dataGrid'](grid);
+
+        expect(grid.textContent).toContain('Idle members');
+        expect(grid.textContent).toContain('Ada');
+        expect(grid.textContent).not.toContain('XP/h');
+        expect(grid.querySelector(`.${'mwi-guild-xp'}__bar`)).toBeNull();
+    });
+
+    test('with guildXPDisplay off the idle list is gone too once its own setting is off', () => {
+        game.settings = { guildXPDisplay: false, guildIdleDisplay: false };
+        game.members = [{ characterID: 'ada', name: 'Ada', actionType: '', isOnline: true }];
+        guildXPDisplay.initialize();
+
+        const grid = buildOverviewGrid();
+        game.observers['GuildPanel_dataGrid'](grid);
+
+        expect(grid.textContent).not.toContain('Idle members');
+    });
+
+    test('guildXPDisplay on: the XP/hr stats block still renders (unchanged behavior)', () => {
+        game.settings = { guildXPDisplay: true, guildIdleDisplay: true };
+        game.guildStats = { lastHourXPH: 500, lastXPH: 500, lastDayXPH: 400, chart: [] };
+        game.members = [{ characterID: 'ada', name: 'Ada', actionType: '', isOnline: true }];
+        guildXPDisplay.initialize();
+
+        const grid = buildOverviewGrid();
+        game.observers['GuildPanel_dataGrid'](grid);
+
+        expect(grid.textContent).toContain('Last hour XP/h');
+        expect(grid.textContent).toContain('Idle members');
+    });
+
+    test('a member column setting on renders that column with guildXPDisplay off', () => {
+        game.settings = {
+            guildXPDisplay: false,
+            guildMembersShowJoined: true,
+            guildMembersShowLastXPH: true,
+            guildMembersShowLastDayXPH: true,
+        };
+        game.members = [{ characterID: 'ada', name: 'Ada' }];
+        game.meta.ada = { name: 'Ada', joinTime: '2026-01-01T00:00:00Z' };
+
+        document.body.innerHTML = '';
+        const table = document.createElement('table');
+        table.className = 'GuildPanel_membersTable__t';
+        table.innerHTML =
+            '<thead><tr><th>Name</th><th>Role</th><th>Activity</th></tr></thead>' +
+            '<tbody><tr><td>Ada</td><td>Member</td><td>Online</td></tr></tbody>';
+        document.body.appendChild(table);
+
+        guildXPDisplay.initialize();
+        game.observers['GuildPanel_membersTable'](table);
+
+        // Status tab (has an Activity column) — Joined is drawn, independent of guildXPDisplay
+        expect(table.querySelector('thead').textContent).toContain('Joined');
+
+        // Last XP/h and Last day XP/h are Contributions-tab-only columns and never
+        // reached the Status tab branch, so re-render as the Contributions tab to
+        // prove they stay off with guildXPDisplay off
+        document.body.innerHTML = '';
+        const contribTable = document.createElement('table');
+        contribTable.className = 'GuildPanel_membersTable__t';
+        contribTable.innerHTML =
+            '<thead><tr><th>Name</th><th>Role</th><th>Guild Exp</th></tr></thead>' +
+            '<tbody><tr><td>Ada</td><td>Member</td><td>1,000</td></tr></tbody>';
+        document.body.appendChild(contribTable);
+        game.observers['GuildPanel_membersTable'](contribTable);
+
+        expect(contribTable.querySelector('thead').textContent).not.toContain('Last XP/h');
+        expect(contribTable.querySelector('thead').textContent).not.toContain('Last day XP/h');
+    });
+
+    test('guildXPDisplay on: Last XP/h and Last day XP/h columns render on the Contributions tab', () => {
+        game.settings = { guildXPDisplay: true, guildMembersShowLastXPH: true, guildMembersShowLastDayXPH: true };
+        game.members = [{ characterID: 'ada', name: 'Ada' }];
+        game.meta.ada = { name: 'Ada' };
+        game.memberStats.ada = { lastXPH: 500, lastDayXPH: 400 };
+
+        document.body.innerHTML = '';
+        const table = document.createElement('table');
+        table.className = 'GuildPanel_membersTable__t';
+        table.innerHTML =
+            '<thead><tr><th>Name</th><th>Role</th><th>Guild Exp</th></tr></thead>' +
+            '<tbody><tr><td>Ada</td><td>Member</td><td>1,000</td></tr></tbody>';
+        document.body.appendChild(table);
+
+        guildXPDisplay.initialize();
+        game.observers['GuildPanel_membersTable'](table);
+
+        expect(table.querySelector('thead').textContent).toContain('Last XP/h');
+        expect(table.querySelector('thead').textContent).toContain('Last day XP/h');
     });
 });
 
