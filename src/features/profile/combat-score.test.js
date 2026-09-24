@@ -20,6 +20,10 @@ const stub = vi.hoisted(() => ({
     frontmost: true,
     minimized: false,
     expands: 0,
+    storedFormat: null,
+    metzExport: { source: 'metz' },
+    shykaiExport: { exportObj: { player: {}, source: 'shykai' } },
+    snapshots: [],
 }));
 
 vi.mock('../../core/config.js', () => ({
@@ -28,15 +32,36 @@ vi.mock('../../core/config.js', () => ({
         getSetting: () => false,
         COLOR_TEXT_SECONDARY: '#999',
         COLOR_ACCENT: '#5b8def',
+        COLOR_LOSS: '#e03131',
+        COLOR_PROFIT: '#4ade80',
     },
 }));
 vi.mock('../../core/data-manager.js', () => ({
-    default: { getCurrentCharacterId: () => stub.currentCharacterId },
+    default: {
+        getCurrentCharacterId: () => stub.currentCharacterId,
+        getInitClientData: () => ({ abilityDetailMap: {} }),
+        characterData: { characterAbilities: [] },
+    },
 }));
-vi.mock('../../core/storage.js', () => ({ default: { getJSON: async () => null, setJSON: async () => {} } }));
+vi.mock('../../core/storage.js', () => ({
+    default: {
+        get: async () => stub.storedFormat,
+        set: async (key, value) => {
+            stub.storedFormat = value;
+        },
+        getJSON: async () => null,
+        setJSON: async () => {},
+    },
+}));
 vi.mock('../../core/websocket.js', () => ({ default: { on: () => {}, off: () => {} } }));
 vi.mock('./score-calculator.js', () => ({ calculateCombatScore: () => ({}) }));
-vi.mock('../combat/combat-sim-export.js', () => ({ constructExportObject: () => ({}) }));
+vi.mock('../combat/combat-sim-export.js', () => ({
+    constructExportObject: async () => stub.shykaiExport,
+}));
+vi.mock('../combat/combat-sim-export-metz.js', () => ({
+    constructMetzCharacterExport: async () => stub.metzExport,
+    applyLoadoutOverrideToMetzCharacter: (character, override) => ({ ...character, override }),
+}));
 vi.mock('../combat/milkonomy-export.js', () => ({ constructMilkonomyExport: () => ({}) }));
 vi.mock('./character-card-button.js', () => ({
     handleViewCardClick: () => {},
@@ -46,7 +71,12 @@ vi.mock('../../utils/dom-observer-helpers.js', () => ({ createMutationWatcher: (
 vi.mock('../../utils/timer-registry.js', () => ({
     createTimerRegistry: () => ({ registerTimeout: () => {}, clearAll: () => {} }),
 }));
-vi.mock('../combat/loadout-snapshot.js', () => ({ default: { getAllSnapshots: () => [] } }));
+vi.mock('../combat/loadout-snapshot.js', () => ({
+    default: {
+        getAllSnapshots: () => stub.snapshots,
+        resolveEquipment: () => ({}),
+    },
+}));
 vi.mock('../combat-sim/combat-sim-ui.js', () => ({ default: {} }));
 vi.mock('../combat-sim/combat-sim-adapter.js', () => ({ buildPlayerDTOFromProfile: () => ({}) }));
 vi.mock('../../utils/enhancement-worker-manager.js', () => ({ terminateWorkerPool: () => {} }));
@@ -484,5 +514,132 @@ describe('the breakdown link', () => {
         expect(combatScore.isOwnProfile({ profile: { characterSkills: [{ characterID: 7 }] } })).toBe(true);
         expect(combatScore.isOwnProfile({ profile: { character: { id: 7 } } })).toBe(true);
         expect(combatScore.isOwnProfile({ profile: { character: { id: 8 } } })).toBe(false);
+    });
+});
+
+describe('sim export split button', () => {
+    /**
+     * A scored profile in the shape `showScorePanel` needs to draw without throwing.
+     * @param {number} characterId - Whose profile this is
+     * @returns {Object} profileData
+     */
+    function profileData(characterId) {
+        return { profile: { sharableCharacter: { id: characterId, name: 'Someone' } } };
+    }
+
+    const scoreData = {
+        total: 0,
+        house: 0,
+        ability: 0,
+        equipment: 0,
+        skillerTotal: 0,
+        skillerEquipment: 0,
+        equipmentHidden: false,
+        hasEquipmentData: true,
+        breakdown: { houses: [], abilities: [], equipment: [] },
+        skillerBreakdown: { equipment: [] },
+    };
+
+    let clipboardText;
+
+    /**
+     * Let the microtask queue drain so the async format lookup (`getSimExportFormat`)
+     * and export handlers settle before assertions run.
+     */
+    async function flush() {
+        for (let i = 0; i < 5; i++) {
+            await new Promise((resolve) => setTimeout(resolve, 0));
+        }
+    }
+
+    beforeEach(() => {
+        document.body.innerHTML = '';
+        stub.currentCharacterId = 7;
+        stub.storedFormat = null;
+        stub.metzExport = { source: 'metz' };
+        stub.shykaiExport = { exportObj: { player: {}, source: 'shykai' } };
+        stub.snapshots = [];
+        combatScore.currentPanel = null;
+        clipboardText = null;
+        Object.defineProperty(navigator, 'clipboard', {
+            value: {
+                writeText: async (text) => {
+                    clipboardText = text;
+                },
+            },
+            configurable: true,
+        });
+    });
+
+    test('default copies the Metz JSON', async () => {
+        combatScore.showScorePanel(profileData(99), scoreData, document.createElement('div'));
+        await flush();
+
+        document.querySelector('#mwi-combat-sim-export-btn').click();
+        await flush();
+
+        expect(clipboardText).toBe(JSON.stringify(stub.metzExport));
+    });
+
+    test('choosing Shykai copies the single-player export shape and persists the choice', async () => {
+        combatScore.showScorePanel(profileData(99), scoreData, document.createElement('div'));
+        await flush();
+
+        document.querySelector('#mwi-combat-sim-format-btn').click();
+        document.querySelector('.mwi-combat-sim-format-option[data-format="shykai"]').click();
+        await flush();
+
+        expect(clipboardText).toBe(JSON.stringify(stub.shykaiExport.exportObj));
+        expect(stub.storedFormat).toBe('shykai');
+    });
+
+    test('a stored Shykai choice is honored on the next panel', async () => {
+        stub.storedFormat = 'shykai';
+        combatScore.showScorePanel(profileData(99), scoreData, document.createElement('div'));
+        await flush();
+
+        expect(document.querySelector('#mwi-combat-sim-export-btn').textContent).toBe('Shykai Sim Export');
+
+        document.querySelector('#mwi-combat-sim-export-btn').click();
+        await flush();
+
+        expect(clipboardText).toBe(JSON.stringify(stub.shykaiExport.exportObj));
+    });
+
+    test('the loadout-override path honors each format', async () => {
+        const snapshot = {
+            name: 'Raid',
+            actionTypeHrid: '/action_types/combat',
+            abilities: [{ abilityHrid: '/abilities/fireball', slot: 1 }],
+            food: [],
+            drinks: [],
+            abilityCombatTriggersMap: {},
+            consumableCombatTriggersMap: {},
+        };
+
+        const metzResult = await combatScore.buildSnapshotExportString('metz', snapshot);
+        expect(JSON.parse(metzResult)).toMatchObject({ source: 'metz', override: expect.any(Object) });
+
+        const shykaiResult = await combatScore.buildSnapshotExportString('shykai', snapshot);
+        const parsedShykai = JSON.parse(shykaiResult);
+        expect(parsedShykai.source).toBe('shykai');
+        // slot 1 (1-based) maps to the sim's normal-ability index 1, matching the
+        // pre-Metz-port Shykai override that this format restores exactly.
+        expect(parsedShykai.abilities[1]).toEqual({ abilityHrid: '/abilities/fireball', level: 1 });
+    });
+
+    test('the menu is gone after teardown', async () => {
+        combatScore.showScorePanel(profileData(99), scoreData, document.createElement('div'));
+        await flush();
+
+        const removeSpy = vi.spyOn(document, 'removeEventListener');
+
+        document.querySelector('#mwi-score-close-btn').click();
+
+        expect(document.getElementById('mwi-combat-sim-format-dropdown')).toBeNull();
+        expect(removeSpy).toHaveBeenCalledWith('click', expect.any(Function));
+        expect(removeSpy).toHaveBeenCalledWith('keydown', expect.any(Function));
+
+        removeSpy.mockRestore();
     });
 });

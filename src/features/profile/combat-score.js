@@ -10,6 +10,7 @@ import webSocketHook from '../../core/websocket.js';
 import { calculateCombatScore } from './score-calculator.js';
 import { numberFormatter } from '../../utils/formatters.js';
 import { constructMetzCharacterExport, applyLoadoutOverrideToMetzCharacter } from '../combat/combat-sim-export-metz.js';
+import { constructExportObject } from '../combat/combat-sim-export.js';
 import { constructMilkonomyExport } from '../combat/milkonomy-export.js';
 import { handleViewCardClick, handleViewCardFromSnapshot } from './character-card-button.js';
 import { buildScorePanel, setScoreSource } from './build-score-panel.js';
@@ -37,6 +38,16 @@ function escapeHtml(value) {
         .replaceAll('"', '&quot;')
         .replaceAll("'", '&#39;');
 }
+
+/**
+ * Sim export format identifiers, and the per-viewer storage key that remembers the choice.
+ */
+const SIM_EXPORT_FORMATS = { METZ: 'metz', SHYKAI: 'shykai' };
+const SIM_EXPORT_FORMAT_STORAGE_KEY = 'simExportFormat';
+const SIM_EXPORT_FORMAT_LABELS = {
+    [SIM_EXPORT_FORMATS.METZ]: 'Metz Sim Export',
+    [SIM_EXPORT_FORMATS.SHYKAI]: 'Shykai Sim Export',
+};
 
 /**
  * CombatScore class manages combat score display on profiles
@@ -314,6 +325,7 @@ class CombatScore {
     showScorePanel(profileData, scoreData, modalContainer) {
         // Remove existing panel if any
         if (this.currentPanel) {
+            this.currentPanel._simFormatDropdownCleanup?.();
             this.currentPanel.remove();
             this.currentPanel = null;
         }
@@ -497,7 +509,45 @@ class CombatScore {
                         font-weight: bold;
                         font-size: 0.85rem;
                         flex: 1;
-                    ">Metz Sim Export</button>
+                    ">${SIM_EXPORT_FORMAT_LABELS[SIM_EXPORT_FORMATS.METZ]}</button>
+                    <button id="mwi-combat-sim-format-btn" title="Choose sim export format" style="
+                        padding: 8px 8px;
+                        background: ${config.COLOR_ACCENT};
+                        color: black;
+                        border: none;
+                        border-radius: 4px;
+                        cursor: pointer;
+                        font-weight: bold;
+                        font-size: 0.85rem;
+                    ">▾</button>
+                    <div id="mwi-combat-sim-format-dropdown" style="
+                        display: none;
+                        position: absolute;
+                        top: 100%;
+                        right: 0;
+                        min-width: 160px;
+                        background: rgba(30, 30, 30, 0.98);
+                        border: 1px solid #555;
+                        border-radius: 4px;
+                        z-index: 10002;
+                        margin-top: 2px;
+                    ">
+                        <div class="mwi-combat-sim-format-option" data-format="${SIM_EXPORT_FORMATS.METZ}" style="
+                            padding: 6px 10px;
+                            cursor: pointer;
+                            font-size: 0.8rem;
+                            border-bottom: 1px solid #333;
+                            color: #ddd;
+                            white-space: nowrap;
+                        ">${SIM_EXPORT_FORMAT_LABELS[SIM_EXPORT_FORMATS.METZ]}</div>
+                        <div class="mwi-combat-sim-format-option" data-format="${SIM_EXPORT_FORMATS.SHYKAI}" title="Also compatible with the szerra shrine sim" style="
+                            padding: 6px 10px;
+                            cursor: pointer;
+                            font-size: 0.8rem;
+                            color: #ddd;
+                            white-space: nowrap;
+                        ">${SIM_EXPORT_FORMAT_LABELS[SIM_EXPORT_FORMATS.SHYKAI]}</div>
+                    </div>
                     <button id="mwi-combat-sim-loadout-btn" style="
                         padding: 8px 10px;
                         background: ${config.COLOR_ACCENT};
@@ -606,6 +656,7 @@ class CombatScore {
         const closeBtn = panel.querySelector('#mwi-score-close-btn');
         if (closeBtn) {
             closeBtn.addEventListener('click', () => {
+                panel._simFormatDropdownCleanup?.();
                 panel.remove();
                 this.currentPanel = null;
             });
@@ -720,11 +771,28 @@ class CombatScore {
             });
         }
 
-        // Combat Sim Export button
+        // Combat Sim Export button, plus the small ▾ that switches its format
         const combatSimBtn = panel.querySelector('#mwi-combat-sim-export-btn');
+        const simFormatBtn = panel.querySelector('#mwi-combat-sim-format-btn');
+        const simFormatDropdown = panel.querySelector('#mwi-combat-sim-format-dropdown');
+        // Mutable across this closure so every handler below (main button, menu
+        // items, the loadout export further down) reads and sets the same value.
+        const simFormatState = { format: SIM_EXPORT_FORMATS.METZ };
+
+        const applySimFormatLabel = () => {
+            if (combatSimBtn) {
+                combatSimBtn.textContent = SIM_EXPORT_FORMAT_LABELS[simFormatState.format];
+            }
+        };
+
+        this.getSimExportFormat().then((format) => {
+            simFormatState.format = format;
+            applySimFormatLabel();
+        });
+
         if (combatSimBtn) {
             combatSimBtn.addEventListener('click', async () => {
-                await this.handleCombatSimExport(combatSimBtn);
+                await this.handleCombatSimExport(combatSimBtn, simFormatState.format);
             });
             combatSimBtn.addEventListener('mouseenter', () => {
                 combatSimBtn.style.opacity = '0.8';
@@ -732,6 +800,64 @@ class CombatScore {
             combatSimBtn.addEventListener('mouseleave', () => {
                 combatSimBtn.style.opacity = '1';
             });
+        }
+
+        if (simFormatBtn && simFormatDropdown) {
+            simFormatBtn.addEventListener('click', (e) => {
+                e.stopPropagation();
+                simFormatDropdown.style.display = simFormatDropdown.style.display === 'none' ? 'block' : 'none';
+            });
+            simFormatBtn.addEventListener('mouseenter', () => {
+                simFormatBtn.style.opacity = '0.8';
+            });
+            simFormatBtn.addEventListener('mouseleave', () => {
+                simFormatBtn.style.opacity = '1';
+            });
+
+            const closeSimFormatDropdown = () => {
+                simFormatDropdown.style.display = 'none';
+            };
+
+            simFormatDropdown.querySelectorAll('.mwi-combat-sim-format-option').forEach((opt) => {
+                opt.addEventListener('click', async (e) => {
+                    e.stopPropagation();
+                    const format = opt.dataset.format;
+                    simFormatState.format = format;
+                    applySimFormatLabel();
+                    closeSimFormatDropdown();
+                    await this.setSimExportFormat(format);
+                    if (combatSimBtn) {
+                        await this.handleCombatSimExport(combatSimBtn, format);
+                    }
+                });
+                opt.addEventListener('mouseenter', () => {
+                    opt.style.background = 'rgba(255,255,255,0.1)';
+                });
+                opt.addEventListener('mouseleave', () => {
+                    opt.style.background = '';
+                });
+            });
+
+            const outsideClickCloser = (e) => {
+                if (!simFormatDropdown.contains(e.target) && e.target !== simFormatBtn) {
+                    closeSimFormatDropdown();
+                }
+            };
+            const escapeCloser = (e) => {
+                if (e.key === 'Escape') closeSimFormatDropdown();
+            };
+            document.addEventListener('click', outsideClickCloser);
+            document.addEventListener('keydown', escapeCloser);
+
+            // Removed explicitly on teardown (see the close button, the cleanup
+            // observer and disable() below) rather than left to self-detect on
+            // the next stray click, so the listeners never outlive the panel.
+            const previousCleanup = panel._simFormatDropdownCleanup;
+            panel._simFormatDropdownCleanup = () => {
+                document.removeEventListener('click', outsideClickCloser);
+                document.removeEventListener('keydown', escapeCloser);
+                previousCleanup?.();
+            };
         }
 
         // Sim Character button - opens combat sim UI with profile data
@@ -806,7 +932,11 @@ class CombatScore {
                     combatSimLoadoutDropdown.querySelectorAll('.mwi-combat-sim-loadout-option').forEach((opt) => {
                         opt.addEventListener('click', async () => {
                             combatSimLoadoutDropdown.style.display = 'none';
-                            await this.handleCombatSimExportFromSnapshot(opt.dataset.name, combatSimBtn);
+                            await this.handleCombatSimExportFromSnapshot(
+                                opt.dataset.name,
+                                combatSimBtn,
+                                simFormatState.format
+                            );
                         });
                         opt.addEventListener('mouseenter', () => {
                             opt.style.background = 'rgba(255,255,255,0.1)';
@@ -1157,6 +1287,7 @@ class CombatScore {
                     !document.body.contains(modal) ||
                     !document.querySelector('div[class*="SharableProfile_overviewTab"]')
                 ) {
+                    panel._simFormatDropdownCleanup?.();
                     panel.remove();
                     this.currentPanel = null;
                     cleanupObserver();
@@ -1170,10 +1301,184 @@ class CombatScore {
     }
 
     /**
+     * Read the viewer's remembered sim export format from storage.
+     * @returns {Promise<string>} One of SIM_EXPORT_FORMATS, defaulting to Metz when unset or unreadable
+     */
+    async getSimExportFormat() {
+        try {
+            const stored = await storage.get(SIM_EXPORT_FORMAT_STORAGE_KEY, 'combatExport', SIM_EXPORT_FORMATS.METZ);
+            return stored === SIM_EXPORT_FORMATS.SHYKAI ? SIM_EXPORT_FORMATS.SHYKAI : SIM_EXPORT_FORMATS.METZ;
+        } catch (error) {
+            console.error('[Combat Score] Failed to read sim export format:', error);
+            return SIM_EXPORT_FORMATS.METZ;
+        }
+    }
+
+    /**
+     * Persist the viewer's chosen sim export format so the next panel opens on it.
+     * @param {string} format - One of SIM_EXPORT_FORMATS
+     */
+    async setSimExportFormat(format) {
+        try {
+            await storage.set(SIM_EXPORT_FORMAT_STORAGE_KEY, format, 'combatExport', true);
+        } catch (error) {
+            console.error('[Combat Score] Failed to persist sim export format:', error);
+        }
+    }
+
+    /**
+     * Show a transient status on a button, then restore its original label and background.
+     * @param {Element} button - Button element
+     * @param {string} text - Status text, e.g. '✓ Copied'
+     * @param {string} background - Status background color
+     * @param {string} originalText - Text to restore after the delay
+     * @param {string} originalBg - Background to restore after the delay
+     */
+    showButtonStatus(button, text, background, originalText, originalBg) {
+        button.textContent = text;
+        button.style.background = background;
+        const resetTimeout = setTimeout(() => {
+            button.textContent = originalText;
+            button.style.background = originalBg;
+        }, 3000);
+        this.timerRegistry.registerTimeout(resetTimeout);
+    }
+
+    /**
+     * Build the clipboard-ready export string for the plain (non-loadout) export, in the given format.
+     * @param {string} format - One of SIM_EXPORT_FORMATS
+     * @param {number|null} currentProfileId - Profile being viewed, or null for the viewer's own character
+     * @returns {Promise<string|null>} JSON string, or null when the underlying builder has no data
+     */
+    async buildPlainExportString(format, currentProfileId) {
+        if (format === SIM_EXPORT_FORMATS.SHYKAI) {
+            // Single-player format: pasteable straight into Shykai / szerra shrine sim's "Player 1 import".
+            const exportData = await constructExportObject(currentProfileId, true);
+            return exportData ? JSON.stringify(exportData.exportObj) : null;
+        }
+
+        const character = await constructMetzCharacterExport(currentProfileId);
+        return character ? JSON.stringify(character) : null;
+    }
+
+    /**
+     * Build the clipboard-ready export string for a loadout snapshot override, in the given format.
+     * @param {string} format - One of SIM_EXPORT_FORMATS
+     * @param {Object} snapshot - Loadout snapshot (see loadout-snapshot.js)
+     * @returns {Promise<string|null>} JSON string, or null when the underlying builder has no data
+     */
+    async buildSnapshotExportString(format, snapshot) {
+        if (format === SIM_EXPORT_FORMATS.SHYKAI) {
+            const exportData = await constructExportObject(null, true);
+            if (!exportData) return null;
+
+            const playerObj = exportData.exportObj;
+            const clientObj = dataManager.getInitClientData();
+
+            // Override equipment from snapshot. The levels come from the
+            // loadout's own rule rather than the wearable hash: a loadout in
+            // "highest owned" mode wears the best copy owned now, and the hash
+            // holds whatever it was when the loadout was last saved — usually 0.
+            playerObj.player.equipment = loadoutSnapshot.resolveEquipment(snapshot);
+
+            // Override abilities from snapshot. Build ability level lookup from
+            // all learned abilities (not just currently equipped).
+            const characterData = dataManager.characterData;
+            const abilityLevelMap = {};
+            for (const ab of characterData?.characterAbilities || []) {
+                if (ab.abilityHrid) abilityLevelMap[ab.abilityHrid] = ab.level || 1;
+            }
+
+            // Map snapshot abilities to sim format (slot 0 = special, slots 1-4 = normal)
+            playerObj.abilities = [
+                { abilityHrid: '', level: 1 },
+                { abilityHrid: '', level: 1 },
+                { abilityHrid: '', level: 1 },
+                { abilityHrid: '', level: 1 },
+                { abilityHrid: '', level: 1 },
+            ];
+            let normalAbilityIndex = 1;
+            for (const ability of snapshot.abilities) {
+                if (!ability.abilityHrid) continue;
+                const isSpecial = clientObj?.abilityDetailMap?.[ability.abilityHrid]?.isSpecialAbility || false;
+                const level = abilityLevelMap[ability.abilityHrid] || 1;
+
+                if (isSpecial) {
+                    playerObj.abilities[0] = { abilityHrid: ability.abilityHrid, level };
+                } else if (normalAbilityIndex < 5) {
+                    playerObj.abilities[normalAbilityIndex++] = {
+                        abilityHrid: ability.abilityHrid,
+                        level,
+                    };
+                }
+            }
+
+            // Override triggers from snapshot (includes all configured triggers regardless of equip state)
+            playerObj.triggerMap = {
+                ...(snapshot.abilityCombatTriggersMap || {}),
+                ...(snapshot.consumableCombatTriggersMap || {}),
+            };
+
+            // Override food from snapshot
+            playerObj.food = { '/action_types/combat': [] };
+            for (let i = 0; i < 3; i++) {
+                playerObj.food['/action_types/combat'][i] = {
+                    itemHrid: snapshot.food?.[i]?.itemHrid || '',
+                };
+            }
+
+            // Override drinks from snapshot
+            playerObj.drinks = { '/action_types/combat': [] };
+            for (let i = 0; i < 3; i++) {
+                playerObj.drinks['/action_types/combat'][i] = {
+                    itemHrid: snapshot.drinks?.[i]?.itemHrid || '',
+                };
+            }
+
+            return JSON.stringify(playerObj);
+        }
+
+        const character = await constructMetzCharacterExport(null);
+        if (!character) return null;
+
+        // Build the native five slots directly from the saved 1-based slot numbers. The
+        // Metz adapter then emits its compact ability list in that same priority order.
+        const characterData = dataManager.characterData;
+        const abilityLevelMap = {};
+        for (const ab of characterData?.characterAbilities || []) {
+            if (ab.abilityHrid) abilityLevelMap[ab.abilityHrid] = ab.level || 1;
+        }
+        const abilities = Array(5).fill(null);
+        for (const ability of snapshot.abilities) {
+            if (!ability.abilityHrid) continue;
+            const index = Number(ability.slot) - 1;
+            if (index < 0 || index >= abilities.length) continue;
+            abilities[index] = {
+                abilityHrid: ability.abilityHrid,
+                level: abilityLevelMap[ability.abilityHrid] || 1,
+            };
+        }
+
+        const overridden = applyLoadoutOverrideToMetzCharacter(character, {
+            equipment: loadoutSnapshot.resolveEquipment(snapshot),
+            abilities,
+            triggerMap: {
+                ...(snapshot.abilityCombatTriggersMap || {}),
+                ...(snapshot.consumableCombatTriggersMap || {}),
+            },
+            food: snapshot.food,
+            drinks: snapshot.drinks,
+        });
+
+        return JSON.stringify(overridden);
+    }
+
+    /**
      * Handle Combat Sim Export button click
      * @param {Element} button - Button element
+     * @param {string} format - One of SIM_EXPORT_FORMATS
      */
-    async handleCombatSimExport(button) {
+    async handleCombatSimExport(button, format) {
         const originalText = button.textContent;
         const originalBg = button.style.background;
 
@@ -1181,37 +1486,17 @@ class CombatScore {
             // Get current profile ID (if viewing someone else's profile)
             const currentProfileId = await storage.get('currentProfileId', 'combatExport', null);
 
-            const character = await constructMetzCharacterExport(currentProfileId);
-            if (!character) {
-                button.textContent = '✗ No Data';
-                button.style.background = config.COLOR_LOSS;
-                const resetTimeout = setTimeout(() => {
-                    button.textContent = originalText;
-                    button.style.background = originalBg;
-                }, 3000);
-                this.timerRegistry.registerTimeout(resetTimeout);
+            const exportString = await this.buildPlainExportString(format, currentProfileId);
+            if (!exportString) {
+                this.showButtonStatus(button, '✗ No Data', config.COLOR_LOSS, originalText, originalBg);
                 return;
             }
 
-            const exportString = JSON.stringify(character);
             await navigator.clipboard.writeText(exportString);
-
-            button.textContent = '✓ Copied';
-            button.style.background = config.COLOR_PROFIT;
-            const resetTimeout = setTimeout(() => {
-                button.textContent = originalText;
-                button.style.background = originalBg;
-            }, 3000);
-            this.timerRegistry.registerTimeout(resetTimeout);
+            this.showButtonStatus(button, '✓ Copied', config.COLOR_PROFIT, originalText, originalBg);
         } catch (error) {
             console.error('[Combat Score] Combat Sim export failed:', error);
-            button.textContent = '✗ Failed';
-            button.style.background = config.COLOR_LOSS;
-            const resetTimeout = setTimeout(() => {
-                button.textContent = originalText;
-                button.style.background = originalBg;
-            }, 3000);
-            this.timerRegistry.registerTimeout(resetTimeout);
+            this.showButtonStatus(button, '✗ Failed', config.COLOR_LOSS, originalText, originalBg);
         }
     }
 
@@ -1219,8 +1504,9 @@ class CombatScore {
      * Handle Combat Sim Export from a loadout snapshot
      * @param {string} snapshotName - Loadout snapshot name
      * @param {Element} button - The main export button (for visual feedback)
+     * @param {string} format - One of SIM_EXPORT_FORMATS
      */
-    async handleCombatSimExportFromSnapshot(snapshotName, button) {
+    async handleCombatSimExportFromSnapshot(snapshotName, button, format) {
         const originalText = button.textContent;
         const originalBg = button.style.background;
 
@@ -1231,66 +1517,17 @@ class CombatScore {
                 return;
             }
 
-            const character = await constructMetzCharacterExport(null);
-            if (!character) {
-                button.textContent = '✗ No Data';
-                button.style.background = config.COLOR_LOSS;
-                const resetTimeout = setTimeout(() => {
-                    button.textContent = originalText;
-                    button.style.background = originalBg;
-                }, 3000);
-                this.timerRegistry.registerTimeout(resetTimeout);
+            const exportString = await this.buildSnapshotExportString(format, snapshot);
+            if (!exportString) {
+                this.showButtonStatus(button, '✗ No Data', config.COLOR_LOSS, originalText, originalBg);
                 return;
             }
 
-            // Build the native five slots directly from the saved 1-based slot numbers. The
-            // Metz adapter then emits its compact ability list in that same priority order.
-            const characterData = dataManager.characterData;
-            const abilityLevelMap = {};
-            for (const ab of characterData?.characterAbilities || []) {
-                if (ab.abilityHrid) abilityLevelMap[ab.abilityHrid] = ab.level || 1;
-            }
-            const abilities = Array(5).fill(null);
-            for (const ability of snapshot.abilities) {
-                if (!ability.abilityHrid) continue;
-                const index = Number(ability.slot) - 1;
-                if (index < 0 || index >= abilities.length) continue;
-                abilities[index] = {
-                    abilityHrid: ability.abilityHrid,
-                    level: abilityLevelMap[ability.abilityHrid] || 1,
-                };
-            }
-
-            const overridden = applyLoadoutOverrideToMetzCharacter(character, {
-                equipment: loadoutSnapshot.resolveEquipment(snapshot),
-                abilities,
-                triggerMap: {
-                    ...(snapshot.abilityCombatTriggersMap || {}),
-                    ...(snapshot.consumableCombatTriggersMap || {}),
-                },
-                food: snapshot.food,
-                drinks: snapshot.drinks,
-            });
-
-            const exportString = JSON.stringify(overridden);
             await navigator.clipboard.writeText(exportString);
-
-            button.textContent = '✓ Copied';
-            button.style.background = config.COLOR_PROFIT;
-            const resetTimeout = setTimeout(() => {
-                button.textContent = originalText;
-                button.style.background = originalBg;
-            }, 3000);
-            this.timerRegistry.registerTimeout(resetTimeout);
+            this.showButtonStatus(button, '✓ Copied', config.COLOR_PROFIT, originalText, originalBg);
         } catch (error) {
             console.error('[Combat Score] Combat Sim snapshot export failed:', error);
-            button.textContent = '✗ Failed';
-            button.style.background = config.COLOR_LOSS;
-            const resetTimeout = setTimeout(() => {
-                button.textContent = originalText;
-                button.style.background = originalBg;
-            }, 3000);
-            this.timerRegistry.registerTimeout(resetTimeout);
+            this.showButtonStatus(button, '✗ Failed', config.COLOR_LOSS, originalText, originalBg);
         }
     }
 
@@ -1552,6 +1789,7 @@ class CombatScore {
             this.timerRegistry.clearAll();
 
             if (this.currentPanel) {
+                this.currentPanel._simFormatDropdownCleanup?.();
                 this.currentPanel.remove();
                 this.currentPanel = null;
             }

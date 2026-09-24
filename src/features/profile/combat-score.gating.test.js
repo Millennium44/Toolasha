@@ -35,7 +35,12 @@ vi.mock('../../core/data-manager.js', () => ({
     default: { getCurrentCharacterId: () => 7 },
 }));
 vi.mock('../../core/storage.js', () => ({
-    default: { set: async () => {}, getJSON: async () => null, setJSON: async () => {} },
+    default: {
+        get: async () => null,
+        set: async () => {},
+        getJSON: async () => null,
+        setJSON: async () => {},
+    },
 }));
 
 const wsHandlers = vi.hoisted(() => new Map());
@@ -61,6 +66,7 @@ vi.mock('../combat/combat-sim-export-metz.js', () => ({
     constructMetzCharacterExport: () => ({}),
     applyLoadoutOverrideToMetzCharacter: () => ({}),
 }));
+vi.mock('../combat/combat-sim-export.js', () => ({ constructExportObject: () => ({}) }));
 vi.mock('../combat/milkonomy-export.js', () => ({ constructMilkonomyExport: () => ({}) }));
 vi.mock('./character-card-button.js', () => ({
     handleViewCardClick: () => {},
