@@ -6,6 +6,14 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Iron Cow profits no longer pay a market tax
+
+- An Iron Cow character can't use the market, so its vendor, coinify and fallback values are no longer cut by the 5% market tax in gathering, production, alchemy, combat loot, enhancing and the alchemy history; profits were understated by that much.
+
+### Alchemy uses the tea-boosted level, and Unrefine shows its XP
+
+- The alchemy under-level success penalty now uses your level including Alchemy Tea, as the game does, in the panel, Best Items, the Philosopher's Stone table and the tea optimizer. Unrefine shows its experience (1.4 × (10 + item level), before Wisdom) instead of none, and a pinned Unrefine action is priced as an unrefine rather than a coinify.
+
 ### Audit round: alchemy history counted market trades and lost the batch that finished during a reload
 
 - Coins collected from a listing or items bought mid-run were being counted as alchemy output (one coinify success recorded as three). Reloading mid-run no longer loses the batch that finished while the page was away, or splits the run into two rows. Restarting the same item, a catalyst running out, and Enhancing Essence from enhanced decomposes are also counted correctly now.
