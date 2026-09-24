@@ -21,6 +21,7 @@ import CombatSimulator, { getCapturedPlayerDetails, setPlayerDetailsCapture } fr
 import CombatUtilities from './combat-utilities.js';
 import AbilityCastEndEvent from './events/ability-cast-end-event.js';
 import AutoAttackEvent from './events/auto-attack-event.js';
+import AwaitCooldownEvent from './events/await-cooldown-event.js';
 import BlindExpirationEvent from './events/blind-expiration-event.js';
 import CombatStartEvent from './events/combat-start-event.js';
 import DamageOverTimeEvent from './events/damage-over-time-event.js';
@@ -2161,6 +2162,40 @@ describe('stun stops every action, blind and silence stop one each', () => {
 
         expect(player.isStunned).toBe(false);
         expect(queued(sim, AutoAttackEvent.type, player).length).toBe(1);
+    });
+
+    test('a blind expiring mid-stun does not re-arm a stunned unit', () => {
+        // The blind wake reaches the same addNextAttackEvent as the wave
+        // spawn and the await-cooldown wake do; this pins that the stun
+        // guard there is not somehow bypassed when the call arrives via
+        // processBlindExpirationEvent instead.
+        const { sim, player } = soloFight();
+        player.isStunned = true;
+        player.stunExpireTime = sim.simulationTime + 3 * ONE_SECOND;
+        player.isBlinded = true;
+        player.blindExpireTime = sim.simulationTime + ONE_SECOND;
+        const blindExpirationEvent = new BlindExpirationEvent(player.blindExpireTime, player);
+
+        sim.processBlindExpirationEvent(blindExpirationEvent);
+
+        expect(player.isBlinded).toBe(false);
+        expect(player.isStunned).toBe(true);
+        expect(queued(sim, AutoAttackEvent.type, player)).toEqual([]);
+        expect(queued(sim, AbilityCastEndEvent.type, player)).toEqual([]);
+    });
+
+    test('an await-cooldown wake does not re-arm a stunned unit', () => {
+        // Same call path, reached from the mana-restoration wake instead.
+        const { sim, player } = soloFight();
+        player.isStunned = true;
+        player.stunExpireTime = sim.simulationTime + 3 * ONE_SECOND;
+        const awaitCooldownEvent = new AwaitCooldownEvent(sim.simulationTime, player);
+
+        sim.processEvent(awaitCooldownEvent);
+
+        expect(player.isStunned).toBe(true);
+        expect(queued(sim, AutoAttackEvent.type, player)).toEqual([]);
+        expect(queued(sim, AbilityCastEndEvent.type, player)).toEqual([]);
     });
 
     test('a stun does not mark a unit out of mana', () => {
