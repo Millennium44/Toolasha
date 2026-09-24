@@ -1,17 +1,19 @@
 /**
  * Finding the game's "Welcome Back!" modal
  *
- * Two features now live inside somebody else's dialog — the offline value line
- * (`features/ui/welcome-back-value.js`) and the session briefing
- * (`features/briefing/session-briefing.js`) — and both have to answer the same
- * question before they can do anything: is this inserted node part of the
- * offline-progress modal, or is it one of the dozen other dialogs the game
- * opens?
+ * The session briefing (`features/briefing/session-briefing.js`) lives inside
+ * somebody else's dialog and has to answer a question before it can do
+ * anything: is this inserted node part of the offline-progress modal, or is it
+ * one of the dozen other dialogs the game opens? (A second feature,
+ * welcome-back-value.js, used to decorate this same modal and share this
+ * detection; it was retired in favor of an Experience row on the Offline
+ * Progress Economics block instead.)
  *
- * One copy of that answer rather than two, because the failure mode of two is
- * not "one stops working". It is one of them decorating a dialog the other
- * declined, which is how a script ends up writing a briefing into the settings
- * window the day the game renames a CSS module.
+ * Kept as one shared answer rather than reimplemented per feature, because the
+ * failure mode of two copies is not "one stops working". It is one of them
+ * decorating a dialog the other declined, which is how a script ends up
+ * writing a briefing into the settings window the day the game renames a CSS
+ * module.
  *
  * The detection deliberately does not lean on the welcome modal's own class name
  * any harder than it has to. The dialog is found through `Modal_modalContent` —
@@ -99,11 +101,11 @@ export function currentWelcomeBackModal(root = document) {
  * most returns never see. It goes above that button instead, and falls back to
  * the end for a dialog that has no such button.
  *
- * Shared between the two features that decorate this modal
- * (`session-briefing.js` and `welcome-back-value.js`), for the same reason the
- * detection above is shared: two copies of "where does a decoration go" is how
- * one of them quietly stays under the button after the other is fixed to sit
- * above it.
+ * Used by `session-briefing.js`, the one feature left decorating this modal
+ * through this shared util, for the same reason the detection above is
+ * shared: a second copy of "where does a decoration go" is how a future
+ * second decorator quietly stays under the button after this one is fixed to
+ * sit above it.
  *
  * @param {HTMLElement} modal - The dialog's content element
  * @param {HTMLElement} node - The decoration to place

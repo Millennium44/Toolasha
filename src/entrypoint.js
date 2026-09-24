@@ -1795,13 +1795,6 @@ function registerFeatures() {
             customCheck: () => true,
         },
         {
-            key: 'welcomeBackValue',
-            name: 'Welcome Back Value',
-            category: 'UI',
-            module: UI.welcomeBackValue,
-            async: false,
-        },
-        {
             key: 'panelSizeMemory',
             name: 'Panel Size Memory',
             category: 'UI',

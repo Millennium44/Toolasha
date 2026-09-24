@@ -170,8 +170,6 @@ const {
     default: feature,
 } = await import('./session-briefing.js');
 
-const { default: welcomeBackValue, ROW_CLASS } = await import('../ui/welcome-back-value.js');
-
 /** The modal the tests write into, once one has been opened */
 let modal = null;
 
@@ -266,7 +264,6 @@ beforeEach(() => {
 
 afterEach(() => {
     _resetBriefingState();
-    welcomeBackValue.cleanup();
     document.body.replaceChildren();
 });
 
@@ -708,22 +705,6 @@ describe('the modal and the facts, in either order', () => {
 
         expect(section()).toBeNull();
         expect(leftover.querySelector(`.${SECTION_CLASS}`)).toBeNull();
-    });
-
-    test('the offline value line still works in the same modal', async () => {
-        game.queue = { queued: 0, seconds: 0 };
-        welcomeBackValue.initialize();
-        await feature.initialize();
-
-        const content = openWelcomeModal();
-        const tile = document.createElement('div');
-        tile.className = 'Item_itemContainer__x';
-        tile.innerHTML = '<svg><use href="#milk"></use></svg><div class="Item_count__y">12</div>';
-        content.appendChild(tile);
-        announce(content);
-
-        expect(content.querySelector(`.${ROW_CLASS}`)).not.toBeNull();
-        expect(section()).not.toBeNull();
     });
 });
 
