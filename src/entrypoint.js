@@ -1699,6 +1699,10 @@ function registerFeatures() {
             category: 'UI',
             module: UI.equipmentLevelDisplay,
             async: false,
+            // Either half being on is enough; each draws under its own setting
+            // inside the module (itemIconLevel for equipment/ability-book text,
+            // showsKeyInfoInIcon for key/fragment zone text).
+            customCheck: () => config.getSetting('itemIconLevel') || config.getSetting('showsKeyInfoInIcon'),
         },
         {
             key: 'alchemyItemDimming',

@@ -36,23 +36,28 @@ class EquipmentLevelDisplay {
      * Setup setting change listener (always active, even when feature is disabled)
      */
     setupSettingListener() {
-        // Listen for main toggle changes
-        config.onSettingChange('itemIconLevel', (enabled) => {
-            if (enabled) {
-                this.initialize();
+        // Both settings share this module — it must stay up while either is
+        // on, and only tear down once both are off. Turning one off with the
+        // other still on just re-renders (equipment/key text drops out on
+        // its own, per-setting, inside addItemLevels).
+        const reactToToggle = () => {
+            if (config.getSetting('itemIconLevel') || config.getSetting('showsKeyInfoInIcon')) {
+                if (!this.isInitialized) {
+                    this.initialize();
+                } else {
+                    this.processedHrefs = new WeakMap();
+                    this.addItemLevels();
+                }
             } else {
                 this.disable();
             }
-        });
+        };
+
+        // Listen for main toggle changes
+        config.onSettingChange('itemIconLevel', reactToToggle);
 
         // Listen for key info toggle
-        config.onSettingChange('showsKeyInfoInIcon', () => {
-            if (this.isInitialized) {
-                // Clear processed map and re-render
-                this.processedHrefs = new WeakMap();
-                this.addItemLevels();
-            }
-        });
+        config.onSettingChange('showsKeyInfoInIcon', reactToToggle);
 
         config.onSettingChange('color_accent', () => {
             if (this.isInitialized) {
@@ -65,7 +70,7 @@ class EquipmentLevelDisplay {
      * Initialize the equipment level display
      */
     initialize() {
-        if (!config.getSetting('itemIconLevel')) {
+        if (!config.getSetting('itemIconLevel') && !config.getSetting('showsKeyInfoInIcon')) {
             return;
         }
 
@@ -209,14 +214,15 @@ class EquipmentLevelDisplay {
             // For ability books, show the ability level requirement
             // For dungeon entry keys, show zone index
             let displayText = null;
+            const showLevels = config.getSetting('itemIconLevel');
 
-            if (itemDetails.equipmentDetail) {
+            if (showLevels && itemDetails.equipmentDetail) {
                 // Equipment: Use levelRequirements from equipmentDetail
                 const levelReq = itemDetails.equipmentDetail.levelRequirements;
                 if (levelReq && levelReq.length > 0 && levelReq[0].level > 0) {
                     displayText = levelReq[0].level.toString();
                 }
-            } else if (itemDetails.abilityBookDetail) {
+            } else if (showLevels && itemDetails.abilityBookDetail) {
                 // Ability book: Use level requirement from abilityBookDetail
                 const abilityLevelReq = itemDetails.abilityBookDetail.levelRequirements;
                 if (abilityLevelReq && abilityLevelReq.length > 0 && abilityLevelReq[0].level > 0) {
