@@ -58,15 +58,24 @@ class CombatScore {
         config.onSettingChange('combatScore', (value) => {
             if (value) {
                 this.initialize();
-            } else {
+            } else if (!config.getSetting('abilitiesTriggers')) {
+                // The module also serves abilitiesTriggers; only tear it down
+                // when neither setting still wants it running.
                 this.disable();
             }
         });
 
         config.onSettingChange('abilitiesTriggers', (value) => {
-            if (!value && this.currentAbilitiesPanel) {
-                this.currentAbilitiesPanel.remove();
-                this.currentAbilitiesPanel = null;
+            if (value) {
+                this.initialize();
+            } else {
+                if (this.currentAbilitiesPanel) {
+                    this.currentAbilitiesPanel.remove();
+                    this.currentAbilitiesPanel = null;
+                }
+                if (!config.getSetting('combatScore')) {
+                    this.disable();
+                }
             }
         });
 

@@ -1419,6 +1419,9 @@ function registerFeatures() {
             category: 'Profile',
             module: Combat.combatScore,
             async: false,
+            // combatScore only hides the score display; abilitiesTriggers renders
+            // its own panel from the same module. Either alone must still run it.
+            customCheck: () => config.getSetting('combatScore') || config.getSetting('abilitiesTriggers'),
             // Prefix-matched: anchoring this on the same hashed selector the
             // feature itself uses meant a game rehash blinded check and feature
             // together — the one failure the health pass exists to catch
