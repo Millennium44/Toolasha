@@ -72,6 +72,8 @@ describe('action bar profit across a character switch', () => {
         actionTimeDisplay.profitElement = null;
         actionTimeDisplay.activeBarProfitId = null;
         actionTimeDisplay.actionNameObserver = null;
+        // A switch redraws the bar only when the bar display is wired
+        actionTimeDisplay.barActive = true;
     });
 
     test('a calculation started before the switch never paints the new character bar', async () => {

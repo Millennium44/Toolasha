@@ -691,6 +691,10 @@ class ActionTimeDisplay {
         this.waitForPanelTimeout = null;
         this.retryUpdateTimeout = null;
         this.cleanupRegistry = createCleanupRegistry();
+        // Teardown for the action bar display alone, so it can be removed while the queue
+        // annotations (on `cleanupRegistry`) keep running
+        this.barCleanupRegistry = createCleanupRegistry();
+        this.barActive = false;
         // The action/actionDetails pair updateRunSoFar last drew for, so an
         // item-flow-recorder change notification can redraw the same row
         // without waiting for the header to move (see initializeItemFlowRedraw)
@@ -1690,6 +1694,16 @@ class ActionTimeDisplay {
     }
 
     /**
+     * Whether anything this module draws is switched on: the action bar display, or the queued
+     * actions annotations. The queue's sub-settings (value, XP, "sim 24h") only draw inside rows
+     * `actionQueue` gates, so they do not count on their own.
+     * @returns {boolean}
+     */
+    shouldEnable() {
+        return Boolean(config.getSetting('actionBar_enabled') || config.getSetting('actionQueue'));
+    }
+
+    /**
      * Initialize the action time display
      */
     async initialize() {
@@ -1703,6 +1717,7 @@ class ActionTimeDisplay {
             this.settingListenersRegistered = true;
             const actionBarSettings = [
                 'actionBar_enabled',
+                'actionQueue',
                 'actionBar_compactWidth',
                 'actionBar_showQueueCount',
                 'actionBar_showActionDuration',
@@ -1715,27 +1730,22 @@ class ActionTimeDisplay {
             ];
             for (const key of actionBarSettings) {
                 config.onSettingChange(key, (newValue) => {
-                    if (key === 'actionBar_enabled') {
-                        if (newValue) {
-                            this.initialize().catch((error) => {
-                                console.error('[ActionTimeDisplay] Re-initialization failed:', error);
-                            });
-                        } else {
-                            this.disable();
-                        }
+                    if (key === 'actionBar_enabled' || key === 'actionQueue') {
+                        this.applyEnabledSettings(key === 'actionBar_enabled' && Boolean(newValue));
                         return;
                     }
                     if (key === 'actionQueue_completionTimeStyle') this.redrawQueueMenu();
-                    else this.updateDisplay();
+                    else if (this.barActive) this.updateDisplay();
                 });
             }
         }
 
-        if (!config.getSetting('actionBar_enabled')) {
+        if (!this.shouldEnable()) {
             return;
         }
 
-        // Set up handler for character switching
+        // Shared by the bar and the queue: a switch also resets the queue's async profit guard
+        // and abandons a running "sim 24h" sweep, so this stays wired with the bar off.
         if (!this.characterInitHandler) {
             this.characterInitHandler = () => {
                 this.handleCharacterSwitch();
@@ -1749,6 +1759,61 @@ class ActionTimeDisplay {
             });
         }
 
+        this.cleanupRegistry.registerCleanup(() => {
+            if (this.queueMenuObserver) {
+                this.queueMenuObserver();
+                this.queueMenuObserver = null;
+            }
+        });
+
+        // Initialize queue tooltip observer
+        this.initializeQueueObserver();
+
+        // Initialize queue hover tooltip observer
+        this.initializeQueueTooltipObserver();
+
+        this.isInitialized = true;
+
+        if (config.getSetting('actionBar_enabled')) {
+            this.enableBar();
+        }
+    }
+
+    /**
+     * Bring the module in line with `actionBar_enabled` and `actionQueue` after one of them
+     * changed: start it, stop it, or add or remove only the bar display.
+     * @param {boolean} barTurnedOn - The change was `actionBar_enabled` switching on
+     */
+    applyEnabledSettings(barTurnedOn) {
+        if (!this.shouldEnable()) {
+            this.disable();
+            return;
+        }
+        if (!this.isInitialized) {
+            this.initialize().catch((error) => {
+                console.error('[ActionTimeDisplay] Re-initialization failed:', error);
+            });
+            return;
+        }
+        if (!config.getSetting('actionBar_enabled')) {
+            this.disableBar();
+        } else if (barTurnedOn) {
+            this.enableBar();
+        }
+    }
+
+    /**
+     * Wire the action bar display: the widgets under the header's action name and everything
+     * that repaints them. Its teardown lives in `barCleanupRegistry` so the bar can be removed
+     * while the queue annotations keep running.
+     */
+    enableBar() {
+        if (this.barActive) {
+            return;
+        }
+        this.barActive = true;
+        const registry = this.barCleanupRegistry;
+
         // Listen for actions_updated so display refreshes when new actions arrive via WebSocket
         // (the DOM updates optimistically before the WS message, so the mutation observer fires
         // before characterActions is populated — this ensures we retry once the data is available)
@@ -1757,7 +1822,7 @@ class ActionTimeDisplay {
                 this.updateDisplay();
             };
             dataManager.on('actions_updated', this.actionsUpdatedHandler);
-            this.cleanupRegistry.registerCleanup(() => {
+            registry.registerCleanup(() => {
                 if (this.actionsUpdatedHandler) {
                     dataManager.off('actions_updated', this.actionsUpdatedHandler);
                     this.actionsUpdatedHandler = null;
@@ -1771,7 +1836,7 @@ class ActionTimeDisplay {
         // once; the handler itself is idempotent to re-registration guards below.
         if (!this._unsubscribeItemFlowChange) {
             this._unsubscribeItemFlowChange = itemFlowRecorder.onChange(() => this.scheduleRunSoFarRedraw());
-            this.cleanupRegistry.registerCleanup(() => {
+            registry.registerCleanup(() => {
                 if (this._unsubscribeItemFlowChange) {
                     this._unsubscribeItemFlowChange();
                     this._unsubscribeItemFlowChange = null;
@@ -1779,7 +1844,7 @@ class ActionTimeDisplay {
             });
         }
 
-        this.cleanupRegistry.registerCleanup(() => {
+        registry.registerCleanup(() => {
             if (this._runSoFarRedrawTimer) {
                 clearTimeout(this._runSoFarRedrawTimer);
                 this._runSoFarRedrawTimer = null;
@@ -1787,49 +1852,42 @@ class ActionTimeDisplay {
             }
         });
 
-        this.cleanupRegistry.registerCleanup(() => {
+        registry.registerCleanup(() => {
             const actionNameElement = document.querySelector('div[class*="Header_actionName"]');
             if (actionNameElement) {
                 this.clearAppendedStats(actionNameElement);
             }
         });
 
-        this.cleanupRegistry.registerCleanup(() => {
+        registry.registerCleanup(() => {
             if (this.waitForPanelTimeout) {
                 clearTimeout(this.waitForPanelTimeout);
                 this.waitForPanelTimeout = null;
             }
         });
 
-        this.cleanupRegistry.registerCleanup(() => {
+        registry.registerCleanup(() => {
             if (this.retryUpdateTimeout) {
                 clearTimeout(this.retryUpdateTimeout);
                 this.retryUpdateTimeout = null;
             }
         });
 
-        this.cleanupRegistry.registerCleanup(() => {
+        registry.registerCleanup(() => {
             if (this.updateTimer) {
                 clearInterval(this.updateTimer);
                 this.updateTimer = null;
             }
         });
 
-        this.cleanupRegistry.registerCleanup(() => {
+        registry.registerCleanup(() => {
             if (this.actionNameObserver) {
                 this.actionNameObserver();
                 this.actionNameObserver = null;
             }
         });
 
-        this.cleanupRegistry.registerCleanup(() => {
-            if (this.queueMenuObserver) {
-                this.queueMenuObserver();
-                this.queueMenuObserver = null;
-            }
-        });
-
-        this.cleanupRegistry.registerCleanup(() => {
+        registry.registerCleanup(() => {
             if (this.unregisterActionNameObserver) {
                 this.unregisterActionNameObserver();
                 this.unregisterActionNameObserver = null;
@@ -1840,14 +1898,26 @@ class ActionTimeDisplay {
         this.waitForActionPanel();
 
         this.initializeActionNameWatcher();
+    }
 
-        // Initialize queue tooltip observer
-        this.initializeQueueObserver();
-
-        // Initialize queue hover tooltip observer
-        this.initializeQueueTooltipObserver();
-
-        this.isInitialized = true;
+    /**
+     * Remove the action bar display and stop everything that repaints it, leaving the queue
+     * annotations running.
+     */
+    disableBar() {
+        try {
+            this.barCleanupRegistry.cleanupAll();
+        } catch (error) {
+            console.error('[Action Time Display] Removing the action bar failed part-way:', error);
+        } finally {
+            this.barActive = false;
+            this.displayElement = null;
+            this.profitElement = null;
+            this.runElement = null;
+            this.activeBarProfitId = null;
+            this._lastRunAction = null;
+            this._lastRunActionDetails = null;
+        }
     }
 
     /**
@@ -2392,7 +2462,7 @@ class ActionTimeDisplay {
         this.runElement = null;
 
         // Re-initialize action panel display for new character
-        this.waitForActionPanel();
+        if (this.barActive) this.waitForActionPanel();
     }
 
     /**
@@ -2415,7 +2485,7 @@ class ActionTimeDisplay {
                 this.waitForPanelTimeout = null;
                 this.waitForActionPanel();
             }, 200);
-            this.cleanupRegistry.registerTimeout(this.waitForPanelTimeout);
+            this.barCleanupRegistry.registerTimeout(this.waitForPanelTimeout);
         }
     }
 
@@ -2527,7 +2597,7 @@ class ActionTimeDisplay {
         `;
         this.profitElement.parentNode.insertBefore(this.runElement, this.profitElement.nextSibling);
 
-        this.cleanupRegistry.registerCleanup(() => {
+        this.barCleanupRegistry.registerCleanup(() => {
             if (this.displayElement && this.displayElement.parentNode) {
                 this.displayElement.parentNode.removeChild(this.displayElement);
             }
@@ -3503,7 +3573,7 @@ class ActionTimeDisplay {
                 this.scheduleUpdateRetry(attempt + 1);
             }
         }, delays[attempt]);
-        this.cleanupRegistry.registerTimeout(this.retryUpdateTimeout);
+        this.barCleanupRegistry.registerTimeout(this.retryUpdateTimeout);
     }
 
     /**
@@ -5774,6 +5844,7 @@ class ActionTimeDisplay {
     disable() {
         try {
             this.cleanupRegistry.cleanupAll();
+            this.barCleanupRegistry.cleanupAll();
             this.displayElement = null;
             this.profitElement = null;
             this.runElement = null;
@@ -5790,6 +5861,7 @@ class ActionTimeDisplay {
         } catch (error) {
             console.error('[Action Time Display] Disable failed part-way:', error);
         } finally {
+            this.barActive = false;
             this.isInitialized = false;
         }
     }

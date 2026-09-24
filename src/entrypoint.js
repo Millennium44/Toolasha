@@ -1087,6 +1087,8 @@ function registerFeatures() {
             category: 'Actions',
             module: Actions.actionTimeDisplay,
             async: false,
+            // The queued-actions annotations run with the action bar display off
+            customCheck: () => Actions.actionTimeDisplay.shouldEnable(),
             healthCheck: () =>
                 whenSetting('actionBar_enabled', () =>
                     injectedInto('div[class*="Header_actionName"]', '#mwi-action-time-display')
