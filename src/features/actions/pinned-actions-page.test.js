@@ -66,6 +66,25 @@ vi.mock('./action-panel-sort.js', () => ({
     },
 }));
 
+// _computeAlchemyStats dispatches to the calculator by alchemy type; stubbed rather than
+// left real so the routing tests below assert which method was called, not what it returns.
+const mockAlchemyCalculator = vi.hoisted(() => ({
+    coinify: vi.fn(),
+    decompose: vi.fn(),
+    transmute: vi.fn(),
+    unrefine: vi.fn(),
+}));
+vi.mock('../market/alchemy-profit-calculator.js', () => ({
+    default: {
+        calculateCoinifyProfit: (...args) => mockAlchemyCalculator.coinify(...args),
+        calculateDecomposeProfit: (...args) => mockAlchemyCalculator.decompose(...args),
+        calculateTransmuteProfit: (...args) => mockAlchemyCalculator.transmute(...args),
+        calculateUnrefineProfit: (...args) => mockAlchemyCalculator.unrefine(...args),
+    },
+}));
+// The XP formula itself is alchemy-rankings.test.js's job; here it only needs to be callable.
+vi.mock('../alchemy/alchemy-rankings.js', () => ({ calcXpPerAction: () => 100 }));
+
 const { default: page, combatZoneRows, formatAge } = await import('./pinned-actions-page.js');
 
 const SNAPSHOT = {
@@ -415,5 +434,49 @@ describe('formatAge', () => {
 
     test('no timestamp says nothing rather than 1970', () => {
         expect(formatAge(null, NOW)).toBe('');
+    });
+});
+
+describe('_computeAlchemyStats', () => {
+    const ITEM_HRID = '/items/refined_plate';
+
+    beforeEach(() => {
+        mockAlchemyCalculator.coinify.mockReset();
+        mockAlchemyCalculator.decompose.mockReset();
+        mockAlchemyCalculator.transmute.mockReset();
+        mockAlchemyCalculator.unrefine.mockReset();
+        mockDataManager.itemDetails[ITEM_HRID] = { itemLevel: 50 };
+    });
+
+    test('a pinned Unrefine action is priced through calculateUnrefineProfit, not Coinify', () => {
+        mockAlchemyCalculator.unrefine.mockReturnValue({
+            profitPerHour: 1234,
+            actionsPerHour: 100,
+            successRate: 1,
+        });
+
+        const stats = page._computeAlchemyStats('unrefine', ITEM_HRID);
+
+        expect(mockAlchemyCalculator.unrefine).toHaveBeenCalledWith(ITEM_HRID, 0);
+        expect(mockAlchemyCalculator.coinify).not.toHaveBeenCalled();
+        expect(stats).toMatchObject({ profitPerHour: 1234, expPerHour: 100 * 100 });
+    });
+
+    test('a pinned Coinify action still routes to calculateCoinifyProfit', () => {
+        mockAlchemyCalculator.coinify.mockReturnValue({
+            profitPerHour: 500,
+            actionsPerHour: 10,
+            successRate: 0.7,
+        });
+
+        page._computeAlchemyStats('coinify', ITEM_HRID);
+
+        expect(mockAlchemyCalculator.coinify).toHaveBeenCalledWith(ITEM_HRID, 0);
+        expect(mockAlchemyCalculator.unrefine).not.toHaveBeenCalled();
+    });
+
+    test('an unpriceable Unrefine item answers null rather than throwing', () => {
+        mockAlchemyCalculator.unrefine.mockReturnValue(null);
+        expect(page._computeAlchemyStats('unrefine', ITEM_HRID)).toBeNull();
     });
 });

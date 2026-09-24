@@ -16,7 +16,6 @@ import combatSimUI from '../combat-sim/combat-sim-ui.js';
 import { calculateGatheringProfit } from './gathering-profit.js';
 import { calculateProductionProfit } from './production-profit.js';
 import { calculateExpPerHour } from '../../utils/experience-calculator.js';
-import { calculateExperienceMultiplier } from '../../utils/experience-parser.js';
 import { numberFormatter } from '../../utils/formatters.js';
 import { createTimerRegistry } from '../../utils/timer-registry.js';
 import { calculateMaterialRequirements } from '../../utils/material-calculator.js';
@@ -24,6 +23,7 @@ import assetManifest from '../../utils/asset-manifest.js';
 import { capProfitRate, sellsFromProfitData, liquidityMarkerHtml } from '../../utils/liquidity-cap.js';
 import { openCombatZoneAtTier } from '../../utils/combat-zone-open.js';
 import alchemyProfitCalculator from '../market/alchemy-profit-calculator.js';
+import { calcXpPerAction } from '../alchemy/alchemy-rankings.js';
 
 const GATHERING_TYPES = ['/action_types/foraging', '/action_types/woodcutting', '/action_types/milking'];
 
@@ -1164,7 +1164,7 @@ class PinnedActionsPage {
 
     /**
      * Compute profit/hr and XP/hr for an alchemy action + item combo
-     * @param {string} alchemyType - 'coinify', 'decompose', or 'transmute'
+     * @param {string} alchemyType - 'coinify', 'decompose', 'transmute', or 'unrefine'
      * @param {string} itemHrid - Item HRID
      * @returns {Object|null} { profitPerHour, expPerHour }
      */
@@ -1175,6 +1175,10 @@ class PinnedActionsPage {
                 profitData = alchemyProfitCalculator.calculateTransmuteProfit(itemHrid);
             } else if (alchemyType === 'decompose') {
                 profitData = alchemyProfitCalculator.calculateDecomposeProfit(itemHrid, 0);
+            } else if (alchemyType === 'unrefine') {
+                // No enhancement level is tracked for a pinned alchemy item (the other three
+                // branches above are always called at 0 too), so this always prices the base item.
+                profitData = alchemyProfitCalculator.calculateUnrefineProfit(itemHrid, 0);
             } else {
                 profitData = alchemyProfitCalculator.calculateCoinifyProfit(itemHrid, 0);
             }
@@ -1184,29 +1188,15 @@ class PinnedActionsPage {
             const itemDetails = dataManager.getItemDetails(itemHrid);
             const itemLevel = itemDetails?.itemLevel || 1;
 
-            const baseXP = this._getAlchemyBaseXP(alchemyType, itemLevel);
-            const xpData = calculateExperienceMultiplier('/skills/alchemy', '/action_types/alchemy');
-            const fullXP = baseXP * xpData.totalMultiplier;
-            const expectedXP = profitData.successRate * fullXP + (1 - profitData.successRate) * fullXP * 0.1;
+            // Shares alchemy-rankings.js's copy rather than re-deriving the formula — that is
+            // also where Unrefine's XP (same 1.4x multiplier as Decompose) is defined.
+            const expectedXP = calcXpPerAction(alchemyType, itemLevel, profitData.successRate);
             const expPerHour = profitData.actionsPerHour * expectedXP;
 
             return { profitPerHour: profitData.profitPerHour, expPerHour, sells: sellsFromProfitData(profitData) };
         } catch (error) {
             console.error('[PinnedActionsPage] Failed to compute alchemy stats:', error);
             return null;
-        }
-    }
-
-    _getAlchemyBaseXP(actionType, itemLevel) {
-        switch (actionType) {
-            case 'coinify':
-                return itemLevel + 10;
-            case 'decompose':
-                return itemLevel * 1.4 + 14;
-            case 'transmute':
-                return itemLevel * 1.6 + 16;
-            default:
-                return 0;
         }
     }
 
