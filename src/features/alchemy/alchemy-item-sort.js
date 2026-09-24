@@ -119,7 +119,8 @@ const CSS = `
         position: absolute;
         left: 0;
         right: 0;
-        bottom: 1px;
+        /* Top edge: the bottom carries the game's item count and other badges, which covered the label */
+        top: 1px;
         text-align: center;
         font-size: 9px;
         line-height: 1;
