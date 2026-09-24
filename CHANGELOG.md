@@ -8,7 +8,7 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ### Alchemize Item picker can sort by profit
 
-- The item picker on each Alchemy tab has an Order toggle (Game / Profit/hr), remembered per tab. Profit/hr ranks items by that action's best profit per hour with a small label on each tile, keeps pinned items first and puts unpriced items last.
+- The item picker on each Alchemy tab has an Order toggle (Game / Profit/hr / XP/hr), remembered per tab. Profit/hr and XP/hr rank items by that action's best figure per hour with a small label on each tile, keep pinned items first and put unpriced items last; Game puts the game's own order back and removes the labels.
 
 ### Coinify shows the coins it pays
 
