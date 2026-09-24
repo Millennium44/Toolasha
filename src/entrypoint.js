@@ -1267,6 +1267,9 @@ function registerFeatures() {
             category: 'Actions',
             module: UI.lootLogStats,
             async: true,
+            // lootLogHistory (persisting and displaying older entries) does not
+            // need the statistics overlays lootLogStats controls, and vice versa.
+            customCheck: () => config.getSetting('lootLogStats') || config.getSetting('lootLogHistory'),
         },
         {
             key: 'lootLogPivot',

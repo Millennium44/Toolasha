@@ -267,25 +267,35 @@ class LootLogStats {
     async initialize() {
         if (this.initialized) return;
 
-        const enabled = config.getSetting('lootLogStats');
-        if (!enabled) return;
-
+        const statsEnabled = config.getSetting('lootLogStats');
         this.historyEnabled = config.getSetting('lootLogHistory');
 
-        // Listen for loot_log_updated messages from WebSocket
+        // Neither setting wants the module running.
+        if (!statsEnabled && !this.historyEnabled) return;
+
+        // Recording needs the current loot log data every update regardless of
+        // which setting asked for it: stats reads it for the live overlays,
+        // history reads it to persist and to know which entries are not
+        // already on screen.
         const wsHandler = (data) => this.handleLootLogUpdate(data);
         webSocketHook.on('loot_log_updated', wsHandler);
         this.unregisterHandlers.push(() => {
             webSocketHook.off('loot_log_updated', wsHandler);
         });
 
-        // Watch for loot log elements in DOM
-        const unregisterObserver = domObserver.onClass('LootLogStats', 'LootLogPanel_actionLoot__32gl_', (element) => {
-            const allElements = document.querySelectorAll('.LootLogPanel_actionLoot__32gl_');
-            const index = Array.prototype.indexOf.call(allElements, element);
-            this.processLootLogElement(element, index, allElements.length);
-        });
-        this.unregisterHandlers.push(unregisterObserver);
+        // Watch for loot log elements in DOM — the per-row statistics overlays
+        if (statsEnabled) {
+            const unregisterObserver = domObserver.onClass(
+                'LootLogStats',
+                'LootLogPanel_actionLoot__32gl_',
+                (element) => {
+                    const allElements = document.querySelectorAll('.LootLogPanel_actionLoot__32gl_');
+                    const index = Array.prototype.indexOf.call(allElements, element);
+                    this.processLootLogElement(element, index, allElements.length);
+                }
+            );
+            this.unregisterHandlers.push(unregisterObserver);
+        }
 
         // Watch for loot log container to inject historical entries
         if (this.historyEnabled) {
@@ -317,10 +327,12 @@ class LootLogStats {
 
         // Process existing loot log elements after short delay
         const timeout = setTimeout(() => {
-            const lootLogElements = document.querySelectorAll('.LootLogPanel_actionLoot__32gl_');
-            lootLogElements.forEach((element, index) =>
-                this.processLootLogElement(element, index, lootLogElements.length)
-            );
+            if (config.getSetting('lootLogStats')) {
+                const lootLogElements = document.querySelectorAll('.LootLogPanel_actionLoot__32gl_');
+                lootLogElements.forEach((element, index) =>
+                    this.processLootLogElement(element, index, lootLogElements.length)
+                );
+            }
 
             if (this.historyEnabled) {
                 this.renderHistoricalEntries();
