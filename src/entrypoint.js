@@ -1893,7 +1893,9 @@ function registerFeatures() {
             // the same record. Nothing outside the module imports it.
             concurrent: true,
             customCheck: () =>
-                config.isFeatureEnabled('collectionFilters') || config.isFeatureEnabled('collectionFavorites'),
+                config.isFeatureEnabled('collectionFilters') ||
+                config.isFeatureEnabled('collectionFavorites') ||
+                config.getSetting('collectionFilters_skillingBadges'),
         },
         { key: 'chatCommands', name: 'Chat Commands', category: 'Chat', module: UI.chatCommands, async: true },
         {

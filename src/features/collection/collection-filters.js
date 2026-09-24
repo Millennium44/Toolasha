@@ -528,10 +528,23 @@ class CollectionFilters {
     // Feature interface
     // -------------------------------------------------------------------------
 
+    /**
+     * Whether any of the three settings this module draws for is on.
+     * @returns {boolean}
+     * @private
+     */
+    _anyEnabled() {
+        return (
+            config.getSetting('collectionFilters') ||
+            config.getSetting('collectionFavorites') ||
+            config.getSetting('collectionFilters_skillingBadges')
+        );
+    }
+
     setupSettingListener() {
         const reinit = () => {
             this.disable();
-            if (config.getSetting('collectionFilters') || config.getSetting('collectionFavorites')) {
+            if (this._anyEnabled()) {
                 this.initialize();
             }
         };
@@ -540,12 +553,20 @@ class CollectionFilters {
         config.onSettingChange('collectionFavorites', reinit);
 
         config.onSettingChange('collectionFilters_skillingBadges', (value) => {
-            if (!this.isInitialized) return;
+            if (!this.isInitialized) {
+                // Badges alone can be the first setting turned on.
+                if (value) this.initialize();
+                return;
+            }
             if (value) {
                 this.disable();
                 this.initialize();
             } else {
                 document.querySelectorAll('.toolasha-cf.collection-badge').forEach((el) => el.remove());
+                // Filters/favorites may still be off — nothing left to keep the module up for.
+                if (!this._anyEnabled()) {
+                    this.disable();
+                }
             }
         });
     }
@@ -554,7 +575,7 @@ class CollectionFilters {
         if (this.isInitialized) return;
         const filtersOn = config.getSetting('collectionFilters');
         const favoritesOn = config.getSetting('collectionFavorites');
-        if (!filtersOn && !favoritesOn) return;
+        if (!filtersOn && !favoritesOn && !config.getSetting('collectionFilters_skillingBadges')) return;
 
         this.isInitialized = true;
         this._filtersEnabled = filtersOn;

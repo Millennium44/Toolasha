@@ -1273,3 +1273,49 @@ describe('the favourites survive a read that cannot be made', () => {
         expect(store.collections.collections_market123).toEqual({ '/items/milk': 12, '/items/log': 3 });
     });
 });
+
+describe('skilling badges alone, with filters and favourites both off', () => {
+    afterEach(() => {
+        collectionFilters.disable();
+    });
+
+    test('initialize() does not early-return', async () => {
+        mockConfig.settings = {
+            collectionFilters: false,
+            collectionFavorites: false,
+            collectionFilters_skillingBadges: true,
+        };
+        collectionFilters.isInitialized = false;
+
+        await collectionFilters.initialize();
+
+        expect(collectionFilters.isInitialized).toBe(true);
+        expect(collectionFilters._filtersEnabled).toBe(false);
+        expect(collectionFilters._favoritesEnabled).toBe(false);
+    });
+
+    test('a skilling tile is still badged with its collected count', async () => {
+        mockConfig.settings = {
+            collectionFilters: false,
+            collectionFavorites: false,
+            collectionFilters_skillingBadges: true,
+        };
+        collectionFilters.isInitialized = false;
+        await collectionFilters.initialize();
+        collectionFilters.collections = { milk: 12 };
+
+        document.body.innerHTML = '';
+        const grid = document.createElement('div');
+        grid.className = 'SkillActionGrid_skillActionGrid__1tJFk';
+        grid.innerHTML =
+            '<div class="SkillAction_skillAction__1esCp">' +
+            '<svg><use href="/static/media/items_sprite.svg#cow"></use></svg>' +
+            '<div class="SkillAction_name__2VPXa">cow</div></div>';
+        document.body.appendChild(grid);
+
+        collectionFilters._addSkillingBadges(grid);
+
+        const badge = grid.querySelector('.toolasha-cf.collection-badge');
+        expect(badge?.textContent).toBe('12');
+    });
+});
