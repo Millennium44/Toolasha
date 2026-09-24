@@ -10,6 +10,7 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 - With the picker on Game order, pinning an item made the order and pins fight over the tile forever and froze the tab; Game order now keeps pinned items first. Items that appear while the picker is sorted go back to their right place under Game order, prices refresh each time the picker opens, and turning the feature off restores the game's order.
 - The treasure tracker no longer takes the bag tax off cowbells for an Iron Cow character, matching the other profit figures.
+- Pinned alchemy actions on a level-less item (such as Labyrinth scrolls) now show the same XP/hr as Best Items and the action panel.
 
 ### Alchemize Item picker can sort by profit
 

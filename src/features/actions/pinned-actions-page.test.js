@@ -83,7 +83,8 @@ vi.mock('../market/alchemy-profit-calculator.js', () => ({
     },
 }));
 // The XP formula itself is alchemy-rankings.test.js's job; here it only needs to be callable.
-vi.mock('../alchemy/alchemy-rankings.js', () => ({ calcXpPerAction: () => 100 }));
+const mockCalcXpPerAction = vi.hoisted(() => vi.fn(() => 100));
+vi.mock('../alchemy/alchemy-rankings.js', () => ({ calcXpPerAction: (...args) => mockCalcXpPerAction(...args) }));
 
 const { default: page, combatZoneRows, formatAge } = await import('./pinned-actions-page.js');
 
@@ -473,6 +474,16 @@ describe('_computeAlchemyStats', () => {
 
         expect(mockAlchemyCalculator.coinify).toHaveBeenCalledWith(ITEM_HRID, 0);
         expect(mockAlchemyCalculator.unrefine).not.toHaveBeenCalled();
+    });
+
+    test('a level-less item earns XP at level 0, as Best Items and the action panel read it', () => {
+        mockDataManager.itemDetails[ITEM_HRID] = {};
+        mockAlchemyCalculator.decompose.mockReturnValue({ profitPerHour: 1, actionsPerHour: 1, successRate: 0.5 });
+        mockCalcXpPerAction.mockClear();
+
+        page._computeAlchemyStats('decompose', ITEM_HRID);
+
+        expect(mockCalcXpPerAction).toHaveBeenCalledWith('decompose', 0, 0.5);
     });
 
     test('an unpriceable Unrefine item answers null rather than throwing', () => {

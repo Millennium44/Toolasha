@@ -1185,8 +1185,8 @@ class PinnedActionsPage {
 
             if (!profitData) return null;
 
-            const itemDetails = dataManager.getItemDetails(itemHrid);
-            const itemLevel = itemDetails?.itemLevel || 1;
+            // XP reads a level-less item at 0, as Best Items, the action panel and the queue rows do
+            const itemLevel = dataManager.getItemDetails(itemHrid)?.itemLevel || 0;
 
             // Shares alchemy-rankings.js's copy rather than re-deriving the formula — that is
             // also where Unrefine's XP (same 1.4x multiplier as Decompose) is defined.
