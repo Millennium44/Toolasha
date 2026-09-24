@@ -475,10 +475,10 @@ export const settingsGroups = {
             },
             alchemyItemSort: {
                 id: 'alchemyItemSort',
-                label: 'Alchemy panel: Sort item picker by profit',
+                label: 'Alchemy panel: Sort item picker by profit or XP',
                 type: 'checkbox',
                 default: true,
-                help: "Adds a Game / Profit/hr toggle to the Alchemize Item picker, remembered per tab. Off (Game) by default, so the picker's order never changes until a tab is switched to Profit/hr.",
+                help: "Adds a Game / Profit/hr / XP/hr toggle to the Alchemize Item picker, remembered per tab. Game by default, so the picker's order never changes until a tab is switched to Profit/hr or XP/hr.",
             },
             alchemy_transmuteHistory: {
                 id: 'alchemy_transmuteHistory',
