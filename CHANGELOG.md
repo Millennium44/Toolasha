@@ -8,7 +8,7 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ### Skill tooltip time to level is back
 
-- Since 3.54.0, turning off "Left sidebar: Show XP/hr rate on skill bars" also removed the skill tooltip's time till next level, even with that setting on. Each now follows its own checkbox again.
+- Since 3.54.0, turning off "Left sidebar: Show XP/hr rate on skill bars" also removed the skill tooltip's time till next level, even with that setting on. Each now follows its own checkbox again. Likewise, turning off the Guild Shop credit table no longer removes the trial tier badges on guild tiles or the trial signup Copy List button.
 - Melee, Defense and the other combat skills showed no XP/hr on the sidebar and no "till next level" in their tooltip until two fights had finished since the page loaded (a whole dungeon run each), so updating the script made it look broken. Without a live fight they now use the last 10 minutes of saved history, as the other skills do.
 
 ### Audit round: pinning an item in the Alchemize picker could freeze the tab

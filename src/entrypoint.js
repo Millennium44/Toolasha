@@ -2205,6 +2205,11 @@ function registerFeatures() {
             category: 'Guild',
             module: Combat.guildCreditValue,
             async: false,
+            // The key switches only the credit table and the shrine block, which
+            // check it themselves. The trial tier badges, the signup Copy List
+            // button and the token-exchange reading ride on the same module and
+            // run whatever it says, so gating the module on it took them away too.
+            customCheck: () => true,
         },
         {
             key: 'guildRoster',
