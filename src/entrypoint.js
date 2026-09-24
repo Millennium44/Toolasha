@@ -2062,6 +2062,11 @@ function registerFeatures() {
             category: 'Skills',
             module: UI.xpTracker,
             async: false,
+            // The key is only the sidebar rate's switch; the tooltip's time to
+            // level has its own, and the module gates each part itself. Gating
+            // on the key alone took the tooltip away from anyone who hid the
+            // sidebar rates.
+            customCheck: () => config.getSetting('xpTracker') || config.getSetting('xpTracker_timeTillLevel'),
             // Every listener it owns - `character_initialized`,
             // `action_completed`, `actions_updated`, `cancel_character_action`
             // - is registered *before* its first await, so deferring the wait
