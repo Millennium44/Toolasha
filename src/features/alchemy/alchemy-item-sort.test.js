@@ -45,6 +45,8 @@ const dataManagerEvents = vi.hoisted(() => new Map());
 const dataManagerMock = vi.hoisted(() => ({
     on: (event, handler) => dataManagerEvents.set(event, handler),
     off: (event) => dataManagerEvents.delete(event),
+    // Only itemLevel matters to xpValueFor(); the module reads it off this map by hrid
+    getInitClientData: vi.fn(() => ({ itemDetailMap: {} })),
 }));
 
 /** Every profit answer a test wants, keyed the same way `calculateCoinifyProfit` etc. are called */
@@ -64,12 +66,18 @@ const calculatorMock = vi.hoisted(() => ({
 
 const pinsMock = vi.hoisted(() => ({ pinnedFor: vi.fn(() => []) }));
 
-vi.mock('../../core/config.js', () => ({ default: { getSetting: () => true } }));
+/** calcXpPerAction is real math tested in alchemy-rankings.test.js; here it just needs to be deterministic */
+const rankingsMock = vi.hoisted(() => ({
+    calcXpPerAction: vi.fn((action, itemLevel, successRate) => (itemLevel + 1) * successRate),
+}));
+
+vi.mock('../../core/config.js', () => ({ default: { getSetting: () => true, getSettingValue: () => '#60a5fa' } }));
 vi.mock('../../core/storage.js', () => ({ default: storageMock }));
 vi.mock('../../core/data-manager.js', () => ({ default: dataManagerMock }));
 vi.mock('../../core/dom-observer.js', () => ({ default: { onClass: () => () => {} } }));
 vi.mock('../market/alchemy-profit-calculator.js', () => ({ default: calculatorMock }));
 vi.mock('./alchemy-item-pins.js', () => ({ default: pinsMock }));
+vi.mock('./alchemy-rankings.js', () => rankingsMock);
 
 const { default: alchemyItemSort } = await import('./alchemy-item-sort.js');
 
@@ -139,6 +147,8 @@ describe('alchemy item sort', () => {
         calculatorMock.calculateDecomposeProfit.mockClear();
         calculatorMock.calculateUnrefineProfit.mockClear();
         calculatorMock.calculateTransmuteProfit.mockClear();
+        dataManagerMock.getInitClientData.mockReturnValue({ itemDetailMap: {} });
+        rankingsMock.calcXpPerAction.mockClear();
         alchemyItemSort.disable();
         document.body.innerHTML = '';
         await alchemyItemSort.initialize();
@@ -152,9 +162,10 @@ describe('alchemy item sort', () => {
         const bar = menu.querySelector(TOGGLE_SELECTOR);
         expect(bar).toBeTruthy();
         const buttons = Array.from(bar.querySelectorAll('button'));
-        expect(buttons.map((b) => b.dataset.mwiSortMode)).toEqual(['game', 'profit']);
+        expect(buttons.map((b) => b.dataset.mwiSortMode)).toEqual(['game', 'profit', 'xp']);
         expect(buttons[0].classList.contains('mwi-alchemy-sort-btn-active')).toBe(true);
         expect(buttons[1].classList.contains('mwi-alchemy-sort-btn-active')).toBe(false);
+        expect(buttons[2].classList.contains('mwi-alchemy-sort-btn-active')).toBe(false);
     });
 
     test('default order is untouched: Game mode never reorders the tiles', () => {
@@ -388,5 +399,88 @@ describe('alchemy item sort', () => {
         menu.querySelector('[data-mwi-sort-mode="game"]').click();
 
         expect(tileHrids(grid)).toEqual(['/items/a', '/items/pinned', '/items/b']);
+    });
+
+    test('XP order: pinned first, then highest XP/hr, unknowns last — and no NaN/undefined labels', () => {
+        buildTabs('decompose');
+        pinsMock.pinnedFor.mockReturnValue(['/items/pinned']);
+        dataManagerMock.getInitClientData.mockReturnValue({
+            itemDetailMap: {
+                '/items/low': { itemLevel: 9 },
+                '/items/high': { itemLevel: 49 },
+                '/items/pinned': { itemLevel: 1 },
+            },
+        });
+        // rankingsMock.calcXpPerAction returns (itemLevel + 1) * successRate, so
+        // /items/high (level 49) outranks /items/low (level 9) once multiplied by actionsPerHour
+        profitAnswers.set('decompose:/items/low:0', { profitPerHour: 1, actionsPerHour: 10, successRate: 1 });
+        profitAnswers.set('decompose:/items/high:0', { profitPerHour: 1, actionsPerHour: 10, successRate: 1 });
+        profitAnswers.set('decompose:/items/pinned:0', { profitPerHour: 1, actionsPerHour: 10, successRate: 1 });
+        profitAnswers.set('decompose:/items/unknown:0', null);
+        const { menu, grid } = buildPicker([
+            ['/items/low', 0],
+            ['/items/unknown', 0],
+            ['/items/pinned', 0],
+            ['/items/high', 0],
+        ]);
+        alchemyItemSort.apply();
+
+        menu.querySelector('[data-mwi-sort-mode="xp"]').click();
+
+        expect(tileHrids(grid)).toEqual(['/items/pinned', '/items/high', '/items/low', '/items/unknown']);
+        expect(menu.querySelector('[data-mwi-sort-mode="xp"]').classList.contains('mwi-alchemy-sort-btn-active')).toBe(
+            true
+        );
+
+        const rateTexts = Array.from(menu.querySelectorAll(RATE_SELECTOR)).map((el) => el.textContent);
+        expect(rateTexts.length).toBe(3);
+        for (const text of rateTexts) {
+            expect(text).not.toContain('NaN');
+            expect(text).not.toContain('undefined');
+        }
+        expect(grid.lastElementChild.querySelector(RATE_SELECTOR)).toBeNull();
+    });
+
+    test('XP figure is the shared helper times the calculator actionsPerHour, not re-derived', () => {
+        buildTabs('coinify');
+        dataManagerMock.getInitClientData.mockReturnValue({
+            itemDetailMap: { '/items/a': { itemLevel: 19 } },
+        });
+        profitAnswers.set('coinify:/items/a:0', { profitPerHour: 1, actionsPerHour: 20, successRate: 0.5 });
+        const { menu } = buildPicker([['/items/a', 0]]);
+        alchemyItemSort.apply();
+        menu.querySelector('[data-mwi-sort-mode="xp"]').click();
+
+        expect(rankingsMock.calcXpPerAction).toHaveBeenCalledWith('coinify', 19, 0.5);
+        // (19 + 1) * 0.5 successRate(mock) * 20 actionsPerHour = 200
+        const rateText = menu.querySelector(RATE_SELECTOR).textContent;
+        expect(rateText).toContain('200');
+    });
+
+    test('switching among all three modes reorders and restores correctly', () => {
+        buildTabs('coinify');
+        dataManagerMock.getInitClientData.mockReturnValue({
+            itemDetailMap: { '/items/a': { itemLevel: 5 }, '/items/b': { itemLevel: 50 } },
+        });
+        profitAnswers.set('coinify:/items/a:0', { profitPerHour: 500, actionsPerHour: 10, successRate: 1 });
+        profitAnswers.set('coinify:/items/b:0', { profitPerHour: 5, actionsPerHour: 10, successRate: 1 });
+        const { menu, grid } = buildPicker([
+            ['/items/a', 0],
+            ['/items/b', 0],
+        ]);
+        alchemyItemSort.apply();
+        const original = tileHrids(grid);
+
+        menu.querySelector('[data-mwi-sort-mode="profit"]').click();
+        expect(tileHrids(grid)).toEqual(['/items/a', '/items/b']); // a has the higher profit
+
+        menu.querySelector('[data-mwi-sort-mode="xp"]').click();
+        expect(tileHrids(grid)).toEqual(['/items/b', '/items/a']); // b has the higher item level -> higher xp
+        // Switching straight from Profit to XP must not leave a profit label behind
+        expect(menu.querySelectorAll(RATE_SELECTOR).length).toBe(2);
+
+        menu.querySelector('[data-mwi-sort-mode="game"]').click();
+        expect(tileHrids(grid)).toEqual(original);
+        expect(menu.querySelectorAll(RATE_SELECTOR).length).toBe(0);
     });
 });

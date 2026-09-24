@@ -1,12 +1,12 @@
 /**
  * Alchemy Item Sort
  *
- * A "Game | Profit/hr" toggle in the Alchemize Item picker, kept per alchemy
- * tab (Coinify, Decompose, Transmute, Unrefine) the way `alchemy-item-pins.js`
- * keeps its pins per tab — what is worth coinifying is rarely what is worth
- * decomposing, so a shared toggle would apply one tab's answer to all four.
- * Off by default: the picker keeps the game's own order until a tab is
- * switched to Profit/hr.
+ * A "Game | Profit/hr | XP/hr" toggle in the Alchemize Item picker, kept per
+ * alchemy tab (Coinify, Decompose, Transmute, Unrefine) the way
+ * `alchemy-item-pins.js` keeps its pins per tab — what is worth coinifying is
+ * rarely what is worth decomposing, so a shared toggle would apply one tab's
+ * answer to all four. Off by default: the picker keeps the game's own order
+ * until a tab is switched away from it.
  *
  * ## Reordering, not fighting React
  *
@@ -17,8 +17,8 @@
  * menu), and guard every write with `sameOrder` so the watcher does not react
  * to its own writes.
  *
- * Pins keeps ordering the picker on its own when this toggle is off — nothing
- * here runs. When a tab is on Profit/hr, this module computes the *whole*
+ * Pins keeps ordering the picker on its own regardless of this toggle —
+ * nothing here overrides it. Profit/hr and XP/hr both compute the *whole*
  * order — pinned items first, in pin order, read from `alchemyItemPins`
  * itself — so pins' own reorder pass (still hooked to the same
  * `ItemSelector_menu` event) finds its own desired order already in place and
@@ -27,32 +27,39 @@
  * ## Restoring Game order
  *
  * The game gives the tiles no order of its own to read back later — once
- * Profit/hr has moved them, the DOM order *is* whatever this module wrote. So
- * every tile is stamped, the first time it is seen each render, with its
- * position at that moment (`stampGameOrder`) — before this module's own
- * dispatch runs for that render. A fresh render (the Item Filter redraws
+ * Profit/hr or XP/hr has moved them, the DOM order *is* whatever this module
+ * wrote. So every tile is stamped, the first time it is seen each render,
+ * with its position at that moment (`stampGameOrder`) — before this module's
+ * own dispatch runs for that render. A fresh render (the Item Filter redraws
  * every tile as a new element) gets a fresh stamp; a tile that survives a
  * mode switch keeps the stamp it already has, so switching back to Game
- * cannot bake a Profit/hr-sorted position in as "the game's order". Switching
- * to Game also strips every Profit/hr label — nothing about switching away
- * from Profit/hr used to undo either half of what it did.
+ * cannot bake a Profit/hr- or XP/hr-sorted position in as "the game's order".
+ * Switching to Game also strips every label — nothing about switching away
+ * used to undo either half of what it did.
  *
  * Game order does not bucket pins itself: it puts every tile back where it
  * was and lets `alchemy-item-pins.js`'s own pass do exactly what it would do
  * if this module did not exist. Building the pin bucket a second time here
  * would only make Game order fight the tile pins actually moved.
  *
- * ## Profit source
+ * ## Profit and XP sources
  *
- * The number is `alchemy-profit-calculator.js`'s own `profitPerHour` — the
- * same figure `alchemy-best-items.js` shows, through the same calculator —
- * rather than a second opinion computed here. Best Items sweeps
+ * The profit figure is `alchemy-profit-calculator.js`'s own `profitPerHour` —
+ * the same figure `alchemy-best-items.js` shows, through the same calculator
+ * — rather than a second opinion computed here. Best Items sweeps
  * `itemDetailMap` at enhancement level 0 for its table
  * (`alchemy-rankings.js`'s `rankAlchemyType`); this instead prices each tile
  * actually on screen at *that tile's own* enhancement level, because the
  * picker can show several copies of one item at different enhancement levels
  * and Decompose/Unrefine price those differently (Coinify and Transmute
  * price the base item only — see `CALCULATOR_METHOD`).
+ *
+ * The XP figure is the calculator's own `actionsPerHour` for that same tile
+ * times `alchemy-rankings.js`'s `calcXpPerAction` — the shared helper Best
+ * Items' XP column and the live action panel both already use, which folds
+ * in wisdom, the failure-action 10% XP and Unrefine's shared multiplier.
+ * Nothing here re-derives XP; both figures come off the one calculator call
+ * per tile, cached together.
  *
  * Prices are cached per open menu per tab and cleared when the market
  * refreshes or the menu closes, so typing in the Item Filter — which redraws
@@ -63,6 +70,7 @@ import config from '../../core/config.js';
 import dataManager from '../../core/data-manager.js';
 import domObserver from '../../core/dom-observer.js';
 import alchemyProfitCalculator from '../market/alchemy-profit-calculator.js';
+import { calcXpPerAction } from './alchemy-rankings.js';
 import { findAlchemizeMenu, activeAlchemyAction, menuTiles, tileItemHrid } from './alchemy-item-selector.js';
 import alchemyItemPins from './alchemy-item-pins.js';
 import { sameOrder } from '../../utils/item-picker-pins.js';
@@ -152,7 +160,7 @@ const CSS = `
 class AlchemyItemSort {
     constructor() {
         this.isInitialized = false;
-        /** `{ [action]: 'game' | 'profit' }` */
+        /** `{ [action]: 'game' | 'profit' | 'xp' }` */
         this.order = {};
         this.unregister = null;
         this.styleEl = null;
@@ -160,10 +168,10 @@ class AlchemyItemSort {
         this.watchedMenu = null;
         this.applying = false;
         this.pricesHandler = null;
-        /** Which action's tiles `this.profitCache` prices, so a tab switch starts fresh */
+        /** Which action's tiles `this.priceCache` prices, so a tab switch starts fresh */
         this.openAction = null;
-        /** `tileKey -> profitPerHour|null`, for the action currently open */
-        this.profitCache = new Map();
+        /** `tileKey -> profitData|null`, the calculator's raw answer for the action currently open — profit and XP are both read off it, never re-derived */
+        this.priceCache = new Map();
         this.resumeTimer = null;
     }
 
@@ -184,7 +192,7 @@ class AlchemyItemSort {
         document.head.appendChild(this.styleEl);
 
         this.unregister = domObserver.onClass('AlchemyItemSort', 'ItemSelector_menu', () => this.apply());
-        this.pricesHandler = () => this.profitCache.clear();
+        this.pricesHandler = () => this.priceCache.clear();
         dataManager.on('market_item_values_updated', this.pricesHandler);
         this.apply();
     }
@@ -210,7 +218,7 @@ class AlchemyItemSort {
             document.querySelectorAll(`.${TOGGLE_CLASS}`).forEach((el) => el.remove());
             document.querySelectorAll(`.${RATE_CLASS}`).forEach((el) => el.remove());
             document.querySelectorAll(`.${TILE_CLASS}`).forEach((el) => el.classList.remove(TILE_CLASS));
-            this.profitCache.clear();
+            this.priceCache.clear();
             this.openAction = null;
             this.isInitialized = false;
         } catch (error) {
@@ -268,11 +276,11 @@ class AlchemyItemSort {
         this.menuObserver?.disconnect();
         this.menuObserver = null;
         this.watchedMenu = null;
-        this.profitCache.clear();
+        this.priceCache.clear();
         this.openAction = null;
     }
 
-    /** Put the toggle in the open menu, and reorder its tiles if Profit/hr is chosen */
+    /** Put the toggle in the open menu, and order its tiles for the tab's chosen mode */
     apply() {
         if (this.applying) return;
 
@@ -298,12 +306,13 @@ class AlchemyItemSort {
         // A different tab than the one the cache was built for: its prices
         // answer a different question, so they cannot be reused
         if (action !== this.openAction) {
-            this.profitCache.clear();
+            this.priceCache.clear();
             this.openAction = action;
         }
 
-        if ((this.order[action] || 'game') === 'profit') {
-            this.reorderByProfit(menu, grid, tiles, action);
+        const mode = this.order[action] || 'game';
+        if (mode === 'profit' || mode === 'xp') {
+            this.reorderRanked(grid, tiles, action, mode);
             return;
         }
         this.applyGameOrder(grid, tiles);
@@ -403,6 +412,7 @@ class AlchemyItemSort {
             for (const [mode, text] of [
                 ['game', 'Game'],
                 ['profit', 'Profit/hr'],
+                ['xp', 'XP/hr'],
             ]) {
                 const btn = document.createElement('button');
                 btn.type = 'button';
@@ -442,7 +452,7 @@ class AlchemyItemSort {
 
     /**
      * Switch a tab's order choice.
-     * @param {string} mode - 'game' or 'profit'
+     * @param {string} mode - 'game', 'profit', or 'xp'
      */
     setMode(mode) {
         const action = activeAlchemyAction();
@@ -464,27 +474,47 @@ class AlchemyItemSort {
     }
 
     /**
-     * This item's profit/hr for the given action, through the real
-     * calculator — never a second opinion computed here.
+     * Split tiles into the "Remove" cell, pinned tiles (in pin order), and
+     * everything else — the shape Profit/hr and XP/hr both build from.
+     * @param {HTMLElement[]} tiles - The menu's current tiles
+     * @param {string} action - The open alchemy tab
+     * @returns {{fixed: HTMLElement[], front: HTMLElement[], rest: HTMLElement[]}}
+     */
+    pinBuckets(tiles, action) {
+        const pinnedRank = new Map(alchemyItemPins.pinnedFor(action).map((hrid, index) => [hrid, index]));
+
+        const fixed = []; // the "Remove" cell, standing for no item
+        const front = [];
+        const rest = [];
+        for (const tile of tiles) {
+            const hrid = tileItemHrid(tile);
+            if (!hrid) fixed.push(tile);
+            else if (pinnedRank.has(hrid)) front.push(tile);
+            else rest.push(tile);
+        }
+        front.sort((a, b) => pinnedRank.get(tileItemHrid(a)) - pinnedRank.get(tileItemHrid(b)));
+
+        return { fixed, front, rest };
+    }
+
+    /**
+     * This tile's calculator answer for the given action — never a second
+     * opinion computed here. Profit and XP are both read off the same answer.
      * @param {string} action - 'coinify' | 'decompose' | 'transmute' | 'unrefine'
      * @param {HTMLElement} tile - An item tile
-     * @returns {number|null} Profit per hour, or null when it could not be priced
+     * @returns {Object|null} The calculator's raw answer for this tile, or null when it could not be priced
      */
-    computeProfit(action, tile) {
+    computePriceData(action, tile) {
         const itemHrid = tileItemHrid(tile);
         if (!itemHrid) return null;
 
         try {
-            let profitData;
             if (action === 'transmute') {
-                profitData = alchemyProfitCalculator.calculateTransmuteProfit(itemHrid);
-            } else {
-                const method = CALCULATOR_METHOD[action];
-                if (!method) return null;
-                profitData = alchemyProfitCalculator[method](itemHrid, tileEnhancementLevel(tile));
+                return alchemyProfitCalculator.calculateTransmuteProfit(itemHrid) || null;
             }
-            const value = profitData?.profitPerHour;
-            return Number.isFinite(value) ? value : null;
+            const method = CALCULATOR_METHOD[action];
+            if (!method) return null;
+            return alchemyProfitCalculator[method](itemHrid, tileEnhancementLevel(tile)) || null;
         } catch (error) {
             console.error(`[AlchemyItemSort] Pricing ${itemHrid} for ${action} failed:`, error);
             return null;
@@ -492,19 +522,67 @@ class AlchemyItemSort {
     }
 
     /**
+     * Profit/hr out of a calculator answer, unmodified.
+     * @param {Object|null} priceData - From `computePriceData`
+     * @returns {number|null} Profit per hour, or null
+     */
+    profitValueFrom(priceData) {
+        const value = priceData?.profitPerHour;
+        return Number.isFinite(value) ? value : null;
+    }
+
+    /**
+     * XP/hr out of a calculator answer: `alchemy-rankings.js`'s
+     * `calcXpPerAction` (wisdom, the failure-action 10% blend, Unrefine's
+     * shared multiplier) times the calculator's own `actionsPerHour` for this
+     * tile — the same two figures Best Items' XP ranking and the live panel
+     * multiply, read off the one calculator call already cached for profit.
+     * @param {string} action - 'coinify' | 'decompose' | 'transmute' | 'unrefine'
+     * @param {string} itemHrid - The tile's item
+     * @param {Object|null} priceData - From `computePriceData`
+     * @returns {number|null} XP per hour, or null
+     */
+    xpValueFor(action, itemHrid, priceData) {
+        if (!priceData) return null;
+        const actionsPerHour = Number(priceData.actionsPerHour);
+        if (!Number.isFinite(actionsPerHour)) return null;
+
+        const successRate = Number.isFinite(priceData.successRate) ? priceData.successRate : 1;
+        // XP reads a level-less item at 0, as rankAlchemyType and the action panel do
+        const itemLevel = dataManager.getInitClientData()?.itemDetailMap?.[itemHrid]?.itemLevel || 0;
+        const value = calcXpPerAction(action, itemLevel, successRate) * actionsPerHour;
+        return Number.isFinite(value) ? value : null;
+    }
+
+    /**
+     * A tile's ranking value for the given mode, off the cached calculator
+     * answer — never re-fetched here.
+     * @param {string} action - The open alchemy tab
+     * @param {string} mode - 'profit' | 'xp'
+     * @param {HTMLElement} tile - An item tile
+     * @returns {number|null} The ranking value, or null when the tile could not be priced
+     */
+    rankValue(action, mode, tile) {
+        const hrid = tileItemHrid(tile);
+        if (!hrid) return null;
+        const priceData = this.priceCache.get(this.tileKey(tile));
+        return mode === 'xp' ? this.xpValueFor(action, hrid, priceData) : this.profitValueFrom(priceData);
+    }
+
+    /**
      * Price whatever tiles are not already cached, yielding back to the
      * browser and resuming later if that takes a while — filling the cache is
      * the only slow part, so the reorder itself never has to wait.
-     * @param {HTMLElement} menu - The open menu
      * @param {HTMLElement} grid - The tile grid
      * @param {HTMLElement[]} tiles - The menu's current tiles
      * @param {string} action - The open alchemy tab
+     * @param {string} mode - 'profit' | 'xp'
      */
-    reorderByProfit(menu, grid, tiles, action) {
+    reorderRanked(grid, tiles, action, mode) {
         const start = nowMs();
         for (const tile of tiles) {
             const key = this.tileKey(tile);
-            if (!this.profitCache.has(key)) this.profitCache.set(key, this.computeProfit(action, tile));
+            if (!this.priceCache.has(key)) this.priceCache.set(key, this.computePriceData(action, tile));
 
             if (nowMs() - start > YIELD_BUDGET_MS) {
                 if (!this.resumeTimer) {
@@ -516,57 +594,58 @@ class AlchemyItemSort {
                 return;
             }
         }
-        this.writeOrder(grid, tiles, action);
+        this.writeRanked(grid, tiles, action, mode);
     }
 
     /**
-     * Reorder the grid: pinned first (in pin order, from `alchemyItemPins`),
-     * then priced tiles best-first, then unpriced tiles last in whatever
+     * Reorder the grid: pinned first (in pin order), then priced tiles
+     * best-first for the chosen mode, then unpriced tiles last in whatever
      * order the game gave them.
      * @param {HTMLElement} grid - The tile grid
      * @param {HTMLElement[]} tiles - The menu's current tiles
      * @param {string} action - The open alchemy tab
+     * @param {string} mode - 'profit' | 'xp'
      */
-    writeOrder(grid, tiles, action) {
-        const pinnedRank = new Map(alchemyItemPins.pinnedFor(action).map((hrid, index) => [hrid, index]));
+    writeRanked(grid, tiles, action, mode) {
+        const { fixed, front, rest } = this.pinBuckets(tiles, action);
 
-        const fixed = []; // the "Remove" cell, standing for no item
-        const front = [];
         const priced = [];
         const unpriced = [];
-        for (const tile of tiles) {
-            const hrid = tileItemHrid(tile);
-            if (!hrid) {
-                fixed.push(tile);
-            } else if (pinnedRank.has(hrid)) {
-                front.push(tile);
-            } else if (Number.isFinite(this.profitCache.get(this.tileKey(tile)))) {
-                priced.push(tile);
-            } else {
-                unpriced.push(tile);
-            }
+        for (const tile of rest) {
+            (Number.isFinite(this.rankValue(action, mode, tile)) ? priced : unpriced).push(tile);
         }
-        front.sort((a, b) => pinnedRank.get(tileItemHrid(a)) - pinnedRank.get(tileItemHrid(b)));
-        priced.sort((a, b) => this.profitCache.get(this.tileKey(b)) - this.profitCache.get(this.tileKey(a)));
+        priced.sort((a, b) => this.rankValue(action, mode, b) - this.rankValue(action, mode, a));
 
-        this.paintRates(tiles);
+        this.paintValues(tiles, action, mode);
 
         this.moveTiles(grid, tiles, [...fixed, ...front, ...priced, ...unpriced]);
     }
 
     /**
-     * A small profit/hr label on each priced tile — only drawn in Profit/hr
-     * order, since the game order carries no ranking to label.
-     * @param {HTMLElement[]} tiles - The menu's current tiles
+     * The blue used for every other XP figure this fork draws — read live so
+     * a settings change picks it up on the next reorder rather than needing a
+     * menu close/reopen.
+     * @returns {string} A CSS color
      */
-    paintRates(tiles) {
+    xpColor() {
+        return config.getSettingValue('color_info', '#60a5fa');
+    }
+
+    /**
+     * A small profit/hr or XP/hr label on each priced tile — only drawn in
+     * Profit/hr or XP/hr order, since Game order carries no ranking to label.
+     * @param {HTMLElement[]} tiles - The menu's current tiles
+     * @param {string} action - The open alchemy tab
+     * @param {string} mode - 'profit' | 'xp'
+     */
+    paintValues(tiles, action, mode) {
         for (const tile of tiles) {
-            const hrid = tileItemHrid(tile);
-            const profit = hrid ? this.profitCache.get(this.tileKey(tile)) : null;
+            const value = this.rankValue(action, mode, tile);
             let rate = tile.querySelector(`.${RATE_CLASS}`);
 
-            if (!Number.isFinite(profit)) {
+            if (!Number.isFinite(value)) {
                 rate?.remove();
+                tile.classList.remove(TILE_CLASS);
                 continue;
             }
 
@@ -576,9 +655,12 @@ class AlchemyItemSort {
                 rate.className = RATE_CLASS;
                 tile.appendChild(rate);
             }
-            const text = `${profit >= 0 ? '' : '-'}${formatKMB(Math.abs(Math.round(profit)))}/h`;
+            const text =
+                mode === 'xp'
+                    ? `${formatKMB(Math.round(value))} xp/h`
+                    : `${value >= 0 ? '' : '-'}${formatKMB(Math.abs(Math.round(value)))}/h`;
             if (rate.textContent !== text) rate.textContent = text;
-            rate.style.color = profit >= 0 ? '#4ade80' : '#f87171';
+            rate.style.color = mode === 'xp' ? this.xpColor() : value >= 0 ? '#4ade80' : '#f87171';
         }
     }
 }
