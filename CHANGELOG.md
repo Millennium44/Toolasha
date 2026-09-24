@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Combat skills show XP/hr and time to level right after a reload
+
+- Melee, Defense and the other combat skills showed no XP/hr on the sidebar and no "till next level" in their tooltip until two fights had finished since the page loaded (a whole dungeon run each), so updating the script made it look broken. Without a live fight they now use the last 10 minutes of saved history, as the other skills do.
+
 ### Audit round: pinning an item in the Alchemize picker could freeze the tab
 
 - With the picker on Game order, pinning an item made the order and pins fight over the tile forever and froze the tab; Game order now keeps pinned items first. Items that appear while the picker is sorted go back to their right place under Game order, prices refresh each time the picker opens, and turning the feature off restores the game's order.

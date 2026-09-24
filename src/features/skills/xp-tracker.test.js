@@ -306,6 +306,67 @@ describe('combat session survives a queue edit behind the running fight', () => 
     });
 });
 
+describe('time till next level in a combat skill tooltip', () => {
+    const tooltip = () => {
+        const el = document.createElement('div');
+        for (const line of ['Melee', 'Level: 154', 'Total Experience: 2,148,342,694', 'XP To Level Up: 1,000,000']) {
+            const div = document.createElement('div');
+            div.textContent = line;
+            el.appendChild(div);
+        }
+        return el;
+    };
+
+    beforeEach(() => {
+        vi.useFakeTimers();
+        vi.setSystemTime(10 * HOUR);
+        xpTracker.combatSession = {};
+    });
+
+    afterEach(() => {
+        vi.useRealTimers();
+    });
+
+    test('with no live fight session, the saved 10-minute history gives the time', () => {
+        // 100k over 5 minutes = 1.2M/hr: 1M to go is 50 minutes
+        xpTracker.xpHistory.melee = [
+            { t: 10 * HOUR - 5 * 60_000, xp: 1_000_000 },
+            { t: 10 * HOUR, xp: 1_100_000 },
+        ];
+        const el = tooltip();
+
+        xpTracker._addTimeTillLevelUp(el);
+
+        expect(el.querySelector('.mwi-xp-time-left')?.textContent).toBe('50 minutes till next level');
+    });
+
+    test('a live fight session wins over the history', () => {
+        xpTracker.xpHistory.melee = [
+            { t: 10 * HOUR - 5 * 60_000, xp: 1_000_000 },
+            { t: 10 * HOUR, xp: 1_100_000 },
+        ];
+        // 500k over one hour: 1M to go is 2 hours
+        xpTracker.combatSession.melee = { startExp: 0, startTime: 9 * HOUR, lastExp: 500_000 };
+        const el = tooltip();
+
+        xpTracker._addTimeTillLevelUp(el);
+
+        expect(el.querySelector('.mwi-xp-time-left')?.textContent).toBe('2 hours till next level');
+    });
+
+    test('no session and nothing in the last 10 minutes shows no line', () => {
+        xpTracker.xpHistory.melee = [
+            { t: 5 * HOUR, xp: 1_000_000 },
+            { t: 5 * HOUR + 60_000, xp: 1_100_000 },
+        ];
+        const el = tooltip();
+
+        xpTracker._addTimeTillLevelUp(el);
+
+        expect(el.querySelector('.mwi-xp-time-left')).toBeNull();
+    });
+});
+
 describe('inLastInterval', () => {
     const HALF_HOUR = 1800_000;
 

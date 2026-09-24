@@ -455,6 +455,24 @@ class XPTracker {
     }
 
     /**
+     * The XP/hr shown for a skill on the sidebar and in its tooltip.
+     *
+     * Combat reads its live fight session, which only has a rate after two
+     * completions since the page loaded and is cleared when combat ends. Until
+     * then it falls back to the 10-minute history non-combat skills use, which
+     * survives a reload — otherwise a combat skill showed nothing right after
+     * every update, and for a whole dungeon run before the second one landed.
+     *
+     * @param {string} skillId - Skill id, e.g. 'melee'
+     * @param {Array} history - That skill's history
+     * @returns {number} XP per hour, or 0 when nothing is measurable
+     */
+    _rateFor(skillId, history) {
+        const sessionRate = COMBAT_SKILL_IDS.has(skillId) ? this._calcSessionRate(skillId) : 0;
+        return sessionRate > 0 ? sessionRate : calcStats(history).lastXPH;
+    }
+
+    /**
      * Inject or refresh XP/hr spans on all visible nav bar skill entries.
      */
     _updateNavBars() {
@@ -475,8 +493,7 @@ class XPTracker {
             const history = this.xpHistory[skillId];
             if (!history) return;
 
-            const stats = calcStats(history);
-            const rate = COMBAT_SKILL_IDS.has(skillId) ? this._calcSessionRate(skillId) : stats.lastXPH;
+            const rate = this._rateFor(skillId, history);
 
             // Remove existing rate span (may be inline or standalone)
             navEl.querySelector('.mwi-xp-rate')?.remove();
@@ -633,8 +650,7 @@ class XPTracker {
             return;
         }
 
-        const stats = calcStats(history);
-        const rate = COMBAT_SKILL_IDS.has(skillId) ? this._calcSessionRate(skillId) : stats.lastXPH;
+        const rate = this._rateFor(skillId, history);
         if (rate <= 0) {
             return;
         }
