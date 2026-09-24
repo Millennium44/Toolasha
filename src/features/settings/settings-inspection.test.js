@@ -119,11 +119,26 @@ describe('the changed list across a whole settings map', () => {
 });
 
 describe('the settings that honestly need a reload', () => {
-    test('the schema flags at least one, or the notice has nothing to point at', () => {
-        expect(refreshRequiredIds().length).toBeGreaterThan(0);
+    // The 18 settings that used to be tagged `requiresRefresh` all gained a
+    // `liveStop` registry entry (feature-registry.js) whose teardown the
+    // registry now runs itself on a setting change, so none of them need the
+    // tag any more — see settings-schema.test.js for the roster. The schema
+    // is currently down to zero; the mechanism itself is still worth testing
+    // against a synthetic map so a future genuinely-refresh-only setting has
+    // somewhere to prove itself.
+    test('nothing in the live schema is tagged — every setting applies without a reload', () => {
+        expect(refreshRequiredIds()).toEqual([]);
     });
 
-    test('every flagged setting really is in the schema and is a switch', () => {
+    test('the mechanism itself: flags exactly the tagged ids, in schema order', () => {
+        const groups = {
+            a: { settings: { one: { requiresRefresh: true }, two: {} } },
+            b: { settings: { three: {}, four: { requiresRefresh: true } } },
+        };
+        expect(refreshRequiredIds(groups)).toEqual(['one', 'four']);
+    });
+
+    test('if the notice ever has something to point at again, every flagged id is a real switch', () => {
         for (const id of refreshRequiredIds()) {
             const definition = getSettingDefinition(id);
             expect(definition, id).not.toBe(null);
@@ -131,7 +146,7 @@ describe('the settings that honestly need a reload', () => {
         }
     });
 
-    test('it is a short list — the point is that most settings are live', () => {
+    test('it would stay a short list — the point is that most settings are live', () => {
         const total = Object.values(settingsGroups).reduce((sum, group) => sum + Object.keys(group.settings).length, 0);
         expect(refreshRequiredIds().length).toBeLessThan(total / 10);
     });

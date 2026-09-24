@@ -1161,6 +1161,9 @@ function registerFeatures() {
             category: 'Actions',
             module: Actions.requiredMaterials,
             async: false,
+            // Its disable() tears down what initialize() adds, so a live setting
+            // change can stop it the same way a character switch does.
+            liveStop: true,
         },
         {
             key: 'drinkTimer',
@@ -1168,6 +1171,7 @@ function registerFeatures() {
             category: 'Actions',
             module: Actions.drinkTimer,
             async: false,
+            liveStop: true,
         },
         {
             key: 'missingMaterialsButton',
@@ -1303,6 +1307,7 @@ function registerFeatures() {
             category: 'Actions',
             module: Actions.skillingOptimizer,
             async: false,
+            liveStop: true,
         },
         {
             key: 'goalPlanner',
@@ -1310,6 +1315,7 @@ function registerFeatures() {
             category: 'General',
             module: Actions.goalPlanner,
             async: true,
+            liveStop: true,
         },
     ];
 
@@ -1323,6 +1329,7 @@ function registerFeatures() {
             // the note in libraries/combat.js
             module: Combat.damageTracker.default,
             async: false,
+            liveStop: true,
         },
         {
             key: 'damageTakenTracker',
@@ -1330,6 +1337,7 @@ function registerFeatures() {
             category: 'Combat',
             module: Combat.damageTakenTracker.default,
             async: false,
+            liveStop: true,
         },
         {
             key: 'stunPersistenceWatch',
@@ -1337,6 +1345,7 @@ function registerFeatures() {
             category: 'Combat',
             module: Combat.stunPersistence,
             async: true,
+            liveStop: true,
         },
         {
             key: 'waveGapWatch',
@@ -1344,6 +1353,7 @@ function registerFeatures() {
             category: 'Combat',
             module: Combat.waveGap,
             async: true,
+            liveStop: true,
         },
         {
             key: 'tickPeriodWatch',
@@ -1351,6 +1361,7 @@ function registerFeatures() {
             category: 'Combat',
             module: Combat.tickPeriod,
             async: true,
+            liveStop: true,
         },
         {
             key: 'combatRecorder_autoStart',
@@ -1830,6 +1841,7 @@ function registerFeatures() {
             // mirrors its open state re-syncs off `VISIBILITY_EVENT`, so it
             // reads the panel correctly whichever of the two lands first.
             concurrent: true,
+            liveStop: true,
         },
         {
             key: 'overlayTabButton',
@@ -1848,6 +1860,7 @@ function registerFeatures() {
                     if (!findCharacterTabList()) return null;
                     return Boolean(document.getElementById('toolasha-overlay-tab'));
                 }),
+            liveStop: true,
         },
         {
             key: 'commandPalette',
@@ -1858,6 +1871,7 @@ function registerFeatures() {
             // No entry in config's own feature map, so the schema switch is what
             // decides — without this the palette would be on regardless
             customCheck: () => config.getSetting('commandPalette'),
+            liveStop: true,
         },
         {
             key: 'draggableModals',
@@ -1969,8 +1983,16 @@ function registerFeatures() {
             // The one blocker was task-reroll-badge.js reading
             // `taskRerollData` with no fallback; it now falls back to the
             // server payload the way task-statistics.js does.
+            liveStop: true,
         },
-        { key: 'taskSorter', name: 'Task Sorter', category: 'Tasks', module: UI.taskSorter, async: false },
+        {
+            key: 'taskSorter',
+            name: 'Task Sorter',
+            category: 'Tasks',
+            module: UI.taskSorter,
+            async: false,
+            liveStop: true,
+        },
         {
             key: 'taskIcons',
             name: 'Task Icons',
@@ -1992,6 +2014,7 @@ function registerFeatures() {
             category: 'Tasks',
             module: UI.taskInventoryHighlighter,
             async: false,
+            liveStop: true,
         },
         {
             key: 'taskStatistics',
@@ -2077,6 +2100,7 @@ function registerFeatures() {
                 if (!named) return null;
                 return Boolean(document.querySelector('.mwi-remaining-xp'));
             },
+            liveStop: true,
         },
         {
             key: 'xpTracker',
@@ -2445,6 +2469,7 @@ function registerFeatures() {
             // Awaits only its own stored listing snapshot before drawing into
             // the game's Welcome Back modal; nothing else reads or writes either.
             concurrent: true,
+            liveStop: true,
         },
         {
             // Registry key stays ironCowFarm (persisted enable/disable state);
@@ -2457,6 +2482,7 @@ function registerFeatures() {
             // Waits only on its own stored loop and overrides, and reopens its
             // own panel; nothing else touches either.
             concurrent: true,
+            liveStop: true,
         },
         {
             key: 'accountView',
@@ -2543,6 +2569,10 @@ function registerFeatures() {
             // Without this the checks above would be dropped on the way into the
             // registry, and `checkFeatureHealth` would go on finding nothing
             healthCheck: feature.healthCheck || undefined,
+            // Opts a feature into `runLiveStops()`: a setting change that closes
+            // its gate disables it live through the `teardown` built above,
+            // instead of only ever starting it.
+            liveStop: feature.liveStop || undefined,
         };
     });
 

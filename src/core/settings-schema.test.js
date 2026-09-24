@@ -170,8 +170,8 @@ describe('the switches whose only reader is the feature-registry gate', () => {
      * re-checks gates on every setting change and starts what a change opens
      * (`setupLiveFeatureStart` — see feature-registry.test.js, "a setting
      * switched on mid-session"), so switching any of these on takes effect at
-     * once. Switching one off is a different matter: the registry only ever
-     * starts, and a module with no teardown on its own switch stays running.
+     * once. `labyrinthMonsterStatCheck` stops itself on its own listener
+     * (outside the `liveStop` mechanism below) and is not one of the 18.
      */
     const REGISTRY_GATED_ONLY = [
         'goalPlanner',
@@ -185,18 +185,32 @@ describe('the switches whose only reader is the feature-registry gate', () => {
     ];
 
     /**
-     * The ones that still need a reload, and what for. Switching on is live for
-     * all of them; each reason is about something the live start cannot do.
+     * The 18 settings whose registry entry now opts into `liveStop: true`
+     * (feature-registry.js: `runLiveStops`) — a setting change that closes the
+     * gate now disables the feature through its existing `disable()`/`cleanup()`
+     * live, the same teardown a character switch already exercised, instead of
+     * only ever starting things. None of them need `requiresRefresh` any more.
      */
-    const STILL_NEEDS_RELOAD = {
-        goalPlanner: 'switching off leaves its panel and palette entry in place',
-        damageTracker: 'switching off leaves its websocket handlers recording',
-        damageTakenTracker: 'switching off leaves its websocket handlers recording',
-        taskInventoryHighlighter: 'switching off leaves the button on the tasks panel',
-        sessionBriefing: 'it draws only when the game opens its Welcome Back window',
-        ironCowFarm: 'switching off leaves its panel and palette entry in place',
-        overlayTabButton: 'switching off leaves the tab drawn',
-    };
+    const LIVE_STOP_SETTINGS = [
+        'requiredMaterials',
+        'skillRemainingXP',
+        'drinkTimer',
+        'skillingOptimizer',
+        'damageTracker',
+        'damageTakenTracker',
+        'stunPersistenceWatch',
+        'waveGapWatch',
+        'tickPeriodWatch',
+        'taskRerollTracker',
+        'taskSorter',
+        'taskInventoryHighlighter',
+        'overlayPanel',
+        'overlayTabButton',
+        'commandPalette',
+        'goalPlanner',
+        'ironCowFarm',
+        'sessionBriefing',
+    ];
 
     test('each one is gated by its own registry entry, which a setting change now re-checks', () => {
         const entrypoint = readFileSync(resolve(process.cwd(), 'src/entrypoint.js'), 'utf8');
@@ -205,9 +219,24 @@ describe('the switches whose only reader is the feature-registry gate', () => {
         }
     });
 
-    test('only the ones whose switch-off is not live still say they need a reload', () => {
+    test('none of them still say they need a reload — labyrinthMonsterStatCheck never did either', () => {
         for (const id of REGISTRY_GATED_ONLY) {
-            expect(Boolean(getSettingDefinition(id)?.requiresRefresh), id).toBe(id in STILL_NEEDS_RELOAD);
+            expect(Boolean(getSettingDefinition(id)?.requiresRefresh), id).toBe(false);
+        }
+    });
+
+    test('each of the 18 has a liveStop registry entry, and none is tagged requiresRefresh', () => {
+        const entrypoint = readFileSync(resolve(process.cwd(), 'src/entrypoint.js'), 'utf8');
+        for (const id of LIVE_STOP_SETTINGS) {
+            // Slice from this entry's `key:` line to the next one, so the
+            // `liveStop: true` this test finds is this entry's own and not a
+            // later feature's.
+            const start = entrypoint.indexOf(`key: '${id}',`);
+            expect(start, id).toBeGreaterThan(-1);
+            const nextKey = entrypoint.indexOf("key: '", start + 1);
+            const entry = entrypoint.slice(start, nextKey === -1 ? undefined : nextKey);
+            expect(entry, id).toContain('liveStop: true');
+            expect(Boolean(getSettingDefinition(id)?.requiresRefresh), id).toBe(false);
         }
     });
 });

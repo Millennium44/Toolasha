@@ -371,7 +371,6 @@ export const settingsGroups = {
                 label: 'Action panel: Show total required and missing materials',
                 type: 'checkbox',
                 default: true,
-                requiresRefresh: true,
                 help: 'Displays total materials needed and shortfall when entering quantity',
             },
             actionPanel_enhanceMatLimitProtections: {
@@ -2182,7 +2181,6 @@ export const settingsGroups = {
                 label: 'Left sidebar: Show remaining XP to next level',
                 type: 'checkbox',
                 default: true,
-                requiresRefresh: true,
                 help: 'Displays how much XP needed to reach the next level under skill progress bars',
             },
             skillRemainingXP_blackBorder: {
@@ -2203,7 +2201,6 @@ export const settingsGroups = {
                 label: 'Drink timer: Show remaining drink supply time in skill panels',
                 type: 'checkbox',
                 default: true,
-                requiresRefresh: true,
                 help: 'Shows how long your drink stock lasts and whether it covers the queued actions. This switch existed internally but was never in the settings panel, so the feature could not be turned off.',
             },
             drinkTimer_warningThreshold: {
@@ -2218,7 +2215,6 @@ export const settingsGroups = {
                 label: 'Skilling Simulator/Optimizer: Enable Optimizer tab in character panel',
                 type: 'checkbox',
                 default: true,
-                requiresRefresh: true,
             },
         },
     },
@@ -2232,10 +2228,9 @@ export const settingsGroups = {
                 label: 'Damage Tracker: Attribute damage per player and per ability',
                 type: 'checkbox',
                 default: true,
-                // Nothing reads this key but the registry gate. Switching it on
-                // starts the tracker live; switching it off leaves the websocket
-                // handlers recording until the page is reloaded.
-                requiresRefresh: true,
+                // Nothing reads this key but the registry gate — switching it on
+                // or off is registered as a `liveStop` feature, so the registry
+                // starts and stops the tracker's websocket handlers itself.
                 help: 'The game attributes nothing, so the caster is worked out from attack counters, then presence, then whose mana fell — an equal split only in a crowd nothing else can separate. Feeds the Damage panel behind the DPS tile',
             },
             damageTakenTracker: {
@@ -2243,9 +2238,8 @@ export const settingsGroups = {
                 label: 'Damage Taken Tracker: What is hitting you, and for how much',
                 type: 'checkbox',
                 default: true,
-                // Same as the damage tracker above: switching it on starts it
-                // live, switching it off needs the reload.
-                requiresRefresh: true,
+                // Same as the damage tracker above: a `liveStop` registry entry
+                // starts and stops it on the switch, live.
                 help: 'Damage taken against health regenerated, broken out per monster and per wave with hit ranges. Feeds the Deaths panel behind the deaths/hr tile',
             },
             combatSessionRestore: {
@@ -2290,10 +2284,8 @@ export const settingsGroups = {
                 label: 'Stun Persistence: Measure whether a stun outlives the monster that cast it',
                 type: 'checkbox',
                 default: false,
-                // The hooks are attached in initialize() and never detached on the
-                // switch: turning it on starts recording live, turning it off
-                // leaves them recording until the page is reloaded
-                requiresRefresh: true,
+                // A `liveStop` registry entry: turning it on starts recording
+                // live, turning it off tears the hooks down live too.
                 help: 'Watches the battle stream for a stun that was still being reported after its caster died, keeping only the waves where exactly one thing could have cast it. The tally survives a reload and builds up over sessions. The payload carries one crowd-control flag, so this covers stun only — not blind and not silence. Feeds the Stun Persistence overlay row and the panel behind it',
             },
             waveGapWatch: {
@@ -2301,10 +2293,8 @@ export const settingsGroups = {
                 label: 'Wave Gap: Measure the real gap between a wave clearing and the next one starting',
                 type: 'checkbox',
                 default: false,
-                // The hooks are attached in initialize() and never detached on the
-                // switch: turning it on starts recording live, turning it off
-                // leaves them recording until the page is reloaded
-                requiresRefresh: true,
+                // A `liveStop` registry entry: turning it on starts recording
+                // live, turning it off tears the hooks down live too.
                 help: 'Times the last monster of a wave dying to the next wave starting, keeping open-zone respawns, dungeon wave transitions and dungeon run boundaries apart, and calibrating its own timing noise against the interval the server states for each action. The simulator uses one constant for all of these; this is our own measurement of whether it should. The tally survives a reload and builds up over sessions. Feeds the Wave Gap overlay row and the panel behind it',
             },
             tickPeriodWatch: {
@@ -2312,10 +2302,8 @@ export const settingsGroups = {
                 label: 'Tick Period: Measure how often the repeating combat effects actually fire',
                 type: 'checkbox',
                 default: false,
-                // The hooks are attached in initialize() and never detached on the
-                // switch: turning it on starts recording live, turning it off
-                // leaves them recording until the page is reloaded
-                requiresRefresh: true,
+                // A `liveStop` registry entry: turning it on starts recording
+                // live, turning it off tears the hooks down live too.
                 help: 'Times the interval between successive regeneration, food and drink recovery, damage-over-time and enrage ticks on the same unit, keeping only the ones the battle stream can tell apart from an ordinary hit or heal, and calibrating its own timing noise against the interval the server states for each action. The simulator advances all four on constants it inherited and nobody here has ever checked. The tally survives a reload and builds up over sessions. Feeds the Tick Period overlay row and the panel behind it',
             },
             combatScore: {
@@ -3047,7 +3035,6 @@ export const settingsGroups = {
                 label: 'Track task reroll costs',
                 type: 'checkbox',
                 default: true,
-                requiresRefresh: true,
                 help: 'Tracks how much gold/cowbells spent rerolling each task',
             },
             taskMapIndex: {
@@ -3075,7 +3062,6 @@ export const settingsGroups = {
                 label: 'Task sorter: Sort tasks by skill type',
                 type: 'checkbox',
                 default: true,
-                requiresRefresh: true,
                 help: 'Adds the sort button and sorting machinery to the task panel. This switch existed internally but was never in the settings panel, so the feature could not be turned off.',
             },
             taskSorter_autoSort: {
@@ -3117,9 +3103,8 @@ export const settingsGroups = {
                 type: 'checkbox',
                 default: true,
                 // The module watches for the tasks panel from its initialize and
-                // nothing else reads the key: the registry starts it live when the
-                // switch goes on, but nothing takes the button away until a reload.
-                requiresRefresh: true,
+                // nothing else reads the key: a `liveStop` registry entry starts
+                // and stops it live in either direction.
                 help: 'Adds a button to dim inventory items not needed for your current non-combat tasks',
             },
             taskStatistics: {
@@ -3280,10 +3265,11 @@ export const settingsGroups = {
                 label: 'Session briefing: What needs you, inside the Welcome Back window',
                 type: 'checkbox',
                 default: true,
-                // The briefing is drawn once, when the game opens its Welcome
-                // Back window. Turning it on mid-session has nothing left to
-                // draw — so say so rather than look broken.
-                requiresRefresh: true,
+                // A `liveStop` registry entry: switching it off live unhooks it.
+                // Switching it back on mid-session starts it again, but the
+                // briefing itself is only drawn once, when the game opens its
+                // Welcome Back window — there is nothing to redraw until the
+                // next one appears.
                 help:
                     'Every other warning in the script fires while you are here, so the one thing none of them can ' +
                     'cover is the time you were away. This adds a section to the bottom of the game’s own ' +
@@ -3313,10 +3299,8 @@ export const settingsGroups = {
                 label: 'Overlay Panel: One floating panel other features add a row to',
                 type: 'checkbox',
                 default: true,
-                // There is no teardown on the switch: turning it on starts the
-                // panel live (the registry re-checks gates on a setting change),
-                // but turning it off leaves the panel running until a reload.
-                requiresRefresh: true,
+                // A `liveStop` registry entry: turning it on starts the panel
+                // live and turning it off tears it down live too.
                 help: 'A configurable overlay. Open it from the Overlay tab beside Inventory, then use the gear to choose which rows show and in what order. Rows appear as features gain them. Its ⇲ button docks it below the character tabs, where it takes its own space instead of covering the game',
             },
             overlayTabButton: {
@@ -3325,10 +3309,8 @@ export const settingsGroups = {
                 type: 'checkbox',
                 default: true,
                 // Read in the module's initialize, like the Overlay Panel above it,
-                // with no listener of its own: the registry draws the tab live when
-                // this (or the overlay) is switched on, but nothing removes it
-                // until the page is reloaded.
-                requiresRefresh: true,
+                // with no listener of its own: a `liveStop` registry entry draws
+                // the tab and removes it live in either direction.
                 help: 'Adds an Overlay switch to the character tabs, beside Inventory and before Optimizer, so the overlay can be shown and hidden without opening settings. Needs the Overlay Panel above',
             },
             commandPalette: {
@@ -3336,7 +3318,6 @@ export const settingsGroups = {
                 label: 'Command palette (Ctrl+K)',
                 type: 'checkbox',
                 default: true,
-                requiresRefresh: true,
                 help: 'Ctrl+K (or Cmd+K) opens a search box listing every panel, every overlay row, every saved overlay layout and every setting by name — arrow keys and Enter to choose, Escape to dismiss. Ignored while you are typing in chat or any other input',
             },
             goalPlanner: {
@@ -3344,7 +3325,6 @@ export const settingsGroups = {
                 label: 'Goal Planner: Ordered steps, cost and time to reach a goal',
                 type: 'checkbox',
                 default: true,
-                requiresRefresh: true,
                 help:
                     'A floating panel (Ctrl+K → Goal Planner) that turns a goal — 500M coins, Sinister Cape +10, ' +
                     'Enhancing 110, Observatory 8 — into the ordered steps to get there, each with its own cost and ' +
@@ -3361,7 +3341,6 @@ export const settingsGroups = {
                 label: 'Iron Bell Farming: The cowbell-farming plan, and what it earns',
                 type: 'checkbox',
                 default: true,
-                requiresRefresh: true,
                 help:
                     'A floating panel (Ctrl+K → Iron Bell Farming) holding the standard iron-cow route to farming gold ' +
                     'for cowbells — the skills to level, the jewelry to craft, then the endless Star Fruit → ' +

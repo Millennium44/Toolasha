@@ -808,6 +808,125 @@ describe('a setting switched on mid-session', () => {
         expect(disable).not.toHaveBeenCalled();
     });
 
+    describe('liveStop — a feature that opts into being disabled live', () => {
+        test('a liveStop feature started at boot is disabled when its gate closes, and re-started when it reopens', async () => {
+            const fresh = await freshRegistry();
+            const initialize = vi.fn();
+            const disable = vi.fn();
+            state.enabledFeatures = new Set(['stoppable']);
+            fresh.replaceFeatures([{ key: 'stoppable', name: 'Stoppable', initialize, disable, liveStop: true }]);
+            fresh.setupLiveFeatureStart();
+            await fresh.initializeFeatures();
+            expect(initialize).toHaveBeenCalledTimes(1);
+
+            changeSetting('stoppable', false);
+            await settle();
+            expect(disable).toHaveBeenCalledTimes(1);
+
+            changeSetting('stoppable', true);
+            await settle();
+            expect(initialize).toHaveBeenCalledTimes(2);
+        });
+
+        test('a non-liveStop feature is not disabled when its gate closes', async () => {
+            const fresh = await freshRegistry();
+            const disable = vi.fn();
+            state.enabledFeatures = new Set(['running']);
+            fresh.replaceFeatures([{ key: 'running', name: 'Running', initialize: vi.fn(), disable }]);
+            fresh.setupLiveFeatureStart();
+            await fresh.initializeFeatures();
+
+            changeSetting('running', false);
+            await settle();
+
+            expect(disable).not.toHaveBeenCalled();
+        });
+
+        test('does not disable before startup completes', async () => {
+            const fresh = await freshRegistry();
+            const initialize = vi.fn();
+            const disable = vi.fn();
+            fresh.replaceFeatures([{ key: 'stoppable', name: 'Stoppable', initialize, disable, liveStop: true }]);
+            fresh.setupLiveFeatureStart();
+
+            // Startup has not run yet, so the feature was never started, but a
+            // setting change queued before it must not run a stop pass early.
+            changeSetting('stoppable', false);
+            await settle();
+            expect(disable).not.toHaveBeenCalled();
+        });
+
+        test('does not disable during a character switch', async () => {
+            const fresh = await freshRegistry();
+            const initialize = vi.fn();
+            const disable = vi.fn();
+            state.enabledFeatures = new Set(['stoppable']);
+            fresh.replaceFeatures([{ key: 'stoppable', name: 'Stoppable', initialize, disable, liveStop: true }]);
+            fresh.setupLiveFeatureStart();
+            await fresh.initializeFeatures();
+
+            state.isCharacterSwitching = true;
+            changeSetting('stoppable', false);
+            await settle();
+
+            expect(disable).not.toHaveBeenCalled();
+        });
+
+        test('does not disable a feature whose start is still in flight', async () => {
+            const fresh = await freshRegistry();
+            let release;
+            const initialize = vi.fn(
+                () =>
+                    new Promise((resolve) => {
+                        release = resolve;
+                    })
+            );
+            const disable = vi.fn();
+            fresh.replaceFeatures([{ key: 'slow', name: 'Slow', initialize, disable, liveStop: true }]);
+            fresh.setupLiveFeatureStart();
+            await fresh.initializeFeatures();
+
+            // Opens the gate and starts the slow initializer, still in flight.
+            changeSetting('slow', true);
+            await settle();
+            expect(initialize).toHaveBeenCalledTimes(1);
+
+            // The gate closes again before that start has settled; the stop
+            // pass triggered by this change must leave it alone.
+            changeSetting('slow', false);
+            await settle();
+            expect(disable).not.toHaveBeenCalled();
+
+            release();
+            await settle();
+        });
+
+        test('a failing disable is reported through noteDisableFailure and does not stop the pass', async () => {
+            vi.spyOn(console, 'error').mockImplementation(() => {});
+            const fresh = await freshRegistry();
+            const failingDisable = vi.fn(() => {
+                throw new Error('teardown failed');
+            });
+            const otherInitialize = vi.fn();
+            const otherDisable = vi.fn();
+            state.enabledFeatures = new Set(['broken', 'other']);
+            fresh.replaceFeatures([
+                { key: 'broken', name: 'Broken', initialize: vi.fn(), disable: failingDisable, liveStop: true },
+                { key: 'other', name: 'Other', initialize: otherInitialize, disable: otherDisable, liveStop: true },
+            ]);
+            fresh.setupLiveFeatureStart();
+            await fresh.initializeFeatures();
+
+            changeSetting('broken', false);
+            changeSetting('other', false);
+            await settle();
+
+            expect(failingDisable).toHaveBeenCalledTimes(1);
+            expect(otherDisable).toHaveBeenCalledTimes(1);
+            expect(fresh.getDisableFailures()).toContain('broken');
+        });
+    });
+
     test('starts nothing before startup has completed, and startup does not then start it twice', async () => {
         const fresh = await freshRegistry();
         const initialize = vi.fn();

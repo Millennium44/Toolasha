@@ -665,12 +665,17 @@ function liveStartAllowed() {
 }
 
 /**
- * Start every feature whose gate is open but which is not running.
+ * Start every feature whose gate is open but which is not running, then stop
+ * every `liveStop` feature whose gate has closed.
  *
- * Starts only. A feature whose gate has closed is left to its own module, which
- * owns any teardown on its own keys. Serial, in registry order, without the
- * startup batch's `concurrent` overlap — a pass normally starts one feature.
- * What fails goes to the same recovery routine a startup failure does.
+ * Starting applies to every feature. Stopping is opt-in (`liveStop: true` on
+ * the registry entry): a feature whose gate has closed is otherwise left to
+ * its own module, which owns any teardown on its own keys — see
+ * `runLiveStops`. Serial, in registry order, without the startup batch's
+ * `concurrent` overlap — a pass normally starts or stops one feature. What
+ * fails to start goes to the same recovery routine a startup failure does;
+ * what fails to stop goes through `noteDisableFailure`, the same bookkeeping
+ * a character switch's teardown uses.
  * @returns {Promise<void>}
  */
 async function runLiveStarts() {
@@ -699,6 +704,44 @@ async function runLiveStarts() {
     if (failures.length > 0 && typeof liveStartFailureHandler === 'function') {
         liveStartFailureHandler(failures);
     }
+
+    await runLiveStops();
+}
+
+/**
+ * Stop every `liveStop` feature the registry started whose gate has since
+ * closed.
+ *
+ * Only `startedKeys` — the registry's own bookkeeping — decides what counts
+ * as started here, the same source `disableAllFeatures` reads; a feature with
+ * an `isRunning` escape hatch (see `isFeatureRunning`) is not consulted, since
+ * that hatch exists for modules that stop *themselves*, which is not this
+ * feature's job. Runs under the same guards a start does: `liveStartAllowed()`
+ * rechecked per feature so a character switch beginning mid-pass stands the
+ * rest down for the switch's own teardown, and `liveStartsInFlight` so a
+ * feature whose start has not settled yet is left alone until it has — the
+ * next setting change re-evaluates it.
+ * @returns {Promise<void>}
+ */
+async function runLiveStops() {
+    for (const feature of featureRegistry) {
+        if (!feature.liveStop) continue;
+        if (!liveStartAllowed()) {
+            liveStartDeferredBySwitch = true;
+            break;
+        }
+        if (liveStartsInFlight.has(feature.key) || !startedKeys.has(feature.key) || isGateOpen(feature)) continue;
+
+        startedKeys.delete(feature.key);
+        try {
+            const featureInstance = getFeatureInstance(feature.key);
+            if (featureInstance && typeof featureInstance.disable === 'function') {
+                await featureInstance.disable();
+            }
+        } catch (error) {
+            noteDisableFailure(feature, error);
+        }
+    }
 }
 
 /**
@@ -726,14 +769,18 @@ function scheduleLiveStart() {
 }
 
 /**
- * Start features whose gate a setting change opens mid-session.
+ * Start features whose gate a setting change opens mid-session, and stop the
+ * `liveStop` ones whose gate a change closes.
  *
  * The registry otherwise evaluates gates only at startup and on a character
  * switch, so a feature whose settings were all off at page load stayed off
- * until a reload however it was switched on. Installed once, by the entrypoint.
+ * until a reload however it was switched on — and, for the `liveStop` opt-in,
+ * a feature switched off stayed running until a reload rather than tearing
+ * down through its existing `disable()`. Installed once, by the entrypoint.
  * @param {Function} [onInitFailures] - Called with what a live start failed to
  *   bring up, shaped like `initializeFeatures()`'s return — the entrypoint passes
- *   the same health-check/retry/report routine boot and a switch use.
+ *   the same health-check/retry/report routine boot and a switch use. A live
+ *   stop's failure is not reported here; it goes through `noteDisableFailure`.
  * @returns {Function} Uninstall function
  */
 function setupLiveFeatureStart(onInitFailures) {
