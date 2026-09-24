@@ -52,6 +52,26 @@ describe('enhancement simulator defaults', () => {
     });
 });
 
+describe('net worth and auto-all sub-settings name their parent', () => {
+    test('the net worth sub-settings all require the net worth master switch', () => {
+        const ids = [
+            'invWorth',
+            'networth_includeCowbells',
+            'networth_includeTaskTokens',
+            'networth_abilityBooksAsInventory',
+            'networth_historyChart',
+            'networth_goldSources',
+        ];
+        for (const id of ids) {
+            expect(getSettingDefinition(id).requires, id).toBe('networth');
+        }
+    });
+
+    test('excluding seals from the auto-all click requires the auto-all button itself', () => {
+        expect(getSettingDefinition('autoAllButton_excludeSeals').requires).toBe('autoAllButton');
+    });
+});
+
 describe('marketplace autofill strategy defaults', () => {
     test('buy and sell both default to matching the best price, not outbidding or undercutting it', () => {
         // A default of 'outbid'/'undercut' quietly escalates or discounts every

@@ -1316,15 +1316,17 @@ export const settingsGroups = {
             },
             market_raiseBuyPriceToCoverQuantity: {
                 id: 'market_raiseBuyPriceToCoverQuantity',
-                label: 'Buy Now: raise the price until it covers the whole quantity',
+                label: 'Auto-filled purchases: raise the price until it covers the whole quantity',
                 type: 'checkbox',
                 default: true,
                 help:
-                    'When a filled buy quantity is more than the best ask has in stock, raise the price to the ' +
-                    'lowest one whose listings add up to the whole amount. The price is a limit, not what every ' +
-                    'unit costs: each listing still sells at its own price, so only the units the cheapest ' +
-                    "listings could not cover pay more. Never goes above the modal's tradable range, never " +
-                    'lowers a price, and never presses the buy button.',
+                    'Applies to the Buy Now dialogs Toolasha auto-fills for you (missing materials, ability books, ' +
+                    'house costs, guild credit value, combat sim upgrades, the consumables panel, the shopping ' +
+                    'list) — not the plain Buy Now window you open yourself. When a filled buy quantity is more ' +
+                    'than the best ask has in stock, raise the price to the lowest one whose listings add up to ' +
+                    'the whole amount. The price is a limit, not what every unit costs: each listing still sells ' +
+                    'at its own price, so only the units the cheapest listings could not cover pay more. Never ' +
+                    "goes above the modal's tradable range, never lowers a price, and never presses the buy button.",
             },
             market_autoFillSellStrategy: {
                 id: 'market_autoFillSellStrategy',
@@ -1924,6 +1926,7 @@ export const settingsGroups = {
                 type: 'checkbox',
                 default: true,
                 help: 'Shows total net worth with a per-category breakdown (equipment, inventory, listings, houses, abilities) below the inventory panel. Requires net worth tracking to be enabled above',
+                requires: 'networth',
             },
             invSort: {
                 id: 'invSort',
@@ -2024,6 +2027,7 @@ export const settingsGroups = {
                 type: 'checkbox',
                 default: false,
                 help: 'Cowbells are not tradeable, but they have a value based on Bag of 10 Cowbells market price',
+                requires: 'networth',
             },
             networth_includeTaskTokens: {
                 id: 'networth_includeTaskTokens',
@@ -2031,6 +2035,7 @@ export const settingsGroups = {
                 type: 'checkbox',
                 default: true,
                 help: 'Value task tokens based on expected value from Task Shop chests. Disable to exclude them from net worth.',
+                requires: 'networth',
             },
             networth_abilityBooksAsInventory: {
                 id: 'networth_abilityBooksAsInventory',
@@ -2038,6 +2043,7 @@ export const settingsGroups = {
                 type: 'checkbox',
                 default: false,
                 help: 'Move ability books from Fixed Assets to Current Assets inventory value. Useful if you plan to sell them.',
+                requires: 'networth',
             },
             networth_historyChart: {
                 id: 'networth_historyChart',
@@ -2045,6 +2051,7 @@ export const settingsGroups = {
                 type: 'checkbox',
                 default: true,
                 help: 'Records hourly net worth snapshots and shows a chart icon next to Total Net Worth. Disable to stop tracking and hide the chart button.',
+                requires: 'networth',
             },
             networth_forecast: {
                 id: 'networth_forecast',
@@ -2065,6 +2072,7 @@ export const settingsGroups = {
                     'Adds a 💰 button beside Net Worth that splits your net worth change by activity — combat drops, ' +
                     'gathering, production, alchemy, enhancing, marketplace, offline — and shows what is left ' +
                     'unexplained rather than balancing it away. Also records production and offline income per day.',
+                requires: 'networth',
             },
             autoAllButton: {
                 id: 'autoAllButton',
@@ -2079,6 +2087,7 @@ export const settingsGroups = {
                 type: 'checkbox',
                 default: true,
                 help: 'When enabled, Scroll of... items from the Labyrinth are not auto-opened',
+                requires: 'autoAllButton',
             },
         },
     },
