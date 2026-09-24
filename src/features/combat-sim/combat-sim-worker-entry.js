@@ -10,6 +10,7 @@ import { buildPlayerExtraBuffs } from './engine/extra-buffs.js';
 import { setGameData } from './engine/game-data.js';
 import { setBuffCapture, getCapturedMonsterBuffs } from './engine/combat-unit.js';
 import CombatSimulator, { setPlayerDetailsCapture, getCapturedPlayerDetails } from './engine/combat-simulator.js';
+import { runTracedSimulation } from './engine/combat-trace.js';
 import Labyrinth from './engine/labyrinth.js';
 import Player from './engine/player.js';
 import { seedSimRng } from './engine/rng.js';
@@ -36,6 +37,7 @@ onmessage = function (event) {
             captureBuffs,
             capturePlayerDetails,
             playerCombatBuffs,
+            captureTrace,
         } = event.data;
 
         // Set game data for the engine singleton. A worker reused for a second
@@ -125,7 +127,12 @@ onmessage = function (event) {
         // session. These are the only engine globals not reset per message.
         let simResult;
         try {
-            simResult = combatSimulator.simulate(simulationTimeLimit, precision);
+            simResult = captureTrace
+                ? runTracedSimulation(combatSimulator, simulationTimeLimit, precision, {
+                      seed,
+                      maxEvents: captureTrace.maxEvents,
+                  })
+                : combatSimulator.simulate(simulationTimeLimit, precision);
 
             if (captureBuffs) {
                 simResult.producedMonsterBuffs = getCapturedMonsterBuffs();

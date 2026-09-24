@@ -102,6 +102,26 @@ function fullAbilitiesArg() {
 }
 
 describe('the labyrinth monster the worker builds', () => {
+    test('only adds diagnostic tracing when explicitly requested', () => {
+        const message = startMessage(null);
+        globalThis.onmessage(message);
+        expect(harness.posted[0].simResult.combatTrace).toBeUndefined();
+
+        message.data.captureTrace = { maxEvents: 25 };
+        message.data.seed = 42;
+        globalThis.onmessage(message);
+        expect(harness.posted[1].simResult.combatTrace).toMatchObject({
+            seed: 42,
+            maxEvents: 25,
+            events: [],
+            truncated: false,
+        });
+
+        delete message.data.captureTrace;
+        globalThis.onmessage(message);
+        expect(harness.posted[2].simResult.combatTrace).toBeUndefined();
+    });
+
     test('a caller who says nothing gets the full ability kit', () => {
         globalThis.onmessage(startMessage({ monsterHrid: '/monsters/x', roomLevel: 100 }));
 
