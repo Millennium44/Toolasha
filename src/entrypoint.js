@@ -1125,6 +1125,12 @@ function registerFeatures() {
             category: 'Actions',
             module: Actions.quickInputButtons,
             async: false,
+            // Any of the three sections it can draw being on is enough; each
+            // section is gated on its own setting inside the module.
+            customCheck: () =>
+                config.getSetting('actionPanel_totalTime_quickInputs') ||
+                config.getSetting('actionPanel_showSpeedTime') ||
+                config.getSetting('actionPanel_showLevelProgress'),
         },
         { key: 'outputTotals', name: 'Output Totals', category: 'Actions', module: Actions.outputTotals, async: false },
         {

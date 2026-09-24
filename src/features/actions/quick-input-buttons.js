@@ -801,9 +801,13 @@ class QuickInputButtons {
                 levelEfficiencyDeficit
             );
 
+            // The button rows are their own setting ('actionPanel_totalTime_quickInputs') —
+            // the registry now also starts this module for Speed/Time or Level Progress
+            // alone, so building this section must not assume the buttons are wanted.
+            const showQuickInputs = config.getSetting('actionPanel_totalTime_quickInputs');
             let queueContent = null;
 
-            if (hasNormalXP) {
+            if (showQuickInputs && hasNormalXP) {
                 queueContent = document.createElement('div');
                 queueContent.style.cssText = `
                     color: var(--text-color-secondary, ${config.COLOR_TEXT_SECONDARY});
@@ -840,7 +844,7 @@ class QuickInputButtons {
 
                 // SECOND ROW: Count-based buttons (times)
                 queueContent.appendChild(this._createCountPresetRow(panel, numberInput, gameData, actionDetails));
-            } else {
+            } else if (showQuickInputs) {
                 // Combat: count presets only (no hour-based buttons)
                 queueContent = document.createElement('div');
                 queueContent.style.cssText = `
@@ -856,8 +860,12 @@ class QuickInputButtons {
             const hideSpeedTime = !config.getSetting('actionPanel_showSpeedTime');
             const hideLevelProgress = !config.getSetting('actionPanel_showLevelProgress');
 
-            inputContainer.insertAdjacentElement('afterend', queueContent);
-            let lastInserted = queueContent;
+            let lastInserted = inputContainer;
+
+            if (queueContent) {
+                inputContainer.insertAdjacentElement('afterend', queueContent);
+                lastInserted = queueContent;
+            }
 
             if (speedSection && !hideSpeedTime) {
                 lastInserted.insertAdjacentElement('afterend', speedSection);
