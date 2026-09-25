@@ -480,9 +480,18 @@ describe('_resolveGoEstimate: what a Go click on this card would do', () => {
         const taskNode = document.createElement('div');
         const estimate = { zoneHrid: '/actions/combat/fly', predictedFights: 42, monsterHrid: '/monsters/fly' };
         taskProfitDisplay._cardEstimates.set(taskNode, estimate);
-        vi.spyOn(config, 'getSetting').mockReturnValue(false); // taskGoMerge off
+        vi.spyOn(config, 'getSetting').mockImplementation((key) => key === 'taskCombatEstimate'); // taskGoMerge off
 
         expect(taskProfitDisplay._resolveGoEstimate(taskNode)).toBe(estimate);
+    });
+
+    test('a stored estimate is ignored once taskCombatEstimate is switched off', () => {
+        const taskNode = document.createElement('div');
+        const estimate = { zoneHrid: '/actions/combat/fly', predictedFights: 12 };
+        taskProfitDisplay._cardEstimates.set(taskNode, estimate);
+        vi.spyOn(config, 'getSetting').mockImplementation((key) => key !== 'taskCombatEstimate');
+
+        expect(taskProfitDisplay._resolveGoEstimate(taskNode)).toBe(null);
     });
 
     test("defers to taskGoMerge's exact total when it is about to combine several in-progress tasks", () => {
@@ -492,7 +501,7 @@ describe('_resolveGoEstimate: what a Go click on this card would do', () => {
             predictedFights: 42,
             monsterHrid: '/monsters/fly',
         });
-        vi.spyOn(config, 'getSetting').mockReturnValue(true); // taskGoMerge on
+        vi.spyOn(config, 'getSetting').mockReturnValue(true); // taskGoMerge and taskCombatEstimate on
         dataManager.characterQuests = [
             {
                 status: '/quest_status/in_progress',
