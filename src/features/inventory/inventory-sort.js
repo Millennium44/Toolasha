@@ -15,6 +15,35 @@ import { readScoped, writeScoped } from '../../utils/character-key.js';
 import { captureOwner, stillOurs, noteTeardown } from '../../utils/init-ownership.js';
 
 /**
+ * Wait for `promise`, but never past `timeoutMs`.
+ *
+ * `applyCurrentSort()` holds its `isCalculating` guard across an await on
+ * `inventoryBadgeManager.renderAllBadges()`, inside a try/finally most callers assume clears the
+ * guard no matter what — but a finally block never runs while its function is suspended on an
+ * await that never settles, so a wedged badge render left `isCalculating` stuck true forever and
+ * with it every later sort request (measured live: 532 tiles, isCalculating never clearing across
+ * 8 s of sampling, while a fresh renderAllBadges() call from the console resolved fine). Racing
+ * the real promise against a timer guarantees the awaiting function is always resumed, whatever
+ * the real promise ends up doing.
+ * @param {Promise<*>} promise - What to wait for
+ * @param {number} timeoutMs - How long to wait before giving up
+ * @returns {Promise<*>} The promise's value, or undefined on timeout
+ */
+async function withBoundedWait(promise, timeoutMs) {
+    let timer;
+    try {
+        return await Promise.race([
+            promise,
+            new Promise((resolve) => {
+                timer = setTimeout(resolve, timeoutMs);
+            }),
+        ]);
+    } finally {
+        clearTimeout(timer);
+    }
+}
+
+/**
  * InventorySort class manages inventory sorting and price badges
  */
 class InventorySort {
@@ -26,6 +55,11 @@ class InventorySort {
         this.currentInventoryElem = null;
         this.warnedItems = new Set(); // Track items we've already warned about
         this.isCalculating = false; // Guard flag to prevent recursive calls
+        // A sort request that arrived while one was already running. Coalesced rather than
+        // dropped: the in-flight run finishes (or times out — see withBoundedWait) and, if this
+        // is set, runs exactly once more instead of leaving the newer request unanswered.
+        this.rerunRequested = false;
+        this.BADGE_RENDER_TIMEOUT_MS = 8000; // Bound on the badge-manager await; see withBoundedWait
         this.isInitialized = false;
         this.initPromise = null;
         this.itemsUpdatedHandler = null;
@@ -426,76 +460,98 @@ class InventorySort {
     }
 
     /**
-     * Apply current sort mode to inventory
+     * Apply current sort mode to inventory.
+     *
+     * `isCalculating` is only ever set/cleared synchronously around `_sortInventoryOnce()`, whose
+     * own badge-manager wait is bounded by `withBoundedWait` — so this method's `finally` always
+     * runs and the guard can never stick. A call that arrives while one is already running is not
+     * dropped: it sets `rerunRequested`, and the in-flight run (once it finishes, whether that is
+     * because the work actually finished or because the bounded wait gave up on it) runs once more
+     * before returning, so a legitimate request made during that window is not lost.
      */
     async applyCurrentSort() {
         if (!this.currentInventoryElem) return;
 
-        // Prevent recursive calls (guard against DOM observer triggering during calculation)
-        if (this.isCalculating) return;
+        if (this.isCalculating) {
+            this.rerunRequested = true;
+            return;
+        }
         this.isCalculating = true;
 
         try {
-            const inventoryElem = this.currentInventoryElem;
-
-            // Trigger badge manager to calculate prices and render badges
-            await inventoryBadgeManager.renderAllBadges();
-
-            // Skip order assignments when custom tabs has taken over the layout —
-            // badges are still updated above, but tile order is managed by custom tabs.
-            if (inventoryElem.classList.contains('toolasha-ct-active')) {
-                return;
-            }
-
-            // Process each category. Found structurally by its Inventory_categoryButton rather
-            // than by walking inventoryElem.children: the old DOM has category divs as direct
-            // children of Inventory_items, but the new native-inventory-tabs DOM (2026-09 patch)
-            // nests them inside the selected TabsComponent panel instead, and only that panel
-            // renders any tiles — so a plain descendant search finds exactly the categories that
-            // are actually on screen in either shape.
-            const categoryButtons = inventoryElem.querySelectorAll('[class*="Inventory_categoryButton"]');
-
-            for (const categoryButton of categoryButtons) {
-                const categoryDiv = this.findCategoryContainer(categoryButton);
-                if (!categoryDiv || !inventoryElem.contains(categoryDiv)) continue;
-
-                const categoryName = categoryButton.textContent.trim();
-
-                // Equipment category: check setting for whether to enable sorting
-                // Loots category: always disable sorting (but allow badges)
-                const isEquipmentCategory = categoryName === 'Equipment';
-                const isLootsCategory = categoryName === 'Loots';
-                const shouldSort = isLootsCategory
-                    ? false
-                    : isEquipmentCategory
-                      ? config.getSetting('invSort_sortEquipment')
-                      : true;
-
-                // Ensure category label stays at top
-                const label = categoryDiv.querySelector('[class*="Inventory_label"]');
-                if (label) {
-                    label.style.order = Number.MIN_SAFE_INTEGER;
-                }
-
-                // Get all item elements
-                const itemElems = categoryDiv.querySelectorAll('[class*="Item_itemContainer"]');
-
-                if (shouldSort && this.currentMode !== 'none') {
-                    // Sort by price (prices already calculated by badge manager)
-                    this.sortItemsByPrice(itemElems, this.currentMode);
-                } else {
-                    // Reset to default order. Removed rather than pinned at "0": every tile
-                    // already defaults to order 0, so leaving an inline "0" behind is inert but
-                    // leftover — clearing the property is the honest reset and does not shadow
-                    // an order another feature sets later.
-                    itemElems.forEach((itemElem) => {
-                        itemElem.style.removeProperty('order');
-                    });
-                }
-            }
+            await this._sortInventoryOnce();
         } finally {
-            // Clear guard flag even on error so later sorts are not blocked forever
             this.isCalculating = false;
+        }
+
+        if (this.rerunRequested) {
+            this.rerunRequested = false;
+            await this.applyCurrentSort();
+        }
+    }
+
+    /**
+     * The body of `applyCurrentSort()`, run under its guard.
+     * @private
+     */
+    async _sortInventoryOnce() {
+        const inventoryElem = this.currentInventoryElem;
+
+        // Trigger badge manager to calculate prices and render badges. Bounded: see
+        // withBoundedWait — a hung render must not hold isCalculating open forever.
+        await withBoundedWait(inventoryBadgeManager.renderAllBadges(), this.BADGE_RENDER_TIMEOUT_MS);
+
+        // Skip order assignments when custom tabs has taken over the layout —
+        // badges are still updated above, but tile order is managed by custom tabs.
+        if (inventoryElem.classList.contains('toolasha-ct-active')) {
+            return;
+        }
+
+        // Process each category. Found structurally by its Inventory_categoryButton rather
+        // than by walking inventoryElem.children: the old DOM has category divs as direct
+        // children of Inventory_items, but the new native-inventory-tabs DOM (2026-09 patch)
+        // nests them inside the selected TabsComponent panel instead, and only that panel
+        // renders any tiles — so a plain descendant search finds exactly the categories that
+        // are actually on screen in either shape.
+        const categoryButtons = inventoryElem.querySelectorAll('[class*="Inventory_categoryButton"]');
+
+        for (const categoryButton of categoryButtons) {
+            const categoryDiv = this.findCategoryContainer(categoryButton);
+            if (!categoryDiv || !inventoryElem.contains(categoryDiv)) continue;
+
+            const categoryName = categoryButton.textContent.trim();
+
+            // Equipment category: check setting for whether to enable sorting
+            // Loots category: always disable sorting (but allow badges)
+            const isEquipmentCategory = categoryName === 'Equipment';
+            const isLootsCategory = categoryName === 'Loots';
+            const shouldSort = isLootsCategory
+                ? false
+                : isEquipmentCategory
+                  ? config.getSetting('invSort_sortEquipment')
+                  : true;
+
+            // Ensure category label stays at top
+            const label = categoryDiv.querySelector('[class*="Inventory_label"]');
+            if (label) {
+                label.style.order = Number.MIN_SAFE_INTEGER;
+            }
+
+            // Get all item elements
+            const itemElems = categoryDiv.querySelectorAll('[class*="Item_itemContainer"]');
+
+            if (shouldSort && this.currentMode !== 'none') {
+                // Sort by price (prices already calculated by badge manager)
+                this.sortItemsByPrice(itemElems, this.currentMode);
+            } else {
+                // Reset to default order. Removed rather than pinned at "0": every tile
+                // already defaults to order 0, so leaving an inline "0" behind is inert but
+                // leftover — clearing the property is the honest reset and does not shadow
+                // an order another feature sets later.
+                itemElems.forEach((itemElem) => {
+                    itemElem.style.removeProperty('order');
+                });
+            }
         }
     }
 
@@ -659,6 +715,8 @@ class InventorySort {
             this.warnedItems.clear();
             this.currentInventoryElem = null;
             this.isInitialized = false;
+            this.isCalculating = false;
+            this.rerunRequested = false;
         } catch (error) {
             console.error('[Inventory Sort] Disable failed part-way:', error);
         } finally {
