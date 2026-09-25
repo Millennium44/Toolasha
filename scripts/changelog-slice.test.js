@@ -229,18 +229,40 @@ describe('slicing by release boundary', () => {
     test('ships every entry back to the marker that serves a player two releases behind', () => {
         // 3.50 shipped 8, 3.49 shipped 7: a player who last ran 3.48 has 15 to
         // read, and the marker naming their build has to ship with them.
-        const result = sliceForkChangelog(markedChangelog([8, 7, 6, 5]));
-        expect(DEFAULT_RELEASES_BACK).toBe(2);
+        const result = sliceForkChangelog(markedChangelog([8, 7, 6, 5, 4, 3]), { releasesBack: 2 });
         expect(result.shownEntries).toBe(15);
         expect(result.markerVersions).toEqual(['3.50.0', '3.49.0', '3.48.0']);
         expect(result.text).toContain('### Entry 15');
         expect(result.text).not.toContain('### Entry 16');
     });
 
+    test('the default reaches back five releases', () => {
+        expect(DEFAULT_RELEASES_BACK).toBe(5);
+        // 3.50 down through 3.46 (five releases back, index 5) is the marker at
+        // 3.45; everything above it is what a player that far behind has to see.
+        const result = sliceForkChangelog(markedChangelog([8, 7, 6, 5, 4, 3]));
+        expect(result.shownEntries).toBe(8 + 7 + 6 + 5 + 4);
+        expect(result.markerVersions).toEqual(['3.50.0', '3.49.0', '3.48.0', '3.47.0', '3.46.0', '3.45.0']);
+    });
+
+    test('a release with more than 30 entries ships whole, up to the entry cap', () => {
+        // A single busy release (65 entries — well past the old 30-entry
+        // ceiling) followed by a quieter one. The boundary the second marker
+        // draws asks for exactly the busy release's entries, and every one of
+        // them survives, because the cap is now 120, not 30.
+        const result = sliceForkChangelog(markedChangelog([65, 5]));
+        expect(result.markerVersions).toEqual(['3.50.0', '3.49.0']);
+        expect(result.shownEntries).toBe(65);
+        expect(result.omittedEntries).toBe(5);
+        expect(result.text).toContain('### Entry 1\n');
+        expect(result.text).toContain('### Entry 65\n');
+        expect(result.text).not.toContain('### Entry 66');
+    });
+
     test('a busy release ships more than a quiet one', () => {
         const busy = sliceForkChangelog(markedChangelog([15, 8, 6, 6, 6]));
         const quiet = sliceForkChangelog(markedChangelog([2, 1, 6, 6, 6]));
-        expect(busy.shownEntries).toBe(23);
+        expect(busy.shownEntries).toBe(35);
         expect(quiet.shownEntries).toBeLessThan(busy.shownEntries);
         // Nothing forced a fixed twelve on either of them.
         expect(busy.shownEntries).not.toBe(DEFAULT_MIN_ENTRIES);
@@ -252,15 +274,15 @@ describe('slicing by release boundary', () => {
     });
 
     test('the entry cap binds when one release is enormous', () => {
-        const result = sliceForkChangelog(markedChangelog([50, 20, 5]));
+        const result = sliceForkChangelog(markedChangelog([200, 20, 5]));
         expect(result.shownEntries).toBe(DEFAULT_MAX_ENTRIES);
-        expect(result.omittedEntries).toBe(45);
-        expect(result.text).toContain('45 more changes are not shown here');
+        expect(result.omittedEntries).toBe(105);
+        expect(result.text).toContain('105 more changes are not shown here');
     });
 
     test('the character cap binds when a release is enormous by the word', () => {
-        const result = sliceForkChangelog(markedChangelog([20, 20, 5], { body: 'w'.repeat(2000) }));
-        expect(result.shownEntries).toBeLessThan(20);
+        const result = sliceForkChangelog(markedChangelog([80, 80, 5], { body: 'w'.repeat(2000) }));
+        expect(result.shownEntries).toBeLessThan(80);
         expect(result.text.length).toBeLessThanOrEqual(DEFAULT_MAX_CHARS + 200);
     });
 
@@ -279,18 +301,18 @@ describe('slicing by release boundary', () => {
     });
 
     test('unreleased entries above the newest marker always ship', () => {
-        const changelog = markedChangelog([8, 8, 8, 8]).replace(
+        const changelog = markedChangelog([8, 8, 8, 8, 8, 8]).replace(
             '<!-- shipped in 3.50.0 -->',
             '### Not released yet\n\nBody.\n\n<!-- shipped in 3.50.0 -->'
         );
         const result = sliceForkChangelog(changelog);
         expect(result.text).toContain('### Not released yet');
-        expect(result.shownEntries).toBe(17);
+        expect(result.shownEntries).toBe(41);
     });
 
     test('markers are not entries: the caps count entries', () => {
-        const result = sliceForkChangelog(markedChangelog([40, 40, 40]));
-        expect(result.totalEntries).toBe(120);
+        const result = sliceForkChangelog(markedChangelog([40, 40, 40, 40]));
+        expect(result.totalEntries).toBe(160);
         expect(result.shownEntries).toBe(DEFAULT_MAX_ENTRIES);
     });
 

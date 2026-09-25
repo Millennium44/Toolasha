@@ -38,20 +38,23 @@
  *
  * Marker semantics decide the arithmetic: the marker for a version sits *above*
  * the entries that shipped in it, so serving a player who last ran version V
- * means shipping every entry above V's marker, and V's marker with them. Two
- * releases back is therefore the marker at index 2, counting the release being
- * built as 0 — it covers the player who updated normally and the player who
- * skipped one.
+ * means shipping every entry above V's marker, and V's marker with them. Five
+ * releases back is therefore the marker at index 5, counting the release being
+ * built as 0 — it covers a player who has missed several releases in a row, not
+ * just the one who updated normally.
  *
- * Why two and not more: over the last 29 releases the fork shipped a median of
- * 8 entries per release, a 90th percentile of 26 and a worst case of 35, at
- * roughly one release a day. Two releases is a median of 23 entries (~19 KB)
- * and a 90th percentile of 42; three is a median of 35 and a 90th percentile of
- * 59, which the caps below would cut most of the time — bundle weight without
- * coverage to show for it. Someone further behind than this still sees the
- * whole slice, with the omission line saying that there is more.
+ * Two releases back used to be the answer, sized to what the popup could show
+ * on one screen. Now that the popup paginates (`whats-new.js`), the limit that
+ * matters is bundle weight, not screen space, and the entry/character caps
+ * below are what actually bound that — this knob just says how far the release
+ * boundaries themselves should reach before those caps take over. Five covers
+ * the entry cap's 120 several times over on a typical day (measured against
+ * `CHANGELOG.md`: five releases back is ~145 entries, so the 120-entry cap
+ * binds first), so the caps, not this number, decide what ships on a busy
+ * stretch. Someone further behind than this still sees the whole slice, with
+ * the omission line saying that there is more.
  */
-export const DEFAULT_RELEASES_BACK = 2;
+export const DEFAULT_RELEASES_BACK = 5;
 
 /**
  * The floor, and the answer when there is nothing better.
@@ -67,18 +70,22 @@ export const DEFAULT_MIN_ENTRIES = 12;
 
 /**
  * The entry cap. A backstop, not the primary limit — the release boundary is —
- * but one release genuinely ran to 35 entries and nothing stops the next from
- * running to fifty, and neither the bundle nor the reader wants all of them.
+ * but five releases back can already ask for well over a hundred entries on a
+ * busy stretch (measured: ~145 against `CHANGELOG.md` today), and nothing
+ * stops a future stretch running higher still. 120 is sized to what the
+ * now-paginated popup (`whats-new.js`) can show over several pages without the
+ * bundle or the reader having to take on everything at once.
  */
-export const DEFAULT_MAX_ENTRIES = 30;
+export const DEFAULT_MAX_ENTRIES = 120;
 
 /**
  * The character cap. Entries are prose whose length nobody enforces, so the
  * entry cap alone does not bound bytes. Entries are dropped whole to stay under
- * it. Thirty recent entries run about 10 KB; this leaves room for wordier ones
- * without letting a long-winded release balloon the bundle.
+ * it. 120 recent entries run about 50 KB (measured against `CHANGELOG.md`);
+ * 100 KB leaves comfortable room for wordier ones without letting a
+ * long-winded stretch balloon the bundle unbounded.
  */
-export const DEFAULT_MAX_CHARS = 24000;
+export const DEFAULT_MAX_CHARS = 100000;
 
 /**
  * Cut the first `## Unreleased` section out of a changelog.
