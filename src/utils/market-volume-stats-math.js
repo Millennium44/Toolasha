@@ -48,16 +48,18 @@ export function filterWindow(rows, days, now = Date.now()) {
  * computed separately.
  * @param {number} price - Any price
  * @param {'up'|'down'} direction - Which way to snap
+ * @param {number} [enhancementLevel=0] - Enhancement level; enhanced items step wider under the
+ *   September 2026 market patch
  * @returns {number} The snapped price, or 0 for a non-positive input
  */
-export function snapPriceTier(price, direction) {
+export function snapPriceTier(price, direction, enhancementLevel = 0) {
     const numeric = Number(price);
     if (!Number.isFinite(numeric) || numeric <= 0) return 0;
 
     const whole = Math.trunc(numeric);
     if (whole <= 1) return 2;
 
-    const step = priceIncrement(whole);
+    const step = priceIncrement(whole, enhancementLevel);
     const lower = whole - (whole % step);
     return direction === 'up' && whole > lower ? lower + step : lower;
 }
@@ -203,9 +205,10 @@ export function splitBuySellVolume(rows) {
 /**
  * All five stats for one already-windowed set of rows.
  * @param {Array<Object>} rows - Rows already filtered to the window (see `filterWindow`)
+ * @param {number} [enhancementLevel=0] - Enhancement level, for snapping min/max to its price tiers
  * @returns {MarketWindowStats}
  */
-export function computeMarketStats(rows) {
+export function computeMarketStats(rows, enhancementLevel = 0) {
     const safeRows = Array.isArray(rows) ? rows : [];
 
     const volume = safeRows.reduce((sum, row) => sum + (Number(row.v) || 0), 0);
@@ -235,8 +238,8 @@ export function computeMarketStats(rows) {
     let minPrice = 0;
     let maxPrice = 0;
     if (positivePrices.length) {
-        minPrice = snapPriceTier(Math.min(...positivePrices), 'down');
-        maxPrice = snapPriceTier(Math.max(...positivePrices), 'up');
+        minPrice = snapPriceTier(Math.min(...positivePrices), 'down', enhancementLevel);
+        maxPrice = snapPriceTier(Math.max(...positivePrices), 'up', enhancementLevel);
     }
 
     const { buyVolume, sellVolume } = splitBuySellVolume(safeRows);
@@ -252,10 +255,14 @@ export const STAT_WINDOWS_DAYS = [1, 3, 5];
  * sliced from one fetch.
  * @param {Array<Object>} rows - Unfiltered rows for the widest window fetched
  * @param {number} [now] - Reference time in ms, defaults to `Date.now()`
+ * @param {number} [enhancementLevel=0] - Enhancement level of the item the rows are for
  * @returns {{days: number, stats: MarketWindowStats}[]}
  */
-export function computeAllWindows(rows, now = Date.now()) {
-    return STAT_WINDOWS_DAYS.map((days) => ({ days, stats: computeMarketStats(filterWindow(rows, days, now)) }));
+export function computeAllWindows(rows, now = Date.now(), enhancementLevel = 0) {
+    return STAT_WINDOWS_DAYS.map((days) => ({
+        days,
+        stats: computeMarketStats(filterWindow(rows, days, now), enhancementLevel),
+    }));
 }
 
 /**

@@ -23,6 +23,13 @@
  * a value moves, the game's actual band lags what this computes from the new
  * value until the passes catch up.
  *
+ * The September 2026 market patch replaces the ladder with finer bins and a
+ * 5x step for enhanced items (see {@link priceIncrement}); it is staged per
+ * server by {@link isSeptember2026MarketPatchLive}. Under that patch the order
+ * book also carries the band itself (`priceBandMins`/`priceBandMaxs` per level),
+ * which this module does not read — the band here is still derived from the
+ * value, now on the new ladder.
+ *
  * The map is reached through the game's own `localStorageUtil.getMarketItemValues()`
  * (via dataManager), which decompresses the localStorage blob for us — reading it
  * raw yields compressed bytes. The dev's advice was to cache it rather than
@@ -38,7 +45,7 @@
  */
 
 import dataManager from '../core/data-manager.js';
-import { isMarketplacePatchLive } from './server-gate.js';
+import { isMarketplacePatchLive, isSeptember2026MarketPatchLive } from './server-gate.js';
 
 /** The width of the tradable range either side of the value (~±10%). */
 export const BAND_FACTOR = 1.1;
@@ -101,20 +108,78 @@ export function marketValueFor(itemHrid, enhancementLevel = 0) {
 }
 
 /**
- * The marketplace's price increment at a price — the game client's own
- * `getBinnedPrice` ladder, by first digit and digit count:
+ * `BinGapUnitTiers` from the game client (September 2026 market patch): the step
+ * unit for a 4+ digit price by its leading two digits, `[upperExclusive, unit]`.
+ * Leading digits 90-99 fall through to 40.
+ */
+const BIN_GAP_UNIT_TIERS = [
+    [12, 4],
+    [15, 5],
+    [18, 6],
+    [24, 8],
+    [30, 10],
+    [36, 12],
+    [48, 16],
+    [60, 20],
+    [75, 25],
+    [90, 30],
+];
+
+/**
+ * The game client's `binGap` under the September 2026 market patch.
+ *
+ * 1-2 digits: 1. 3 digits: by first digit — unenhanced 1-3 → 1, 4-7 → 2, 8-9 → 4;
+ * enhanced 1 → 2, 2-3 → 5, 4-7 → 10, 8-9 → 20. 4+ digits: the tier unit for the
+ * leading two digits × 10^(digits−4), and 5× that for an enhanced item.
+ * @param {number} whole - A positive whole price
+ * @param {number} enhancementLevel - Enhancement level; any level above 0 is "enhanced"
+ * @returns {number}
+ */
+function binGap(whole, enhancementLevel) {
+    const text = String(whole);
+    const digits = text.length;
+    if (digits <= 2) return 1;
+    const enhanced = enhancementLevel > 0;
+    if (digits === 3) {
+        const first = Number(text[0]);
+        if (enhanced) {
+            if (first === 1) return 2;
+            if (first <= 3) return 5;
+            return first <= 7 ? 10 : 20;
+        }
+        if (first <= 3) return 1;
+        return first <= 7 ? 2 : 4;
+    }
+    const lead2 = Number(text.slice(0, 2));
+    const tier = BIN_GAP_UNIT_TIERS.find(([limit]) => lead2 < limit);
+    const unit = (tier ? tier[1] : 40) * 10 ** (digits - 4);
+    return enhanced ? 5 * unit : unit;
+}
+
+/**
+ * The marketplace's price increment at a price — the step of the game client's
+ * `getBinnedPrice`.
+ *
+ * Under the September 2026 market patch ({@link isSeptember2026MarketPatchLive})
+ * it is the client's `binGap`: 1,000-1,199 → 4, 1,200-1,499 → 5 … 9,000-11,999 →
+ * 40, scaling ×10 per extra digit, and 5× for an enhanced item (own table below
+ * 1,000). Otherwise it is the earlier ladder, by first digit and digit count,
+ * which ignores enhancement level:
  *
  *   first digit 1-2 → 5×10^(digits−4)      (1,000-2,999: 5; 10,000-29,999: 50 …)
  *   first digit 3-4 → 10^(digits−3)        (300-499: 1; 3,000-4,999: 10 …)
  *   first digit 5-9 → 2×10^(digits−3)      (500-999: 2; 5,000-9,999: 20 …)
  *
- * with a floor of 1, so every increment is roughly 0.17-0.5% of the price.
+ * with a floor of 1. On both ladders every tier boundary is a multiple of the
+ * step just below it, which {@link nextPriceUp} relies on.
  * @param {number} price - Any price (fractions are floored, as the game does)
+ * @param {number} [enhancementLevel=0] - Enhancement level of the item being priced
  * @returns {number} The increment the ladder assigns that price
  */
-export function priceIncrement(price) {
+export function priceIncrement(price, enhancementLevel = 0) {
     const whole = Math.floor(price);
     if (!(whole > 0)) return 1;
+    if (isSeptember2026MarketPatchLive()) return binGap(whole, enhancementLevel);
     const text = String(whole);
     const digits = text.length;
     const first = text[0];
@@ -127,15 +192,16 @@ export function priceIncrement(price) {
  * The next price on the increment ladder strictly above `price`.
  *
  * The step is the one at `price` itself, and the result is snapped to a
- * multiple of it — every tier boundary (1,000, 3,000, 5,000, 10,000 …) is a
- * multiple of the step below it, so 999 goes to 1,000 rather than 1,001.
+ * multiple of it — every tier boundary is a multiple of the step below it, so
+ * 999 goes to 1,000 rather than 1,001.
  * @param {number} price - A price (fractions are floored first)
+ * @param {number} [enhancementLevel=0] - Enhancement level of the item being priced
  * @returns {number} The next ladder price up; 1 for anything not above 0
  */
-export function nextPriceUp(price) {
+export function nextPriceUp(price, enhancementLevel = 0) {
     const whole = Math.floor(price);
     if (!(whole > 0)) return 1;
-    const step = priceIncrement(whole);
+    const step = priceIncrement(whole, enhancementLevel);
     return (Math.floor(whole / step) + 1) * step;
 }
 
@@ -143,15 +209,16 @@ export function nextPriceUp(price) {
  * The next price on the increment ladder strictly below `price`.
  *
  * The step is taken from one below `price`, so crossing down into a finer
- * tier uses the finer step: 1,000 goes to 998 (the 500-999 step of 2), not 995.
- * Never goes below 1, the lowest price an order can carry.
+ * tier uses the finer step: 1,000 goes to 998 on the earlier ladder (the 500-999
+ * step of 2), not 995. Never goes below 1, the lowest price an order can carry.
  * @param {number} price - A price (fractions are rounded up first, so the result stays below it)
+ * @param {number} [enhancementLevel=0] - Enhancement level of the item being priced
  * @returns {number} The next ladder price down, floored at 1
  */
-export function nextPriceDown(price) {
+export function nextPriceDown(price, enhancementLevel = 0) {
     const below = Math.ceil(price) - 1;
     if (!(below > 1)) return 1;
-    const step = priceIncrement(below);
+    const step = priceIncrement(below, enhancementLevel);
     return Math.max(1, Math.floor(below / step) * step);
 }
 
@@ -161,14 +228,15 @@ export function nextPriceDown(price) {
  * each side. The increment is taken from the raw ±10% figure before snapping —
  * mirroring `getBinnedPrice`, which sizes the step from its input.
  * @param {number|null} value - Market value
+ * @param {number} [enhancementLevel=0] - Enhancement level the value is for
  * @returns {{min:number, max:number}|null}
  */
-export function bandFromValue(value) {
+export function bandFromValue(value, enhancementLevel = 0) {
     if (!(value > 0)) return null;
     const rawMax = value * BAND_FACTOR;
-    const maxStep = priceIncrement(rawMax);
+    const maxStep = priceIncrement(rawMax, enhancementLevel);
     const rawMin = value / BAND_FACTOR;
-    const minStep = priceIncrement(rawMin);
+    const minStep = priceIncrement(rawMin, enhancementLevel);
     return {
         min: Math.max(0, Math.floor(rawMin / minStep) * minStep - minStep),
         max: Math.ceil(rawMax / maxStep) * maxStep + maxStep,
@@ -189,7 +257,7 @@ function bandFor(itemHrid, enhancementLevel) {
     }
     let band = perLevel[enhancementLevel];
     if (band === undefined) {
-        band = bandFromValue(marketValueFor(itemHrid, enhancementLevel));
+        band = bandFromValue(marketValueFor(itemHrid, enhancementLevel), enhancementLevel);
         perLevel[enhancementLevel] = band;
     }
     return band;

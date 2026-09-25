@@ -1,6 +1,13 @@
 import { describe, test, expect, vi, afterEach } from 'vitest';
 
-const mocks = vi.hoisted(() => ({ patchLive: true, payload: null, throws: false, calls: 0, handlers: new Map() }));
+const mocks = vi.hoisted(() => ({
+    patchLive: true,
+    september: false,
+    payload: null,
+    throws: false,
+    calls: 0,
+    handlers: new Map(),
+}));
 
 vi.mock('../core/data-manager.js', () => ({
     default: {
@@ -12,7 +19,10 @@ vi.mock('../core/data-manager.js', () => ({
         on: (event, handler) => mocks.handlers.set(event, handler),
     },
 }));
-vi.mock('./server-gate.js', () => ({ isMarketplacePatchLive: () => mocks.patchLive }));
+vi.mock('./server-gate.js', () => ({
+    isMarketplacePatchLive: () => mocks.patchLive,
+    isSeptember2026MarketPatchLive: () => mocks.september,
+}));
 
 import {
     refreshMarketValues,
@@ -32,6 +42,7 @@ const payload = (version, values) => ({ marketValuesVersion: version, marketItem
 afterEach(() => {
     _resetMarketValues();
     mocks.patchLive = true;
+    mocks.september = false;
     mocks.payload = null;
     mocks.throws = false;
     mocks.calls = 0;
@@ -52,6 +63,112 @@ describe('priceIncrement', () => {
         expect(priceIncrement(44671)).toBe(100);
         expect(priceIncrement(339020)).toBe(1000);
         expect(priceIncrement(33110000000)).toBe(100000000);
+    });
+});
+
+describe('priceIncrement under the September 2026 market patch (test server)', () => {
+    // Every expected gap below is the client's binGap(price, enhLevel) from the
+    // test-server bundle, evaluated on the same price.
+    test.each([
+        [7, 1, 1],
+        [99, 1, 1],
+        [100, 1, 2],
+        [399, 1, 5],
+        [400, 2, 10],
+        [799, 2, 10],
+        [800, 4, 20],
+        [999, 4, 20],
+        [1000, 4, 20],
+        [1199, 4, 20],
+        [1200, 5, 25],
+        [1499, 5, 25],
+        [1500, 6, 30],
+        [1800, 8, 40],
+        [2400, 10, 50],
+        [3000, 12, 60],
+        [3600, 16, 80],
+        [4800, 20, 100],
+        [6000, 25, 125],
+        [7500, 30, 150],
+        [8999, 30, 150],
+        [9000, 40, 200],
+        [9999, 40, 200],
+        [10000, 40, 200],
+        [11999, 40, 200],
+        [12000, 50, 250],
+        [123456, 500, 2500],
+        [1234567, 5000, 25000],
+    ])('%i: gap %i unenhanced, %i enhanced', (price, plain, enhanced) => {
+        mocks.september = true;
+        expect(priceIncrement(price)).toBe(plain);
+        expect(priceIncrement(price, 0)).toBe(plain);
+        expect(priceIncrement(price, 1)).toBe(enhanced);
+        expect(priceIncrement(price, 10)).toBe(enhanced);
+    });
+
+    test('three-digit enhanced prices use their own table, not 5x', () => {
+        mocks.september = true;
+        expect([150, 250, 350, 450, 750, 850].map((p) => priceIncrement(p, 3))).toEqual([2, 5, 5, 10, 10, 20]);
+    });
+
+    test('fractions floor first, and the floor of 1 holds', () => {
+        mocks.september = true;
+        expect(priceIncrement(1199.9)).toBe(4);
+        expect(priceIncrement(0)).toBe(1);
+        expect(priceIncrement(-3, 5)).toBe(1);
+    });
+
+    test('the earlier ladder ignores enhancement level on live', () => {
+        expect(priceIncrement(1000, 5)).toBe(5);
+        expect(priceIncrement(150, 5)).toBe(1);
+        expect(priceIncrement(44671, 12)).toBe(100);
+    });
+});
+
+describe('nextPriceUp / nextPriceDown under the September 2026 market patch', () => {
+    test('steps by the new gap, snapping to a multiple like getBinnedPrice', () => {
+        mocks.september = true;
+        // getBinnedPrice(1003, roundUp) = 1004; getBinnedPrice(1003) = 1000
+        expect(nextPriceUp(1003)).toBe(1004);
+        expect(nextPriceDown(1003)).toBe(1000);
+        expect(nextPriceUp(1000)).toBe(1004);
+        expect(nextPriceDown(1004)).toBe(1000);
+        expect(nextPriceUp(123456)).toBe(123500);
+        expect(nextPriceDown(123456)).toBe(123000);
+    });
+
+    test('an enhanced item steps five times as far', () => {
+        mocks.september = true;
+        expect(nextPriceUp(1000, 1)).toBe(1020);
+        expect(nextPriceDown(1020, 1)).toBe(1000);
+        expect(nextPriceUp(123456, 7)).toBe(125000);
+        expect(nextPriceDown(123456, 7)).toBe(122500);
+    });
+
+    test('tier boundaries are reached exactly from either side', () => {
+        mocks.september = true;
+        expect(nextPriceUp(999)).toBe(1000);
+        expect(nextPriceUp(1198)).toBe(1200);
+        expect(nextPriceDown(1200)).toBe(1196);
+        expect(nextPriceDown(1000)).toBe(996);
+        expect(nextPriceUp(9960)).toBe(10000);
+        expect(nextPriceDown(10000)).toBe(9960);
+        expect(nextPriceUp(990, 2)).toBe(1000);
+        expect(nextPriceDown(1000, 2)).toBe(980);
+        expect(nextPriceUp(7480, 1)).toBe(7500);
+        expect(nextPriceDown(7500, 1)).toBe(7375);
+    });
+
+    test('every price a step lands on is a valid bin (price % gap === 0)', () => {
+        mocks.september = true;
+        for (const level of [0, 1]) {
+            let price = 2;
+            while (price < 2_000_000) {
+                price = nextPriceUp(price, level);
+                expect(price % priceIncrement(price, level)).toBe(0);
+                expect(nextPriceUp(nextPriceDown(price, level), level)).toBe(price);
+            }
+        }
     });
 });
 
@@ -100,6 +217,23 @@ describe('nextPriceUp / nextPriceDown', () => {
     test('fractions stay on the correct side of the price', () => {
         expect(nextPriceUp(999.5)).toBe(1000);
         expect(nextPriceDown(1000.5)).toBe(1000);
+    });
+});
+
+describe('bandFromValue under the September 2026 market patch', () => {
+    test('snaps outward on the new ladder and widens by one of its steps', () => {
+        mocks.september = true;
+        // 1100: raw max 1210 (on a gap-5 bin) + 5; raw min 999.99... at gap 4 -> 996 - 4
+        expect(bandFromValue(1100)).toEqual({ min: 992, max: 1215 });
+        // enhanced: raw max 1210 at gap 25 -> 1225 + 25; raw min at gap 20 -> 980 - 20
+        expect(bandFromValue(1100, 3)).toEqual({ min: 960, max: 1250 });
+    });
+
+    test('the level reaches the band through clampToBand', () => {
+        mocks.september = true;
+        mocks.payload = payload(1, { '/items/sword': { 0: 1100, 3: 1100 } });
+        expect(clampToBand(2000, '/items/sword', 0)).toBe(1215);
+        expect(clampToBand(2000, '/items/sword', 3)).toBe(1250);
     });
 });
 
