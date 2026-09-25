@@ -13,6 +13,7 @@
 import config from '../../../core/config.js';
 import domObserver from '../../../core/dom-observer.js';
 import dataManager from '../../../core/data-manager.js';
+import storage from '../../../core/storage.js';
 import inventorySort from '../inventory-sort.js';
 import { totalValueKey } from '../inventory-badge-mode.js';
 import inventoryBadgeManager from '../inventory-badge-manager.js';
@@ -57,11 +58,22 @@ import {
     LINEBREAK_HRID,
 } from './custom-tabs-data.js';
 
+/** Icon id (`<use href="…#inventory_all">`) of the native inventory's "All" tab */
+const NATIVE_ALL_TAB_ICON = 'inventory_all';
+/** Per-character, device-local (not synced) key: the native inventory tab to restore on leaving the Toolasha view */
+const NATIVE_TAB_STORAGE_PREFIX = 'toolasha_local_inventoryNativeTab_';
+/** Clicks on the native "All" tab per activation before the layout proceeds with what is rendered */
+const MAX_NATIVE_ALL_TAB_CLICKS = 2;
+
 // ---------------------------------------------------------------------------
 // CSS
 // ---------------------------------------------------------------------------
 
-const PANEL_CSS = `
+/**
+ * Stylesheet injected while the feature is on; exported so tests can apply it to a fixture.
+ * @type {string}
+ */
+export const PANEL_CSS = `
 /* ---------- Toolasha-active mode on Inventory_items ---------- */
 /* When our tab is active, Inventory_items becomes a flex container.
    Category wrappers and grids get display:contents so tiles become
@@ -80,6 +92,22 @@ const PANEL_CSS = `
 }
 .toolasha-ct-active [class*="Inventory_itemGrid"] {
     display: contents;
+}
+
+/* Native-inventory-tabs DOM (game patch 2026-09): Inventory_items holds a
+   TabsComponent (flattened by the direct-child rule above) whose panels hold
+   the category wrappers. Flatten the panel chain down to the grids; hidden
+   panels keep the game's display:none, and the tab row is hidden because the
+   Toolasha view always shows the whole inventory. None of these selectors
+   match inside the pre-patch DOM. */
+.toolasha-ct-active [class*="TabsComponent_tabPanelsContainer"],
+.toolasha-ct-active [class*="TabPanel_tabPanel"]:not([class*="TabPanel_hidden"]),
+.toolasha-ct-active [class*="TabPanel_tabPanel"]:not([class*="TabPanel_hidden"]) > div,
+.toolasha-ct-active [class*="TabPanel_tabPanel"]:not([class*="TabPanel_hidden"]) > div > div {
+    display: contents;
+}
+.toolasha-ct-active [class*="TabsComponent_tabsContainer"] {
+    display: none !important;
 }
 
 /* Hide game category labels and buttons exposed by display:contents */
@@ -596,6 +624,10 @@ export default class CustomTabsUI {
         // exact button latched until its label changes so tile-observer passes fired by the
         // same render cannot click it a second time and toggle the category closed again.
         this._nativeCategoryExpandRequests = new WeakSet();
+        // Native inventory tabs (game patch 2026-09): the game renders tiles only for the selected
+        // tab, so the Toolasha view selects "All" and hands the player's own choice back on leaving.
+        this._nativeAllTabClicks = 0;
+        this._savedNativeInvTab = null; // { charId, key } — the tab selected before "All" was forced
     }
 
     // -----------------------------------------------------------------------
@@ -734,6 +766,13 @@ export default class CustomTabsUI {
 
     cleanup() {
         noteTeardown(this);
+        // Memory-only: a stored choice is left for the next instance, which may be drawing a
+        // different character by the time a storage read would return.
+        if (this._isActive) {
+            this._restoreNativeInventoryTab({ allowStored: false }).catch((error) => {
+                console.error('[CustomTabs] Restoring the native inventory tab failed:', error);
+            });
+        }
         if (this._inventoryTabEl) {
             this._inventoryTabEl.style.display = '';
             this._inventoryTabEl = null;
@@ -869,6 +908,9 @@ export default class CustomTabsUI {
     _findCharacterTabList() {
         const allTabLists = document.querySelectorAll('[role="tablist"]');
         for (const tl of allTabLists) {
+            // The inventory has its own tab strip since the 2026-09 patch; the Toolasha button
+            // and the panel switching belong to the character panel's strip only.
+            if (tl.closest('[class*="Inventory_items"]')) continue;
             for (const tab of tl.querySelectorAll('[role="tab"]')) {
                 if (tab.textContent.trim() === 'Inventory') return tl;
             }
@@ -979,6 +1021,9 @@ export default class CustomTabsUI {
         if (this._tabBtn) this._tabBtn.classList.remove('Mui-selected');
         this._clearLayout();
         this._showGameContent();
+        this._restoreNativeInventoryTab().catch((error) => {
+            console.error('[CustomTabs] Restoring the native inventory tab failed:', error);
+        });
         // Restore the selected state on the clicked native tab. React won't re-render because
         // MUI still thinks this tab was selected (we bypassed its state when activating Toolasha).
         if (clickedTab) {
@@ -1031,6 +1076,133 @@ export default class CustomTabsUI {
         return document.querySelector('[class*="Inventory_items"]');
     }
 
+    // -----------------------------------------------------------------------
+    // Native inventory tabs (game patch 2026-09)
+    // -----------------------------------------------------------------------
+
+    /**
+     * The inventory's own tab strip, present only in the post-patch DOM. Detected by structure
+     * so the pre-patch DOM (still on the main server until it updates) takes the old path.
+     * @param {HTMLElement|null} invContainer
+     * @returns {HTMLElement|null}
+     */
+    _findNativeInventoryTabList(invContainer) {
+        return invContainer?.querySelector('[class*="TabsComponent_tabsContainer"] [role="tablist"]') || null;
+    }
+
+    /**
+     * Stable identity of a native inventory tab: its icon id, which survives React re-rendering
+     * the strip; position as the fallback for a tab without one.
+     * @param {HTMLElement} tab
+     * @param {number} index
+     * @returns {string}
+     */
+    _nativeInventoryTabKey(tab, index) {
+        const href = tab.querySelector('use')?.getAttribute('href') || '';
+        const icon = href.includes('#') ? href.slice(href.lastIndexOf('#') + 1) : '';
+        return icon || `index:${index}`;
+    }
+
+    /**
+     * @param {HTMLElement} tab
+     * @returns {boolean}
+     */
+    _isNativeTabSelected(tab) {
+        return tab.getAttribute('aria-selected') === 'true' || tab.classList.contains('Mui-selected');
+    }
+
+    /**
+     * The native tabs and which of them is "All" (by icon; first tab if no icon matches).
+     * @param {HTMLElement} tabList
+     * @returns {{tabs: HTMLElement[], allTab: HTMLElement|undefined}}
+     */
+    _nativeInventoryTabs(tabList) {
+        const tabs = [...tabList.querySelectorAll('[role="tab"]')];
+        const allTab = tabs.find((t, i) => this._nativeInventoryTabKey(t, i) === NATIVE_ALL_TAB_ICON) || tabs[0];
+        return { tabs, allTab };
+    }
+
+    /**
+     * Select the native "All" tab when another one is selected, remembering the player's choice
+     * in memory and per character in storage, so a reload inside the Toolasha view keeps it.
+     * Clicks are capped per activation: if the game ignores them the layout proceeds with the
+     * tiles it has rather than looping.
+     * @param {HTMLElement} invContainer
+     * @returns {boolean} true when a click was issued and the caller should wait for the re-render
+     */
+    _selectNativeAllTab(invContainer) {
+        const tabList = this._findNativeInventoryTabList(invContainer);
+        if (!tabList) return false;
+        const { tabs, allTab } = this._nativeInventoryTabs(tabList);
+        if (!allTab || this._isNativeTabSelected(allTab)) return false;
+        if (this._nativeAllTabClicks >= MAX_NATIVE_ALL_TAB_CLICKS) return false;
+
+        const selectedIndex = tabs.findIndex((t) => this._isNativeTabSelected(t));
+        const charId = dataManager.getCurrentCharacterId();
+        if (selectedIndex >= 0 && !this._savedNativeInvTab && charId) {
+            const key = this._nativeInventoryTabKey(tabs[selectedIndex], selectedIndex);
+            this._savedNativeInvTab = { charId, key };
+            this._persistNativeTabChoice(`${NATIVE_TAB_STORAGE_PREFIX}${charId}`, key);
+        }
+
+        this._nativeAllTabClicks++;
+        allTab.click();
+        return true;
+    }
+
+    /**
+     * Write (or, with a null key, delete) the stored native tab choice without blocking a
+     * layout pass.
+     * @param {string} storageKey
+     * @param {string|null} key
+     * @returns {Promise<void>}
+     */
+    async _persistNativeTabChoice(storageKey, key) {
+        try {
+            if (key === null) await storage.delete(storageKey, 'settings');
+            else await storage.set(storageKey, key, 'settings');
+        } catch (error) {
+            console.error('[CustomTabs] Saving the native inventory tab failed:', error);
+        }
+    }
+
+    /**
+     * Hand the native inventory tab back to the player's choice after the Toolasha view forced
+     * "All". Acts only while "All" is still selected (anything else is a choice made since) and
+     * only for the character the choice was made on.
+     * @param {Object} [options]
+     * @param {boolean} [options.allowStored=true] - fall back to the stored choice, left by a
+     *   reload inside the Toolasha view, when none is held in memory
+     * @returns {Promise<void>}
+     */
+    async _restoreNativeInventoryTab({ allowStored = true } = {}) {
+        const charId = dataManager.getCurrentCharacterId();
+        const held = this._savedNativeInvTab;
+        this._savedNativeInvTab = null;
+        // Pre-patch DOM: nothing to restore, and no storage read on every exit
+        if (!charId || !this._findNativeInventoryTabList(this._findInvContainer())) return;
+        const storageKey = `${NATIVE_TAB_STORAGE_PREFIX}${charId}`;
+
+        let key = held?.charId === charId ? held.key : null;
+        if (key) {
+            this._persistNativeTabChoice(storageKey, null);
+        } else {
+            if (!allowStored) return;
+            key = await storage.get(storageKey, 'settings', null);
+            // Re-entered the Toolasha view or switched character during the read: the stored
+            // choice stays for the next exit.
+            if (!key || this._isActive || dataManager.getCurrentCharacterId() !== charId) return;
+            await this._persistNativeTabChoice(storageKey, null);
+        }
+
+        const tabList = this._findNativeInventoryTabList(this._findInvContainer());
+        if (!tabList) return;
+        const { tabs, allTab } = this._nativeInventoryTabs(tabList);
+        if (!allTab || !this._isNativeTabSelected(allTab)) return;
+        const target = tabs.find((t, i) => this._nativeInventoryTabKey(t, i) === key);
+        if (target && target !== allTab) target.click();
+    }
+
     /**
      * Count total items across all tabs (recursively) for rebuild detection.
      * @returns {number}
@@ -1069,6 +1241,15 @@ export default class CustomTabsUI {
 
         // Ensure the Inventory panel is visible
         this._showInventoryPanel();
+
+        // Native inventory tabs render tiles for the selected tab only. Switch to "All" and let
+        // the re-render drive the real pass, the same hand-off as the collapsed-category path.
+        if (this._selectNativeAllTab(invContainer)) {
+            requestAnimationFrame(() => {
+                if (this._isActive && this._findInvContainer() === invContainer) this._applyLayout();
+            });
+            return;
+        }
 
         if (needsFullRebuild) {
             this._removeInjectedEls();
@@ -1360,8 +1541,11 @@ export default class CustomTabsUI {
 
         this._removeInjectedEls();
 
+        this._nativeAllTabClicks = 0;
+
         if (this._invContainer) {
             this._invContainer.classList.remove('toolasha-ct-active');
+            this._invContainer.style.gap = '';
 
             // Remove visible class and inline order from all tiles
             const tiles = this._invContainer.querySelectorAll('[class*="Item_itemContainer"]');
@@ -1621,6 +1805,7 @@ export default class CustomTabsUI {
         );
         const buttons = invContainer.querySelectorAll('[class*="Inventory_categoryButton"], button[aria-expanded]');
         for (const button of buttons) {
+            if (button.closest('[class*="TabsComponent_tabsContainer"]')) continue;
             const label = button.getAttribute('aria-label') || button.getAttribute('title') || button.textContent;
             const categoryHrid = button.dataset.categoryHrid || categoryHridByName.get(normalizeLabel(label));
             if (!categoryHrid || !missingCategoryHrids.has(categoryHrid)) continue;
