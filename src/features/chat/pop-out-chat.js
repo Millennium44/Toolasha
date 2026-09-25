@@ -172,6 +172,7 @@ function resolveMessage(message) {
 
     return {
         type: 'chat_message',
+        id: message.id,
         channel: message.chan || '',
         sName: message.sName || '',
         m: resolvedText,
@@ -239,6 +240,7 @@ class PopOutChat {
         // started, shown in the pop-out topbar so a block is visibly doing something.
         this.blockedCount = 0;
         this.wsHandler = null;
+        this.wsUpdateHandler = null;
         this.initialized = false;
         this.timerRegistry = createTimerRegistry();
         this.unregisterObserver = null;
@@ -266,6 +268,11 @@ class PopOutChat {
         // Listen for incoming chat messages from WebSocket
         this.wsHandler = (data) => this._onChatMessage(data);
         webSocketHook.on('chat_message_received', this.wsHandler);
+
+        // A deletion purges the buffered copy and tells an open pop-out to do
+        // the same — see _onChatMessageUpdated.
+        this.wsUpdateHandler = (data) => this._onChatMessageUpdated(data);
+        webSocketHook.on('chat_message_updated', this.wsUpdateHandler);
 
         // Start keepalive ping
         const pingTimer = setInterval(() => {
@@ -367,6 +374,11 @@ class PopOutChat {
         const message = data?.message;
         if (!message || !message.chan) return;
 
+        // Arrived already deleted (e.g. a moderator's view of a channel's
+        // backlog) — never buffer or relay it. An ordinary post-then-delete is
+        // handled separately, by _onChatMessageUpdated.
+        if (message.isDeleted) return;
+
         const resolved = resolveMessage(message);
 
         // Drop messages from blocked players
@@ -398,6 +410,29 @@ class PopOutChat {
 
         // Relay to pop-out if open
         this._relayPost(resolved);
+    }
+
+    /**
+     * Handle `chat_message_updated`: a deletion drops that message from
+     * `messageBuffer` (so a pane created after this point does not render it)
+     * and relays a `chat_message_deleted` event so an already-open pop-out
+     * drops it too. An undelete restores nothing — the buffer is not a
+     * persisted store, and the message's content was already dropped, not
+     * remembered anywhere it could be put back from.
+     * @param {Object} data
+     */
+    _onChatMessageUpdated(data) {
+        const message = data?.message;
+        if (!message || !message.isDeleted || message.id == null || !message.chan) return;
+
+        const list = this.messageBuffer.get(message.chan);
+        if (list) {
+            const key = String(message.id);
+            const idx = list.findIndex((m) => m.id != null && String(m.id) === key);
+            if (idx !== -1) list.splice(idx, 1);
+        }
+
+        this._relayPost({ type: 'chat_message_deleted', channel: message.chan, id: message.id });
     }
 
     /**
@@ -1049,6 +1084,22 @@ class PopOutChat {
         if (p.channelHrid === data.channel) appendMessage(p, data);
       });
     }
+    if (data.type === 'chat_message_deleted') {
+      // Undelete is not a thing this relay ever sends — a deleted message's
+      // content is dropped, not remembered, on the game-tab side too. See
+      // PopOutChat._onChatMessageUpdated.
+      const list = messageBuffer[data.channel];
+      if (list && data.id != null) {
+        const key = String(data.id);
+        const idx = list.findIndex(m => m.id != null && String(m.id) === key);
+        if (idx !== -1) {
+          list.splice(idx, 1);
+          panes.forEach(p => {
+            if (p.channelHrid === data.channel) refilterPane(p);
+          });
+        }
+      }
+    }
   };
 
   // Signal ready
@@ -1499,6 +1550,11 @@ class PopOutChat {
         if (this.wsHandler) {
             webSocketHook.off('chat_message_received', this.wsHandler);
             this.wsHandler = null;
+        }
+
+        if (this.wsUpdateHandler) {
+            webSocketHook.off('chat_message_updated', this.wsUpdateHandler);
+            this.wsUpdateHandler = null;
         }
 
         if (this.relayChannel) {
