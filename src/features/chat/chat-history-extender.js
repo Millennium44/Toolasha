@@ -15,6 +15,8 @@ import chatHistoryPersistence, {
     handleRestoredClick,
     parseStoredMessage,
     rewireRestoredMessage,
+    SENDER_SELECTOR,
+    senderNameFrom,
     serializeMessage,
     TAB_KEY_PREFIX,
 } from './chat-history-persistence.js';
@@ -178,6 +180,48 @@ const PENDING_ID_TTL_MS = 15000;
 const PENDING_ID_MAX_PER_CHANNEL = 50;
 
 /**
+ * A live message node's sender and message text, read the same way
+ * {@link senderNameFrom} reads a restored one, plus everything that follows
+ * it in document order.
+ *
+ * Reading the sender through its own element (rather than pattern-matching
+ * the whole line) is what makes exact comparison possible at all: the line's
+ * leading timestamp is formatted client-side from the user's clock settings,
+ * which this script cannot reproduce, so nothing here ever tries to. Once
+ * the sender's own text is found inside the node's full text, the remainder
+ * — with the separator the game draws between name and message (":", ": ",
+ * …) trimmed off the front — is the message body, whatever the timestamp
+ * format turned out to be.
+ *
+ * @param {Element} node - A `ChatMessage_chatMessage` node
+ * @returns {{sender: string, body: string}|null} Null when the node carries
+ *   no sender element at all (a system message) or the extraction otherwise
+ *   fails — both correctly mean "cannot be matched", not "matches anything".
+ */
+function extractSenderAndBody(node) {
+    let senderEl;
+    try {
+        senderEl = node.querySelector(SENDER_SELECTOR);
+    } catch {
+        return null;
+    }
+    if (!senderEl) return null;
+
+    const sender = senderNameFrom(senderEl);
+    if (!sender) return null;
+
+    const fullText = node.textContent || '';
+    const idx = fullText.indexOf(sender);
+    if (idx === -1) return null;
+
+    const body = fullText
+        .slice(idx + sender.length)
+        .replace(/^[:\s]+/, '')
+        .trim();
+    return { sender, body };
+}
+
+/**
  * Matches this script's own DOM scrape of chat messages to the game's own
  * per-message `id`, so a later `chat_message_updated` deletion can find the
  * exact node — and, once stored, the exact stored entry — to remove.
@@ -187,15 +231,25 @@ const PENDING_ID_MAX_PER_CHANNEL = 50;
  * {@link ChatTabHandler#_tagMessageId} the moment a channel tab's DOM
  * actually renders the next message.
  *
- * Matching is by *content*, not queue position. A channel's queue can hold
- * ids for messages that arrived while its tab was not open (nothing renders
- * them, so nothing claims them), and opening — or switching to — that tab
- * then renders its whole visible backlog as one batch of `addedNodes`: a
- * mutation batch that can mix nodes the game already knew about with a
- * genuinely new one. A blind FIFO shift for every node in that batch, in DOM
- * order, has no reason to land on the node the front-of-queue id actually
- * names; get it wrong and a later deletion purges — or skip-stores — a
- * completely unrelated player's message. See {@link claim}.
+ * Matching is by *exact* content, not queue position and not substring
+ * search. A channel's queue can hold ids for messages that arrived while its
+ * tab was not open (nothing renders them, so nothing claims them), and
+ * opening — or switching to — that tab then renders its whole visible
+ * backlog as one batch of `addedNodes`: a mutation batch that can mix nodes
+ * the game already knew about with a genuinely new one. A blind FIFO shift
+ * for every node in that batch, in DOM order, has no reason to land on the
+ * node the front-of-queue id actually names.
+ *
+ * A substring check is not enough to fix that on its own: an earlier
+ * `Bob: hi` entry is a substring match against a later node reading
+ * `Bob: hi there`, and `Ann` against `Anna`, so a reordered or batched
+ * render could still claim the wrong queued id for a node whose content only
+ * *contains* it. {@link claim} therefore compares the sender and message
+ * text {@link extractSenderAndBody} reads off the node for exact equality
+ * against a candidate — never `.includes()` — and, if more than one queued
+ * candidate matches exactly (two genuinely identical messages), claims
+ * neither: which one is which cannot be told apart, so tagging either would
+ * be a guess, and an untagged node is always the safe outcome.
  */
 class PendingMessageIds {
     constructor() {
@@ -225,15 +279,16 @@ class PendingMessageIds {
     }
 
     /**
-     * Claim the queued entry whose content matches a just-rendered node, if
-     * any — never just the front of the queue. A node's rendered text is
-     * checked for both the sender name and the message text `note()` recorded
-     * for a candidate entry; a candidate with neither (a system message,
-     * whose `m` is a translation key the DOM never shows verbatim) can never
-     * match and is correctly skipped, same as a node that matches nothing at
-     * all — left untagged, which is always safe: see `purgeMessageById` /
-     * `findLiveMessageNode`, which only ever touch a node already carrying
-     * `data-mwi-msg-id`.
+     * Claim the queued entry whose content matches a just-rendered node
+     * *exactly*, if exactly one does — never just the front of the queue,
+     * and never a substring match. See the class doc for why both of those
+     * are unsafe on their own. A candidate with neither a sender nor a
+     * message (a system message, whose `m` is a translation key the DOM
+     * never shows verbatim) can never match, same as a node this build
+     * cannot extract a sender/body from at all ({@link extractSenderAndBody}
+     * returns null for it) — both correctly leave the node untagged, which
+     * is always safe: see `purgeMessageById` / `findLiveMessageNode`, which
+     * only ever touch a node already carrying `data-mwi-msg-id`.
      * @param {string} chan
      * @param {Element} node - The message node just added to the DOM
      * @returns {{id: string|number, isDeleted: boolean}|null}
@@ -246,16 +301,23 @@ class PendingMessageIds {
         while (queue.length && now - queue[0].ts > PENDING_ID_TTL_MS) queue.shift();
         if (!queue.length) return null;
 
-        const text = node?.textContent || '';
-        const index = queue.findIndex((entry) => {
-            if (!entry.sName && !entry.m) return false;
-            if (entry.sName && !text.includes(entry.sName)) return false;
-            if (entry.m && !text.includes(entry.m)) return false;
-            return true;
-        });
-        if (index === -1) return null;
+        const rendered = extractSenderAndBody(node);
+        if (!rendered) return null;
 
-        return queue.splice(index, 1)[0];
+        const matches = [];
+        for (let i = 0; i < queue.length; i += 1) {
+            const entry = queue[i];
+            if (!entry.sName && !entry.m) continue;
+            if (entry.sName !== rendered.sender) continue;
+            if (entry.m !== rendered.body) continue;
+            matches.push(i);
+        }
+        // Zero: nothing describes this node. More than one: two queued
+        // messages this node's content cannot be told apart from — tagging
+        // either would be a guess about which is which.
+        if (matches.length !== 1) return null;
+
+        return queue.splice(matches[0], 1)[0];
     }
 
     /**
@@ -330,6 +392,24 @@ class DeletedMessageIds {
         if (id == null) return false;
         this._prune();
         return this.ids.has(String(id));
+    }
+
+    /**
+     * Undo one `add()` — an undelete means this id is not currently deleted
+     * any more, and a stale tombstone entry would otherwise keep a live
+     * node's later, ordinary eviction from being buffered/stored at all (see
+     * `_onMutation`'s eviction handler, which consults this set as well as
+     * the `mwiSkipStore` flag). `restore()`'s use of this set is a narrow
+     * race-window catch, not a durable "is this deleted" record, so nothing
+     * here needs to survive an undelete.
+     * @param {string|number} id
+     */
+    remove(id) {
+        if (id == null) return;
+        const key = String(id);
+        if (!this.ids.has(key)) return;
+        this.ids.delete(key);
+        this.entries = this.entries.filter((entry) => entry.id !== key);
     }
 
     _prune() {
@@ -645,9 +725,10 @@ class ChatTabHandler {
      * A message that arrived already deleted (a moderator's view of a
      * channel's backlog, say) is stamped `data-mwi-skip-store` instead of an
      * id: nothing will ever need to find it by id, and `_onMutation`'s
-     * eviction handler reads that flag to keep it out of storage without
-     * keeping it out of the live buffer — the game already chose to render
-     * it.
+     * eviction handler reads that flag to keep it out of both storage and
+     * this script's own live buffer when it is eventually evicted or removed
+     * — the same flag `ChatHistoryExtender#_handleMessageUpdated` stamps
+     * onto a node that was live when a deletion arrived for it.
      *
      * @param {Element} node - A newly-added `ChatMessage_chatMessage` node
      * @param {string|null} tabKey - This container's tab key, from {@link chatTabKey}
@@ -807,16 +888,32 @@ class ChatTabHandler {
                         node.className?.includes('ChatMessage_chatMessage') &&
                         node !== this.bufferEl
                     ) {
-                        const clone = node.cloneNode(true);
-                        this.bufferEl.appendChild(clone);
+                        // A deleted message reaching removedNodes at all is the
+                        // ordinary case for everyone but the author (who the
+                        // game keeps showing "[Message Deleted…] <text>" in
+                        // place — no removal, so no eviction, nothing for this
+                        // branch to do). Cloning it into the live buffer would
+                        // put the deleted content right back in front of a
+                        // viewer the game just hid it from — the `mwiSkipStore`
+                        // check below only ever stopped it reaching *disk*.
+                        //
+                        // Checked two ways: the flag `_handleMessageUpdated`
+                        // stamps directly onto a still-live node it can find,
+                        // and — for a node removed before that lookup ever ran
+                        // (or before `_tagMessageId` had tagged it with an id
+                        // to look up) — the deletion tombstone by whatever id
+                        // the node does carry. Neither finding it is exactly
+                        // the "arrived already deleted" case _tagMessageId
+                        // already handles by never assigning an id at all; see
+                        // that flag's own doc.
+                        const isDeleted =
+                            node.dataset.mwiSkipStore === '1' ||
+                            (node.dataset.mwiMsgId && this.deletedIds?.has(node.dataset.mwiMsgId));
 
-                        // A message flagged by `_tagMessageId` as having arrived
-                        // pre-deleted stays in the live buffer like any other
-                        // eviction — the game already chose to render it — but is
-                        // never written to disk: a deleted message must not
-                        // survive a reload. See chat-history-persistence.js's
-                        // "Message identity and deletion" section.
-                        if (!node.dataset.mwiSkipStore) {
+                        if (!isDeleted) {
+                            const clone = node.cloneNode(true);
+                            this.bufferEl.appendChild(clone);
+
                             // Serialized from the clone, before the trim below can take
                             // it away again: the record is capped separately from the
                             // buffer, so a message can leave the screen and stay stored.
@@ -975,9 +1072,13 @@ class ChatHistoryExtender {
             // Undelete: a moderator-only action (players cannot undo their own
             // delete) and nothing here needs restoring — a message already
             // purged from storage/buffer is gone for good, see
-            // chat-history-persistence.js. The only thing left to correct is a
+            // chat-history-persistence.js. What is left to correct is a
             // still-live, not-yet-evicted node that a prior delete flagged
-            // `mwiSkipStore`: it should be storable again once it is evicted.
+            // `mwiSkipStore`: it should be storable (and bufferable) again
+            // once it is evicted — which also means clearing this id out of
+            // the deletion tombstone, or the eviction handler's tombstone
+            // check would keep treating it as deleted regardless.
+            this.deletedIds?.remove(message.id);
             for (const handler of this.activeHandlers) {
                 const live = handler.findLiveMessageNode(key);
                 if (live) delete live.dataset.mwiSkipStore;

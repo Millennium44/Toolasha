@@ -261,10 +261,23 @@ describe('chat-history-extender: message identity and deletion', () => {
         return container;
     }
 
-    function makeMessage(text) {
+    /**
+     * The game's real chat-line markup (mirrors chat-history-persistence.test.js's
+     * `senderHTML`): a sender element the id correlator can find and read via
+     * `senderNameFrom`, not just a flat text blob — the exact-match matcher
+     * needs a real sender element to extract from.
+     * @param {string} sender
+     * @param {string} text
+     */
+    function makeMessage(sender, text) {
         const el = document.createElement('div');
         el.className = 'ChatMessage_chatMessage__xyz';
-        el.textContent = text;
+        el.innerHTML =
+            '<span>[12:00:00 PM] </span>' +
+            '<span class="ChatMessage_name__1UZ8t ChatMessage_clickable__3Nt2s">' +
+            '<div class="CharacterName_characterName__2FqyZ">' +
+            `<div class="CharacterName_name__1amXp"><span>${sender}</span></div></div></span>` +
+            `<span>: ${text}</span>`;
         return el;
     }
 
@@ -312,9 +325,9 @@ describe('chat-history-extender: message identity and deletion', () => {
         await settle();
 
         wsHandlers.chat_message_received({
-            message: { id: 'msg-1', chan: '/chat_channel_types/trade', m: 'selling cheese' },
+            message: { id: 'msg-1', chan: '/chat_channel_types/trade', sName: 'Alice', m: 'selling cheese' },
         });
-        const node = makeMessage('selling cheese');
+        const node = makeMessage('Alice', 'selling cheese');
         container.appendChild(node);
         await settle();
 
@@ -337,7 +350,7 @@ describe('chat-history-extender: message identity and deletion', () => {
                 m: 'a totally different message',
             },
         });
-        const node = makeMessage('selling cheese');
+        const node = makeMessage('Alice', 'selling cheese');
         container.appendChild(node);
         await settle();
 
@@ -345,6 +358,50 @@ describe('chat-history-extender: message identity and deletion', () => {
         // it is left untagged rather than wrongly claiming msg-mismatch's id —
         // an untagged node can never be purged by a later deletion for an id
         // it was never actually the message for.
+        expect(node.dataset.mwiMsgId).toBeUndefined();
+    });
+
+    test('near-miss content (overlapping sender/text prefixes) is never claimed — exact match only', async () => {
+        // Codex's exact scenario: an earlier `Bob: hi` entry is a *substring*
+        // of a later `Bob: hi there` node, and `Ann` is a substring of
+        // `Anna` — the old `.includes()` matcher would wrongly claim across
+        // either. Exact equality on both fields must reject both.
+        const container = buildChannelChat('/chat_channel_types/trade');
+        chatHistoryExtender.initialize();
+        await settle();
+
+        wsHandlers.chat_message_received({
+            message: { id: 'msg-bob-hi', chan: '/chat_channel_types/trade', sName: 'Bob', m: 'hi' },
+        });
+        const longerText = makeMessage('Bob', 'hi there');
+        container.appendChild(longerText);
+        await settle();
+        expect(longerText.dataset.mwiMsgId).toBeUndefined();
+
+        wsHandlers.chat_message_received({
+            message: { id: 'msg-ann', chan: '/chat_channel_types/trade', sName: 'Ann', m: 'hello' },
+        });
+        const longerName = makeMessage('Anna', 'hello');
+        container.appendChild(longerName);
+        await settle();
+        expect(longerName.dataset.mwiMsgId).toBeUndefined();
+    });
+
+    test('two queued candidates with identical sender and text are ambiguous — neither is tagged', async () => {
+        const container = buildChannelChat('/chat_channel_types/trade');
+        chatHistoryExtender.initialize();
+        await settle();
+
+        wsHandlers.chat_message_received({
+            message: { id: 'msg-dup-1', chan: '/chat_channel_types/trade', sName: 'Alice', m: 'hi' },
+        });
+        wsHandlers.chat_message_received({
+            message: { id: 'msg-dup-2', chan: '/chat_channel_types/trade', sName: 'Alice', m: 'hi' },
+        });
+        const node = makeMessage('Alice', 'hi');
+        container.appendChild(node);
+        await settle();
+
         expect(node.dataset.mwiMsgId).toBeUndefined();
     });
 
@@ -361,17 +418,17 @@ describe('chat-history-extender: message identity and deletion', () => {
         await settle();
 
         wsHandlers.chat_message_received({
-            message: { id: 'msg-old', chan: '/chat_channel_types/trade', m: 'old backlog line' },
+            message: { id: 'msg-old', chan: '/chat_channel_types/trade', sName: 'Alice', m: 'old backlog line' },
         });
         wsHandlers.chat_message_received({
-            message: { id: 'msg-new', chan: '/chat_channel_types/trade', m: 'brand new message' },
+            message: { id: 'msg-new', chan: '/chat_channel_types/trade', sName: 'Alice', m: 'brand new message' },
         });
 
         // Appended in the OPPOSITE order from how their ids were queued, and
         // synchronously — so they land in one mutation batch together, and a
         // position-based claim is provably wrong if it ever matches.
-        const nodeA = makeMessage('brand new message');
-        const nodeB = makeMessage('old backlog line');
+        const nodeA = makeMessage('Alice', 'brand new message');
+        const nodeB = makeMessage('Alice', 'old backlog line');
         container.appendChild(nodeA);
         container.appendChild(nodeB);
         await settle();
@@ -395,8 +452,10 @@ describe('chat-history-extender: message identity and deletion', () => {
         chatHistoryExtender.initialize();
         await settle();
 
-        wsHandlers.chat_message_received({ message: { id: 'msg-1', chan: '/chat_channel_types/whisper' } });
-        const node = makeMessage('meet me at the tower');
+        wsHandlers.chat_message_received({
+            message: { id: 'msg-1', chan: '/chat_channel_types/whisper', sName: 'Alice', m: 'meet me at the tower' },
+        });
+        const node = makeMessage('Alice', 'meet me at the tower');
         container.appendChild(node);
         await settle();
 
@@ -413,20 +472,22 @@ describe('chat-history-extender: message identity and deletion', () => {
                 id: 'msg-1',
                 chan: '/chat_channel_types/trade',
                 isDeleted: true,
+                sName: 'Alice',
                 m: 'a moderator sees this, deleted',
             },
         });
-        const node = makeMessage('a moderator sees this, deleted');
+        const node = makeMessage('Alice', 'a moderator sees this, deleted');
         container.appendChild(node);
         await settle();
 
         expect(node.dataset.mwiMsgId).toBeUndefined();
         expect(node.dataset.mwiSkipStore).toBe('1');
 
-        // Buffered on eviction like any live message, but never persisted.
+        // Never buffered (a resurrection risk no less real than the
+        // still-live case below) and never persisted, on eviction.
         await evict(container, node);
         await chatHistoryPersistence.flush();
-        expect(container.querySelector('.mwi-history-buffer').textContent).toContain('deleted');
+        expect(container.querySelector('.mwi-history-buffer').textContent).not.toContain('deleted');
         expect(db.settings[Object.keys(db.settings)[0]].tabs).toEqual({});
     });
 
@@ -436,9 +497,9 @@ describe('chat-history-extender: message identity and deletion', () => {
         await settle();
 
         wsHandlers.chat_message_received({
-            message: { id: 'msg-1', chan: '/chat_channel_types/trade', m: 'selling cheese' },
+            message: { id: 'msg-1', chan: '/chat_channel_types/trade', sName: 'Alice', m: 'selling cheese' },
         });
-        const node = makeMessage('selling cheese');
+        const node = makeMessage('Alice', 'selling cheese');
         container.appendChild(node);
         await settle();
         await evict(container, node);
@@ -498,9 +559,9 @@ describe('chat-history-extender: message identity and deletion', () => {
         await settle();
 
         wsHandlers.chat_message_received({
-            message: { id: 'msg-1', chan: '/chat_channel_types/trade', m: 'selling cheese' },
+            message: { id: 'msg-1', chan: '/chat_channel_types/trade', sName: 'Alice', m: 'selling cheese' },
         });
-        const node = makeMessage('selling cheese');
+        const node = makeMessage('Alice', 'selling cheese');
         container.appendChild(node);
         await settle();
         expect(node.dataset.mwiMsgId).toBe('msg-1');
@@ -515,6 +576,50 @@ describe('chat-history-extender: message identity and deletion', () => {
         await evict(container, node);
         await chatHistoryPersistence.flush();
         expect(db.settings[Object.keys(db.settings)[0]].tabs).toEqual({});
+        // The live-verified bug: for a non-author, non-moderator viewer the
+        // game removes the node outright rather than redacting it in place —
+        // and that removal reaches this handler exactly like an ordinary
+        // eviction. Without the mwiSkipStore check in the removedNodes
+        // branch, cloning it into the buffer put the deleted content right
+        // back in front of a viewer the game just hid it from.
+        expect(container.querySelector('.mwi-history-buffer').textContent).not.toContain('selling cheese');
+    });
+
+    test('a node removed before it was ever marked deleted is still kept out of the buffer (tombstone fallback)', async () => {
+        // The narrow race Codex flagged alongside the resurrection bug: a
+        // deletion can arrive for a node this handler's own
+        // findLiveMessageNode lookup fails to find at that exact moment (the
+        // id correlator had not tagged it yet, or the lookup simply loses a
+        // timing race) — no mwiSkipStore is ever stamped on the node, only
+        // the tombstone records the id. Simulated directly: the node's own
+        // `data-mwi-msg-id` is hidden from findLiveMessageNode while the
+        // deletion runs (so the marking loop cannot find it, exactly as a
+        // missed lookup would look from the outside), then restored — the
+        // node genuinely was msg-1 all along, this only hid *when* that
+        // became visible to the marking loop.
+        const container = buildChannelChat('/chat_channel_types/trade');
+        chatHistoryExtender.initialize();
+        await settle();
+
+        wsHandlers.chat_message_received({
+            message: { id: 'msg-1', chan: '/chat_channel_types/trade', sName: 'Alice', m: 'selling cheese' },
+        });
+        const node = makeMessage('Alice', 'selling cheese');
+        container.appendChild(node);
+        await settle();
+        expect(node.dataset.mwiMsgId).toBe('msg-1');
+
+        delete node.dataset.mwiMsgId;
+        await wsHandlers.chat_message_updated({
+            message: { id: 'msg-1', chan: '/chat_channel_types/trade', isDeleted: true },
+        });
+        expect(node.dataset.mwiSkipStore).toBeUndefined();
+        node.dataset.mwiMsgId = 'msg-1';
+
+        await evict(container, node);
+        await chatHistoryPersistence.flush();
+        expect(container.querySelector('.mwi-history-buffer').textContent).not.toContain('selling cheese');
+        expect(db.settings[Object.keys(db.settings)[0]]?.tabs ?? {}).toEqual({});
     });
 
     test('an undelete clears the skip-store flag so a later eviction stores normally', async () => {
@@ -523,9 +628,9 @@ describe('chat-history-extender: message identity and deletion', () => {
         await settle();
 
         wsHandlers.chat_message_received({
-            message: { id: 'msg-1', chan: '/chat_channel_types/trade', m: 'selling cheese' },
+            message: { id: 'msg-1', chan: '/chat_channel_types/trade', sName: 'Alice', m: 'selling cheese' },
         });
-        const node = makeMessage('selling cheese');
+        const node = makeMessage('Alice', 'selling cheese');
         container.appendChild(node);
         await settle();
 
