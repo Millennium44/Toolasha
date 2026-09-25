@@ -282,54 +282,71 @@ describe('chat-history-extender: message identity and deletion', () => {
     }
 
     /**
-     * A Trade/Recruit line naming an item, the way the game actually renders
-     * one: prose, then an inline `Item_itemContainer` icon+label element (the
-     * same class chat-history-persistence.test.js's `makeItemMessage` uses) —
-     * never prose alone, which is all `chat_message_received`'s own `m` field
-     * carries for such a line (see pop-out-chat.js's `resolveMessage`, which
-     * keeps `m` and `renderedLinks` separate for the same reason).
+     * A Trade/Recruit line naming an item, the shape confirmed live for a
+     * `/chat_link_types/item` post: sender, ": ", then one
+     * `ChatMessage_linkContainer` per link (each wrapping an
+     * `Item_itemContainer`, same class chat-history-persistence.test.js's
+     * `makeItemMessage` uses), then the trailing prose — never prose alone,
+     * which is all a placeholder-stripped `m` holds (see
+     * {@link messageWithPlaceholders}).
      * @param {string} sender
      * @param {string} prose
-     * @param {number} [itemLinks] - How many item-link elements to render
+     * @param {number} [linkCount] - How many link elements to render
      */
-    function makeLinkedMessage(sender, prose, itemLinks = 1) {
+    function makeLinkedMessage(sender, prose, linkCount = 1) {
         const el = document.createElement('div');
         el.className = 'ChatMessage_chatMessage__xyz';
         const links = Array.from(
-            { length: itemLinks },
+            { length: linkCount },
             () =>
+                '<div class="ChatMessage_linkContainer__1">' +
                 '<div class="Item_itemContainer__1">' +
                 '<svg><use href="/static/media/items_sprite.svg#cheese"></use></svg>' +
-                '<span>[Cheese @ 12.3K Sell]</span></div>'
+                '<span class="Item_count__1">13928</span>' +
+                '<span class="Item_name__1">Cheese</span></div></div>'
         ).join('');
         el.innerHTML =
-            '<span>[12:00:00 PM] </span>' +
+            '<span class="ChatMessage_timestamp__1">[12:48:32 PM] </span>' +
             '<span class="ChatMessage_name__1UZ8t ChatMessage_clickable__3Nt2s">' +
             '<div class="CharacterName_characterName__2FqyZ">' +
             `<div class="CharacterName_name__1amXp"><span>${sender}</span></div></div></span>` +
-            `<span>: ${prose} </span>` +
-            links;
+            '<span>: </span>' +
+            links +
+            `<span> ${prose}</span>`;
         return el;
     }
 
     /**
-     * `linksMetadata`, shaped the way `resolveLink()` in pop-out-chat.js
-     * reads it — the one place in this codebase that already names these
-     * fields for a real message — for one `/chat_link_types/market_listing`
-     * entry.
+     * `linksMetadata`, shaped the way a live `/chat_link_types/item` post's
+     * carried it: `[{"linkType":"/chat_link_types/item","itemHrid":"/items/cheese","itemCount":13928}]`.
+     * `resolveLink()` in pop-out-chat.js reads the same field names for the
+     * richer `market_listing` variant; this is the plain `item` shape that
+     * was actually confirmed live.
+     * @param {number} [count]
+     * @returns {string} A JSON string — `linksMetadata` is sent as one on the wire
+     */
+    function itemLinksMetadata(count = 1) {
+        return JSON.stringify(
+            Array.from({ length: count }, () => ({
+                linkType: '/chat_link_types/item',
+                itemHrid: '/items/cheese',
+                itemCount: 13928,
+            }))
+        );
+    }
+
+    /**
+     * `chat_message_received`'s own `m`, with a `{{N}}` placeholder standing
+     * in for each link — confirmed live: `m: "{{0}} test link, please ignore"`
+     * for a one-link message.
+     * @param {number} linkCount
+     * @param {string} prose
      * @returns {string}
      */
-    function marketListingLinksMetadata() {
-        return JSON.stringify([
-            {
-                linkType: '/chat_link_types/market_listing',
-                itemHrid: '/items/cheese',
-                itemEnhancementLevel: 0,
-                itemCount: 3,
-                price: 12345,
-                isSell: true,
-            },
-        ]);
+    function messageWithPlaceholders(linkCount, prose) {
+        if (!linkCount) return prose;
+        const placeholders = Array.from({ length: linkCount }, (_, i) => `{{${i}}}`).join(' ');
+        return `${placeholders} ${prose}`;
     }
 
     async function evict(container, node) {
@@ -439,11 +456,11 @@ describe('chat-history-extender: message identity and deletion', () => {
     });
 
     test('a Trade post naming an item is still tagged, even though the DOM renders more than m alone', async () => {
-        // Codex's exact bug: the queued entry's m is prose-only ("selling"),
-        // but the live node also renders the item's icon+label — an exact
-        // whole-line comparison rejected every such message, which is most
-        // Trade/Recruit traffic. The item element's own text must not count
-        // against the match.
+        // Live-confirmed shape: m carries a {{0}} placeholder where the link
+        // renders ("{{0}} test link, please ignore"), linksMetadata is a JSON
+        // string, and the DOM wraps the link in ChatMessage_linkContainer —
+        // an exact whole-line comparison against raw m rejected every such
+        // message, which is most Trade/Recruit traffic.
         const container = buildChannelChat('/chat_channel_types/trade');
         chatHistoryExtender.initialize();
         await settle();
@@ -453,22 +470,22 @@ describe('chat-history-extender: message identity and deletion', () => {
                 id: 'msg-1',
                 chan: '/chat_channel_types/trade',
                 sName: 'Alice',
-                m: 'selling',
-                linksMetadata: marketListingLinksMetadata(),
+                m: messageWithPlaceholders(1, 'test link, please ignore'),
+                linksMetadata: itemLinksMetadata(1),
             },
         });
-        const node = makeLinkedMessage('Alice', 'selling', 1);
+        const node = makeLinkedMessage('Alice', 'test link, please ignore', 1);
         container.appendChild(node);
         await settle();
 
         expect(node.dataset.mwiMsgId).toBe('msg-1');
     });
 
-    test('an item-link count mismatch is never claimed, even with identical prose', async () => {
-        // A candidate naming one item must not be claimed by a node rendering
-        // a different number of item links — the structural check the item
-        // case still needs, since two different linked messages can easily
-        // share the same short prose ("selling").
+    test('a link-count mismatch is never claimed, even with identical prose', async () => {
+        // A candidate naming one link must not be claimed by a node rendering
+        // a different number of links — the structural check the linked case
+        // still needs, since two different linked messages can easily share
+        // the same short prose.
         const container = buildChannelChat('/chat_channel_types/trade');
         chatHistoryExtender.initialize();
         await settle();
@@ -478,33 +495,18 @@ describe('chat-history-extender: message identity and deletion', () => {
                 id: 'msg-1',
                 chan: '/chat_channel_types/trade',
                 sName: 'Alice',
-                m: 'selling',
-                linksMetadata: marketListingLinksMetadata(),
+                m: messageWithPlaceholders(1, 'test link, please ignore'),
+                linksMetadata: itemLinksMetadata(1),
             },
         });
-        const noLinkNode = makeMessage('Alice', 'selling');
+        const noLinkNode = makeMessage('Alice', 'test link, please ignore');
         container.appendChild(noLinkNode);
         await settle();
 
         expect(noLinkNode.dataset.mwiMsgId).toBeUndefined();
     });
 
-    test('a plain-text candidate is never claimed by a node that renders an item link', async () => {
-        const container = buildChannelChat('/chat_channel_types/trade');
-        chatHistoryExtender.initialize();
-        await settle();
-
-        wsHandlers.chat_message_received({
-            message: { id: 'msg-1', chan: '/chat_channel_types/trade', sName: 'Alice', m: 'selling' },
-        });
-        const linkedNode = makeLinkedMessage('Alice', 'selling', 1);
-        container.appendChild(linkedNode);
-        await settle();
-
-        expect(linkedNode.dataset.mwiMsgId).toBeUndefined();
-    });
-
-    test('a tagged item-link message can still be purged by a later deletion', async () => {
+    test('a plain-text candidate is never claimed by a node that renders a link', async () => {
         const container = buildChannelChat('/chat_channel_types/trade');
         chatHistoryExtender.initialize();
         await settle();
@@ -514,11 +516,31 @@ describe('chat-history-extender: message identity and deletion', () => {
                 id: 'msg-1',
                 chan: '/chat_channel_types/trade',
                 sName: 'Alice',
-                m: 'selling',
-                linksMetadata: marketListingLinksMetadata(),
+                m: 'test link, please ignore',
             },
         });
-        const node = makeLinkedMessage('Alice', 'selling', 1);
+        const linkedNode = makeLinkedMessage('Alice', 'test link, please ignore', 1);
+        container.appendChild(linkedNode);
+        await settle();
+
+        expect(linkedNode.dataset.mwiMsgId).toBeUndefined();
+    });
+
+    test('a tagged linked message can still be purged by a later deletion', async () => {
+        const container = buildChannelChat('/chat_channel_types/trade');
+        chatHistoryExtender.initialize();
+        await settle();
+
+        wsHandlers.chat_message_received({
+            message: {
+                id: 'msg-1',
+                chan: '/chat_channel_types/trade',
+                sName: 'Alice',
+                m: messageWithPlaceholders(1, 'test link, please ignore'),
+                linksMetadata: itemLinksMetadata(1),
+            },
+        });
+        const node = makeLinkedMessage('Alice', 'test link, please ignore', 1);
         container.appendChild(node);
         await settle();
         expect(node.dataset.mwiMsgId).toBe('msg-1');
