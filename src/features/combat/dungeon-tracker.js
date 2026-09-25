@@ -1004,9 +1004,15 @@ class DungeonTracker {
                         }
 
                         // Dungeon action is running - store info for when new_battle fires
+                        // A queue update landing in the gap between two runs of
+                        // the same action keeps the card saying so
+                        const betweenRuns =
+                            this.pendingDungeonInfo?.betweenRuns === true &&
+                            this.pendingDungeonInfo.dungeonHrid === runningNow.actionHrid;
                         this.pendingDungeonInfo = {
                             dungeonHrid: runningNow.actionHrid,
                             tier: runningNow.difficultyTier,
+                            ...(betweenRuns ? { betweenRuns: true } : {}),
                         };
 
                         // If already tracking (somehow), update immediately
@@ -1925,6 +1931,18 @@ class DungeonTracker {
             if (this.currentRun.maxWaves) {
                 this.currentRun.wavesCompleted = Math.max(this.currentRun.wavesCompleted, this.currentRun.maxWaves);
             }
+            // The action goes on, so the next run's wave 1 is ~3 s away. Arm the
+            // provisional card for it, marked as the gap between runs, so the
+            // panel stays up with the finished run's figures instead of blinking
+            // off. Everything that ends the action clears it: the action going
+            // done or leaving the front of the queue (onActionsUpdated),
+            // resetTracking, a character switch (cleanup), and the next run's
+            // own start (startDungeon).
+            this.pendingDungeonInfo = {
+                dungeonHrid: this.currentRun.dungeonHrid,
+                tier: this.currentRun.tier,
+                betweenRuns: true,
+            };
             this.completeDungeon();
         } else {
             this.notifyUpdate();
@@ -2327,7 +2345,7 @@ class DungeonTracker {
      * real run replaces it as soon as the next `new_battle` arrives.
      *
      * @returns {{dungeonHrid: string, dungeonName: string, tier: number|null,
-     *   maxWaves: number|null, pending: true}|null} The provisional card, or null
+     *   maxWaves: number|null, pending: true, betweenRuns?: true}|null} The provisional card, or null
      */
     getPendingDungeon() {
         if (this.isTracking || !this.pendingDungeonInfo?.dungeonHrid) {
@@ -2341,6 +2359,9 @@ class DungeonTracker {
             tier: this.pendingDungeonInfo.tier ?? null,
             maxWaves: info?.maxWaves ?? null,
             pending: true,
+            // Set only in the gap after a solo run of a repeating action: the
+            // run just finished, and the next one has not sent its wave 1 yet
+            ...(this.pendingDungeonInfo.betweenRuns ? { betweenRuns: true } : {}),
         };
     }
 

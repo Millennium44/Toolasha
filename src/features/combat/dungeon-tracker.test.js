@@ -3314,6 +3314,79 @@ describe('a repeating dungeon action, run after run', () => {
     });
 });
 
+describe('the gap between two runs of a repeating dungeon', () => {
+    const SOLO = [{ character: { name: 'Marketcow' } }];
+    const PARTY = [{ character: { name: 'Marketcow' } }, { character: { name: 'Alice' } }];
+
+    beforeEach(() => {
+        game.actions = [{ actionHrid: DEN, difficultyTier: 0, ordinal: 0, isDone: false, maxCount: 0 }];
+    });
+
+    test('a solo run finishing with the action still queued leaves the next run announced', async () => {
+        beTracking({ currentWave: 10, wavesCompleted: 9, maxWaves: 10, battleId: 1, partyNames: ['Marketcow'] });
+        const seen = [];
+        tracker.onUpdate((run, completed) => seen.push({ run, completed, pending: tracker.getPendingDungeon() }));
+
+        tracker.onActionCompleted({ endCharacterAction: { actionHrid: DEN, wave: 0, isDone: false } });
+        await flush();
+
+        // The completion and the update after it both find the gap card armed
+        expect(seen.length).toBeGreaterThanOrEqual(2);
+        expect(seen[0].completed).toBeTruthy();
+        for (const entry of seen) expect(entry.pending).toMatchObject({ dungeonHrid: DEN, betweenRuns: true });
+
+        // A queue update in the gap keeps it marked as the gap
+        tracker.onActionsUpdated({ endCharacterActions: [{ actionHrid: DEN, difficultyTier: 0, isDone: false }] });
+        expect(tracker.getPendingDungeon()).toMatchObject({ betweenRuns: true });
+
+        // Wave 1 of the next run replaces it with the run
+        await tracker.onNewBattle({ wave: 1, battleId: 2, combatStartTime: '2026-09-25T20:00:00.000Z', players: SOLO });
+        await flush();
+        expect(tracker.isTracking).toBe(true);
+        expect(tracker.getPendingDungeon()).toBeNull();
+        expect(tracker.getCurrentRun()).not.toBeNull();
+    });
+
+    test('the dungeon leaving the queue in the gap clears it', async () => {
+        beTracking({ currentWave: 10, wavesCompleted: 9, maxWaves: 10, battleId: 1, partyNames: ['Marketcow'] });
+        tracker.onActionCompleted({ endCharacterAction: { actionHrid: DEN, wave: 0, isDone: false } });
+        await flush();
+
+        game.actions = [];
+        tracker.onActionsUpdated({ endCharacterActions: [{ actionHrid: DEN, difficultyTier: 0, isDone: true }] });
+
+        expect(tracker.getPendingDungeon()).toBeNull();
+    });
+
+    test('the last run of the action (isDone) arms nothing', async () => {
+        beTracking({ currentWave: 10, wavesCompleted: 9, maxWaves: 10, battleId: 1, partyNames: ['Marketcow'] });
+
+        tracker.onActionCompleted({ endCharacterAction: { actionHrid: DEN, wave: 0, isDone: true } });
+        await flush();
+
+        expect(tracker.isTracking).toBe(false);
+        expect(tracker.getPendingDungeon()).toBeNull();
+    });
+
+    test('a party run is unchanged: its completion arms nothing', async () => {
+        beTracking({
+            currentWave: 10,
+            wavesCompleted: 10,
+            maxWaves: 10,
+            battleId: 1,
+            partyNames: PARTY.map((p) => p.character.name),
+            keyCountsMap: { Marketcow: 12, Alice: 8 },
+            anchoredAt: '2026-08-04T10:00:00.000Z',
+        });
+
+        tracker.onChatMessage(keyCountsData('2026-08-04T10:04:32.000Z', 'Key counts: [Marketcow - 11], [Alice - 7]'));
+        await flush();
+
+        expect(tracker.isTracking).toBe(false);
+        expect(tracker.getPendingDungeon()).toBeNull();
+    });
+});
+
 describe('recovering a partial party run’s start from chat', () => {
     // A 65-wave dungeon so the live case — a refresh at wave 48 — can be played
     // out at the wave numbers it actually happens at.

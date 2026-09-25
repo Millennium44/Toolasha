@@ -134,7 +134,8 @@ class DungeonTrackerUI {
                 return;
             }
 
-            if (completedRun) {
+            if (completedRun && !dungeonTracker.getPendingDungeon()?.betweenRuns) {
+                // The dungeon action is over: its last run just finished
                 this.hide();
             } else if (currentRun) {
                 // Dungeon in progress
@@ -556,6 +557,11 @@ class DungeonTrackerUI {
     showPending(pending) {
         if (!this.container || !pending) return;
 
+        if (pending.betweenRuns) {
+            this.showBetweenRuns(pending);
+            return;
+        }
+
         const dungeonName = this.container.querySelector('#mwi-dt-dungeon-name');
         if (dungeonName) {
             dungeonName.textContent =
@@ -586,6 +592,62 @@ class DungeonTrackerUI {
 
         const paceElement = this.container.querySelector('#mwi-dt-pace');
         if (paceElement) paceElement.style.display = 'none';
+    }
+
+    /**
+     * Draw the gap between two runs of a repeating dungeon action.
+     *
+     * The run just finished is already in history, so Last/Avg/Runs are redrawn
+     * to include it; the next run has not sent its wave 1, so there is no elapsed
+     * time, wave or pace to show yet, and the card says the next run is starting
+     * rather than blinking the panel off for those few seconds.
+     *
+     * @param {{dungeonName: string, tier: number|null}} pending - From `getPendingDungeon`
+     * @returns {Promise<void>}
+     */
+    async showBetweenRuns(pending) {
+        const ticket = captureOwner(this);
+        const character = currentCharacter();
+
+        const dungeonName = this.container.querySelector('#mwi-dt-dungeon-name');
+        if (dungeonName) {
+            dungeonName.textContent =
+                pending.tier === null || pending.tier === undefined
+                    ? pending.dungeonName
+                    : `${pending.dungeonName} (T${pending.tier})`;
+        }
+
+        const waveCounter = this.container.querySelector('#mwi-dt-wave-counter');
+        if (waveCounter) {
+            waveCounter.textContent = 'next run starting…';
+            waveCounter.title = 'The last run finished; the next one begins with its first wave';
+        }
+
+        const timeLabel = this.container.querySelector('#mwi-dt-time-label');
+        if (timeLabel) {
+            timeLabel.textContent = 'Elapsed: ';
+            timeLabel.title = '';
+        }
+
+        const currentTime = this.container.querySelector('#mwi-dt-current-time');
+        if (currentTime) currentTime.textContent = '00:00';
+
+        const progressBar = this.container.querySelector('#mwi-dt-progress-bar');
+        if (progressBar) progressBar.style.width = '0%';
+        const progressText = this.container.querySelector('#mwi-dt-progress-text');
+        if (progressText) progressText.textContent = '';
+
+        const paceElement = this.container.querySelector('#mwi-dt-pace');
+        if (paceElement) paceElement.style.display = 'none';
+
+        try {
+            const drawn = await this.drawHistoryStats(ticket, character);
+            if (!drawn) return;
+            await this.updateRunHistory();
+            await this.updateRoiBoard();
+        } catch (error) {
+            console.error('[Toolasha Dungeon Tracker UI] Between-runs history failed to draw:', error);
+        }
     }
 
     /**
@@ -713,6 +775,39 @@ class DungeonTrackerUI {
             return;
         }
 
+        const drawn = await this.drawHistoryStats(ticket, character);
+        if (!drawn) return;
+
+        // Pace against stored history — always your own runs for this dungeon,
+        // unfiltered by the panel's history filters, since "vs your avg" is a
+        // claim about you and this dungeon whatever the list below is showing.
+        //
+        // The average window and the reset marker are not history filters
+        // though: they are what "your avg" now means, the same redefinition the
+        // chat line and the header above already honour, so pace honours them
+        // too rather than measuring against a lifetime nobody else is quoting.
+        this.updatePaceChip(run, drawn.allRuns, drawn.averageLimits, character);
+
+        // Update run history list
+        await this.updateRunHistory();
+
+        // The board reads the same runs; a completed run moves its row
+        await this.updateRoiBoard();
+    }
+
+    /**
+     * Draw the stored-history figures: header Last/Avg/Runs and the stats grid.
+     *
+     * Shared by a live run's draw and the gap between two runs of a repeating
+     * dungeon, where there is no run to draw but the one just finished has
+     * already joined history.
+     *
+     * @param {Object} ticket - From `captureOwner`, taken before any await
+     * @param {{id: string|null, name: string|null}} character - Whose history this is
+     * @returns {Promise<{allRuns: Array<Object>, averageLimits: Object}|null>} What was read,
+     *   or null when a character switch tore the panel down mid-read
+     */
+    async drawHistoryStats(ticket, character) {
         // Fetch run statistics - respect ALL filters to match chart exactly
         let stats, runHistory, lastRunTime;
 
@@ -725,7 +820,7 @@ class DungeonTrackerUI {
         // figures below would be the departing character's run measured against
         // the arriving character's history. Leave what is on screen alone; the
         // arriving character's own initialize() draws its panel.
-        if (!stillOurs(ticket)) return;
+        if (!stillOurs(ticket)) return null;
         // The run store is shared across characters on purpose (see
         // dungeon-tracker-storage.js); this is where "how am I doing" narrows
         // it back to the character asking
@@ -756,7 +851,7 @@ class DungeonTrackerUI {
         };
         // Second suspension point, same teardown: every line below writes into
         // `this.container`, which cleanup() has nulled by now
-        if (!stillOurs(ticket)) return;
+        if (!stillOurs(ticket)) return null;
 
         // Calculate stats from filtered runs
         if (runHistory.length > 0) {
@@ -787,16 +882,6 @@ class DungeonTrackerUI {
             stats = { totalRuns: 0, avgTime: 0, fastestTime: 0, slowestTime: 0 };
             lastRunTime = 0;
         }
-
-        // Pace against stored history — always your own runs for this dungeon,
-        // unfiltered by the panel's history filters, since "vs your avg" is a
-        // claim about you and this dungeon whatever the list below is showing.
-        //
-        // The average window and the reset marker are not history filters
-        // though: they are what "your avg" now means, the same redefinition the
-        // chat line and the header above already honour, so pace honours them
-        // too rather than measuring against a lifetime nobody else is quoting.
-        this.updatePaceChip(run, allRuns, averageLimits, character);
 
         // Update header stats (always visible)
         const headerLast = this.container.querySelector('#mwi-dt-header-last');
@@ -835,11 +920,7 @@ class DungeonTrackerUI {
             slowestTime.textContent = stats.slowestTime > 0 ? this.formatTime(stats.slowestTime) : '--:--';
         }
 
-        // Update run history list
-        await this.updateRunHistory();
-
-        // The board reads the same runs; a completed run moves its row
-        await this.updateRoiBoard();
+        return { allRuns, averageLimits };
     }
 
     /**
