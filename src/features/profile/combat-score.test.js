@@ -628,6 +628,91 @@ describe('sim export split button', () => {
         expect(parsedShykai.abilities[1]).toEqual({ abilityHrid: '/abilities/fireball', level: 1 });
     });
 
+    test('own profile shows exactly one caret, with FORMAT and loadout sections in its menu', async () => {
+        stub.snapshots = [
+            {
+                name: 'Raid',
+                actionTypeHrid: '/action_types/combat',
+                abilities: [],
+                food: [],
+                drinks: [],
+                abilityCombatTriggersMap: {},
+                consumableCombatTriggersMap: {},
+            },
+        ];
+        combatScore.showScorePanel(profileData(stub.currentCharacterId), scoreData, document.createElement('div'));
+        await flush();
+
+        // The export button plus exactly one caret -- the old separate loadout
+        // caret next to it is gone.
+        const carets = document.querySelectorAll('#mwi-combat-sim-wrapper > button');
+        expect(carets.length).toBe(2);
+
+        const dropdown = document.querySelector('#mwi-combat-sim-format-dropdown');
+        expect(dropdown.querySelectorAll('.mwi-combat-sim-format-option').length).toBe(2);
+
+        const loadoutSection = document.querySelector('#mwi-combat-sim-loadout-section');
+        expect(loadoutSection.style.display).toBe('block');
+        const loadoutOptions = dropdown.querySelectorAll('.mwi-combat-sim-loadout-option');
+        expect(loadoutOptions.length).toBe(1);
+        expect(loadoutOptions[0].textContent).toBe('Raid');
+    });
+
+    test("another player's menu has only the FORMAT section, even with saved loadouts of your own", async () => {
+        stub.snapshots = [
+            {
+                name: 'Raid',
+                actionTypeHrid: '/action_types/combat',
+                abilities: [],
+                food: [],
+                drinks: [],
+                abilityCombatTriggersMap: {},
+                consumableCombatTriggersMap: {},
+            },
+        ];
+        combatScore.showScorePanel(profileData(99), scoreData, document.createElement('div'));
+        await flush();
+
+        const dropdown = document.querySelector('#mwi-combat-sim-format-dropdown');
+        expect(dropdown.querySelectorAll('.mwi-combat-sim-format-option').length).toBe(2);
+
+        const loadoutSection = document.querySelector('#mwi-combat-sim-loadout-section');
+        expect(loadoutSection.style.display).toBe('none');
+        expect(dropdown.querySelectorAll('.mwi-combat-sim-loadout-option').length).toBe(0);
+    });
+
+    test('a loadout item exports in whichever format is currently chosen', async () => {
+        const snapshot = {
+            name: 'Raid',
+            actionTypeHrid: '/action_types/combat',
+            abilities: [{ abilityHrid: '/abilities/fireball', slot: 1 }],
+            food: [],
+            drinks: [],
+            abilityCombatTriggersMap: {},
+            consumableCombatTriggersMap: {},
+        };
+        stub.snapshots = [snapshot];
+        combatScore.showScorePanel(profileData(stub.currentCharacterId), scoreData, document.createElement('div'));
+        await flush();
+
+        document.querySelector('#mwi-combat-sim-format-btn').click();
+        document.querySelector('.mwi-combat-sim-loadout-option[data-name="Raid"]').click();
+        await flush();
+        expect(JSON.parse(clipboardText)).toMatchObject({ source: 'metz', override: expect.any(Object) });
+
+        // Switch format -- the option click above also exports immediately, so
+        // clear the clipboard before reading the loadout export that follows.
+        document.querySelector('#mwi-combat-sim-format-btn').click();
+        document.querySelector('.mwi-combat-sim-format-option[data-format="shykai"]').click();
+        await flush();
+        clipboardText = null;
+
+        document.querySelector('#mwi-combat-sim-format-btn').click();
+        document.querySelector('.mwi-combat-sim-loadout-option[data-name="Raid"]').click();
+        await flush();
+        expect(JSON.parse(clipboardText).source).toBe('shykai');
+    });
+
     test('the menu is gone after teardown', async () => {
         combatScore.showScorePanel(profileData(99), scoreData, document.createElement('div'));
         await flush();

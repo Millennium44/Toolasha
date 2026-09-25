@@ -510,7 +510,7 @@ class CombatScore {
                         font-size: 0.85rem;
                         flex: 1;
                     ">${SIM_EXPORT_FORMAT_LABELS[SIM_EXPORT_FORMATS.METZ]}</button>
-                    <button id="mwi-combat-sim-format-btn" title="Choose sim export format" style="
+                    <button id="mwi-combat-sim-format-btn" title="Sim export options" style="
                         padding: 8px 8px;
                         background: ${config.COLOR_ACCENT};
                         color: black;
@@ -525,54 +525,48 @@ class CombatScore {
                         position: absolute;
                         top: 100%;
                         right: 0;
-                        min-width: 160px;
+                        min-width: 190px;
                         background: rgba(30, 30, 30, 0.98);
                         border: 1px solid #555;
                         border-radius: 4px;
                         z-index: 10002;
                         margin-top: 2px;
+                        max-height: 220px;
+                        overflow-y: auto;
                     ">
+                        <div style="
+                            padding: 6px 10px 2px;
+                            font-size: 0.65rem;
+                            text-transform: uppercase;
+                            letter-spacing: 0.05em;
+                            color: #888;
+                        ">Format</div>
                         <div class="mwi-combat-sim-format-option" data-format="${SIM_EXPORT_FORMATS.METZ}" style="
                             padding: 6px 10px;
                             cursor: pointer;
                             font-size: 0.8rem;
-                            border-bottom: 1px solid #333;
                             color: #ddd;
                             white-space: nowrap;
-                        ">${SIM_EXPORT_FORMAT_LABELS[SIM_EXPORT_FORMATS.METZ]}</div>
+                        "><span class="mwi-combat-sim-format-marker" style="display: inline-block; width: 14px;"></span>${SIM_EXPORT_FORMAT_LABELS[SIM_EXPORT_FORMATS.METZ]}</div>
                         <div class="mwi-combat-sim-format-option" data-format="${SIM_EXPORT_FORMATS.SHYKAI}" title="Also compatible with the szerra shrine sim" style="
                             padding: 6px 10px;
                             cursor: pointer;
                             font-size: 0.8rem;
                             color: #ddd;
                             white-space: nowrap;
-                        ">${SIM_EXPORT_FORMAT_LABELS[SIM_EXPORT_FORMATS.SHYKAI]}</div>
+                        "><span class="mwi-combat-sim-format-marker" style="display: inline-block; width: 14px;"></span>${SIM_EXPORT_FORMAT_LABELS[SIM_EXPORT_FORMATS.SHYKAI]}</div>
+                        <div id="mwi-combat-sim-loadout-section" style="display: none;">
+                            <div style="border-top: 1px solid #444; margin: 4px 0;"></div>
+                            <div style="
+                                padding: 4px 10px 2px;
+                                font-size: 0.65rem;
+                                text-transform: uppercase;
+                                letter-spacing: 0.05em;
+                                color: #888;
+                            ">Export a Saved Loadout</div>
+                            <div id="mwi-combat-sim-loadout-list"></div>
+                        </div>
                     </div>
-                    <button id="mwi-combat-sim-loadout-btn" style="
-                        padding: 8px 10px;
-                        background: ${config.COLOR_ACCENT};
-                        color: black;
-                        border: none;
-                        border-radius: 4px;
-                        cursor: pointer;
-                        font-weight: bold;
-                        font-size: 0.85rem;
-                        display: none;
-                    ">▾</button>
-                    <div id="mwi-combat-sim-loadout-dropdown" style="
-                        display: none;
-                        position: absolute;
-                        top: 100%;
-                        left: 0;
-                        right: 0;
-                        background: rgba(30, 30, 30, 0.98);
-                        border: 1px solid #555;
-                        border-radius: 4px;
-                        z-index: 10001;
-                        margin-top: 2px;
-                        max-height: 160px;
-                        overflow-y: auto;
-                    "></div>
                 </div>
                 <button id="mwi-sim-character-btn" style="
                     padding: 8px 12px;
@@ -785,9 +779,19 @@ class CombatScore {
             }
         };
 
+        // Marks the radio-style FORMAT option that matches the current choice;
+        // re-run whenever the choice changes so the check mark follows it.
+        const updateFormatMarkers = () => {
+            simFormatDropdown?.querySelectorAll('.mwi-combat-sim-format-option').forEach((opt) => {
+                const marker = opt.querySelector('.mwi-combat-sim-format-marker');
+                if (marker) marker.textContent = opt.dataset.format === simFormatState.format ? '✓' : '';
+            });
+        };
+
         this.getSimExportFormat().then((format) => {
             simFormatState.format = format;
             applySimFormatLabel();
+            updateFormatMarkers();
         });
 
         if (combatSimBtn) {
@@ -824,6 +828,7 @@ class CombatScore {
                     const format = opt.dataset.format;
                     simFormatState.format = format;
                     applySimFormatLabel();
+                    updateFormatMarkers();
                     closeSimFormatDropdown();
                     await this.setSimExportFormat(format);
                     if (combatSimBtn) {
@@ -837,6 +842,58 @@ class CombatScore {
                     opt.style.background = '';
                 });
             });
+
+            // The "export a saved loadout" section is own-profile-only, and only
+            // when there is something saved — otherwise it stays hidden and the
+            // menu is FORMAT alone, matching another player's profile.
+            const loadoutProfileCharId =
+                profileData?.profile?.sharableCharacter?.id ||
+                profileData?.profile?.characterSkills?.[0]?.characterID ||
+                profileData?.profile?.character?.id;
+            const isOwnCharacterForLoadouts = loadoutProfileCharId === dataManager.getCurrentCharacterId();
+            const loadoutSection = simFormatDropdown.querySelector('#mwi-combat-sim-loadout-section');
+            const loadoutList = simFormatDropdown.querySelector('#mwi-combat-sim-loadout-list');
+            if (isOwnCharacterForLoadouts && loadoutSection && loadoutList) {
+                const combatSnapshots = loadoutSnapshot
+                    .getAllSnapshots()
+                    .filter((s) => s.actionTypeHrid === '/action_types/combat');
+                if (combatSnapshots.length > 0) {
+                    loadoutSection.style.display = 'block';
+
+                    loadoutList.innerHTML = combatSnapshots
+                        .map(
+                            (s) =>
+                                `<div class="mwi-combat-sim-loadout-option" data-name="${escapeHtml(s.name)}" style="
+                                padding: 6px 10px 6px 24px;
+                                cursor: pointer;
+                                font-size: 0.8rem;
+                                color: #ddd;
+                                white-space: nowrap;
+                                overflow: hidden;
+                                text-overflow: ellipsis;
+                            ">${escapeHtml(s.name)}</div>`
+                        )
+                        .join('');
+
+                    loadoutList.querySelectorAll('.mwi-combat-sim-loadout-option').forEach((opt) => {
+                        opt.addEventListener('click', async (e) => {
+                            e.stopPropagation();
+                            closeSimFormatDropdown();
+                            await this.handleCombatSimExportFromSnapshot(
+                                opt.dataset.name,
+                                combatSimBtn,
+                                simFormatState.format
+                            );
+                        });
+                        opt.addEventListener('mouseenter', () => {
+                            opt.style.background = 'rgba(255,255,255,0.1)';
+                        });
+                        opt.addEventListener('mouseleave', () => {
+                            opt.style.background = '';
+                        });
+                    });
+                }
+            }
 
             const outsideClickCloser = (e) => {
                 if (!simFormatDropdown.contains(e.target) && e.target !== simFormatBtn) {
@@ -884,80 +941,6 @@ class CombatScore {
             simCharBtn.addEventListener('mouseleave', () => {
                 simCharBtn.style.opacity = '1';
             });
-        }
-
-        // Combat Sim loadout dropdown for own character only
-        const combatSimLoadoutBtn = panel.querySelector('#mwi-combat-sim-loadout-btn');
-        const combatSimLoadoutDropdown = panel.querySelector('#mwi-combat-sim-loadout-dropdown');
-        if (combatSimLoadoutBtn && combatSimLoadoutDropdown) {
-            const profileCharId =
-                profileData?.profile?.sharableCharacter?.id ||
-                profileData?.profile?.characterSkills?.[0]?.characterID ||
-                profileData?.profile?.character?.id;
-            const isOwnCharacter = profileCharId === dataManager.getCurrentCharacterId();
-            if (isOwnCharacter) {
-                const allSnapshots = loadoutSnapshot.getAllSnapshots();
-                const combatSnapshots = allSnapshots.filter((s) => s.actionTypeHrid === '/action_types/combat');
-                if (combatSnapshots.length > 0) {
-                    combatSimLoadoutBtn.style.display = '';
-
-                    combatSimLoadoutDropdown.innerHTML = combatSnapshots
-                        .map(
-                            (s) =>
-                                `<div class="mwi-combat-sim-loadout-option" data-name="${escapeHtml(s.name)}" style="
-                                padding: 6px 10px;
-                                cursor: pointer;
-                                font-size: 0.8rem;
-                                border-bottom: 1px solid #333;
-                                color: #ddd;
-                                white-space: nowrap;
-                                overflow: hidden;
-                                text-overflow: ellipsis;
-                            ">${escapeHtml(s.name)}</div>`
-                        )
-                        .join('');
-
-                    combatSimLoadoutBtn.addEventListener('click', (e) => {
-                        e.stopPropagation();
-                        combatSimLoadoutDropdown.style.display =
-                            combatSimLoadoutDropdown.style.display === 'none' ? 'block' : 'none';
-                    });
-                    combatSimLoadoutBtn.addEventListener('mouseenter', () => {
-                        combatSimLoadoutBtn.style.opacity = '0.8';
-                    });
-                    combatSimLoadoutBtn.addEventListener('mouseleave', () => {
-                        combatSimLoadoutBtn.style.opacity = '1';
-                    });
-
-                    combatSimLoadoutDropdown.querySelectorAll('.mwi-combat-sim-loadout-option').forEach((opt) => {
-                        opt.addEventListener('click', async () => {
-                            combatSimLoadoutDropdown.style.display = 'none';
-                            await this.handleCombatSimExportFromSnapshot(
-                                opt.dataset.name,
-                                combatSimBtn,
-                                simFormatState.format
-                            );
-                        });
-                        opt.addEventListener('mouseenter', () => {
-                            opt.style.background = 'rgba(255,255,255,0.1)';
-                        });
-                        opt.addEventListener('mouseleave', () => {
-                            opt.style.background = '';
-                        });
-                    });
-
-                    const closeCombatSimDropdown = (e) => {
-                        if (!document.body.contains(combatSimLoadoutDropdown)) {
-                            document.removeEventListener('click', closeCombatSimDropdown);
-                            return;
-                        }
-                        if (!combatSimLoadoutDropdown.contains(e.target) && e.target !== combatSimLoadoutBtn) {
-                            combatSimLoadoutDropdown.style.display = 'none';
-                        }
-                    };
-                    document.addEventListener('click', closeCombatSimDropdown);
-                }
-            }
         }
 
         // Milkonomy Export button
