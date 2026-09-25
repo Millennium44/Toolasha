@@ -63,7 +63,23 @@ export function usesWorstCaseRounding(artisanMode, numActions) {
 export function artisanInputTotal(basePerAction, artisanBonus, numActions, artisanMode) {
     const materialsPerAction = basePerAction * (1 - artisanBonus);
     if (usesWorstCaseRounding(artisanMode, numActions)) {
-        return Math.ceil(materialsPerAction) * numActions;
+        return ceilUnits(materialsPerAction) * numActions;
     }
-    return Math.ceil(materialsPerAction * numActions);
+    return ceilUnits(materialsPerAction * numActions);
+}
+
+/**
+ * Round a unit count up, ignoring the IEEE residue a fractional product leaves.
+ *
+ * `3 × (1 − 0.2) × 100` evaluates to `240.00000000000003`, and a bare
+ * `Math.ceil` bills 241 for a run the bag covers with 240. The tolerance is
+ * far above any accumulated product error and far below the smallest real
+ * excess a whole-unit recipe count times a tea percentage can produce.
+ *
+ * @param {number} units - Possibly fractional units
+ * @returns {number} Whole units; an unbounded run stays unbounded
+ */
+function ceilUnits(units) {
+    if (!Number.isFinite(units)) return units;
+    return Math.ceil(units - Math.abs(units) * 1e-12 - 1e-12);
 }
