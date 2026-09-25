@@ -2656,6 +2656,15 @@ describe('the all-zones table', () => {
             mocks.allZonesResult = [];
         });
 
+        test('All Zones records the edited party roster, so recorded runs are matched against it', async () => {
+            // runMatchesSimParty compares a run's team with this roster; the edited path used to
+            // leave it empty, so any same-sized party's runs could pace the simulation
+            ui._playerInfo = [];
+            await ui._onSimulateAllZones();
+
+            expect(ui._playerInfo.map((p) => p.hrid)).toEqual(['player1', 'player2']);
+        });
+
         test('All Zones prices the run for the character being optimized, not a stale results tab', async () => {
             await ui._onSimulateAllZones();
 
