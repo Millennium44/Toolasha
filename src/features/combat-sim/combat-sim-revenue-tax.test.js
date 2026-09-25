@@ -239,7 +239,13 @@ describe('calculateSimRevenue pricing mode and the patient tick', () => {
         expect(on).toBeGreaterThan(off);
     });
 
-    test('dungeon key costs buy one tick above the bid too, since they go through the same helper', () => {
+    test('dungeon key costs follow the key pricing setting, not the general buy side or its patient tick', () => {
+        // Keys used to be priced off the same general-buy helper as
+        // consumables, so a Patient/bid general setting silently moved the key
+        // cost too. `profitCalc_keyPricingMode` defaults to 'ask' and is a
+        // side of its own — see `resolveKeyPricing` in key-cost.js — so it
+        // must answer the same ask price regardless of the general setting or
+        // its patient tick.
         const { simResult, gameData } = simClearingDungeon(10, 5000, 1000);
         mocks.prices['/items/chimerical_entry_key'] = { ask: 1100, bid: 1000 };
         mocks.prices['/items/chimerical_chest_key'] = { ask: 1100, bid: 1000 };
@@ -247,12 +253,12 @@ describe('calculateSimRevenue pricing mode and the patient tick', () => {
 
         mocks.patientTick = false;
         const { keyCostPerHour: off } = calculateSimRevenue(simResult, gameData, 'player1', HOURS);
-        expect(off).toBeCloseTo(0.2 * 2000, 6);
+        expect(off).toBeCloseTo(0.2 * 2200, 6);
 
         mocks.patientTick = true;
         const { keyCostPerHour: on } = calculateSimRevenue(simResult, gameData, 'player1', HOURS);
-        expect(on).toBeCloseTo(0.2 * 2002, 6);
-        expect(on).toBeGreaterThan(off);
+        expect(on).toBeCloseTo(0.2 * 2200, 6);
+        expect(on).toBe(off);
     });
 });
 

@@ -192,9 +192,14 @@ const FOLLOWS_GLOBAL_MODE = 'followsGlobalMode';
  *
  * ## What the basis changes
  *
- * On the `market` basis — every mode but `craft` — `unitCost` is the cheaper of
- * the two, which is what this has always reported and what `ask` and `bid` must
- * keep reporting.
+ * On the `market` basis — `ask`, `bid`, and `synced` once it has resolved to a
+ * side — `unitCost` is the market price of the key, full stop. The user picked
+ * a side of the book on purpose; the recipe is never consulted to override it,
+ * even when crafting would be cheaper. `craftCost` and `savings` are still
+ * computed and returned so a display can *say* crafting would be cheaper, but
+ * the number actually charged is the market one. The one exception is a key
+ * nobody is selling: with no market price to report, the craft cost is used
+ * instead so a costable key is never left uncosted.
  *
  * On the `craft` basis `unitCost` is the craft cost even when the market is
  * cheaper, because the user has said they make their own keys and wants them
@@ -208,6 +213,13 @@ const FOLLOWS_GLOBAL_MODE = 'followsGlobalMode';
  *   so a display and a net worth both get the honest replacement cost rather
  *   than a null that every `?? 0` downstream would turn into a free key. Only
  *   when the market has nothing either is `unitCost` null.
+ *
+ * `cheaper` names the route actually used (`'buy'`/`'craft'`), not which side
+ * happens to be less gold right now — those differ exactly when the market
+ * basis is charging the market price while the recipe would have been
+ * cheaper. Compare `craftCost` and `buyPrice` directly for the economic
+ * comparison; `formatKeyCostNote` does this to phrase it without claiming the
+ * figure charged is the cheaper one when it isn't.
  *
  * @param {string} keyHrid - Key item HRID
  * @param {Object} [options] - Costing options
@@ -265,16 +277,14 @@ export function describeKeyCost(keyHrid, options = {}) {
 
     if (buyPrice === null && craftCost === null) return empty;
 
-    // A tie goes to buying: the two cost the same gold and only one of them
-    // also costs the player an afternoon.
-    let cheaper;
-    if (craftCost === null) cheaper = 'buy';
-    else if (buyPrice === null) cheaper = 'craft';
-    else cheaper = craftCost < buyPrice ? 'craft' : 'buy';
-
-    // The craft basis overrides the comparison, but only where there is a craft
-    // cost to override it with — see the fallback rule above.
-    const route = basis === 'craft' && craftCost !== null ? 'craft' : cheaper;
+    // The route actually used to price the key. On the `market` basis — every
+    // mode but `craft` — the key is valued at the market price, full stop: no
+    // comparison against the recipe, because the user picked a market side on
+    // purpose. The `craft` basis is the one place a recipe wins even when the
+    // market is cheaper, because the user said they make their own. Either
+    // basis falls back to the other route when its preferred side cannot be
+    // priced at all (see the fallback rule in the docstring above).
+    const route = basis === 'craft' ? (craftCost !== null ? 'craft' : 'buy') : buyPrice !== null ? 'buy' : 'craft';
 
     const unitCost = route === 'craft' ? craftCost : buyPrice;
     const savings = buyPrice !== null && craftCost !== null ? Math.abs(buyPrice - craftCost) : 0;
@@ -409,8 +419,22 @@ export function formatKeyCostNote(cost, options = {}) {
     const buyPart = cost.buyPrice !== null && cost.buyPrice !== undefined ? `buy ${money(cost.buyPrice)}` : null;
 
     if (craftPart && buyPart) {
-        const saved = cost.savings > 0 ? `, saves ${money(cost.savings)} ea` : '';
-        return `${craftPart} ea vs ${buyPart} — using ${cost.cheaper === 'craft' ? 'crafted' : 'bought'}${saved}`;
+        const using = cost.cheaper === 'craft' ? 'crafted' : 'bought';
+
+        // `cost.cheaper` is the route actually charged, not necessarily the
+        // side that is cheaper right now — the market basis charges the
+        // market price even when the recipe is cheaper. When the route and
+        // the actual comparison agree, say the savings plainly; when they
+        // don't, say what the other side would have saved without implying
+        // the figure charged is the cheaper one.
+        const actuallyCheaper = cost.craftCost < cost.buyPrice ? 'craft' : 'buy';
+        if (actuallyCheaper === cost.cheaper || cost.savings <= 0) {
+            const saved = cost.savings > 0 ? `, saves ${money(cost.savings)} ea` : '';
+            return `${craftPart} ea vs ${buyPart} — using ${using}${saved}`;
+        }
+
+        const otherWord = actuallyCheaper === 'craft' ? 'crafting' : 'buying';
+        return `${craftPart} ea vs ${buyPart} — using ${using}, ${otherWord} would save ${money(cost.savings)} ea`;
     }
     if (craftPart) return `${craftPart} ea — not on the market, using crafted`;
     return `${buyPart} ea — no recipe, using bought`;

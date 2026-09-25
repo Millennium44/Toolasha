@@ -1865,16 +1865,18 @@ export const settingsGroups = {
                 ],
                 help:
                     'How a dungeon key is valued everywhere the script prices one: item tooltips, net worth and the ' +
-                    'inventory badges, combat income and the key-cost breakdown, the dungeon ROI board, the chest ' +
-                    'risk-of-ruin model, and the consumables panel’s dungeon readiness card. Changing it moves your ' +
-                    'net worth and your combat profit/hr, not only the dungeon card. “Same as the profit calculation ' +
-                    'pricing mode” follows that setting’s buy side — keys are only ever bought, so its sell side has ' +
-                    'nothing to say here — and it also takes that setting’s patient-tick delay on a bid quote the ' +
-                    'same way ordinary profit prices do, so it can read differently from picking a plain "Bid" here, ' +
-                    'which is an exact book price and never ticks. “What it costs you to craft one” values a key at ' +
-                    'your own crafting cost instead of a market price, with the materials priced on that same buy ' +
-                    'side; a key you cannot craft, or whose recipe has a material with no price, falls back to its ' +
-                    'market price rather than being counted as free.',
+                    'inventory badges, combat income and the key-cost breakdown, the combat simulator, the dungeon ' +
+                    'ROI board, the chest risk-of-ruin model, and the consumables panel’s dungeon readiness card. ' +
+                    'Changing it moves your net worth and your combat profit/hr, not only the dungeon card. “Same ' +
+                    'as the profit calculation pricing mode” follows that setting’s buy side — keys are only ever ' +
+                    'bought, so its sell side has nothing to say here — and it also takes that setting’s ' +
+                    'patient-tick delay on a bid quote the same way ordinary profit prices do, so it can read ' +
+                    'differently from picking a plain "Bid" here, which is an exact book price and never ticks. ' +
+                    '“Ask” and “Bid” value the key at that market price outright — the recipe is never compared ' +
+                    'against it, even when crafting would be cheaper. “What it costs you to craft one” values a ' +
+                    'key at your own crafting cost instead, even when the market is cheaper, with the materials ' +
+                    'priced on that same buy side; a key you cannot craft, or whose recipe has a material with no ' +
+                    'price, falls back to its market price rather than being counted as free.',
             },
             profitCalc_liquidityCap: {
                 id: 'profitCalc_liquidityCap',

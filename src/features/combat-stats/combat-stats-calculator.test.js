@@ -1,12 +1,16 @@
 /**
  * Tests for dungeon key costs in the combat statistics calculator
  *
- * The costing itself belongs to `src/utils/key-cost.js` and is tested there.
- * What this pins is what the profit figure does with it: that a run is charged
- * the cheaper of buying and crafting each key, that the alternative survives
+ * The costing itself — and which of buying and crafting a key's cost actually
+ * follows — belongs to `src/utils/key-cost.js` and is tested there. What this
+ * pins is what the profit figure does with whatever `describeKeyCost` hands
+ * back: that a run is charged its `unitCost`, that the alternative survives
  * into the breakdown so the display can show it, that a key nobody can price is
  * skipped rather than counted as free, and that the pricing mode comes back out
- * with the numbers.
+ * with the numbers. The `cost()` fixture below reproduces the market basis's
+ * cheaper-of comparison only because that is a convenient way to vary which
+ * route a test exercises — it is not asserting that production picks the
+ * cheaper side.
  */
 
 import { describe, test, expect, beforeEach, afterEach, vi } from 'vitest';

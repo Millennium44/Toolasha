@@ -224,16 +224,25 @@ const render = async () => {
  * card is allowed to rely on: the costing decides the mode and applies it to
  * the market lookup and the recipe alike.
  */
-const keyCosts = ({ buy = 1000, craft = 600, mode = 'ask', craftSeconds = 20 } = {}) => {
+/**
+ * A costed key, shaped the way `describeKeyCost` returns it post-fix: on the
+ * `market` basis (the default here — 'ask'/'bid'/'synced') the route is
+ * `buy` whenever there is a market price, full stop, never the cheaper-of
+ * comparison; it only falls back to `craft` when there is no market price at
+ * all. The `craft` basis always routes to `craft` when there is a recipe.
+ */
+const keyCosts = ({ buy = 1000, craft = 600, mode = 'ask', craftSeconds = 20, basis = 'market' } = {}) => {
+    const cheaper = basis === 'craft' ? (craft !== null ? 'craft' : 'buy') : buy !== null ? 'buy' : 'craft';
     keys.cost = {
         itemHrid: KEY,
         itemName: 'Chimerical Entry Key',
         pricingMode: mode,
+        basis,
         buyPrice: buy,
         craftCost: craft,
         craftSeconds,
-        cheaper: craft !== null && (buy === null || craft < buy) ? 'craft' : 'buy',
-        unitCost: craft !== null && (buy === null || craft < buy) ? craft : buy,
+        cheaper,
+        unitCost: cheaper === 'craft' ? craft : buy,
         savings: buy !== null && craft !== null ? Math.abs(buy - craft) : 0,
     };
 };
@@ -688,7 +697,12 @@ describe('typing an exact run count', () => {
 });
 
 describe('buying the missing keys against crafting them', () => {
-    test('crafting cheaper is named on the line and shown against the buy total', async () => {
+    test('a market key setting buys even when the recipe would be cheaper, and says what crafting would save', async () => {
+        // Pre-fix, the market basis (the default here — 'ask') silently routed
+        // to whichever of buying and crafting was cheaper. The fix makes it buy
+        // at the market price full stop, and only say what the recipe would
+        // have saved rather than switch to it — see `describeKeyCost` in
+        // key-cost.js.
         inParty();
         store.data.consumablesDungeonRuns = 10;
         keyCosts({ buy: 1000, craft: 600 });
@@ -696,12 +710,27 @@ describe('buying the missing keys against crafting them', () => {
 
         const body = text();
         // Six missing: the route on the key line, and both totals under it
-        expect(body).toContain('6 to craft');
+        expect(body).toContain('6 to buy');
         expect(body).toContain('craft 4Kc vs buy 6Kc');
-        expect(body).toContain('cheaper to craft');
-        expect(body).toContain('saving 2Kc');
-        expect(body).toContain('at the bench');
+        expect(body).toContain('priced to buy at your key setting');
+        expect(body).toContain('crafting would save 2Kc');
+        // Buying is the route taken, so there is no crafting time to report
+        expect(body).not.toContain('at the bench');
         expect(body).toContain('both at ask');
+        expect(body).not.toContain('cheaper to craft');
+    });
+
+    test('the craft basis takes the recipe over a cheaper market price, and says so', async () => {
+        inParty();
+        store.data.consumablesDungeonRuns = 10;
+        keyCosts({ buy: 1000, craft: 600, basis: 'craft' });
+        await render();
+
+        const body = text();
+        expect(body).toContain('6 to craft');
+        expect(body).toContain('costed as crafted, your key pricing mode');
+        expect(body).not.toContain('cheaper to craft');
+        expect(body).not.toContain('priced to buy');
     });
 
     test('buying cheaper keeps the line saying buy', async () => {

@@ -625,12 +625,19 @@ function drawPlayer(body, stats) {
         `${formatWithSeparator(Math.round(stats.consumableCosts?.value || 0))} of consumables and ` +
         `${formatWithSeparator(Math.round(stats.keyCosts?.value || 0))} of keys.`;
 
-    // A key is costed at the cheaper of buying and crafting it, and which one
-    // that was changes the figure above — so say so rather than leave the
-    // number unexplained.
+    // A key priced as crafted changes the figure above, and why it was priced
+    // that way differs by basis — the `craft` setting always crafts, while a
+    // market setting (ask/bid/synced) only falls back to crafting when nobody
+    // is selling the key at all — so say which happened rather than assume it
+    // was a cheaper-of comparison (see `describeKeyCost` in key-cost.js).
     const craftedKeys = (stats.keyBreakdown || []).filter((entry) => entry.keyCost?.cheaper === 'craft');
-    if (craftedKeys.length) {
-        summary.title += `\nPriced as crafted, cheaper than buying: ${craftedKeys
+    const noMarket = craftedKeys.filter((entry) => entry.keyCost?.buyPrice === null);
+    const byCraftSetting = craftedKeys.filter((entry) => entry.keyCost?.buyPrice !== null);
+    if (noMarket.length) {
+        summary.title += `\nPriced as crafted, not on the market: ${noMarket.map((entry) => entry.itemName).join(', ')}.`;
+    }
+    if (byCraftSetting.length) {
+        summary.title += `\nPriced as crafted (your key pricing setting): ${byCraftSetting
             .map((entry) => entry.itemName)
             .join(', ')}.`;
     }

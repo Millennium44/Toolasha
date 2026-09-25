@@ -23,6 +23,7 @@ import { manualAchievementCombatBuffs, deriveAchievementCombatBuffs } from '../.
 import { MARKET_TAX, COWBELL_BAG_HRID, COWBELL_BAG_TAX } from '../../utils/profit-constants.js';
 import { calculatePriceAfterTax } from '../../utils/profit-helpers.js';
 import { getItemPrice } from '../../utils/market-data.js';
+import { getKeyUnitCost } from '../../utils/key-cost.js';
 
 /**
  * The combat scrolls the player currently has active.
@@ -1419,11 +1420,19 @@ export function calculateExpectedDrops(simResult, gameData, playerHrid = 'player
 /**
  * Calculate dungeon key costs from a drop map.
  * Entry keys (1:1 with regular chests) + chest keys (1:1 with all chests).
+ *
+ * `getKeyPrice` prices each key — pass {@link getKeyUnitCost} (or a wrapper
+ * around it) so a key is valued the way `profitCalc_keyPricingMode` says,
+ * not the general buy side. The general buy side ignores the setting
+ * entirely and, worse, is a *different* side than the key setting whenever
+ * the two disagree (e.g. general buy on Patient bid while keys are set to
+ * ask), so it was never just "close enough".
+ *
  * @param {Map<string, number>} dropMap - itemHrid → expected count from calculateExpectedDrops
- * @param {Function} getBuyPrice - Function to get buy price for an item (from UI)
+ * @param {Function} getKeyPrice - itemHrid → unit cost for a key; callers pass a key-pricing-aware lookup
  * @returns {Array<{itemHrid: string, name: string, count: number, unitCost: number, totalCost: number}>}
  */
-export function calculateDungeonKeyCosts(dropMap, getBuyPrice) {
+export function calculateDungeonKeyCosts(dropMap, getKeyPrice) {
     const costs = [];
     if (!dropMap) return costs;
 
@@ -1446,7 +1455,7 @@ export function calculateDungeonKeyCosts(dropMap, getBuyPrice) {
     }
 
     for (const [keyHrid, count] of Object.entries(keyCounts)) {
-        const unitCost = getBuyPrice(keyHrid);
+        const unitCost = getKeyPrice(keyHrid);
         const keyDetails = dataManager.getItemDetails(keyHrid);
         costs.push({
             itemHrid: keyHrid,
@@ -1482,6 +1491,19 @@ function getSellPrice(itemHrid) {
 function getBuyPrice(itemHrid) {
     if (!itemHrid) return 0;
     return getItemPrice(itemHrid, { context: 'profit', side: 'buy' }) ?? 0;
+}
+
+/**
+ * The unit cost of a dungeon key under `profitCalc_keyPricingMode`, coalesced
+ * to 0 rather than `getKeyUnitCost`'s `null` — this sim already treats an
+ * unpriceable consumable or drop as free (see {@link getBuyPrice}/
+ * {@link getSellPrice}), so a key follows the same convention rather than
+ * turning a whole dungeon's cost into `NaN`.
+ * @param {string} itemHrid - Key item HRID
+ * @returns {number}
+ */
+function getKeyPrice(itemHrid) {
+    return getKeyUnitCost(itemHrid) ?? 0;
 }
 
 /**
@@ -1564,7 +1586,7 @@ export function calculateSimRevenue(simResult, gameData, playerHrid, hours) {
     // same helper rather than reading this one, so nothing double-counts.
     let keyCostPerHour = 0;
     if (simResult.isDungeon) {
-        for (const key of calculateDungeonKeyCosts(dropMap, getBuyPrice)) {
+        for (const key of calculateDungeonKeyCosts(dropMap, getKeyPrice)) {
             keyCostPerHour += key.totalCost / hours;
         }
         costPerHour += keyCostPerHour;

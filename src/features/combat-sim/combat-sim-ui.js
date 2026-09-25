@@ -67,6 +67,7 @@ import {
     parseBestiaryZoneKey,
 } from '../../utils/bestiary-plan.js';
 import { openCombatZoneAtTier } from '../../utils/combat-zone-open.js';
+import { getKeyUnitCost } from '../../utils/key-cost.js';
 import performanceMonitor from '../../utils/performance-monitor.js';
 import { capProfitRateCached, liquidityMarkerHtml } from '../../utils/liquidity-cap.js';
 import { badgeHtml, calibrationBadgeFor } from '../../utils/calibration-badge.js';
@@ -6188,8 +6189,8 @@ class CombatSimUI {
 
             // Compute dungeon key costs from drop map
             if (simResult.isDungeon) {
-                const getBuyPriceForKey = (keyHrid) => this._getBuyPrice(keyHrid);
-                dungeonKeyCosts = calculateDungeonKeyCosts(dropMap, getBuyPriceForKey);
+                const getKeyPriceForKey = (keyHrid) => this._getKeyPrice(keyHrid);
+                dungeonKeyCosts = calculateDungeonKeyCosts(dropMap, getKeyPriceForKey);
                 for (const key of dungeonKeyCosts) {
                     keyCostPerHr += (key.count / hours) * key.unitCost;
                     keyCostTotal += key.totalCost;
@@ -6968,8 +6969,8 @@ class CombatSimUI {
         let keyCostPerHrMetric = 0;
         if (simResult.isDungeon && gameData) {
             const dropMap = calculateExpectedDrops(simResult, gameData, activeTab);
-            const getBuyPriceForKey = (keyHrid) => this._getBuyPrice(keyHrid);
-            const keyCosts = calculateDungeonKeyCosts(dropMap, getBuyPriceForKey);
+            const getKeyPriceForKey = (keyHrid) => this._getKeyPrice(keyHrid);
+            const keyCosts = calculateDungeonKeyCosts(dropMap, getKeyPriceForKey);
             for (const key of keyCosts) {
                 keyCostPerHrMetric += (key.count / hours) * key.unitCost;
             }
@@ -7656,6 +7657,20 @@ class CombatSimUI {
     _getBuyPrice(itemHrid) {
         if (!itemHrid) return 0;
         return getItemPrice(itemHrid, { context: 'profit', side: 'buy' }) ?? 0;
+    }
+
+    /**
+     * The unit cost of a dungeon key under `profitCalc_keyPricingMode`, not the
+     * general buy side `_getBuyPrice` reads — the two can disagree (e.g. the
+     * key setting on 'ask' while the general setting buys Patient/bid), and a
+     * key is not "close enough" priced off the wrong one. Coalesced to 0 like
+     * every other unpriced figure in this sim, per {@link _getBuyPrice}.
+     * @param {string} keyHrid - Key item HRID
+     * @returns {number}
+     * @private
+     */
+    _getKeyPrice(keyHrid) {
+        return getKeyUnitCost(keyHrid) ?? 0;
     }
 
     /**
