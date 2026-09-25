@@ -1237,14 +1237,6 @@ class BulkSellAssistant {
             if ((item.count || 0) <= 0) return false;
             if (item.itemHrid === '/items/coin') return false;
             if (!clientData?.itemDetailMap?.[item.itemHrid]?.isTradable) return false;
-            // A Locked item cannot be sold to the shop or listed on the market — the game
-            // itself refuses the sale, so never queue it. `characterItemMarks` never
-            // arrives on a server that has not shipped item marks yet, and
-            // `isItemLocked` then always reports false, so this is a no-op there.
-            if (dataManager.isItemLocked(item.itemHrid, item.enhancementLevel || 0)) {
-                locked += item.count || 0;
-                return false;
-            }
             const key = holdKey(item.itemHrid, item.enhancementLevel);
             // Held items are counted, not silently dropped: an item vanishing
             // from the sell queue with no explanation is indistinguishable from
@@ -1273,6 +1265,18 @@ class BulkSellAssistant {
                     enhanced += item.count || 0;
                     return false;
                 }
+            }
+            // A Locked item cannot be sold to the shop or listed on the market — the game
+            // itself refuses the sale, so never queue it. Checked last, after the tab/
+            // watchlist eligibility filters above: a locked stack outside the selected
+            // source was never going to be queued anyway, and counting it here would
+            // report "N locked items skipped" for stock the player never asked this run
+            // to touch. `characterItemMarks` never arrives on a server that has not
+            // shipped item marks yet, and `isItemLocked` then always reports false, so
+            // this is a no-op there.
+            if (dataManager.isItemLocked(item.itemHrid, item.enhancementLevel || 0)) {
+                locked += item.count || 0;
+                return false;
             }
             return true;
         });

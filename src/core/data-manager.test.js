@@ -1240,6 +1240,49 @@ describe('overlapping character switches', () => {
         expect(dataManager.getCurrentCharacterId()).toBe('char-2');
     });
 
+    test('an item_marks_updated arriving mid-switch is applied to the arriving character, not lost', async () => {
+        const { default: dataManager } = await import('./data-manager.js');
+        await webSocketHandlers.get('init_character_data')(initPayload());
+
+        let releaseFlush;
+        storageMock.flushAll = vi.fn(
+            () =>
+                new Promise((resolve) => {
+                    releaseFlush = resolve;
+                })
+        );
+
+        // _bindActiveSocket already points ownership at the arriving character
+        // synchronously, before this init's own handling — the flush below — ever
+        // replaces characterData with char-2's own snapshot
+        const pending = webSocketHandlers.get('init_character_data')(
+            initPayload({
+                character: { id: 'char-2', name: 'Two' },
+                characterItemMarks: [
+                    { itemHrid: '/items/cheese', kind: 'lock', minEnhancementLevel: 0, maxEnhancementLevel: 1000 },
+                ],
+            })
+        );
+        await Promise.resolve();
+        expect(dataManager.isCharacterSwitching).toBe(true);
+
+        // A mark update for char-2 lands in the gap — characterData still belongs to
+        // (or has just been cleared of) char-1 at this point
+        webSocketHandlers.get('item_marks_updated')({
+            characterItemMarks: [
+                { itemHrid: '/items/wine', kind: 'lock', minEnhancementLevel: 0, maxEnhancementLevel: 1000 },
+            ],
+        });
+
+        releaseFlush();
+        await pending;
+
+        // The stashed update — the newer of the two — wins over the list the init
+        // payload carried, rather than being silently overwritten by it
+        expect(dataManager.isItemLocked('/items/wine')).toBe(true);
+        expect(dataManager.isItemLocked('/items/cheese')).toBe(false);
+    });
+
     test('a second init waits for the first to finish rather than interleaving with it', async () => {
         vi.useFakeTimers({ toFake: ['Date'] });
         const { default: dataManager } = await import('./data-manager.js');

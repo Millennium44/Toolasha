@@ -258,6 +258,18 @@ describe('Locked items are never queued', () => {
         expect(queued()).toEqual(expect.arrayContaining(['/items/cheese', '/items/milk', '/items/sword']));
         expect(bulkSell.lockedSkipped).toBe(0);
     });
+
+    test('a locked stack outside the selected source is not counted as skipped', async () => {
+        // /items/milk is locked, but the watchlist (game.watched) never names it — the
+        // watchlist run was never going to queue it regardless of the lock, so it must
+        // not show up as "N locked items skipped" for a run that never looked at it
+        game.locked.add('/items/milk:0');
+        bulkSell.selectedTabId = 'watchlist';
+        await bulkSell._start();
+
+        expect(queued()).not.toContain('/items/milk');
+        expect(bulkSell.lockedSkipped).toBe(0);
+    });
 });
 
 /**
