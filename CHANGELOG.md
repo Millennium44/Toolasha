@@ -6,6 +6,14 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Audit round: production skills checked against the game and a live brewing run
+
+- Cooking, brewing, cheesesmithing, crafting and tailoring were checked against the game's own formulas and a live brewing run: efficiency, Artisan and Gourmet figures match what the game did.
+- Production income no longer counts a charm or upgrade craft's upgrade item as free, and now applies Artisan and Gourmet; its first batch after login is counted in full. The loot log bills a charm's upgrade unit, and calibration no longer reads every production run as over-optimistic.
+- Queue rows and Max count only the +0 stack an upgrade recipe will actually use, so they no longer promise crafts the game can't do. Material totals no longer ask for one extra unit on exact counts, and the crafting plan sizes multi-output intermediates in whole crafts.
+- The production board's cost per unit accounts for Gourmet, upgrade crafts follow the pricing mode, and the skilling optimizer counts seal and guild efficiency and speed.
+- Holding the arrows on the Level Progress "To level" box and on the Combat Level panel's target boxes now steps continuously.
+
 ### Skill tooltip's "This month" line and the ability book XP rate start recording
 
 - The daily skill and ability recorders behind the skill tooltip's "This month" XP and the ability book panel's XP rate were never switched on after they were added, so both stayed blank. They record from now on; the figures fill in as days pass.
