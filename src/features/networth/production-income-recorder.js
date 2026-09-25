@@ -158,15 +158,19 @@ class ProductionIncomeRecorder {
 
         this._handlers = {
             actionCompleted: (data) => this._onActionCompleted(data),
+            actionsUpdated: (data) => this._seedCounts(data?.endCharacterActions),
             characterInitialized: (data) => this._onCharacterInitialized(data),
             characterSwitching: () => this._forget(),
         };
 
         dataManager.on('action_completed', this._handlers.actionCompleted);
+        dataManager.on('actions_updated', this._handlers.actionsUpdated);
         dataManager.on('character_initialized', this._handlers.characterInitialized);
         dataManager.on('character_switching', this._handlers.characterSwitching);
 
         this.isActive = true;
+        // Started mid-session: the queue already carries each action's counter
+        this._seedCounts(dataManager.getCurrentActions?.());
         await this.load();
     }
 
@@ -174,6 +178,7 @@ class ProductionIncomeRecorder {
     cleanup() {
         if (!this._handlers) return;
         dataManager.off('action_completed', this._handlers.actionCompleted);
+        dataManager.off('actions_updated', this._handlers.actionsUpdated);
         dataManager.off('character_initialized', this._handlers.characterInitialized);
         dataManager.off('character_switching', this._handlers.characterSwitching);
         this._handlers = null;
@@ -341,11 +346,31 @@ class ProductionIncomeRecorder {
     }
 
     /**
+     * Baseline each queued action's counter before its first `action_completed`.
+     *
+     * Only sound from the queue between messages (login, `actions_updated`): by
+     * the time an `action_completed` is handled, the cached queue already holds
+     * that message's counter. An id already baselined keeps its own figure.
+     *
+     * @param {Array<Object>|null|undefined} actions - Character actions
+     */
+    _seedCounts(actions) {
+        if (!Array.isArray(actions)) return;
+        for (const action of actions) {
+            const id = action?.id;
+            if (id === undefined || id === null || action.isDone || this._counts.has(id)) continue;
+            this._counts.set(id, Number(action.currentCount) || 0);
+        }
+    }
+
+    /**
      * How many actions completed since the last message for this action.
      *
      * `currentCount` is a running counter the server sends, and efficiency procs
      * make it jump by more than one — so the delta is the honest count and a
-     * bare `+1` per message would undercount a fast crafting run badly. A
+     * bare `+1` per message would undercount a fast crafting run badly. The
+     * baseline comes from the queue (`_seedCounts`), so a run's first batched
+     * message is measured too; an id with no baseline counts as one. A
      * counter that went backwards is a new action wearing an old id; that
      * message counts as one and re-baselines.
      *
@@ -383,6 +408,9 @@ class ProductionIncomeRecorder {
     _onCharacterInitialized(data) {
         try {
             this._forget();
+            // The login snapshot already includes every completion made while no
+            // page was connected; only what completes from here on is recorded
+            this._seedCounts(data?.characterActions ?? dataManager.getCurrentActions?.());
             if (!config.getSetting('networth_goldSources')) return;
 
             const offlineItems = data?.offlineItems || [];

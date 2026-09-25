@@ -11,6 +11,7 @@ const state = vi.hoisted(() => ({
     artisan: 0,
     gourmet: 0,
     personalGourmet: 0,
+    queue: [],
 }));
 
 vi.mock('../../core/storage.js', () => ({
@@ -24,6 +25,7 @@ vi.mock('../../core/data-manager.js', () => ({
         getCurrentCharacterId: () => state.charId,
         getActionDetails: (hrid) => state.actionDetails[hrid] || null,
         getInitClientData: () => ({ itemDetailMap: {} }),
+        getCurrentActions: () => state.queue.map((action) => ({ ...action })),
         getPersonalBuffFlatBoost: (type, buff) => (buff === '/buff_types/gourmet' ? state.personalGourmet : 0),
         on: vi.fn(),
         off: vi.fn(),
@@ -78,6 +80,7 @@ beforeEach(() => {
     state.artisan = 0;
     state.gourmet = 0;
     state.personalGourmet = 0;
+    state.queue = [];
     recorder._forget();
 });
 
@@ -215,6 +218,34 @@ describe('recording production', () => {
         const [row] = state.saved.rows;
         expect(row.outputValue).toBe(0);
         expect(row.unpricedActions).toBe(1);
+    });
+});
+
+describe('a run’s first message', () => {
+    test('a batch in the first message after login is counted in full from the queued counter', async () => {
+        const queued = { id: 20, actionHrid: '/actions/cooking/cheese', currentCount: 10 };
+        recorder._onCharacterInitialized({ characterActions: [queued], offlineItems: [] });
+        await recorder._onActionCompleted({ endCharacterAction: { ...queued, currentCount: 13 } });
+
+        // Three completions (efficiency repeats batched into one message), not one
+        expect(state.saved.rows.find((entry) => entry.d === TODAY).actions).toBe(3);
+    });
+
+    test('an action added to the queue mid-session is baselined when it arrives', async () => {
+        recorder._seedCounts([{ id: 21, actionHrid: '/actions/cooking/cheese', currentCount: 0 }]);
+        await recorder._onActionCompleted({
+            endCharacterAction: { id: 21, actionHrid: '/actions/cooking/cheese', currentCount: 3 },
+        });
+        expect(state.saved.rows.find((entry) => entry.d === TODAY).actions).toBe(3);
+    });
+
+    test('a baseline already running is not overwritten by a later queue update', async () => {
+        const action = { id: 22, actionHrid: '/actions/cooking/cheese', currentCount: 0 };
+        recorder._seedCounts([action]);
+        await recorder._onActionCompleted({ endCharacterAction: { ...action, currentCount: 2 } });
+        recorder._seedCounts([{ ...action, currentCount: 0 }]);
+        await recorder._onActionCompleted({ endCharacterAction: { ...action, currentCount: 4 } });
+        expect(state.saved.rows.find((entry) => entry.d === TODAY).actions).toBe(4);
     });
 });
 
