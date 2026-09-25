@@ -5721,6 +5721,16 @@ describe('planning to a points target from the panel', () => {
         expect(footer).not.toMatch(/reaches 2/);
         expect(ui._bestiaryPlanText()).toContain('3 total (+2, 3 wanted)');
         expect(mocks.store.get('settings:combatSimBestiaryPlanTotal')).toBe(3);
+
+        // Typing a new target previews the gap but does not change the drawn plan or what Copy
+        // copies until Plan is pressed again
+        const input = ui.panel.querySelector('#mwi-csim-bestiary-plan-value');
+        input.value = '5';
+        input.dispatchEvent(new Event('input'));
+        expect(note.textContent).toBe('you have 1 · need 4');
+        expect(ui._bestiaryPlanText()).toContain('3 total (+2, 3 wanted)');
+        click('#mwi-csim-bestiary-plan-btn');
+        expect(ui._bestiaryPlanText()).toContain('5 wanted');
     });
 
     test('a target at or below the current total shows an "already at" note and no route', async () => {
