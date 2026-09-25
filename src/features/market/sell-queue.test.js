@@ -67,9 +67,22 @@ vi.mock('../../core/dom-observer.js', () => ({
  * is asserted here is that the whole held count is held back while it is
  * queued, and given back when the queue goes.
  */
-const ledger = vi.hoisted(() => ({ reserved: [], released: [] }));
+const ledger = vi.hoisted(() => ({
+    reserved: [],
+    released: [],
+    reserveCalls: 0,
+    // Delays the Nth `reserve()` call (1-indexed) by this many ms; used to force a
+    // stale claim's own write to resolve AFTER a later, surviving claim's write has
+    // already landed — the exact ordering the reconcile-not-release fix is for.
+    delayReserveCallNumber: 0,
+    delayReserveMs: 0,
+}));
 vi.mock('../../utils/inventory-reservations.js', () => ({
     reserve: async (ownerId, lines) => {
+        ledger.reserveCalls += 1;
+        if (ledger.reserveCalls === ledger.delayReserveCallNumber) {
+            await new Promise((resolve) => setTimeout(resolve, ledger.delayReserveMs));
+        }
         ledger.reserved.push({ ownerId, lines });
         return true;
     },
@@ -297,6 +310,9 @@ describe('what the queue holds back from every other plan', () => {
     beforeEach(() => {
         ledger.reserved = [];
         ledger.released = [];
+        ledger.reserveCalls = 0;
+        ledger.delayReserveCallNumber = 0;
+        ledger.delayReserveMs = 0;
         tabsState.container = marketplaceStrip();
         dataManagerMock.inventory = [
             { itemHrid: '/items/cheese', itemLocationHrid: '/item_locations/inventory', count: 12 },
@@ -406,6 +422,10 @@ describe('the tab badge and the sold-out check count plain copies only', () => {
 
     beforeEach(() => {
         ledger.reserved = [];
+        ledger.released = [];
+        ledger.reserveCalls = 0;
+        ledger.delayReserveCallNumber = 0;
+        ledger.delayReserveMs = 0;
         tabsState.container = marketplaceStrip();
     });
 
@@ -588,6 +608,62 @@ describe('the tab badge and the sold-out check count plain copies only', () => {
         nav.remove();
     });
 
+    /*
+     * Codex review on PR #196, deferred and now fixed: when the lock-filter loop
+     * prunes only SOME entries (Cheese, locked) and something survives (Wine),
+     * the loop bumps `generation` and this call goes on to restate its own claim
+     * for the survivor. Wine's own earlier, non-first-item `claimQueue()` — already
+     * in flight before the loop ran — is now stale under the bumped generation.
+     * If that stale claim's `reserve()` resolves AFTER Cheese's replacement claim
+     * has already landed, an unconditional release on the stale branch would wipe
+     * out the still-valid, just-landed claim for a queue that is still standing.
+     * Forcing that exact ordering here (Wine's own reserve is the delayed one)
+     * is what distinguishes the fix from the bug: the old code released
+     * `sellQueue` outright; the fix reconciles instead, because the queue was
+     * never actually empty.
+     */
+    test('a stale claim whose write lands after a surviving replacement claim reconciles, not releases', async () => {
+        dataManagerMock.inventory = [
+            { itemHrid: '/items/cheese', itemLocationHrid: '/item_locations/inventory', count: 12 },
+            { itemHrid: '/items/wine', itemLocationHrid: '/item_locations/inventory', count: 6 },
+        ];
+        tabsState.container = null;
+        // Wine's own claimQueue() issues the first reserve() call, nested inside
+        // Cheese's still-unresolved openMarketplacePage(); delay exactly that call
+        // so it resolves after Cheese's own post-lock-filter reserve() (the second
+        // call) has already landed.
+        ledger.delayReserveCallNumber = 1;
+        ledger.delayReserveMs = 220;
+
+        const nav = document.createElement('div');
+        nav.className = 'NavigationBar_nav__3uuUl';
+        nav.innerHTML = '<svg aria-label="navigationBar.marketplace"></svg>';
+        nav.addEventListener('click', () => {
+            tabsState.container = marketplaceStrip();
+            // Only Cheese turns out to be locked — Wine survives
+            dataManagerMock.lockedKeys.add('/items/cheese:0');
+            observerState.handler(popper('<a href="/items/wine">Wine</a>'));
+            shiftRightClickInventory();
+        });
+        document.body.appendChild(nav);
+
+        observerState.handler(popper('<a href="/items/cheese">Cheese</a>'));
+        shiftRightClickInventory();
+        // Long enough for Cheese's own 200ms wait, the lock-filter loop, its own
+        // reserve() landing, AND Wine's delayed 220ms reserve() resolving after it
+        await new Promise((resolve) => setTimeout(resolve, 500));
+
+        // Wine survived the loop and is still queued and tabbed
+        expect(document.querySelector('[data-item-hrid="/items/cheese"]')).toBeNull();
+        expect(document.querySelector('[data-item-hrid="/items/wine"]')).not.toBeNull();
+        // The whole point: nothing released the shared owner out from under a
+        // queue that never went empty — the old code did, right here
+        expect(ledger.released).not.toContain('sellQueue');
+        // And the ledger's last word on it is a claim for exactly what survived
+        expect(ledger.reserved.at(-1).lines).toEqual([{ itemHrid: '/items/wine', enhancementLevel: 0, count: 6 }]);
+        nav.remove();
+    });
+
     test('an item locked after it is already queued is dropped and its claim given back', async () => {
         dataManagerMock.inventory = [
             { itemHrid: '/items/cheese', itemLocationHrid: '/item_locations/inventory', count: 12 },
@@ -639,6 +715,9 @@ describe('a character switch takes the queue with it', () => {
     beforeEach(() => {
         ledger.reserved = [];
         ledger.released = [];
+        ledger.reserveCalls = 0;
+        ledger.delayReserveCallNumber = 0;
+        ledger.delayReserveMs = 0;
         tabsState.container = marketplaceStrip();
         dataManagerMock.inventory = [
             { itemHrid: '/items/cheese', itemLocationHrid: '/item_locations/inventory', count: 12 },
@@ -696,6 +775,9 @@ describe('a character switch takes the queue with it', () => {
 
         ledger.reserved = [];
         ledger.released = [];
+        ledger.reserveCalls = 0;
+        ledger.delayReserveCallNumber = 0;
+        ledger.delayReserveMs = 0;
 
         // A websocket message a beat before the switch: the sweep restates the
         // claim, and that write is still in flight when the teardown releases

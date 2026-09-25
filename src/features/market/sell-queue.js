@@ -208,10 +208,37 @@ async function claimQueue() {
         { label: 'Queued for selling' }
     );
     if (era !== generation) {
-        release(RESERVATION_OWNER);
+        await reconcileStaleClaim();
         return false;
     }
     return landed;
+}
+
+/**
+ * What a call whose era has gone stale owes the shared reservation, in place
+ * of the unconditional `release()` a live call would run.
+ *
+ * A stale call cannot tell whether the current generation's own claim has
+ * already landed by the time it notices it is stale — only that the queue it
+ * read is not necessarily the one standing now. Releasing unconditionally can
+ * erase a claim a surviving call just wrote: the first add's post-marketplace
+ * lock-filter loop can remove a locked entry and bump `generation`, making a
+ * concurrent add's earlier, still-in-flight `reserve()` stale; if that
+ * `reserve()` lands after the surviving queue has already restated its own
+ * claim under the new generation, an unconditional release here would wipe it
+ * out from under a queue that is still standing. So a stale call reconciles
+ * instead of blindly releasing: release only when the current queue is
+ * actually empty (nothing left to hold back), otherwise restate the current
+ * queue's claim so the ledger matches what actually survived.
+ *
+ * @returns {Promise<void>}
+ */
+async function reconcileStaleClaim() {
+    if (queue.length === 0) {
+        release(RESERVATION_OWNER);
+        return;
+    }
+    await claimQueue();
 }
 
 /**
@@ -503,10 +530,13 @@ async function addToQueue(itemHrid, itemName) {
     injectTabs();
     await claimQueue();
     if (era !== generation) {
-        // The claim was in flight while the teardown released, so it can have
-        // landed on top of that release — hold nothing back for a queue that is
-        // gone rather than leaving stock spoken for until the seven-day sweep
-        release(RESERVATION_OWNER);
+        // The claim was in flight while something else moved the era on — a
+        // teardown, or the lock-filter loop pruning a locked entry — so it can
+        // have landed on top of whatever that did. Reconcile rather than blindly
+        // release: an empty queue (a teardown, or every entry turning out
+        // unsellable) gives everything back, but a queue that still has surviving
+        // entries gets its claim restated instead of wiped out from under it.
+        await reconcileStaleClaim();
         return;
     }
     // This call's own item can have been the one the lock-filter loop just pruned,
