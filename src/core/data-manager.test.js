@@ -208,6 +208,109 @@ describe('DataManager', () => {
 });
 
 /**
+ * Item marks (Favorite / Lock). A locked item cannot be sold to the shop or
+ * listed on the market; `isItemLocked`/`isItemFavorite` are the shared read
+ * every sell path (bulk-sell-assistant, sell-queue) checks against.
+ *
+ * `characterItemMarks` arrives as part of `init_character_data` itself — it is
+ * just another field on `characterData`, like `myMarketListings` — so there is
+ * no dedicated init test here beyond confirming the helpers read that field.
+ * `item_marks_updated` is the one with its own handler, tested below.
+ */
+describe('item marks (Favorite / Lock)', () => {
+    test('no marks at all leaves both helpers false, unchanged from today', async () => {
+        const { default: dataManager } = await import('./data-manager.js');
+        dataManager.characterData = { characterItemMarks: [] };
+
+        expect(dataManager.isItemLocked('/items/cheese')).toBe(false);
+        expect(dataManager.isItemFavorite('/items/cheese')).toBe(false);
+    });
+
+    test('no characterData at all (pre-login) leaves both helpers false', async () => {
+        const { default: dataManager } = await import('./data-manager.js');
+        dataManager.characterData = null;
+
+        expect(dataManager.isItemLocked('/items/cheese')).toBe(false);
+        expect(dataManager.isItemFavorite('/items/cheese')).toBe(false);
+    });
+
+    test('a single-level lock (this_level scope) locks only that level', async () => {
+        const { default: dataManager } = await import('./data-manager.js');
+        dataManager.characterData = {
+            characterItemMarks: [
+                { itemHrid: '/items/cheese', kind: 'lock', minEnhancementLevel: 3, maxEnhancementLevel: 3 },
+            ],
+        };
+
+        expect(dataManager.isItemLocked('/items/cheese', 3)).toBe(true);
+        expect(dataManager.isItemLocked('/items/cheese', 0)).toBe(false);
+        expect(dataManager.isItemLocked('/items/cheese', 4)).toBe(false);
+        expect(dataManager.isItemLocked('/items/other', 3)).toBe(false);
+    });
+
+    test('an all-levels lock (all_levels scope, min 0 max 1000) locks every level', async () => {
+        const { default: dataManager } = await import('./data-manager.js');
+        dataManager.characterData = {
+            characterItemMarks: [
+                { itemHrid: '/items/cheese', kind: 'lock', minEnhancementLevel: 0, maxEnhancementLevel: 1000 },
+            ],
+        };
+
+        expect(dataManager.isItemLocked('/items/cheese', 0)).toBe(true);
+        expect(dataManager.isItemLocked('/items/cheese', 10)).toBe(true);
+        expect(dataManager.isItemLocked('/items/cheese', 1000)).toBe(true);
+    });
+
+    test('a favorite mark does not read as locked, and vice versa', async () => {
+        const { default: dataManager } = await import('./data-manager.js');
+        dataManager.characterData = {
+            characterItemMarks: [
+                { itemHrid: '/items/cheese', kind: 'favorite', minEnhancementLevel: 0, maxEnhancementLevel: 1000 },
+            ],
+        };
+
+        expect(dataManager.isItemFavorite('/items/cheese')).toBe(true);
+        expect(dataManager.isItemLocked('/items/cheese')).toBe(false);
+    });
+
+    test('item_marks_updated replaces the mark list', async () => {
+        const { default: dataManager } = await import('./data-manager.js');
+        dataManager.characterData = {
+            characterItemMarks: [
+                { itemHrid: '/items/cheese', kind: 'lock', minEnhancementLevel: 0, maxEnhancementLevel: 1000 },
+            ],
+        };
+
+        const handler = webSocketHandlers.get('item_marks_updated');
+        expect(typeof handler).toBe('function');
+
+        handler({
+            characterItemMarks: [
+                { itemHrid: '/items/wine', kind: 'lock', minEnhancementLevel: 0, maxEnhancementLevel: 1000 },
+            ],
+        });
+
+        // The old lock is gone, replaced wholesale by the new list
+        expect(dataManager.isItemLocked('/items/cheese')).toBe(false);
+        expect(dataManager.isItemLocked('/items/wine')).toBe(true);
+    });
+
+    test('an unrecognised item_marks_updated shape is ignored, not thrown, and leaves marks as they were', async () => {
+        const { default: dataManager } = await import('./data-manager.js');
+        dataManager.characterData = {
+            characterItemMarks: [
+                { itemHrid: '/items/cheese', kind: 'lock', minEnhancementLevel: 0, maxEnhancementLevel: 1000 },
+            ],
+        };
+
+        const handler = webSocketHandlers.get('item_marks_updated');
+        expect(() => handler({ someOtherShape: true })).not.toThrow();
+
+        expect(dataManager.isItemLocked('/items/cheese')).toBe(true);
+    });
+});
+
+/**
  * The desync the labyrinth produces.
  *
  * The lab equips a loadout per room and restores on exit. Equipment tracked

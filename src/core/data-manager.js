@@ -188,6 +188,11 @@ class DataManager {
         this.bossMonsterHrids = new Set(); // Monster HRIDs that appear in bossSpawns
         this.battleData = null; // Current battle data (for Combat Sim export on Steam)
 
+        // Whether an unrecognised item_marks_updated shape has already been logged this
+        // session — logged once, not per message, so a wrong assumption about the payload
+        // key does not spam the console for the rest of the session.
+        this._itemMarksUnknownShapeLogged = false;
+
         // Who this character last fought alongside, from `new_battle`'s `players`.
         //
         // `characterData.partyInfo` is only ever what `init_character_data` carried,
@@ -1781,6 +1786,37 @@ class DataManager {
                 this.characterQuests = this.characterQuests.filter((q) => q.status !== '/quest_status/claimed');
             }
         });
+
+        // Handle item_marks_updated (Favorite/Lock marks on items).
+        //
+        // init_character_data carries the initial `characterItemMarks` list as part of
+        // `data` itself — see `_handleInitCharacterData`, which stores the whole payload
+        // as `this.characterData` — so nothing special is needed there. This keeps that
+        // list current for the rest of the session.
+        //
+        // The exact payload shape of this message was not confirmed against a live
+        // capture at the time this was written (the handler name
+        // `handleMessageItemMarksUpdated` is known from the client bundle, the payload
+        // key is not); assume it carries the full list under `characterItemMarks`, the
+        // same key `init_character_data` uses, but never throw on a different shape —
+        // log once and leave the existing marks in place.
+        this.webSocketHook.on('item_marks_updated', (data, context) => {
+            if (!this._isFromActiveSocket(context)) return;
+            if (!this.characterData) return;
+
+            if (Array.isArray(data?.characterItemMarks)) {
+                this.characterData.characterItemMarks = data.characterItemMarks;
+                return;
+            }
+
+            if (!this._itemMarksUnknownShapeLogged) {
+                this._itemMarksUnknownShapeLogged = true;
+                console.warn(
+                    '[DataManager] item_marks_updated arrived in an unrecognised shape; ignoring it. Payload keys:',
+                    data && typeof data === 'object' ? Object.keys(data) : typeof data
+                );
+            }
+        });
     }
 
     /**
@@ -2804,6 +2840,59 @@ class DataManager {
      */
     getBlockedCharacterMap() {
         return this.characterData?.blockedCharacterMap || {};
+    }
+
+    /**
+     * Whether an item (at a given enhancement level) carries a given mark kind.
+     *
+     * A mark's range is inclusive on both ends — `isMarked(ranges, level) = ranges.some(r =>
+     * level >= r.min && level <= r.max)` in the client. "All levels" is stored as
+     * `{minEnhancementLevel: 0, maxEnhancementLevel: 1000}` rather than a separate flag, so no
+     * special-casing is needed here beyond the inclusive range check.
+     *
+     * @param {string} itemHrid - The item
+     * @param {'favorite'|'lock'} kind - Which mark to check for
+     * @param {number} enhancementLevel - The enhancement level to check
+     * @returns {boolean} True if any mark of that kind covers this item at this level
+     * @private
+     */
+    _hasItemMark(itemHrid, kind, enhancementLevel) {
+        const marks = this.characterData?.characterItemMarks;
+        if (!Array.isArray(marks) || marks.length === 0) return false;
+        return marks.some(
+            (mark) =>
+                mark.itemHrid === itemHrid &&
+                mark.kind === kind &&
+                enhancementLevel >= (mark.minEnhancementLevel ?? 0) &&
+                enhancementLevel <= (mark.maxEnhancementLevel ?? 0)
+        );
+    }
+
+    /**
+     * Whether an item is Locked at a given enhancement level.
+     *
+     * A Locked item cannot be sold to the shop or listed on the market — see the
+     * marketplace panel's own "This item is locked and cannot be sold." message. On a
+     * server that has not shipped item marks yet, `characterItemMarks` never arrives and
+     * this always reports false, matching today's behavior exactly.
+     *
+     * @param {string} itemHrid - The item
+     * @param {number} [enhancementLevel] - The enhancement level to check; defaults to 0
+     * @returns {boolean} True if the item is locked at this level
+     */
+    isItemLocked(itemHrid, enhancementLevel = 0) {
+        return this._hasItemMark(itemHrid, 'lock', enhancementLevel);
+    }
+
+    /**
+     * Whether an item is marked Favorite at a given enhancement level.
+     *
+     * @param {string} itemHrid - The item
+     * @param {number} [enhancementLevel] - The enhancement level to check; defaults to 0
+     * @returns {boolean} True if the item is favorited at this level
+     */
+    isItemFavorite(itemHrid, enhancementLevel = 0) {
+        return this._hasItemMark(itemHrid, 'favorite', enhancementLevel);
     }
 
     /**
