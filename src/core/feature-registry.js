@@ -201,33 +201,53 @@ const initializedIn = new Map();
 
 /**
  * Restart a feature the arriving character had already built when a start from a
- * torn-down generation settled on top of it.
+ * torn-down generation settled on top of it, or built while that start's disable
+ * was still running and could clear it.
  *
  * A feature module is a singleton holding both starts' resources, and no disable
  * can tell them apart. So once the arriving character's own start has settled,
  * disable the lot and start it again for them through the tracked path — unless
  * its gate has closed meanwhile, or a teardown since has taken both down.
+ *
+ * The restart's own disable is late work too: should it outlive a teardown and the
+ * next character's start stop waiting on it at `IN_FLIGHT_START_WAIT_MS`, that
+ * instance is repaired by another pass. Each pass needs another teardown to land
+ * mid-disable, so this does not loop on its own.
  * @param {Object} feature - Registry entry
  * @returns {Promise<void>}
  */
 async function restartForArrival(feature) {
+    while (await restartForArrivalOnce(feature)) {
+        // Repeated for the character a teardown during the last pass brought in
+    }
+}
+
+/**
+ * One pass of `restartForArrival`.
+ * @param {Object} feature - Registry entry
+ * @returns {Promise<boolean>} True when its disable outlived a teardown and the newer
+ *   generation's instance was built under it, so the key needs another pass
+ */
+async function restartForArrivalOnce(feature) {
     const { key } = feature;
     // Another late start is already restarting it; that restart's disable covers this one
-    if (lateRestartsInFlight.has(key)) return;
+    if (lateRestartsInFlight.has(key)) return false;
     lateRestartsInFlight.add(key);
     const arrival = teardownGeneration;
     try {
         await waitBounded(keyWorkOf(key));
         // A teardown since has disabled everything; a live stop has disabled it and dropped its key
-        if (teardownGeneration !== arrival || !startedKeys.has(key)) return;
+        if (teardownGeneration !== arrival || !startedKeys.has(key)) return false;
         await trackedDisable(feature);
         // A teardown ran during the disable. One queued but not yet run is safe to start
         // under: it waits for this tracked start before disabling. `liveStartAllowed()` is
         // no guard here — it stays false until the arriving character's re-init returns.
-        if (teardownGeneration !== arrival) return;
+        // But a start for the newer generation that stopped waiting on this disable at the
+        // cap built its instance under it, which the disable may have cleared: repair that.
+        if (teardownGeneration !== arrival) return initializedIn.get(key) === teardownGeneration;
         if (!isGateOpen(feature)) {
             startedKeys.delete(key);
-            return;
+            return false;
         }
         try {
             await trackedInitialize(feature);
@@ -248,6 +268,7 @@ async function restartForArrival(feature) {
     }
     // A stop pass that ran during the restart skipped it as in flight
     if (!isGateOpen(feature)) scheduleLiveStart();
+    return false;
 }
 
 /**
@@ -259,7 +280,8 @@ async function restartForArrival(feature) {
  * key since, its disable runs inside this same held work, so a start of the key
  * queued behind it — the arriving character's re-init, a live start — begins
  * only once the leftovers are gone. If the arriving character's instance is
- * already built, see `restartForArrival`.
+ * already built — or is built while that disable runs, by a start that stopped
+ * waiting on it at `IN_FLIGHT_START_WAIT_MS` — see `restartForArrival`.
  *
  * All of it finishes before the caller resumes. The caller must not resume
  * first: a live start's caller holds the key in `liveStartsInFlight` until it
@@ -285,6 +307,11 @@ async function trackStart(feature, started, generation) {
             return;
         }
         await disableFeature(feature);
+        // Nobody had initialized the key for the current generation when this disable
+        // began. If somebody has now, a start queued behind it stopped waiting at the
+        // cap and built the arriving instance while the disable was suspended, and the
+        // disable may since have cleared it: repair it the same way.
+        restart = initializedIn.get(key) === teardownGeneration;
     })();
     await holdKeyWork(key, work);
     if (restart) await restartForArrival(feature);
