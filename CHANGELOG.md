@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Custom Inventory Tabs work with the game's new inventory tabs (test server first)
+
+- The Toolasha inventory view lays out every item again instead of a single column; it shows the game's All tab while open and puts your own tab choice back when you leave.
+
 ### Audit round: settings switched mid-session start and stop what they should
 
 - Settings replaced all at once (an import, a settings-mirror restore) now start and stop the features they switch; a failed feature's retry no longer restarts one you have since switched off; switching the overlay off takes its tab button down with it; and a character switch waits for a feature still starting before tearing down.
