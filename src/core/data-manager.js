@@ -1228,9 +1228,14 @@ class DataManager {
         if (this._pendingItemMarksUpdate && this._pendingItemMarksUpdate.socket === ownerSocket) {
             const pendingMarks = this._pendingItemMarksUpdate.marks;
             this._pendingItemMarksUpdate = null;
-            const belongsToThisCharacter = pendingMarks.every(
-                (mark) => !mark.characterID || mark.characterID === newCharacterId
-            );
+            // A malformed entry must not throw here: this runs inside the character switch, and a
+            // throw would abort the whole init instead of just dropping an unusable mark list
+            const belongsToThisCharacter =
+                Array.isArray(pendingMarks) &&
+                pendingMarks.every(
+                    (mark) =>
+                        mark && typeof mark === 'object' && (!mark.characterID || mark.characterID === newCharacterId)
+                );
             if (belongsToThisCharacter) {
                 this.characterData.characterItemMarks = pendingMarks;
             }

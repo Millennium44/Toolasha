@@ -1351,6 +1351,42 @@ describe('overlapping character switches', () => {
         expect(dataManager.isItemLocked('/items/wine')).toBe(true);
     });
 
+    test('a malformed entry in a mid-switch mark update does not abort the character switch', async () => {
+        // The stash is applied inside the switch; a null entry used to throw there and fail the
+        // whole init, where before the list was merely stored
+        const { default: dataManager } = await import('./data-manager.js');
+        const socketB = { id: 'socket-b' };
+        await webSocketHandlers.get('init_character_data')(initPayload());
+
+        let releaseFlush;
+        storageMock.flushAll = vi.fn(
+            () =>
+                new Promise((resolve) => {
+                    releaseFlush = resolve;
+                })
+        );
+        const pendingB = webSocketHandlers.get('init_character_data')(
+            initPayload({ character: { id: 'char-2', name: 'Two' } }),
+            { socket: socketB }
+        );
+        await Promise.resolve();
+        webSocketHandlers.get('item_marks_updated')({ characterItemMarks: [null] }, { socket: socketB });
+        const initialized = vi.fn();
+        dataManager.on('character_initialized', initialized);
+
+        releaseFlush();
+        await pendingB;
+        // character_initialized is delivered deferred, not inline
+        await new Promise((resolve) => setTimeout(resolve, 20));
+        dataManager.off('character_initialized', initialized);
+
+        expect(initialized).toHaveBeenCalled();
+
+        expect(dataManager.getCurrentCharacterId()).toBe('char-2');
+        expect(dataManager.isCharacterSwitching).toBe(false);
+        expect(dataManager.isItemLocked('/items/wine')).toBe(false);
+    });
+
     test('a second init waits for the first to finish rather than interleaving with it', async () => {
         vi.useFakeTimers({ toFake: ['Date'] });
         const { default: dataManager } = await import('./data-manager.js');
