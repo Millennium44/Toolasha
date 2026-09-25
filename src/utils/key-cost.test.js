@@ -275,13 +275,17 @@ describe('patient +1 tick', () => {
 });
 
 describe('describeKeyCost', () => {
-    test('prefers crafting when the materials come to less than the market price', () => {
+    test('on the market basis, charges the market price even when crafting is cheaper', () => {
+        // 'ask' is a market-basis mode: the market price is charged full stop,
+        // never compared against the recipe. `craftCost` and `savings` are
+        // still reported so a display can say crafting would have been
+        // cheaper, but `unitCost` is never the craft cost here.
         const cost = describeKeyCost(CHEST_KEY);
 
         expect(cost.buyPrice).toBe(8000);
         expect(cost.craftCost).toBe(5000);
-        expect(cost.cheaper).toBe('craft');
-        expect(cost.unitCost).toBe(5000);
+        expect(cost.cheaper).toBe('buy');
+        expect(cost.unitCost).toBe(8000);
         expect(cost.savings).toBe(3000);
         expect(cost.itemName).toBe('Chimerical Chest Key');
     });
@@ -349,7 +353,7 @@ describe('describeKeyCost', () => {
         expect(cost.unitCost).toBe(4000);
     });
 
-    test('an explicit mode overrides the setting', () => {
+    test('an explicit mode overrides the setting, and stays on the market basis', () => {
         settings.keyPricingMode = 'bid';
 
         const cost = describeKeyCost(CHEST_KEY, { mode: 'ask' });
@@ -357,16 +361,21 @@ describe('describeKeyCost', () => {
         expect(cost.pricingMode).toBe('ask');
         expect(cost.buyPrice).toBe(8000);
         expect(cost.craftCost).toBe(5000);
-        expect(cost.cheaper).toBe('craft');
+        // An explicit `mode` with no `basis` resolves to the market basis (see
+        // `describeKeyCost`'s docstring), so the market price is charged even
+        // though the recipe is cheaper here.
+        expect(cost.cheaper).toBe('buy');
+        expect(cost.unitCost).toBe(8000);
     });
 
-    test('a tie goes to buying, because only crafting also costs time', () => {
+    test('the market basis buys even when the recipe comes to exactly the same gold', () => {
         market.book[CHEST_KEY] = { ask: 5000, bid: 5000 };
 
         const cost = describeKeyCost(CHEST_KEY);
 
         expect(cost.craftCost).toBe(5000);
         expect(cost.cheaper).toBe('buy');
+        expect(cost.unitCost).toBe(5000);
         expect(cost.savings).toBe(0);
     });
 
@@ -382,7 +391,9 @@ describe('describeKeyCosts', () => {
         const costs = describeKeyCosts([CHEST_KEY, ENTRY_KEY, CHEST_KEY, null]);
 
         expect(costs.size).toBe(2);
-        expect(costs.get(CHEST_KEY).cheaper).toBe('craft');
+        // Both are market-basis (default 'ask'): the market price wins for
+        // both, even though crafting the chest key would be cheaper.
+        expect(costs.get(CHEST_KEY).cheaper).toBe('buy');
         expect(costs.get(ENTRY_KEY).cheaper).toBe('buy');
     });
 });
@@ -391,6 +402,16 @@ describe('formatKeyCostNote', () => {
     const plain = { formatNumber: (value) => String(Math.round(value)), formatSeconds: (s) => `${s}s` };
 
     test('names both sides and the one that was used', () => {
+        // Default 'ask' is a market-basis mode, so the market price is used
+        // even though crafting is cheaper here — the note must say so without
+        // claiming the figure charged is the cheaper one.
+        const note = formatKeyCostNote(describeKeyCost(CHEST_KEY), plain);
+
+        expect(note).toBe('craft 5000 (60s) ea vs buy 8000 — using bought, crafting would save 3000 ea');
+    });
+
+    test('says the plain savings when the route used is also the cheaper side', () => {
+        settings.keyPricingMode = 'craft';
         const note = formatKeyCostNote(describeKeyCost(CHEST_KEY), plain);
 
         expect(note).toBe('craft 5000 (60s) ea vs buy 8000 — using crafted, saves 3000 ea');

@@ -263,11 +263,14 @@ export function calculateIncomeBreakdown(lootMap) {
  * Each regular dungeon chest in the loot map represents one entry key consumed,
  * and every chest (regular or refinement) represents one chest key.
  *
- * A key is costed at whichever of buying and crafting it is cheaper — see
- * `src/utils/key-cost.js`. The alternative and the crafting time ride along in
- * the breakdown so the display can show the choice rather than hide it. A key
- * that is neither on the market nor craftable is skipped, as before: an unknown
- * cost is not a zero one, and pretending otherwise would inflate profit.
+ * A key is costed per the key pricing setting — see `describeKeyCost` in
+ * `src/utils/key-cost.js`: a market mode (ask/bid/synced) always charges the
+ * market price, the craft mode always charges the recipe, and either falls
+ * back to the other route only when its own side cannot be priced at all.
+ * The alternative and the crafting time ride along in the breakdown so the
+ * display can show it. A key that is neither on the market nor craftable is
+ * skipped, as before: an unknown cost is not a zero one, and pretending
+ * otherwise would inflate profit.
  *
  * @param {Object} lootMap - totalLootMap from player data
  * @param {number} durationSeconds - Combat duration in seconds (for daily rate)

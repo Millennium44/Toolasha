@@ -1455,10 +1455,24 @@ class ConsumablesPanel {
         // On the craft basis the route was not chosen by the comparison, and
         // saying "cheaper to craft" over a craft that costs more than the
         // market would be the line arguing against the figure beside it.
-        const verdict =
-            plan.costBasis === 'craft' && plan.cheaper === 'craft'
-                ? 'costed as crafted, your key pricing mode'
-                : `cheaper to ${plan.cheaper}`;
+        //
+        // On a market basis (ask/bid/synced) the route is the market price,
+        // full stop — `describeKeyCost` never substitutes a cheaper recipe
+        // there. When the recipe would in fact have been cheaper, say so
+        // without claiming the figure charged is the cheaper one.
+        let verdict;
+        if (plan.costBasis === 'craft' && plan.cheaper === 'craft') {
+            verdict = 'costed as crafted, your key pricing mode';
+        } else if (
+            plan.cheaper === 'buy' &&
+            plan.buyTotal !== null &&
+            plan.craftTotal !== null &&
+            plan.craftTotal < plan.buyTotal
+        ) {
+            verdict = `priced to buy at your key setting — crafting would save ${gold(plan.buyTotal - plan.craftTotal)}`;
+        } else {
+            verdict = `cheaper to ${plan.cheaper}`;
+        }
 
         return this._readinessNote(
             `${formatWithSeparator(plan.shortfall)} short: ${craft} vs ${buy}, both at ${basis} — ` +
