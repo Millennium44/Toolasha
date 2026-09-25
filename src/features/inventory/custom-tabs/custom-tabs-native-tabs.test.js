@@ -49,17 +49,34 @@ const storageMock = vi.hoisted(() => {
     };
 });
 
+/** Callbacks registered with the DOM observer, so a test can play the game rendering a strip */
+const observer = vi.hoisted(() => ({ classHandlers: new Map(), readyHandlers: [] }));
+
 vi.mock('../../../core/config.js', () => ({
     default: {
         getSetting: (key) => game.settings[key] ?? false,
         getSettingValue: (key, fallback = null) => game.settings[key] ?? fallback,
+        onSettingChange: () => () => {},
     },
 }));
 vi.mock('../../../core/storage.js', () => ({ default: storageMock }));
-vi.mock('../../../core/dom-observer.js', () => ({ default: { onClass: () => () => {} } }));
+vi.mock('../../../core/dom-observer.js', () => ({
+    default: {
+        onClass: (name, className, fn) => {
+            observer.classHandlers.set(`${name}:${className}`, fn);
+            return () => observer.classHandlers.delete(`${name}:${className}`);
+        },
+        onReady: (_name, fn) => {
+            observer.readyHandlers.push(fn);
+            return () => {};
+        },
+    },
+}));
 vi.mock('../../../core/data-manager.js', () => ({
     default: {
         getCurrentCharacterId: () => game.charId,
+        on: () => {},
+        off: () => {},
         getInventory: () => game.inventory,
         getInitClientData: () => ({
             itemDetailMap: game.itemDetailMap,
@@ -67,10 +84,18 @@ vi.mock('../../../core/data-manager.js', () => ({
         }),
     },
 }));
-vi.mock('../inventory-sort.js', () => ({ default: { currentMode: 'none' } }));
-vi.mock('../inventory-badge-manager.js', () => ({ default: {} }));
+vi.mock('../inventory-sort.js', () => ({ default: { currentMode: 'none', onModeChange: () => () => {} } }));
+vi.mock('../inventory-badge-manager.js', () => ({
+    default: { currentInventoryElem: {}, renderAllBadges: async () => {} },
+}));
 vi.mock('../../combat/loadout-snapshot.js', () => ({ default: {} }));
-vi.mock('../../../utils/bundle-bridge.js', () => ({ loadoutSnapshot: () => null }));
+vi.mock('../../../utils/bundle-bridge.js', () => ({
+    loadoutSnapshot: () => ({ onUpdate: () => {}, offUpdate: () => {} }),
+}));
+vi.mock('./custom-tabs-data.js', async (importOriginal) => ({
+    ...(await importOriginal()),
+    loadConfig: async () => ({ tabs: [] }),
+}));
 
 const { default: CustomTabsUI, PANEL_CSS } = await import('./custom-tabs-ui.js');
 
@@ -248,6 +273,9 @@ beforeEach(() => {
     storageMock.set.mockClear();
     storageMock.delete.mockClear();
     game.charId = 'char-1';
+    game.settings.inventoryTabs_defaultTab = false;
+    observer.classHandlers.clear();
+    observer.readyHandlers.length = 0;
     rafQueue = [];
     vi.stubGlobal('requestAnimationFrame', (fn) => rafQueue.push(fn));
 });
@@ -434,6 +462,79 @@ describe('native inventory tabs (post-patch DOM)', () => {
         // does not see the class removal, so the scope is asserted directly)
         expect(fixture.inv.className).toBe('Inventory_items__6SXv0');
         expect(document.querySelector('.toolasha-ct-active')).toBeNull();
+    });
+});
+
+describe('a page that starts outside the Toolasha view', () => {
+    /** Play the game rendering its strips: the class watcher fires for each tabs container */
+    function renderStrips() {
+        const handler = observer.classHandlers.get('CustomTabs:TabsComponent_tabsContainer');
+        for (const container of document.querySelectorAll('[class*="TabsComponent_tabsContainer"]')) {
+            handler(container);
+        }
+    }
+
+    test('hands back a choice stored by a reload inside the view once the native strip exists', async () => {
+        // The previous page reloaded with the view open: the game came back on "All" and the
+        // player's tab survives only in storage.
+        storageMock.map.set('toolasha_local_inventoryNativeTab_char-1', 'item_category_loot');
+        const { inventoryPanel } = buildCharacterPanel();
+        const ui = new CustomTabsUI();
+        await ui.initialize();
+        for (const fn of observer.readyHandlers) fn();
+
+        // The inventory strip renders after the character panel's
+        const fixture = buildNewInventory(inventoryPanel, 'inventory_all');
+        renderStrips();
+
+        expect(ui._isActive).toBe(false);
+        await vi.waitFor(() => expect(fixture.selected()).toBe('item_category_loot'));
+        expect(storageMock.map.has('toolasha_local_inventoryNativeTab_char-1')).toBe(false);
+
+        // Consumed once: a later strip render does not read or click again
+        storageMock.get.mockClear();
+        fixture.tabFor('inventory_all').click();
+        renderStrips();
+        await Promise.resolve();
+        expect(storageMock.get).not.toHaveBeenCalled();
+        expect(fixture.selected()).toBe('inventory_all');
+        ui.cleanup();
+    });
+
+    test('leaves a stored choice of another character alone', async () => {
+        storageMock.map.set('toolasha_local_inventoryNativeTab_char-2', 'item_category_loot');
+        const { inventoryPanel } = buildCharacterPanel();
+        const fixture = buildNewInventory(inventoryPanel, 'inventory_all');
+        const ui = new CustomTabsUI();
+        await ui.initialize();
+        for (const fn of observer.readyHandlers) fn();
+        renderStrips();
+        await Promise.resolve();
+        await Promise.resolve();
+
+        expect(fixture.selected()).toBe('inventory_all');
+        expect(storageMock.map.get('toolasha_local_inventoryNativeTab_char-2')).toBe('item_category_loot');
+        ui.cleanup();
+    });
+
+    test('when the view opens first, the stored choice waits for its exit', async () => {
+        game.settings.inventoryTabs_defaultTab = true;
+        storageMock.map.set('toolasha_local_inventoryNativeTab_char-1', 'item_category_loot');
+        const { inventoryPanel } = buildCharacterPanel();
+        const fixture = buildNewInventory(inventoryPanel, 'inventory_all');
+        const ui = new CustomTabsUI();
+        await ui.initialize();
+        for (const fn of observer.readyHandlers) fn();
+        renderStrips();
+        await Promise.resolve();
+
+        expect(ui._isActive).toBe(true);
+        expect(fixture.selected()).toBe('inventory_all');
+        expect(storageMock.map.get('toolasha_local_inventoryNativeTab_char-1')).toBe('item_category_loot');
+
+        ui._deactivatePanel();
+        await vi.waitFor(() => expect(fixture.selected()).toBe('item_category_loot'));
+        ui.cleanup();
     });
 });
 
