@@ -622,6 +622,8 @@ class CollectionFilters {
                 'CollectionFilters-skilling',
                 'SkillActionGrid_skillActionGrid__1tJFk',
                 (node) => {
+                    // Switching badges off with filters or favorites still on keeps this watcher
+                    if (!config.getSetting('collectionFilters_skillingBadges')) return;
                     this._addSkillingBadges(node);
                 }
             );
@@ -1008,6 +1010,14 @@ class CollectionFilters {
         this.collectionsLastUpdated = Date.now();
         storage.set(this._charKey('collectionsUpdatedAt'), this.collectionsLastUpdated, 'collections');
 
+        // Badges alone only need the counts scanned above. The checkboxes, the sort row, the saved
+        // sort order and the remembered "show uncollected" belong to filters and favorites, and
+        // must not rearrange the grid for a player who switched both off.
+        if (!this._filtersEnabled && !this._favoritesEnabled) {
+            this._watchForTiles(panelEl, catsEl, tileCount);
+            return;
+        }
+
         // --- Inject checkboxes ---
         // Remove old Toolasha checkboxes (but not stars, which are inside catsEl)
         panelEl.querySelectorAll('.toolasha-cf').forEach((el) => el.remove());
@@ -1105,6 +1115,16 @@ class CollectionFilters {
         // --- Render favorites section at top ---
         this._renderFavoritesSection(catsEl);
 
+        this._watchForTiles(panelEl, catsEl, tileCount);
+    }
+
+    /**
+     * Rescan once the tiles arrive, when the panel was drawn before them.
+     * @param {HTMLElement} panelEl - The controls bar
+     * @param {HTMLElement} catsEl - The categories element the tiles go in
+     * @param {number} tileCount - How many tiles the pass that called this scanned
+     */
+    _watchForTiles(panelEl, catsEl, tileCount) {
         // --- Watch for tiles being added (tiles load after controls bar) ---
         if (this.catsObserver) {
             this.catsObserver.disconnect();
