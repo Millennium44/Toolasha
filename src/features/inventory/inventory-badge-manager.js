@@ -171,13 +171,9 @@ class InventoryBadgeManager {
     async renderAllBadges() {
         if (!this.currentInventoryElem) return;
 
-        // Cooldown check for renderAllBadges
-        const now = Date.now();
-        const timeSinceLastRender = now - this.lastRenderTime;
-        if (timeSinceLastRender < this.RENDER_COOLDOWN) {
-            return;
-        }
-
+        // Queue a request that lands during an in-flight render before the cooldown can drop it:
+        // the cooldown is measured from that render's start, so a request in its first moments
+        // (e.g. the popper-close refresh after React replaces a tile) would otherwise be lost.
         // Prevent concurrent renders. Checked (and `lastRenderTime` advanced) only
         // once a render is actually about to start: a call that bails here because
         // another render is already running must not consume the cooldown, or a
@@ -188,6 +184,13 @@ class InventoryBadgeManager {
         // measured from a render that never happened.
         if (this.isRendering) {
             this.rerenderRequested = true;
+            return;
+        }
+
+        // Cooldown check for renderAllBadges
+        const now = Date.now();
+        const timeSinceLastRender = now - this.lastRenderTime;
+        if (timeSinceLastRender < this.RENDER_COOLDOWN) {
             return;
         }
 

@@ -172,7 +172,8 @@ describe('renderAllBadges cooldown/concurrency', () => {
 
         // A second request arrives while the first is still pricing. Not dropped: it is recorded
         // instead, and must not itself start a second concurrent pricing pass.
-        inventoryBadgeManager.lastRenderTime = 0; // clear the unrelated cooldown gate for this call
+        // Deliberately inside the cooldown window of the in-flight render: that is exactly when a
+        // popper-close refresh arrives, and the cooldown must not drop it before it is queued
         await inventoryBadgeManager.renderAllBadges();
         expect(inventoryBadgeManager.rerenderRequested).toBe(true);
         expect(calcSpy).toHaveBeenCalledTimes(1);
