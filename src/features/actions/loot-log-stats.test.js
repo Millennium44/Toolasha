@@ -189,6 +189,32 @@ describe('LootLogStats.getModelPrice', () => {
     });
 });
 
+describe('LootLogStats.calculateInputCost', () => {
+    let stats;
+
+    beforeEach(() => {
+        vi.clearAllMocks();
+        stats = new LootLogStats();
+        dataManager.getItemDetails.mockReturnValue({ name: 'Item' });
+        getItemPrices.mockImplementation((hrid) => ({ '/items/basic_charm': { ask: 100, bid: 90 } })[hrid] || null);
+    });
+
+    test('an upgrade item that is also an input bills its upgrade unit on top of the inputs', () => {
+        dataManager.getActionDetails.mockReturnValue({
+            type: '/action_types/crafting',
+            inputItems: [{ itemHrid: '/items/basic_charm', count: 8 }],
+            upgradeItemHrid: '/items/basic_charm',
+        });
+
+        const cost = stats.calculateInputCost('/actions/crafting/advanced_charm', 10);
+        // 8 inputs + 1 upgrade per action, ten actions
+        expect(cost.inputs).toEqual([
+            expect.objectContaining({ hrid: '/items/basic_charm', count: 90, askTotal: 9000, bidTotal: 8100 }),
+        ]);
+        expect(cost.askCost).toBe(9000);
+    });
+});
+
 describe('LootLogStats.buildLuckReading', () => {
     let stats;
 

@@ -705,9 +705,14 @@ class LootLogStats {
             hrid: input.itemHrid,
             count: (input.count || 0) * actionCount,
         }));
+        // One upgrade unit per action on top of the inputs, even when it is the same
+        // item as one of them (every advanced+ charm takes 8 of its lower charm as
+        // input and one more in the upgrade slot)
         const upgradeHrid = actionDetails.upgradeItemHrid;
-        if (upgradeHrid && !consumed.some((c) => c.hrid === upgradeHrid)) {
-            consumed.push({ hrid: upgradeHrid, count: actionCount });
+        if (upgradeHrid) {
+            const line = consumed.find((c) => c.hrid === upgradeHrid);
+            if (line) line.count += actionCount;
+            else consumed.push({ hrid: upgradeHrid, count: actionCount });
         }
 
         let askCost = 0;
