@@ -4295,12 +4295,12 @@ class CombatSimUI {
             ? `<div style="color:#ffb74d; font-size:10px; margin-top:2px;">Every zone ran dry before ` +
               `${plan.targetPoints} points — this is as far as they get.</div>`
             : '';
-        // Total mode plans for the gap but talks in the target the player
-        // actually asked for — "1000 total (+106)", not "106 points".
-        const routeAmount =
-            this._bestiaryPlanMode === 'total'
-                ? `${this._bestiaryPlanTotal || BESTIARY_PLAN_DEFAULT_TOTAL} total (+${plan.totalPoints})`
-                : `${plan.totalPoints} points`;
+        // Total mode talks in totals, not the gap: where the route actually ends (thresholds give
+        // points in steps, so it can pass the target by a few) and what was asked for.
+        const totals = this._bestiaryPlanMode === 'total' ? this._bestiaryTotalGap() : null;
+        const routeAmount = totals
+            ? `${totals.currentTotal + plan.totalPoints} total (+${plan.totalPoints}, ${totals.wanted} wanted)`
+            : `${plan.totalPoints} points`;
         out.innerHTML = `
             ${skippedNote}
             <div style="overflow-x:auto;">
