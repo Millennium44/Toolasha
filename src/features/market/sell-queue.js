@@ -457,6 +457,13 @@ async function addToQueue(itemHrid, itemName) {
             if (era !== generation) return;
         }
 
+        // Locked while the marketplace was opening: the inventory listener that drops newly
+        // locked entries is not installed until just below, so that lock would go unseen.
+        if (dataManager.isItemLocked(itemHrid, QUEUED_ENHANCEMENT_LEVEL)) {
+            queue.length = 0;
+            return;
+        }
+
         cleanupObserver = setupMarketplaceCleanupObserver(handleMarketplaceCleanup, currentTabs);
         setupInventoryListener();
     }
