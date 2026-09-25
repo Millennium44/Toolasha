@@ -316,6 +316,65 @@ describe('the average window reaches the panel too', () => {
     });
 });
 
+describe('between two runs of a repeating dungeon', () => {
+    const finished = { dungeonHrid: '/actions/combat/pirate_cove', totalTime: 300_000 };
+    const between = {
+        dungeonHrid: '/actions/combat/pirate_cove',
+        dungeonName: 'Pirate Cove',
+        tier: 1,
+        pending: true,
+        betweenRuns: true,
+    };
+
+    test('a solo run finishing with the action still queued keeps the panel up, then the next run takes over', async () => {
+        ui.show();
+        // The run just finished is already in history when the completion arrives
+        world.runs = [{ dungeonName: 'Pirate Cove', tier: 1, duration: 300_000, timestamp: new Date().toISOString() }];
+        world.pending = between;
+
+        ui.dungeonUpdateHandler(null, finished);
+        await vi.waitFor(() => expect(text('#mwi-dt-header-last')).toBe('05:00'));
+
+        expect(ui.container.style.display).toBe('block');
+        expect(text('#mwi-dt-dungeon-name')).toBe('Pirate Cove (T1)');
+        expect(text('#mwi-dt-wave-counter')).toBe('next run starting…');
+        expect(text('#mwi-dt-current-time')).toBe('00:00');
+        expect(text('#mwi-dt-header-avg')).toBe('05:00');
+        expect(text('#mwi-dt-header-runs')).toBe('1');
+
+        // The notifyUpdate that follows the completion keeps the same card
+        ui.dungeonUpdateHandler(null, null);
+        expect(ui.container.style.display).toBe('block');
+        expect(text('#mwi-dt-wave-counter')).toBe('next run starting…');
+
+        // Wave 1 of the next run
+        world.pending = null;
+        world.currentRun = run({ currentWave: 1, wavesCompleted: 0, totalElapsed: 0 });
+        ui.dungeonUpdateHandler(world.currentRun);
+        await vi.waitFor(() => expect(text('#mwi-dt-wave-counter')).toBe('Wave 1/65'));
+        expect(ui.container.style.display).toBe('block');
+        expect(text('#mwi-dt-time-label')).toBe('Elapsed:');
+    });
+
+    test('the last run of the action finishing still hides the panel', () => {
+        ui.show();
+        world.pending = null;
+
+        ui.dungeonUpdateHandler(null, finished);
+
+        expect(ui.container.style.display).toBe('none');
+    });
+
+    test('a page-load provisional card is not a reason to stay up after a completion', () => {
+        ui.show();
+        world.pending = { dungeonHrid: '/actions/combat/pirate_cove', dungeonName: 'Pirate Cove', tier: 1 };
+
+        ui.dungeonUpdateHandler(null, finished);
+
+        expect(ui.container.style.display).toBe('none');
+    });
+});
+
 describe('the ROI board redraws on a pricing change made elsewhere', () => {
     let state;
 
