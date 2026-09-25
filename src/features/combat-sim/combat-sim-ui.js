@@ -57,6 +57,7 @@ import {
     zoneBestiaryOutlook,
     resolvePartySize,
     creditsPerKill,
+    totalBestiaryPoints,
 } from '../../utils/bestiary.js';
 import {
     planBestiaryRoute,
@@ -159,13 +160,24 @@ const BESTIARY_PLAN_DEFAULT_HOURS = 24;
 
 /**
  * Which way round the planner is asked its question — a time budget ("what can
- * I earn in a day") or a points target ("how long until twenty more") — and the
- * target itself. Both are remembered for the same reason the hours are: whoever
+ * I earn in a day"), a points target ("how long until twenty more"), or a
+ * total points target ("how long until my total reaches N") — and the target
+ * itself. Both are remembered for the same reason the hours are: whoever
  * plans in points plans in points.
  */
 const BESTIARY_PLAN_MODE_KEY = 'combatSimBestiaryPlanMode';
 const BESTIARY_PLAN_POINTS_KEY = 'combatSimBestiaryPlanPoints';
 const BESTIARY_PLAN_DEFAULT_POINTS = 20;
+
+/**
+ * "Total" mode's own remembered target — a total points figure, not a gap, so
+ * it stays meaningful across characters and sessions the same way the points
+ * target does. The gap fed to the planner is always computed fresh from this
+ * and the Bestiary's current total (see {@link totalBestiaryPoints}), never
+ * stored itself.
+ */
+const BESTIARY_PLAN_TOTAL_KEY = 'combatSimBestiaryPlanTotal';
+const BESTIARY_PLAN_DEFAULT_TOTAL = 1000;
 
 /**
  * How much slower (in percent) a zone may reach its next Bestiary point and
@@ -2016,6 +2028,7 @@ class CombatSimUI {
         this._bestiaryPlanMode = 'hours';
         this._bestiaryPlanHours = BESTIARY_PLAN_DEFAULT_HOURS;
         this._bestiaryPlanPoints = BESTIARY_PLAN_DEFAULT_POINTS;
+        this._bestiaryPlanTotal = BESTIARY_PLAN_DEFAULT_TOTAL;
         this._bestiaryPlanTolerance = BESTIARY_PLAN_DEFAULT_TOLERANCE;
         // What the displayed results were actually run on, so a re-sort keeps
         // saying so and a saved comparison can never be read as a real-loadout run
@@ -3824,9 +3837,13 @@ class CombatSimUI {
             const savedHours = Number(await storage.get(BESTIARY_PLAN_HOURS_KEY, 'settings', null));
             if (savedHours > 0) this._bestiaryPlanHours = savedHours;
             const savedMode = await storage.get(BESTIARY_PLAN_MODE_KEY, 'settings', null);
-            if (savedMode === 'points' || savedMode === 'hours') this._bestiaryPlanMode = savedMode;
+            if (savedMode === 'points' || savedMode === 'hours' || savedMode === 'total') {
+                this._bestiaryPlanMode = savedMode;
+            }
             const savedPoints = Number(await storage.get(BESTIARY_PLAN_POINTS_KEY, 'settings', null));
             if (savedPoints > 0) this._bestiaryPlanPoints = savedPoints;
+            const savedTotal = Number(await storage.get(BESTIARY_PLAN_TOTAL_KEY, 'settings', null));
+            if (savedTotal > 0) this._bestiaryPlanTotal = savedTotal;
             // Unlike hours/points, 0 is a legitimate stored tolerance (the
             // tie-break turned off), so "nothing saved yet" has to be told
             // apart from a saved 0 by checking the raw value, not just the
@@ -3855,6 +3872,11 @@ class CombatSimUI {
                 storage.set(
                     BESTIARY_PLAN_POINTS_KEY,
                     this._bestiaryPlanPoints || BESTIARY_PLAN_DEFAULT_POINTS,
+                    'settings'
+                ),
+                storage.set(
+                    BESTIARY_PLAN_TOTAL_KEY,
+                    this._bestiaryPlanTotal || BESTIARY_PLAN_DEFAULT_TOTAL,
                     'settings'
                 ),
                 storage.set(
@@ -3889,24 +3911,31 @@ class CombatSimUI {
         const box = document.createElement('div');
         box.id = 'mwi-csim-bestiary-plan';
         box.style.cssText = 'margin-top:8px; padding-top:6px; border-top:1px solid #333;';
-        const mode = this._bestiaryPlanMode === 'points' ? 'points' : 'hours';
+        const mode =
+            this._bestiaryPlanMode === 'points' ? 'points' : this._bestiaryPlanMode === 'total' ? 'total' : 'hours';
         const hours = this._bestiaryPlanHours || BESTIARY_PLAN_DEFAULT_HOURS;
         const points = this._bestiaryPlanPoints || BESTIARY_PLAN_DEFAULT_POINTS;
+        const total = this._bestiaryPlanTotal || BESTIARY_PLAN_DEFAULT_TOTAL;
         const tolerance =
             this._bestiaryPlanTolerance >= 0 ? this._bestiaryPlanTolerance : BESTIARY_PLAN_DEFAULT_TOLERANCE;
         const inputStyle =
             'width:56px; background:#1a1a2e; color:#e0e0e0; border:1px solid #444; border-radius:4px; ' +
             'padding:2px 4px; font-size:11px; text-align:center;';
+        const modeLabel = mode === 'points' ? 'Points wanted' : mode === 'total' ? 'Total wanted' : 'Hours';
+        const modeValue = mode === 'points' ? points : mode === 'total' ? total : hours;
+        const modeMin = mode === 'hours' ? '0.1' : '1';
         box.innerHTML = `
             <div style="display:flex; align-items:center; gap:6px; flex-wrap:wrap; font-size:11px;">
                 <span style="color:#ffb74d; font-weight:600;" title="Which zones, in which order, earn the most Bestiary points in the time given: fight wherever the next point lands soonest, then move on. Uses the kills per hour this run simulated and your current defeated counts.">Bestiary plan</span>
-                <select class="toolasha-select" id="mwi-csim-bestiary-plan-mode" title="Hours: what a time budget earns. Points: how long a points target takes, and where." style="background:#1a1a2e; color:#e0e0e0; border:1px solid #444; border-radius:4px; padding:2px 4px; font-size:11px; font-family:inherit; cursor:pointer;">
+                <select class="toolasha-select" id="mwi-csim-bestiary-plan-mode" title="Hours: what a time budget earns. Points: how long a points target takes, and where. Total points: how long until your Bestiary total reaches a number." style="background:#1a1a2e; color:#e0e0e0; border:1px solid #444; border-radius:4px; padding:2px 4px; font-size:11px; font-family:inherit; cursor:pointer;">
                     <option value="hours"${mode === 'hours' ? ' selected' : ''}>Hours</option>
                     <option value="points"${mode === 'points' ? ' selected' : ''}>Points</option>
+                    <option value="total"${mode === 'total' ? ' selected' : ''}>Total points</option>
                 </select>
-                <label style="color:#888; display:flex; align-items:center; gap:4px;"><span id="mwi-csim-bestiary-plan-label">${mode === 'points' ? 'Points wanted' : 'Hours'}</span>
-                    <input id="mwi-csim-bestiary-plan-value" type="number" min="${mode === 'points' ? '1' : '0.1'}" max="100000" step="any" value="${mode === 'points' ? points : hours}" style="${inputStyle}">
+                <label style="color:#888; display:flex; align-items:center; gap:4px;"><span id="mwi-csim-bestiary-plan-label">${modeLabel}</span>
+                    <input id="mwi-csim-bestiary-plan-value" type="number" min="${modeMin}" max="100000" step="any" value="${modeValue}" style="${inputStyle}">
                 </label>
+                <span id="mwi-csim-bestiary-plan-total-note" style="color:#666; font-size:10px; display:${mode === 'total' ? '' : 'none'};"></span>
                 <label style="color:#888; display:flex; align-items:center; gap:4px;" title="When two zones would reach their next Bestiary point within this many percent of each other's pace, the route prefers the one with the higher Score instead of the merely faster one. 0 turns this off and always takes the fastest.">Tolerance %
                     <input id="mwi-csim-bestiary-plan-tolerance" type="number" min="0" max="100" step="1" value="${tolerance}" style="${inputStyle}">
                 </label>
@@ -3932,6 +3961,8 @@ class CombatSimUI {
         const input = box.querySelector('#mwi-csim-bestiary-plan-value');
         const label = box.querySelector('#mwi-csim-bestiary-plan-label');
         const modeSelect = box.querySelector('#mwi-csim-bestiary-plan-mode');
+        const totalNote = box.querySelector('#mwi-csim-bestiary-plan-total-note');
+        this._updateBestiaryTotalNote(totalNote);
         // What the one box means depends on the mode, so the switch banks the
         // value it is leaving before it swaps the field under the cursor
         const readInput = () => {
@@ -3939,6 +3970,9 @@ class CombatSimUI {
             if (this._bestiaryPlanMode === 'points') {
                 this._bestiaryPlanPoints = value > 0 ? value : BESTIARY_PLAN_DEFAULT_POINTS;
                 input.value = String(this._bestiaryPlanPoints);
+            } else if (this._bestiaryPlanMode === 'total') {
+                this._bestiaryPlanTotal = value > 0 ? value : BESTIARY_PLAN_DEFAULT_TOTAL;
+                input.value = String(this._bestiaryPlanTotal);
             } else {
                 this._bestiaryPlanHours = value > 0 ? value : BESTIARY_PLAN_DEFAULT_HOURS;
                 input.value = String(this._bestiaryPlanHours);
@@ -3947,17 +3981,29 @@ class CombatSimUI {
         modeSelect.addEventListener('change', (event) => {
             event.stopPropagation();
             readInput();
-            this._bestiaryPlanMode = modeSelect.value === 'points' ? 'points' : 'hours';
+            this._bestiaryPlanMode =
+                modeSelect.value === 'points' ? 'points' : modeSelect.value === 'total' ? 'total' : 'hours';
             const nowPoints = this._bestiaryPlanMode === 'points';
-            label.textContent = nowPoints ? 'Points wanted' : 'Hours';
-            input.min = nowPoints ? '1' : '0.1';
+            const nowTotal = this._bestiaryPlanMode === 'total';
+            label.textContent = nowPoints ? 'Points wanted' : nowTotal ? 'Total wanted' : 'Hours';
+            input.min = nowPoints || nowTotal ? '1' : '0.1';
             input.value = String(
                 nowPoints
                     ? this._bestiaryPlanPoints || BESTIARY_PLAN_DEFAULT_POINTS
-                    : this._bestiaryPlanHours || BESTIARY_PLAN_DEFAULT_HOURS
+                    : nowTotal
+                      ? this._bestiaryPlanTotal || BESTIARY_PLAN_DEFAULT_TOTAL
+                      : this._bestiaryPlanHours || BESTIARY_PLAN_DEFAULT_HOURS
             );
+            if (totalNote) totalNote.style.display = nowTotal ? '' : 'none';
+            this._updateBestiaryTotalNote(totalNote);
             this._persistBestiaryPlanPrefs();
             if (this._bestiaryPlanActive) this._drawBestiaryPlan();
+        });
+        input.addEventListener('input', () => {
+            if (this._bestiaryPlanMode !== 'total') return;
+            const value = parseFloat(input.value);
+            this._bestiaryPlanTotal = value > 0 ? value : this._bestiaryPlanTotal;
+            this._updateBestiaryTotalNote(totalNote);
         });
         box.querySelector('#mwi-csim-bestiary-plan-dungeons')?.addEventListener('change', (event) => {
             event.stopPropagation();
@@ -4019,18 +4065,76 @@ class CombatSimUI {
     }
 
     /**
+     * "Total" mode's own arithmetic: the Bestiary's current total (over the
+     * same counts the plan uses), the total the player asked for, and the gap
+     * between them that actually gets planned for.
+     *
+     * Null without a loaded Bestiary — there is nothing honest to compute a
+     * current total from yet.
+     *
+     * @returns {{currentTotal: number, wanted: number, gap: number}|null}
+     * @private
+     */
+    _bestiaryTotalGap() {
+        if (!this._bestiaryPlanCounts) return null;
+        const currentTotal = totalBestiaryPoints(this._bestiaryPlanCounts);
+        const wanted = this._bestiaryPlanTotal || BESTIARY_PLAN_DEFAULT_TOTAL;
+        return { currentTotal, wanted, gap: wanted - currentTotal };
+    }
+
+    /**
+     * Keep the small "you have N · need M" note next to the plan's input in
+     * step with the current mode, target and Bestiary total. A no-op outside
+     * total mode or before the Bestiary has loaded, so the note simply stays
+     * blank rather than showing a stale figure.
+     * @param {HTMLElement|null} el
+     * @private
+     */
+    _updateBestiaryTotalNote(el) {
+        if (!el) return;
+        if (this._bestiaryPlanMode !== 'total') {
+            el.textContent = '';
+            return;
+        }
+        const totals = this._bestiaryTotalGap();
+        if (!totals) {
+            el.textContent = '';
+            return;
+        }
+        el.textContent =
+            totals.gap > 0
+                ? `you have ${totals.currentTotal} · need ${totals.gap}`
+                : `you have ${totals.currentTotal} · already at ${totals.currentTotal}`;
+    }
+
+    /**
      * The plan the planner would draw now, or null without the Bestiary.
+     *
+     * In total mode the planner never sees the total itself — only the gap
+     * between it and the Bestiary's current total (see {@link
+     * _bestiaryTotalGap}), computed fresh off the same counts the plan uses.
+     * A gap that is not positive — the total is already reached — has no
+     * route to plan, so this returns null exactly as it does before the
+     * Bestiary has loaded; {@link _drawBestiaryPlan} tells the two apart.
+     *
      * @returns {Object|null}
      * @private
      */
     _currentBestiaryPlan() {
         if (!this._bestiaryPlanCounts || !this._bestiaryPlanZones) return null;
+        let targetPoints = null;
+        if (this._bestiaryPlanMode === 'points') {
+            targetPoints = this._bestiaryPlanPoints || BESTIARY_PLAN_DEFAULT_POINTS;
+        } else if (this._bestiaryPlanMode === 'total') {
+            const totals = this._bestiaryTotalGap();
+            if (!totals || totals.gap <= 0) return null;
+            targetPoints = totals.gap;
+        }
         return planBestiaryRoute({
             zones: this._bestiaryPlanZones,
             counts: this._bestiaryPlanCounts,
             hours: this._bestiaryPlanHours || BESTIARY_PLAN_DEFAULT_HOURS,
-            targetPoints:
-                this._bestiaryPlanMode === 'points' ? this._bestiaryPlanPoints || BESTIARY_PLAN_DEFAULT_POINTS : null,
+            targetPoints,
             tolerancePercent:
                 this._bestiaryPlanTolerance >= 0 ? this._bestiaryPlanTolerance : BESTIARY_PLAN_DEFAULT_TOLERANCE,
         });
@@ -4058,6 +4162,8 @@ class CombatSimUI {
     _drawBestiaryPlan() {
         const out = this.panel?.querySelector('#mwi-csim-bestiary-plan-out');
         const copyBtn = this.panel?.querySelector('#mwi-csim-bestiary-plan-copy');
+        const totalNote = this.panel?.querySelector('#mwi-csim-bestiary-plan-total-note');
+        this._updateBestiaryTotalNote(totalNote);
         if (!out) return;
 
         if (!this._bestiaryPlanCounts) {
@@ -4067,6 +4173,15 @@ class CombatSimUI {
                 'if this does not fill in)</span>';
             if (copyBtn) copyBtn.style.display = 'none';
             return;
+        }
+
+        if (this._bestiaryPlanMode === 'total') {
+            const totals = this._bestiaryTotalGap();
+            if (totals && totals.gap <= 0) {
+                out.innerHTML = `<span style="color:#888; font-size:11px;">already at ${totals.currentTotal}</span>`;
+                if (copyBtn) copyBtn.style.display = 'none';
+                return;
+            }
         }
 
         const plan = this._currentBestiaryPlan();
@@ -4180,6 +4295,12 @@ class CombatSimUI {
             ? `<div style="color:#ffb74d; font-size:10px; margin-top:2px;">Every zone ran dry before ` +
               `${plan.targetPoints} points — this is as far as they get.</div>`
             : '';
+        // Total mode plans for the gap but talks in the target the player
+        // actually asked for — "1000 total (+106)", not "106 points".
+        const routeAmount =
+            this._bestiaryPlanMode === 'total'
+                ? `${this._bestiaryPlanTotal || BESTIARY_PLAN_DEFAULT_TOTAL} total (+${plan.totalPoints})`
+                : `${plan.totalPoints} points`;
         out.innerHTML = `
             ${skippedNote}
             <div style="overflow-x:auto;">
@@ -4189,7 +4310,7 @@ class CombatSimUI {
                 </table>
             </div>
             <div id="mwi-csim-bestiary-plan-footer" style="font-size:11px; color:#888; margin-top:4px;">
-                Route: <span style="color:#4caf50; font-weight:600;">${plan.totalPoints} points</span> in ${formatPlanHours(plan.hoursUsed)} h · ${single}
+                Route: <span style="color:#4caf50; font-weight:600;">${routeAmount}</span> in ${formatPlanHours(plan.hoursUsed)} h · ${single}
             </div>
             ${shortfall}
         `;

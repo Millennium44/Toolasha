@@ -7,6 +7,7 @@ import {
     monsterCreditsPerHour,
     countsByMonster,
     zoneBestiaryOutlook,
+    totalBestiaryPoints,
 } from './bestiary.js';
 
 describe('the game’s point formula', () => {
@@ -29,6 +30,29 @@ describe('the game’s point formula', () => {
         expect(nextPointCount(9)).toBe(10);
         expect(nextPointCount(10)).toBe(100);
         expect(nextPointCount(150)).toBe(1000);
+    });
+});
+
+describe('the Bestiary’s current total', () => {
+    test('sums pointsFromCount over every monster', () => {
+        // 1 (first kill) + 3 (ten) + 6 (hundred) = 10
+        expect(totalBestiaryPoints({ a: 1, b: 10, c: 100 })).toBe(10);
+    });
+
+    test('an unfought monster (no entry, or an explicit 0) contributes nothing', () => {
+        expect(totalBestiaryPoints({ a: 1, b: 0 })).toBe(pointsFromCount(1));
+        expect(totalBestiaryPoints({})).toBe(0);
+        expect(totalBestiaryPoints(null)).toBe(0);
+        expect(totalBestiaryPoints(undefined)).toBe(0);
+    });
+
+    test('matches countsByMonster’s own output, the shape the planner actually feeds it', () => {
+        const counts = countsByMonster([
+            { monsterHrid: '/monsters/fly', count: 1000 },
+            { monsterHrid: '/monsters/rat', count: 9 },
+        ]);
+        // pointsFromCount(1000) = 10, pointsFromCount(9) = 1
+        expect(totalBestiaryPoints(counts)).toBe(11);
     });
 });
 
