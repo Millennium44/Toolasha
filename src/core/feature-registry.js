@@ -103,11 +103,44 @@ async function swallowRejection(promise) {
 }
 
 /**
- * Track `started` in `inFlightStarts` until it settles, then remove it.
- * @param {Promise} started - The `initialize()` call this tracks
+ * Bumped by every `disableAllFeatures()`. A tracked start records it when it
+ * begins; finding it moved when the start settles means a teardown ran while the
+ * start was still in flight — past `IN_FLIGHT_START_WAIT_MS` — so what the start
+ * built belongs to a character that has already been torn down.
+ */
+let teardownGeneration = 0;
+
+/**
+ * Take down what a start built after the teardown it outlived had already run.
+ *
+ * Skipped when the key is back in `startedKeys`: only this generation's own
+ * start (the switch's re-init or a later live start) can have put it there, and
+ * the feature is then running for the arriving character — a disable here would
+ * take that down too.
+ * @param {Object} feature - Registry entry
  * @returns {Promise<void>}
  */
-async function trackInFlightStart(started) {
+async function disableLateStart(feature) {
+    if (startedKeys.has(feature.key)) return;
+    try {
+        const featureInstance = getFeatureInstance(feature.key);
+        if (featureInstance && typeof featureInstance.disable === 'function') {
+            await featureInstance.disable();
+        }
+    } catch (error) {
+        noteDisableFailure(feature, error);
+    }
+}
+
+/**
+ * Track `started` in `inFlightStarts` until it settles, then remove it — and if a
+ * teardown ran in the meantime, disable what it built (see `disableLateStart`).
+ * @param {Object} feature - Registry entry whose `initialize()` this is
+ * @param {Promise} started - The `initialize()` call this tracks
+ * @param {number} generation - `teardownGeneration` when the start began
+ * @returns {Promise<void>}
+ */
+async function trackInFlightStart(feature, started, generation) {
     const settled = swallowRejection(started);
     inFlightStarts.add(settled);
     try {
@@ -115,6 +148,7 @@ async function trackInFlightStart(started) {
     } finally {
         inFlightStarts.delete(settled);
     }
+    if (generation !== teardownGeneration) await disableLateStart(feature);
 }
 
 /**
@@ -123,8 +157,9 @@ async function trackInFlightStart(started) {
  * @returns {Promise<*>} What `initialize()` resolves to; a synchronous throw rejects it
  */
 function trackedInitialize(feature) {
+    const generation = teardownGeneration;
     const started = (async () => feature.initialize())();
-    trackInFlightStart(started);
+    trackInFlightStart(feature, started, generation);
     return started;
 }
 
@@ -505,6 +540,7 @@ async function disableAllFeatures() {
     const cleanupPromises = [];
     disableFailures.clear();
     startedKeys.clear();
+    teardownGeneration++;
     for (const feature of featureRegistry) {
         try {
             const featureInstance = getFeatureInstance(feature.key);
@@ -766,11 +802,20 @@ async function runLiveStarts() {
 
         startedKeys.add(feature.key);
         liveStartsInFlight.add(feature.key);
+        const generation = teardownGeneration;
         try {
             await trackedInitialize(feature);
         } catch (error) {
             console.error(`[Toolasha] Failed to initialize ${feature.name} after a setting change:`, error);
-            failures.push({ key: feature.key, name: feature.name, reason: `Initialization threw: ${error?.message}` });
+            // Not reported once a teardown has outlived it: the recovery routine would
+            // retry it into the arriving character, on top of that character's own start.
+            if (generation === teardownGeneration) {
+                failures.push({
+                    key: feature.key,
+                    name: feature.name,
+                    reason: `Initialization threw: ${error?.message}`,
+                });
+            }
         } finally {
             liveStartsInFlight.delete(feature.key);
         }
@@ -904,10 +949,12 @@ function getFeatureInstance(key) {
  * anybody about.
  *
  * @param {Array<Object>} failedFeatures - Array of failed feature objects
- * @returns {Promise<Array<{key: string, name: string, reason: string}>>} Those still failing
+ * @returns {Promise<Array<{key: string, name: string, reason: string}>>} Those still failing — none
+ *   once a character switch's teardown has run during the retry
  */
 async function retryFailedFeatures(failedFeatures) {
     const stillFailed = [];
+    const generation = teardownGeneration;
 
     for (const failed of failedFeatures) {
         // A switch starting inside this retry's delay (retryFailedFeatures is
@@ -916,7 +963,10 @@ async function retryFailedFeatures(failedFeatures) {
         // out — the same guard initializeFeatures applies.
         // `layerTornDown` covers the settle window after a switch's teardown,
         // where the switching flag has already dropped but the re-init has not run.
-        if (dataManager.getIsCharacterSwitching() || layerTornDown) break;
+        // A teardown that outlived an earlier retry here (see `waitForInFlightStarts`)
+        // ends the list too: it is the departing character's, and the arriving one's
+        // re-init has started — and reported — its own features already.
+        if (dataManager.getIsCharacterSwitching() || layerTornDown || generation !== teardownGeneration) break;
 
         const feature = getFeature(failed.key);
         if (!feature) continue;
@@ -956,7 +1006,8 @@ async function retryFailedFeatures(failedFeatures) {
         if (!isGateOpen(feature)) scheduleLiveStart();
     }
 
-    return stillFailed;
+    // Failures of a character already torn down are nobody's to report
+    return generation === teardownGeneration ? stillFailed : [];
 }
 
 /**
