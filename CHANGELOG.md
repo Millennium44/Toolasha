@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Locked items are never sold (test server first)
+
+- Items you Lock in the game's new Favorite / Lock menu are skipped by the bulk sell assistant and can't be added to the sell queue.
+
 ### Market tax 4% and the new price steps (test server first)
 
 - On the test server, profits and sale values use the new 4% market tax, and suggested prices follow the game's new price steps (5x wider for enhanced items), stepping cleanly past listings still on the old steps. The main server keeps the old rules until it gets the patch.
