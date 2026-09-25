@@ -435,7 +435,13 @@ async function addToQueue(itemHrid, itemName) {
     if (count === 0) return;
 
     const isFirstItem = queue.length === 0;
-    const era = generation;
+    let era = generation;
+    // Whether the lock-filter loop below removed THIS call's own entry, not one a
+    // concurrent add contributed. Only the first-item call ever sets this — a
+    // non-first call never runs that loop — so it decides whether the trailing
+    // navigate below still points at this call's own item or has to fall back to
+    // whatever else survived.
+    let ownEntryRemoved = false;
     queue.push({ itemHrid, itemName });
 
     if (isFirstItem) {
@@ -459,11 +465,36 @@ async function addToQueue(itemHrid, itemName) {
 
         // Locked while the marketplace was opening: the inventory listener that drops newly
         // locked entries is not installed until just below, so that lock would go unseen. The
-        // whole queue is checked — more items can be Shift+RightClicked in during the wait.
+        // whole queue is checked — more items can be Shift+RightClicked in during the wait, and
+        // one of THEM can already have run its own (non-first-item) claimQueue()/injectTabs()/
+        // navigate before this loop runs.
+        let anyRemoved = false;
         for (let i = queue.length - 1; i >= 0; i--) {
-            if (dataManager.isItemLocked(queue[i].itemHrid, QUEUED_ENHANCEMENT_LEVEL)) queue.splice(i, 1);
+            if (dataManager.isItemLocked(queue[i].itemHrid, QUEUED_ENHANCEMENT_LEVEL)) {
+                if (queue[i].itemHrid === itemHrid) ownEntryRemoved = true;
+                queue.splice(i, 1);
+                anyRemoved = true;
+            }
         }
-        if (queue.length === 0) return;
+        if (anyRemoved) {
+            // Fences off a concurrent add's in-flight claim the same way a real
+            // teardown does: claimQueue() (and the check just below) compare their own
+            // captured era against `generation`, so bumping it here makes a claim or a
+            // navigate from one of the entries this loop just pruned land as stale —
+            // it releases instead of resurrecting a stack just decided unsellable. This
+            // call's own work continues, under the new era.
+            generation += 1;
+            era = generation;
+        }
+        if (queue.length === 0) {
+            // Nothing left to hold back for. Reconciles away whatever a concurrent
+            // add already injected before this loop pruned its entry too — injectTabs()
+            // is a full rebuild from the (now empty) queue, so this clears every tab
+            // TAB_OWNER holds rather than leaving one behind with nothing claiming it
+            injectTabs();
+            release(RESERVATION_OWNER);
+            return;
+        }
 
         cleanupObserver = setupMarketplaceCleanupObserver(handleMarketplaceCleanup, currentTabs);
         setupInventoryListener();
@@ -478,7 +509,12 @@ async function addToQueue(itemHrid, itemName) {
         release(RESERVATION_OWNER);
         return;
     }
-    navigateToMarketplace(itemHrid, 0);
+    // This call's own item can have been the one the lock-filter loop just pruned,
+    // while other entries (its own or a concurrent add's) survived — navigating to
+    // it anyway would override whichever surviving entry the player should land on
+    // with an item the game will refuse to sell. queue.length is at least 1 here;
+    // the empty case already returned above.
+    navigateToMarketplace(ownEntryRemoved ? queue[0].itemHrid : itemHrid, 0);
 }
 
 /**

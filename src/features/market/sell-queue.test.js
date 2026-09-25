@@ -20,7 +20,10 @@ const socketState = vi.hoisted(() => ({ handler: null }));
 const switchState = vi.hoisted(() => ({ handlers: new Map() }));
 const dataManagerMock = vi.hoisted(() => ({
     getInitClientData: () => ({
-        itemDetailMap: { '/items/cheese': { name: 'Cheese', isTradable: true } },
+        itemDetailMap: {
+            '/items/cheese': { name: 'Cheese', isTradable: true },
+            '/items/wine': { name: 'Wine', isTradable: true },
+        },
     }),
     // Nothing in the bag by default: addToQueue returns before touching the marketplace
     inventory: [],
@@ -502,6 +505,86 @@ describe('the tab badge and the sold-out check count plain copies only', () => {
 
         expect(document.querySelector('[data-item-hrid="/items/cheese"]')).toBeNull();
         expect(ledger.reserved.filter((claim) => claim.lines?.length)).toHaveLength(0);
+        nav.remove();
+    });
+
+    test('a lock on the first item during the wait does not override navigation to a second item added meanwhile', async () => {
+        const { navigateToMarketplace } = await import('../../utils/marketplace-tabs.js');
+        navigateToMarketplace.mockClear();
+        dataManagerMock.inventory = [
+            { itemHrid: '/items/cheese', itemLocationHrid: '/item_locations/inventory', count: 12 },
+            { itemHrid: '/items/wine', itemLocationHrid: '/item_locations/inventory', count: 6 },
+        ];
+        // Cheese starts the queue and waits for the marketplace to open, same as the
+        // test above. While it waits, Wine is Shift+RightClicked in too (the non-first
+        // path, which claims and navigates for itself immediately) — and it is Cheese,
+        // not Wine, that turns out to be locked once the wait resolves.
+        tabsState.container = null;
+        const nav = document.createElement('div');
+        nav.className = 'NavigationBar_nav__3uuUl';
+        nav.innerHTML = '<svg aria-label="navigationBar.marketplace"></svg>';
+        nav.addEventListener('click', () => {
+            tabsState.container = marketplaceStrip();
+            dataManagerMock.lockedKeys.add('/items/cheese:0');
+            observerState.handler(popper('<a href="/items/wine">Wine</a>'));
+            shiftRightClickInventory();
+        });
+        document.body.appendChild(nav);
+
+        observerState.handler(popper('<a href="/items/cheese">Cheese</a>'));
+        shiftRightClickInventory();
+        await new Promise((resolve) => setTimeout(resolve, 260));
+
+        // Cheese is gone — locked — but Wine survived and kept its tab and claim
+        expect(document.querySelector('[data-item-hrid="/items/cheese"]')).toBeNull();
+        expect(document.querySelector('[data-item-hrid="/items/wine"]')).not.toBeNull();
+        expect(ledger.reserved.at(-1).lines).toEqual([{ itemHrid: '/items/wine', enhancementLevel: 0, count: 6 }]);
+        // Whatever navigated last, it must not be the locked, now-removed Cheese —
+        // overriding Wine's own navigation with the item that got pruned is the bug
+        const lastNav = navigateToMarketplace.mock.calls.at(-1);
+        expect(lastNav?.[0]).toBe('/items/wine');
+        nav.remove();
+    });
+
+    /*
+     * Every entry becomes locked while a concurrent add (Wine, added during Cheese's
+     * marketplace-open wait) has already run its own claimQueue()/injectTabs() for
+     * itself. Hard to pin down exactly where Wine's own in-flight work lands relative
+     * to Cheese's pruning loop — both are real microtask races this harness cannot
+     * fully order — so this asserts the invariant the fix is actually for: nothing is
+     * left reserved or tabbed once the loop decides the whole queue is unsellable,
+     * whatever interleaving actually occurred.
+     */
+    test('every entry locking mid-wait reconciles away a concurrent add too, not just its own', async () => {
+        dataManagerMock.inventory = [
+            { itemHrid: '/items/cheese', itemLocationHrid: '/item_locations/inventory', count: 12 },
+            { itemHrid: '/items/wine', itemLocationHrid: '/item_locations/inventory', count: 6 },
+        ];
+        tabsState.container = null;
+        const nav = document.createElement('div');
+        nav.className = 'NavigationBar_nav__3uuUl';
+        nav.innerHTML = '<svg aria-label="navigationBar.marketplace"></svg>';
+        nav.addEventListener('click', () => {
+            tabsState.container = marketplaceStrip();
+            // Both entries turn out to be locked, not just Cheese's own
+            dataManagerMock.lockedKeys.add('/items/cheese:0');
+            dataManagerMock.lockedKeys.add('/items/wine:0');
+            observerState.handler(popper('<a href="/items/wine">Wine</a>'));
+            shiftRightClickInventory();
+        });
+        document.body.appendChild(nav);
+
+        observerState.handler(popper('<a href="/items/cheese">Cheese</a>'));
+        shiftRightClickInventory();
+        await new Promise((resolve) => setTimeout(resolve, 260));
+
+        // Nothing survives — neither tab is left behind, whichever call injected it
+        expect(document.querySelector('[data-item-hrid="/items/cheese"]')).toBeNull();
+        expect(document.querySelector('[data-item-hrid="/items/wine"]')).toBeNull();
+        // And the reservation is given back — whether Wine's own claim released
+        // itself (its era went stale) or Cheese's reconciliation released it, nothing
+        // is left holding stock out of every crafting plan for something unsellable
+        expect(ledger.released).toContain('sellQueue');
         nav.remove();
     });
 

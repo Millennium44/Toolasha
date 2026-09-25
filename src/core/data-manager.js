@@ -193,6 +193,12 @@ class DataManager {
         // key does not spam the console for the rest of the session.
         this._itemMarksUnknownShapeLogged = false;
 
+        // A characterItemMarks list that arrived from the arriving character's own
+        // socket while a character switch was still clearing/replacing `characterData`
+        // — see the item_marks_updated handler and its use in `_handleInitCharacterData`.
+        // Null means there is nothing waiting to be applied.
+        this._pendingItemMarksUpdate = null;
+
         // Who this character last fought alongside, from `new_battle`'s `players`.
         //
         // `characterData.partyInfo` is only ever what `init_character_data` carried,
@@ -1198,6 +1204,15 @@ class DataManager {
 
         // Process new character data normally
         this.characterData = data;
+        // A mark update from this same character's socket that arrived while the
+        // switch above was still clearing/replacing characterData — see the
+        // item_marks_updated handler — is applied now that characterData is this
+        // character's own object, rather than lost to it never having landed
+        // anywhere durable.
+        if (this._pendingItemMarksUpdate) {
+            this.characterData.characterItemMarks = this._pendingItemMarksUpdate;
+            this._pendingItemMarksUpdate = null;
+        }
         this.characterSkills = data.characterSkills;
         this.characterItems = data.characterItems;
         this._itemIndexById = null; // Rebuilt lazily against the new inventory
@@ -1296,6 +1311,10 @@ class DataManager {
                     // The flag is raised before the teardown; a throw part way
                     // through it would otherwise block feature init for good.
                     this.isCharacterSwitching = false;
+                    // A stash left over from this failed switch belongs to a characterData
+                    // that never landed; applying it to whatever init succeeds next would
+                    // hand that character marks that were never verified as theirs
+                    this._pendingItemMarksUpdate = null;
                 });
             return this._switchChain;
         });
@@ -1799,22 +1818,40 @@ class DataManager {
         // sends `characterItemMarks: []`, not an absent field). Still never throw on an
         // unexpected shape — log once and leave the existing marks in place — in case a
         // future patch changes it.
+        //
+        // `_bindActiveSocket` binds the arriving character's socket synchronously, before
+        // `_handleInitCharacterData` (which can suspend for a while — storage flush,
+        // awaited switch listeners) ever replaces `characterData` with that character's
+        // own init. A mark update from that same (now active) socket can arrive in that
+        // gap, while `characterData` still belongs to (or has just been cleared of) the
+        // DEPARTING character — writing into it there is later thrown away wholesale when
+        // the init snapshot lands, or dropped outright against a still-null characterData,
+        // either way leaving the arriving character on stale lock state until some later
+        // mark update happens to arrive. `isCharacterSwitching` is true for exactly that
+        // window (see `_handleInitCharacterData`), so a message that clears the active-socket
+        // check while it is still true is stashed instead, and applied once that same
+        // handler replaces `characterData` — see the assignment there.
         this.webSocketHook.on('item_marks_updated', (data, context) => {
             if (!this._isFromActiveSocket(context)) return;
-            if (!this.characterData) return;
 
-            if (Array.isArray(data?.characterItemMarks)) {
-                this.characterData.characterItemMarks = data.characterItemMarks;
+            if (!Array.isArray(data?.characterItemMarks)) {
+                if (!this._itemMarksUnknownShapeLogged) {
+                    this._itemMarksUnknownShapeLogged = true;
+                    console.warn(
+                        '[DataManager] item_marks_updated arrived in an unrecognised shape; ignoring it. Payload keys:',
+                        data && typeof data === 'object' ? Object.keys(data) : typeof data
+                    );
+                }
                 return;
             }
 
-            if (!this._itemMarksUnknownShapeLogged) {
-                this._itemMarksUnknownShapeLogged = true;
-                console.warn(
-                    '[DataManager] item_marks_updated arrived in an unrecognised shape; ignoring it. Payload keys:',
-                    data && typeof data === 'object' ? Object.keys(data) : typeof data
-                );
+            if (this.isCharacterSwitching) {
+                this._pendingItemMarksUpdate = data.characterItemMarks;
+                return;
             }
+
+            if (!this.characterData) return;
+            this.characterData.characterItemMarks = data.characterItemMarks;
         });
     }
 
