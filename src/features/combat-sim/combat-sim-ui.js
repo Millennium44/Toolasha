@@ -3309,9 +3309,25 @@ class CombatSimUI {
         if (this._allZonesSortCol) {
             const col = this._allZonesSortCol;
             const asc = this._allZonesSortAsc;
+            // clearsPerDay/failsPerDay/avgClearTime are null on a non-dungeon
+            // row (nothing to measure), not zero — a real dungeon can
+            // legitimately read 0 (no clears yet). Coercing null to 0 put
+            // every non-dungeon row ahead of the slowest real dungeon on an
+            // ascending sort; missing values now sort after every measured
+            // one regardless of sort direction, same as the Bestiary column
+            // sends its "no first point" rows last below.
+            const dungeonMetricCols = new Set(['clearsPerDay', 'failsPerDay', 'avgClearTime']);
             rows.sort((a, b) => {
-                const va = a[col] ?? 0;
-                const vb = b[col] ?? 0;
+                const rawA = a[col];
+                const rawB = b[col];
+                if (dungeonMetricCols.has(col)) {
+                    const missingA = rawA === null || rawA === undefined;
+                    const missingB = rawB === null || rawB === undefined;
+                    if (missingA !== missingB) return missingA ? 1 : -1;
+                    if (missingA) return 0;
+                }
+                const va = rawA ?? 0;
+                const vb = rawB ?? 0;
                 if (typeof va === 'string') return asc ? va.localeCompare(vb) : vb.localeCompare(va);
                 if (va !== vb) return asc ? va - vb : vb - va;
                 // Equal Bestiary points — most rows at 0.0 — order by how soon
