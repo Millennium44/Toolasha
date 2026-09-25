@@ -1107,6 +1107,15 @@ class BulkSellAssistant {
      */
     _onConfirmClick() {
         if (this._confirmSent()) return;
+        // A lock landing in the gap between the modal opening and this click is
+        // caught here too — see `_isCurrentLocked` — rather than only refusing the
+        // press: the server would reject the sale either way, and a refusal note
+        // the player has to notice and then press Skip for is a worse outcome than
+        // the run just moving on, the same way an unmarketable item already does.
+        if (this._isCurrentLocked()) {
+            this._skipLockedCurrent();
+            return;
+        }
         const target = this._confirmTarget();
         if (target.why) {
             // Said on the strip rather than swallowed: a button that does
@@ -1306,6 +1315,32 @@ class BulkSellAssistant {
         this._prepareCurrent();
     }
 
+    /**
+     * Whether the current queue entry has been locked since the queue was built.
+     *
+     * The queue-build filter in `_start` is a one-time snapshot of inventory: it
+     * never sees a lock the player sets after pressing Start. `dataManager`'s copy
+     * of `characterItemMarks` does update live, through `item_marks_updated`, so
+     * checking it again — right before the run would otherwise open a sell form or
+     * press Confirm on one — catches a lock that lands mid-run, where a stale queue
+     * entry never would.
+     *
+     * @returns {boolean} True when the item this.current names is now locked
+     */
+    _isCurrentLocked() {
+        if (!this.current) return false;
+        return dataManager.isItemLocked(this.current.itemHrid, this.current.enhancementLevel || 0);
+    }
+
+    /**
+     * Skip the current entry because it was found to be locked, counted the same
+     * way the queue-build filter counts one it finds locked up front.
+     */
+    _skipLockedCurrent() {
+        this.lockedSkipped += this.current?.count || 0;
+        this._skip('locked');
+    }
+
     _prepareCurrent() {
         this._clearTransient();
         if (this.index >= this.queue.length) {
@@ -1318,6 +1353,16 @@ class BulkSellAssistant {
         this.decision = null;
         this.state = 'preparing';
         this._render();
+
+        // Revalidate before doing anything the server could reject: the item this
+        // step named may have been locked after the queue was built (see
+        // `_isCurrentLocked`). Checked before the vendor path too — a vendor sale
+        // never touches the marketplace order book, so nothing else here would
+        // ever catch it.
+        if (this._isCurrentLocked()) {
+            this._skipLockedCurrent();
+            return;
+        }
 
         // Vendor check runs BEFORE any marketplace navigation: the item action
         // menu must be the only thing touching the UI, or the navigation's

@@ -260,6 +260,70 @@ describe('Locked items are never queued', () => {
     });
 });
 
+/**
+ * A lock landing after the queue was already built.
+ *
+ * `_start`'s filter is a one-time snapshot of inventory; a player who locks an
+ * item mid-run needs it checked again — once right before a step would open a
+ * sell form (`_prepareCurrent`), and again right before Confirm would press
+ * the game's own button (`_onConfirmClick`), since the two moments can be
+ * seconds apart with a modal sitting open in between.
+ */
+describe('a lock landing mid-run is caught again, not just at the queue build', () => {
+    afterEach(() => {
+        bulkSell._stop('');
+    });
+
+    test('_prepareCurrent skips a step whose item was locked after the queue was built', () => {
+        bulkSell.queue = [
+            { itemHrid: '/items/cheese', enhancementLevel: 0, count: 18, name: 'Cheese' },
+            { itemHrid: '/items/milk', enhancementLevel: 0, count: 4, name: 'Milk' },
+        ];
+        bulkSell.index = 0;
+        bulkSell.lockedSkipped = 0;
+        game.locked.add('/items/cheese:0');
+
+        bulkSell._prepareCurrent();
+
+        // Counted the same way the queue-build filter counts one it finds locked
+        // up front, and the step is skipped without ever opening a sell form
+        expect(bulkSell.lockedSkipped).toBe(18);
+        expect(bulkSell.bookTimeout).toBeNull();
+        expect(bulkSell.index).toBe(1);
+    });
+
+    test('a step whose item is still unlocked is prepared as usual', () => {
+        bulkSell.queue = [{ itemHrid: '/items/cheese', enhancementLevel: 0, count: 18, name: 'Cheese' }];
+        bulkSell.index = 0;
+        bulkSell.lockedSkipped = 0;
+
+        bulkSell._prepareCurrent();
+
+        expect(bulkSell.lockedSkipped).toBe(0);
+        // The order-book wait was armed — this step went on to the market path
+        expect(bulkSell.bookTimeout).not.toBeNull();
+        expect(bulkSell.index).toBe(0);
+    });
+
+    test('_onConfirmClick skips without pressing the game button when a lock lands in the gap before Confirm', () => {
+        bulkSell.queue = [{ itemHrid: '/items/cheese', enhancementLevel: 0, count: 18, name: 'Cheese' }];
+        bulkSell.index = 0;
+        bulkSell.current = bulkSell.queue[0];
+        bulkSell.lockedSkipped = 0;
+        bulkSell.decision = { insta: true, price: 100, avgPrice: 100, reason: 'queue ok' };
+        bulkSell.state = 'awaiting_confirm';
+        bulkSell._confirmedStep = null;
+
+        game.locked.add('/items/cheese:0');
+        bulkSell._onConfirmClick();
+
+        expect(bulkSell.lockedSkipped).toBe(18);
+        // The step advanced through the skip path, not through a press the
+        // server would have rejected
+        expect(bulkSell.index).toBe(1);
+    });
+});
+
 describe('the watchlist is only offered when it has something in it', () => {
     const optionValues = async () => {
         bulkSell._buildPanel();
