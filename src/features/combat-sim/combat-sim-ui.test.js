@@ -2203,6 +2203,139 @@ describe('the all-zones table', () => {
         });
     });
 
+    describe('dungeon clears, fails and average clear time', () => {
+        const HOUR_NS = 3600 * 1e9;
+        // Zone/tier is not a dungeon by default; a dungeon result carries
+        // isDungeon plus the counters the engine already tracks per run —
+        // see sim-result.js's dungeonsCompleted/dungeonsFailed/
+        // dungeonCleanClearTimeTotal/dungeonCleanClearCount.
+        const dungeonResult = (
+            name,
+            { simHours = 1, completed = 0, failed = 0, cleanTotalNs = 0, cleanCount = 0 }
+        ) => ({
+            zone: { name, difficultyTier: 1, zoneHrid: `/actions/combat/${name}` },
+            simResult: {
+                simulatedTime: HOUR_NS * simHours,
+                encounters: 10,
+                deaths: { player1: 0 },
+                experienceGained: { player1: {} },
+                isDungeon: true,
+                dungeonsCompleted: completed,
+                dungeonsFailed: failed,
+                dungeonCleanClearTimeTotal: cleanTotalNs,
+                dungeonCleanClearCount: cleanCount,
+            },
+            revenue: { netPerHour: 0, revenuePerHour: 0, costPerHour: 0, dropEntries: [] },
+        });
+        const zoneResult = (name) => ({
+            zone: { name, difficultyTier: 1, zoneHrid: `/actions/combat/${name}` },
+            simResult: {
+                simulatedTime: HOUR_NS,
+                encounters: 10,
+                deaths: { player1: 0 },
+                experienceGained: { player1: {} },
+            },
+            revenue: { netPerHour: 0, revenuePerHour: 0, costPerHour: 0, dropEntries: [] },
+        });
+
+        /** The drawn cell for a zone row and column, by header position */
+        function cell(zoneName, colKey) {
+            const headers = [...ui.panel.querySelectorAll('#mwi-csim-results th')].map((th) => th.dataset.col);
+            const index = headers.indexOf(colKey);
+            const rows = [...ui.panel.querySelectorAll('#mwi-csim-results tbody tr')];
+            const row = rows.find((tr) => tr.cells[0].textContent.includes(zoneName));
+            return row?.cells[index];
+        }
+
+        beforeEach(() => {
+            ui.buildPanel();
+        });
+
+        afterEach(() => {
+            ui.destroy();
+        });
+
+        test('a dungeon row shows clears/day, fails/day and the clean average clear time', async () => {
+            // 24 completions and 8 fails over 4 simulated hours → 144/day and
+            // 48/day; 3600 s of clean-pair time over 6 pairs → 600 s average
+            await ui._displayAllZonesResults(
+                [
+                    dungeonResult('[D] Pirate Cove', {
+                        simHours: 4,
+                        completed: 24,
+                        failed: 8,
+                        cleanTotalNs: 600 * 6 * 1e9,
+                        cleanCount: 6,
+                    }),
+                ],
+                4,
+                {}
+            );
+
+            expect(cell('Pirate Cove', 'clearsPerDay').textContent).toBe('144.0');
+            expect(cell('Pirate Cove', 'failsPerDay').textContent).toBe('48.0');
+            expect(cell('Pirate Cove', 'avgClearTime').textContent).toBe('0h 10m 00s');
+        });
+
+        test('a non-dungeon row shows — in all three columns', async () => {
+            await ui._displayAllZonesResults([zoneResult('Fly')], 1, {});
+
+            expect(cell('Fly', 'clearsPerDay').textContent).toBe('—');
+            expect(cell('Fly', 'failsPerDay').textContent).toBe('—');
+            expect(cell('Fly', 'avgClearTime').textContent).toBe('—');
+        });
+
+        test('a dungeon with no clean pair yet (first run still in progress) reads — for the average', async () => {
+            await ui._displayAllZonesResults(
+                [dungeonResult('[D] Sinister Circus', { simHours: 1, completed: 0, failed: 0 })],
+                1,
+                {}
+            );
+
+            expect(cell('Sinister Circus', 'clearsPerDay').textContent).toBe('0.0');
+            expect(cell('Sinister Circus', 'avgClearTime').textContent).toBe('—');
+        });
+
+        test('the CSV export carries the three columns as raw numbers, empty for non-dungeon rows', async () => {
+            const saved = [];
+            ui._wireCsvButton = ((original) => (button, stem, build) => {
+                saved.push({ stem, build });
+                return original.call(ui, button, stem, build);
+            })(ui._wireCsvButton);
+
+            await ui._displayAllZonesResults(
+                [
+                    dungeonResult('[D] Pirate Cove', {
+                        simHours: 4,
+                        completed: 24,
+                        failed: 8,
+                        cleanTotalNs: 600 * 6 * 1e9,
+                        cleanCount: 6,
+                    }),
+                    zoneResult('Fly'),
+                ],
+                4,
+                {}
+            );
+
+            const exported = saved.find((entry) => entry.stem === 'combatsim-all-zones');
+            const { rows, columns } = exported.build();
+            const keys = columns.map((c) => c.key);
+            expect(keys).toEqual(expect.arrayContaining(['clearsPerDay', 'failsPerDay', 'avgClearTime']));
+
+            const dungeonRow = rows.find((r) => r.zone.includes('Pirate Cove'));
+            const zoneRow = rows.find((r) => r.zone === 'Fly');
+            expect(dungeonRow.clearsPerDay).toBeCloseTo(144);
+            expect(dungeonRow.failsPerDay).toBeCloseTo(48);
+            expect(dungeonRow.avgClearTime).toBeCloseTo(600);
+            expect(zoneRow.clearsPerDay).toBeNull();
+            expect(zoneRow.failsPerDay).toBeNull();
+            expect(zoneRow.avgClearTime).toBeNull();
+
+            delete ui._wireCsvButton;
+        });
+    });
+
     describe('the Max-tier Food checkbox', () => {
         beforeEach(() => {
             mocks.store.clear();
