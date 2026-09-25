@@ -22,11 +22,16 @@ vi.mock('../combat-stats/combat-stats-data-collector.js', () => ({
 vi.mock('../combat-stats/combat-stats-calculator.js', () => ({
     calculatePlayerStats: (player, duration) => ({
         name: player.name,
+        isCurrentPlayer: player.isCurrentPlayer,
         income: { bid: player.income ?? 0, ask: player.income ?? 0 },
-        consumableCosts: { bid: 1000, ask: 1000 },
-        keyCosts: { bid: 500, ask: 500 },
+        consumableCosts: { bid: player.consumableCosts ?? 1000, ask: player.consumableCosts ?? 1000 },
+        keyCosts: { bid: player.keyCosts ?? 500, ask: player.keyCosts ?? 500 },
         dailyProfit: { bid: (player.income ?? 0) * 10, ask: 0 },
         lootList: player.lootList || [],
+        incomeItems: player.incomeItems || [],
+        consumableBreakdown: player.consumableBreakdown || [],
+        keyBreakdown: player.keyBreakdown || [],
+        duration,
         // Not part of the real return shape — carried only so a test can see
         // what duration the panel actually asked for
         _duration: duration,
@@ -58,6 +63,7 @@ vi.mock('../combat-stats/combat-session-history.js', () => ({
 
 const { partyLootPanel, buildSessionHistoryRows, SESSION_HISTORY_COLUMNS, buildSummaryText, _partyRuns, _resetView } =
     await import('./party-loot-panel.js');
+const { formatKMB } = await import('../../utils/formatters.js');
 
 const CHEST = { itemHrid: '/items/enchanted_chest', itemName: 'Enchanted Chest', count: 2, totalValue: 7_400_000 };
 const ODDITY = { itemHrid: '/items/nothing', itemName: 'Unpriced Thing', count: 1, totalValue: 0 };
@@ -425,5 +431,166 @@ describe('the plain-text summary', () => {
     test('a player with nothing dropped yet says so rather than showing an empty list', () => {
         const out = buildSummaryText([stats({ lootList: [] })], 'Live Session');
         expect(out).toContain('Nothing dropped yet.');
+    });
+});
+
+describe('the per-character breakdown', () => {
+    // The disclosure control is the name row: a caret plus the name, nothing
+    // else on the page matches that shape
+    const nameHeading = (name) =>
+        [...partyLootPanel.panel.querySelectorAll('div')].find(
+            (el) =>
+                el.children.length === 2 &&
+                /[▸▾]/.test(el.children[0]?.textContent || '') &&
+                el.textContent.includes(name)
+        );
+
+    const ENTRY_KEY = {
+        itemHrid: '/items/pirate_entry_key',
+        itemName: 'Pirate Entry Key',
+        count: 2,
+        pricePerItem: 100_000,
+        totalCost: 200_000,
+        keyCost: { cheaper: 'buy' },
+    };
+    const CHEST_KEY = {
+        itemHrid: '/items/pirate_chest_key',
+        itemName: 'Pirate Chest Key',
+        count: 3,
+        pricePerItem: 50_000,
+        totalCost: 150_000,
+        keyCost: { cheaper: 'craft' },
+    };
+
+    beforeEach(() => {
+        game.data.players[1] = {
+            ...game.data.players[1],
+            income: 10_000_000,
+            consumableCosts: 2_000_000,
+            keyCosts: 350_000,
+            lootList: [CHEST],
+            incomeItems: [
+                {
+                    itemHrid: CHEST.itemHrid,
+                    itemName: 'Enchanted Chest',
+                    count: 2,
+                    isOpenable: true,
+                    unitValue: { bid: 3_700_000 },
+                    totalValue: { bid: 7_400_000 },
+                },
+                {
+                    itemHrid: '/items/coin',
+                    itemName: 'Coin',
+                    count: 2_600_000,
+                    isOpenable: false,
+                    unitValue: { bid: 1 },
+                    totalValue: { bid: 2_600_000 },
+                },
+            ],
+            consumableBreakdown: [
+                {
+                    itemHrid: '/items/coffee',
+                    itemName: 'Coffee',
+                    count: 20,
+                    pricePerItem: 100_000,
+                    totalCost: 2_000_000,
+                },
+            ],
+            keyBreakdown: [ENTRY_KEY, CHEST_KEY],
+        };
+    });
+
+    test('the card opens collapsed, with a caret hinting it expands', () => {
+        partyLootPanel.show();
+
+        expect(text()).not.toContain('Income');
+        const heading = nameHeading('Millennium44');
+        expect(heading.textContent).toContain('▸');
+    });
+
+    test('clicking the name expands it into the full breakdown, and clicking again collapses it', () => {
+        partyLootPanel.show();
+
+        nameHeading('Millennium44').click();
+        expect(text()).toContain('Income');
+        expect(text()).toContain('Coffee');
+        expect(text()).toContain('Pirate Entry Key');
+        expect(nameHeading('Millennium44').textContent).toContain('▾');
+
+        nameHeading('Millennium44').click();
+        expect(text()).not.toContain('Coffee');
+        expect(nameHeading('Millennium44').textContent).toContain('▸');
+    });
+
+    test('the summary lines sum exactly to the banked figure the card shows', () => {
+        partyLootPanel.show();
+        nameHeading('Millennium44').click();
+
+        // income 10M, consumables 2M, keys 350k → net 7.65M, matching the card
+        const banked = 10_000_000 - 2_000_000 - 350_000;
+        expect(text()).toContain(formatKMB(10_000_000)); // Loot total
+        expect(text()).toContain(formatKMB(2_000_000)); // Consumables
+        expect(text()).toContain(formatKMB(350_000)); // Keys
+        expect(text()).toContain(formatKMB(banked)); // Net, and the card's own coin line
+        // The card's own coin line is the same figure the summary's Net line is
+        const cardCoinLine = [...partyLootPanel.panel.querySelectorAll('span')].find((el) =>
+            el.textContent.includes(formatKMB(banked))
+        );
+        expect(cardCoinLine).toBeTruthy();
+    });
+
+    test('keys are split entry vs chest, each labelled crafted or market', () => {
+        partyLootPanel.show();
+        nameHeading('Millennium44').click();
+
+        expect(text()).toContain('Pirate Entry Key (market)');
+        expect(text()).toContain('Pirate Chest Key (crafted)');
+    });
+
+    test('a party member (not the current player) is labelled as an estimate', () => {
+        game.data.players[0] = {
+            ...game.data.players[0],
+            income: 1_000_000,
+            consumableCosts: 100_000,
+            keyCosts: 0,
+            consumableBreakdown: [
+                { itemHrid: '/items/tea', itemName: 'Tea', count: 5, pricePerItem: 20_000, totalCost: 100_000 },
+            ],
+        };
+        partyLootPanel.show();
+
+        nameHeading('Briggsy99').click();
+        expect(text()).toContain('Consumables (estimated)');
+    });
+
+    test('the current player is not labelled as an estimate', () => {
+        partyLootPanel.show();
+        nameHeading('Millennium44').click();
+
+        expect(text()).toContain('Consumables');
+        expect(text()).not.toContain('Consumables (estimated)');
+    });
+
+    test('expanded state survives a redraw of the live session', () => {
+        partyLootPanel.show();
+        nameHeading('Millennium44').click();
+        expect(text()).toContain('Income');
+
+        // A refresh rebuilds the whole body; the click must not have been forgotten
+        partyLootPanel.render();
+
+        expect(text()).toContain('Income');
+        expect(nameHeading('Millennium44').textContent).toContain('▾');
+    });
+
+    test('an unpriced consumable is shown as unpriced rather than free', () => {
+        game.data.players[1].consumableBreakdown = [
+            { itemHrid: '/items/mystery_tea', itemName: 'Mystery Tea', count: 4, pricePerItem: null, totalCost: 0 },
+        ];
+        partyLootPanel.show();
+        nameHeading('Millennium44').click();
+
+        expect(text()).toContain('Mystery Tea');
+        expect(text()).toContain('—');
     });
 });

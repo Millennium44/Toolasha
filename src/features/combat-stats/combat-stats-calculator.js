@@ -69,6 +69,59 @@ export function describeLuckAdjustment(adjustment) {
 }
 
 /**
+ * What one loot entry is worth, both sides of the book.
+ *
+ * The one place this pricing rule is written. `calculateIncome` sums it and
+ * `calculateIncomeItems` lists it per item, so the total shown on a card and
+ * the rows an expanded breakdown adds up can never disagree about what a
+ * single drop was worth — they read the same number.
+ *
+ * @param {Object} loot - One entry from a lootMap (`{itemHrid, count}`)
+ * @returns {{ask: number, bid: number}}
+ */
+function valueOfLoot(loot) {
+    const itemCount = loot.count;
+
+    // Coins are revenue at face value (1 coin = 1 gold)
+    if (loot.itemHrid === '/items/coin') {
+        return { ask: itemCount, bid: itemCount };
+    }
+
+    const itemDetails = dataManager.getItemDetails(loot.itemHrid);
+    if (itemDetails?.isOpenable) {
+        // Openable containers (chests, crates, etc.): use expected value
+        const ev =
+            expectedValueCalculator.getCachedValue(loot.itemHrid) ||
+            expectedValueCalculator.calculateSingleContainer(loot.itemHrid);
+        if (ev === null || ev <= 0) return { ask: 0, bid: 0 };
+
+        // A dungeon chest may be worth what *this player* measures it at
+        // rather than what the table promises — see `chestLuckAdjustment`;
+        // null means no adjustment
+        const adjustment = chestLuckAdjustment(loot.itemHrid);
+        const adjustedEv = adjustment ? ev * adjustment.ratio : ev;
+        return { ask: adjustedEv * itemCount, bid: adjustedEv * itemCount };
+    }
+
+    // Other items: market price, or an Iron Cow character's own valuation
+    const ironCow = ironCowBook(loot.itemHrid);
+    const prices = ironCow ?? marketAPI.getPrice(loot.itemHrid);
+    if (!prices) return { ask: 0, bid: 0 };
+
+    // Drops are sold on the market, so the sale tax comes off what they fetch
+    // when the reader has asked for net income. Coin is handled above (face
+    // value, never sold); containers use an expected value that is already
+    // net of the tax. A vendor or coinify value is not a market sale and is
+    // untaxed — and neither is a plain market price on an Iron Cow character,
+    // which has no market access to realize it through either.
+    const mult =
+        !ironCow && !isIronCowCharacter() && salesTaxNetted()
+            ? 1 - (loot.itemHrid === COWBELL_BAG_HRID ? COWBELL_BAG_TAX : MARKET_TAX)
+            : 1;
+    return { ask: prices.ask * itemCount * mult, bid: prices.bid * itemCount * mult };
+}
+
+/**
  * Calculate total income from loot
  * @param {Object} lootMap - totalLootMap from player data
  * @returns {Object} { ask: number, bid: number }
@@ -82,52 +135,49 @@ export function calculateIncome(lootMap) {
     }
 
     for (const loot of Object.values(lootMap)) {
-        const itemCount = loot.count;
-
-        // Coins are revenue at face value (1 coin = 1 gold)
-        if (loot.itemHrid === '/items/coin') {
-            totalAsk += itemCount;
-            totalBid += itemCount;
-        } else {
-            const itemDetails = dataManager.getItemDetails(loot.itemHrid);
-            if (itemDetails?.isOpenable) {
-                // Openable containers (chests, crates, etc.): use expected value
-                const ev =
-                    expectedValueCalculator.getCachedValue(loot.itemHrid) ||
-                    expectedValueCalculator.calculateSingleContainer(loot.itemHrid);
-                if (ev !== null && ev > 0) {
-                    // A dungeon chest may be worth what *this player* measures
-                    // it at rather than what the table promises — see
-                    // `chestLuckAdjustment`; null means no adjustment
-                    const adjustment = chestLuckAdjustment(loot.itemHrid);
-                    const adjustedEv = adjustment ? ev * adjustment.ratio : ev;
-                    totalAsk += adjustedEv * itemCount;
-                    totalBid += adjustedEv * itemCount;
-                }
-            } else {
-                // Other items: market price, or an Iron Cow character's own valuation
-                const ironCow = ironCowBook(loot.itemHrid);
-                const prices = ironCow ?? marketAPI.getPrice(loot.itemHrid);
-                if (prices) {
-                    // Drops are sold on the market, so the sale tax comes off
-                    // what they fetch when the reader has asked for net income.
-                    // Coin is handled above (face value, never sold); containers
-                    // use an expected value that is already net of the tax. A
-                    // vendor or coinify value is not a market sale and is untaxed —
-                    // and neither is a plain market price on an Iron Cow character,
-                    // which has no market access to realize it through either.
-                    const mult =
-                        !ironCow && !isIronCowCharacter() && salesTaxNetted()
-                            ? 1 - (loot.itemHrid === COWBELL_BAG_HRID ? COWBELL_BAG_TAX : MARKET_TAX)
-                            : 1;
-                    totalAsk += prices.ask * itemCount * mult;
-                    totalBid += prices.bid * itemCount * mult;
-                }
-            }
-        }
+        const value = valueOfLoot(loot);
+        totalAsk += value.ask;
+        totalBid += value.bid;
     }
 
     return { ask: totalAsk, bid: totalBid };
+}
+
+/**
+ * Every loot entry, what it was and what it is worth, for a full income
+ * breakdown display.
+ *
+ * Each entry's value comes from `valueOfLoot` — the same rule
+ * `calculateIncome` sums — so this list always totals to `calculateIncome`'s
+ * figures exactly; nothing here invents a second pricing mode for display.
+ * Sorted by bid value descending, so the biggest contributor to a run's
+ * income reads first.
+ *
+ * @param {Object} lootMap - totalLootMap from player data
+ * @returns {Array<Object>} `{itemHrid, itemName, count, isOpenable,
+ *   unitValue: {ask, bid}, totalValue: {ask, bid}}`
+ */
+export function calculateIncomeItems(lootMap) {
+    if (!lootMap) return [];
+
+    const items = [];
+    for (const loot of Object.values(lootMap)) {
+        const itemDetails = dataManager.getItemDetails(loot.itemHrid);
+        const totalValue = valueOfLoot(loot);
+        const count = loot.count || 0;
+
+        items.push({
+            itemHrid: loot.itemHrid,
+            itemName: itemDetails?.name || (loot.itemHrid === '/items/coin' ? 'Coin' : loot.itemHrid),
+            count,
+            isOpenable: Boolean(itemDetails?.isOpenable),
+            unitValue: count > 0 ? { ask: totalValue.ask / count, bid: totalValue.bid / count } : { ask: 0, bid: 0 },
+            totalValue,
+        });
+    }
+
+    items.sort((a, b) => b.totalValue.bid - a.totalValue.bid || a.itemName.localeCompare(b.itemName));
+    return items;
 }
 
 /**
@@ -473,6 +523,10 @@ export function calculatePlayerStats(playerData, durationSeconds = null) {
     // Format loot list
     const lootList = formatLootList(playerData.loot);
 
+    // Every drop and coin, with a unit and total value at both prices — the
+    // itemized form of `income` above, for a per-character breakdown display
+    const incomeItems = calculateIncomeItems(playerData.loot);
+
     return {
         name: playerData.name,
         income: {
@@ -499,6 +553,7 @@ export function calculatePlayerStats(playerData, durationSeconds = null) {
         deathCount: playerData.deathCount,
         deathsPerHour,
         lootList,
+        incomeItems,
         incomeBreakdown: incomeBreakdownData.breakdown,
         isDungeonRun: incomeBreakdownData.isDungeonRun,
         chestLuckAdjustments,

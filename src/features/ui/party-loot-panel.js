@@ -34,9 +34,15 @@ import { itemIcon, linkToMarketplace, shortDuration, ROW_COLORS, GLYPHS } from '
 import { navigateToMarketplace } from '../../utils/marketplace-tabs.js';
 import { createPanel, panelCard, panelNote } from '../../utils/simple-panel.js';
 import { toCsv, csvFilename, downloadCsv } from '../../utils/csv-export.js';
+import { DUNGEON_CHEST_ENTRY_KEYS, DUNGEON_CHEST_CHEST_KEYS } from '../../utils/dungeon-keys.js';
 import combatStatsDataCollector from '../combat-stats/combat-stats-data-collector.js';
 import { calculatePlayerStats } from '../combat-stats/combat-stats-calculator.js';
 import { loadSessions, combineSessions, describeSession } from '../combat-stats/combat-session-history.js';
+
+/** Every entry-key hrid a regular dungeon chest implies, for splitting the Keys section */
+const ENTRY_KEY_HRIDS = new Set(Object.values(DUNGEON_CHEST_ENTRY_KEYS));
+/** Every chest-key hrid a dungeon chest (regular or refinement) implies */
+const CHEST_KEY_HRIDS = new Set(Object.values(DUNGEON_CHEST_CHEST_KEYS));
 
 const ACCENT = '#e0b978';
 
@@ -152,6 +158,16 @@ let viewing = 'live';
 let sessions = [];
 
 /**
+ * Which characters' cards are expanded to their full breakdown, by name.
+ *
+ * Module state for the same reason `viewing` is: a redraw happens every
+ * `refreshMs` tick, and a click that expanded a card must still be expanded
+ * after the very next one — collapsing it on its own timer is indistinguishable
+ * from the panel ignoring the click.
+ */
+let expandedNames = new Set();
+
+/**
  * Take a fresh copy of the archive.
  *
  * Async and fire-and-forget, because `draw` is synchronous and a storage read
@@ -244,6 +260,7 @@ export function _partyRuns() {
 export function _resetView() {
     viewing = 'live';
     sessions = [];
+    expandedNames = new Set();
 }
 
 /**
@@ -298,13 +315,241 @@ function lootRow(item) {
 }
 
 /**
+ * One line of the breakdown table: a name, a count, a unit price and a total.
+ *
+ * @param {string} name - Item or key name
+ * @param {string} count - Formatted count
+ * @param {string} unit - Formatted unit price, or '' to leave the column blank
+ * @param {string} total - Formatted total
+ * @param {string} [color] - Ink for the total column
+ * @returns {HTMLElement}
+ */
+function breakdownRow(name, count, unit, total, color = ROW_COLORS.neutral) {
+    const line = document.createElement('div');
+    Object.assign(line.style, {
+        display: 'grid',
+        gridTemplateColumns: 'minmax(0, 1fr) 52px 62px 68px',
+        gap: '6px',
+        fontSize: '11px',
+        padding: '1px 0',
+    });
+
+    const nameEl = document.createElement('span');
+    nameEl.textContent = name;
+    Object.assign(nameEl.style, { overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' });
+
+    const countEl = document.createElement('span');
+    countEl.textContent = count;
+    Object.assign(countEl.style, { textAlign: 'right', whiteSpace: 'nowrap', color: ROW_COLORS.dim });
+
+    const unitEl = document.createElement('span');
+    unitEl.textContent = unit;
+    Object.assign(unitEl.style, { textAlign: 'right', whiteSpace: 'nowrap', color: ROW_COLORS.dim });
+
+    const totalEl = document.createElement('span');
+    totalEl.textContent = total;
+    Object.assign(totalEl.style, { textAlign: 'right', whiteSpace: 'nowrap', color });
+
+    line.append(nameEl, countEl, unitEl, totalEl);
+    return line;
+}
+
+/**
+ * A section heading inside the breakdown: what follows, and why.
+ *
+ * @param {string} text - Section label
+ * @returns {HTMLElement}
+ */
+function breakdownHeading(text) {
+    const heading = document.createElement('div');
+    heading.textContent = text;
+    Object.assign(heading.style, {
+        color: ROW_COLORS.dim,
+        fontWeight: 'bold',
+        fontSize: '10px',
+        textTransform: 'uppercase',
+        letterSpacing: '0.02em',
+        marginTop: '4px',
+    });
+    return heading;
+}
+
+/**
+ * A count, formatted the same way the loot rows already do — compacted past
+ * six digits so a coin count does not blow out the column.
+ *
+ * @param {number} count
+ * @returns {string}
+ */
+function formatCount(count) {
+    return count >= 100000 ? formatKMB(count) : formatWithSeparator(count);
+}
+
+/**
+ * The full income/cost breakdown for one character: every drop, every
+ * consumable, every key, and the summary line that ties them to the banked
+ * figure the card shows.
+ *
+ * Every figure here comes from `calculatePlayerStats` — nothing is
+ * recomputed, so the breakdown can never disagree with the card it expands.
+ *
+ * @param {Object} stats - From `calculatePlayerStats`
+ * @param {number} banked - The exact figure the card's coin line shows
+ * @returns {HTMLElement}
+ */
+function playerBreakdown(stats, banked) {
+    const wrap = document.createElement('div');
+    Object.assign(wrap.style, {
+        marginTop: '2px',
+        marginBottom: '2px',
+        paddingTop: '4px',
+        borderTop: '1px dashed rgba(255, 255, 255, 0.12)',
+        display: 'flex',
+        flexDirection: 'column',
+        gap: '1px',
+    });
+
+    // Income: every drop and coin, at what the card actually counted it as
+    const incomeItems = stats.incomeItems || [];
+    wrap.appendChild(breakdownHeading('Income'));
+    if (incomeItems.length) {
+        if (incomeItems.some((item) => item.isOpenable)) {
+            wrap.appendChild(panelNote('Chests at opening value.'));
+        }
+        for (const item of incomeItems) {
+            wrap.appendChild(
+                breakdownRow(
+                    item.itemName,
+                    formatCount(item.count),
+                    formatKMB(item.unitValue.bid),
+                    formatKMB(item.totalValue.bid),
+                    ROW_COLORS.gold
+                )
+            );
+        }
+    } else {
+        wrap.appendChild(panelNote('Nothing dropped yet.'));
+    }
+
+    // Consumables: what was eaten and drunk to get it. A party member's own
+    // count comes from combat events; everyone else's is read off inventory
+    // snapshots between waves, which is an estimate rather than a count —
+    // see `combat-stats-data-collector.js`'s party tracker.
+    const consumableItems = stats.consumableBreakdown || [];
+    wrap.appendChild(breakdownHeading(stats.isCurrentPlayer ? 'Consumables' : 'Consumables (estimated)'));
+    if (consumableItems.length) {
+        for (const item of consumableItems) {
+            wrap.appendChild(
+                breakdownRow(
+                    item.itemName,
+                    formatCount(item.count),
+                    item.pricePerItem !== null ? formatKMB(item.pricePerItem) : '—',
+                    item.pricePerItem !== null ? formatKMB(item.totalCost) : '—',
+                    ROW_COLORS.bad
+                )
+            );
+        }
+    } else {
+        wrap.appendChild(panelNote('None used.'));
+    }
+
+    // Keys: entry keys (one per regular dungeon chest received) and chest
+    // keys (one per chest, regular or refinement) charged separately, each
+    // priced at whichever of buying and crafting was cheaper
+    const keyItems = stats.keyBreakdown || [];
+    const entryKeys = keyItems.filter((item) => ENTRY_KEY_HRIDS.has(item.itemHrid));
+    const chestKeys = keyItems.filter((item) => CHEST_KEY_HRIDS.has(item.itemHrid));
+    const otherKeys = keyItems.filter(
+        (item) => !ENTRY_KEY_HRIDS.has(item.itemHrid) && !CHEST_KEY_HRIDS.has(item.itemHrid)
+    );
+
+    wrap.appendChild(breakdownHeading('Keys'));
+    if (keyItems.length) {
+        const keyRow = (item) => {
+            const route = item.keyCost?.cheaper === 'craft' ? 'crafted' : 'market';
+            return breakdownRow(
+                `${item.itemName} (${route})`,
+                formatCount(item.count),
+                formatKMB(item.pricePerItem),
+                formatKMB(item.totalCost),
+                ROW_COLORS.bad
+            );
+        };
+        if (entryKeys.length) {
+            for (const item of entryKeys) wrap.appendChild(keyRow(item));
+        }
+        if (chestKeys.length) {
+            for (const item of chestKeys) wrap.appendChild(keyRow(item));
+        }
+        for (const item of otherKeys) wrap.appendChild(keyRow(item));
+    } else {
+        wrap.appendChild(panelNote('None spent.'));
+    }
+
+    // Summary: the same subtraction the card's coin line does, spelled out —
+    // `banked` is that exact figure, not recomputed, so the two can never
+    // read differently
+    wrap.appendChild(breakdownHeading('Summary'));
+    wrap.appendChild(breakdownRow('Loot total', '', '', formatKMB(stats.income.bid), ROW_COLORS.gold));
+    wrap.appendChild(breakdownRow('− Consumables', '', '', formatKMB(stats.consumableCosts?.bid || 0), ROW_COLORS.bad));
+    wrap.appendChild(breakdownRow('− Keys', '', '', formatKMB(stats.keyCosts?.bid || 0), ROW_COLORS.bad));
+    wrap.appendChild(breakdownRow('= Net', '', '', formatKMB(banked), banked >= 0 ? ROW_COLORS.good : ROW_COLORS.bad));
+
+    const rateLine = document.createElement('div');
+    Object.assign(rateLine.style, { fontSize: '11px', color: ROW_COLORS.dim, marginTop: '2px' });
+    const sessionLength = Number.isFinite(stats.duration) && stats.duration > 0 ? shortDuration(stats.duration) : '—';
+    rateLine.textContent = `${formatKMB(Math.round(stats.dailyProfit.bid))}/day over ${sessionLength}`;
+    wrap.appendChild(rateLine);
+
+    return wrap;
+}
+
+/**
  * One character: what they banked, what that is per day, and every drop.
+ *
+ * The name row doubles as a disclosure control — clicking it expands the card
+ * into the full income/cost breakdown `playerBreakdown` builds, and the ▸/▾
+ * glyph says so before the click. Which characters are expanded is kept in
+ * `expandedNames` rather than on the card, so it survives the panel's own
+ * refresh timer redrawing everything underneath it.
  *
  * @param {HTMLElement} body - Where it goes
  * @param {Object} stats - From `calculatePlayerStats`
  */
 function drawPlayer(body, stats) {
-    const card = panelCard(body, stats.name || 'You', stats.isCurrentPlayer ? ROW_COLORS.gold : ACCENT);
+    const accent = stats.isCurrentPlayer ? ROW_COLORS.gold : ACCENT;
+    const card = panelCard(body, null, accent);
+
+    const nameKey = stats.name || 'You';
+    const expanded = expandedNames.has(nameKey);
+
+    const heading = document.createElement('div');
+    Object.assign(heading.style, {
+        display: 'flex',
+        alignItems: 'center',
+        gap: '4px',
+        color: accent,
+        fontWeight: 'bold',
+        marginBottom: '3px',
+        cursor: 'pointer',
+        userSelect: 'none',
+    });
+    heading.title = expanded ? 'Click to collapse.' : 'Click for a full income/cost breakdown.';
+
+    const caret = document.createElement('span');
+    caret.textContent = expanded ? '▾' : '▸';
+    caret.style.fontSize = '9px';
+
+    const label = document.createElement('span');
+    label.textContent = nameKey;
+
+    heading.append(caret, label);
+    heading.addEventListener('click', () => {
+        if (expandedNames.has(nameKey)) expandedNames.delete(nameKey);
+        else expandedNames.add(nameKey);
+        partyLootPanel.render();
+    });
+    card.appendChild(heading);
 
     // Both cost figures are `{ask, bid}` rather than numbers; subtracting the
     // objects gives NaN, which is how this last went wrong on the tile
@@ -344,6 +589,8 @@ function drawPlayer(body, stats) {
             .join(', ')}.`;
     }
     card.appendChild(summary);
+
+    if (expanded) card.appendChild(playerBreakdown(stats, banked));
 
     const items = stats.lootList || [];
     if (!items.length) {
