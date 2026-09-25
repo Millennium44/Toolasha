@@ -209,60 +209,76 @@ function middle(values) {
 /**
  * Restate a dungeon's simulated credit rates at the clear time you actually get.
  *
- * The simulator clears a dungeon at the pace of a party that never hesitates,
- * never re-stocks and never wipes on a wave it should not have; the run history
- * knows what the door really costs. Both agree about what one clear *contains*
- * — the sim's credits per simulated hour divided by its completions per simulated
- * hour is a wave-for-wave inventory of a single clear — so the honest rate is
- * that inventory times the clears per hour your own runs manage.
+ * The simulator clears a dungeon at the pace of a party that never hesitates
+ * and never re-stocks; the run history knows what the door really costs. What
+ * changes between the two is the *pace*, so the honest restatement is a time
+ * stretch: every rate, kills and clears alike, times `simClearSeconds /
+ * yourClearSeconds`. Kills per clear come out exactly as the sim had them.
  *
- * With no runs for the tier, the dungeon's other tiers stand in (a slower tier
- * is a better guide to your party than a simulation of it); with no runs at all,
- * the sim's own clear time, said so in `source`.
+ * The sim's side of that ratio must be the time one clean clear takes
+ * (`dungeonCleanClearTimeTotal / dungeonCleanClearCount`), not simulated hours
+ * over completions. The two agree only for a run that never wiped. For one that
+ * did, hours-per-completion charges every failed attempt to the few clears that
+ * finished, and the old per-clear inventory built on it (credits per hour over
+ * completions per hour) handed every kill from those failed attempts to the
+ * clears as well — a dungeon completed a handful of times a day came out as a
+ * clear worth dozens of bosses, and at your real clear time the plan crossed
+ * thresholds in three hours that the table put a day away.
+ *
+ * Only runs at the same tier set your pace. Another tier's runs are not a
+ * stand-in: a T0 clear is several times faster than a T2 one, and applying it
+ * to T2 inflated every T2 rate by that factor. With no runs at the tier, the
+ * sim's own pace stands, and `source` says so.
  *
  * @param {Object} input
  * @param {Object} input.creditsPerHour - The sim's Bestiary credits per hour by monster
  * @param {number} input.simClearsPerHour - The sim's completions per simulated hour
- * @param {Array<Object>} [input.runs] - Recorded runs for this dungeon, any tier (`{tier, duration|totalTime}`)
+ * @param {number} [input.simClearSeconds] - One clean simulated clear, in seconds. Omitted: `3600 /
+ *   simClearsPerHour`, which is only right for a run that never wiped — a caller whose run did wipe and
+ *   has no clean clear to offer should pass no `runs`, so nothing is rescaled
+ * @param {Array<Object>} [input.runs] - Recorded runs for this dungeon (`{tier, duration|totalTime}`)
  * @param {number|null} [input.tier] - The tier being rescaled
  * @returns {{creditsPerHour: Object, clearsPerHour: number, clearSeconds: number,
- *   source: 'measured'|'measured-all-tiers'|'sim', runs: number}|null} Null when the sim never cleared it
+ *   source: 'measured'|'sim', runs: number}|null} Null when the sim never cleared it
  */
-export function rescaleDungeonRates({ creditsPerHour = {}, simClearsPerHour = 0, runs = [], tier = null } = {}) {
+export function rescaleDungeonRates({
+    creditsPerHour = {},
+    simClearsPerHour = 0,
+    simClearSeconds = null,
+    runs = [],
+    tier = null,
+} = {}) {
     const simClears = Number(simClearsPerHour) || 0;
     if (!(simClears > 0)) return null;
 
-    const perClear = {};
+    const rates = {};
     for (const [hrid, rate] of Object.entries(creditsPerHour || {})) {
         const perHour = Number(rate) || 0;
-        if (!(perHour > 0)) continue;
-        perClear[hrid] = perHour / simClears;
+        if (perHour > 0) rates[hrid] = perHour;
     }
-    if (!Object.keys(perClear).length) return null;
+    if (!Object.keys(rates).length) return null;
+
+    const given = Number(simClearSeconds);
+    const simSeconds = Number.isFinite(given) && given > 0 ? given : 3600 / simClears;
 
     const all = (Array.isArray(runs) ? runs : []).filter(Boolean);
     const sameTier = Number.isInteger(tier) ? all.filter((run) => Number(run.tier) === tier) : [];
     const tierDurations = sameTier.map(runDurationMs).filter((ms) => ms !== null);
-    const allDurations = all.map(runDurationMs).filter((ms) => ms !== null);
 
     let source = 'sim';
     let sampled = 0;
-    let clearSeconds = 3600 / simClears;
+    let clearSeconds = simSeconds;
     if (tierDurations.length) {
         source = 'measured';
         sampled = tierDurations.length;
         clearSeconds = middle(tierDurations) / 1000;
-    } else if (allDurations.length) {
-        source = 'measured-all-tiers';
-        sampled = allDurations.length;
-        clearSeconds = middle(allDurations) / 1000;
     }
     if (!(clearSeconds > 0)) return null;
 
-    const clearsPerHour = 3600 / clearSeconds;
+    const stretch = simSeconds / clearSeconds;
     const scaled = {};
-    for (const [hrid, perOne] of Object.entries(perClear)) scaled[hrid] = perOne * clearsPerHour;
-    return { creditsPerHour: scaled, clearsPerHour, clearSeconds, source, runs: sampled };
+    for (const [hrid, perHour] of Object.entries(rates)) scaled[hrid] = perHour * stretch;
+    return { creditsPerHour: scaled, clearsPerHour: simClears * stretch, clearSeconds, source, runs: sampled };
 }
 
 /**

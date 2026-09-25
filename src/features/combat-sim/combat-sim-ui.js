@@ -740,6 +740,112 @@ export function gearFingerprint(playerDTOs) {
 }
 
 /**
+ * One results-table row as a Bestiary planner zone, at the rates it should be
+ * planned at.
+ *
+ * An ordinary zone is planned at the rates the sim reported. A dungeon is
+ * restated at the clear time your runs at that tier measured (see
+ * `rescaleDungeonRates`), and its "fights" are clears — completions, never the
+ * waves the sim counts as encounters. A dungeon the sim never completed has
+ * kill rates (from the attempts that failed) but no clear rate at all, so it
+ * quotes no clear count rather than quoting its waves as clears.
+ *
+ * @param {Object} row - A results-table row (`_creditsPerHour`, `_creditsPerKill`, `_dungeon`, …)
+ * @param {Array<Object>} [runs] - The dungeon run history, every dungeon
+ * @returns {Object} A `planBestiaryRoute` zone
+ */
+export function bestiaryPlanZoneForRow(row, runs = []) {
+    const partySizeNote = row._partySizeUnknown
+        ? 'party size not recorded — assumed solo, may undercount a party run'
+        : null;
+    const withNote = (zone, extra) => ({ ...zone, note: [zone.note, extra].filter(Boolean).join(' · ') || null });
+    const zone = {
+        zoneHrid: `${row.zoneHrid || row.zone}|T${row.tier}`,
+        name: `${row.zone} T${row.tier}`,
+        creditsPerHour: row._creditsPerHour,
+        // What the planner's fight-count padding converts credits back to
+        // bodies with — see bestiary-plan.js's padSegmentFights. A dungeon's
+        // rescaled rates are struck at this same rate.
+        creditsPerKill: row._creditsPerKill,
+        encountersPerHour: row.encounters,
+        // Only used to break near-ties in bestiary pace — see
+        // planBestiaryRoute's tolerancePercent
+        score: row.score,
+    };
+    if (!row._dungeon) return withNote(zone, partySizeNote);
+
+    const simHours = Number(row._dungeon.simHours) || 0;
+    const completions = Number(row._dungeon.completions) || 0;
+    const failed = Number(row._dungeon.failed) || 0;
+    const cleanSeconds = Number(row._dungeon.cleanClearSeconds);
+    const hasClean = Number.isFinite(cleanSeconds) && cleanSeconds > 0;
+    // A run that wiped and never managed two clears in a row has no clean clear
+    // to set its pace by, and hours-per-completion would charge the wipes to
+    // the clears — so it keeps the sim's own pace rather than guessing one
+    const pacable = hasClean || failed === 0;
+    const scaled = rescaleDungeonRates({
+        creditsPerHour: row._creditsPerHour,
+        simClearsPerHour: simHours > 0 ? completions / simHours : 0,
+        simClearSeconds: hasClean ? cleanSeconds : null,
+        runs: pacable
+            ? (runs || []).filter((run) => run?.dungeonName === row._dungeon.name || run?.dungeonHrid === row.zoneHrid)
+            : [],
+        tier: row.tier,
+    });
+    if (!scaled) {
+        // Waves are not clears: with no completion there is nothing to quote
+        return withNote(
+            {
+                ...zone,
+                encountersPerHour: null,
+                isDungeon: true,
+                note: completions > 0 ? null : 'never cleared in the sim — its kills are from failed runs',
+            },
+            partySizeNote
+        );
+    }
+    return withNote(
+        {
+            ...zone,
+            creditsPerHour: scaled.creditsPerHour,
+            // A dungeon's "fights" are clears, which is also what the plan
+            // table calls them
+            encountersPerHour: scaled.clearsPerHour,
+            isDungeon: true,
+            note:
+                scaled.source === 'measured'
+                    ? `measured (${scaled.runs} run${scaled.runs === 1 ? '' : 's'})`
+                    : 'sim clear time',
+        },
+        partySizeNote
+    );
+}
+
+/**
+ * Restate each row's Bestiary outlook at its planner zone's rates, so the
+ * table's "Bestiary pts/day" and the plan beneath it are one set of numbers.
+ *
+ * `planZones` is `_buildBestiaryPlanZones(rows)`'s answer, one zone per row in
+ * row order; a row with no zone at its index keeps the outlook it was built
+ * with.
+ *
+ * @param {Array<Object>} rows - Results-table rows, mutated
+ * @param {Array<Object>} planZones - One planner zone per row
+ * @param {Object} counts - monsterHrid → Bestiary credits so far
+ */
+export function applyPlanRatesToRows(rows, planZones, counts) {
+    if (!Array.isArray(rows) || !Array.isArray(planZones) || !counts) return;
+    rows.forEach((row, index) => {
+        const zone = planZones[index];
+        if (!zone || !zone.creditsPerHour || zone.zoneHrid !== `${row.zoneHrid || row.zone}|T${row.tier}`) return;
+        const outlook = zoneBestiaryOutlook({ creditsPerHour: zone.creditsPerHour, counts, hours: 24 });
+        row._bestiary = outlook;
+        row.bestiary = outlook.pointsPerDay;
+        row._bestiaryNote = zone.isDungeon ? zone.note || null : null;
+    });
+}
+
+/**
  * The gear currently worn, signed the same way a run signs itself.
  * @returns {Promise<string|null>} Digest, or null when character data is unavailable
  */
@@ -3129,8 +3235,19 @@ class CombatSimUI {
                 // A dungeon row is marked the way the Configure select marks
                 // one, and carries what the planner needs to restate its kill
                 // rates at a real clear time
+                // — the clean clear time, and whether the run ever wiped, are
+                // what `rescaleDungeonRates` needs to stretch the pace honestly
                 const dungeon = sim.isDungeon
-                    ? { completions: sim.dungeonsCompleted || 0, simHours, name: r.zone.name }
+                    ? {
+                          completions: sim.dungeonsCompleted || 0,
+                          failed: sim.dungeonsFailed || 0,
+                          cleanClearSeconds:
+                              sim.dungeonCleanClearCount > 0
+                                  ? sim.dungeonCleanClearTimeTotal / sim.dungeonCleanClearCount / 1e9
+                                  : null,
+                          simHours,
+                          name: r.zone.name,
+                      }
                     : null;
 
                 // Clears/Fails per day and the average clear time, dungeon rows
@@ -3223,6 +3340,19 @@ class CombatSimUI {
         // any sort or column hiding — neither is a property of the current view
         scoreAllZoneRows(rows);
         const best = bestAllZoneRows(rows);
+        // What the route planner works from: the zones (in run order — ties in
+        // the plan go to the earlier one), the counts, and how many zones had
+        // no result to plan with
+        const planZones = await this._buildBestiaryPlanZones(rows);
+        if (!this._isCurrentRun(ownerId, runToken)) return;
+        this._bestiaryPlanZones = planZones;
+        this._bestiaryPlanCounts = bestiaryCounts;
+        // The column and the plan read the same per-monster rates: a dungeon's
+        // are restated at your clear time for the plan, so the column is
+        // restated with them, or the table calls a zone a day away that the
+        // plan clears in an afternoon. One plan zone per row, in row order.
+        if (bestiaryCounts) applyPlanRatesToRows(rows, planZones, bestiaryCounts);
+
         // The Bestiary's own winner: most points in a day, ties to the earlier first point
         const bestBestiary = bestiaryCounts
             ? rows.reduce((top, row) => {
@@ -3235,13 +3365,6 @@ class CombatSimUI {
               }, null)
             : null;
 
-        // What the route planner works from: the zones (in run order — ties in
-        // the plan go to the earlier one), the counts, and how many zones had
-        // no result to plan with
-        const planZones = await this._buildBestiaryPlanZones(rows);
-        if (!this._isCurrentRun(ownerId, runToken)) return;
-        this._bestiaryPlanZones = planZones;
-        this._bestiaryPlanCounts = bestiaryCounts;
         this._bestiaryPlanSkipped = zoneResults.filter((r) => !r || !r.simResult).length;
         this._bestiaryPlanGameData = gameData;
 
@@ -3424,7 +3547,8 @@ class CombatSimUI {
                                         return `${name}: ${m.count} credits, ${m.creditsPerHour.toFixed(1)}/hr → next point at ${m.nextAt} in ${eta} (+${m.pointsGained} in 24h)`;
                                     })
                                     .join('\n');
-                                const cellTitle = `${outlook.pointsGained} points in the first 24 h here.\n${lines}`;
+                                const paceNote = row._bestiaryNote ? `\nDungeon pace: ${row._bestiaryNote}.` : '';
+                                const cellTitle = `${outlook.pointsGained} points in the first 24 h here.${paceNote}\n${lines}`;
                                 style += ' text-align:right; font-variant-numeric:tabular-nums;';
                                 const bestVal = maxVals[col.key];
                                 if (bestVal !== undefined && val === bestVal && val > 0 && rows.length > 1) {
@@ -3607,12 +3731,9 @@ class CombatSimUI {
      * (ties in the plan go to the earlier one), at the kill rates it should be
      * planned at.
      *
-     * An ordinary zone is planned at the rates the sim reported. A dungeon is
-     * not: the sim clears one at a pace nobody sustains, and a route that sent
-     * you there on that promise would be wrong by however much your party
-     * actually hesitates. What the sim is right about is the *contents* of a
-     * clear, so the rates are restated as "one clear's worth of kills, at the
-     * clears an hour your own run history manages" — see `rescaleDungeonRates`.
+     * See {@link bestiaryPlanZoneForRow} for the per-row rules; this only
+     * reads the run history those rules need. The table's Bestiary column is
+     * restated at these same rates (`applyPlanRatesToRows`).
      *
      * @param {Array<Object>} rows - The results table's rows
      * @returns {Promise<Array<Object>>} Planner zones
@@ -3628,60 +3749,7 @@ class CombatSimUI {
             }
         }
 
-        // Not expected to be seen — see `_partySizeUnknown` where the row is
-        // built — but if a run ever reaches the plan without its party size,
-        // this is the plan's existing way of flagging a row as answering for
-        // less than it looks like: the same `note` a dungeon row carries for
-        // "measured" vs. "sim clear time".
-        const partySizeNote = (row) =>
-            row._partySizeUnknown ? 'party size not recorded — assumed solo, may undercount a party run' : null;
-        const withNote = (zone, extra) => ({ ...zone, note: [zone.note, extra].filter(Boolean).join(' · ') || null });
-
-        return rows.map((row) => {
-            const zone = {
-                zoneHrid: `${row.zoneHrid || row.zone}|T${row.tier}`,
-                name: `${row.zone} T${row.tier}`,
-                creditsPerHour: row._creditsPerHour,
-                // What the planner's fight-count padding converts credits
-                // back to bodies with — see bestiary-plan.js's
-                // padSegmentFights. A dungeon's rescaled creditsPerHour below
-                // is still struck at this same rate, so it carries over
-                // unchanged through the object spread.
-                creditsPerKill: row._creditsPerKill,
-                encountersPerHour: row.encounters,
-                // Only used to break near-ties in bestiary pace — see
-                // planBestiaryRoute's tolerancePercent
-                score: row.score,
-            };
-            if (!row._dungeon) return withNote(zone, partySizeNote(row));
-
-            const simHours = Number(row._dungeon.simHours) || 0;
-            const scaled = rescaleDungeonRates({
-                creditsPerHour: row._creditsPerHour,
-                simClearsPerHour: simHours > 0 ? row._dungeon.completions / simHours : 0,
-                runs: runs.filter((run) => run?.dungeonName === row._dungeon.name || run?.dungeonHrid === row.zoneHrid),
-                tier: row.tier,
-            });
-            if (!scaled) return withNote({ ...zone, isDungeon: true }, partySizeNote(row));
-
-            return withNote(
-                {
-                    ...zone,
-                    creditsPerHour: scaled.creditsPerHour,
-                    // A dungeon's "fights" are clears, which is also what the plan
-                    // table calls them
-                    encountersPerHour: scaled.clearsPerHour,
-                    isDungeon: true,
-                    note:
-                        scaled.source === 'measured'
-                            ? `measured (${scaled.runs} run${scaled.runs === 1 ? '' : 's'})`
-                            : scaled.source === 'measured-all-tiers'
-                              ? `measured, all tiers (${scaled.runs} run${scaled.runs === 1 ? '' : 's'})`
-                              : 'sim clear time',
-                },
-                partySizeNote(row)
-            );
-        });
+        return rows.map((row) => bestiaryPlanZoneForRow(row, runs));
     }
 
     /**
@@ -3782,10 +3850,18 @@ class CombatSimUI {
                 </label>
                 <button id="mwi-csim-bestiary-plan-btn" style="background:${ACCENT_BTN_BG}; border:1px solid ${ACCENT_BTN_BORDER}; color:#8ab4f8; border-radius:4px; padding:2px 8px; font-size:11px; cursor:pointer; font-family:inherit;">Plan</button>
                 <button id="mwi-csim-bestiary-plan-copy" style="display:none; background:#1a1a2e; color:#8ab4f8; border:1px solid #333; border-radius:3px; padding:2px 8px; font-size:11px; cursor:pointer; font-family:inherit;">Copy</button>
-                <label style="color:#888; display:flex; align-items:center; gap:4px; cursor:pointer;" title="Simulate every dungeon at T0-T2 as well, and let the plan send you into one. Dungeon rows are marked [D] and are planned at the clear time your own run history measured, not the simulator's. Takes effect on the next All Zones run.">
+                ${
+                    // A run-scope option for an ordinary sweep: it adds every
+                    // dungeon to the next run. A Dungeons run is nothing but
+                    // dungeons already, so there it would be a switch that
+                    // changes nothing — and it never filtered the plan.
+                    this._allZonesMode === 'dungeons'
+                        ? ''
+                        : `<label style="color:#888; display:flex; align-items:center; gap:4px; cursor:pointer;" title="Simulate every dungeon at T0-T2 as well, and let the plan send you into one. Dungeon rows are marked [D] and are planned at the clear time your own runs at that tier measured, where there are any. Takes effect on the next All Zones run.">
                     <input id="mwi-csim-bestiary-plan-dungeons" type="checkbox"${this._includeDungeons ? ' checked' : ''} style="margin:0; cursor:pointer;">
                     Include dungeons
-                </label>
+                </label>`
+                }
             </div>
             <div id="mwi-csim-bestiary-plan-out" style="margin-top:6px;"></div>
         `;
@@ -3821,7 +3897,7 @@ class CombatSimUI {
             this._persistBestiaryPlanPrefs();
             if (this._bestiaryPlanActive) this._drawBestiaryPlan();
         });
-        box.querySelector('#mwi-csim-bestiary-plan-dungeons').addEventListener('change', (event) => {
+        box.querySelector('#mwi-csim-bestiary-plan-dungeons')?.addEventListener('change', (event) => {
             event.stopPropagation();
             this._includeDungeons = event.target.checked;
             this._persistBestiaryPlanPrefs();
