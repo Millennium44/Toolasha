@@ -196,7 +196,14 @@ class DataManager {
         // A characterItemMarks list that arrived from the arriving character's own
         // socket while a character switch was still clearing/replacing `characterData`
         // — see the item_marks_updated handler and its use in `_handleInitCharacterData`.
-        // Null means there is nothing waiting to be applied.
+        // Keyed to the socket it arrived from ({socket, marks}), not just the marks
+        // themselves: during an overlapping A→B→C switch, `activeSocket` is rebound to
+        // C synchronously while B's queued `_handleInitCharacterData` can still be
+        // awaiting its teardown, so a mark update from C can be stashed here while B's
+        // handler is the next one to look at this slot. Keying it lets B recognise the
+        // stash is not its own and leave it alone for C's own handler to consume; a
+        // single unkeyed slot let B eat it, leaving C with stale lock state until
+        // another mark update happened to arrive. Null means there is nothing waiting.
         this._pendingItemMarksUpdate = null;
 
         // Who this character last fought alongside, from `new_battle`'s `players`.
@@ -1052,9 +1059,13 @@ class DataManager {
      * character's data to the older character's arrays.
      * @param {object} data - The init_character_data payload
      * @param {number} arrivedAt - When the message arrived, for rapid-switch detection
+     * @param {Object|null} [ownerSocket] - The socket this init came from, captured
+     *   synchronously by `_bindActiveSocket` before this call was even queued behind
+     *   `_switchChain`. Used to tell whether a stashed `_pendingItemMarksUpdate`
+     *   belongs to THIS call's character rather than a later one queued behind it.
      * @private
      */
-    async _handleInitCharacterData(data, arrivedAt) {
+    async _handleInitCharacterData(data, arrivedAt, ownerSocket = null) {
         // Detect character switch
         const newCharacterId = data.character?.id;
         const newCharacterName = data.character?.name;
@@ -1208,10 +1219,21 @@ class DataManager {
         // switch above was still clearing/replacing characterData — see the
         // item_marks_updated handler — is applied now that characterData is this
         // character's own object, rather than lost to it never having landed
-        // anywhere durable.
-        if (this._pendingItemMarksUpdate) {
-            this.characterData.characterItemMarks = this._pendingItemMarksUpdate;
+        // anywhere durable. Only THIS call's own stash: during an overlapping
+        // A→B→C switch, a stash left behind while B was still suspended can belong
+        // to C, queued right behind it — applying it here would hand B a lock list
+        // that was never verified as theirs, and leave it unclaimed for C's own
+        // handler below. `characterID` on each entry (when present) is a second,
+        // independent check against the same mistake.
+        if (this._pendingItemMarksUpdate && this._pendingItemMarksUpdate.socket === ownerSocket) {
+            const pendingMarks = this._pendingItemMarksUpdate.marks;
             this._pendingItemMarksUpdate = null;
+            const belongsToThisCharacter = pendingMarks.every(
+                (mark) => !mark.characterID || mark.characterID === newCharacterId
+            );
+            if (belongsToThisCharacter) {
+                this.characterData.characterItemMarks = pendingMarks;
+            }
         }
         this.characterSkills = data.characterSkills;
         this.characterItems = data.characterItems;
@@ -1304,8 +1326,9 @@ class DataManager {
             // this is meant to close.
             this._bindActiveSocket(data, context);
 
+            const ownerSocket = context?.socket ?? null;
             this._switchChain = (this._switchChain || Promise.resolve())
-                .then(() => this._handleInitCharacterData(data, arrivedAt))
+                .then(() => this._handleInitCharacterData(data, arrivedAt, ownerSocket))
                 .catch((error) => {
                     console.error('[DataManager] init_character_data handling failed:', error);
                     // The flag is raised before the teardown; a throw part way
@@ -1313,8 +1336,13 @@ class DataManager {
                     this.isCharacterSwitching = false;
                     // A stash left over from this failed switch belongs to a characterData
                     // that never landed; applying it to whatever init succeeds next would
-                    // hand that character marks that were never verified as theirs
-                    this._pendingItemMarksUpdate = null;
+                    // hand that character marks that were never verified as theirs. Only
+                    // drop it here when it is actually this failed call's own stash — one
+                    // belonging to a different (still in-flight, or already-succeeded)
+                    // socket must survive for that socket's own handler to consume.
+                    if (this._pendingItemMarksUpdate?.socket === ownerSocket) {
+                        this._pendingItemMarksUpdate = null;
+                    }
                 });
             return this._switchChain;
         });
@@ -1846,7 +1874,10 @@ class DataManager {
             }
 
             if (this.isCharacterSwitching) {
-                this._pendingItemMarksUpdate = data.characterItemMarks;
+                // Keyed to the socket this arrived from, so the queued handler that
+                // consumes it can tell whether it is its own — see the field comment
+                // and `_handleInitCharacterData`.
+                this._pendingItemMarksUpdate = { socket: context?.socket ?? null, marks: data.characterItemMarks };
                 return;
             }
 
