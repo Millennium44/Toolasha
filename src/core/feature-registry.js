@@ -111,17 +111,43 @@ async function swallowRejection(promise) {
 let teardownGeneration = 0;
 
 /**
- * Take down what a start built after the teardown it outlived had already run.
- *
- * Skipped when the key is back in `startedKeys`: only this generation's own
- * start (the switch's re-init or a later live start) can have put it there, and
- * the feature is then running for the arriving character — a disable here would
- * take that down too.
+ * Settle-only promise of the latest `initialize()` call per key, from any start
+ * path — so a late start can wait out the arriving character's own start of the
+ * same feature before restarting it (see `settleLateStart`).
+ * @type {Map<string, Promise<void>>}
+ */
+const latestStarts = new Map();
+
+/** Keys `settleLateStart` is disabling and restarting, so no live pass or retry touches them meanwhile. */
+const lateRestartsInFlight = new Set();
+
+/**
+ * Whether a live start, a retry or a late-start restart is bringing `key` up right now.
+ * @param {string} key - Feature key
+ * @returns {boolean} True when a live pass or a retry must leave it alone
+ */
+function startInFlight(key) {
+    return liveStartsInFlight.has(key) || lateRestartsInFlight.has(key);
+}
+
+/**
+ * Record `settled` as the latest start of `key` until it settles.
+ * @param {string} key - Feature key
+ * @param {Promise<void>} settled - Never-rejecting settle promise of the start
+ * @returns {Promise<void>}
+ */
+async function recordLatestStart(key, settled) {
+    latestStarts.set(key, settled);
+    await settled;
+    if (latestStarts.get(key) === settled) latestStarts.delete(key);
+}
+
+/**
+ * Call a feature's `disable()`, routing a throw to `noteDisableFailure`.
  * @param {Object} feature - Registry entry
  * @returns {Promise<void>}
  */
-async function disableLateStart(feature) {
-    if (startedKeys.has(feature.key)) return;
+async function disableFeature(feature) {
     try {
         const featureInstance = getFeatureInstance(feature.key);
         if (featureInstance && typeof featureInstance.disable === 'function') {
@@ -133,34 +159,86 @@ async function disableLateStart(feature) {
 }
 
 /**
- * Track `started` in `inFlightStarts` until it settles, then remove it — and if a
- * teardown ran in the meantime, disable what it built (see `disableLateStart`).
- * @param {Object} feature - Registry entry whose `initialize()` this is
- * @param {Promise} started - The `initialize()` call this tracks
- * @param {number} generation - `teardownGeneration` when the start began
+ * Take down what a start built after the teardown it outlived had already run.
+ *
+ * With the key out of `startedKeys`, the arriving character has not started the
+ * feature: disable it. With the key back, the arriving character has started it
+ * too, and a feature module is a singleton holding both starts' resources — no
+ * disable can tell them apart. So once that own start has settled, disable the
+ * lot and start it again for the arriving character through the tracked path,
+ * unless its gate has closed meanwhile, or a teardown since has taken both down.
+ * @param {Object} feature - Registry entry
+ * @param {Promise<void>} ownSettled - The late start's own settle promise
  * @returns {Promise<void>}
  */
-async function trackInFlightStart(feature, started, generation) {
-    const settled = swallowRejection(started);
-    inFlightStarts.add(settled);
-    try {
-        await settled;
-    } finally {
-        inFlightStarts.delete(settled);
+async function settleLateStart(feature, ownSettled) {
+    const { key } = feature;
+    if (!startedKeys.has(key)) {
+        await disableFeature(feature);
+        return;
     }
-    if (generation !== teardownGeneration) await disableLateStart(feature);
+    // Another late start is already restarting it; that restart's disable covers this one
+    if (lateRestartsInFlight.has(key)) return;
+    const arrival = teardownGeneration;
+    const arrivingStart = latestStarts.get(key);
+    if (arrivingStart && arrivingStart !== ownSettled) await arrivingStart;
+    // A teardown since has disabled everything; a live stop has disabled it and dropped its key
+    if (teardownGeneration !== arrival || !startedKeys.has(key) || lateRestartsInFlight.has(key)) return;
+
+    lateRestartsInFlight.add(key);
+    try {
+        await disableFeature(feature);
+        // A teardown ran during the disable. One queued but not yet run is safe to start
+        // under: it waits for this tracked start before disabling. `liveStartAllowed()` is
+        // no guard here — it stays false until the arriving character's re-init returns.
+        if (teardownGeneration !== arrival) return;
+        if (!isGateOpen(feature)) {
+            startedKeys.delete(key);
+            return;
+        }
+        try {
+            await trackedInitialize(feature);
+        } catch (error) {
+            console.error(`[Toolasha] Failed to restart ${feature.name} after a late start:`, error);
+            if (teardownGeneration === arrival && typeof liveStartFailureHandler === 'function') {
+                try {
+                    liveStartFailureHandler([
+                        { key, name: feature.name, reason: `Initialization threw: ${error?.message}` },
+                    ]);
+                } catch (handlerError) {
+                    console.error('[FeatureRegistry] Live start failure handler threw:', handlerError);
+                }
+            }
+        }
+    } finally {
+        lateRestartsInFlight.delete(key);
+    }
+    // A stop pass that ran during the restart skipped it as in flight
+    if (!isGateOpen(feature)) scheduleLiveStart();
 }
 
 /**
- * Call a feature's `initialize()` and track it until it settles.
+ * Call a feature's `initialize()` and track it in `inFlightStarts` until it
+ * settles — and if a teardown ran in the meantime, take down what it built (see
+ * `settleLateStart`) before the caller resumes. The caller must not resume
+ * first: a live start's caller holds the key in `liveStartsInFlight` until it
+ * does and then runs a stop pass, which would disable the feature a second time
+ * alongside `settleLateStart`.
  * @param {Object} feature - Registry entry
  * @returns {Promise<*>} What `initialize()` resolves to; a synchronous throw rejects it
  */
-function trackedInitialize(feature) {
+async function trackedInitialize(feature) {
     const generation = teardownGeneration;
     const started = (async () => feature.initialize())();
-    trackInFlightStart(feature, started, generation);
-    return started;
+    const settled = swallowRejection(started);
+    inFlightStarts.add(settled);
+    recordLatestStart(feature.key, settled);
+    try {
+        return await started;
+    } finally {
+        inFlightStarts.delete(settled);
+        if (generation !== teardownGeneration) await settleLateStart(feature, settled);
+    }
 }
 
 /**
@@ -381,6 +459,7 @@ async function runFeatureInitialization() {
             recordTiming(feature, startedAt, ownMs);
             continue;
         }
+        recordLatestStart(feature.key, swallowRejection(started));
 
         // Attach the handlers now rather than at the end: an initializer that
         // rejects before anything awaits it is an unhandled rejection otherwise.
@@ -798,7 +877,7 @@ async function runLiveStarts() {
             liveStartDeferredBySwitch = true;
             break;
         }
-        if (liveStartsInFlight.has(feature.key) || isFeatureRunning(feature) || !isGateOpen(feature)) continue;
+        if (startInFlight(feature.key) || isFeatureRunning(feature) || !isGateOpen(feature)) continue;
 
         startedKeys.add(feature.key);
         liveStartsInFlight.add(feature.key);
@@ -850,7 +929,7 @@ async function runLiveStops() {
             liveStartDeferredBySwitch = true;
             break;
         }
-        if (liveStartsInFlight.has(feature.key) || !startedKeys.has(feature.key) || isGateOpen(feature)) continue;
+        if (startInFlight(feature.key) || !startedKeys.has(feature.key) || isGateOpen(feature)) continue;
 
         startedKeys.delete(feature.key);
         try {
@@ -973,7 +1052,7 @@ async function retryFailedFeatures(failedFeatures) {
         // Switched off since it failed (a live stop may already have disabled
         // it), or being brought up by a live start: a retry here would leave it
         // running outside `startedKeys`, where no later stop can reach it.
-        if (liveStartsInFlight.has(feature.key) || !isGateOpen(feature)) continue;
+        if (startInFlight(feature.key) || !isGateOpen(feature)) continue;
 
         startedKeys.add(feature.key);
         liveStartsInFlight.add(feature.key);
