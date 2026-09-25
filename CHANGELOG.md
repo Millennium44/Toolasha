@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Deleted chat posts with item links are told apart
+
+- Two posts from one player with the same text but links to different items are now each matched, so deleting one removes it from Toolasha's chat history.
+
 ### Deleted chat messages leave Toolasha too
 
 - A chat message deleted by its author or a moderator is removed from Toolasha's saved chat history, the mention log and the pop-out chat, and one that arrives already deleted is never saved.
