@@ -670,6 +670,8 @@ describe('LootLogStats.renderHistoricalEntries pagination', () => {
         dataManager.getActionDetails.mockReturnValue(undefined);
         getItemPrices.mockReturnValue(undefined);
         stats = new LootLogStats();
+        // Only ever rendered with history on; a render that finds it off is discarded
+        stats.historyEnabled = true;
         stats.currentLootLogData = [];
     });
 

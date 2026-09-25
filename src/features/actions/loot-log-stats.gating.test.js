@@ -190,6 +190,28 @@ describe('LootLogStats: switching either part live', () => {
         expect(lootLogHistory.mergeAndSave).toHaveBeenCalledWith([{ characterActionId: 'a1' }]);
     });
 
+    test('history switched off while a render is reading storage does not put the section back', async () => {
+        on.add('lootLogHistory');
+        await stats.initialize();
+        document.body.innerHTML = '<div class="LootLogPanel_actionLoots__3oTid"></div>';
+        stats.currentLootLogData = [{ characterActionId: 'a1' }];
+        stats.renderHistoricalEntry = () => document.createElement('div');
+        let release;
+        lootLogHistory.getHistoricalEntries.mockImplementationOnce(
+            () =>
+                new Promise((resolve) => {
+                    release = resolve;
+                })
+        );
+
+        const rendering = stats.renderHistoricalEntries();
+        flip('lootLogHistory', false);
+        release([{ characterActionId: 'old1' }]);
+        await rendering;
+
+        expect(document.querySelector('.mwi-loot-log-history')).toBeNull();
+    });
+
     test('history switched off stops persisting and removes the historical section', async () => {
         on.add('lootLogHistory');
         await stats.initialize();
