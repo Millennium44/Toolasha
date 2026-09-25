@@ -589,3 +589,120 @@ describe('the changelog the popup draws', () => {
         whatsNew.close();
     });
 });
+
+describe('the changelog pages when there is more than one screen of it', () => {
+    const base = { headline: 'x', forkChanged: false, newIds: [], turnedOff: new Set(), isNewcomer: false };
+
+    /** `count` whole `###` entries, numbered so a test can name which ones survived. */
+    function manyEntries(count) {
+        const parts = [];
+        for (let i = 1; i <= count; i++) parts.push(`### Entry ${i}\n\nBody text ${i}.`);
+        return `${parts.join('\n\n')}\n`;
+    }
+
+    function nextButton() {
+        return whatsNew.panel.querySelector('.toolasha-whats-new-page-next');
+    }
+    function prevButton() {
+        return whatsNew.panel.querySelector('.toolasha-whats-new-page-prev');
+    }
+    function pageLabel() {
+        return whatsNew.panel.querySelector('.toolasha-whats-new-page-label')?.textContent;
+    }
+
+    test('controls are not offered for thirty entries or fewer', () => {
+        virtualChangelog.text = manyEntries(30);
+        whatsNew._buildPanel(base);
+        expect(nextButton()).toBeNull();
+        expect(prevButton()).toBeNull();
+        expect(whatsNew.panel.textContent).toContain('Entry 30');
+        whatsNew.close();
+    });
+
+    test('sixty-five entries split into three pages of thirty, thirty and five', () => {
+        virtualChangelog.text = manyEntries(65);
+        whatsNew._buildPanel(base);
+
+        expect(pageLabel()).toBe('Page 1 of 3');
+        expect(whatsNew.panel.textContent).toContain('Entry 1');
+        expect(whatsNew.panel.textContent).toContain('Entry 30');
+        expect(whatsNew.panel.textContent).not.toContain('Entry 31');
+
+        nextButton().click();
+        expect(pageLabel()).toBe('Page 2 of 3');
+        expect(whatsNew.panel.textContent).not.toContain('Entry 1\n');
+        expect(whatsNew.panel.textContent).toContain('Entry 31');
+        expect(whatsNew.panel.textContent).toContain('Entry 60');
+        expect(whatsNew.panel.textContent).not.toContain('Entry 61');
+
+        nextButton().click();
+        expect(pageLabel()).toBe('Page 3 of 3');
+        expect(whatsNew.panel.textContent).toContain('Entry 61');
+        expect(whatsNew.panel.textContent).toContain('Entry 65');
+        expect(nextButton().disabled).toBe(true);
+
+        prevButton().click();
+        expect(pageLabel()).toBe('Page 2 of 3');
+        expect(prevButton().disabled).toBe(false);
+        whatsNew.close();
+    });
+
+    test('Prev is disabled on the first page', () => {
+        virtualChangelog.text = manyEntries(65);
+        whatsNew._buildPanel(base);
+        expect(prevButton().disabled).toBe(true);
+        whatsNew.close();
+    });
+
+    test('the omission line rides only on the last page', () => {
+        virtualChangelog.text = `${manyEntries(40)}\n10 more changes are not shown here — the full list is in CHANGELOG.md on GitHub.\n`;
+        whatsNew._buildPanel(base);
+
+        expect(pageLabel()).toBe('Page 1 of 2');
+        expect(whatsNew.panel.textContent).not.toContain('not shown here');
+
+        nextButton().click();
+        expect(pageLabel()).toBe('Page 2 of 2');
+        expect(whatsNew.panel.textContent).toContain('10 more changes are not shown here');
+        whatsNew.close();
+    });
+
+    test('reopening the popup resets to page 1', () => {
+        virtualChangelog.text = manyEntries(65);
+        whatsNew._buildPanel(base);
+        nextButton().click();
+        expect(pageLabel()).toBe('Page 2 of 3');
+        whatsNew.close();
+
+        whatsNew._buildPanel(base);
+        expect(pageLabel()).toBe('Page 1 of 3');
+        whatsNew.close();
+    });
+
+    test('a page change scrolls the popup body back to the top', () => {
+        virtualChangelog.text = manyEntries(65);
+        whatsNew._buildPanel(base);
+        const body = whatsNew.panel.children[1]; // header, body, footer, in that order
+        body.scrollTop = 400;
+        nextButton().click();
+        expect(body.scrollTop).toBe(0);
+        whatsNew.close();
+    });
+
+    test('the copy button still copies every entry, not just the page on screen', async () => {
+        virtualChangelog.text = manyEntries(65);
+        let copied = null;
+        whatsNew._writeClipboard = async (text) => {
+            copied = text;
+            return true;
+        };
+        whatsNew._buildPanel(base);
+        nextButton().click(); // now on page 2
+        whatsNew.panel.querySelector('.toolasha-whats-new-copy-changelog').click();
+        await Promise.resolve();
+
+        expect(copied).toContain('### Entry 1\n');
+        expect(copied).toContain('### Entry 65\n');
+        whatsNew.close();
+    });
+});

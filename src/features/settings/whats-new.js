@@ -198,6 +198,82 @@ function renderForkMarkdown(root, markdown) {
     }
 }
 
+/** How many changelog entries the popup shows on one page. */
+const CHANGELOG_PAGE_SIZE = 30;
+
+/**
+ * The one line `sliceForkChangelog` (build time) or `filterChangelogSince`
+ * (run time) appends when entries were left out — matched loosely, the same
+ * way `changelog-markers.js` matches it, because the load-bearing part is the
+ * count and the sentence's opening, not its exact wording.
+ */
+const OMISSION_RE = /\n\n((?:\d+|One) more changes? (?:are|is) not shown here[^\n]*)$/;
+
+/**
+ * Split the (already run-time filtered) changelog markdown into whole `###`
+ * entries, so the popup can hand out thirty at a time instead of one long
+ * scroll.
+ *
+ * The head — whatever comes before the first entry, normally just the
+ * "## Unreleased" heading `renderForkMarkdown` skips anyway — and the
+ * omission paragraph are pulled out separately rather than treated as entries
+ * of their own, because neither belongs to a single page: the head only makes
+ * sense ahead of the first entry, and the omission line describes everything
+ * past what shipped, not past whichever page happens to be showing.
+ * @param {string} markdown - Changelog markdown, already filtered for what
+ *   this player has not seen
+ * @returns {{head: string, entries: Array<string>, omission: string}}
+ */
+function splitChangelogEntries(markdown) {
+    const lines = String(markdown).split('\n');
+    const starts = [];
+    for (let i = 0; i < lines.length; i++) {
+        if (/^###\s/.test(lines[i])) starts.push(i);
+    }
+    if (starts.length === 0) return { head: String(markdown).trim(), entries: [], omission: '' };
+
+    const head = lines.slice(0, starts[0]).join('\n').trim();
+    const entries = starts.map((from, i) =>
+        lines
+            .slice(from, starts[i + 1] ?? lines.length)
+            .join('\n')
+            .trim()
+    );
+
+    // The omission paragraph, when there is one, rides at the tail of the last
+    // entry's text — nothing marks where the entry ends and the paragraph
+    // after it begins except the blank line between them — so it is peeled off
+    // there rather than found as an entry of its own.
+    const last = entries[entries.length - 1];
+    const omissionMatch = OMISSION_RE.exec(last);
+    let omission = '';
+    if (omissionMatch) {
+        omission = omissionMatch[1];
+        entries[entries.length - 1] = last.slice(0, omissionMatch.index).trim();
+    }
+    return { head, entries, omission };
+}
+
+/**
+ * The markdown for one page: the head only on page 1, that page's slice of
+ * entries, and the omission line only on the last page.
+ * @param {{head: string, entries: Array<string>, omission: string}} parsed
+ * @param {number} page - 1-based page number, clamped into range
+ * @param {number} pageSize
+ * @returns {string}
+ */
+function changelogPage(parsed, page, pageSize) {
+    const { head, entries, omission } = parsed;
+    const totalPages = Math.max(1, Math.ceil(entries.length / pageSize));
+    const clamped = Math.min(Math.max(1, page), totalPages);
+    const slice = entries.slice((clamped - 1) * pageSize, clamped * pageSize);
+    const parts = [];
+    if (clamped === 1 && head) parts.push(head);
+    parts.push(...slice);
+    if (clamped === totalPages && omission) parts.push(omission);
+    return parts.join('\n\n');
+}
+
 class WhatsNew {
     constructor() {
         this.panel = null;
@@ -946,8 +1022,86 @@ class WhatsNew {
                 borderRadius: '6px',
                 padding: '8px 10px',
             });
-            renderForkMarkdown(box, changelogText);
             log.appendChild(box);
+
+            // Paginated over the *filtered* text, not the raw slice — the copy
+            // button above still copies the whole `changelogText`, page or no
+            // page, because a bug report wants everything the player has not
+            // seen, not whatever thirty entries happened to be on screen.
+            const parsed = splitChangelogEntries(changelogText);
+            const totalPages = Math.max(1, Math.ceil(parsed.entries.length / CHANGELOG_PAGE_SIZE));
+            // A fresh local per popup build, not instance state — reopening the
+            // popup calls `_buildPanel` again and always starts a new one, so
+            // the page resets to 1 every time it opens without anything having
+            // to remember to reset it.
+            let page = 1;
+
+            if (totalPages > 1) {
+                const pager = document.createElement('div');
+                Object.assign(pager.style, {
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    gap: '10px',
+                    margin: '8px 0 2px',
+                });
+                const prev = document.createElement('button');
+                prev.type = 'button';
+                prev.className = 'toolasha-whats-new-page-prev';
+                prev.textContent = '‹ Prev';
+                const pageLabel = document.createElement('span');
+                pageLabel.className = 'toolasha-whats-new-page-label';
+                Object.assign(pageLabel.style, { fontSize: '11px', color: COLORS.dim });
+                const next = document.createElement('button');
+                next.type = 'button';
+                next.className = 'toolasha-whats-new-page-next';
+                next.textContent = 'Next ›';
+                for (const button of [prev, next]) {
+                    Object.assign(button.style, {
+                        background: 'rgba(96, 165, 250, 0.1)',
+                        border: `1px solid ${COLORS.border}`,
+                        borderRadius: '4px',
+                        color: COLORS.accent,
+                        fontSize: '11px',
+                        padding: '2px 8px',
+                        cursor: 'pointer',
+                    });
+                }
+                pager.appendChild(prev);
+                pager.appendChild(pageLabel);
+                pager.appendChild(next);
+                log.appendChild(pager);
+
+                const renderPage = () => {
+                    box.innerHTML = '';
+                    renderForkMarkdown(box, changelogPage(parsed, page, CHANGELOG_PAGE_SIZE));
+                    pageLabel.textContent = `Page ${page} of ${totalPages}`;
+                    prev.disabled = page <= 1;
+                    next.disabled = page >= totalPages;
+                    for (const button of [prev, next]) {
+                        button.style.opacity = button.disabled ? '0.4' : '1';
+                        button.style.cursor = button.disabled ? 'default' : 'pointer';
+                    }
+                    // The changelog box does not scroll on its own — the popup
+                    // body does — so a page change has to reset that scroll, or
+                    // "Next" from partway down page 1 lands partway down page 2.
+                    body.scrollTop = 0;
+                };
+                prev.addEventListener('click', () => {
+                    if (page <= 1) return;
+                    page -= 1;
+                    renderPage();
+                });
+                next.addEventListener('click', () => {
+                    if (page >= totalPages) return;
+                    page += 1;
+                    renderPage();
+                });
+                renderPage();
+            } else {
+                renderForkMarkdown(box, changelogPage(parsed, 1, CHANGELOG_PAGE_SIZE));
+            }
+
             body.appendChild(log);
         }
 
