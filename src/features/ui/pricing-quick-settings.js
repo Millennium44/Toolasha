@@ -58,7 +58,9 @@ function createKeyPricingSelect(cssText) {
     for (const option of options) {
         const optionEl = document.createElement('option');
         optionEl.value = option.value;
-        optionEl.textContent = option.label;
+        // Prefixed like the Buy:/Sell: selects beside it; bare, "Ask (instant buy)"
+        // reads as a third copy of the buy side
+        optionEl.textContent = `Keys: ${option.label}`;
         optionEl.style.backgroundColor = PRICING_SELECT_BACKGROUND;
         optionEl.style.color = '#fff';
         select.appendChild(optionEl);

@@ -64,10 +64,10 @@ describe('createPricingQuickSettings', () => {
             label: option.textContent,
         }));
         expect(options).toEqual([
-            { value: 'ask', label: 'Ask (instant buy)' },
-            { value: 'bid', label: 'Bid (patient buy)' },
-            { value: 'synced', label: 'Same as the profit calculation pricing mode' },
-            { value: 'craft', label: 'What it costs you to craft one' },
+            { value: 'ask', label: 'Keys: Ask (instant buy)' },
+            { value: 'bid', label: 'Keys: Bid (patient buy)' },
+            { value: 'synced', label: 'Keys: Same as the profit calculation pricing mode' },
+            { value: 'craft', label: 'Keys: What it costs you to craft one' },
         ]);
     });
 
