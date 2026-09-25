@@ -201,6 +201,7 @@ vi.mock('../../core/data-manager.js', () => ({
         getItemDetails: () => null,
         getSkills: () => [],
         getCurrentCharacterId: () => mocks.characterId,
+        getCurrentCharacterName: () => mocks.characterName ?? 'Me',
         getCurrentCharacterGameMode: () => 'standard',
         getLearnedAbilities: () => mocks.learned || [],
         getInitClientData: () => ({
@@ -492,6 +493,7 @@ const {
     skillingGearWarnings,
     duplicateAuraWarnings,
     partyLintWarnings,
+    runMatchesSimParty,
 } = await import('./combat-sim-ui.js');
 
 /** A result row shaped like the upgrade advisor's output. */
@@ -5881,8 +5883,8 @@ describe('dungeons in the all-zones run and in the plan', () => {
         // Twenty minutes a clear is three an hour, half the sim's six — so the
         // sim's 60 goblins an hour become 30
         mocks.dungeonRuns = [
-            { dungeonName: 'Den', tier: 1, duration: 1_200_000 },
-            { dungeonName: 'Den', tier: 1, duration: 1_200_000 },
+            { dungeonName: 'Den', tier: 1, duration: 1_200_000, recordedBy: 'char1', team: ['Me'], teamKey: 'Me' },
+            { dungeonName: 'Den', tier: 1, duration: 1_200_000, recordedBy: 'char1', team: ['Me'], teamKey: 'Me' },
         ];
         mocks.monsters = [{ monsterHrid: '/monsters/goblin', count: 8 }];
         await ui._displayAllZonesResults([dungeonResult()], 1, gameData);
@@ -5929,6 +5931,36 @@ describe('dungeons in the all-zones run and in the plan', () => {
             td.textContent.trim()
         );
         expect(cells[3]).toBe('≈7 clears');
+    });
+});
+
+describe('runMatchesSimParty: whose dungeon runs may pace a simulation', () => {
+    const who = { characterId: 'char1', characterName: 'Me', partySize: 3, roster: ['Me', 'Bo', 'Al'] };
+
+    test('this character’s run with exactly the simulated party counts', () => {
+        expect(runMatchesSimParty({ recordedBy: 'char1', team: ['Al', 'Bo', 'Me'], teamKey: 'Al,Bo,Me' }, who)).toBe(
+            true
+        );
+    });
+
+    test('another recorder, another roster or another party size does not', () => {
+        expect(runMatchesSimParty({ recordedBy: 'char2', team: ['Al', 'Bo', 'Me'] }, who)).toBe(false);
+        expect(runMatchesSimParty({ recordedBy: 'char1', team: ['Al', 'Cy', 'Me'] }, who)).toBe(false);
+        expect(runMatchesSimParty({ recordedBy: 'char1', team: ['Me'] }, who)).toBe(false);
+        expect(runMatchesSimParty({ recordedBy: 'char1' }, who)).toBe(false);
+    });
+
+    test('an unknown roster falls back to the team size alone', () => {
+        const run = { recordedBy: 'char1', teamKey: 'Al,Cy,Me' };
+        expect(runMatchesSimParty(run, { ...who, roster: null })).toBe(true);
+        // A roster of a different length than the sim is stale, not evidence
+        expect(runMatchesSimParty(run, { ...who, roster: ['Me'] })).toBe(true);
+    });
+
+    test('a legacy unstamped run is this character’s only by name on its roster', () => {
+        const solo = { characterId: 'char1', characterName: 'Me', partySize: 1 };
+        expect(runMatchesSimParty({ team: ['Me'] }, solo)).toBe(true);
+        expect(runMatchesSimParty({ teamKey: 'Alt' }, solo)).toBe(false);
     });
 });
 
@@ -6036,8 +6068,22 @@ describe('the Bestiary column and the plan read one set of dungeon rates', () =>
         // used to, made it 55.8/hr and three thresholds in a few hours while
         // the column still said a day away.
         mocks.dungeonRuns = [
-            { dungeonName: 'Chimerical Den', tier: 2, duration: 600_000 },
-            { dungeonName: 'Chimerical Den', tier: 2, duration: 600_000 },
+            {
+                dungeonName: 'Chimerical Den',
+                tier: 2,
+                duration: 600_000,
+                recordedBy: 'char1',
+                team: ['Me'],
+                teamKey: 'Me',
+            },
+            {
+                dungeonName: 'Chimerical Den',
+                tier: 2,
+                duration: 600_000,
+                recordedBy: 'char1',
+                team: ['Me'],
+                teamKey: 'Me',
+            },
         ];
         await ui._displayAllZonesResults([denT2()], 24, gameData);
 
@@ -6052,12 +6098,79 @@ describe('the Bestiary column and the plan read one set of dungeon rates', () =>
         expect(rows[0][5]).not.toContain('Manticore 496 → 1000');
     });
 
+    test('another character’s runs, or this one’s in a different party, do not set the pace', async () => {
+        // An alt's fast T2 clears, and this character's own T2 clears in a
+        // party of two: neither is the solo character this run simulated, so
+        // the sim's own pace stands (24.5 h) instead of the alt's 10 minutes
+        mocks.dungeonRuns = [
+            {
+                dungeonName: 'Chimerical Den',
+                tier: 2,
+                duration: 600_000,
+                recordedBy: 'char2',
+                team: ['Alt'],
+                teamKey: 'Alt',
+            },
+            {
+                dungeonName: 'Chimerical Den',
+                tier: 2,
+                duration: 600_000,
+                recordedBy: 'char2',
+                team: ['Alt'],
+                teamKey: 'Alt',
+            },
+            {
+                dungeonName: 'Chimerical Den',
+                tier: 2,
+                duration: 300_000,
+                recordedBy: 'char1',
+                team: ['Friend', 'Me'],
+                teamKey: 'Friend,Me',
+            },
+            // A legacy run with no stamp is matched by name, and is the alt's
+            { dungeonName: 'Chimerical Den', tier: 2, duration: 300_000, team: ['Alt'], teamKey: 'Alt' },
+        ];
+        await ui._displayAllZonesResults([denT2()], 24, gameData);
+
+        expect(bestiaryCell('Chimerical Den').textContent).toContain('1st 24.5h');
+        click('#mwi-csim-bestiary-plan-btn');
+        expect(planRows()[0][2]).toBe('24:31');
+        const fightsCell = ui.panel.querySelectorAll('#mwi-csim-bestiary-plan-out tbody tr td')[3];
+        expect(fightsCell.getAttribute('title')).toContain('sim clear time');
+
+        // This character's own solo T2 run does set it
+        mocks.dungeonRuns.push({
+            dungeonName: 'Chimerical Den',
+            tier: 2,
+            duration: 600_000,
+            recordedBy: 'char1',
+            team: ['Me'],
+            teamKey: 'Me',
+        });
+        await ui._displayAllZonesResults([denT2()], 24, gameData);
+        expect(bestiaryCell('Chimerical Den').textContent).toContain('1st 10.2h');
+    });
+
     test('another tier’s runs do not set a T2 dungeon’s pace', async () => {
         // Only T0 runs on record: a T0 clear says nothing about a T2 one, so
         // the sim's own pace stands and both read 24.5 h
         mocks.dungeonRuns = [
-            { dungeonName: 'Chimerical Den', tier: 0, duration: 300_000 },
-            { dungeonName: 'Chimerical Den', tier: 0, duration: 300_000 },
+            {
+                dungeonName: 'Chimerical Den',
+                tier: 0,
+                duration: 300_000,
+                recordedBy: 'char1',
+                team: ['Me'],
+                teamKey: 'Me',
+            },
+            {
+                dungeonName: 'Chimerical Den',
+                tier: 0,
+                duration: 300_000,
+                recordedBy: 'char1',
+                team: ['Me'],
+                teamKey: 'Me',
+            },
         ];
         await ui._displayAllZonesResults([denT2()], 24, gameData);
 
