@@ -411,3 +411,54 @@ describe('mid-session live start', () => {
         expect(document.querySelector('.mwi-volume-stats')).toBeNull();
     });
 });
+
+describe('fitting beside the Buy button', () => {
+    const rect = (left, top, width, height) => ({
+        left,
+        top,
+        width,
+        height,
+        right: left + width,
+        bottom: top + height,
+        x: left,
+        y: top,
+    });
+
+    const setup = (buyLeft) => {
+        const row = document.createElement('div');
+        row.className = 'MarketplacePanel_newListingButtonsContainer__x';
+        const sell = document.createElement('button');
+        const buy = document.createElement('button');
+        row.append(sell, buy);
+        const panel = document.createElement('div');
+        panel.className = 'mwi-volume-stats';
+        document.body.append(row, panel);
+        panel.getBoundingClientRect = () => rect(100, 0, 400, 100);
+        buy.getBoundingClientRect = () => rect(buyLeft, 60, 120, 30);
+        return panel;
+    };
+
+    afterEach(() => {
+        document.body.innerHTML = '';
+    });
+
+    test('scales the overlay down so it stops short of the Buy button', () => {
+        // 400 wide from x=100 would reach 500; the Buy button starts at 400
+        const panel = setup(400);
+        marketVolumeStats.fitPanel(panel);
+        expect(panel.style.transform).toBe('scale(0.730)');
+        expect(panel.style.transformOrigin).toBe('top left');
+    });
+
+    test('leaves a wide layout untouched', () => {
+        const panel = setup(700);
+        marketVolumeStats.fitPanel(panel);
+        expect(panel.style.transform).toBe('');
+    });
+
+    test('never shrinks below the readable minimum', () => {
+        const panel = setup(150);
+        marketVolumeStats.fitPanel(panel);
+        expect(panel.style.transform).toBe('scale(0.550)');
+    });
+});

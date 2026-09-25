@@ -56,6 +56,12 @@ const UPDATE_DEBOUNCE_MS = 50;
  */
 const SETTLE_CHECK_DELAYS_MS = [150, 400];
 
+/** Smallest the overlay is scaled to fit beside the Buy button; below this it would be unreadable */
+const MIN_FIT_SCALE = 0.55;
+
+/** Clear space kept between the overlay and the Buy button, in CSS pixels */
+const FIT_GAP_PX = 8;
+
 /** Where column visibility preferences are kept */
 const COLUMN_PREFS_KEY = 'market_volumeStats_columns';
 
@@ -455,6 +461,52 @@ class MarketVolumeStats {
                 this.toggleColumnMenu(panel);
             });
         }
+        this.fitPanel(panel);
+        this.watchPanelFit(panel);
+    }
+
+    /**
+     * Shrink the overlay so it stops short of the "+ New Buy Listing" button.
+     *
+     * The overlay hangs off the item icon at a fixed width; in a narrow window
+     * (the game's pop-out marketplace) that runs it over the Buy button. It is
+     * scaled from its top-left corner rather than clipped or reflowed, so every
+     * column stays readable, down to MIN_FIT_SCALE; wider layouts are untouched.
+     * @param {HTMLElement} panel - The overlay
+     */
+    fitPanel(panel) {
+        if (!panel?.isConnected) return;
+        panel.style.transform = '';
+        const buyButton = document.querySelector(GAME.MARKETPLACE_NEW_LISTING_BUTTONS)?.lastElementChild;
+        if (!buyButton) return;
+        const panelRect = panel.getBoundingClientRect();
+        const buyRect = buyButton.getBoundingClientRect();
+        const sharesRows = buyRect.top < panelRect.bottom && buyRect.bottom > panelRect.top;
+        const available = buyRect.left - FIT_GAP_PX - panelRect.left;
+        if (!sharesRows || panelRect.width <= 0 || available >= panelRect.width) return;
+        const scale = Math.max(MIN_FIT_SCALE, available / panelRect.width);
+        panel.style.transformOrigin = 'top left';
+        panel.style.transform = `scale(${scale.toFixed(3)})`;
+    }
+
+    /**
+     * Re-fit the overlay when the order book area changes size — the pop-out
+     * window is resizable, and the game re-lays the row out without any
+     * mutation this feature's observer would see.
+     * @param {HTMLElement} panel - The overlay
+     */
+    watchPanelFit(panel) {
+        const area = panel.closest('[class*="MarketplacePanel_infoContainer"]') || panel.parentElement;
+        if (!area || typeof ResizeObserver === 'undefined' || this.fitObservedArea === area) return;
+        this.fitObserver?.disconnect();
+        this.fitObservedArea = area;
+        this.fitObserver = new ResizeObserver(() => this.fitPanel(document.querySelector('.mwi-volume-stats')));
+        this.fitObserver.observe(area);
+        this.cleanupRegistry.registerCleanup(() => {
+            this.fitObserver?.disconnect();
+            this.fitObserver = null;
+            this.fitObservedArea = null;
+        });
     }
 
     /**
