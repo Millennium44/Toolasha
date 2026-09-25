@@ -338,8 +338,12 @@ describe('renderQueueLengths switches layout on isVolumeStatsPanelActive()', () 
                 [askListing(100, 5, '2026-01-01T00:00:00Z')],
                 [askListing(90, 3, '2026-01-01T00:00:00Z')]
             );
-            expect(container.querySelectorAll('.mwi-queue-length')).toHaveLength(1);
-            expect(container.querySelector('.mwi-queue-length-combined')).not.toBeNull();
+            expect(container.querySelectorAll('.mwi-queue-length-combined')).toHaveLength(1);
+            // The spacer that keeps the group in the left half, not under the icon
+            expect(container.querySelectorAll('.mwi-queue-length-spacer')).toHaveLength(1);
+            expect(
+                container.querySelectorAll(':scope > .mwi-queue-length-ask, :scope > .mwi-queue-length-bid')
+            ).toHaveLength(0);
         } finally {
             volumeStatsMock.active = false;
         }

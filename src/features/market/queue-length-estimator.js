@@ -329,7 +329,9 @@ class QueueLengthEstimator {
      * @param {Array} bids
      */
     displayCombinedQueueLength(buttonContainer, asks, bids) {
-        buttonContainer.querySelector('.mwi-queue-length-combined')?.remove();
+        buttonContainer
+            .querySelectorAll('.mwi-queue-length-combined, .mwi-queue-length-spacer')
+            .forEach((el) => el.remove());
 
         const askStats = this.computeQueueStats(asks);
         const bidStats = this.computeQueueStats(bids);
@@ -339,7 +341,12 @@ class QueueLengthEstimator {
 
         const wrapper = document.createElement('div');
         wrapper.classList.add('mwi-queue-length', 'mwi-queue-length-combined');
-        wrapper.style.cssText = 'display:flex;align-items:center;gap:6px;font-size:1.2rem;';
+        // The row is space-between: with a lone middle item the group would land
+        // dead center, under the item icon. Growing the group and an equal spacer
+        // after it puts the group in the middle of the left half instead, where
+        // the ask count sits in the separate layout.
+        wrapper.style.cssText =
+            'display:flex;flex:1;justify-content:center;align-items:center;gap:6px;font-size:1.2rem;min-width:0;';
 
         if (askStats) {
             wrapper.appendChild(this.buildLabeledSide('Ask', askStats, true));
@@ -355,6 +362,11 @@ class QueueLengthEstimator {
         }
 
         buttonContainer.insertBefore(wrapper, buttonContainer.children[1]);
+
+        const spacer = document.createElement('div');
+        spacer.classList.add('mwi-queue-length', 'mwi-queue-length-spacer');
+        spacer.style.flex = '1';
+        buttonContainer.insertBefore(spacer, wrapper.nextSibling);
     }
 
     /**
