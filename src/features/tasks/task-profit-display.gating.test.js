@@ -31,14 +31,86 @@ vi.mock('./task-profit-calculator.js', () => ({
 }));
 
 describe('entrypoint.js registry gate for taskProfitDisplay', () => {
-    test("the 'taskProfitDisplay' entry's customCheck includes taskCombatEstimate", () => {
+    test("the 'taskProfitDisplay' entry's customCheck is the module's own shouldEnable()", () => {
         const here = path.dirname(fileURLToPath(import.meta.url));
         const entrypointSrc = readFileSync(path.join(here, '..', '..', 'entrypoint.js'), 'utf8');
 
         const keyIndex = entrypointSrc.indexOf("key: 'taskProfitDisplay',");
         expect(keyIndex).toBeGreaterThan(-1);
         const entryText = entrypointSrc.slice(keyIndex, keyIndex + 700);
-        expect(entryText).toContain("config.getSetting('taskCombatEstimate')");
+        expect(entryText).toMatch(/customCheck:\s*\(\)\s*=>\s*UI\.taskProfitDisplay\.shouldEnable\(\)/);
+    });
+
+    test.each([
+        'taskProfitCalculator',
+        'taskGoMerge',
+        'taskQueuedIndicator',
+        'taskMaterialsIndicator',
+        'taskEfficiencyRating',
+        'taskCombatEstimate',
+    ])('shouldEnable() is true with only %s on', (only) => {
+        const spy = vi.spyOn(config, 'getSetting').mockImplementation((key) => key === only);
+        try {
+            expect(taskProfitDisplay.shouldEnable()).toBe(true);
+        } finally {
+            spy.mockRestore();
+        }
+    });
+});
+
+describe('taskProfitDisplay: live switches', () => {
+    let on;
+
+    beforeEach(() => {
+        on = new Set();
+        vi.spyOn(config, 'getSetting').mockImplementation((key) => on.has(key));
+        vi.spyOn(dataManager, 'getInitClientData').mockReturnValue({ actionDetailMap: {} });
+        taskProfitDisplay.disable();
+        document.body.innerHTML = '';
+    });
+
+    afterEach(() => {
+        taskProfitDisplay.disable();
+        vi.restoreAllMocks();
+    });
+
+    const flip = (key, value) => {
+        if (value) on.add(key);
+        else on.delete(key);
+        config._notifySettingChange(key, value);
+    };
+
+    test('switching the profit line off keeps the module up for the combat estimate', () => {
+        on.add('taskProfitCalculator');
+        on.add('taskCombatEstimate');
+        taskProfitDisplay.initialize();
+        expect(taskProfitDisplay.isInitialized).toBe(true);
+
+        flip('taskProfitCalculator', false);
+
+        expect(taskProfitDisplay.isInitialized).toBe(true);
+    });
+
+    test('after the module stopped itself, any one task setting switched on restarts it', () => {
+        on.add('taskProfitCalculator');
+        taskProfitDisplay.initialize();
+        flip('taskProfitCalculator', false);
+        expect(taskProfitDisplay.isInitialized).toBe(false);
+
+        // The registry already counts this module as started, so it will not start it again
+        flip('taskCombatEstimate', true);
+
+        expect(taskProfitDisplay.isInitialized).toBe(true);
+    });
+
+    test('switching off the last one stops it, whichever one it is', () => {
+        on.add('taskGoMerge');
+        taskProfitDisplay.initialize();
+        expect(taskProfitDisplay.isInitialized).toBe(true);
+
+        flip('taskGoMerge', false);
+
+        expect(taskProfitDisplay.isInitialized).toBe(false);
     });
 });
 
