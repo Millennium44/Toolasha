@@ -227,4 +227,29 @@ describe('queued-actions annotations with the action bar display off', () => {
         expect(inject).toHaveBeenCalledWith(menu);
         inject.mockRestore();
     });
+
+    test('actionQueue as the last enabled setting strips an already-open edit menu on disable', async () => {
+        // With the bar off, actionQueue is the module's only reason to be up: switching it off
+        // makes shouldEnable() false and applyEnabledSettings() takes the disable() branch, not
+        // the revisitOpenQueueMenu() one — the menu annotations must not depend on that branch.
+        state.settings = { actionBar_enabled: false, actionQueue: true };
+        await actionTimeDisplay.initialize();
+
+        const menu = editMenu();
+        menu.innerHTML = '<div class="QueuedActions_action__a"></div>';
+        state.onClass.get(QUEUE_OBSERVER)(menu);
+        menu.querySelector('.QueuedActions_action__a').appendChild(document.createElement('span')).className =
+            'mwi-queue-action-time';
+        const total = document.createElement('div');
+        total.id = 'mwi-queue-total-time';
+        document.body.appendChild(total);
+        expect(menu.classList.contains('toolasha-queue-edit-menu-enhanced')).toBe(true);
+
+        changeSetting('actionQueue', false);
+
+        expect(actionTimeDisplay.isInitialized).toBe(false);
+        expect(menu.classList.contains('toolasha-queue-edit-menu-enhanced')).toBe(false);
+        expect(menu.querySelectorAll('.mwi-queue-action-time')).toHaveLength(0);
+        expect(document.getElementById('mwi-queue-total-time')).toBeNull();
+    });
 });
