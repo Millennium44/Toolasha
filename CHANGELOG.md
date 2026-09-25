@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Audit round: settings switched mid-session start and stop what they should
+
+- Settings replaced all at once (an import, a settings-mirror restore) now start and stop the features they switch; a failed feature's retry no longer restarts one you have since switched off; switching the overlay off takes its tab button down with it; and a character switch waits for a feature still starting before tearing down.
+
 ### Audit round: settings that work on their own now switch cleanly both ways
 
 - Task card displays no longer lose the combat estimate when another task setting is switched off, and come back when any of them is switched on again.
