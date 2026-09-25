@@ -668,10 +668,13 @@ export default class CustomTabsUI {
         document.head.appendChild(this._styleEl);
 
         // Also fires for the inventory's own strip (post-2026-09 DOM), which is when a stored
-        // native tab choice can first be handed back.
-        const unregister = domObserver.onClass('CustomTabs', 'TabsComponent_tabsContainer', () => {
+        // native tab choice can first be handed back — and, with the view already open, when the
+        // "All" switch can first happen. The tile observer cannot stand in for this: a selected
+        // native tab with no tiles mounts no Item_itemContainer for it to see.
+        const unregister = domObserver.onClass('CustomTabs', 'TabsComponent_tabsContainer', (el) => {
             this._tryInjectTabButton();
             this._consumeStoredNativeTab();
+            if (this._isActive && el?.closest?.('[class*="Inventory_items"]')) this._applyLayout();
         });
         this._unregisterHandlers.push(unregister);
 
