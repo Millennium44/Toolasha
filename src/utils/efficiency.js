@@ -122,6 +122,41 @@ export function calculateEfficiencyBreakdown({
 }
 
 /**
+ * Whether a boosted skill level meets a gathering/production action's *start*
+ * requirement, matching the game's own `checkLevelRequirementsWithBuff`.
+ *
+ * This is a different rule from {@link calculateEfficiencyBreakdown}'s level
+ * efficiency, which the game leaves unfloored and untruncated because it is a
+ * continuous bonus. Starting an action is a yes/no gate, and the client applies
+ * it differently:
+ * - the boosted skill level (base level + tea skill-level bonus, drink
+ *   concentration already folded in) is **floored**, not left fractional;
+ * - the Action Level buff (Artisan Tea) is **truncated toward zero** and then
+ *   *added to the requirement* rather than to the level — it never lowers what
+ *   you need, it only raises it.
+ *
+ * A tea that helps efficiency once an action is running can still block that
+ * same action from starting at all — Artisan Tea's whole failure mode.
+ *
+ * @param {Object} params - Inputs
+ * @param {number} params.requiredLevel - The action's base level requirement
+ * @param {number} params.skillLevel - Player's base skill level
+ * @param {number} [params.teaSkillLevelBonus=0] - Flat skill-level bonus from tea (DC folded in)
+ * @param {number} [params.actionLevelBonus=0] - Action Level bonus from tea, e.g. Artisan Tea (DC folded in)
+ * @returns {boolean} Whether the action can be started
+ *
+ * @example
+ * // Base level 45, Artisan Tea +5 Action Level scaled to 6.0 by drink concentration
+ * canStartAction({ requiredLevel: 40, skillLevel: 45, actionLevelBonus: 6.0 })
+ * // Returns: false — 45 < 40 + 6
+ */
+export function canStartAction({ requiredLevel, skillLevel, teaSkillLevelBonus = 0, actionLevelBonus = 0 }) {
+    const boostedLevel = Math.floor((skillLevel || 0) + (teaSkillLevelBonus || 0));
+    const effectiveRequirement = (requiredLevel || 0) + Math.trunc(actionLevelBonus || 0);
+    return boostedLevel >= effectiveRequirement;
+}
+
+/**
  * Build the shared efficiency context for a production or gathering action.
  * Consolidates equipment lookup, tea parsing, house bonus, skill level, and
  * efficiency breakdown calculation that would otherwise be duplicated across
@@ -305,5 +340,6 @@ export default {
     stackAdditive,
     calculateEfficiencyMultiplier,
     calculateEfficiencyBreakdown,
+    canStartAction,
     getActionEfficiencyContext,
 };

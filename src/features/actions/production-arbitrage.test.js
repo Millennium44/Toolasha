@@ -285,6 +285,17 @@ describe('rankProductionArbitrage', () => {
         expect(again.find((row) => row.itemHrid === '/items/verdant_cheese').levelMet).toBe(true);
     });
 
+    test('flags a recipe Artisan Tea blocks even though the base level meets it', async () => {
+        // Level exactly meets the requirement, but Artisan Tea's Action Level buff
+        // raises the requirement, not the level — the game refuses to start this.
+        game.skills = [{ skillHrid: '/skills/cheesesmithing', level: 65 }];
+        calculator.answers['/actions/cheesesmithing/verdant_cheese'].actionLevelBonus = 6;
+        const rows = await rankProductionArbitrage();
+        const verdant = rows.find((row) => row.itemHrid === '/items/verdant_cheese');
+        // 65 < 65 + 6
+        expect(verdant.levelMet).toBe(false);
+    });
+
     test('skips a recipe the calculator cannot cost', async () => {
         calculator.answers['/actions/cooking/egg'] = null;
         const rows = await rankProductionArbitrage();

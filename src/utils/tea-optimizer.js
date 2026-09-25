@@ -4,7 +4,7 @@
  */
 
 import dataManager from '../core/data-manager.js';
-import { calculateEfficiencyBreakdown, calculateEfficiencyMultiplier } from './efficiency.js';
+import { calculateEfficiencyBreakdown, calculateEfficiencyMultiplier, canStartAction } from './efficiency.js';
 import { calculateExperienceMultiplier } from './experience-parser.js';
 import { houseBuffTotalsForLevels } from './house-efficiency.js';
 import { getDrinkConcentration } from './tea-parser.js';
@@ -1251,11 +1251,23 @@ export function findOptimalTeas(
             actionScores.push({ action: actionName, score });
         } else {
             for (const action of actions) {
-                let score;
-                if (goal === 'xp') {
+                let score = 0;
+                // A combo suggesting Artisan Tea is exactly the case that can block the
+                // action it is being scored for: the Action Level buff raises the start
+                // requirement, and `actions` was only filtered against the bare skill
+                // level (see getActionsForSkill). A combo that would not let the action
+                // start scores it 0 rather than crediting a rate the game would refuse.
+                const canStart = canStartAction({
+                    requiredLevel: action.levelRequirement?.level || 1,
+                    skillLevel: playerLevel,
+                    teaSkillLevelBonus: buffs.skillLevels[normalizedSkill] || 0,
+                    actionLevelBonus: buffs.actionLevel,
+                });
+
+                if (canStart && goal === 'xp') {
                     score = calculateXpPerHour(action, buffs, playerLevel, otherEfficiency, calcContext);
                     totalScore += score;
-                } else if (isGathering) {
+                } else if (canStart && isGathering) {
                     score = calculateGatheringGoldPerHour(
                         action,
                         buffs,
@@ -1272,7 +1284,7 @@ export function findOptimalTeas(
                         profitableCount++;
                         if (unpricedByAction?.get(action.name)) hasMissingPrices = true;
                     }
-                } else {
+                } else if (canStart) {
                     score = calculateProductionGoldPerHour(
                         action,
                         buffs,
@@ -1770,6 +1782,18 @@ export function calculateSkillPerformance(
     let hasMissingPrices = false;
 
     for (const action of actions) {
+        // These are the character's actual current teas, not a hypothetical combo — but the
+        // same rule applies: Artisan Tea's Action Level buff can block an action the bare
+        // skill level would otherwise allow (see getActionsForSkill), and a "current
+        // performance" figure for an action that cannot currently be started is not a rate.
+        const canStart = canStartAction({
+            requiredLevel: action.levelRequirement?.level || 1,
+            skillLevel: playerLevel,
+            teaSkillLevelBonus: buffs.skillLevels[normalizedSkill] || 0,
+            actionLevelBonus: buffs.actionLevel,
+        });
+        if (!canStart) continue;
+
         const xp = calculateXpPerHour(action, buffs, playerLevel, otherEfficiency, calcContext);
         if (xp > 0) {
             totalXp += xp;

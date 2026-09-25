@@ -60,6 +60,8 @@ import { GATHERING_TYPES, PRODUCTION_TYPES } from '../../utils/profit-constants.
 import { getPriceAgeString } from '../../utils/market-data.js';
 import { effectiveInventory, shortfallNote } from '../../utils/inventory-reservations.js';
 import { RESERVATION_OWNER_PREFIX } from './goal-planner.js';
+import { canStartAction } from '../../utils/efficiency.js';
+import { getDrinkConcentration, parseActionLevelBonus, parseTeaSkillLevelBonus } from '../../utils/tea-parser.js';
 
 const COIN_HRID = '/items/coin';
 const INVENTORY_LOCATION = '/item_locations/inventory';
@@ -209,6 +211,14 @@ function costSideIncomplete(profit) {
 
 /**
  * Every action the character's levels allow, of a set of types.
+ *
+ * "Allow" means what the game itself would let you start right now: the base
+ * skill level check, plus the character's real currently-active drinks for
+ * that action type — including Artisan Tea's Action Level buff, which raises
+ * the requirement rather than the level. A production action the bare skill
+ * level clears can still be one the currently-worn Artisan Tea blocks, and
+ * this must not rank it alongside what can actually be started.
+ *
  * @param {Array<string>} types - Action type hrids
  * @returns {Array<{hrid: string, action: Object}>} Actions the character can start
  */
@@ -217,14 +227,37 @@ function availableActions(types) {
     if (!gameData?.actionDetailMap) return [];
     const skills = dataManager.getSkills() || [];
     const levels = new Map(skills.map((skill) => [skill.skillHrid, skill.level]));
+    const itemDetailMap = gameData.itemDetailMap || {};
+    const drinkConcentration = getDrinkConcentration(dataManager.getEquipment(), itemDetailMap);
 
     const found = [];
     for (const [hrid, action] of Object.entries(gameData.actionDetailMap)) {
         if (!types.includes(action.type)) continue;
         const requirement = action.levelRequirement;
         if (requirement?.skillHrid) {
-            const level = levels.get(requirement.skillHrid) ?? 1;
-            if (level < (requirement.level || 1)) continue;
+            const skillLevel = levels.get(requirement.skillHrid) ?? 1;
+            const activeDrinks = dataManager.getActionDrinkSlots?.(action.type) || [];
+            const teaSkillLevelBonus = parseTeaSkillLevelBonus(
+                action.type,
+                activeDrinks,
+                itemDetailMap,
+                drinkConcentration
+            );
+            // Action Level teas (Artisan Tea) only exist for production skills — see
+            // profit-constants.js's PRODUCTION_TYPES/GATHERING_TYPES split.
+            const actionLevelBonus = PRODUCTION_TYPES.includes(action.type)
+                ? parseActionLevelBonus(activeDrinks, itemDetailMap, drinkConcentration)
+                : 0;
+            if (
+                !canStartAction({
+                    requiredLevel: requirement.level || 1,
+                    skillLevel,
+                    teaSkillLevelBonus,
+                    actionLevelBonus,
+                })
+            ) {
+                continue;
+            }
         }
         found.push({ hrid, action });
     }

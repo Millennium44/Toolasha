@@ -34,8 +34,13 @@ vi.mock('./house-efficiency.js', () => ({
     calculateHouseEfficiency: () => 0,
 }));
 
-const { calculateEfficiencyBreakdown, calculateEfficiencyMultiplier, stackAdditive, getActionEfficiencyContext } =
-    await import('./efficiency.js');
+const {
+    calculateEfficiencyBreakdown,
+    calculateEfficiencyMultiplier,
+    stackAdditive,
+    getActionEfficiencyContext,
+    canStartAction,
+} = await import('./efficiency.js');
 
 describe('calculateEfficiencyMultiplier', () => {
     test('calculates multiplier from efficiency percentage', () => {
@@ -131,6 +136,32 @@ describe('calculateEfficiencyBreakdown', () => {
         expect(result.effectiveLevel).toBe(0);
         expect(result.levelEfficiency).toBe(0);
         expect(result.totalEfficiency).toBe(0);
+    });
+});
+
+describe('canStartAction', () => {
+    test('Artisan Tea (+5 base, scaled to +6 by 20% drink concentration) blocks a recipe exactly 6 levels below the boosted level', () => {
+        // 65 skill level, requirement 60: without the buff this clears by 5.
+        // Artisan Tea raises the requirement by floor(5 * 1.2) = 6, so it no longer does.
+        expect(canStartAction({ requiredLevel: 60, skillLevel: 65, actionLevelBonus: 5 * 1.2 })).toBe(false);
+        // One level higher clears it again.
+        expect(canStartAction({ requiredLevel: 60, skillLevel: 66, actionLevelBonus: 5 * 1.2 })).toBe(true);
+    });
+
+    test('floors a fractional boosted skill level', () => {
+        // 60 base + 4.9 tea skill levels = 64.9, floored to 64 — one short of 65
+        expect(canStartAction({ requiredLevel: 65, skillLevel: 60, teaSkillLevelBonus: 4.9 })).toBe(false);
+        expect(canStartAction({ requiredLevel: 65, skillLevel: 60, teaSkillLevelBonus: 5.0 })).toBe(true);
+    });
+
+    test('truncates a fractional action-level buff toward zero rather than rounding or ceiling', () => {
+        // 5.9 truncates to 5, not 6 — the requirement only rises by 5
+        expect(canStartAction({ requiredLevel: 60, skillLevel: 65, actionLevelBonus: 5.9 })).toBe(true);
+        expect(canStartAction({ requiredLevel: 60, skillLevel: 65, actionLevelBonus: 6.0 })).toBe(false);
+    });
+
+    test('meets the requirement exactly', () => {
+        expect(canStartAction({ requiredLevel: 40, skillLevel: 40 })).toBe(true);
     });
 });
 

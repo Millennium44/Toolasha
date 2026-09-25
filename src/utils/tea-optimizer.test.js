@@ -1101,3 +1101,54 @@ describe('calculateSkillPerformance — seal and guild buffs', () => {
         expect(result.xpPerHour).toBeCloseTo(495 * 10, 6);
     });
 });
+
+describe('Artisan Tea can block the very action it is being scored on', () => {
+    // Level 65 clears the action's bare requirement (60) by 5 — but Artisan
+    // Tea's Action Level buff (+6 here) raises the requirement, not the
+    // level, and 65 < 60 + 6. Both functions used to score this action as
+    // though it could run.
+    beforeEach(() => {
+        state.gameData = {
+            itemDetailMap: {
+                '/items/artisan_tea': {
+                    consumableDetail: { buffs: [{ typeHrid: '/buff_types/action_level', flatBoost: 6 }] },
+                },
+                '/items/verdant_output': {},
+            },
+            actionDetailMap: {
+                '/actions/cheesesmithing/verdant': {
+                    type: '/action_types/cheesesmithing',
+                    name: 'Verdant',
+                    baseTimeCost: 10e9,
+                    levelRequirement: { level: 60 },
+                    outputItems: [{ itemHrid: '/items/verdant_output', count: 1 }],
+                },
+            },
+        };
+        prices.byHrid = { '/items/verdant_output': 1000, '/items/artisan_tea': 0 };
+        state.skills = [{ skillHrid: '/skills/cheesesmithing', level: 65 }];
+    });
+
+    test('calculateSkillPerformance scores 0 gold for an action the current tea blocks', () => {
+        const result = calculateSkillPerformance('cheesesmithing', new Map(), ['/items/artisan_tea'], 65);
+        expect(result.goldPerHour).toBe(0);
+    });
+
+    test('findOptimalTeas does not credit a combo with gold from an action it would block', () => {
+        const result = findOptimalTeas(
+            'cheesesmithing',
+            'gold',
+            null,
+            null,
+            { pinned: new Set(['/items/artisan_tea']), banned: new Set() },
+            null,
+            new Map(),
+            null,
+            65
+        );
+
+        expect(result.error).toBeUndefined();
+        expect(result.optimal.actionScores).toEqual([{ action: 'Verdant', score: 0, hasMissingPrices: false }]);
+        expect(result.optimal.profitableCount).toBe(0);
+    });
+});

@@ -19,6 +19,8 @@ const game = vi.hoisted(() => ({
     actionDetailMap: {},
     skills: [],
     inventory: [],
+    itemDetailMap: {},
+    drinkSlots: {},
 }));
 
 const rates = vi.hoisted(() => ({
@@ -32,13 +34,18 @@ const rates = vi.hoisted(() => ({
 
 vi.mock('../../core/data-manager.js', () => ({
     default: {
-        getInitClientData: () => ({ actionDetailMap: game.actionDetailMap, levelExperienceTable: [0, 1, 2] }),
+        getInitClientData: () => ({
+            actionDetailMap: game.actionDetailMap,
+            itemDetailMap: game.itemDetailMap,
+            levelExperienceTable: [0, 1, 2],
+        }),
         getItemDetails: () => null,
         getActionDetails: (hrid) => game.actionDetailMap[hrid] || null,
         getSkills: () => game.skills,
         getEquipment: () => new Map(),
         getInventory: () => game.inventory,
         getHouseRoomLevel: () => 0,
+        getActionDrinkSlots: (actionType) => game.drinkSlots[actionType] || [],
     },
 }));
 vi.mock('../../api/marketplace.js', () => ({
@@ -157,6 +164,8 @@ beforeEach(() => {
         { skillHrid: '/skills/alchemy', level: 50, experience: 0 },
     ];
     game.inventory = [];
+    game.itemDetailMap = {};
+    game.drinkSlots = {};
 
     rates.gathering = { '/actions/milking/cow': { profitPerHour: 100_000 } };
     rates.production = { '/actions/cooking/stew': { profitPerHour: 50_000 } };
@@ -203,6 +212,19 @@ describe('goldRates — four providers, one ranking', () => {
     test('a provider with nothing to offer simply is not in the list', async () => {
         const context = await buildPlannerContext();
         expect(context.goldRates().map((rate) => rate.kind)).toEqual(['gathering', 'production']);
+    });
+
+    test('a production action the character currently cannot start (Artisan Tea) is not ranked', async () => {
+        // Level 50 clears the bare requirement of 45 by 5 — but the character's real,
+        // currently-active Artisan Tea raises the requirement by 6, not the level.
+        game.actionDetailMap['/actions/cooking/stew'].levelRequirement = { skillHrid: '/skills/cooking', level: 45 };
+        game.itemDetailMap['/items/artisan_tea'] = {
+            consumableDetail: { buffs: [{ typeHrid: '/buff_types/action_level', flatBoost: 6 }] },
+        };
+        game.drinkSlots['/action_types/cooking'] = [{ itemHrid: '/items/artisan_tea' }];
+
+        const context = await buildPlannerContext();
+        expect(context.goldRates().map((rate) => rate.actionHrid)).not.toContain('/actions/cooking/stew');
     });
 
     test('the alchemy ranking is told which market fetch it is pricing against', async () => {

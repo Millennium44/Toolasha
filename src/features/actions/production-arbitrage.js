@@ -48,6 +48,7 @@ import { capProfitRate, sellsFromProfitData, liquidityCapEnabled } from '../../u
 import { yieldToEventLoop } from '../../utils/background-work.js';
 import { testerShopEnabled } from '../../utils/tester-shop.js';
 import { HOURS_PER_DAY } from '../../utils/profit-constants.js';
+import { canStartAction } from '../../utils/efficiency.js';
 
 /** The five production skills, in the order the board's filter lists them */
 export const PRODUCTION_SKILLS = [
@@ -187,6 +188,7 @@ export function rowFromProfit(recipe, profitData, now = Date.now()) {
     const level = skillLevel(skill.skillHrid);
     const requiredLevel = action.levelRequirement?.level || 1;
     const teaLevels = Number(profitData.teaSkillLevelBonus) || 0;
+    const actionLevelBonus = Number(profitData.actionLevelBonus) || 0;
     const unitsPerHour = Number(profitData.totalItemsPerHour) || 0;
     const marginPerHour = Number(profitData.profitPerHour) || 0;
     const quality = dataQuality(profitData, now);
@@ -200,9 +202,15 @@ export function rowFromProfit(recipe, profitData, now = Date.now()) {
         skillLabel: skill.label,
         requiredLevel,
         level,
-        // Tea skill levels count towards starting an action, the same way the
-        // efficiency arithmetic counts them
-        levelMet: level + teaLevels >= requiredLevel,
+        // Matches the game's own checkLevelRequirementsWithBuff: the boosted level is
+        // floored, and Artisan Tea's Action Level buff raises the requirement rather
+        // than the level — a tea that helps efficiency can still block the start.
+        levelMet: canStartAction({
+            requiredLevel,
+            skillLevel: level,
+            teaSkillLevelBonus: teaLevels,
+            actionLevelBonus,
+        }),
         materialCostPerUnit: Number(profitData.costPerItem) || 0,
         saleAfterTax: Number(profitData.priceAfterTax) || 0,
         marginPerUnit: Number(profitData.profitPerItem) || 0,
