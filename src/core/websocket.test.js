@@ -166,6 +166,27 @@ describe('content-hash deduplication', () => {
         expect(handler).toHaveBeenCalledTimes(2);
     });
 
+    test('item_marks_updated survives the hash when only a later mark changes', () => {
+        // The game sends the whole list each time, so an unchanged first mark makes two
+        // updates agree well past the dedup prefix — the second is the lock toggle itself
+        const handler = vi.fn();
+        webSocketHook.on('item_marks_updated', handler);
+        const first = {
+            id: 138,
+            characterID: 30404,
+            itemHrid: '/items/cheese',
+            kind: 'lock',
+            minEnhancementLevel: 0,
+            maxEnhancementLevel: 1000,
+        };
+        const second = { ...first, id: 139, itemHrid: '/items/milk' };
+
+        webSocketHook.processMessage(msg('item_marks_updated', { characterItemMarks: [first] }));
+        webSocketHook.processMessage(msg('item_marks_updated', { characterItemMarks: [first, second] }));
+
+        expect(handler).toHaveBeenCalledTimes(2);
+    });
+
     test('new_battle survives the hash, so every baseline is re-seeded', () => {
         // It seeds every monster and player baseline there is, and two
         // consecutive waves of the same zone open identically for well past a
