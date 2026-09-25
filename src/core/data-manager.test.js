@@ -1283,6 +1283,74 @@ describe('overlapping character switches', () => {
         expect(dataManager.isItemLocked('/items/cheese')).toBe(false);
     });
 
+    test("an item_marks_updated for the second leg of an A→B→C switch is not eaten by B's own handler", async () => {
+        // B's own _handleInitCharacterData is still suspended (its flush has not
+        // resolved) when C's init_character_data arrives; `_bindActiveSocket` moves
+        // `activeSocket` to socketC synchronously, so a mark update from C is
+        // accepted and stashed while B is still the next handler in `_switchChain`
+        // to look at the stash. Keyed by socket, B must recognise the stash is not
+        // its own and leave it for C's own handler, which runs right after it.
+        const { default: dataManager } = await import('./data-manager.js');
+        const socketB = { id: 'socket-b' };
+        const socketC = { id: 'socket-c' };
+        await webSocketHandlers.get('init_character_data')(initPayload());
+
+        let releaseFlush;
+        let flushCalls = 0;
+        storageMock.flushAll = vi.fn(() => {
+            flushCalls += 1;
+            // Only B's own switch suspends; C's runs straight through once queued
+            // behind B in `_switchChain`.
+            if (flushCalls === 1) {
+                return new Promise((resolve) => {
+                    releaseFlush = resolve;
+                });
+            }
+            return Promise.resolve();
+        });
+
+        const pendingB = webSocketHandlers.get('init_character_data')(
+            initPayload({ character: { id: 'char-2', name: 'Two' } }),
+            { socket: socketB }
+        );
+        await Promise.resolve();
+        expect(dataManager.isCharacterSwitching).toBe(true);
+
+        // C arrives while B is still suspended — activeSocket moves to socketC now,
+        // synchronously, even though B's own handling has not finished
+        const pendingC = webSocketHandlers.get('init_character_data')(
+            initPayload({ character: { id: 'char-3', name: 'Three' } }),
+            { socket: socketC }
+        );
+        expect(dataManager.activeSocket).toBe(socketC);
+
+        // A mark update from C's own socket lands in the gap
+        webSocketHandlers.get('item_marks_updated')(
+            {
+                characterItemMarks: [
+                    {
+                        itemHrid: '/items/wine',
+                        characterID: 'char-3',
+                        kind: 'lock',
+                        minEnhancementLevel: 0,
+                        maxEnhancementLevel: 1000,
+                    },
+                ],
+            },
+            { socket: socketC }
+        );
+
+        // B's flush releases; B's own handler must not consume C's stash
+        releaseFlush();
+        await pendingB;
+        await pendingC;
+
+        // C, the character the mark update actually belongs to, has it — not lost
+        // to B eating the stash on its way through
+        expect(dataManager.getCurrentCharacterId()).toBe('char-3');
+        expect(dataManager.isItemLocked('/items/wine')).toBe(true);
+    });
+
     test('a second init waits for the first to finish rather than interleaving with it', async () => {
         vi.useFakeTimers({ toFake: ['Date'] });
         const { default: dataManager } = await import('./data-manager.js');
