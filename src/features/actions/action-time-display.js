@@ -3998,21 +3998,27 @@ class ActionTimeDisplay {
             }
         }
 
+        // Production spends only +0 copies of an input, and the upgrade slot only the stack
+        // the queued action selected (the game's own counter reads that one stack), so an
+        // enhanced copy elsewhere in the bag buys nothing.
+        const upgradeLevel = this.getProductionUpgradeLevel(actionDetails, actionObj);
+
         // Check input items (affected by Artisan Tea). An item that is ALSO the
         // upgrade item (every advanced+ charm reuses its own lower tier as the
         // upgrade slot) is billed once here — the artisan-reduced input count
         // plus the unreduced +1 for the upgrade — rather than as two independent
         // constraints against the same stock, which let the less-restrictive of
-        // the two hide the real, larger per-action cost.
+        // the two hide the real, larger per-action cost. Only when the selected
+        // upgrade stack is the +0 one is it the same stock.
         let upgradeAccountedFor = false;
         if (hasInputItems) {
             for (const inputItem of actionDetails.inputItems) {
                 noteProvenance(inputItem.itemHrid);
-                const availableCount = byHrid[inputItem.itemHrid] || 0;
+                const availableCount = byEnhancedKey[`${inputItem.itemHrid}::0`] || 0;
 
                 // Apply Artisan reduction to required materials
                 let requiredPerAction = inputItem.count * (1 - artisanBonus);
-                if (hasUpgradeItem === inputItem.itemHrid) {
+                if (hasUpgradeItem === inputItem.itemHrid && upgradeLevel === 0) {
                     requiredPerAction += 1;
                     upgradeAccountedFor = true;
                 }
@@ -4032,7 +4038,7 @@ class ActionTimeDisplay {
         // already folded into an input's per-action cost above.
         if (hasUpgradeItem && !upgradeAccountedFor) {
             noteProvenance(hasUpgradeItem);
-            const availableCount = byHrid[hasUpgradeItem] || 0;
+            const availableCount = byEnhancedKey[`${hasUpgradeItem}::${upgradeLevel}`] || 0;
 
             if (availableCount < minLimit) {
                 minLimit = availableCount;
@@ -4045,6 +4051,23 @@ class ActionTimeDisplay {
         }
 
         return { maxActions: minLimit, limitType, isEstimated: usedEstimate };
+    }
+
+    /**
+     * Enhancement level of the upgrade stack a queued production action consumes.
+     *
+     * The queued action names its upgrade stack in `primaryItemHash`. A hash naming some other
+     * item (or none) leaves the +0 stack, which is what an action without a selection draws.
+     *
+     * @param {Object} actionDetails - Action detail object for the row
+     * @param {Object|null} actionObj - Character action object (carries the item hashes)
+     * @returns {number} Enhancement level, 0 when no stack is selected
+     */
+    getProductionUpgradeLevel(actionDetails, actionObj) {
+        const upgradeHrid = actionDetails?.upgradeItemHrid;
+        if (!upgradeHrid || !actionObj?.primaryItemHash) return 0;
+        const { itemHrid, level } = this.parseItemHash(actionObj.primaryItemHash);
+        return itemHrid === upgradeHrid && Number.isFinite(level) && level > 0 ? level : 0;
     }
 
     /**
@@ -4439,9 +4462,10 @@ class ActionTimeDisplay {
         for (const inputItem of actionDetails.inputItems || []) {
             spend(inputItem.itemHrid, performed * inputItem.count * (1 - artisanBonus));
         }
-        // Upgrade items are not reduced by Artisan, matching the limit
+        // Upgrade items are not reduced by Artisan, and come out of the selected stack,
+        // matching the limit
         if (actionDetails.upgradeItemHrid) {
-            spend(actionDetails.upgradeItemHrid, performed);
+            spend(actionDetails.upgradeItemHrid, performed, this.getProductionUpgradeLevel(actionDetails, actionObj));
         }
         return credit();
     }
