@@ -384,7 +384,9 @@ class PinnedActionsPage {
 
             this.allActions.push(row);
 
-            if (!isWarm) {
+            // A figure the action tiles cached is uncapped: this page ranks by the liquidity-capped
+            // pace, so such a row paints at once and is still resolved through computeStats.
+            if (!isWarm || cachedStats.liquidityChecked !== true) {
                 pendingResolutions.push(this._resolveRowStats(row, actionHrid, details, pinnedItemHrid));
             }
         }
@@ -1150,7 +1152,7 @@ class PinnedActionsPage {
                 }
             }
 
-            const stats = { profitPerHour, expPerHour, liquidityLimit };
+            const stats = { profitPerHour, expPerHour, liquidityLimit, liquidityChecked: true };
             if (!actionPanelSort.cachedStats) actionPanelSort.cachedStats = {};
             const cacheKey = pinnedItemHrid ? `${actionHrid}|${pinnedItemHrid}` : actionHrid;
             actionPanelSort.cachedStats[cacheKey] = stats;

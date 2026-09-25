@@ -218,7 +218,11 @@ class ActionPanelSort {
         if (data) {
             data.profitPerHour = profitPerHour;
             if (!this.cachedStats[data.actionHrid]) this.cachedStats[data.actionHrid] = {};
-            this.cachedStats[data.actionHrid].profitPerHour = profitPerHour;
+            const entry = this.cachedStats[data.actionHrid];
+            entry.profitPerHour = profitPerHour;
+            // An uncapped tile figure replaces any liquidity-capped one the pinned page left
+            delete entry.liquidityChecked;
+            delete entry.liquidityLimit;
         }
     }
 

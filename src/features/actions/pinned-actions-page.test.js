@@ -397,7 +397,12 @@ describe('loadActions', () => {
     });
 
     test('a warm row (already cached) never calls computeStats and never shows as pending', async () => {
-        mockActionPanelSort.cachedStats[ACTION_HRID] = { profitPerHour: 9_000, expPerHour: 300, liquidityLimit: null };
+        mockActionPanelSort.cachedStats[ACTION_HRID] = {
+            profitPerHour: 9_000,
+            expPerHour: 300,
+            liquidityLimit: null,
+            liquidityChecked: true,
+        };
         const computeStatsSpy = vi.spyOn(page, 'computeStats');
 
         await page.loadActions();
@@ -408,6 +413,27 @@ describe('loadActions', () => {
             profitPerHour: 9_000,
             expPerHour: 300,
         });
+    });
+
+    test('a figure cached by the action tiles paints at once, then is replaced by the liquidity-capped one', async () => {
+        // The tiles cache an uncapped profit/hr; ranking pins by it let a row the player had
+        // browsed past outrank the same row computed here, which is capped by market volume
+        mockActionPanelSort.cachedStats[ACTION_HRID] = { profitPerHour: 900_000, expPerHour: 300 };
+        let resolveStats;
+        const computeStatsSpy = vi
+            .spyOn(page, 'computeStats')
+            .mockImplementation(() => new Promise((resolve) => (resolveStats = resolve)));
+
+        const loadPromise = page.loadActions();
+
+        expect(page.allActions[0]).toMatchObject({ pending: false, profitPerHour: 900_000 });
+        expect(computeStatsSpy).toHaveBeenCalledTimes(1);
+
+        const limit = { kind: 'volume' };
+        resolveStats({ profitPerHour: 120_000, expPerHour: 300, liquidityLimit: limit, liquidityChecked: true });
+        await loadPromise;
+
+        expect(page.allActions[0]).toMatchObject({ pending: false, profitPerHour: 120_000, liquidityLimit: limit });
     });
 
     test('a row whose stats call rejects settles as unpriced rather than staying pending forever', async () => {

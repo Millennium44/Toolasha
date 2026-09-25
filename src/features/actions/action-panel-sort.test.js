@@ -103,6 +103,20 @@ describe('cachedStats and a pricing-setting change', () => {
         expect(actionPanelSort.getCachedStats('/actions/milking/cow')).toBeNull();
     });
 
+    test('a tile figure drops the liquidity verdict the pinned page left on the same entry', () => {
+        const panel = document.createElement('div');
+        actionPanelSort.registerPanel(panel, '/actions/milking/cow');
+        actionPanelSort.cachedStats['/actions/milking/cow'] = {
+            profitPerHour: 1000,
+            liquidityLimit: { kind: 'volume' },
+            liquidityChecked: true,
+        };
+
+        actionPanelSort.updateProfit(panel, 4000);
+
+        expect(actionPanelSort.getCachedStats('/actions/milking/cow')).toEqual({ profitPerHour: 4000 });
+    });
+
     test('either patient tick changing from outside drops the cache too', () => {
         cacheSomething();
         writePricingSetting('profitCalc_patientTickBuy');
