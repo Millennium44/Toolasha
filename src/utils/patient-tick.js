@@ -75,7 +75,7 @@ export function isPatientTickOn(side) {
  * @param {number|null} [book.ask] - Best ask (a buy never ticks up to it)
  * @param {number|null} [book.bid] - Best bid (a sell never ticks down to it)
  * @param {string} [book.itemHrid] - Item HRID, to clamp into the tradable range
- * @param {number} [book.enhancementLevel=0] - Enhancement level
+ * @param {number} [book.enhancementLevel=0] - Enhancement level; sets the tick size and the band
  * @returns {number|null} The improved price, or `price` unchanged
  */
 export function patientTickPrice(price, side, basis, book = {}) {
@@ -88,10 +88,10 @@ export function patientTickPrice(price, side, basis, book = {}) {
     const { ask = null, bid = null, itemHrid = null, enhancementLevel = 0 } = book;
     let improved;
     if (buyAtBid) {
-        improved = nextPriceUp(price);
+        improved = nextPriceUp(price, enhancementLevel);
         if (typeof ask === 'number' && ask > 0 && improved >= ask) return price;
     } else {
-        improved = nextPriceDown(price);
+        improved = nextPriceDown(price, enhancementLevel);
         if (improved >= price) return price;
         if (typeof bid === 'number' && bid > 0 && improved <= bid) return price;
     }

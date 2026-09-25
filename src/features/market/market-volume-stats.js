@@ -384,7 +384,7 @@ class MarketVolumeStats {
                 return;
             }
 
-            const windows = computeAllWindows(rows);
+            const windows = computeAllWindows(rows, Date.now(), enhancementLevel);
             // Cached so a column-visibility toggle can redraw without a refetch
             this.lastWindows = windows;
             this.lastSource = source;

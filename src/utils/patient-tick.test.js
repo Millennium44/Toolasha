@@ -1,6 +1,6 @@
 import { describe, test, expect, vi, beforeEach } from 'vitest';
 
-const mocks = vi.hoisted(() => ({ tickBuy: true, tickSell: true, band: null }));
+const mocks = vi.hoisted(() => ({ tickBuy: true, tickSell: true, band: null, september: false }));
 
 vi.mock('../core/config.js', () => ({
     default: {
@@ -22,6 +22,10 @@ vi.mock('./market-values.js', async (importOriginal) => {
 });
 
 vi.mock('../core/data-manager.js', () => ({ default: {} }));
+vi.mock('./server-gate.js', () => ({
+    isMarketplacePatchLive: () => true,
+    isSeptember2026MarketPatchLive: () => mocks.september,
+}));
 
 import {
     patientTickPrice,
@@ -36,6 +40,7 @@ beforeEach(() => {
     mocks.tickBuy = true;
     mocks.tickSell = true;
     mocks.band = null;
+    mocks.september = false;
 });
 
 describe('the per-side tick settings', () => {
@@ -135,5 +140,25 @@ describe('patientTickPrice', () => {
     test('an unpriced quote passes straight through', () => {
         expect(patientTickPrice(null, 'buy', 'bid')).toBeNull();
         expect(patientTickPrice(0, 'buy', 'bid')).toBe(0);
+    });
+});
+
+describe('patientTickPrice under the September 2026 market patch', () => {
+    test('ticks by the new bin gap, five times wider for an enhanced item', () => {
+        mocks.september = true;
+        expect(patientTickPrice(1000, 'buy', 'bid', { ask: 1100 })).toBe(1004);
+        expect(patientTickPrice(1000, 'sell', 'ask', { bid: 900 })).toBe(996);
+        expect(patientTickPrice(1000, 'buy', 'bid', { ask: 1100, itemHrid: '/items/x', enhancementLevel: 4 })).toBe(
+            1020
+        );
+        expect(patientTickPrice(1000, 'sell', 'ask', { bid: 900, itemHrid: '/items/x', enhancementLevel: 4 })).toBe(
+            980
+        );
+    });
+
+    test('a wider enhanced tick that would reach the other side stays put', () => {
+        mocks.september = true;
+        expect(patientTickPrice(1000, 'buy', 'bid', { ask: 1010, enhancementLevel: 2 })).toBe(1000);
+        expect(patientTickPrice(1000, 'buy', 'bid', { ask: 1010 })).toBe(1004);
     });
 });

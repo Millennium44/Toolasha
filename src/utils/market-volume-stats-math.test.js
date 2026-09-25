@@ -1,4 +1,15 @@
-import { describe, test, expect } from 'vitest';
+import { describe, test, expect, vi, afterEach } from 'vitest';
+
+const gates = vi.hoisted(() => ({ september: false }));
+
+vi.mock('./server-gate.js', () => ({
+    isMarketplacePatchLive: () => true,
+    isSeptember2026MarketPatchLive: () => gates.september,
+}));
+
+afterEach(() => {
+    gates.september = false;
+});
 import {
     filterWindow,
     snapPriceTier,
@@ -187,5 +198,46 @@ describe('trimTrailingZeros', () => {
 
     test('passes non-strings through unchanged', () => {
         expect(trimTrailingZeros(null)).toBe(null);
+    });
+});
+
+describe('snapPriceTier under the September 2026 market patch', () => {
+    // getBinnedPrice(price, roundUp, enhLevel) from the test-server client
+    test('snaps to the new bins, down or up, the way getBinnedPrice does', () => {
+        gates.september = true;
+        expect(snapPriceTier(1003, 'down')).toBe(1000);
+        expect(snapPriceTier(1003, 'up')).toBe(1004);
+        expect(snapPriceTier(1004, 'up')).toBe(1004);
+        expect(snapPriceTier(123456, 'down')).toBe(123000);
+        expect(snapPriceTier(123456, 'up')).toBe(123500);
+        expect(snapPriceTier(1, 'down')).toBe(2);
+    });
+
+    test('an enhanced item snaps to its wider bins', () => {
+        gates.september = true;
+        expect(snapPriceTier(1003, 'down', 3)).toBe(1000);
+        expect(snapPriceTier(1003, 'up', 3)).toBe(1020);
+        expect(snapPriceTier(123456, 'up', 1)).toBe(125000);
+        expect(snapPriceTier(850, 'up', 1)).toBe(860);
+    });
+
+    test('computeAllWindows threads the level to the min/max snap', () => {
+        gates.september = true;
+        const now = 10 * 86400 * 1000;
+        const rows = [
+            { time: 10 * 86400 - 60, p: 1003, v: 1, a: 1003, b: 1003 },
+            { time: 10 * 86400 - 60, p: 1017, v: 1, a: 1017, b: 1017 },
+        ];
+        const [plain] = computeAllWindows(rows, now);
+        const [enhanced] = computeAllWindows(rows, now, 2);
+        expect([plain.stats.minPrice, plain.stats.maxPrice]).toEqual([1000, 1020]);
+        expect([enhanced.stats.minPrice, enhanced.stats.maxPrice]).toEqual([1000, 1020]);
+        const [wide] = computeAllWindows([{ ...rows[0], p: 1021 }], now, 2);
+        expect([wide.stats.minPrice, wide.stats.maxPrice]).toEqual([1020, 1040]);
+    });
+
+    test('on live the level changes nothing', () => {
+        expect(snapPriceTier(1231, 'up', 5)).toBe(1235);
+        expect(snapPriceTier(1234, 'down', 5)).toBe(1230);
     });
 });
