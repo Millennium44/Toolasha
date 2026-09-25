@@ -69,10 +69,15 @@ class CombatScore {
         config.onSettingChange('combatScore', (value) => {
             if (value) {
                 this.initialize();
+                this.applyScoreVisibility();
             } else if (!config.getSetting('abilitiesTriggers')) {
                 // The module also serves abilitiesTriggers; only tear it down
                 // when neither setting still wants it running.
                 this.disable();
+            } else {
+                // The panel stays up for the abilities below it, so the score
+                // sections in it have to follow the switch themselves
+                this.applyScoreVisibility();
             }
         });
 
@@ -95,6 +100,29 @@ class CombatScore {
                 this.refresh();
             }
         });
+    }
+
+    /**
+     * Show or hide the Combat Score and Skiller Score sections of the open panel to match
+     * `combatScore`. Hiding one also folds its details, so showing it again starts folded, the way
+     * a freshly drawn panel does.
+     */
+    applyScoreVisibility() {
+        const panel = this.currentPanel;
+        if (!panel) return;
+        const show = Boolean(config.getSetting('combatScore'));
+        for (const [toggleId, detailsId] of [
+            ['mwi-score-toggle', 'mwi-score-details'],
+            ['mwi-skiller-score-toggle', 'mwi-skiller-score-details'],
+        ]) {
+            const toggle = panel.querySelector(`#${toggleId}`);
+            if (!toggle) continue;
+            toggle.style.display = show ? '' : 'none';
+            if (show) continue;
+            const details = panel.querySelector(`#${detailsId}`);
+            if (details) details.style.display = 'none';
+            toggle.textContent = toggle.textContent.replace(/^(\s*)- /, '$1+ ');
+        }
     }
 
     /**
