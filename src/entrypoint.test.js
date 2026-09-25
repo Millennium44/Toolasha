@@ -544,6 +544,32 @@ describe('task icons health check', () => {
     });
 });
 
+describe('overlay tab button gate', () => {
+    const gate = () => {
+        const entry = registered.find((feature) => feature.key === 'overlayTabButton');
+        expect(typeof entry?.customCheck, 'overlayTabButton has no customCheck').toBe('function');
+        return entry.customCheck();
+    };
+
+    test('closes when the overlay itself is switched off, so a live stop takes the button down with it', () => {
+        settings.overlayTabButton = true;
+        settings.overlayPanel = false;
+        expect(gate()).toBe(false);
+    });
+
+    test('closes on its own switch', () => {
+        settings.overlayTabButton = false;
+        settings.overlayPanel = true;
+        expect(gate()).toBe(false);
+    });
+
+    test('opens when both are on', () => {
+        settings.overlayTabButton = true;
+        settings.overlayPanel = true;
+        expect(gate()).toBe(true);
+    });
+});
+
 describe('overlay tab button health check', () => {
     const check = () => checkFor('overlayTabButton')();
 
