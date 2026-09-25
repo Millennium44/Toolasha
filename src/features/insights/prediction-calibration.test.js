@@ -25,6 +25,10 @@ const game = vi.hoisted(() => ({
     runProfit: { askProfit: 500, bidProfit: 400 },
     /** The item flow recorder's own gathering totals, by run id — `getRunGathering`'s stand-in */
     itemFlowRuns: {},
+    /** The artisan reduction the production forecast was computed under */
+    artisanBonus: 0,
+    /** The options each `calculateProfit` call was handed */
+    profitCalls: [],
 }));
 
 vi.mock('../../core/config.js', () => ({ default: { getSetting: () => true } }));
@@ -89,11 +93,16 @@ vi.mock('../actions/gathering-profit.js', () => ({
     },
 }));
 vi.mock('../actions/production-profit.js', () => ({
-    calculateProductionProfit: async () => ({ profitPerHour: game.profitPerHour, hasMissingPrices: false }),
+    calculateProductionProfit: async () => ({
+        profitPerHour: game.profitPerHour,
+        hasMissingPrices: false,
+        artisanBonus: game.artisanBonus,
+    }),
 }));
 vi.mock('../actions/loot-log-stats.js', () => ({
     LootLogStats: class {
-        calculateProfit() {
+        calculateProfit(logEntry, options) {
+            game.profitCalls.push(options);
             return game.runProfit;
         }
     },
@@ -139,6 +148,9 @@ beforeEach(async () => {
     game.profitPerHour = 1000;
     game.runProfit = { askProfit: 500, bidProfit: 400 };
     game.gate = null;
+    game.actionType = '/action_types/milking';
+    game.artisanBonus = 0;
+    game.profitCalls = [];
     calibration = new PredictionCalibration();
     await calibration.initialize();
 });
@@ -195,6 +207,18 @@ describe('pairing a forecast with a finished run', () => {
         await send([entry(2, '2026-08-04T11:30:00Z'), entry(1, '2026-08-04T10:00:00Z')]);
 
         expect((await calibration.getRecords())[0].predicted).toBe(1000);
+    });
+
+    test('a production run is charged its inputs at the artisan reduction the forecast assumed', async () => {
+        game.actionType = '/action_types/cooking';
+        game.artisanBonus = 0.1;
+        await send([entry(1, '2026-08-04T10:00:00Z')]);
+        // The tea ran out after the forecast; the run was still played under it
+        game.artisanBonus = 0;
+        await send([entry(2, '2026-08-04T11:30:00Z'), entry(1, '2026-08-04T10:00:00Z')]);
+
+        expect(await calibration.getRecords()).toHaveLength(1);
+        expect(game.profitCalls).toEqual([{ artisanBonus: 0.1 }]);
     });
 
     test('refuses a run that was already over when the script started', async () => {

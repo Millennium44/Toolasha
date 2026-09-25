@@ -279,7 +279,7 @@ class PredictionCalibration {
         // The forecast belongs to the run that is happening now — taken later it
         // would be measured against whatever the character is wearing later
         if (!this.pending.has(running.characterActionId) && !this.recorded.has(running.characterActionId)) {
-            const predicted = await this._predict(running.actionHrid);
+            const forecast = await this._predict(running.actionHrid);
             // `_predict` can take a while (it runs the same calculators the
             // action panels use), long enough for a character switch to land
             // mid-await. `disable()` already cleared `pending` for the
@@ -290,8 +290,8 @@ class PredictionCalibration {
             // before the matching "finished" entry is processed, a run that
             // was actually the departing character's would be written into
             // the arriving character's history as if it were theirs.
-            if (predicted !== null && dataManager.getCurrentCharacterId() === owner) {
-                this.pending.set(running.characterActionId, { predicted, at: Date.now() });
+            if (forecast !== null && dataManager.getCurrentCharacterId() === owner) {
+                this.pending.set(running.characterActionId, { ...forecast, at: Date.now() });
             }
         }
 
@@ -324,7 +324,7 @@ class PredictionCalibration {
         const durationSec = (new Date(entry.endTime) - new Date(entry.startTime)) / 1000;
         if (!Number.isFinite(durationSec) || durationSec < MIN_DURATION_SEC) return false;
 
-        const actual = this._actual(entry, durationSec);
+        const actual = this._actual(entry, durationSec, forecast.artisanBonus);
         if (actual === null) return false;
 
         this.records.push({
@@ -352,8 +352,14 @@ class PredictionCalibration {
 
     /**
      * What the calculators say this action is worth per hour, right now.
+     *
+     * The Artisan reduction the forecast assumed rides along: a loot log entry
+     * records only what a run produced, so the actual side charges its inputs at
+     * the same reduction rather than at the recipe's printed counts.
+     *
      * @param {string} actionHrid - Action HRID
-     * @returns {Promise<number|null>} Profit per hour, or null when not forecastable
+     * @returns {Promise<{predicted: number, artisanBonus: number}|null>} Profit per hour and the
+     *   artisan reduction behind it, or null when not forecastable
      */
     async _predict(actionHrid) {
         try {
@@ -369,7 +375,8 @@ class PredictionCalibration {
             // sim, the enhancement chain) and their own recorders —
             // combat-calibration.js and enhancement-calibration.js — pair them.
             if (!data || data.hasMissingPrices) return null;
-            return Number.isFinite(data.profitPerHour) ? data.profitPerHour : null;
+            if (!Number.isFinite(data.profitPerHour)) return null;
+            return { predicted: data.profitPerHour, artisanBonus: Number(data.artisanBonus) || 0 };
         } catch (error) {
             console.error('[PredictionCalibration] Prediction failed:', error);
             return null;
@@ -380,12 +387,13 @@ class PredictionCalibration {
      * What the run actually paid per hour, by the loot log's own arithmetic.
      * @param {Object} entry - Loot log entry
      * @param {number} durationSec - How long the run took
+     * @param {number} [artisanBonus=0] - The artisan reduction the forecast assumed
      * @returns {{perHour: number, perHourBid: number}|null}
      */
-    _actual(entry, durationSec) {
+    _actual(entry, durationSec, artisanBonus = 0) {
         try {
             if (!this.lootLogMath) this.lootLogMath = new LootLogStats();
-            const profit = this.lootLogMath.calculateProfit(entry);
+            const profit = this.lootLogMath.calculateProfit(entry, { artisanBonus });
             if (!profit || !Number.isFinite(profit.askProfit)) return null;
             const hours = durationSec / 3600;
             if (hours <= 0) return null;
@@ -449,11 +457,11 @@ class PredictionCalibration {
      */
     async _snapshotLive(id, actionHrid, owner) {
         if (this.pending.has(id) || this.recorded.has(id)) return;
-        const predicted = await this._predict(actionHrid);
-        if (predicted === null) return;
+        const forecast = await this._predict(actionHrid);
+        if (forecast === null) return;
         if (this.pending.has(id) || this.recorded.has(id)) return;
         if (dataManager.getCurrentCharacterId() !== owner) return;
-        this.pending.set(id, { predicted, at: Date.now() });
+        this.pending.set(id, { ...forecast, at: Date.now() });
     }
 
     /**

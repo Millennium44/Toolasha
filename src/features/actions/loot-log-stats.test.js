@@ -213,6 +213,23 @@ describe('LootLogStats.calculateInputCost', () => {
         ]);
         expect(cost.askCost).toBe(9000);
     });
+
+    test('an artisan reduction applies to the inputs at its average, never to the upgrade item', () => {
+        getItemPrices.mockImplementation(
+            (hrid) =>
+                ({ '/items/milk': { ask: 10, bid: 8 }, '/items/rainbow_sword': { ask: 1000, bid: 900 } })[hrid] || null
+        );
+        dataManager.getActionDetails.mockReturnValue({
+            type: '/action_types/crafting',
+            inputItems: [{ itemHrid: '/items/milk', count: 4 }],
+            upgradeItemHrid: '/items/rainbow_sword',
+        });
+
+        const cost = stats.calculateInputCost('/actions/crafting/holy_sword', 10, { artisanBonus: 0.1 });
+        expect(cost.inputs[0].count).toBeCloseTo(36); // 4 × 0.9 × 10
+        expect(cost.inputs[1].count).toBe(10);
+        expect(cost.askCost).toBeCloseTo(360 + 10000);
+    });
 });
 
 describe('LootLogStats.buildLuckReading', () => {

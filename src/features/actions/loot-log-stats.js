@@ -689,10 +689,14 @@ class LootLogStats {
      * Calculate the market cost of inputs consumed by a logged action run.
      * @param {string} actionHrid - Action HRID
      * @param {number} actionCount - Number of completed actions
+     * @param {Object} [options]
+     * @param {number} [options.artisanBonus=0] - Artisan reduction the run was played under, as a
+     *   decimal; applied to the regular inputs at its average, never to the upgrade item. A loot
+     *   log entry does not say what the run consumed, so a caller that does not know leaves it 0
      * @returns {Object|null} { askCost, bidCost, inputs: [{hrid, name, count, askTotal, bidTotal}] },
      *   or null when the action's inputs cannot be resolved (unknown action, alchemy)
      */
-    calculateInputCost(actionHrid, actionCount) {
+    calculateInputCost(actionHrid, actionCount, { artisanBonus = 0 } = {}) {
         if (!actionHrid || !actionCount) return null;
 
         // Alchemy consumes item-specific inputs not present in actionDetailMap
@@ -701,9 +705,10 @@ class LootLogStats {
         const actionDetails = dataManager.getActionDetails(actionHrid);
         if (!actionDetails) return null;
 
+        const keep = 1 - Math.min(Math.max(Number(artisanBonus) || 0, 0), 1);
         const consumed = (actionDetails.inputItems || []).map((input) => ({
             hrid: input.itemHrid,
-            count: (input.count || 0) * actionCount,
+            count: (input.count || 0) * keep * actionCount,
         }));
         // One upgrade unit per action on top of the inputs, even when it is the same
         // item as one of them (every advanced+ charm takes 8 of its lower charm as
@@ -740,12 +745,13 @@ class LootLogStats {
      * Calculate profit for a logged action run: drop revenue after market tax
      * minus the cost of consumed inputs.
      * @param {Object} logData - Log entry ({actionHrid, actionCount, drops})
+     * @param {Object} [options] - Passed to {@link calculateInputCost}
      * @returns {Object|null} { askProfit, bidProfit, inputs } or null when not computable
      */
-    calculateProfit(logData) {
+    calculateProfit(logData, options = {}) {
         if (!logData?.drops) return null;
 
-        const inputCost = this.calculateInputCost(logData.actionHrid, logData.actionCount);
+        const inputCost = this.calculateInputCost(logData.actionHrid, logData.actionCount, options);
         if (!inputCost) return null;
 
         // Revenue after the marketplace tax (coins are untaxed face value; an Iron Cow
