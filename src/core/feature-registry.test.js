@@ -951,6 +951,68 @@ describe('a setting switched on mid-session', () => {
         });
     });
 
+    describe('a character switch landing while a live start is in flight', () => {
+        test('the teardown waits for the start, so it takes down what the start built', async () => {
+            const fresh = await freshRegistry();
+            state.currentCharacterId = 'A';
+            const order = [];
+            let release;
+            const initialize = vi.fn(() => {
+                order.push('init:begin');
+                return new Promise((resolve) => {
+                    release = () => {
+                        order.push('init:end');
+                        resolve();
+                    };
+                });
+            });
+            const disable = vi.fn(() => order.push('disable'));
+            fresh.replaceFeatures([{ key: 'slow', name: 'Slow', initialize, disable, liveStop: true }]);
+            fresh.setupCharacterSwitchHandler();
+            fresh.setupLiveFeatureStart();
+            await fresh.initializeFeatures();
+
+            changeSetting('slow', true);
+            await settle();
+            expect(order).toEqual(['init:begin']);
+
+            const teardown = state.handlers.character_switching();
+            await settle();
+            expect(disable).not.toHaveBeenCalled();
+
+            release();
+            await teardown;
+            expect(order).toEqual(['init:begin', 'init:end', 'disable']);
+        });
+
+        test('a start that never settles holds the teardown only for a bounded time', async () => {
+            vi.useFakeTimers();
+            try {
+                const fresh = await freshRegistry();
+                state.currentCharacterId = 'A';
+                const disable = vi.fn();
+                fresh.replaceFeatures([
+                    { key: 'stuck', name: 'Stuck', initialize: () => new Promise(() => {}), disable },
+                ]);
+                fresh.setupCharacterSwitchHandler();
+                fresh.setupLiveFeatureStart();
+                await fresh.initializeFeatures();
+
+                changeSetting('stuck', true);
+                await vi.advanceTimersByTimeAsync(0);
+                const teardown = state.handlers.character_switching();
+                await vi.advanceTimersByTimeAsync(0);
+                expect(disable).not.toHaveBeenCalled();
+
+                await vi.advanceTimersByTimeAsync(10_000);
+                await teardown;
+                expect(disable).toHaveBeenCalledTimes(1);
+            } finally {
+                vi.useRealTimers();
+            }
+        });
+    });
+
     describe('the failed-feature retry', () => {
         test('a feature stopped live before its retry is not started behind the stop', async () => {
             vi.spyOn(console, 'error').mockImplementation(() => {});
