@@ -8,6 +8,9 @@ const state = vi.hoisted(() => ({
     prices: {},
     stored: [],
     saved: null,
+    artisan: 0,
+    gourmet: 0,
+    personalGourmet: 0,
 }));
 
 vi.mock('../../core/storage.js', () => ({
@@ -20,12 +23,22 @@ vi.mock('../../core/data-manager.js', () => ({
     default: {
         getCurrentCharacterId: () => state.charId,
         getActionDetails: (hrid) => state.actionDetails[hrid] || null,
+        getInitClientData: () => ({ itemDetailMap: {} }),
+        getPersonalBuffFlatBoost: (type, buff) => (buff === '/buff_types/gourmet' ? state.personalGourmet : 0),
         on: vi.fn(),
         off: vi.fn(),
     },
 }));
 vi.mock('../../utils/offline-economics-calculator.js', () => ({
     calculateOfflineEconomics: ({ offlineItems }) => ({ profit: offlineItems.length * 1000 }),
+}));
+vi.mock('../../utils/action-context.js', () => ({
+    resolveActionContext: () => ({ equipment: new Map(), drinks: [] }),
+}));
+vi.mock('../../utils/tea-parser.js', () => ({
+    getDrinkConcentration: () => 0,
+    parseArtisanBonus: () => state.artisan,
+    parseGourmetBonus: () => state.gourmet,
 }));
 vi.mock('../../utils/market-data.js', () => ({
     getItemPrice: (hrid) => state.prices[hrid] ?? null,
@@ -62,6 +75,9 @@ beforeEach(() => {
     state.prices = { '/items/cheese': 100, '/items/milk': 40 };
     state.stored = [];
     state.saved = null;
+    state.artisan = 0;
+    state.gourmet = 0;
+    state.personalGourmet = 0;
     recorder._forget();
 });
 
@@ -75,6 +91,53 @@ describe('recording production', () => {
         expect(row.outputValue).toBe(100);
         expect(row.inputValue).toBe(80);
         expect(row.actions).toBe(1);
+    });
+
+    test('the upgrade item is charged one per action, on top of an input of the same item', async () => {
+        state.actionDetails['/actions/crafting/advanced_charm'] = {
+            type: '/action_types/crafting',
+            outputItems: [{ itemHrid: '/items/advanced_charm', count: 1 }],
+            inputItems: [{ itemHrid: '/items/basic_charm', count: 8 }],
+            upgradeItemHrid: '/items/basic_charm',
+        };
+        state.prices['/items/advanced_charm'] = 1000;
+        state.prices['/items/basic_charm'] = 100;
+        await recorder._onActionCompleted({
+            endCharacterAction: { id: 11, actionHrid: '/actions/crafting/advanced_charm', currentCount: 1 },
+        });
+
+        const row = state.saved.rows.find((entry) => entry.d === TODAY);
+        // 8 inputs + 1 upgrade: the craft lost 100, it did not make 200
+        expect(row.inputValue).toBe(900);
+        expect(row.outputValue).toBe(1000);
+    });
+
+    test('an unpriced upgrade item leaves the action unvalued rather than free', async () => {
+        state.actionDetails['/actions/crafting/holy_sword'] = {
+            type: '/action_types/crafting',
+            outputItems: [{ itemHrid: '/items/holy_sword', count: 1 }],
+            inputItems: [{ itemHrid: '/items/milk', count: 2 }],
+            upgradeItemHrid: '/items/rainbow_sword',
+        };
+        state.prices['/items/holy_sword'] = 5000;
+        await recorder._onActionCompleted({
+            endCharacterAction: { id: 12, actionHrid: '/actions/crafting/holy_sword', currentCount: 1 },
+        });
+
+        expect(state.saved.rows[0]).toMatchObject({ outputValue: 0, inputValue: 0, unpricedActions: 1 });
+    });
+
+    test('artisan reduces the inputs and gourmet adds output, as expected values', async () => {
+        state.artisan = 0.1;
+        state.gourmet = 0.12;
+        state.personalGourmet = 0.03;
+        await recorder._onActionCompleted({
+            endCharacterAction: { id: 13, actionHrid: '/actions/cooking/cheese', currentCount: 1 },
+        });
+
+        const row = state.saved.rows.find((entry) => entry.d === TODAY);
+        expect(row.inputValue).toBeCloseTo(72); // 2 × 40 × 0.9
+        expect(row.outputValue).toBeCloseTo(115); // 100 × 1.15
     });
 
     test('a jump in the action counter counts every action it covers', async () => {

@@ -18,7 +18,9 @@
  * ## What it can and cannot see
  *
  * The recipe and the number of actions completed are known exactly; the outputs
- * are what the recipe says they are. Rare extra drops from a production action
+ * are what the recipe says they are, with Gourmet's extra output at its expected
+ * value, and the inputs are the recipe's with Artisan's reduction at its average
+ * and one upgrade item per action. Rare extra drops from a production action
  * are *not* counted here — they land in the loot log, and counting them in both
  * places would be worse than counting them in neither. This is why the
  * attribution panel labels production as an estimate and everything else as
@@ -44,6 +46,8 @@ import dataManager from '../../core/data-manager.js';
 import { calculateOfflineEconomics } from '../../utils/offline-economics-calculator.js';
 import { createChunkedHistory, timeChunkId } from '../../utils/chunked-history.js';
 import { getItemPrice } from '../../utils/market-data.js';
+import { resolveActionContext } from '../../utils/action-context.js';
+import { getDrinkConcentration, parseArtisanBonus, parseGourmetBonus } from '../../utils/tea-parser.js';
 import { PRODUCTION_TYPES } from '../../utils/profit-constants.js';
 import { localDayId, dayStart } from './gold-sources.js';
 
@@ -76,6 +80,38 @@ const rowChunkId = (row) => timeChunkId(dayStart(row?.d), 'month');
  * @property {number} [unpricedActions] - Actions left out because an input or
  *   output had no market price; the day's production figure is short by these
  */
+
+/**
+ * An unenhanced unit at market; coins, which some recipes take, at face value.
+ * @param {string} itemHrid - Item
+ * @returns {number|null} Coins per unit, or null when unpriced
+ */
+function unitPrice(itemHrid) {
+    if (itemHrid === '/items/coin') return 1;
+    return getItemPrice(itemHrid, { enhancementLevel: 0, context: 'networth' });
+}
+
+/**
+ * Artisan and Gourmet as they stand for an action type, from the drinks and gear
+ * the forecasts read, so a day's margin is on the same footing as the panel's.
+ * @param {string} actionType - e.g. `/action_types/cooking`
+ * @returns {{artisan: number, gourmet: number}} Both as decimals
+ */
+function recipeBuffs(actionType) {
+    try {
+        const itemDetailMap = dataManager.getInitClientData?.()?.itemDetailMap || {};
+        const { equipment, drinks } = resolveActionContext(actionType);
+        const concentration = getDrinkConcentration(equipment, itemDetailMap);
+        const artisan = parseArtisanBonus(drinks, itemDetailMap, concentration) || 0;
+        const gourmet =
+            (parseGourmetBonus(drinks, itemDetailMap, concentration) || 0) +
+            (dataManager.getPersonalBuffFlatBoost?.(actionType, '/buff_types/gourmet') || 0);
+        return { artisan: Math.min(Math.max(artisan, 0), 1), gourmet: Math.max(gourmet, 0) };
+    } catch (error) {
+        console.error('[ProductionIncome] Reading artisan and gourmet failed:', error);
+        return { artisan: 0, gourmet: 0 };
+    }
+}
 
 class ProductionIncomeRecorder {
     constructor() {
@@ -257,19 +293,28 @@ class ProductionIncomeRecorder {
             // this recorder exists to avoid. So an action either has both halves
             // priced or it is not valued at all, and the day counts how many it
             // had to leave out so the panel can say the figure is short
+            // Gourmet adds output and Artisan removes input, both as expected values
+            // over the batch; the upgrade item is one per action and never reduced
+            const { artisan, gourmet } = recipeBuffs(details.type);
+
             let outputValue = 0;
             let unpriced = false;
             for (const output of details.outputItems || []) {
-                const unit = getItemPrice(output.itemHrid, { enhancementLevel: 0, context: 'networth' });
-                if (Number.isFinite(unit)) outputValue += unit * (output.count || 0) * completed;
+                const unit = unitPrice(output.itemHrid);
+                if (Number.isFinite(unit)) outputValue += unit * (output.count || 0) * (1 + gourmet) * completed;
                 else if ((output.count || 0) > 0) unpriced = true;
             }
 
             let inputValue = 0;
             for (const inputItem of details.inputItems || []) {
-                const unit = getItemPrice(inputItem.itemHrid, { enhancementLevel: 0, context: 'networth' });
-                if (Number.isFinite(unit)) inputValue += unit * (inputItem.count || 0) * completed;
+                const unit = unitPrice(inputItem.itemHrid);
+                if (Number.isFinite(unit)) inputValue += unit * (inputItem.count || 0) * (1 - artisan) * completed;
                 else if ((inputItem.count || 0) > 0) unpriced = true;
+            }
+            if (details.upgradeItemHrid) {
+                const unit = unitPrice(details.upgradeItemHrid);
+                if (Number.isFinite(unit)) inputValue += unit * completed;
+                else unpriced = true;
             }
 
             if (!unpriced && outputValue === 0 && inputValue === 0) return;
