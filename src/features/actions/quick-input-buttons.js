@@ -1170,9 +1170,11 @@ class QuickInputButtons {
      * Set input value using React utility
      * @param {HTMLInputElement} input - Number input element
      * @param {number} value - Value to set
+     * @param {Object} [options] - {focus} — false for a fill driven by another input the player
+     *   is still using: moving focus off a held spinner arrow stops its hold-to-repeat
      */
-    setInputValue(input, value) {
-        setReactInputValue(input, value, { focus: true });
+    setInputValue(input, value, { focus = true } = {}) {
+        setReactInputValue(input, value, { focus });
     }
 
     /**
@@ -1528,8 +1530,8 @@ class QuickInputButtons {
                     `;
                     targetLevelResult.style.color = `var(--text-color-primary, ${config.COLOR_TEXT_PRIMARY})`;
 
-                    // Auto-fill queue input when target level changes
-                    this.setInputValue(numberInput, result.actionsNeeded);
+                    // Auto-fill the queue input without taking focus from the target input
+                    this.setInputValue(numberInput, result.actionsNeeded, { focus: false });
                 } else {
                     targetLevelResult.textContent = 'Invalid level';
                     targetLevelResult.style.color = 'var(--color-error, #ff4444)';
