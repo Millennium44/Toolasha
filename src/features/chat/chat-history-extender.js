@@ -180,6 +180,56 @@ const PENDING_ID_TTL_MS = 15000;
 const PENDING_ID_MAX_PER_CHANNEL = 50;
 
 /**
+ * Chat link types whose payload names an item — rendered as the game's own
+ * `Item_itemContainer` icon+label component, the same one item links inside
+ * restored chat markup already resolve through (see `itemHridFrom` in
+ * chat-history-persistence.js). `/chat_link_types/ability` and the other
+ * link types are not: nothing here claims to know how they render, so a
+ * message carrying one simply keeps failing the item-count check below and
+ * stays untagged, same as before this existed.
+ */
+const ITEM_LINK_TYPES = new Set([
+    '/chat_link_types/item',
+    '/chat_link_types/market_listing',
+    '/chat_link_types/collection',
+]);
+
+/**
+ * How many item-shaped links a `chat_message_received` message's raw
+ * `linksMetadata` names — a structural fingerprint {@link claim} can compare
+ * against how many `Item_itemContainer` elements a candidate DOM node
+ * actually contains, without needing to reconstruct the exact label text
+ * those elements render (their formatting — enhancement, count, price — is
+ * this script's own separate concern in chat-history-persistence.js, not
+ * duplicated here).
+ * @param {string|undefined} linksMetadataJSON - `message.linksMetadata`, as sent
+ * @returns {number}
+ */
+function countItemLinks(linksMetadataJSON) {
+    if (!linksMetadataJSON) return 0;
+    try {
+        const links = JSON.parse(linksMetadataJSON);
+        if (!Array.isArray(links)) return 0;
+        return links.filter((link) => ITEM_LINK_TYPES.has(link?.linkType)).length;
+    } catch {
+        return 0;
+    }
+}
+
+/**
+ * Collapse whitespace runs to a single space and trim — applied to both
+ * sides of a body comparison so that stripping an item-container element out
+ * of the DOM (see {@link extractSenderAndBody}) cannot turn a run of
+ * collapsed spacing into a mismatch against `entry.m`, which never had that
+ * element's markup to begin with.
+ * @param {string} text
+ * @returns {string}
+ */
+function normalizeSpacing(text) {
+    return (text || '').replace(/\s+/g, ' ').trim();
+}
+
+/**
  * A live message node's sender and message text, read the same way
  * {@link senderNameFrom} reads a restored one, plus everything that follows
  * it in document order.
@@ -193,10 +243,24 @@ const PENDING_ID_MAX_PER_CHANNEL = 50;
  * …) trimmed off the front — is the message body, whatever the timestamp
  * format turned out to be.
  *
+ * A Trade/Recruit post naming an item (most of them do) also renders that
+ * item's icon+label inline — text `chat_message_received`'s own `m` field
+ * never contained, since the game keeps prose and links separate on the wire
+ * (see `resolveMessage`/`appendMessage` in pop-out-chat.js, which render them
+ * as two different things for exactly this reason). Comparing the *whole*
+ * line's text against `m` would therefore reject every linked message. Every
+ * `Item_itemContainer` element is cut out of a clone before reading text, so
+ * the body extracted here is prose only, matching what `m` actually holds;
+ * how many such elements the node held is returned separately; `claim`
+ * requires it to match the candidate's own count from `linksMetadata` as a
+ * structural check that does not depend on reconstructing the elements'
+ * exact rendered label text.
+ *
  * @param {Element} node - A `ChatMessage_chatMessage` node
- * @returns {{sender: string, body: string}|null} Null when the node carries
- *   no sender element at all (a system message) or the extraction otherwise
- *   fails — both correctly mean "cannot be matched", not "matches anything".
+ * @returns {{sender: string, body: string, itemLinkCount: number}|null} Null
+ *   when the node carries no sender element at all (a system message) or the
+ *   extraction otherwise fails — both correctly mean "cannot be matched",
+ *   not "matches anything".
  */
 function extractSenderAndBody(node) {
     let senderEl;
@@ -210,15 +274,27 @@ function extractSenderAndBody(node) {
     const sender = senderNameFrom(senderEl);
     if (!sender) return null;
 
-    const fullText = node.textContent || '';
+    let itemLinkCount = 0;
+    let textSource = node;
+    try {
+        const itemContainers = node.querySelectorAll('[class*="Item_itemContainer"]');
+        itemLinkCount = itemContainers.length;
+        if (itemLinkCount) {
+            const clone = node.cloneNode(true);
+            clone.querySelectorAll('[class*="Item_itemContainer"]').forEach((el) => el.remove());
+            textSource = clone;
+        }
+    } catch {
+        // Fall back to the un-stripped node; a link-bearing message just
+        // will not match below, which is the safe outcome.
+    }
+
+    const fullText = textSource.textContent || '';
     const idx = fullText.indexOf(sender);
     if (idx === -1) return null;
 
-    const body = fullText
-        .slice(idx + sender.length)
-        .replace(/^[:\s]+/, '')
-        .trim();
-    return { sender, body };
+    const body = normalizeSpacing(fullText.slice(idx + sender.length).replace(/^[:\s]+/, ''));
+    return { sender, body, itemLinkCount };
 }
 
 /**
@@ -249,11 +325,15 @@ function extractSenderAndBody(node) {
  * against a candidate — never `.includes()` — and, if more than one queued
  * candidate matches exactly (two genuinely identical messages), claims
  * neither: which one is which cannot be told apart, so tagging either would
- * be a guess, and an untagged node is always the safe outcome.
+ * be a guess, and an untagged node is always the safe outcome. A message
+ * naming an item also has to match on how many item links it carries — see
+ * {@link extractSenderAndBody} and {@link countItemLinks} — or a Trade post
+ * (most of which name an item) would never satisfy the text comparison at
+ * all, since the game keeps prose and links as separate fields.
  */
 class PendingMessageIds {
     constructor() {
-        /** @type {Map<string, Array<{id: string|number, isDeleted: boolean, sName: string, m: string, ts: number}>>} */
+        /** @type {Map<string, Array<{id: string|number, isDeleted: boolean, sName: string, m: string, itemLinkCount: number, ts: number}>>} */
         this.byChannel = new Map();
     }
 
@@ -266,15 +346,23 @@ class PendingMessageIds {
      * @param {boolean} isDeleted - True for a message that arrived pre-deleted
      * @param {string} [sName] - Sender name, as `chat_message_received` carries it
      * @param {string} [m] - Message text, as `chat_message_received` carries it
+     * @param {string} [linksMetadata] - Raw `linksMetadata`, as `chat_message_received` carries it
      */
-    note(chan, id, isDeleted, sName, m) {
+    note(chan, id, isDeleted, sName, m, linksMetadata) {
         if (!chan || id == null) return;
         let queue = this.byChannel.get(chan);
         if (!queue) {
             queue = [];
             this.byChannel.set(chan, queue);
         }
-        queue.push({ id, isDeleted: !!isDeleted, sName: sName || '', m: m || '', ts: Date.now() });
+        queue.push({
+            id,
+            isDeleted: !!isDeleted,
+            sName: sName || '',
+            m: normalizeSpacing(m),
+            itemLinkCount: countItemLinks(linksMetadata),
+            ts: Date.now(),
+        });
         if (queue.length > PENDING_ID_MAX_PER_CHANNEL) queue.shift();
     }
 
@@ -310,6 +398,7 @@ class PendingMessageIds {
             if (!entry.sName && !entry.m) continue;
             if (entry.sName !== rendered.sender) continue;
             if (entry.m !== rendered.body) continue;
+            if (entry.itemLinkCount !== rendered.itemLinkCount) continue;
             matches.push(i);
         }
         // Zero: nothing describes this node. More than one: two queued
@@ -1051,11 +1140,18 @@ class ChatHistoryExtender {
      * Handle `chat_message_received`: queue the id for {@link ChatTabHandler#_tagMessageId}
      * to claim once the DOM node it belongs to is actually rendered. See
      * {@link PendingMessageIds}.
-     * @param {{id?: string|number, chan?: string, isDeleted?: boolean, sName?: string, m?: string}|null} message
+     * @param {{id?: string|number, chan?: string, isDeleted?: boolean, sName?: string, m?: string, linksMetadata?: string}|null} message
      */
     _handleMessageReceived(message) {
         if (!message || message.id == null || !message.chan || !this.messageIds) return;
-        this.messageIds.note(message.chan, message.id, !!message.isDeleted, message.sName, message.m);
+        this.messageIds.note(
+            message.chan,
+            message.id,
+            !!message.isDeleted,
+            message.sName,
+            message.m,
+            message.linksMetadata
+        );
     }
 
     /**
