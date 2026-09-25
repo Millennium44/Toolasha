@@ -628,6 +628,9 @@ export default class CustomTabsUI {
         // tab, so the Toolasha view selects "All" and hands the player's own choice back on leaving.
         this._nativeAllTabClicks = 0;
         this._savedNativeInvTab = null; // { charId, key } — the tab selected before "All" was forced
+        // A choice stored by an earlier page whose Toolasha view was still open at reload. Consumed
+        // once, when the native strip first exists, unless the view opens first (its exit restores).
+        this._storedNativeTabPending = false;
     }
 
     // -----------------------------------------------------------------------
@@ -657,14 +660,18 @@ export default class CustomTabsUI {
         // registrations below run in sequence off it.
         if (!stillOurs(ticket)) return;
         this._configCharId = charId;
+        this._storedNativeTabPending = true;
 
         // Inject CSS
         this._styleEl = document.createElement('style');
         this._styleEl.textContent = PANEL_CSS;
         document.head.appendChild(this._styleEl);
 
+        // Also fires for the inventory's own strip (post-2026-09 DOM), which is when a stored
+        // native tab choice can first be handed back.
         const unregister = domObserver.onClass('CustomTabs', 'TabsComponent_tabsContainer', () => {
             this._tryInjectTabButton();
+            this._consumeStoredNativeTab();
         });
         this._unregisterHandlers.push(unregister);
 
@@ -675,12 +682,14 @@ export default class CustomTabsUI {
         this._unregisterHandlers.push(
             domObserver.onReady('CustomTabsCatchUp', () => {
                 this._tryInjectTabButton();
+                this._consumeStoredNativeTab();
 
                 if (!this._tabBtn) {
                     let retries = 0;
                     const retryInterval = setInterval(() => {
                         retries++;
                         this._tryInjectTabButton();
+                        this._consumeStoredNativeTab();
                         if (this._tabBtn || retries >= 20) clearInterval(retryInterval);
                     }, 500);
                     this._unregisterHandlers.push(() => clearInterval(retryInterval));
@@ -999,6 +1008,8 @@ export default class CustomTabsUI {
     _activatePanel() {
         if (this._isActive) return;
         this._isActive = true;
+        // The stored choice is now this view's to restore on exit
+        this._storedNativeTabPending = false;
 
         if (this._tabBtn) this._tabBtn.classList.add('Mui-selected');
         const tabList = this._tabBtn?.parentElement;
@@ -1164,6 +1175,20 @@ export default class CustomTabsUI {
         } catch (error) {
             console.error('[CustomTabs] Saving the native inventory tab failed:', error);
         }
+    }
+
+    /**
+     * After a reload that happened inside the Toolasha view, the game shows "All" and the player's
+     * choice survives only in storage. When this page starts outside the view, hand it back as
+     * soon as the native strip exists (the restore itself checks the character and clears the key).
+     */
+    _consumeStoredNativeTab() {
+        if (!this._storedNativeTabPending || this._isActive) return;
+        if (!this._findNativeInventoryTabList(this._findInvContainer())) return;
+        this._storedNativeTabPending = false;
+        this._restoreNativeInventoryTab().catch((error) => {
+            console.error('[CustomTabs] Restoring the native inventory tab failed:', error);
+        });
     }
 
     /**
