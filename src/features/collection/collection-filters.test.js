@@ -36,6 +36,7 @@ const mockConfig = vi.hoisted(() => ({
 }));
 
 const mockMarket = vi.hoisted(() => ({ prices: {} }));
+const mockObserver = vi.hoisted(() => ({ handlers: new Map() }));
 const mockEfficiency = vi.hoisted(() => ({ context: { actionTime: 10, efficiencyMultiplier: 1, totalGathering: 0 } }));
 
 vi.mock('../../core/config.js', () => ({
@@ -46,7 +47,14 @@ vi.mock('../../core/config.js', () => ({
     },
 }));
 vi.mock('../../core/data-manager.js', () => ({ default: mockDataManager }));
-vi.mock('../../core/dom-observer.js', () => ({ default: { onClass: () => () => {} } }));
+vi.mock('../../core/dom-observer.js', () => ({
+    default: {
+        onClass: (name, _className, callback) => {
+            mockObserver.handlers.set(name, callback);
+            return () => mockObserver.handlers.delete(name);
+        },
+    },
+}));
 vi.mock('../../api/marketplace.js', () => ({
     default: {
         getPrice: (hrid) => mockMarket.prices[hrid] ?? null,
@@ -1317,5 +1325,67 @@ describe('skilling badges alone, with filters and favourites both off', () => {
 
         const badge = grid.querySelector('.toolasha-cf.collection-badge');
         expect(badge?.textContent).toBe('12');
+    });
+});
+
+describe('each setting keeps to its own part', () => {
+    afterEach(() => {
+        collectionFilters.disable();
+        collectionFilters.sortMode = 'default';
+    });
+
+    /** A skilling grid with one tile the badge pass recognizes */
+    const buildGrid = () => {
+        document.body.innerHTML = '';
+        const grid = document.createElement('div');
+        grid.className = 'SkillActionGrid_skillActionGrid__1tJFk';
+        grid.innerHTML =
+            '<div class="SkillAction_skillAction__1esCp">' +
+            '<svg><use href="/static/media/items_sprite.svg#cow"></use></svg>' +
+            '<div class="SkillAction_name__2VPXa">cow</div></div>';
+        document.body.appendChild(grid);
+        return grid;
+    };
+
+    test('badges switched off with filters still on are not drawn on the next skilling grid', async () => {
+        mockConfig.settings = {
+            collectionFilters: true,
+            collectionFavorites: false,
+            collectionFilters_skillingBadges: true,
+        };
+        collectionFilters.isInitialized = false;
+        await collectionFilters.initialize();
+        collectionFilters.collections = { milk: 12 };
+        const onGrid = mockObserver.handlers.get('CollectionFilters-skilling');
+        expect(onGrid).toBeTypeOf('function');
+
+        mockConfig.settings.collectionFilters_skillingBadges = false;
+        const grid = buildGrid();
+        onGrid(grid);
+
+        expect(grid.querySelector('.toolasha-cf.collection-badge')).toBeNull();
+    });
+
+    test('badges alone scan the counts but draw no controls and keep the game order', async () => {
+        mockConfig.settings = {
+            collectionFilters: false,
+            collectionFavorites: false,
+            collectionFilters_skillingBadges: true,
+        };
+        collectionFilters.isInitialized = false;
+        await collectionFilters.initialize();
+        // A sort order saved while filters were on
+        collectionFilters.sortMode = 'items-needed';
+
+        const { panelEl, catsEl } = buildPanel([
+            { itemId: 'milk', count: '500' },
+            { itemId: 'log', count: '5' },
+        ]);
+        collectionFilters._rerenderPanel(panelEl);
+
+        expect(collectionFilters.collections).toEqual({ milk: 500, log: 5 });
+        expect(panelEl.querySelector('.toolasha-cf')).toBeNull();
+        const order = [...catsEl.children].map((el) => el.querySelector('use').getAttribute('href').split('#')[1]);
+        expect(order).toEqual(['milk', 'log']);
     });
 });
