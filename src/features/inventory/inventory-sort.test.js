@@ -90,6 +90,15 @@ vi.mock('./inventory-badge-manager.js', () => ({
         clearProcessedTracking: () => {},
         renderAllBadges: async () => {
             badgeManager.calls += 1;
+            if (badgeManager.slow) {
+                // Settles only when the test calls release(), after the sort's bound has elapsed
+                return new Promise((resolve) => {
+                    badgeManager.release = () => {
+                        badgeManager.onRender?.();
+                        resolve();
+                    };
+                });
+            }
             if (badgeManager.hang) {
                 // A promise that never resolves, matching the live symptom: renderAllBadges() got
                 // stuck and never settled.
@@ -447,6 +456,55 @@ describe('InventorySort.applyCurrentSort — cannot wedge on a hung badge render
         // Not dropped, and not run twice on top of the in-flight one either — just remembered.
         expect(inventorySort.rerunRequested).toBe(true);
         expect(itemsByHrid(inv).get('c1').style.order).toBe('');
+    });
+});
+
+describe('InventorySort.applyCurrentSort — a render that outlasts the bound still corrects the order', () => {
+    beforeEach(() => {
+        document.body.innerHTML = '';
+        settings.invSort = true;
+        settings.invSort_sortEquipment = false;
+        badgeManager.hang = false;
+        badgeManager.slow = true;
+        badgeManager.release = null;
+        badgeManager.onRender = null;
+        inventorySort.currentMode = 'ask';
+        inventorySort.isCalculating = false;
+        inventorySort.rerunRequested = false;
+        vi.useFakeTimers();
+    });
+
+    afterEach(() => {
+        badgeManager.slow = false;
+        vi.useRealTimers();
+        inventorySort.currentInventoryElem = null;
+    });
+
+    test('values that land after the bound are sorted once the render finishes', async () => {
+        const inv = buildOldInventory([
+            [
+                'Currencies',
+                [
+                    ['c1', 10],
+                    ['c2', 30],
+                ],
+            ],
+        ]);
+        inventorySort.currentInventoryElem = inv;
+        await inventorySort.applyCurrentSort();
+        expect(itemsByHrid(inv).get('c2').style.order).toBe('0');
+
+        // The bound elapses while prices are still being calculated
+        await vi.advanceTimersByTimeAsync(inventorySort.BADGE_RENDER_TIMEOUT_MS);
+        // ...then the render finishes and the real values reverse the order
+        badgeManager.onRender = () => {
+            itemsByHrid(inv).get('c1').dataset.askValue = '50';
+        };
+        badgeManager.release();
+        await vi.advanceTimersByTimeAsync(0);
+
+        expect(itemsByHrid(inv).get('c1').style.order).toBe('0');
+        expect(itemsByHrid(inv).get('c2').style.order).toBe('1');
     });
 });
 
