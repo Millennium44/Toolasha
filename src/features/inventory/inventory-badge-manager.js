@@ -43,6 +43,10 @@ class InventoryBadgeManager {
         this.lastCalculationTime = 0; // Timestamp of last calculation
         this.CALCULATION_COOLDOWN = 250; // 250ms minimum between calculations
         this.isRendering = false; // Guard flag for renderAllBadges
+        // A renderAllBadges() call that arrived while one was already in flight — the in-flight
+        // pass finishes (or gives up) whatever it started with, then runs once more against the
+        // *current* tiles instead of the request being silently dropped. See renderAllBadges.
+        this.rerenderRequested = false;
         this.lastRenderTime = 0; // Timestamp of last render
         this.RENDER_COOLDOWN = 100; // 100ms minimum between render calls
         this.inventoryLookupCache = null; // Cached inventory lookup map
@@ -147,7 +151,22 @@ class InventoryBadgeManager {
     }
 
     /**
-     * Render all badges on all items from all providers
+     * Render all badges on all items from all providers.
+     *
+     * A call that arrives while a render is already in flight used to just return — silently, as
+     * if the work were done. Live symptom (Codex P1): switch native tabs while the initial render
+     * is still pricing the previous tab's tiles, and this early return means the switch's own
+     * request never runs at all. The original render keeps iterating item containers it captured
+     * before the switch, which the game's own re-render has by then removed from the document, so
+     * it prices detached tiles nobody can see; the new tab's tiles are never priced by anyone,
+     * and stay unbadged/unsorted until some unrelated later event happens to trigger a refresh.
+     *
+     * Now a request that arrives mid-render is not dropped: it sets `rerenderRequested`, and the
+     * in-flight render (once it finishes — or, from the caller's side, gives up on via
+     * `withBoundedWait`) runs once more against `this.currentInventoryElem`'s *current* children,
+     * which is whichever tab is showing by the time it actually runs. Bounded and not a busy loop:
+     * `_runRenderAllBadges` only re-enters itself once per request that arrived during its own
+     * run, so the chain's length tracks real requests, not how long a render happens to take.
      */
     async renderAllBadges() {
         if (!this.currentInventoryElem) return;
@@ -168,9 +187,22 @@ class InventoryBadgeManager {
         // the in-flight render finishes, which then has to wait out a cooldown
         // measured from a render that never happened.
         if (this.isRendering) {
+            this.rerenderRequested = true;
             return;
         }
-        this.lastRenderTime = now;
+
+        await this._runRenderAllBadges();
+    }
+
+    /**
+     * The guarded body of `renderAllBadges()`, including its own coalesced rerun. Bypasses the
+     * cooldown/isRendering checks in the public method on purpose: a rerun exists specifically to
+     * correct a render that already ran (or gave up) while stale, so it must not be blocked by
+     * the same gate that a fresh, unrelated call is subject to.
+     * @private
+     */
+    async _runRenderAllBadges() {
+        this.lastRenderTime = Date.now();
         this.isRendering = true;
 
         try {
@@ -208,6 +240,11 @@ class InventoryBadgeManager {
         } finally {
             // Clear rendering guard even on error so later renders are not blocked forever
             this.isRendering = false;
+        }
+
+        if (this.rerenderRequested) {
+            this.rerenderRequested = false;
+            await this._runRenderAllBadges();
         }
     }
 
@@ -688,6 +725,8 @@ class InventoryBadgeManager {
             this.processedItems = new WeakSet();
             this.currentInventoryElem = null;
             this.isInitialized = false;
+            this.isRendering = false;
+            this.rerenderRequested = false;
         } catch (error) {
             console.error('[Inventory Badge Manager] Disable failed part-way:', error);
         } finally {
