@@ -364,6 +364,34 @@ describe('the registry the entrypoint builds', () => {
         const withChecks = registered.filter((feature) => typeof feature.healthCheck === 'function');
         expect(withChecks.length).toBeGreaterThanOrEqual(12);
     });
+
+    test('registers every feature module that declares its own registry key', async () => {
+        // A module whose default export names a `key` is written to be started by the
+        // registry. skillCheckpoints and abilityCheckpoints shipped that way on 2026-08-30
+        // with no entry here, so neither ever ran and the tooltip's "This month" line and
+        // the ability book's XP rate stayed blank. Only the default export's own `key` counts
+        // — overlay rows and other objects further down a file carry keys of their own.
+        const { readdirSync, statSync } = await import('node:fs');
+        const { join } = await import('node:path');
+        const walk = (dir) =>
+            readdirSync(dir).flatMap((name) => {
+                const full = join(dir, name);
+                if (statSync(full).isDirectory()) return walk(full);
+                return name.endsWith('.js') && !name.endsWith('.test.js') ? [full] : [];
+            });
+        const registeredKeys = new Set(registered.map((feature) => feature.key));
+        const missing = [];
+        for (const file of walk(resolve(process.cwd(), 'src/features'))) {
+            const source = readFileSync(file, 'utf-8');
+            const start = source.indexOf('\nexport default {');
+            if (start < 0) continue;
+            const end = source.indexOf('\n};', start);
+            const block = source.slice(start, end < 0 ? undefined : end);
+            const match = block.match(/^ {4}key: '([A-Za-z0-9_]+)'/m);
+            if (match && !registeredKeys.has(match[1])) missing.push(`${match[1]} (${file})`);
+        }
+        expect(missing).toEqual([]);
+    });
 });
 
 /**

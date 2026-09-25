@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Skill tooltip's "This month" line and the ability book XP rate start recording
+
+- The daily skill and ability recorders behind the skill tooltip's "This month" XP and the ability book panel's XP rate were never switched on after they were added, so both stayed blank. They record from now on; the figures fill in as days pass.
+
 <!-- shipped in 3.59.0 -->
 
 ### Profile sim export offers Shykai again

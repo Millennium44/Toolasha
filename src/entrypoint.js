@@ -2123,6 +2123,28 @@ function registerFeatures() {
             concurrent: true,
         },
         {
+            key: 'skillCheckpoints',
+            name: 'Skill Checkpoints',
+            category: 'Skills',
+            module: UI.skillCheckpoints,
+            async: false,
+            // A daily recorder with no switch of its own: the skill tooltip's
+            // "This month" line reads it, so it records whatever the tooltip
+            // settings say. Unregistered from 2026-08-30 until now, which left
+            // that line blank for everyone.
+            customCheck: () => true,
+        },
+        {
+            key: 'abilityCheckpoints',
+            name: 'Ability Checkpoints',
+            category: 'Skills',
+            module: Market.abilityCheckpoints,
+            async: false,
+            // The ability book panel's XP rate reads this daily recorder; like
+            // skillCheckpoints it has no switch and was never registered.
+            customCheck: () => true,
+        },
+        {
             key: 'housePanelObserver',
             name: 'House Panel Observer',
             category: 'House',
