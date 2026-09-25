@@ -281,6 +281,57 @@ describe('chat-history-extender: message identity and deletion', () => {
         return el;
     }
 
+    /**
+     * A Trade/Recruit line naming an item, the way the game actually renders
+     * one: prose, then an inline `Item_itemContainer` icon+label element (the
+     * same class chat-history-persistence.test.js's `makeItemMessage` uses) —
+     * never prose alone, which is all `chat_message_received`'s own `m` field
+     * carries for such a line (see pop-out-chat.js's `resolveMessage`, which
+     * keeps `m` and `renderedLinks` separate for the same reason).
+     * @param {string} sender
+     * @param {string} prose
+     * @param {number} [itemLinks] - How many item-link elements to render
+     */
+    function makeLinkedMessage(sender, prose, itemLinks = 1) {
+        const el = document.createElement('div');
+        el.className = 'ChatMessage_chatMessage__xyz';
+        const links = Array.from(
+            { length: itemLinks },
+            () =>
+                '<div class="Item_itemContainer__1">' +
+                '<svg><use href="/static/media/items_sprite.svg#cheese"></use></svg>' +
+                '<span>[Cheese @ 12.3K Sell]</span></div>'
+        ).join('');
+        el.innerHTML =
+            '<span>[12:00:00 PM] </span>' +
+            '<span class="ChatMessage_name__1UZ8t ChatMessage_clickable__3Nt2s">' +
+            '<div class="CharacterName_characterName__2FqyZ">' +
+            `<div class="CharacterName_name__1amXp"><span>${sender}</span></div></div></span>` +
+            `<span>: ${prose} </span>` +
+            links;
+        return el;
+    }
+
+    /**
+     * `linksMetadata`, shaped the way `resolveLink()` in pop-out-chat.js
+     * reads it — the one place in this codebase that already names these
+     * fields for a real message — for one `/chat_link_types/market_listing`
+     * entry.
+     * @returns {string}
+     */
+    function marketListingLinksMetadata() {
+        return JSON.stringify([
+            {
+                linkType: '/chat_link_types/market_listing',
+                itemHrid: '/items/cheese',
+                itemEnhancementLevel: 0,
+                itemCount: 3,
+                price: 12345,
+                isSell: true,
+            },
+        ]);
+    }
+
     async function evict(container, node) {
         container.removeChild(node);
         await Promise.resolve();
@@ -385,6 +436,98 @@ describe('chat-history-extender: message identity and deletion', () => {
         container.appendChild(longerName);
         await settle();
         expect(longerName.dataset.mwiMsgId).toBeUndefined();
+    });
+
+    test('a Trade post naming an item is still tagged, even though the DOM renders more than m alone', async () => {
+        // Codex's exact bug: the queued entry's m is prose-only ("selling"),
+        // but the live node also renders the item's icon+label — an exact
+        // whole-line comparison rejected every such message, which is most
+        // Trade/Recruit traffic. The item element's own text must not count
+        // against the match.
+        const container = buildChannelChat('/chat_channel_types/trade');
+        chatHistoryExtender.initialize();
+        await settle();
+
+        wsHandlers.chat_message_received({
+            message: {
+                id: 'msg-1',
+                chan: '/chat_channel_types/trade',
+                sName: 'Alice',
+                m: 'selling',
+                linksMetadata: marketListingLinksMetadata(),
+            },
+        });
+        const node = makeLinkedMessage('Alice', 'selling', 1);
+        container.appendChild(node);
+        await settle();
+
+        expect(node.dataset.mwiMsgId).toBe('msg-1');
+    });
+
+    test('an item-link count mismatch is never claimed, even with identical prose', async () => {
+        // A candidate naming one item must not be claimed by a node rendering
+        // a different number of item links — the structural check the item
+        // case still needs, since two different linked messages can easily
+        // share the same short prose ("selling").
+        const container = buildChannelChat('/chat_channel_types/trade');
+        chatHistoryExtender.initialize();
+        await settle();
+
+        wsHandlers.chat_message_received({
+            message: {
+                id: 'msg-1',
+                chan: '/chat_channel_types/trade',
+                sName: 'Alice',
+                m: 'selling',
+                linksMetadata: marketListingLinksMetadata(),
+            },
+        });
+        const noLinkNode = makeMessage('Alice', 'selling');
+        container.appendChild(noLinkNode);
+        await settle();
+
+        expect(noLinkNode.dataset.mwiMsgId).toBeUndefined();
+    });
+
+    test('a plain-text candidate is never claimed by a node that renders an item link', async () => {
+        const container = buildChannelChat('/chat_channel_types/trade');
+        chatHistoryExtender.initialize();
+        await settle();
+
+        wsHandlers.chat_message_received({
+            message: { id: 'msg-1', chan: '/chat_channel_types/trade', sName: 'Alice', m: 'selling' },
+        });
+        const linkedNode = makeLinkedMessage('Alice', 'selling', 1);
+        container.appendChild(linkedNode);
+        await settle();
+
+        expect(linkedNode.dataset.mwiMsgId).toBeUndefined();
+    });
+
+    test('a tagged item-link message can still be purged by a later deletion', async () => {
+        const container = buildChannelChat('/chat_channel_types/trade');
+        chatHistoryExtender.initialize();
+        await settle();
+
+        wsHandlers.chat_message_received({
+            message: {
+                id: 'msg-1',
+                chan: '/chat_channel_types/trade',
+                sName: 'Alice',
+                m: 'selling',
+                linksMetadata: marketListingLinksMetadata(),
+            },
+        });
+        const node = makeLinkedMessage('Alice', 'selling', 1);
+        container.appendChild(node);
+        await settle();
+        expect(node.dataset.mwiMsgId).toBe('msg-1');
+
+        await wsHandlers.chat_message_updated({
+            message: { id: 'msg-1', chan: '/chat_channel_types/trade', isDeleted: true },
+        });
+
+        expect(node.dataset.mwiSkipStore).toBe('1');
     });
 
     test('two queued candidates with identical sender and text are ambiguous — neither is tagged', async () => {
