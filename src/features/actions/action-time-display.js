@@ -1931,9 +1931,11 @@ class ActionTimeDisplay {
             'ActionTimeDisplay-Queue',
             'QueuedActions_queuedActionsEditMenu',
             (queueMenu) => {
+                // The width pin exists for the rows `actionQueue` injects; with the bar keeping
+                // this module up and the queue off, the menu is left at its native size.
                 // classList.add is a no-op if already present, so repeated mounts/reorders of the
                 // same element can never duplicate the marker.
-                queueMenu.classList.add(QUEUE_EDIT_MENU_MARKER_CLASS);
+                queueMenu.classList.toggle(QUEUE_EDIT_MENU_MARKER_CLASS, Boolean(config.getSetting('actionQueue')));
 
                 this.injectQueueTimes(queueMenu);
 

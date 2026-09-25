@@ -15,6 +15,7 @@
 import { describe, test, expect, beforeEach, afterEach, vi } from 'vitest';
 
 const observerState = vi.hoisted(() => ({ handler: null, unregistered: 0 }));
+const settings = vi.hoisted(() => ({ actionQueue: true }));
 
 vi.mock('../../core/dom-observer.js', () => ({
     default: {
@@ -43,7 +44,7 @@ vi.mock('../../core/data-manager.js', () => ({
 
 vi.mock('../../core/config.js', () => ({
     default: {
-        getSetting: (key) => key === 'actionQueue',
+        getSetting: (key) => Boolean(settings[key]),
         getSettingValue: (_key, fallback) => fallback,
         COLOR_TEXT_SECONDARY: '#999',
         COLOR_TOOLTIP_INFO: '#abc',
@@ -82,6 +83,7 @@ const styleText = () => document.getElementById(STYLE_ID)?.textContent ?? '';
 
 describe('QueuedActions edit-menu width contract', () => {
     beforeEach(() => {
+        settings.actionQueue = true;
         observerState.handler = null;
         observerState.unregistered = 0;
         document.body.innerHTML = '';
@@ -143,6 +145,18 @@ describe('QueuedActions edit-menu width contract', () => {
 
         expect(menu.classList.contains(MARKER_CLASS)).toBe(true);
         expect(menu.querySelectorAll('.mwi-queue-action-time').length).toBe(0);
+    });
+
+    test('with the queue annotations off the menu keeps its native size', () => {
+        // The action bar display alone keeps this module running
+        settings.actionQueue = false;
+        actionTimeDisplay.initializeQueueObserver();
+        const menu = editMenu();
+        menu.classList.add(MARKER_CLASS);
+
+        observerState.handler(menu);
+
+        expect(menu.classList.contains(MARKER_CLASS)).toBe(false);
     });
 
     test('the marker is not duplicated when the same menu is delivered again', () => {
