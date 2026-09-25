@@ -293,7 +293,8 @@ function extractSenderAndBody(node) {
     const idx = fullText.indexOf(sender);
     if (idx === -1) return null;
 
-    const body = normalizeSpacing(fullText.slice(idx + sender.length).replace(/^[:\s]+/, ''));
+    // Exactly one rendered separator: a body that itself starts with a colon (":D") keeps it
+    const body = normalizeSpacing(fullText.slice(idx + sender.length).replace(/^\s*:\s*/, ''));
     return { sender, body, linkCount };
 }
 
@@ -887,10 +888,11 @@ class ChatTabHandler {
         // all). Checking it here, not just relying on markDeleted having
         // run, is what keeps a node from being tagged with a bare id instead
         // of skip-store if it somehow raced ahead of that.
+        // The id is kept even on a skip-store node, so a moderator's later undelete can
+        // still find the node and clear the flag
+        node.dataset.mwiMsgId = String(claimed.id);
         if (claimed.isDeleted || this.deletedIds?.has(claimed.id)) {
             node.dataset.mwiSkipStore = '1';
-        } else {
-            node.dataset.mwiMsgId = String(claimed.id);
         }
     }
 

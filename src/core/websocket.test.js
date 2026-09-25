@@ -187,6 +187,18 @@ describe('content-hash deduplication', () => {
         expect(handler).toHaveBeenCalledTimes(2);
     });
 
+    test('chat_message_updated survives the hash, so an undelete is not dropped', () => {
+        // Delete and undelete of one message agree until isDeleted, past the dedup prefix
+        const handler = vi.fn();
+        webSocketHook.on('chat_message_updated', handler);
+        const base = { id: 2239150, chan: '/chat_channel_types/trade', sName: 'MillenniumTest', m: 'selling cheese' };
+
+        webSocketHook.processMessage(msg('chat_message_updated', { message: { ...base, isDeleted: true } }));
+        webSocketHook.processMessage(msg('chat_message_updated', { message: { ...base, isDeleted: false } }));
+
+        expect(handler).toHaveBeenCalledTimes(2);
+    });
+
     test('new_battle survives the hash, so every baseline is re-seeded', () => {
         // It seeds every monster and player baseline there is, and two
         // consecutive waves of the same zone open identically for well past a

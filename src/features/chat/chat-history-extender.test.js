@@ -429,6 +429,22 @@ describe('chat-history-extender: message identity and deletion', () => {
         expect(node.dataset.mwiMsgId).toBeUndefined();
     });
 
+    test('a message whose text itself starts with a colon is still claimed', async () => {
+        // The DOM reads "Bob: :D"; only the rendered separator is stripped, not the user's own colon
+        const container = buildChannelChat('/chat_channel_types/trade');
+        chatHistoryExtender.initialize();
+        await settle();
+
+        wsHandlers.chat_message_received({
+            message: { id: 'msg-colon', chan: '/chat_channel_types/trade', sName: 'Bob', m: ':D' },
+        });
+        const node = makeMessage('Bob', ':D');
+        container.appendChild(node);
+        await settle();
+
+        expect(node.dataset.mwiMsgId).toBe('msg-colon');
+    });
+
     test('near-miss content (overlapping sender/text prefixes) is never claimed — exact match only', async () => {
         // Codex's exact scenario: an earlier `Bob: hi` entry is a *substring*
         // of a later `Bob: hi there` node, and `Ann` is a substring of
@@ -627,7 +643,7 @@ describe('chat-history-extender: message identity and deletion', () => {
         expect(node.dataset.mwiMsgId).toBeUndefined();
     });
 
-    test('a message that arrives already deleted is tagged skip-store, not an id', async () => {
+    test('a message that arrives already deleted is tagged skip-store, keeping its id', async () => {
         const container = buildChannelChat('/chat_channel_types/trade');
         chatHistoryExtender.initialize();
         await settle();
@@ -645,7 +661,8 @@ describe('chat-history-extender: message identity and deletion', () => {
         container.appendChild(node);
         await settle();
 
-        expect(node.dataset.mwiMsgId).toBeUndefined();
+        // The id stays too, so a moderator's undelete can still find this node
+        expect(node.dataset.mwiMsgId).toBeDefined();
         expect(node.dataset.mwiSkipStore).toBe('1');
 
         // Never buffered (a resurrection risk no less real than the
@@ -787,7 +804,7 @@ describe('chat-history-extender: message identity and deletion', () => {
         expect(db.settings[Object.keys(db.settings)[0]]?.tabs ?? {}).toEqual({});
     });
 
-    test('a deletion arriving before its message has ever rendered still tags the node skip-store, not a bare id', async () => {
+    test('a deletion arriving before its message has ever rendered still tags the node skip-store', async () => {
         // The order that matters: chat_message_received queues a pending
         // entry (isDeleted: false), then chat_message_updated marks that same
         // id deleted BEFORE any node for it has rendered — a real race, since
@@ -815,7 +832,8 @@ describe('chat-history-extender: message identity and deletion', () => {
         container.appendChild(node);
         await settle();
 
-        expect(node.dataset.mwiMsgId).toBeUndefined();
+        // The id stays too, so a moderator's undelete can still find this node
+        expect(node.dataset.mwiMsgId).toBeDefined();
         expect(node.dataset.mwiSkipStore).toBe('1');
     });
 
