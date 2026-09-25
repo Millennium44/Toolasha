@@ -144,6 +144,49 @@ describe('renderAllBadges cooldown/concurrency', () => {
         // cooldown that was never actually spent rendering anything.
         expect(inventoryBadgeManager.lastRenderTime).toBe(0);
     });
+
+    /**
+     * Codex P1: a render requested while one is already in flight used to just return, silently,
+     * as if the work were done. Live symptom: switch native tabs while the initial render is still
+     * pricing the previous tab's tiles — the switch's own request is dropped, the in-flight render
+     * keeps pricing tiles the game has since removed from the document, and the new tab's tiles
+     * are never priced by anyone until an unrelated later event happens to trigger a refresh.
+     *
+     * `calculatePricesForAllItems` is stubbed here (its own internals are covered elsewhere) so
+     * the test can hold a "render" open on demand and observe whether a second one actually runs.
+     */
+    test('a call that arrives mid-render is coalesced into a rerun, not dropped', async () => {
+        inventoryBadgeManager.currentInventoryElem = document.createElement('div');
+        inventoryBadgeManager.lastRenderTime = 0;
+
+        let releaseFirstCalc;
+        const firstCalc = new Promise((resolve) => {
+            releaseFirstCalc = resolve;
+        });
+        const calcSpy = vi.spyOn(inventoryBadgeManager, 'calculatePricesForAllItems');
+        calcSpy.mockImplementationOnce(() => firstCalc); // the "in flight" render, held open
+        calcSpy.mockImplementation(async () => {}); // the coalesced rerun resolves right away
+
+        const firstRender = inventoryBadgeManager.renderAllBadges();
+        await Promise.resolve(); // let it reach the held-open await; isRendering is now true
+
+        // A second request arrives while the first is still pricing. Not dropped: it is recorded
+        // instead, and must not itself start a second concurrent pricing pass.
+        inventoryBadgeManager.lastRenderTime = 0; // clear the unrelated cooldown gate for this call
+        await inventoryBadgeManager.renderAllBadges();
+        expect(inventoryBadgeManager.rerenderRequested).toBe(true);
+        expect(calcSpy).toHaveBeenCalledTimes(1);
+
+        releaseFirstCalc();
+        await firstRender;
+
+        // The coalesced rerun ran once the first pass finished, pricing whatever is current then
+        // — not dropped, and not looping forever either (called exactly twice: once for the
+        // original request, once for the one that arrived mid-render).
+        expect(calcSpy).toHaveBeenCalledTimes(2);
+        expect(inventoryBadgeManager.rerenderRequested).toBe(false);
+        expect(inventoryBadgeManager.isRendering).toBe(false);
+    });
 });
 
 describe('itemHasBadges', () => {
