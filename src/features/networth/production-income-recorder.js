@@ -46,6 +46,7 @@ import dataManager from '../../core/data-manager.js';
 import { calculateOfflineEconomics } from '../../utils/offline-economics-calculator.js';
 import { createChunkedHistory, timeChunkId } from '../../utils/chunked-history.js';
 import { getItemPrice } from '../../utils/market-data.js';
+import { parseItemHash } from '../../utils/item-hash.js';
 import { resolveActionContext } from '../../utils/action-context.js';
 import { getDrinkConcentration, parseArtisanBonus, parseGourmetBonus } from '../../utils/tea-parser.js';
 import { PRODUCTION_TYPES } from '../../utils/profit-constants.js';
@@ -84,11 +85,31 @@ const rowChunkId = (row) => timeChunkId(dayStart(row?.d), 'month');
 /**
  * An unenhanced unit at market; coins, which some recipes take, at face value.
  * @param {string} itemHrid - Item
+ * @param {number} [enhancementLevel] - Enhancement level to price at; recipe inputs and
+ *   outputs are always +0, but the upgrade item is priced at the stack the action selected
  * @returns {number|null} Coins per unit, or null when unpriced
  */
-function unitPrice(itemHrid) {
+function unitPrice(itemHrid, enhancementLevel = 0) {
     if (itemHrid === '/items/coin') return 1;
-    return getItemPrice(itemHrid, { enhancementLevel: 0, context: 'networth' });
+    return getItemPrice(itemHrid, { enhancementLevel, context: 'networth' });
+}
+
+/**
+ * Enhancement level of the upgrade stack a completed production action drew from.
+ *
+ * The action names its upgrade stack in `primaryItemHash`
+ * (`char1::/item_locations/inventory::/items/rainbow_sword::5`, last segment the level); a
+ * hash naming some other item, or none, means the +0 stack — the same shape and reasoning as
+ * `action-time-display.js`'s `getProductionUpgradeLevel`.
+ *
+ * @param {string} upgradeItemHrid - The recipe's upgrade item
+ * @param {Object} action - `endCharacterAction`
+ * @returns {number} Enhancement level, 0 when no matching stack is named
+ */
+function upgradeLevelFromAction(upgradeItemHrid, action) {
+    if (!upgradeItemHrid || !action?.primaryItemHash) return 0;
+    const { itemHrid, level } = parseItemHash(action.primaryItemHash);
+    return itemHrid === upgradeItemHrid && Number.isFinite(level) && level > 0 ? level : 0;
 }
 
 /**
@@ -317,7 +338,8 @@ class ProductionIncomeRecorder {
                 else if ((inputItem.count || 0) > 0) unpriced = true;
             }
             if (details.upgradeItemHrid) {
-                const unit = unitPrice(details.upgradeItemHrid);
+                const upgradeLevel = upgradeLevelFromAction(details.upgradeItemHrid, action);
+                const unit = unitPrice(details.upgradeItemHrid, upgradeLevel);
                 if (Number.isFinite(unit)) inputValue += unit * completed;
                 else unpriced = true;
             }

@@ -6,6 +6,7 @@ const state = vi.hoisted(() => ({
     quota: false,
     actionDetails: {},
     prices: {},
+    pricesByLevel: {},
     stored: [],
     saved: null,
     artisan: 0,
@@ -43,7 +44,13 @@ vi.mock('../../utils/tea-parser.js', () => ({
     parseGourmetBonus: () => state.gourmet,
 }));
 vi.mock('../../utils/market-data.js', () => ({
-    getItemPrice: (hrid) => state.prices[hrid] ?? null,
+    getItemPrice: (hrid, options) => {
+        const level = options?.enhancementLevel || 0;
+        if (level > 0 && state.pricesByLevel[`${hrid}::${level}`] !== undefined) {
+            return state.pricesByLevel[`${hrid}::${level}`];
+        }
+        return state.prices[hrid] ?? null;
+    },
 }));
 vi.mock('../../utils/chunked-history.js', () => ({
     timeChunkId: (t) => new Date(t).toISOString().slice(0, 7),
@@ -75,6 +82,7 @@ beforeEach(() => {
     state.quota = false;
     state.actionDetails = { '/actions/cooking/cheese': COOKING };
     state.prices = { '/items/cheese': 100, '/items/milk': 40 };
+    state.pricesByLevel = {};
     state.stored = [];
     state.saved = null;
     state.artisan = 0;
@@ -113,6 +121,31 @@ describe('recording production', () => {
         // 8 inputs + 1 upgrade: the craft lost 100, it did not make 200
         expect(row.inputValue).toBe(900);
         expect(row.outputValue).toBe(1000);
+    });
+
+    test('the upgrade item is priced at the enhancement level the action selected', async () => {
+        state.actionDetails['/actions/crafting/rainbow_sword'] = {
+            type: '/action_types/crafting',
+            outputItems: [{ itemHrid: '/items/rainbow_hilt', count: 1 }],
+            inputItems: [{ itemHrid: '/items/milk', count: 2 }],
+            upgradeItemHrid: '/items/rainbow_sword',
+        };
+        state.prices['/items/rainbow_hilt'] = 5000;
+        state.prices['/items/rainbow_sword'] = 100; // +0 price, should NOT be used
+        state.pricesByLevel['/items/rainbow_sword::5'] = 1000; // +5 price, should be used
+
+        await recorder._onActionCompleted({
+            endCharacterAction: {
+                id: 21,
+                actionHrid: '/actions/crafting/rainbow_sword',
+                currentCount: 1,
+                primaryItemHash: 'char1::/item_locations/inventory::/items/rainbow_sword::5',
+            },
+        });
+
+        const row = state.saved.rows.find((entry) => entry.d === TODAY);
+        // 2 milk (80) + one +5 upgrade stack (1000), not the +0 price (100)
+        expect(row.inputValue).toBe(1080);
     });
 
     test('an unpriced upgrade item leaves the action unvalued rather than free', async () => {
