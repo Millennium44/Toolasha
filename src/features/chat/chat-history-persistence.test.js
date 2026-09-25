@@ -83,11 +83,12 @@ vi.mock('../../utils/profile-command.js', () => ({
     VALID_PLAYER_NAME_RE: /^[A-Za-z0-9_]+$/,
 }));
 
-import chatHistoryExtender, { chatTabKey } from './chat-history-extender.js';
+import chatHistoryExtender, { chatTabKey, tabKeyForChannel } from './chat-history-extender.js';
 import chatHistoryPersistence, {
     applyCaps,
     CHAT_HISTORY_KEY_BASE,
     CHAT_HISTORY_STORE,
+    extractStoredMessageId,
     handleRestoredClick,
     MAX_MESSAGES_PER_TAB,
     MAX_TOTAL_CHARS,
@@ -1056,5 +1057,102 @@ describe('a chat tab is named by the tab that is open', () => {
             '<div class="ChatMessage_chatMessage__z">selling cheese</div>',
         ]);
         expect(JSON.stringify(stored)).not.toContain('bring the key');
+    });
+});
+
+/**
+ * A September 2026 patch lets a player delete their own Trade/Recruit
+ * messages, on top of the moderator deletion that already existed. See the
+ * "Message identity and deletion" section at the top of
+ * chat-history-persistence.js for the whole mechanism — chat-history-extender
+ * stamps a live node's game-assigned id as `data-mwi-msg-id`, which rides
+ * along inside the stored HTML rather than as a field of its own.
+ */
+describe('message identity: extractStoredMessageId and purgeMessageById', () => {
+    beforeEach(() => {
+        settingValues.chatHistoryExtender = true;
+        settingValues.chatHistoryExtender_maxHistory = null;
+        db.settings = {};
+        db.quota = false;
+        db.writes = 0;
+    });
+
+    afterEach(() => {
+        chatHistoryExtender.disable();
+        chatHistoryPersistence.reset();
+    });
+
+    test('extractStoredMessageId pulls the id back out of stored markup', () => {
+        expect(
+            extractStoredMessageId('<div class="ChatMessage_chatMessage__x" data-mwi-msg-id="msg-42">hi</div>')
+        ).toBe('msg-42');
+    });
+
+    test('extractStoredMessageId returns null for markup carrying no id — the pre-patch shape', () => {
+        expect(extractStoredMessageId('<div class="ChatMessage_chatMessage__x">hi</div>')).toBeNull();
+        expect(extractStoredMessageId(null)).toBeNull();
+        expect(extractStoredMessageId(undefined)).toBeNull();
+    });
+
+    test('purgeMessageById removes the one matching message and schedules a write', async () => {
+        chatHistoryPersistence.enable(() => MAX_MESSAGES_PER_TAB);
+        const tabKey = tabKeyForChannel('/chat_channel_types/trade');
+        chatHistoryPersistence.tabs = {
+            [tabKey]: [
+                '<div class="ChatMessage_chatMessage__x" data-mwi-msg-id="1">first</div>',
+                '<div class="ChatMessage_chatMessage__x" data-mwi-msg-id="2">second</div>',
+            ],
+        };
+
+        const removed = await chatHistoryPersistence.purgeMessageById(tabKey, '1');
+
+        expect(removed).toBe(true);
+        expect(chatHistoryPersistence.tabs[tabKey]).toHaveLength(1);
+        expect(chatHistoryPersistence.tabs[tabKey][0]).toContain('second');
+
+        await chatHistoryPersistence.flush();
+        expect(db.settings[STORAGE_KEY].tabs[tabKey]).toHaveLength(1);
+    });
+
+    test('purging the last message in a tab drops the tab entirely', async () => {
+        chatHistoryPersistence.enable(() => MAX_MESSAGES_PER_TAB);
+        const tabKey = tabKeyForChannel('/chat_channel_types/trade');
+        chatHistoryPersistence.tabs = {
+            [tabKey]: ['<div class="ChatMessage_chatMessage__x" data-mwi-msg-id="1">only</div>'],
+        };
+
+        await chatHistoryPersistence.purgeMessageById(tabKey, '1');
+
+        expect(chatHistoryPersistence.tabs[tabKey]).toBeUndefined();
+    });
+
+    test('an id with nothing stored under it is a no-op, not an error', async () => {
+        chatHistoryPersistence.enable(() => MAX_MESSAGES_PER_TAB);
+        const tabKey = tabKeyForChannel('/chat_channel_types/trade');
+        chatHistoryPersistence.tabs = {
+            [tabKey]: ['<div class="ChatMessage_chatMessage__x" data-mwi-msg-id="1">first</div>'],
+        };
+
+        const removed = await chatHistoryPersistence.purgeMessageById(tabKey, 'nonexistent');
+
+        expect(removed).toBe(false);
+        expect(chatHistoryPersistence.tabs[tabKey]).toHaveLength(1);
+    });
+
+    test('a message stored without an id (older build, or a whisper/name tab) cannot be purged by id', async () => {
+        chatHistoryPersistence.enable(() => MAX_MESSAGES_PER_TAB);
+        const tabKey = 'tab2:name:Alice';
+        chatHistoryPersistence.tabs = {
+            [tabKey]: ['<div class="ChatMessage_chatMessage__x">no id here</div>'],
+        };
+
+        const removed = await chatHistoryPersistence.purgeMessageById(tabKey, 'anything');
+
+        expect(removed).toBe(false);
+        expect(chatHistoryPersistence.tabs[tabKey]).toHaveLength(1);
+    });
+
+    test('purgeMessageById on a disabled/unloaded persistence is a safe no-op', async () => {
+        expect(await chatHistoryPersistence.purgeMessageById('tab2:ch:/chat_channel_types/trade', '1')).toBe(false);
     });
 });

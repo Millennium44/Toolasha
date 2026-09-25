@@ -62,6 +62,46 @@
  * the write down and every one of them trims oldest-first. See
  * {@link MAX_MESSAGE_CHARS}, {@link MAX_MESSAGES_PER_TAB} and
  * {@link MAX_TOTAL_CHARS}.
+ *
+ * ## Message identity and deletion
+ *
+ * A September 2026 patch (test server only as of this writing) lets a player
+ * delete their own Trade/Recruit messages, on top of the moderator deletion
+ * that already existed. Deletion arrives as `chat_message_updated`, carrying
+ * `{ id, chan, isDeleted, deleteReason }` for the message it targets — no
+ * text, no sender, nothing else. Removing the right stored message therefore
+ * means keying by that `id`, which nothing here used before this patch: a
+ * stored entry was, and still is, just an HTML string.
+ *
+ * Rather than change that shape (a new field would mean a `RECORD_VERSION`
+ * bump and a migration for every existing record), the id rides *inside* the
+ * markup: `chat-history-extender.js` stamps a live message's DOM node with
+ * `data-mwi-msg-id` the moment it can correlate that node to the
+ * `chat_message_received` websocket event that produced it, and
+ * `serializeMessage` neither adds nor strips that attribute, so it survives
+ * into storage as part of the HTML like any other attribute the game itself
+ * wrote. {@link extractStoredMessageId} pulls it back out with a regex — a
+ * full parse of every message in a tab on every deletion is more work than a
+ * deletion (which can arrive in a burst, e.g. a moderator clearing a channel)
+ * should cost.
+ *
+ * That correlation is only possible for a tab keyed `tab2:ch:<channel>` — an
+ * aggregate channel like Trade or Global, where the websocket's `chan` field
+ * names the same channel the open tab shows. A `tab2:name:<label>` tab
+ * (whispers, or any tab the strip does not expose a channel for) has no such
+ * 1:1 mapping — several whisper conversations can share one `chan` value — so
+ * chat-history-extender does not attempt it there, and a message recorded
+ * from one carries no id. So does every message recorded by a build before
+ * this patch. {@link purgeMessageById} simply cannot find either kind: they
+ * stay on disk until the ordinary caps age them out, same as before this
+ * existed. That is a quiet miss, not a crash — deletion here is a courtesy on
+ * top of a local cache, not a guarantee.
+ *
+ * An undelete (`chat_message_updated` with `isDeleted: false`) restores
+ * nothing. The deleted message's markup is gone the moment it is purged;
+ * there is nothing left to put back, and re-adding a message this script
+ * never re-receives over the socket is not something an undelete event alone
+ * can do.
  */
 
 import dataManager from '../../core/data-manager.js';
@@ -122,7 +162,17 @@ const WRITE_DEBOUNCE_MS = 5000;
  * an empty name and returned; and the decorator skips any node already carrying
  * the class, so nothing ever put it back. The pair has to travel together.
  */
-const STALE_ATTRIBUTES = ['data-mwi-uid', 'data-mwi-hydrated', 'data-mwi-profile-link', 'data-mwi-key-names-linked'];
+const STALE_ATTRIBUTES = [
+    'data-mwi-uid',
+    'data-mwi-hydrated',
+    'data-mwi-profile-link',
+    'data-mwi-key-names-linked',
+    // A session-local flag (chat-history-extender's `_tagMessageId` /
+    // `_handleMessageUpdated`): a message carrying it is never handed to
+    // `record()` in the first place, so this only fires for a message this
+    // build did not mean to skip — belt and braces, not the primary gate.
+    'data-mwi-skip-store',
+];
 
 /**
  * Serialize one live/cloned chat message node for storage.
@@ -513,6 +563,20 @@ export function dropForeignKeys(tabs) {
 }
 
 /**
+ * Pull a stored message's `data-mwi-msg-id` back out of its serialized HTML,
+ * without parsing it — see the "Message identity and deletion" section above
+ * for why the id lives inside the markup instead of a field of its own.
+ *
+ * @param {string} html - One stored message, as {@link serializeMessage} produced it
+ * @returns {string|null} The id, or null when the message carries none
+ */
+export function extractStoredMessageId(html) {
+    if (typeof html !== 'string') return null;
+    const match = html.match(/\sdata-mwi-msg-id="([^"]*)"/);
+    return match ? match[1] : null;
+}
+
+/**
  * Apply the three caps to a `{tabKey: [html]}` map, oldest-first, in place.
  *
  * Per-tab count first (cheap, and the cap the user's setting talks about), then
@@ -718,6 +782,40 @@ class ChatHistoryPersistence {
             console.error('[ChatHistoryPersistence] Could not write chat history:', error);
             return false;
         }
+    }
+
+    /**
+     * Remove one message from a tab's stored record by the game's own id, and
+     * schedule the write. The caller (chat-history-extender's
+     * `chat_message_updated` handler) is the only one that knows a tab key
+     * from a bare channel hrid — see {@link tabKeyForChannel} there.
+     *
+     * Only a message recorded with an id can be found this way — see the
+     * "Message identity and deletion" section at the top of this file for
+     * which ones that is. Everything else is a silent no-op: there is no
+     * corruption to report, just nothing here that names the message.
+     *
+     * @param {string} tabKey - `tab2:ch:<channel>`
+     * @param {string|number} id - The game's message id
+     * @returns {Promise<boolean>} Whether a stored message was found and removed
+     */
+    async purgeMessageById(tabKey, id) {
+        if (!this.enabled || !tabKey || id == null) return false;
+        // A read may still be in flight. Purging `this.tabs` now and letting
+        // that read land afterwards would put the deleted message straight
+        // back — the same race `load()`'s "pending" merge exists to survive,
+        // just from the other direction.
+        if (this.loadPromise) await this.loadPromise;
+        if (!this.tabs || !this.tabs[tabKey]) return false;
+
+        const key = String(id);
+        const before = this.tabs[tabKey].length;
+        this.tabs[tabKey] = this.tabs[tabKey].filter((html) => extractStoredMessageId(html) !== key);
+        if (this.tabs[tabKey].length === before) return false;
+
+        if (!this.tabs[tabKey].length) delete this.tabs[tabKey];
+        this._scheduleWrite();
+        return true;
     }
 
     /** Drop the session's state. Storage is left alone — a disable is not a wipe. */

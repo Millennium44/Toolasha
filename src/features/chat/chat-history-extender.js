@@ -7,6 +7,7 @@
 
 import config from '../../core/config.js';
 import domObserver from '../../core/dom-observer.js';
+import webSocketHook from '../../core/websocket.js';
 import { addStyles, removeStyles } from '../../utils/dom.js';
 import { createTimerRegistry } from '../../utils/timer-registry.js';
 import chatHistoryPersistence, {
@@ -131,6 +132,108 @@ export function chatTabKey(containerEl) {
 }
 
 /**
+ * The channel hrid a `ch:`-keyed tab names, or null.
+ *
+ * Only a `ch:` tab (an aggregate channel like Trade or Global, keyed off
+ * `data-mention-channel`) has a channel that the websocket's `chan` field
+ * also names 1:1. A `name:` tab does not — several whisper conversations
+ * share one `chan` value — so {@link PendingMessageIds} is never asked about
+ * one, and a message recorded from one carries no id. See the "Message
+ * identity and deletion" section in chat-history-persistence.js.
+ *
+ * @param {string|null} tabKey - From {@link chatTabKey}
+ * @returns {string|null}
+ */
+function channelFromTabKey(tabKey) {
+    const prefix = `${TAB_KEY_PREFIX}ch:`;
+    if (!tabKey || !tabKey.startsWith(prefix)) return null;
+    return tabKey.slice(prefix.length);
+}
+
+/**
+ * The tab key a channel's own websocket `chan` field would be recorded
+ * under, were that channel's tab open. The reverse of
+ * {@link channelFromTabKey}, used by the `chat_message_updated` handler to
+ * find where a deleted message might be stored without needing the DOM at
+ * all — a moderator can delete a message in a channel this tab is not even
+ * looking at.
+ *
+ * @param {string} chan - A `chat_message_updated` message's `chan` field
+ * @returns {string} `tab2:ch:<chan>`
+ */
+export function tabKeyForChannel(chan) {
+    return `${TAB_KEY_PREFIX}ch:${chan}`;
+}
+
+/**
+ * How long a websocket-received id waits to be claimed by the DOM node it
+ * belongs to before it is dropped as unclaimed. Generous next to how fast the
+ * game actually renders (well under a second): this only needs to survive a
+ * slow tab, not a stalled one.
+ */
+const PENDING_ID_TTL_MS = 15000;
+
+/** Ceiling per channel, so a channel whose tab is never opened cannot grow this without bound. */
+const PENDING_ID_MAX_PER_CHANNEL = 50;
+
+/**
+ * Matches this script's own DOM scrape of chat messages to the game's own
+ * per-message `id`, so a later `chat_message_updated` deletion can find the
+ * exact node — and, once stored, the exact stored entry — to remove.
+ *
+ * One instance per `ChatHistoryExtender` session (see its `messageIds`
+ * field), fed by a `chat_message_received` listener and drained by
+ * {@link ChatTabHandler#_tagMessageId} the moment a channel tab's DOM
+ * actually renders the next message. FIFO within a channel: the socket
+ * delivers a channel's messages in the same order the game renders them, and
+ * only one tab (hence one channel's worth of DOM) is ever live at a time —
+ * see {@link chatTabKey}'s "one container" model.
+ */
+class PendingMessageIds {
+    constructor() {
+        /** @type {Map<string, Array<{id: string|number, isDeleted: boolean, ts: number}>>} */
+        this.byChannel = new Map();
+    }
+
+    /**
+     * Record one message's id as soon as it is seen on the socket, before the
+     * DOM node it will render into exists.
+     * @param {string} chan
+     * @param {string|number} id
+     * @param {boolean} isDeleted - True for a message that arrived pre-deleted
+     */
+    note(chan, id, isDeleted) {
+        if (!chan || id == null) return;
+        let queue = this.byChannel.get(chan);
+        if (!queue) {
+            queue = [];
+            this.byChannel.set(chan, queue);
+        }
+        queue.push({ id, isDeleted: !!isDeleted, ts: Date.now() });
+        if (queue.length > PENDING_ID_MAX_PER_CHANNEL) queue.shift();
+    }
+
+    /**
+     * Claim the next id queued for a channel.
+     * @param {string} chan
+     * @returns {{id: string|number, isDeleted: boolean}|null}
+     */
+    take(chan) {
+        const queue = this.byChannel.get(chan);
+        if (!queue) return null;
+        const now = Date.now();
+        while (queue.length && now - queue[0].ts > PENDING_ID_TTL_MS) queue.shift();
+        if (!queue.length) return null;
+        return queue.shift();
+    }
+
+    /** Drop everything queued — a character switch means none of it is ours any more. */
+    clear() {
+        this.byChannel.clear();
+    }
+}
+
+/**
  * Read React props for a batch of DOM nodes via the fiber tree.
  *
  * The `__reactProps$…`/`__reactFiber$…` expando keys these nodes used to carry
@@ -174,12 +277,14 @@ class ChatTabHandler {
      * @param {Map} interactionCache - Shared cache of UID → React handlers
      * @param {() => number} getMaxHistory - Returns current max history setting
      * @param {string|null} tabKey - Persistence key for this tab, from {@link chatTabKey}
+     * @param {PendingMessageIds} messageIds - Shared id correlator, from {@link ChatHistoryExtender}
      */
-    constructor(containerEl, interactionCache, getMaxHistory, tabKey = null) {
+    constructor(containerEl, interactionCache, getMaxHistory, tabKey = null, messageIds = null) {
         this.container = containerEl;
         this.interactionCache = interactionCache;
         this.getMaxHistory = getMaxHistory;
         this.tabKey = tabKey;
+        this.messageIds = messageIds;
         /** Whether a restore has already been fired for this tab; see {@link _resolveTabKey}. */
         this.restoreStarted = false;
 
@@ -400,6 +505,79 @@ class ChatTabHandler {
     }
 
     /**
+     * Stamp a newly-added message node with the game's own id, when it can be
+     * known — see {@link PendingMessageIds} and {@link channelFromTabKey}.
+     *
+     * A message that arrived already deleted (a moderator's view of a
+     * channel's backlog, say) is stamped `data-mwi-skip-store` instead of an
+     * id: nothing will ever need to find it by id, and `_onMutation`'s
+     * eviction handler reads that flag to keep it out of storage without
+     * keeping it out of the live buffer — the game already chose to render
+     * it.
+     *
+     * @param {Element} node - A newly-added `ChatMessage_chatMessage` node
+     * @param {string|null} tabKey - This container's tab key, from {@link chatTabKey}
+     */
+    _tagMessageId(node, tabKey) {
+        if (!this.messageIds) return;
+        if (node.dataset.mwiMsgId || node.dataset.mwiSkipStore) return;
+
+        const chan = channelFromTabKey(tabKey);
+        if (!chan) return;
+
+        const claimed = this.messageIds.take(chan);
+        if (!claimed) return;
+
+        if (claimed.isDeleted) {
+            node.dataset.mwiSkipStore = '1';
+        } else {
+            node.dataset.mwiMsgId = String(claimed.id);
+        }
+    }
+
+    /**
+     * Remove every buffered node carrying a given message id — a deletion
+     * arriving for a message this tab already evicted into its buffer, or
+     * restored from storage into it. A still-*live* node (not yet evicted) is
+     * a separate case, handled by {@link ChatHistoryExtender#_handleMessageUpdated}
+     * directly, because it is not this handler's to remove: it is still owned
+     * by the game's own React tree.
+     *
+     * @param {string|number} id
+     * @returns {number} How many nodes were removed
+     */
+    purgeMessageById(id) {
+        if (id == null) return 0;
+        const key = String(id);
+        let removed = 0;
+        for (const node of [...this.bufferEl.querySelectorAll('[data-mwi-msg-id]')]) {
+            if (node.dataset.mwiMsgId !== key) continue;
+            node.querySelectorAll('[data-mwi-uid]').forEach((u) => {
+                this.interactionCache.delete(u.getAttribute('data-mwi-uid'));
+            });
+            if (node.hasAttribute('data-mwi-uid')) {
+                this.interactionCache.delete(node.getAttribute('data-mwi-uid'));
+            }
+            node.remove();
+            removed += 1;
+        }
+        return removed;
+    }
+
+    /**
+     * The still-live (not yet evicted) node carrying a given message id, if
+     * any is currently rendered by this tab.
+     * @param {string} key - `String(id)`
+     * @returns {Element|null}
+     */
+    findLiveMessageNode(key) {
+        for (const node of this.container.querySelectorAll('[data-mwi-msg-id]')) {
+            if (node.dataset.mwiMsgId === key && !this.bufferEl.contains(node)) return node;
+        }
+        return null;
+    }
+
+    /**
      * Re-emit a React synthetic event for history buffer interactions.
      * @param {Event} e
      */
@@ -482,6 +660,7 @@ class ChatTabHandler {
             mut.addedNodes.forEach((node) => {
                 if (node.nodeType === 1 && node.className?.includes('ChatMessage_chatMessage')) {
                     this.hydrateMessage(node);
+                    this._tagMessageId(node, tabKey);
                 }
             });
 
@@ -497,11 +676,19 @@ class ChatTabHandler {
                         const clone = node.cloneNode(true);
                         this.bufferEl.appendChild(clone);
 
-                        // Serialized from the clone, before the trim below can take
-                        // it away again: the record is capped separately from the
-                        // buffer, so a message can leave the screen and stay stored.
-                        const html = serializeMessage(clone);
-                        if (html && tabKey) chatHistoryPersistence.record(tabKey, html);
+                        // A message flagged by `_tagMessageId` as having arrived
+                        // pre-deleted stays in the live buffer like any other
+                        // eviction — the game already chose to render it — but is
+                        // never written to disk: a deleted message must not
+                        // survive a reload. See chat-history-persistence.js's
+                        // "Message identity and deletion" section.
+                        if (!node.dataset.mwiSkipStore) {
+                            // Serialized from the clone, before the trim below can take
+                            // it away again: the record is capped separately from the
+                            // buffer, so a message can leave the screen and stay stored.
+                            const html = serializeMessage(clone);
+                            if (html && tabKey) chatHistoryPersistence.record(tabKey, html);
+                        }
 
                         this._trim(maxHistory);
                     }
@@ -538,6 +725,10 @@ class ChatHistoryExtender {
         this.interactionCache = new Map();
         this.tabHandlers = new WeakMap();
         this.activeHandlers = new Set();
+        /** @type {PendingMessageIds|null} */
+        this.messageIds = null;
+        this._onChatMessageReceived = null;
+        this._onChatMessageUpdated = null;
     }
 
     initialize() {
@@ -554,13 +745,20 @@ class ChatHistoryExtender {
 
         chatHistoryPersistence.enable(getMaxHistory);
 
+        this.messageIds = new PendingMessageIds();
+        this._onChatMessageReceived = (data) => this._handleMessageReceived(data?.message);
+        webSocketHook.on('chat_message_received', this._onChatMessageReceived);
+        this._onChatMessageUpdated = (data) => this._handleMessageUpdated(data?.message);
+        webSocketHook.on('chat_message_updated', this._onChatMessageUpdated);
+
         const attachHandler = (containerEl) => {
             if (this.tabHandlers.has(containerEl)) return;
             const handler = new ChatTabHandler(
                 containerEl,
                 this.interactionCache,
                 getMaxHistory,
-                chatTabKey(containerEl)
+                chatTabKey(containerEl),
+                this.messageIds
             );
             this.tabHandlers.set(containerEl, handler);
             this.activeHandlers.add(handler);
@@ -614,6 +812,56 @@ class ChatHistoryExtender {
         this.timerRegistry.registerInterval(cleanupInterval);
     }
 
+    /**
+     * Handle `chat_message_received`: queue the id for {@link ChatTabHandler#_tagMessageId}
+     * to claim once the DOM node it belongs to is actually rendered. See
+     * {@link PendingMessageIds}.
+     * @param {{id?: string|number, chan?: string, isDeleted?: boolean}|null} message
+     */
+    _handleMessageReceived(message) {
+        if (!message || message.id == null || !message.chan || !this.messageIds) return;
+        this.messageIds.note(message.chan, message.id, !!message.isDeleted);
+    }
+
+    /**
+     * Handle `chat_message_updated` — a deletion or undelete of a message
+     * already seen. See chat-history-persistence.js's "Message identity and
+     * deletion" section for the shape of the whole mechanism.
+     * @param {{id?: string|number, chan?: string, isDeleted?: boolean}|null} message
+     */
+    async _handleMessageUpdated(message) {
+        if (!message || message.id == null) return;
+        const key = String(message.id);
+
+        if (!message.isDeleted) {
+            // Undelete: a moderator-only action (players cannot undo their own
+            // delete) and nothing here needs restoring — a message already
+            // purged from storage/buffer is gone for good, see
+            // chat-history-persistence.js. The only thing left to correct is a
+            // still-live, not-yet-evicted node that a prior delete flagged
+            // `mwiSkipStore`: it should be storable again once it is evicted.
+            for (const handler of this.activeHandlers) {
+                const live = handler.findLiveMessageNode(key);
+                if (live) delete live.dataset.mwiSkipStore;
+            }
+            return;
+        }
+
+        for (const handler of this.activeHandlers) {
+            const live = handler.findLiveMessageNode(key);
+            if (live) live.dataset.mwiSkipStore = '1';
+            handler.purgeMessageById(message.id);
+        }
+
+        if (message.chan) {
+            try {
+                await chatHistoryPersistence.purgeMessageById(tabKeyForChannel(message.chan), message.id);
+            } catch (error) {
+                console.error('[ChatHistoryExtender] Could not purge a deleted message from storage:', error);
+            }
+        }
+    }
+
     disable() {
         try {
             // Land what the session recorded before the state goes; a disable
@@ -629,6 +877,16 @@ class ChatHistoryExtender {
             this.unregisterHandlers = [];
             this.timerRegistry.clearAll();
             this.interactionCache.clear();
+            if (this._onChatMessageReceived) {
+                webSocketHook.off('chat_message_received', this._onChatMessageReceived);
+                this._onChatMessageReceived = null;
+            }
+            if (this._onChatMessageUpdated) {
+                webSocketHook.off('chat_message_updated', this._onChatMessageUpdated);
+                this._onChatMessageUpdated = null;
+            }
+            this.messageIds?.clear();
+            this.messageIds = null;
             removeStyles(STYLE_ID);
             this.isInitialized = false;
         } catch (error) {

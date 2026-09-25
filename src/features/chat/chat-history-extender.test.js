@@ -30,7 +30,50 @@ vi.mock('../../core/dom-observer.js', () => ({
     },
 }));
 
-import chatHistoryExtender from './chat-history-extender.js';
+const wsHandlers = vi.hoisted(() => ({}));
+vi.mock('../../core/websocket.js', () => ({
+    default: {
+        on: (event, handler) => {
+            wsHandlers[event] = handler;
+        },
+        off: (event, handler) => {
+            if (wsHandlers[event] === handler) delete wsHandlers[event];
+        },
+    },
+}));
+
+// Only reached once a test gives a container a real tab strip (a `ch:`-keyed
+// tab), so id correlation and deletion can go all the way through
+// chat-history-persistence.js's storage calls — none of the fiber/hydration
+// tests above touch this.
+const db = vi.hoisted(() => ({ settings: {} }));
+vi.mock('../../core/storage.js', () => ({
+    default: {
+        get: vi.fn(async (key, store, fallback = null) => {
+            const bucket = db[store] || {};
+            return Object.prototype.hasOwnProperty.call(bucket, key) ? bucket[key] : fallback;
+        }),
+        set: vi.fn(async (key, value, store) => {
+            db[store] = db[store] || {};
+            db[store][key] = JSON.parse(JSON.stringify(value));
+            return true;
+        }),
+        isQuotaExceeded: vi.fn(() => false),
+    },
+}));
+vi.mock('../../utils/character-key.js', () => ({ characterKey: (base) => `${base}_char1` }));
+vi.mock('../../core/data-manager.js', () => ({ default: { getItemDetails: vi.fn(() => null) } }));
+vi.mock('../../utils/marketplace-tabs.js', () => ({ navigateToMarketplace: vi.fn() }));
+vi.mock('../../utils/profile-command.js', () => ({
+    openPlayerProfile: vi.fn(),
+    fillProfileCommand: vi.fn(),
+    findChatInput: vi.fn(() => null),
+    getGameCore: vi.fn(() => null),
+    VALID_PLAYER_NAME_RE: /^[A-Za-z0-9_]+$/,
+}));
+
+import chatHistoryExtender, { tabKeyForChannel } from './chat-history-extender.js';
+import chatHistoryPersistence from './chat-history-persistence.js';
 
 /**
  * Build a minimal fiber tree and wire it under `#root._reactRootContainer`
@@ -186,5 +229,227 @@ describe('chat-history-extender', () => {
 
         clonedLink.dispatchEvent(new MouseEvent('click', { bubbles: true }));
         expect(onClick).toHaveBeenCalledTimes(1);
+    });
+});
+
+/**
+ * A September 2026 patch lets a player delete their own Trade/Recruit
+ * messages, on top of the moderator deletion that already existed. It
+ * arrives as `chat_message_updated`, carrying `{ id, chan, isDeleted }`.
+ * These tests exercise the id correlation (`chat_message_received` →
+ * `data-mwi-msg-id`) and the deletion/undeletion handling built on it — see
+ * the "Message identity and deletion" section at the top of
+ * chat-history-persistence.js.
+ */
+describe('chat-history-extender: message identity and deletion', () => {
+    /** A live chat pane with a real tab strip — a `ch:`-keyed tab, unlike {@link buildChatContainer}. */
+    function buildChannelChat(channel) {
+        document.body.innerHTML = '<div id="root"><div class="Chat_tabsComponentContainer__x"></div></div>';
+        const strip = document.querySelector('.Chat_tabsComponentContainer__x');
+        const button = document.createElement('button');
+        button.setAttribute('role', 'tab');
+        button.setAttribute('data-mention-channel', channel);
+        button.setAttribute('aria-selected', 'true');
+        button.textContent = channel.split('/').pop();
+        strip.appendChild(button);
+
+        const container = document.createElement('div');
+        container.className = 'ChatHistory_chatHistory__abc';
+        document.getElementById('root').appendChild(container);
+        return container;
+    }
+
+    function makeMessage(text) {
+        const el = document.createElement('div');
+        el.className = 'ChatMessage_chatMessage__xyz';
+        el.textContent = text;
+        return el;
+    }
+
+    async function evict(container, node) {
+        container.removeChild(node);
+        await Promise.resolve();
+        await Promise.resolve();
+    }
+
+    /** Let a mutation batch (and any hydrate/tag work it queues) land. */
+    async function settle() {
+        for (let i = 0; i < 4; i += 1) await Promise.resolve();
+    }
+
+    beforeEach(() => {
+        settingValues.chatHistoryExtender = true;
+        settingValues.chatHistoryExtender_maxHistory = null;
+        observerReady.handlers = [];
+        observerReady.domReady = true;
+        db.settings = {};
+    });
+
+    afterEach(() => {
+        chatHistoryExtender.disable();
+        chatHistoryPersistence.reset();
+        document.body.innerHTML = '';
+    });
+
+    test('registers and unregisters chat_message_received/chat_message_updated with the feature lifecycle', () => {
+        expect(wsHandlers.chat_message_received).toBeUndefined();
+        expect(wsHandlers.chat_message_updated).toBeUndefined();
+
+        chatHistoryExtender.initialize();
+        expect(wsHandlers.chat_message_received).toBeTypeOf('function');
+        expect(wsHandlers.chat_message_updated).toBeTypeOf('function');
+
+        chatHistoryExtender.disable();
+        expect(wsHandlers.chat_message_received).toBeUndefined();
+        expect(wsHandlers.chat_message_updated).toBeUndefined();
+    });
+
+    test('a live message is tagged with the id its chat_message_received carried', async () => {
+        const container = buildChannelChat('/chat_channel_types/trade');
+        chatHistoryExtender.initialize();
+        await settle();
+
+        wsHandlers.chat_message_received({ message: { id: 'msg-1', chan: '/chat_channel_types/trade' } });
+        const node = makeMessage('selling cheese');
+        container.appendChild(node);
+        await settle();
+
+        expect(node.dataset.mwiMsgId).toBe('msg-1');
+    });
+
+    test('a whisper/name tab is never tagged — no reliable channel correlation', async () => {
+        document.body.innerHTML = '<div id="root"><div class="Chat_tabsComponentContainer__x"></div></div>';
+        const strip = document.querySelector('.Chat_tabsComponentContainer__x');
+        const button = document.createElement('button');
+        button.setAttribute('role', 'tab');
+        button.setAttribute('aria-selected', 'true');
+        button.textContent = 'Alice';
+        strip.appendChild(button);
+        const container = document.createElement('div');
+        container.className = 'ChatHistory_chatHistory__abc';
+        document.getElementById('root').appendChild(container);
+
+        chatHistoryExtender.initialize();
+        await settle();
+
+        wsHandlers.chat_message_received({ message: { id: 'msg-1', chan: '/chat_channel_types/whisper' } });
+        const node = makeMessage('meet me at the tower');
+        container.appendChild(node);
+        await settle();
+
+        expect(node.dataset.mwiMsgId).toBeUndefined();
+    });
+
+    test('a message that arrives already deleted is tagged skip-store, not an id', async () => {
+        const container = buildChannelChat('/chat_channel_types/trade');
+        chatHistoryExtender.initialize();
+        await settle();
+
+        wsHandlers.chat_message_received({
+            message: { id: 'msg-1', chan: '/chat_channel_types/trade', isDeleted: true },
+        });
+        const node = makeMessage('a moderator sees this, deleted');
+        container.appendChild(node);
+        await settle();
+
+        expect(node.dataset.mwiMsgId).toBeUndefined();
+        expect(node.dataset.mwiSkipStore).toBe('1');
+
+        // Buffered on eviction like any live message, but never persisted.
+        await evict(container, node);
+        await chatHistoryPersistence.flush();
+        expect(container.querySelector('.mwi-history-buffer').textContent).toContain('deleted');
+        expect(db.settings[Object.keys(db.settings)[0]].tabs).toEqual({});
+    });
+
+    test('deleting an id already evicted into the buffer removes it from screen and from storage', async () => {
+        const container = buildChannelChat('/chat_channel_types/trade');
+        chatHistoryExtender.initialize();
+        await settle();
+
+        wsHandlers.chat_message_received({ message: { id: 'msg-1', chan: '/chat_channel_types/trade' } });
+        const node = makeMessage('selling cheese');
+        container.appendChild(node);
+        await settle();
+        await evict(container, node);
+        await chatHistoryPersistence.flush();
+
+        const tabKey = tabKeyForChannel('/chat_channel_types/trade');
+        expect(db.settings[Object.keys(db.settings)[0]].tabs[tabKey][0]).toContain('selling cheese');
+
+        await wsHandlers.chat_message_updated({
+            message: { id: 'msg-1', chan: '/chat_channel_types/trade', isDeleted: true },
+        });
+
+        expect(container.querySelector('.mwi-history-buffer').textContent).not.toContain('selling cheese');
+        await chatHistoryPersistence.flush();
+        expect(db.settings[Object.keys(db.settings)[0]].tabs[tabKey]).toBeUndefined();
+    });
+
+    test('deleting a still-live (not yet evicted) message flags it so eviction never stores it', async () => {
+        const container = buildChannelChat('/chat_channel_types/trade');
+        chatHistoryExtender.initialize();
+        await settle();
+
+        wsHandlers.chat_message_received({ message: { id: 'msg-1', chan: '/chat_channel_types/trade' } });
+        const node = makeMessage('selling cheese');
+        container.appendChild(node);
+        await settle();
+        expect(node.dataset.mwiMsgId).toBe('msg-1');
+
+        await wsHandlers.chat_message_updated({
+            message: { id: 'msg-1', chan: '/chat_channel_types/trade', isDeleted: true },
+        });
+        expect(node.dataset.mwiSkipStore).toBe('1');
+        // Still on screen — the game, not this script, decides whether a live node is removed.
+        expect(container.contains(node)).toBe(true);
+
+        await evict(container, node);
+        await chatHistoryPersistence.flush();
+        expect(db.settings[Object.keys(db.settings)[0]].tabs).toEqual({});
+    });
+
+    test('an undelete clears the skip-store flag so a later eviction stores normally', async () => {
+        const container = buildChannelChat('/chat_channel_types/trade');
+        chatHistoryExtender.initialize();
+        await settle();
+
+        wsHandlers.chat_message_received({ message: { id: 'msg-1', chan: '/chat_channel_types/trade' } });
+        const node = makeMessage('selling cheese');
+        container.appendChild(node);
+        await settle();
+
+        await wsHandlers.chat_message_updated({
+            message: { id: 'msg-1', chan: '/chat_channel_types/trade', isDeleted: true },
+        });
+        await wsHandlers.chat_message_updated({
+            message: { id: 'msg-1', chan: '/chat_channel_types/trade', isDeleted: false },
+        });
+        expect(node.dataset.mwiSkipStore).toBeUndefined();
+
+        await evict(container, node);
+        await chatHistoryPersistence.flush();
+        const tabKey = tabKeyForChannel('/chat_channel_types/trade');
+        expect(db.settings[Object.keys(db.settings)[0]].tabs[tabKey][0]).toContain('selling cheese');
+    });
+
+    test('a deletion for a message never seen (already off disk, or from before this build) does not throw', async () => {
+        buildChannelChat('/chat_channel_types/trade');
+        chatHistoryExtender.initialize();
+        await settle();
+
+        await expect(
+            wsHandlers.chat_message_updated({
+                message: { id: 'msg-nonexistent', chan: '/chat_channel_types/trade', isDeleted: true },
+            })
+        ).resolves.not.toThrow();
+    });
+
+    test('malformed chat_message_updated payloads are ignored, not thrown', async () => {
+        chatHistoryExtender.initialize();
+        await settle();
+
+        await expect(wsHandlers.chat_message_updated({})).resolves.not.toThrow();
+        await expect(wsHandlers.chat_message_updated({ message: {} })).resolves.not.toThrow();
     });
 });
