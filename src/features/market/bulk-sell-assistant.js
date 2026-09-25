@@ -1345,7 +1345,9 @@ class BulkSellAssistant {
         this._clearTransient();
         if (this.index >= this.queue.length) {
             this.state = 'done';
-            this.statusNote = `Done — ${this.queue.length} stacks processed`;
+            // The skip summary set at Start is cleared by the first step, so the run's end is where
+            // it is said: otherwise locked, held and enhanced stacks look silently missing
+            this.statusNote = `Done — ${this.queue.length} stacks processed${this._skipNote()}`;
             this._render();
             return;
         }
