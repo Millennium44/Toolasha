@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### A slow feature cleanup no longer undoes the next character's start
+
+- When a feature takes over five seconds to shut down during a character switch, the arriving character's copy of it is rebuilt afterwards instead of being left broken.
+
 ### Deleted chat posts with item links are told apart
 
 - Two posts from one player with the same text but links to different items are now each matched, so deleting one removes it from Toolasha's chat history.
