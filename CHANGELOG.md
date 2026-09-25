@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Trade stats table starts and stops cleanly
+
+- The marketplace trade stats table no longer registers twice when two settings change at once, no longer leaks a cleanup per item viewed, and stays off when switched off while it is still starting up.
+
 ### Trade stats on enhanceable items, and Artisan Tea's level requirement
 
 - The order book's trade stats table now loads for enhanceable items opened straight from the market (it stuck on "Loading"), sits compactly beside the item without adding height (shrinking to fit in the pop-out window), and while it is shown the for-sale counts move together to the left as "Ask … · Bid …" so it no longer covers the bid count, and appears as soon as Price History is switched on.
