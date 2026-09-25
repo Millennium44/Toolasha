@@ -1849,10 +1849,11 @@ function registerFeatures() {
             category: 'Interface',
             module: UI.overlayTabButton,
             async: false,
-            // Its own switch is the gate, but the module also refuses to start
-            // while the overlay is off — so a start refused at page load is
-            // retried when the overlay is switched on, rather than counted
-            isRunning: () => UI.overlayTabButton.initialized === true,
+            // The button is a switch for the overlay, so the overlay's own setting
+            // is part of the gate: switching the overlay off live-stops the button
+            // too (left up, a click would redraw a disabled overlay), and switching
+            // it on starts a button the module refused at page load.
+            customCheck: () => Boolean(config.getSetting('overlayTabButton') && config.getSetting('overlayPanel')),
             // The button is a switch for the overlay and the module refuses to
             // draw one when the overlay itself is off
             healthCheck: () =>
