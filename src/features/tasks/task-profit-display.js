@@ -560,6 +560,10 @@ class TaskProfitDisplay {
         this._cardEstimates = new WeakMap();
         this._estimateMode = 'solo'; // Last-used Solo/Zone choice (persisted)
         this.marketDataInitPromise = null; // Guard against duplicate market data inits
+        // Bumped by disable() so an addProfitToTask() call already resumed from an await knows its
+        // render is stale and must not touch the DOM — isInitialized alone misses a disable()
+        // immediately followed by a re-initialize while the call is still suspended.
+        this._renderGeneration = 0;
         this._simQueue = Promise.resolve();
         // One pending refresh per source, so a burst of messages runs it once
         this._questsTimer = null;
@@ -1233,6 +1237,11 @@ class TaskProfitDisplay {
      * @param {Element} taskNode - Task card DOM element
      */
     async addProfitToTask(taskNode) {
+        // Captured before any await: if disable() bumps this while we are suspended, every render
+        // below is stale and must not touch the DOM, even once a later initialize() has moved
+        // isInitialized back to true for an unrelated, more recent render pass.
+        const generation = this._renderGeneration;
+        const isStale = () => generation !== this._renderGeneration;
         try {
             // Check if game data is ready
             if (!dataManager.getInitClientData()) {
@@ -1255,6 +1264,9 @@ class TaskProfitDisplay {
 
             if (!expectedValueCalculator.isInitialized) {
                 const initialized = await this.ensureMarketDataInitialized();
+                if (isStale()) {
+                    return;
+                }
                 if (!initialized || !expectedValueCalculator.isInitialized) {
                     this.pendingTaskNodes.add(taskNode);
                     this.displayLoadingState(taskNode, taskData);
@@ -1264,6 +1276,9 @@ class TaskProfitDisplay {
 
             // Calculate profit
             const profitData = await calculateTaskProfit(taskData);
+            if (isStale()) {
+                return;
+            }
 
             // Show combat estimate UI for combat tasks
             if (profitData === null) {
@@ -3159,6 +3174,10 @@ class TaskProfitDisplay {
      */
     disable() {
         try {
+            // Invalidate any addProfitToTask() call still suspended on a market-init or
+            // calculateTaskProfit() await; it checks this after every await and bails instead of
+            // appending a new .mwi-task-profit once every setting is off.
+            this._renderGeneration++;
             // Cancel pending timeouts so they cannot recreate UI after disable
             this.timerRegistry.clearAll();
             this._cardRefreshTimer = null;
