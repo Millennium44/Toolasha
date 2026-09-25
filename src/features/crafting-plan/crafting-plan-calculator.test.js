@@ -245,6 +245,36 @@ describe('multi-output recipes and upgrade items', () => {
         expect(plan.children[0].quantity).toBe(3); // 1 shaft per action
     });
 
+    test('a multi-output intermediate is sized in whole actions below the root too', () => {
+        // 3 shafts → 2 arrows; a quiver takes 5 arrows, which is 3 arrow crafts and 9 shafts
+        game.itemDetails['/items/arrow'] = { name: 'Arrow', isTradable: true };
+        game.itemDetails['/items/shaft'] = { name: 'Shaft', isTradable: true };
+        game.itemDetails['/items/quiver'] = { name: 'Quiver', isTradable: true };
+        market.prices['/items/arrow'] = 100;
+        market.prices['/items/shaft'] = 10;
+        market.prices['/items/quiver'] = 9999;
+        game.initClientData.actionDetailMap['/actions/crafting/arrow'] = {
+            type: '/action_types/crafting',
+            category: '/action_categories/crafting/ammo',
+            inputItems: [{ itemHrid: '/items/shaft', count: 3 }],
+            outputItems: [{ itemHrid: '/items/arrow', count: 2 }],
+        };
+        game.initClientData.actionDetailMap['/actions/crafting/quiver'] = {
+            type: '/action_types/crafting',
+            category: '/action_categories/crafting/ammo',
+            inputItems: [{ itemHrid: '/items/arrow', count: 5 }],
+            outputItems: [{ itemHrid: '/items/quiver', count: 1 }],
+        };
+
+        const arrows = computeBestCraftingPlan('/items/quiver', 1).children[0];
+
+        expect(arrows).toMatchObject({ strategy: 'craft', quantity: 5, actionsNeeded: 3 });
+        expect(arrows.children[0].quantity).toBe(9);
+        expect(collectMissingMaterials(computeBestCraftingPlan('/items/quiver', 1), [])).toEqual([
+            expect.objectContaining({ itemHrid: '/items/shaft', missing: 9 }),
+        ]);
+    });
+
     test('an upgrade item is charged once per action and skips the artisan discount', () => {
         // Reinforced boots: 2 leather + the boots themselves
         game.itemDetails['/items/reinforced_boots'] = { name: 'Reinforced Boots', isTradable: true };

@@ -110,16 +110,20 @@ export function getArtisanBonus(actionType) {
  * printed count and the reduction the template was built with. Upgrade-item
  * templates carry no `countPerAction` and are never reduced.
  *
+ * Either way the parent is made in whole crafts: 5 of a 2-per-craft item is 3
+ * crafts, and its inputs are three crafts' worth, not two and a half.
+ *
  * @param {{qtyPerUnit: number, countPerAction?: number, artisanBonus?: number}} template - A childrenTemplate entry
  * @param {number} quantity - Units of the parent this node produces
  * @param {number} outputCount - Units of the parent one craft yields
  * @returns {number} Units of the input
  */
 function memoChildQuantity(template, quantity, outputCount) {
-    if (template.countPerAction === undefined) return template.qtyPerUnit * quantity;
     const actions = Math.ceil(quantity / outputCount);
+    const perAction = template.qtyPerUnit * outputCount;
+    if (template.countPerAction === undefined) return perAction * actions;
     const artisanMode = getArtisanMaterialMode();
-    if (!usesWorstCaseRounding(artisanMode, actions)) return template.qtyPerUnit * quantity;
+    if (!usesWorstCaseRounding(artisanMode, actions)) return perAction * actions;
     return artisanInputTotal(template.countPerAction, template.artisanBonus, actions, artisanMode);
 }
 
