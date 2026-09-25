@@ -13,8 +13,42 @@ import { describe, test, expect, beforeEach, afterEach, vi } from 'vitest';
 
 const game = vi.hoisted(() => ({ data: null, sessions: [] }));
 
+// A small live config, extended past the panel's own settings to cover the
+// pricing quick-settings row it now mounts: three real settings the row
+// reads and writes, plus the change/load subscriptions it (and the row's
+// module-level resync) register.
+const settings = vi.hoisted(() => ({
+    values: {
+        profitCalc_pricingMode: 'hybrid',
+        profitCalc_patientTickBuy: false,
+        profitCalc_patientTickSell: false,
+        profitCalc_pricingNaming: false,
+        profitCalc_keyPricingMode: 'ask',
+    },
+    changeCallbacks: {},
+}));
 vi.mock('../../core/config.js', () => ({
-    default: { Z_FLOATING_PANEL: 1100, getSetting: () => true, getSettingValue: () => 'full' },
+    default: {
+        Z_FLOATING_PANEL: 1100,
+        getSetting: (key) => (key in settings.values ? settings.values[key] : true),
+        getSettingValue: (key, fallback) => settings.values[key] ?? fallback ?? 'full',
+        setSetting: (key, value) => {
+            settings.values[key] = value;
+            (settings.changeCallbacks[key] || []).forEach((cb) => cb(key, value));
+        },
+        setSettingValue: (key, value) => {
+            settings.values[key] = value;
+            (settings.changeCallbacks[key] || []).forEach((cb) => cb(key, value));
+        },
+        onSettingChange: (key, callback) => {
+            settings.changeCallbacks[key] = settings.changeCallbacks[key] || [];
+            settings.changeCallbacks[key].push(callback);
+            return () => {
+                settings.changeCallbacks[key] = (settings.changeCallbacks[key] || []).filter((cb) => cb !== callback);
+            };
+        },
+        onSettingsLoaded: () => () => {},
+    },
 }));
 vi.mock('../combat-stats/combat-stats-data-collector.js', () => ({
     default: { getLatestData: () => game.data },
@@ -74,6 +108,13 @@ beforeEach(() => {
     // the next test looking at it, and one that leaves the archive full leaves
     // the next test's identical read looking unchanged and drawing nothing
     _resetView();
+    settings.values = {
+        profitCalc_pricingMode: 'hybrid',
+        profitCalc_patientTickBuy: false,
+        profitCalc_patientTickSell: false,
+        profitCalc_pricingNaming: false,
+        profitCalc_keyPricingMode: 'ask',
+    };
     game.sessions = [];
     game.combinedResult = undefined;
     game.data = {
@@ -340,6 +381,48 @@ describe('the top bar', () => {
 
         expect(partyLootPanel.panel.querySelector('select').value).toBe('live');
         expect(text()).toContain('Briggsy99');
+    });
+});
+
+describe('the pricing quick-settings row', () => {
+    const keySelect = () => [...partyLootPanel.panel.querySelectorAll('select')].find((el) => el.dataset.mwiKeyPricing);
+
+    test('sits in the top bar, alongside the run picker', () => {
+        partyLootPanel.show();
+
+        const selects = [...partyLootPanel.panel.querySelectorAll('select')];
+        // The run picker, plus the row's Buy/Sell/Key selects
+        expect(selects.length).toBe(4);
+        expect(keySelect()).toBeTruthy();
+    });
+
+    test('changing a pricing setting re-renders the panel', () => {
+        partyLootPanel.show();
+        const before = text();
+
+        keySelect().value = 'craft';
+        keySelect().dispatchEvent(new Event('change'));
+
+        // Nothing here asserts a figure changed (the mocked calculator ignores
+        // pricing) — only that the write reached config and the panel is still
+        // showing a real render rather than having thrown
+        expect(settings.values.profitCalc_keyPricingMode).toBe('craft');
+        expect(text()).not.toContain(FAILED);
+        expect(text().length).toBeGreaterThan(0);
+        expect(text()).toBe(before); // same content, but re-drawn rather than stale
+    });
+
+    test('a pricing change made elsewhere (the settings panel, or the sim) also re-renders', () => {
+        partyLootPanel.show();
+
+        // Simulate a write from outside this panel, as the settings panel or
+        // the combat simulator's own copy of the row would make
+        settings.values.profitCalc_keyPricingMode = 'bid';
+        (settings.changeCallbacks.profitCalc_keyPricingMode || []).forEach((cb) =>
+            cb('profitCalc_keyPricingMode', 'bid')
+        );
+
+        expect(keySelect().value).toBe('bid');
     });
 });
 

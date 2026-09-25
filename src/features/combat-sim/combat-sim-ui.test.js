@@ -92,6 +92,8 @@ const mocks = vi.hoisted(() => ({
     /** Whether the House Upgrade target grid omits skilling-only rooms */
     skipSkillingRooms: false,
     settingChangeCallbacks: new Map(),
+    /** The `getSettingValue` mock's `profitCalc_keyPricingMode`, for the pricing quick-settings row */
+    keyPricingMode: 'ask',
 }));
 
 vi.mock('../../core/config.js', () => ({
@@ -102,14 +104,28 @@ vi.mock('../../core/config.js', () => ({
         getSettingValue: (key, fallback) => {
             if (key === 'profitCalc_pricingMode') return mocks.pricingMode;
             if (key === 'profitCalc_patientTickBuy' || key === 'profitCalc_patientTickSell') return mocks.patientTick;
+            if (key === 'profitCalc_keyPricingMode') return mocks.keyPricingMode;
             return fallback;
         },
         getSetting: (key, fallback = false) =>
             key === 'combatSim_upgradeSkipSkillingRooms' ? mocks.skipSkillingRooms : fallback,
+        // Real `setSetting`/`setSettingValue` fire the registered change callback
+        // synchronously; the pricing quick-settings row (and the dropdowns it is
+        // built from) depend on that to resync themselves after their own write.
+        setSetting: (key, value) => {
+            if (key === 'profitCalc_patientTickBuy' || key === 'profitCalc_patientTickSell') mocks.patientTick = value;
+            mocks.settingChangeCallbacks.get(key)?.(key, value);
+        },
+        setSettingValue: (key, value) => {
+            if (key === 'profitCalc_pricingMode') mocks.pricingMode = value;
+            if (key === 'profitCalc_keyPricingMode') mocks.keyPricingMode = value;
+            mocks.settingChangeCallbacks.get(key)?.(key, value);
+        },
         onSettingChange: (key, callback) => {
             mocks.settingChangeCallbacks.set(key, callback);
             return () => mocks.settingChangeCallbacks.delete(key);
         },
+        onSettingsLoaded: () => () => {},
         getPricingModeLabel: () => 'Hybrid',
         getPricingModeDisplayLabel: () => 'Hybrid',
     },
@@ -3789,6 +3805,49 @@ describe('the summary at the top of the Results tab', () => {
         // 100 × 9 ticked ask, net of 5% tax = 855/hr = 20.52K/day, rounded to
         // 20.5K — this line fails pre-fix
         expect(on).toContain('Revenue 20.5K/day');
+    });
+
+    test('the pricing quick-settings row sits above the results, with Buy/Sell/Key selects', () => {
+        showFight();
+        const row = ui.panel.querySelector('#mwi-csim-results-pricing');
+
+        expect(row).toBeTruthy();
+        const selects = row.querySelectorAll('select');
+        expect(selects).toHaveLength(3);
+        expect(selects[0].dataset.mwiPricingSide).toBe('buy');
+        expect(selects[1].dataset.mwiPricingSide).toBe('sell');
+        expect(selects[2].dataset.mwiKeyPricing).toBe('true');
+    });
+
+    test('choosing a Key pricing option re-prices the displayed run without a re-run', () => {
+        mocks.drops = new Map([['/items/coin', 1200]]);
+        showFight();
+        const simResultBefore = ui._lastSimResult;
+
+        const keySelect = ui.panel.querySelector('#mwi-csim-results-pricing select[data-mwi-key-pricing]');
+        keySelect.value = 'craft';
+        keySelect.dispatchEvent(new Event('change'));
+
+        // The write reached config, and the results redrew from the very same
+        // cached simResult object — nothing here re-ran the simulation
+        expect(mocks.keyPricingMode).toBe('craft');
+        expect(ui._lastSimResult).toBe(simResultBefore);
+        expect(ui.panel.querySelector('#mwi-csim-results').textContent).not.toContain('could not be drawn');
+    });
+
+    test('a Buy/Sell pricing change made elsewhere resyncs the row and re-prices the run', () => {
+        mocks.drops = new Map([['/items/cheese', 100]]);
+        mocks.prices['/items/cheese'] = { bid: 8, ask: 10 };
+        showFight();
+
+        // As the main settings panel or Party Loot's copy of the row would do
+        mocks.pricingMode = 'optimistic';
+        mocks.settingChangeCallbacks.get('profitCalc_pricingMode')?.('profitCalc_pricingMode', 'optimistic');
+
+        const buySelect = ui.panel.querySelector('#mwi-csim-results-pricing select[data-mwi-pricing-side="buy"]');
+        expect(buySelect.value).toBe('patient');
+        // Revenue moved to the ask-side price optimistic pricing implies
+        expect(ui.panel.querySelector('#mwi-csim-results').textContent).toContain('Revenue 22.8K/day');
     });
 
     test('a history run priced before a pricing change is re-priced rather than compared stale', () => {
