@@ -250,6 +250,8 @@ class LootLogStats {
         this.itemsSpriteUrl = null;
         this.actionsSpriteUrl = null;
         this.historyEnabled = false;
+        /** Bumped per history render and on switch-off, so a render parked on storage cannot land late */
+        this.historyRenderGen = 0;
         this.unregisterStatsObserver = null;
         this.unregisterHistoryObserver = null;
         this.historicalBatchSize = 20;
@@ -339,6 +341,7 @@ class LootLogStats {
         } else if (!this.historyEnabled && this.unregisterHistoryObserver) {
             this.unregisterHistoryObserver();
             this.unregisterHistoryObserver = null;
+            this.historyRenderGen += 1;
             document.querySelectorAll('.mwi-loot-log-history').forEach((el) => el.remove());
         }
     }
@@ -1630,7 +1633,10 @@ class LootLogStats {
         const currentIds = new Set(this.currentLootLogData.map((e) => e.characterActionId));
 
         // Get historical entries not in current set
+        const gen = ++this.historyRenderGen;
         const historicalEntries = await lootLogHistory.getHistoricalEntries(currentIds);
+        // A newer render, or history switched off, while the read was in flight
+        if (gen !== this.historyRenderGen || !this.historyEnabled || !container.isConnected) return;
         if (historicalEntries.length === 0) return;
 
         // Create separator
@@ -1999,7 +2005,8 @@ class LootLogStats {
         const dayProfitSpans = document.querySelectorAll('.mwi-loot-log-day-profit');
         dayProfitSpans.forEach((span) => span.remove());
 
-        // Remove historical entries section
+        // Remove historical entries section, and void any render still reading storage
+        this.historyRenderGen += 1;
         const historySection = document.querySelectorAll('.mwi-loot-log-history');
         historySection.forEach((el) => el.remove());
 
