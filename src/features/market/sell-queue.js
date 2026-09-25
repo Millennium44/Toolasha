@@ -324,6 +324,17 @@ function updateTabsOnInventoryChange() {
         const entry = queue.find((e) => e.itemHrid === itemHrid);
         if (!entry) return;
 
+        // A player can lock an item after it is already queued. `item_marks_updated`
+        // reaches this same listener (its type contains "item", the filter below),
+        // so this is where a newly-locked entry has to be caught — the sold-out check
+        // just below only ever fires at count 0, and a locked item can sit at a
+        // nonzero count forever, keeping its tab and its reservation (and holding that
+        // stock back from every crafting plan) for something that can never sell.
+        if (dataManager.isItemLocked(entry.itemHrid, QUEUED_ENHANCEMENT_LEVEL)) {
+            toRemove.push(itemHrid);
+            return;
+        }
+
         const count = getInventoryCount(entry.itemHrid, QUEUED_ENHANCEMENT_LEVEL);
         const badgeSpan = tab.querySelector('[class*="TabsComponent_badge"]');
         if (badgeSpan) {

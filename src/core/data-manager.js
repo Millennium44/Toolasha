@@ -1794,12 +1794,11 @@ class DataManager {
         // as `this.characterData` — so nothing special is needed there. This keeps that
         // list current for the rest of the session.
         //
-        // The exact payload shape of this message was not confirmed against a live
-        // capture at the time this was written (the handler name
-        // `handleMessageItemMarksUpdated` is known from the client bundle, the payload
-        // key is not); assume it carries the full list under `characterItemMarks`, the
-        // same key `init_character_data` uses, but never throw on a different shape —
-        // log once and leave the existing marks in place.
+        // Confirmed live on the test server: `{ type, characterItemMarks: [...] }`, the
+        // full list under the same key `init_character_data` uses (unlocking everything
+        // sends `characterItemMarks: []`, not an absent field). Still never throw on an
+        // unexpected shape — log once and leave the existing marks in place — in case a
+        // future patch changes it.
         this.webSocketHook.on('item_marks_updated', (data, context) => {
             if (!this._isFromActiveSocket(context)) return;
             if (!this.characterData) return;

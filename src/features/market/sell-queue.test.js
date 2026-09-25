@@ -479,6 +479,28 @@ describe('the tab badge and the sold-out check count plain copies only', () => {
         expect(document.querySelector('[data-item-hrid="/items/cheese"]')).toBeNull();
         expect(ledger.reserved).toHaveLength(0);
     });
+
+    test('an item locked after it is already queued is dropped and its claim given back', async () => {
+        dataManagerMock.inventory = [
+            { itemHrid: '/items/cheese', itemLocationHrid: '/item_locations/inventory', count: 12 },
+        ];
+
+        await queueCheese();
+        expect(document.querySelector('[data-item-hrid="/items/cheese"]')).not.toBeNull();
+        expect(ledger.reserved.at(-1).lines).toEqual([{ itemHrid: '/items/cheese', enhancementLevel: 0, count: 12 }]);
+
+        // The player locks it mid-run. The count in the bag has not changed — the
+        // sold-out check alone would never remove this tab — but item_marks_updated
+        // reaches the same wildcard listener updateTabsOnInventoryChange listens on.
+        dataManagerMock.lockedKeys.add('/items/cheese:0');
+        socketState.handler({ type: 'item_marks_updated' });
+
+        expect(document.querySelector('[data-item-hrid="/items/cheese"]')).toBeNull();
+        // The claim over the now-unsellable stock is re-stated as empty (the queue's
+        // own release mechanism — see claimQueue), not left holding that stock out of
+        // every crafting plan for something that can never sell
+        expect(ledger.reserved.at(-1).lines).toEqual([]);
+    });
 });
 
 /*
