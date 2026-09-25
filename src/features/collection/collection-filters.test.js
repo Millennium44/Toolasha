@@ -946,6 +946,36 @@ describe('sorting the tiles', () => {
         expect(tileFor(catsEl, 'milk').style.marginBottom).toBe('');
     });
 
+    test('switching filters and favorites off clears a prior sort even though the sort row is gone', () => {
+        // Badges-only mode takes the early-return path in _rerenderPanel, which never calls
+        // _applySorting. A leftover inline `order` (and the time-sort margin/overflow) used to
+        // survive with no controls left to reset them.
+        mockDataManager.clientData = {
+            actionDetailMap: {
+                '/actions/milking/cow': { dropTable: [{ itemHrid: '/items/milk', count: 1, dropRate: 1 }] },
+            },
+        };
+        const { panelEl, catsEl } = buildPanel([
+            { itemId: 'milk', count: '9280' },
+            { itemId: 'log', count: '5' },
+        ]);
+        collectionFilters.collections = { milk: 9280, log: 5 };
+        collectionFilters.sortMode = 'time-to-next-tier';
+        collectionFilters._applySorting(catsEl);
+        expect(tileFor(catsEl, 'milk').style.order).toBe('0');
+        expect(tileFor(catsEl, 'milk').querySelector('.time-to-tier')).toBeTruthy();
+
+        collectionFilters._filtersEnabled = false;
+        collectionFilters._favoritesEnabled = false;
+        collectionFilters._rerenderPanel(panelEl);
+
+        expect(tileFor(catsEl, 'milk').style.order).toBe('');
+        expect(tileFor(catsEl, 'log').style.order).toBe('');
+        expect(tileFor(catsEl, 'milk').style.marginBottom).toBe('');
+        expect(tileFor(catsEl, 'milk').style.overflow).toBe('');
+        expect(catsEl.querySelector('.time-to-tier')).toBeNull();
+    });
+
     test('a produced item counts a whole crafting cycle, not a drop rate', () => {
         mockDataManager.clientData = {
             actionDetailMap: {
