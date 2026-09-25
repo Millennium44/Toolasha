@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Pricing settings inside Party Loot and the combat sim
+
+- Party Loot and the combat sim now carry a compact Buy / Sell / Keys pricing row; changing it updates the setting everywhere and re-prices the panel on the spot, without re-running the sim.
+
 ### Party Loot shows where the profit comes from
 
 - Click a character in Party Loot to expand a breakdown: every drop and chest, each consumable used, entry and chest keys (crafted or bought), and the loot − consumables − keys = net lines that match the card.
