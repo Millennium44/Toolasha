@@ -24,6 +24,16 @@
  * element itself before its ancestors, so it lands on the grid — already the smallest container
  * that owns both the button and the tiles, in both DOM shapes, since only the wrapper divs above
  * the grid differ between them.
+ *
+ * A THIRD live symptom (still zero tiles ordered, after the above fix): `applyCurrentSort()`
+ * holds `isCalculating` across an `await inventoryBadgeManager.renderAllBadges()`, inside a
+ * try/finally most callers assume always clears the guard — but a finally block never runs while
+ * its function is suspended on an await that never settles. One `renderAllBadges()` call (likely
+ * from startup, competing with the extra calls the tab-switch watcher above makes) got a promise
+ * that never resolved, so `isCalculating` stuck `true` forever and every later sort request was
+ * silently dropped by the reentrancy guard. The fix bounds that await (`withBoundedWait`) so the
+ * function is always resumed, and coalesces a request that arrives mid-run into exactly one more
+ * pass afterward instead of dropping it.
  */
 
 import { describe, test, expect, beforeEach, afterEach, vi } from 'vitest';
@@ -31,6 +41,8 @@ import { describe, test, expect, beforeEach, afterEach, vi } from 'vitest';
 const settings = vi.hoisted(() => ({ invSort: true, invSort_sortEquipment: false }));
 /** Callbacks registered with the DOM observer, so a test can play a class match or a tab switch */
 const observer = vi.hoisted(() => ({ classHandlers: new Map() }));
+/** Controls the mocked badge manager's renderAllBadges(): resolves normally unless `hang` is set */
+const badgeManager = vi.hoisted(() => ({ hang: false, calls: 0 }));
 
 vi.mock('../../core/config.js', () => ({
     default: {
@@ -63,7 +75,12 @@ vi.mock('./inventory-badge-manager.js', () => ({
         unregisterProvider: () => {},
         invalidateCache: () => {},
         clearProcessedTracking: () => {},
-        renderAllBadges: async () => {},
+        renderAllBadges: () => {
+            badgeManager.calls += 1;
+            // A promise that never resolves, matching the live symptom: renderAllBadges() got
+            // stuck and never settled.
+            return badgeManager.hang ? new Promise(() => {}) : Promise.resolve();
+        },
     },
 }));
 vi.mock('./inventory-badge-mode.js', () => ({ BADGE_MODE_SETTING: 'invBadgeMode', stackBadgeValueKey: () => null }));
@@ -184,6 +201,8 @@ describe('InventorySort.applyCurrentSort — category scoping', () => {
         document.body.innerHTML = '';
         settings.invSort = true;
         settings.invSort_sortEquipment = false;
+        badgeManager.hang = false;
+        badgeManager.calls = 0;
         inventorySort.currentMode = 'ask';
         inventorySort.isCalculating = false;
     });
@@ -294,14 +313,88 @@ describe('InventorySort.applyCurrentSort — category scoping', () => {
     });
 });
 
+describe('InventorySort.applyCurrentSort — cannot wedge on a hung badge render', () => {
+    beforeEach(() => {
+        document.body.innerHTML = '';
+        settings.invSort = true;
+        settings.invSort_sortEquipment = false;
+        badgeManager.hang = false;
+        badgeManager.calls = 0;
+        inventorySort.currentMode = 'ask';
+        inventorySort.isCalculating = false;
+        inventorySort.rerunRequested = false;
+        vi.useFakeTimers();
+    });
+
+    afterEach(() => {
+        vi.useRealTimers();
+        inventorySort.currentInventoryElem = null;
+    });
+
+    test('a renderAllBadges() that never resolves does not block this sort forever', async () => {
+        badgeManager.hang = true;
+        const inv = buildOldInventory([
+            [
+                'Currencies',
+                [
+                    ['c1', 10],
+                    ['c2', 30],
+                ],
+            ],
+        ]);
+        inventorySort.currentInventoryElem = inv;
+
+        const applyPromise = inventorySort.applyCurrentSort();
+
+        // Still inside the bounded wait — the hung renderAllBadges() has not resolved.
+        await Promise.resolve();
+        expect(inventorySort.isCalculating).toBe(true);
+
+        await vi.advanceTimersByTimeAsync(inventorySort.BADGE_RENDER_TIMEOUT_MS);
+        await applyPromise;
+
+        // The bounded wait gave up and the sort still ran and completed.
+        expect(inventorySort.isCalculating).toBe(false);
+        const items = itemsByHrid(inv);
+        expect(items.get('c2').style.order).toBe('0');
+        expect(items.get('c1').style.order).toBe('1');
+    });
+
+    test('a wedged render does not leave isCalculating stuck: a later call is not dropped forever', async () => {
+        badgeManager.hang = true;
+        const inv = buildOldInventory([['Currencies', [['c1', 10]]]]);
+        inventorySort.currentInventoryElem = inv;
+
+        const firstApply = inventorySort.applyCurrentSort();
+        await Promise.resolve();
+
+        // A second request arrives while the first is still (bounded-)waiting on the hung render.
+        // It must not be lost: applyCurrentSort() coalesces it into a rerun after the first pass.
+        const secondApply = inventorySort.applyCurrentSort();
+        expect(inventorySort.rerunRequested).toBe(true);
+
+        await vi.advanceTimersByTimeAsync(inventorySort.BADGE_RENDER_TIMEOUT_MS);
+        // The coalesced rerun makes its own (also hung) renderAllBadges() call, bounded the same way.
+        await vi.advanceTimersByTimeAsync(inventorySort.BADGE_RENDER_TIMEOUT_MS);
+        await Promise.all([firstApply, secondApply]);
+
+        expect(inventorySort.isCalculating).toBe(false);
+        expect(inventorySort.rerunRequested).toBe(false);
+        expect(itemsByHrid(inv).get('c1').style.order).toBe('0');
+    });
+});
+
 describe('InventorySort — reapplies sort when a native tab switch re-renders tiles', () => {
     beforeEach(() => {
         document.body.innerHTML = '';
         observer.classHandlers.clear();
         settings.invSort = true;
         settings.invSort_sortEquipment = false;
+        badgeManager.hang = false;
+        badgeManager.calls = 0;
         inventorySort.currentMode = 'none';
         inventorySort.isCalculating = false;
+        inventorySort.rerunRequested = false;
         inventorySort.isInitialized = false;
         inventorySort.unregisterHandlers = [];
         inventorySort.initPromise = null;
