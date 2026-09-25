@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Market tax 4% and the new price steps (test server first)
+
+- On the test server, profits and sale values use the new 4% market tax, and suggested prices follow the game's new price steps (5x wider for enhanced items), stepping cleanly past listings still on the old steps. The main server keeps the old rules until it gets the patch.
+
 ### Custom Inventory Tabs work with the game's new inventory tabs (test server first)
 
 - The Toolasha inventory view lays out every item again instead of a single column; it shows the game's All tab while open and puts your own tab choice back when you leave.
