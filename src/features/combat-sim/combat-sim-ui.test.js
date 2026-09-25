@@ -5715,7 +5715,8 @@ describe('planning to a points target from the panel', () => {
         expect(plan.targetPoints).toBe(2);
 
         const footer = ui.panel.querySelector('#mwi-csim-bestiary-plan-footer').textContent;
-        expect(footer).toContain('3 total (+2)');
+        // Where the route ends and what was asked for: 1 + 2 gained, with 3 wanted
+        expect(footer).toContain('3 total (+2, 3 wanted)');
         expect(mocks.store.get('settings:combatSimBestiaryPlanTotal')).toBe(3);
     });
 
