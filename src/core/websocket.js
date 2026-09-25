@@ -98,6 +98,9 @@ const SKIP_DEDUP_TYPES = new Set([
     'consumable_buffs_updated',
     'community_buffs_updated',
     'house_rooms_updated',
+    // Carries the full mark list; two lists sharing an unchanged first mark agree for far more
+    // than the dedup prefix, so a lock toggled further down the list would be dropped as a repeat.
+    'item_marks_updated',
     'achievement_buffs_updated',
     'moo_pass_buffs_updated',
     'equipment_buffs_updated',
