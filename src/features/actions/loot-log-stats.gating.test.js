@@ -26,6 +26,7 @@ vi.mock('../../core/config.js', () => ({
     default: {
         getSetting: vi.fn(),
         getSettingValue: vi.fn(),
+        onSettingChange: vi.fn(() => () => {}),
         COLOR_PROFIT: '#0f0',
         COLOR_LOSS: '#f00',
         COLOR_GOLD: '#ff0',
@@ -110,5 +111,95 @@ describe('LootLogStats: only lootLogHistory on', () => {
 
         expect(renderSpy).toHaveBeenCalled();
         expect(processSpy).not.toHaveBeenCalled();
+    });
+});
+
+describe('LootLogStats: switching either part live', () => {
+    let stats;
+    let on;
+
+    /** Flip a setting and fire the listener the instance registered for it */
+    const flip = (key, value) => {
+        if (value) on.add(key);
+        else on.delete(key);
+        for (const [registered, callback] of config.onSettingChange.mock.calls) {
+            if (registered === key) callback(value);
+        }
+    };
+
+    const watchers = (name) => domObserver.onClass.mock.calls.filter((call) => call[0] === name).length;
+
+    beforeEach(() => {
+        vi.clearAllMocks();
+        on = new Set();
+        config.getSetting.mockImplementation((key) => on.has(key));
+        domObserver.onClass.mockImplementation(() => vi.fn());
+        document.body.innerHTML = '';
+        stats = new LootLogStats();
+    });
+
+    test('statistics switched on in history-only mode attach the row watcher, not a second socket listener', async () => {
+        on.add('lootLogHistory');
+        await stats.initialize();
+        expect(watchers('LootLogStats')).toBe(0);
+
+        flip('lootLogStats', true);
+
+        expect(watchers('LootLogStats')).toBe(1);
+        expect(webSocketHook.on.mock.calls.filter((call) => call[0] === 'loot_log_updated')).toHaveLength(1);
+
+        // Flipping it again while on does not stack a second watcher
+        flip('lootLogStats', true);
+        expect(watchers('LootLogStats')).toBe(1);
+    });
+
+    test('statistics switched off detach the row watcher and take the drawn figures and stamps away', async () => {
+        on.add('lootLogStats');
+        on.add('lootLogHistory');
+        await stats.initialize();
+        const unregister =
+            domObserver.onClass.mock.results[
+                domObserver.onClass.mock.calls.findIndex((call) => call[0] === 'LootLogStats')
+            ].value;
+
+        document.body.innerHTML = `
+            <div class="LootLogPanel_actionLoot__32gl_" data-mwi-loot-log-stamp="1|2">
+                <div></div><div><div class="mwi-loot-log-value">5</div></div>
+                <div><span class="mwi-loot-log-avgtime">1s</span></div>
+            </div>`;
+
+        flip('lootLogStats', false);
+
+        expect(unregister).toHaveBeenCalledTimes(1);
+        expect(document.querySelector('.mwi-loot-log-value')).toBeNull();
+        expect(document.querySelector('.mwi-loot-log-avgtime')).toBeNull();
+        expect(document.querySelector('.LootLogPanel_actionLoot__32gl_').dataset.mwiLootLogStamp).toBeUndefined();
+        expect(stats.initialized).toBe(true);
+    });
+
+    test('history switched on in statistics-only mode starts persisting', async () => {
+        on.add('lootLogStats');
+        await stats.initialize();
+        const handler = webSocketHook.on.mock.calls.find((call) => call[0] === 'loot_log_updated')[1];
+
+        handler({ lootLog: [{ characterActionId: 'a1' }] });
+        expect(lootLogHistory.mergeAndSave).not.toHaveBeenCalled();
+
+        flip('lootLogHistory', true);
+        expect(watchers('LootLogHistory')).toBe(1);
+        expect(lootLogHistory.mergeAndSave).toHaveBeenCalledWith([{ characterActionId: 'a1' }]);
+    });
+
+    test('history switched off stops persisting and removes the historical section', async () => {
+        on.add('lootLogHistory');
+        await stats.initialize();
+        document.body.innerHTML = '<div class="mwi-loot-log-history"></div>';
+        const handler = webSocketHook.on.mock.calls.find((call) => call[0] === 'loot_log_updated')[1];
+
+        flip('lootLogHistory', false);
+        handler({ lootLog: [{ characterActionId: 'a2' }] });
+
+        expect(lootLogHistory.mergeAndSave).not.toHaveBeenCalled();
+        expect(document.querySelector('.mwi-loot-log-history')).toBeNull();
     });
 });
