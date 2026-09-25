@@ -3090,6 +3090,230 @@ describe('banking a solo run', () => {
     });
 });
 
+describe('a repeating dungeon action, run after run', () => {
+    /*
+     * A dungeon queued to repeat is one action across many runs, so the last
+     * wave's `action_completed` carries `isDone: false` (and `wave: 0`, the
+     * action's wave count resetting) and the next run follows as wave 1 of a new
+     * battle — a recorded solo Sinister Circus session numbered its runs'
+     * battles 1, 2, 3. A solo run has no "Key counts" message to end it, so
+     * those two signals are all there is.
+     */
+    const SOLO = [{ character: { name: 'Marketcow' } }];
+    const PARTY = [{ character: { name: 'Marketcow' } }, { character: { name: 'Alice' } }];
+    const T0 = Date.parse('2026-09-25T22:18:43.000Z');
+    const WAVE_MS = 10_000;
+    const COMBAT_START = '2026-09-25T20:00:00.000Z';
+
+    /** One wave as the server sends it: the battle, then its completion. */
+    async function wave(n, { battleId, players = SOLO, last = false, at }) {
+        vi.setSystemTime(at);
+        await tracker.onNewBattle({ wave: n, battleId, combatStartTime: COMBAT_START, players });
+        await flush();
+        vi.setSystemTime(at + WAVE_MS);
+        // The last wave of a repeating run reports the reset count, not 10
+        tracker.onActionCompleted({ endCharacterAction: { actionHrid: DEN, wave: last ? 0 : n, isDone: false } });
+        await flush();
+    }
+
+    /** Waves `from`..10 of one run, starting at `at`; resolves to when the last one ended. */
+    async function waves(from, { battleId, players = SOLO, at, skipLastCompletion = false }) {
+        let t = at;
+        for (let n = from; n <= 10; n++) {
+            if (n === 10 && skipLastCompletion) {
+                vi.setSystemTime(t);
+                await tracker.onNewBattle({ wave: n, battleId, combatStartTime: COMBAT_START, players });
+                await flush();
+                return t + WAVE_MS;
+            }
+            await wave(n, { battleId, players, last: n === 10, at: t });
+            t += WAVE_MS;
+        }
+        return t;
+    }
+
+    beforeEach(() => {
+        vi.useFakeTimers();
+        game.actions = [{ actionHrid: DEN, difficultyTier: 0, ordinal: 0, isDone: false, maxCount: 0 }];
+        game.actionDetails[DEN] = {
+            name: 'Chimerical Den',
+            combatZoneInfo: {
+                isDungeon: true,
+                dungeonInfo: {
+                    keyItemHrid: '/items/chimerical_entry_key',
+                    rewardDropTable: [{ itemHrid: '/items/chimerical_chest', dropRate: 1 }],
+                },
+            },
+        };
+    });
+
+    /** An inventory row as `endCharacterItems` carries it: the new total, not a delta. */
+    function item(itemHrid, count) {
+        return { id: count, itemHrid, itemLocationHrid: '/item_locations/inventory', count, enhancementLevel: 0 };
+    }
+
+    test('a normal solo run, no reload: the last wave’s chest ends it with no party message', async () => {
+        // The live case: 50 waves watched from wave 1, then the last wave's
+        // action_completed with the chest and the next run's key in its items
+        let t = T0;
+        for (let n = 1; n <= 9; n++) {
+            await wave(n, { battleId: 1, at: t });
+            t += WAVE_MS;
+        }
+        vi.setSystemTime(t);
+        await tracker.onNewBattle({ wave: 10, battleId: 1, combatStartTime: COMBAT_START, players: SOLO });
+        await flush();
+        expect(tracker.restoredMidRun).toBe(false);
+        vi.setSystemTime(t + WAVE_MS);
+        tracker.onActionCompleted({
+            endCharacterAction: { actionHrid: DEN, difficultyTier: 0, wave: 0, isDone: false, currentCount: 254 },
+            endCharacterItems: [item('/items/chimerical_chest', 2999), item('/items/chimerical_entry_key', 6894)],
+        });
+        await flush();
+
+        expect(tracker.isTracking).toBe(false);
+        expect(tracker._lastCompletionTime).toBe(t + WAVE_MS);
+        expect(game.savedRuns).toHaveLength(1);
+        expect(game.savedRuns[0].run.duration).toBe(t + WAVE_MS - T0);
+
+        vi.setSystemTime(t + WAVE_MS + 3_000);
+        await tracker.onNewBattle({ wave: 1, battleId: 2, combatStartTime: COMBAT_START, players: SOLO });
+        await flush();
+        expect(tracker.currentRun.startTime).toBe(t + WAVE_MS + 3_000);
+    });
+
+    test('the chest ends the run even when a missed battle left the wave count short', async () => {
+        beTracking({ currentWave: 9, wavesCompleted: 8, maxWaves: 10, battleId: 1, partyNames: ['Marketcow'] });
+
+        tracker.onActionCompleted({
+            endCharacterAction: { actionHrid: DEN, wave: 0, isDone: false },
+            endCharacterItems: [item('/items/chimerical_chest', 2999)],
+        });
+        await flush();
+
+        expect(tracker.isTracking).toBe(false);
+    });
+
+    test('an ordinary wave’s drops do not end the run', async () => {
+        beTracking({ currentWave: 4, wavesCompleted: 3, maxWaves: 10, battleId: 1, partyNames: ['Marketcow'] });
+
+        tracker.onActionCompleted({
+            endCharacterAction: { actionHrid: DEN, wave: 4, isDone: false },
+            endCharacterItems: [item('/items/coin', 5_000_000), item('/items/chimerical_quiver', 1)],
+        });
+        await flush();
+
+        expect(tracker.isTracking).toBe(true);
+        expect(tracker.currentRun.wavesCompleted).toBe(4);
+    });
+
+    test('a solo run ends on its last wave, and the next run’s Elapsed starts there', async () => {
+        const end = await waves(1, { battleId: 1, at: T0 });
+
+        // The run is over before the next battle arrives, and banked whole
+        expect(tracker.isTracking).toBe(false);
+        expect(game.savedRuns).toHaveLength(1);
+        expect(game.savedRuns[0].run.duration).toBe(end - T0);
+        expect(game.savedRuns[0].run.source).toBe('tracker');
+
+        // Next run, three seconds of respawn later
+        const next = end + 3_000;
+        vi.setSystemTime(next);
+        await tracker.onNewBattle({ wave: 1, battleId: 2, combatStartTime: COMBAT_START, players: SOLO });
+        await flush();
+
+        expect(tracker.currentRun.startTime).toBe(next);
+        expect(tracker.currentRun.wavesCompleted).toBe(0);
+        vi.setSystemTime(next + 5_000);
+        expect(tracker.getCurrentRun().totalElapsed).toBe(5_000);
+    });
+
+    test('a solo run whose last completion never arrived still ends when the next run begins', async () => {
+        const end = await waves(1, { battleId: 1, at: T0, skipLastCompletion: true });
+        expect(tracker.isTracking).toBe(true);
+
+        vi.setSystemTime(end);
+        await tracker.onNewBattle({ wave: 1, battleId: 2, combatStartTime: COMBAT_START, players: SOLO });
+        await flush();
+
+        expect(game.savedRuns).toHaveLength(1);
+        expect(game.savedRuns[0].run.duration).toBe(end - T0);
+        expect(tracker.isTracking).toBe(true);
+        expect(tracker.currentBattleId).toBe(2);
+        expect(tracker.currentRun.startTime).toBe(end);
+        expect(tracker.currentRun.currentWave).toBe(1);
+    });
+
+    test('a run restored after a reload ends too, and counts: its record kept the real start', async () => {
+        // The reload: waves 1-4 were watched by the previous page, which saved
+        // the run with its own start. The new page restores it on wave 5.
+        const recordStart = T0 - 4 * WAVE_MS;
+        vi.setSystemTime(T0);
+        mockStorage.storeFor('settings').set(`${IN_PROGRESS}_market123`, {
+            battleId: 1,
+            dungeonHrid: DEN,
+            tier: 0,
+            startTime: recordStart,
+            currentWave: 4,
+            maxWaves: 10,
+            wavesCompleted: 4,
+            waveTimes: [WAVE_MS, WAVE_MS, WAVE_MS, WAVE_MS],
+            lastUpdateTime: T0 - 1_000,
+            partyNames: ['Marketcow'],
+        });
+
+        const end = await waves(5, { battleId: 1, at: T0 });
+
+        expect(tracker.isTracking).toBe(false);
+        expect(game.savedRuns).toHaveLength(1);
+        expect(game.savedRuns[0].run.timestamp).toBe(new Date(recordStart).toISOString());
+        expect(game.savedRuns[0].run.duration).toBe(end - recordStart);
+
+        vi.setSystemTime(end + 3_000);
+        await tracker.onNewBattle({ wave: 1, battleId: 2, combatStartTime: COMBAT_START, players: SOLO });
+        await flush();
+
+        expect(tracker.restoredMidRun).toBe(false);
+        expect(tracker.currentRun.startTime).toBe(end + 3_000);
+    });
+
+    test('a run joined part-way ends without being banked, and the next one is whole', async () => {
+        // No record to restore: tracking first sees wave 7, so the start is unknown
+        const end = await waves(7, { battleId: 1, at: T0 });
+
+        expect(tracker.isTracking).toBe(false);
+        expect(game.savedRuns).toEqual([]);
+
+        vi.setSystemTime(end + 3_000);
+        await tracker.onNewBattle({ wave: 1, battleId: 2, combatStartTime: COMBAT_START, players: SOLO });
+        await flush();
+
+        expect(tracker.joinedMidRun).toBe(false);
+        expect(tracker.currentRun.startTime).toBe(end + 3_000);
+    });
+
+    test('a party run is still ended by its key counts, not by its last wave or the next battle', async () => {
+        const end = await waves(1, { battleId: 1, players: PARTY, at: T0 });
+        tracker.firstKeyCountTimestamp = T0;
+        tracker.lastKeyCountTimestamp = T0;
+
+        // Neither the last wave nor the next run's first battle ends it
+        expect(tracker.isTracking).toBe(true);
+        vi.setSystemTime(end + 3_000);
+        await tracker.onNewBattle({ wave: 1, battleId: 2, combatStartTime: COMBAT_START, players: PARTY });
+        await flush();
+        expect(tracker.isTracking).toBe(true);
+        expect(game.savedRuns).toEqual([]);
+
+        tracker.onChatMessage(keyCountsData(new Date(end).toISOString(), 'Key counts: [Marketcow - 11], [Alice - 7]'));
+        await flush();
+
+        expect(game.savedRuns).toHaveLength(1);
+        expect(game.savedRuns[0].run.validated).toBe(true);
+        expect(game.savedRuns[0].run.duration).toBe(end - T0);
+    });
+});
+
 describe('recovering a partial party run’s start from chat', () => {
     // A 65-wave dungeon so the live case — a refresh at wave 48 — can be played
     // out at the wave numbers it actually happens at.

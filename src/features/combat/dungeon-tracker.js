@@ -17,6 +17,7 @@ import { createTimerRegistry } from '../../utils/timer-registry.js';
 import { characterKey, readScopedFrom, writeScoped } from '../../utils/character-key.js';
 import { runningAction, runningCombatAction } from '../../utils/combat-actions.js';
 import { assessRecoveredStart, RECOVERY_FALLBACK_MAX_MS } from './dungeon-pace.js';
+import { dungeonChestItems } from '../../utils/dungeon-chest-luck.js';
 import { parseGameNumber, gameDigitsSource } from '../../utils/number-parser.js';
 import { chatStampToDate } from '../../utils/locale-date-order.js';
 
@@ -1564,6 +1565,31 @@ class DungeonTracker {
             // dungeon already being tracked, and the resend then reads as a
             // start.
             const sameBattle = data.battleId !== undefined && data.battleId === this.currentBattleId;
+
+            // A solo run that reached its last wave, followed by wave 1 of a new
+            // battle, is the next run of a repeating dungeon action — the game
+            // numbers each run's battle afresh (1, 2, 3 in a recorded solo
+            // session) and restarts the wave count. It is not a resend. The
+            // last wave's own completion normally ends the run first (see
+            // onActionCompleted); this catches a run whose final completion
+            // never reached us. Party runs are left to their "Key counts"
+            // message, which may arrive after this battle and must still find
+            // the run to validate it.
+            const nextRunOfSoloDungeon =
+                this.isTracking &&
+                !sameBattle &&
+                data.battleId !== undefined &&
+                this.currentBattleId !== null &&
+                this.isSoloRun() &&
+                (this.isFinalWaveCleared() ||
+                    (Boolean(this.currentRun.maxWaves) && this.currentRun.currentWave >= this.currentRun.maxWaves));
+            if (nextRunOfSoloDungeon) {
+                await this.completeDungeon();
+                if (currentOwner() !== owner) return;
+                this.startDungeon(data);
+                return;
+            }
+
             if (this.isTracking && (sameBattle || !this.pendingDungeonInfo)) {
                 this.currentBattleId = data.battleId;
                 this.startWave(data);
@@ -1873,12 +1899,10 @@ class DungeonTracker {
         // Save state after wave completion
         this.saveInProgressRun();
 
+        const allWavesCompleted = this.isFinalWaveCleared();
+
         // Check if dungeon is complete
         if (action.isDone) {
-            // Check if this was a successful completion (all waves done) or early exit
-            const allWavesCompleted =
-                this.currentRun.maxWaves && this.currentRun.wavesCompleted >= this.currentRun.maxWaves;
-
             if (allWavesCompleted) {
                 // Successful completion
                 this.completeDungeon();
@@ -1886,9 +1910,58 @@ class DungeonTracker {
                 // Early exit (fled, died, or failed)
                 this.resetTracking();
             }
+        } else if (this.isSoloRun() && (allWavesCompleted || this.runRewardArrived(data))) {
+            // A repeating dungeon action ("Runs: 253") is not done when one run
+            // ends: its last wave's completion arrives with `isDone: false` and
+            // the next run's wave 1 follows. A party run is ended by the
+            // completion "Key counts" message, which carries the server's own
+            // timestamp and must stay the thing that ends it. A solo run has no
+            // such message, so without this it never ended at all and its
+            // Elapsed ran on across every run after it.
+            //
+            // The same update carries the run's chest and the next run's entry
+            // key, which settle it even when a missed `new_battle` left the wave
+            // count short of the last wave.
+            if (this.currentRun.maxWaves) {
+                this.currentRun.wavesCompleted = Math.max(this.currentRun.wavesCompleted, this.currentRun.maxWaves);
+            }
+            this.completeDungeon();
         } else {
             this.notifyUpdate();
         }
+    }
+
+    /**
+     * Whether an `action_completed` carries the end of a dungeon run in its items.
+     *
+     * Only a finished run moves the dungeon's entry key (spent on the next run) or
+     * its completion chest, and `endCharacterItems` lists only items whose count
+     * changed — live, a solo Chimerical Den's last wave arrived with
+     * `chimerical_chest` and `chimerical_entry_key` together. The chest is the
+     * reward table's guaranteed entry (`dungeonChestItems`), not the whole table:
+     * a refinement chest is not a completion's payout.
+     *
+     * @param {Object} data - `action_completed` message data
+     * @returns {boolean} True when the tracked dungeon's key or completion chest changed
+     */
+    runRewardArrived(data) {
+        const items = data?.endCharacterItems;
+        const run = this.currentRun;
+        if (!Array.isArray(items) || items.length === 0 || !run?.dungeonHrid) return false;
+        const actionDetail = dataManager.getActionDetails?.(run.dungeonHrid);
+        const runItems = new Set(dungeonChestItems(actionDetail, run.tier ?? 0));
+        const keyItemHrid = actionDetail?.combatZoneInfo?.dungeonInfo?.keyItemHrid;
+        if (keyItemHrid) runItems.add(keyItemHrid);
+        return items.some((item) => runItems.has(item?.itemHrid));
+    }
+
+    /**
+     * Whether the run in progress has cleared its last wave.
+     * @returns {boolean} True when the run's wave count has reached the dungeon's maxWaves
+     */
+    isFinalWaveCleared() {
+        const run = this.currentRun;
+        return Boolean(run?.maxWaves) && run.wavesCompleted >= run.maxWaves;
     }
 
     /**
