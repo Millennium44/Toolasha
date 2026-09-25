@@ -369,7 +369,12 @@ class MarketVolumeStats {
             panel = document.createElement('div');
             panel.className = 'mwi-volume-stats';
             panel.style.cssText =
-                'display:inline-block;margin:4px 0;z-index:20;' +
+                // The info container is a 3-column grid (side | icon | side). The
+                // right-hand cell beside the icon is where players liked it; in that
+                // cell it is in flow, so a tall table pushes the bid-side count row
+                // down instead of covering it. Outside a grid these are ignored.
+                'display:block;width:fit-content;margin:4px 0 4px 8px;z-index:20;' +
+                'grid-column:3;grid-row:2;justify-self:start;align-self:start;' +
                 'white-space:nowrap;font-size:13px;line-height:1.5;text-align:left;' +
                 'background:#101116;border-radius:4px;box-shadow:0 2px 10px rgba(0,0,0,0.3);' +
                 'padding:4px 8px;pointer-events:auto;';

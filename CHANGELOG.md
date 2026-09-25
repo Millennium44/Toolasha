@@ -8,7 +8,7 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ### Trade stats on enhanceable items, and Artisan Tea's level requirement
 
-- The order book's trade stats table now loads for enhanceable items opened straight from the market (it stuck on "Loading"), sits below the item instead of over the bid-side count, and appears as soon as Price History is switched on.
+- The order book's trade stats table now loads for enhanceable items opened straight from the market (it stuck on "Loading"), stays beside the item without covering the bid-side count, and appears as soon as Price History is switched on.
 - Artisan Tea raises the level needed to start an action (+5, more with Drink Concentration), as the game does: the production board's craftable filter, the skilling optimizer and the goal planner no longer count actions it blocks.
 
 ### Audit round: production skills checked against the game and a live brewing run
