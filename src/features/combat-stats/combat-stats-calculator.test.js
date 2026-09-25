@@ -297,6 +297,46 @@ describe('calculatePlayerStats', () => {
     });
 });
 
+describe('what a dungeon run banked, as the Party Loot panel and the Total Profit tile read it', () => {
+    // Both readers subtract `consumableCosts.bid` and `keyCosts.bid` from
+    // `income.bid`. `consumableCosts` used to come back as a bare number, so
+    // `.bid` read undefined and every banked figure — Party Loot's cards, its
+    // party total, its copy and CSV export, and the Total Profit tile — charged
+    // a run nothing for the food and drink it ate while the daily rate beside
+    // it did subtract them.
+    test('consumables come back as {ask, bid}, so the banked figure subtracts them', () => {
+        ev.value = 5_830_000;
+        market.prices['/items/spaceberry_cake'] = { ask: 2000, bid: 1800 };
+        market.prices['/items/ultra_melee_coffee'] = { ask: 40000, bid: 38000 };
+
+        const stats = calculatePlayerStats(
+            {
+                name: 'You',
+                loot: { '/items/chimerical_chest::0': { itemHrid: CHIMERICAL_CHEST, count: 8 } },
+                deathCount: 0,
+                consumables: [
+                    { itemHrid: '/items/spaceberry_cake', consumed: 43, consumedPerDay: 338 },
+                    { itemHrid: '/items/ultra_melee_coffee', consumed: 41, consumedPerDay: 320 },
+                ],
+            },
+            11040
+        );
+
+        const eaten = 43 * 2000 + 41 * 40000;
+        expect(stats.consumableCosts).toEqual({ ask: eaten, bid: eaten });
+
+        // 8 entry keys at 20,000 and 8 chest keys crafted at 5,000
+        expect(stats.keyCosts.bid).toBe(8 * 20000 + 8 * 5000);
+        const banked = stats.income.bid - (stats.consumableCosts?.bid || 0) - (stats.keyCosts?.bid || 0);
+        expect(banked).toBe(8 * 5_830_000 - eaten - 8 * 25000);
+    });
+
+    test('a run that has eaten nothing reports zero on both sides, not undefined', () => {
+        const stats = calculatePlayerStats({ name: 'You', loot: {}, deathCount: 0, consumables: [] }, 600);
+        expect(stats.consumableCosts).toEqual({ ask: 0, bid: 0 });
+    });
+});
+
 describe('measured-luck adjustment of a dungeon chest EV', () => {
     const lootOf = (hrid = CHIMERICAL_CHEST) => ({ a: { itemHrid: hrid, count: 2 } });
 
