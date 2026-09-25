@@ -393,6 +393,22 @@ describe('checkFeatureHealth', () => {
 });
 
 describe('retryFailedFeatures', () => {
+    beforeEach(() => {
+        // A failure is only ever reported for a feature whose gate was open
+        state.enabledFeatures.add('a');
+    });
+
+    test('does not retry a feature switched off since it failed', async () => {
+        state.enabledFeatures.delete('a');
+        const initialize = vi.fn();
+        featureRegistry.replaceFeatures([{ key: 'a', name: 'A', initialize, healthCheck: () => false }]);
+
+        const stillFailed = await featureRegistry.retryFailedFeatures([{ key: 'a', name: 'A' }]);
+
+        expect(initialize).not.toHaveBeenCalled();
+        expect(stillFailed).toEqual([]);
+    });
+
     test('re-runs initialize and reports still-failing features via a false health check', async () => {
         featureRegistry.replaceFeatures([{ key: 'a', name: 'A', initialize: vi.fn(), healthCheck: () => false }]);
         const stillFailed = await featureRegistry.retryFailedFeatures([{ key: 'a', name: 'A' }]);
@@ -932,6 +948,86 @@ describe('a setting switched on mid-session', () => {
             expect(failingDisable).toHaveBeenCalledTimes(1);
             expect(otherDisable).toHaveBeenCalledTimes(1);
             expect(fresh.getDisableFailures()).toContain('broken');
+        });
+    });
+
+    describe('the failed-feature retry', () => {
+        test('a feature stopped live before its retry is not started behind the stop', async () => {
+            vi.spyOn(console, 'error').mockImplementation(() => {});
+            const fresh = await freshRegistry();
+            let fail = true;
+            const initialize = vi.fn(() => {
+                if (fail) throw new Error('panel not drawn yet');
+            });
+            const disable = vi.fn();
+            state.enabledFeatures = new Set(['flaky']);
+            fresh.replaceFeatures([{ key: 'flaky', name: 'Flaky', initialize, disable, liveStop: true }]);
+            fresh.setupLiveFeatureStart();
+            const failures = await fresh.initializeFeatures();
+            expect(failures.map((f) => f.key)).toEqual(['flaky']);
+
+            // Switched off inside the recovery routine's delay
+            changeSetting('flaky', false);
+            await settle();
+            expect(disable).toHaveBeenCalledTimes(1);
+
+            fail = false;
+            await fresh.retryFailedFeatures(failures);
+            expect(initialize).toHaveBeenCalledTimes(1);
+
+            // Switched back on: started exactly once more, not stacked on a retry
+            changeSetting('flaky', true);
+            await settle();
+            expect(initialize).toHaveBeenCalledTimes(2);
+        });
+
+        test('a feature switched off while its retry is in flight is stopped once the retry lands', async () => {
+            const fresh = await freshRegistry();
+            let release;
+            const initialize = vi.fn(
+                () =>
+                    new Promise((resolve) => {
+                        release = resolve;
+                    })
+            );
+            const disable = vi.fn();
+            state.enabledFeatures = new Set(['flaky']);
+            fresh.replaceFeatures([{ key: 'flaky', name: 'Flaky', initialize: vi.fn(), disable, liveStop: true }]);
+            fresh.setupLiveFeatureStart();
+            await fresh.initializeFeatures();
+            fresh.getFeature('flaky').initialize = initialize;
+
+            const retrying = fresh.retryFailedFeatures([{ key: 'flaky', name: 'Flaky' }]);
+            changeSetting('flaky', false);
+            await settle();
+            expect(disable).not.toHaveBeenCalled();
+
+            release();
+            await retrying;
+            await settle();
+            expect(disable).toHaveBeenCalledTimes(1);
+        });
+
+        test('retries nothing while a switch has the layer down', async () => {
+            vi.useFakeTimers();
+            const fresh = await freshRegistry();
+            state.currentCharacterId = 'B';
+            state.enabledFeatures = new Set(['flaky']);
+            const initialize = vi.fn();
+            fresh.replaceFeatures([{ key: 'flaky', name: 'Flaky', initialize }]);
+            fresh.setupCharacterSwitchHandler();
+            await fresh.initializeFeatures();
+            initialize.mockClear();
+
+            try {
+                // Teardown done, switching flag already down, re-init still settling
+                await state.handlers.character_switching();
+                await fresh.retryFailedFeatures([{ key: 'flaky', name: 'Flaky' }]);
+
+                expect(initialize).not.toHaveBeenCalled();
+            } finally {
+                vi.useRealTimers();
+            }
         });
     });
 

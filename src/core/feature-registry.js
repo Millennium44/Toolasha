@@ -839,11 +839,19 @@ async function retryFailedFeatures(failedFeatures) {
         // always called from a setTimeout, so there is a window for one) must
         // not initialize features into a character that is already on its way
         // out — the same guard initializeFeatures applies.
-        if (dataManager.getIsCharacterSwitching()) break;
+        // `layerTornDown` covers the settle window after a switch's teardown,
+        // where the switching flag has already dropped but the re-init has not run.
+        if (dataManager.getIsCharacterSwitching() || layerTornDown) break;
 
         const feature = getFeature(failed.key);
         if (!feature) continue;
+        // Switched off since it failed (a live stop may already have disabled
+        // it), or being brought up by a live start: a retry here would leave it
+        // running outside `startedKeys`, where no later stop can reach it.
+        if (liveStartsInFlight.has(feature.key) || !isGateOpen(feature)) continue;
 
+        startedKeys.add(feature.key);
+        liveStartsInFlight.add(feature.key);
         try {
             await feature.initialize();
 
@@ -866,7 +874,11 @@ async function retryFailedFeatures(failedFeatures) {
                 name: feature.name,
                 reason: `Retry threw: ${error.message}`,
             });
+        } finally {
+            liveStartsInFlight.delete(feature.key);
         }
+        // A stop pass that ran during the retry skipped it as in flight
+        if (!isGateOpen(feature)) scheduleLiveStart();
     }
 
     return stillFailed;
