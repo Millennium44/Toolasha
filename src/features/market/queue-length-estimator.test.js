@@ -35,9 +35,12 @@ vi.mock('../../core/config.js', () => ({
 // market-volume-stats.js's gating is exercised by its own tests; here it is a
 // simple switch so the two layouts (and the switch between them) can be
 // driven directly.
-const volumeStatsMock = vi.hoisted(() => ({ active: false }));
+const volumeStatsMock = vi.hoisted(() => ({ active: false, compact: false }));
 vi.mock('./market-volume-stats.js', () => ({
     isVolumeStatsPanelActive: () => volumeStatsMock.active,
+    isVolumeStatsCompact: () => volumeStatsMock.compact,
+    COMBINED_COUNTS_FONT_FULL: '1.2rem',
+    COMBINED_COUNTS_FONT_COMPACT: '0.95rem',
 }));
 
 const { default: queueLengthEstimator } = await import('./queue-length-estimator.js');
@@ -455,5 +458,32 @@ describe('the figure under the button belongs to the item on screen', () => {
             queueLengthEstimator.orderBooksCache = {};
             cleanup();
         }
+    });
+});
+
+describe('combined counts text size', () => {
+    const render = () => {
+        const container = document.createElement('div');
+        container.append(document.createElement('button'), document.createElement('button'));
+        queueLengthEstimator.displayCombinedQueueLength(
+            container,
+            [{ price: 100, quantity: 5, createdTimestamp: '2026-01-01T00:00:00Z' }],
+            [{ price: 90, quantity: 3, createdTimestamp: '2026-01-01T00:00:00Z' }]
+        );
+        return container.querySelector('.mwi-queue-length-combined');
+    };
+
+    afterEach(() => {
+        volumeStatsMock.compact = false;
+    });
+
+    test('stays full size in the expanded view', () => {
+        volumeStatsMock.compact = false;
+        expect(render().style.fontSize).toBe('1.2rem');
+    });
+
+    test('shrinks while the trade stats table is squeezed to fit', () => {
+        volumeStatsMock.compact = true;
+        expect(render().style.fontSize).toBe('0.95rem');
     });
 });

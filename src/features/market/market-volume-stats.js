@@ -62,6 +62,19 @@ const MIN_FIT_SCALE = 0.55;
 /** Clear space kept between the overlay and the Buy button, in CSS pixels */
 const FIT_GAP_PX = 8;
 
+/** Combined Ask/Bid counts text size: the separate counts' size, and the tight-row size */
+export const COMBINED_COUNTS_FONT_FULL = '1.2rem';
+export const COMBINED_COUNTS_FONT_COMPACT = '0.95rem';
+
+/**
+ * Whether the overlay is currently shrunk to fit a tight row (the pop-out view).
+ * @returns {boolean}
+ */
+export function isVolumeStatsCompact() {
+    const panel = document.querySelector('.mwi-volume-stats');
+    return !!panel && panel.style.transform !== '';
+}
+
 /** Where column visibility preferences are kept */
 const COLUMN_PREFS_KEY = 'market_volumeStats_columns';
 
@@ -483,10 +496,17 @@ class MarketVolumeStats {
         const buyRect = buyButton.getBoundingClientRect();
         const sharesRows = buyRect.top < panelRect.bottom && buyRect.bottom > panelRect.top;
         const available = buyRect.left - FIT_GAP_PX - panelRect.left;
-        if (!sharesRows || panelRect.width <= 0 || available >= panelRect.width) return;
-        const scale = Math.max(MIN_FIT_SCALE, available / panelRect.width);
-        panel.style.transformOrigin = 'top left';
-        panel.style.transform = `scale(${scale.toFixed(3)})`;
+        const fits = !sharesRows || panelRect.width <= 0 || available >= panelRect.width;
+        if (!fits) {
+            const scale = Math.max(MIN_FIT_SCALE, available / panelRect.width);
+            panel.style.transformOrigin = 'top left';
+            panel.style.transform = `scale(${scale.toFixed(3)})`;
+        }
+        // The combined Ask/Bid counts follow the same cue: full size in the
+        // expanded view, compact only when the row is tight enough to shrink this
+        document.querySelectorAll('.mwi-queue-length-combined').forEach((el) => {
+            el.style.fontSize = fits ? COMBINED_COUNTS_FONT_FULL : COMBINED_COUNTS_FONT_COMPACT;
+        });
     }
 
     /**

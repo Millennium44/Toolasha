@@ -23,7 +23,12 @@ import config from '../../core/config.js';
 import { formatKMB } from '../../utils/formatters.js';
 import { createCleanupRegistry } from '../../utils/cleanup-registry.js';
 import { GAME } from '../../utils/selectors.js';
-import { isVolumeStatsPanelActive } from './market-volume-stats.js';
+import {
+    isVolumeStatsPanelActive,
+    isVolumeStatsCompact,
+    COMBINED_COUNTS_FONT_FULL,
+    COMBINED_COUNTS_FONT_COMPACT,
+} from './market-volume-stats.js';
 
 /**
  * How long order-book messages are gathered before the display is redrawn.
@@ -345,8 +350,9 @@ class QueueLengthEstimator {
         // dead center, under the item icon. Growing the group and an equal spacer
         // after it puts the group in the middle of the left half instead, where
         // the ask count sits in the separate layout.
-        wrapper.style.cssText =
-            'display:flex;flex:1;justify-content:center;align-items:center;gap:5px;font-size:0.95rem;min-width:0;';
+        wrapper.style.cssText = 'display:flex;flex:1;justify-content:center;align-items:center;gap:5px;min-width:0;';
+        // Full size in the expanded view; the table's fit step keeps this in step on resize
+        wrapper.style.fontSize = isVolumeStatsCompact() ? COMBINED_COUNTS_FONT_COMPACT : COMBINED_COUNTS_FONT_FULL;
 
         if (askStats) {
             wrapper.appendChild(this.buildLabeledSide('Ask', askStats, true));
