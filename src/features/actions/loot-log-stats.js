@@ -250,6 +250,8 @@ class LootLogStats {
         this.itemsSpriteUrl = null;
         this.actionsSpriteUrl = null;
         this.historyEnabled = false;
+        this.unregisterStatsObserver = null;
+        this.unregisterHistoryObserver = null;
         this.historicalBatchSize = 20;
         this.historicalRendered = 0;
         // Percentiles already worked out, keyed by what they were worked out
@@ -283,9 +285,31 @@ class LootLogStats {
             webSocketHook.off('loot_log_updated', wsHandler);
         });
 
-        // Watch for loot log elements in DOM — the per-row statistics overlays
-        if (statsEnabled) {
-            const unregisterObserver = domObserver.onClass(
+        // The per-row statistics overlays and the historical entries, each under its own setting
+        this.syncParts();
+
+        // Both switches are read live. The registry records this module as started once it has
+        // initialized it and never starts it again, so a switch flipped after that is this
+        // module's to act on, in either direction.
+        for (const key of ['lootLogStats', 'lootLogHistory']) {
+            this.unregisterHandlers.push(config.onSettingChange(key, () => this.syncParts()));
+        }
+
+        this.initialized = true;
+    }
+
+    /**
+     * Attach or detach the statistics overlays and the historical entries to match their settings.
+     *
+     * The loot_log_updated listener stays attached whichever of the two is on, and is never
+     * attached here, so switching a part on or off never registers it a second time.
+     */
+    syncParts() {
+        const statsOn = Boolean(config.getSetting('lootLogStats'));
+        this.historyEnabled = Boolean(config.getSetting('lootLogHistory'));
+
+        if (statsOn && !this.unregisterStatsObserver) {
+            this.unregisterStatsObserver = domObserver.onClass(
                 'LootLogStats',
                 'LootLogPanel_actionLoot__32gl_',
                 (element) => {
@@ -294,20 +318,54 @@ class LootLogStats {
                     this.processLootLogElement(element, index, allElements.length);
                 }
             );
-            this.unregisterHandlers.push(unregisterObserver);
+            // Rows already on screen were drawn before the watcher existed
+            if (this.initialized) this.processVisibleRows();
+        } else if (!statsOn && this.unregisterStatsObserver) {
+            this.unregisterStatsObserver();
+            this.unregisterStatsObserver = null;
+            this.removeStatsOverlays();
         }
 
-        // Watch for loot log container to inject historical entries
-        if (this.historyEnabled) {
-            const unregisterHistoryObserver = domObserver.onClass(
+        if (this.historyEnabled && !this.unregisterHistoryObserver) {
+            this.unregisterHistoryObserver = domObserver.onClass(
                 'LootLogHistory',
                 'LootLogPanel_actionLoots__3oTid',
                 () => this.renderHistoricalEntries()
             );
-            this.unregisterHandlers.push(unregisterHistoryObserver);
+            if (this.initialized && this.currentLootLogData) {
+                lootLogHistory.mergeAndSave(this.currentLootLogData);
+                this.renderHistoricalEntries();
+            }
+        } else if (!this.historyEnabled && this.unregisterHistoryObserver) {
+            this.unregisterHistoryObserver();
+            this.unregisterHistoryObserver = null;
+            document.querySelectorAll('.mwi-loot-log-history').forEach((el) => el.remove());
         }
+    }
 
-        this.initialized = true;
+    /**
+     * Run the statistics pass over every loot log row on screen.
+     */
+    processVisibleRows() {
+        const lootLogElements = document.querySelectorAll('.LootLogPanel_actionLoot__32gl_');
+        lootLogElements.forEach((element, index) => this.processLootLogElement(element, index, lootLogElements.length));
+    }
+
+    /**
+     * Remove the statistics drawn on the game's own loot log rows, and their stamps, so a later
+     * pass redraws every row rather than taking an unchanged stamp as already drawn.
+     */
+    removeStatsOverlays() {
+        document.querySelectorAll('.LootLogPanel_actionLoot__32gl_').forEach((row) => {
+            row.querySelectorAll(
+                '.mwi-loot-log-value, .mwi-loot-log-avgtime, .mwi-loot-log-day-value, ' +
+                    '.mwi-loot-log-day-profit, .mwi-loot-log-enhancing'
+            ).forEach((el) => el.remove());
+            delete row.dataset.mwiLootLogStamp;
+        });
+        document.querySelectorAll('.mwi-enh-merge-panel').forEach((el) => el.remove());
+        this.enhSummaries.clear();
+        this.enhSelected.clear();
     }
 
     /**
@@ -328,10 +386,7 @@ class LootLogStats {
         // Process existing loot log elements after short delay
         const timeout = setTimeout(() => {
             if (config.getSetting('lootLogStats')) {
-                const lootLogElements = document.querySelectorAll('.LootLogPanel_actionLoot__32gl_');
-                lootLogElements.forEach((element, index) =>
-                    this.processLootLogElement(element, index, lootLogElements.length)
-                );
+                this.processVisibleRows();
             }
 
             if (this.historyEnabled) {
@@ -1956,6 +2011,10 @@ class LootLogStats {
         // Unregister all handlers
         this.unregisterHandlers.forEach((fn) => fn());
         this.unregisterHandlers = [];
+        this.unregisterStatsObserver?.();
+        this.unregisterStatsObserver = null;
+        this.unregisterHistoryObserver?.();
+        this.unregisterHistoryObserver = null;
 
         // Clear timers
         this.timerRegistry.clearAll();
