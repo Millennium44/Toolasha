@@ -789,8 +789,11 @@ class InventoryBadgeManager {
             this.processedItems = new WeakSet();
             this.currentInventoryElem = null;
             this.isInitialized = false;
-            this.isRendering = false;
-            this.rerenderRequested = false;
+            // isRendering / rerenderRequested are deliberately left alone: they belong to a render
+            // that may still be running (a character switch lands mid-calculation). Cleared here,
+            // the next character's render starts alongside it, skips calculation because the old
+            // one still holds isCalculating, and draws unpriced tiles with its correction dropped.
+            // Left set, that request queues and the old run's rerun prices the new tiles.
         } catch (error) {
             console.error('[Inventory Badge Manager] Disable failed part-way:', error);
         } finally {

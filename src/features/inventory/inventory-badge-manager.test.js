@@ -161,6 +161,38 @@ describe('renderAllBadges cooldown/concurrency', () => {
      * `calculatePricesForAllItems` is stubbed here (its own internals are covered elsewhere) so
      * the test can hold a "render" open on demand and observe whether a second one actually runs.
      */
+    test('disable() mid-render does not let the next character start a render alongside it', async () => {
+        // A character switch disables the manager while a render is still pricing. Clearing the
+        // render guard there let the arriving character render at once — skipping calculation,
+        // which the old run still held — and dropped the correction pass for the new tiles.
+        inventoryBadgeManager.currentInventoryElem = document.createElement('div');
+        inventoryBadgeManager.lastRenderTime = 0;
+        let releaseFirstCalc;
+        const firstCalc = new Promise((resolve) => {
+            releaseFirstCalc = resolve;
+        });
+        const calcSpy = vi.spyOn(inventoryBadgeManager, 'calculatePricesForAllItems');
+        calcSpy.mockImplementationOnce(() => firstCalc);
+        calcSpy.mockImplementation(async () => {});
+
+        const firstRender = inventoryBadgeManager.renderAllBadges();
+        await Promise.resolve();
+
+        inventoryBadgeManager.disable();
+        // The arriving character's inventory mounts and asks for badges
+        inventoryBadgeManager.currentInventoryElem = document.createElement('div');
+        const secondRender = inventoryBadgeManager.renderAllBadges();
+        await Promise.resolve();
+        expect(calcSpy).toHaveBeenCalledTimes(1); // queued, not run alongside
+
+        releaseFirstCalc();
+        await firstRender;
+        await secondRender;
+        // ...and the queued pass then prices the new character's tiles
+        expect(calcSpy).toHaveBeenCalledTimes(2);
+        expect(inventoryBadgeManager.isRendering).toBe(false);
+    });
+
     test('a call that arrives mid-render is coalesced into a rerun, not dropped', async () => {
         inventoryBadgeManager.currentInventoryElem = document.createElement('div');
         inventoryBadgeManager.lastRenderTime = 0;
