@@ -52,6 +52,8 @@ vi.mock('../../core/storage.js', () => ({ default: storageMock }));
 vi.mock('./mooket/market-history-api.js', () => ({ default: historyApi }));
 
 const { default: marketVolumeStats } = await import('./market-volume-stats.js');
+const { default: domObserver } = await import('../../core/dom-observer.js');
+const { getCleanupRegistryCensus } = await import('../../utils/cleanup-registry.js');
 
 /** Builds a minimal stand-in for the game's current-item card, holding one item's sprite `use` and enhancement badge. */
 function buildCurrentItem(itemHrid, enhancementLevel = 0) {
@@ -79,6 +81,7 @@ beforeEach(() => {
     historyApi.rows = null;
     historyApi.cooldownMs = 0;
     historyApi.fetchHistory.mockClear();
+    domObserver.onClass.mockClear();
     document.body.innerHTML = '';
 });
 
@@ -460,5 +463,91 @@ describe('fitting beside the Buy button', () => {
         const panel = setup(150);
         marketVolumeStats.fitPanel(panel);
         expect(panel.style.transform).toBe('scale(0.550)');
+    });
+});
+
+describe('watchPanelFit teardown bookkeeping', () => {
+    afterEach(() => {
+        document.body.innerHTML = '';
+    });
+
+    /** A fresh info-container + overlay pair, the way React re-creates them on every item change */
+    function newArea() {
+        const area = document.createElement('div');
+        area.className = 'MarketplacePanel_infoContainer__x';
+        const panel = document.createElement('div');
+        panel.className = 'mwi-volume-stats';
+        area.appendChild(panel);
+        document.body.appendChild(area);
+        return panel;
+    }
+
+    test('watching several distinct areas across a session registers only one teardown cleanup', () => {
+        const before = getCleanupRegistryCensus().cleanups;
+
+        // Five item changes, each swapping in a brand-new info-container node —
+        // exactly what watchPanelFit() sees on every renderTable() in real use.
+        for (let i = 0; i < 5; i++) {
+            marketVolumeStats.watchPanelFit(newArea());
+        }
+
+        // Before the fix, every distinct area pushed its own customCleanup closure
+        // into the registry, growing it without bound for the life of the tab.
+        expect(getCleanupRegistryCensus().cleanups - before).toBe(1);
+    });
+
+    test('disable() lets a later watch register its cleanup again', () => {
+        marketVolumeStats.watchPanelFit(newArea());
+        const afterFirstWatch = getCleanupRegistryCensus().cleanups;
+
+        marketVolumeStats.disable();
+        expect(getCleanupRegistryCensus().cleanups).toBe(afterFirstWatch - 1);
+
+        marketVolumeStats.watchPanelFit(newArea());
+        expect(getCleanupRegistryCensus().cleanups).toBe(afterFirstWatch);
+    });
+});
+
+describe('concurrent initialize() calls', () => {
+    test('two calls before loadColumnPrefs resolves register the order-book observer once', async () => {
+        let release;
+        storageMock.getJSON.mockImplementationOnce(
+            () =>
+                new Promise((resolve) => {
+                    release = () => resolve(null);
+                })
+        );
+        buildCurrentItem('/items/coin');
+
+        const first = marketVolumeStats.initialize();
+        const second = marketVolumeStats.initialize();
+        release();
+        await Promise.all([first, second]);
+
+        expect(domObserver.onClass).toHaveBeenCalledTimes(1);
+        expect(marketVolumeStats.isInitialized).toBe(true);
+    });
+
+    test('disable() during an in-flight initialize() ends disabled, and a later call still works', async () => {
+        let release;
+        storageMock.getJSON.mockImplementationOnce(
+            () =>
+                new Promise((resolve) => {
+                    release = () => resolve(null);
+                })
+        );
+        buildCurrentItem('/items/coin');
+
+        const pending = marketVolumeStats.initialize();
+        marketVolumeStats.disable();
+        release();
+        await pending;
+
+        expect(marketVolumeStats.isInitialized).toBe(false);
+        expect(domObserver.onClass).not.toHaveBeenCalled();
+
+        await marketVolumeStats.initialize();
+        expect(marketVolumeStats.isInitialized).toBe(true);
+        expect(domObserver.onClass).toHaveBeenCalledTimes(1);
     });
 });
