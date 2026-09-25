@@ -191,4 +191,40 @@ describe('queued-actions annotations with the action bar display off', () => {
         expect(state.onClass.has(QUEUE_OBSERVER)).toBe(true);
         expect(state.onClass.has(ACTION_NAME_OBSERVER)).toBe(false);
     });
+
+    test('toggling actionQueue off while the bar keeps the module running strips an already-open edit menu', async () => {
+        state.settings = { actionBar_enabled: true, actionQueue: true };
+        await actionTimeDisplay.initialize();
+
+        const menu = editMenu();
+        menu.innerHTML = '<div class="QueuedActions_action__a"></div>';
+        state.onClass.get(QUEUE_OBSERVER)(menu);
+        menu.querySelector('.QueuedActions_action__a').appendChild(document.createElement('span')).className =
+            'mwi-queue-action-time';
+        expect(menu.classList.contains('toolasha-queue-edit-menu-enhanced')).toBe(true);
+
+        // The bar stays on, so applyEnabledSettings never revisits the menu on its own -
+        // shouldEnable() stays true and only the bar branch is handled.
+        changeSetting('actionQueue', false);
+
+        expect(menu.classList.contains('toolasha-queue-edit-menu-enhanced')).toBe(false);
+        expect(menu.querySelectorAll('.mwi-queue-action-time')).toHaveLength(0);
+    });
+
+    test('toggling actionQueue back on while the bar keeps the module running re-injects into an open edit menu', async () => {
+        state.settings = { actionBar_enabled: true, actionQueue: false };
+        const inject = vi.spyOn(actionTimeDisplay, 'injectQueueTimes');
+        await actionTimeDisplay.initialize();
+
+        const menu = editMenu();
+        state.onClass.get(QUEUE_OBSERVER)(menu);
+        expect(menu.classList.contains('toolasha-queue-edit-menu-enhanced')).toBe(false);
+        inject.mockClear();
+
+        changeSetting('actionQueue', true);
+
+        expect(menu.classList.contains('toolasha-queue-edit-menu-enhanced')).toBe(true);
+        expect(inject).toHaveBeenCalledWith(menu);
+        inject.mockRestore();
+    });
 });

@@ -830,6 +830,46 @@ class ActionTimeDisplay {
     }
 
     /**
+     * Bring an already-open QueuedActions edit menu in line with the `actionQueue` setting after
+     * it changes at runtime while `actionBar_enabled` keeps this module running. `initializeQueueObserver`'s
+     * `domObserver.onClass` callback only fires for menus that mount after the change, and
+     * `injectQueueTimes` itself no-ops when `actionQueue` is off, so neither one revisits a menu
+     * that was already open: the width-pin marker and the injected queue rows would otherwise be
+     * stuck at whatever they were when the setting changed. Toggles the marker and either injects
+     * or strips the queue annotations to match. A closed menu needs nothing.
+     */
+    revisitOpenQueueMenu() {
+        const queueMenu = this._lastQueueMenu?.isConnected
+            ? this._lastQueueMenu
+            : document.querySelector('[class*="QueuedActions_queuedActionsEditMenu"]');
+        if (!queueMenu?.isConnected) return;
+
+        const queueEnabled = Boolean(config.getSetting('actionQueue'));
+        queueMenu.classList.toggle(QUEUE_EDIT_MENU_MARKER_CLASS, queueEnabled);
+
+        if (this.queueMenuObserver) {
+            this.queueMenuObserver();
+            this.queueMenuObserver = null;
+        }
+
+        if (queueEnabled) {
+            this.injectQueueTimes(queueMenu);
+            this.setupQueueMenuObserver(queueMenu);
+            return;
+        }
+
+        queueMenu.querySelectorAll('.mwi-queue-action-time').forEach((el) => el.remove());
+        queueMenu.querySelectorAll('.mwi-queue-action-profit').forEach((el) => el.remove());
+        queueMenu.querySelectorAll('.mwi-queue-action-xp').forEach((el) => el.remove());
+        queueMenu.querySelectorAll(`.${ZONE_SIM_CLASS}`).forEach((el) => el.remove());
+        queueMenu.querySelectorAll(`.${QUEUE_SIM_HEADER_CLASS}`).forEach((el) => el.remove());
+        const existingTotal = document.querySelector('#mwi-queue-total-time');
+        if (existingTotal) {
+            existingTotal.remove();
+        }
+    }
+
+    /**
      * The loadout a queued action fights in, by the id the action carries.
      *
      * The loadout store is keyed by the server's loadout id; the character data's own loadout
@@ -1732,6 +1772,11 @@ class ActionTimeDisplay {
                 config.onSettingChange(key, (newValue) => {
                     if (key === 'actionBar_enabled' || key === 'actionQueue') {
                         this.applyEnabledSettings(key === 'actionBar_enabled' && Boolean(newValue));
+                        // `actionQueue` switching off (or back on) while `actionBar_enabled` keeps
+                        // the module running never reaches `initializeQueueObserver`'s callback again
+                        // — that only fires for menus mounted after the change — so an already-open
+                        // edit menu has to be revisited by hand.
+                        if (key === 'actionQueue' && this.isInitialized) this.revisitOpenQueueMenu();
                         return;
                     }
                     if (key === 'actionQueue_completionTimeStyle') this.redrawQueueMenu();
