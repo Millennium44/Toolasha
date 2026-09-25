@@ -19,10 +19,11 @@ import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 
 const settings = vi.hoisted(() => ({ combatScore: true, abilitiesTriggers: true, characterCard: false }));
+const settingListeners = vi.hoisted(() => new Map());
 
 vi.mock('../../core/config.js', () => ({
     default: {
-        onSettingChange: () => {},
+        onSettingChange: (key, callback) => settingListeners.set(key, callback),
         getSetting: (key) => settings[key],
         COLOR_TEXT_SECONDARY: '#999',
         COLOR_TEXT_PRIMARY: '#fff',
@@ -206,5 +207,47 @@ describe('combatScore / abilitiesTriggers decoupling', () => {
 
         expect(document.getElementById('mwi-combat-score-panel')).not.toBeNull();
         expect(document.getElementById('mwi-abilities-triggers-panel')).toBeNull();
+    });
+});
+
+describe('combatScore switched live with abilities & triggers on', () => {
+    const flip = (key, value) => {
+        settings[key] = value;
+        settingListeners.get(key)(value);
+    };
+
+    const openProfile = async () => {
+        mountProfilePanel();
+        await wsHandlers.get('profile_shared')(profileSharedData());
+        await new Promise((resolve) => setTimeout(resolve, 0));
+        await new Promise((resolve) => setTimeout(resolve, 0));
+    };
+
+    test('the score sections of the open panel hide and come back, folded', async () => {
+        combatScore.disable();
+        settings.combatScore = true;
+        settings.abilitiesTriggers = true;
+        combatScore.initialize();
+        await openProfile();
+
+        const toggle = document.getElementById('mwi-score-toggle');
+        const skillerToggle = document.getElementById('mwi-skiller-score-toggle');
+        expect(toggle.style.display).toBe('');
+        toggle.click();
+        expect(document.getElementById('mwi-score-details').style.display).toBe('block');
+
+        flip('combatScore', false);
+
+        expect(combatScore.isInitialized).toBe(true);
+        expect(document.getElementById('mwi-abilities-triggers-panel')).not.toBeNull();
+        expect(toggle.style.display).toBe('none');
+        expect(skillerToggle.style.display).toBe('none');
+        expect(document.getElementById('mwi-score-details').style.display).toBe('none');
+
+        flip('combatScore', true);
+
+        expect(toggle.style.display).toBe('');
+        expect(skillerToggle.style.display).toBe('');
+        expect(toggle.textContent.trim().startsWith('+ ')).toBe(true);
     });
 });
