@@ -101,6 +101,9 @@ const SKIP_DEDUP_TYPES = new Set([
     // Carries the full mark list; two lists sharing an unchanged first mark agree for far more
     // than the dedup prefix, so a lock toggled further down the list would be dropped as a repeat.
     'item_marks_updated',
+    // A moderator's delete and undelete of one message differ only in isDeleted, which sits past
+    // the dedup prefix; dropping the second leaves the message flagged deleted.
+    'chat_message_updated',
     'achievement_buffs_updated',
     'moo_pass_buffs_updated',
     'equipment_buffs_updated',
