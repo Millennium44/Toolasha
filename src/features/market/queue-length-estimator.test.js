@@ -170,6 +170,91 @@ describe('displayQueueLength', () => {
     });
 });
 
+describe('displayQueueLength with a grid host', () => {
+    /** @returns {{infoContainer: HTMLElement, host: {infoContainer: HTMLElement}}} */
+    const gridHost = () => {
+        const infoContainer = document.createElement('div');
+        infoContainer.className = 'MarketplacePanel_infoContainer__q';
+        document.body.appendChild(infoContainer);
+        return { infoContainer, host: { infoContainer } };
+    };
+
+    test('ask is placed left of the icon (column 1, end/end), bid right of it (column 3, start/end)', () => {
+        const { infoContainer, host } = gridHost();
+        const buttons = buttonContainer();
+
+        queueLengthEstimator.displayQueueLength(buttons, [askListing(100, 5, '2026-01-01T00:00:00Z')], true, host);
+        queueLengthEstimator.displayQueueLength(buttons, [askListing(90, 3, '2026-01-01T00:00:00Z')], false, host);
+
+        const ask = infoContainer.querySelector('.mwi-queue-length-ask');
+        const bid = infoContainer.querySelector('.mwi-queue-length-bid');
+        expect(ask).not.toBeNull();
+        expect(bid).not.toBeNull();
+        expect(ask.style.gridColumn).toBe('1');
+        expect(ask.style.justifySelf).toBe('end');
+        expect(ask.style.alignSelf).toBe('end');
+        expect(bid.style.gridColumn).toBe('3');
+        expect(bid.style.justifySelf).toBe('start');
+        expect(bid.style.alignSelf).toBe('end');
+        // Never inserted into the button row when a grid host is available
+        expect(buttons.querySelector('.mwi-queue-length')).toBeNull();
+
+        infoContainer.remove();
+    });
+
+    test('re-rendering into the grid host replaces the previous element rather than duplicating it', () => {
+        const { infoContainer, host } = gridHost();
+        const buttons = buttonContainer();
+
+        queueLengthEstimator.displayQueueLength(buttons, [askListing(100, 5, '2026-01-01T00:00:00Z')], true, host);
+        queueLengthEstimator.displayQueueLength(buttons, [askListing(100, 9, '2026-01-01T00:00:00Z')], true, host);
+
+        const els = infoContainer.querySelectorAll('.mwi-queue-length-ask');
+        expect(els).toHaveLength(1);
+        expect(els[0].textContent).toBe('9');
+
+        infoContainer.remove();
+    });
+
+    test('an empty listings array removes any existing element from the grid host and adds nothing', () => {
+        const { infoContainer, host } = gridHost();
+        const buttons = buttonContainer();
+
+        queueLengthEstimator.displayQueueLength(buttons, [askListing(100, 5, '2026-01-01T00:00:00Z')], true, host);
+        expect(infoContainer.querySelector('.mwi-queue-length-ask')).not.toBeNull();
+
+        queueLengthEstimator.displayQueueLength(buttons, [], true, host);
+        expect(infoContainer.querySelector('.mwi-queue-length-ask')).toBeNull();
+
+        infoContainer.remove();
+    });
+
+    test('getGridHost finds the info container and getGridHost returns null without one', () => {
+        document.body.innerHTML = '';
+        expect(queueLengthEstimator.getGridHost()).toBeNull();
+
+        const infoContainer = document.createElement('div');
+        infoContainer.className = 'MarketplacePanel_infoContainer__q';
+        const currentItem = document.createElement('div');
+        currentItem.className = 'MarketplacePanel_currentItem__x';
+        infoContainer.appendChild(currentItem);
+        document.body.appendChild(infoContainer);
+
+        expect(queueLengthEstimator.getGridHost()).toEqual({ infoContainer });
+        document.body.innerHTML = '';
+    });
+
+    test('no grid host present falls back to the button row', () => {
+        document.body.innerHTML = '';
+        const buttons = buttonContainer();
+
+        expect(queueLengthEstimator.getGridHost()).toBeNull();
+        queueLengthEstimator.displayQueueLength(buttons, [askListing(100, 5, '2026-01-01T00:00:00Z')], true, null);
+
+        expect(buttons.querySelector('.mwi-queue-length-ask')).not.toBeNull();
+    });
+});
+
 describe('the figure under the button belongs to the item on screen', () => {
     /**
      * @param {string} iconName - Sprite id the marketplace panel is showing
@@ -248,6 +333,85 @@ describe('the figure under the button belongs to the item on screen', () => {
             queueLengthEstimator.repaint();
 
             expect(buttons.querySelector('.mwi-queue-length-ask')).toBeNull();
+        } finally {
+            queueLengthEstimator.orderBooksCache = {};
+            cleanup();
+        }
+    });
+});
+
+describe('processOrderBook with an info-container grid present', () => {
+    /**
+     * @param {string} iconName - Sprite id the marketplace panel is showing
+     * @returns {{infoContainer: HTMLElement, buttons: HTMLElement, cleanup: Function}}
+     */
+    const gridPanel = (iconName) => {
+        document.body.textContent = '';
+        const infoContainer = document.createElement('div');
+        infoContainer.className = 'MarketplacePanel_infoContainer__q';
+        const currentItem = document.createElement('div');
+        currentItem.className = 'MarketplacePanel_currentItem__x';
+        currentItem.innerHTML = `<svg><use href="#${iconName}"></use></svg>`;
+        infoContainer.appendChild(currentItem);
+        document.body.appendChild(infoContainer);
+
+        const buttons = document.createElement('div');
+        buttons.className = 'MarketplacePanel_newListingButtonsContainer__y';
+        buttons.appendChild(document.createElement('button'));
+        buttons.appendChild(document.createElement('button'));
+        const books = document.createElement('div');
+        books.className = 'MarketplacePanel_orderBooksContainer__z';
+        document.body.append(books, buttons);
+        return {
+            infoContainer,
+            buttons,
+            cleanup: () => {
+                document.body.textContent = '';
+            },
+        };
+    };
+
+    test('counts go into the grid host, not the button row, when an info container is present', () => {
+        const { infoContainer, buttons, cleanup } = gridPanel('cheese');
+        try {
+            queueLengthEstimator.orderBooksCache = {
+                '/items/cheese': {
+                    data: {
+                        orderBooks: [
+                            {
+                                asks: [{ price: 10, quantity: 500, createdTimestamp: 1 }],
+                                bids: [{ price: 9, quantity: 400, createdTimestamp: 1 }],
+                            },
+                        ],
+                    },
+                },
+            };
+            queueLengthEstimator.processOrderBook();
+
+            expect(infoContainer.querySelector('.mwi-queue-length-ask').textContent).toBe('500');
+            expect(infoContainer.querySelector('.mwi-queue-length-bid').textContent).toBe('400');
+            expect(buttons.querySelector('.mwi-queue-length')).toBeNull();
+        } finally {
+            queueLengthEstimator.orderBooksCache = {};
+            cleanup();
+        }
+    });
+
+    test('disable() / clearDisplays() removes counts from the grid host too', () => {
+        const { infoContainer, cleanup } = gridPanel('cheese');
+        try {
+            queueLengthEstimator.orderBooksCache = {
+                '/items/cheese': {
+                    data: {
+                        orderBooks: [{ asks: [{ price: 10, quantity: 5, createdTimestamp: 1 }], bids: [] }],
+                    },
+                },
+            };
+            queueLengthEstimator.processOrderBook();
+            expect(infoContainer.querySelector('.mwi-queue-length-ask')).not.toBeNull();
+
+            queueLengthEstimator.clearDisplays();
+            expect(infoContainer.querySelector('.mwi-queue-length-ask')).toBeNull();
         } finally {
             queueLengthEstimator.orderBooksCache = {};
             cleanup();

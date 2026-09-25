@@ -351,10 +351,11 @@ class MarketVolumeStats {
      *
      * Placed as the current-item card's next sibling in normal flow, not as an
      * absolutely-positioned overlay inside it: the card carries the ask-side
-     * count to the icon's left and the bid-side count to its right, and an
-     * overlay anchored to the icon covered the bid count. A sibling in normal
-     * flow only ever pushes whatever came after it (the "Tradable range" line,
-     * if present) further down — it can never sit on top of anything.
+     * count to the icon's left and the bid-side count to its right (see
+     * queue-length-estimator.js's getGridHost()/displayQueueLength()), and an
+     * overlay anchored to the icon used to cover the bid count. A sibling in
+     * normal flow only ever pushes whatever came after it (the "Tradable range"
+     * line, if present) further down — it can never sit on top of anything.
      * @param {HTMLElement} currentItemElement
      * @returns {HTMLElement} The panel's content container
      */
@@ -369,12 +370,15 @@ class MarketVolumeStats {
             panel = document.createElement('div');
             panel.className = 'mwi-volume-stats';
             panel.style.cssText =
-                // The info container is a 3-column grid (side | icon | side). The
-                // right-hand cell beside the icon is where players liked it; in that
-                // cell it is in flow, so a tall table pushes the bid-side count row
-                // down instead of covering it. Outside a grid these are ignored.
-                'display:block;width:fit-content;margin:4px 0 4px 8px;z-index:20;' +
-                'grid-column:3;grid-row:2;justify-self:start;align-self:start;' +
+                // The info container is a 3-column grid (side | icon | side), row 2.
+                // queue-length-estimator.js puts the bid-side "for sale" count at the
+                // start (left, near the icon) of this same column-3 cell, bottom-aligned;
+                // this table anchors to the end (right) of that cell, top-aligned, so the
+                // two share the cell without overlapping as long as the column is wide
+                // enough for both (~365px table + ~80px count at typical widths). Outside
+                // a grid these placement properties are ignored.
+                'display:block;width:fit-content;margin:4px 8px 4px 0;z-index:20;' +
+                'grid-column:3;grid-row:2;justify-self:end;align-self:start;' +
                 'white-space:nowrap;font-size:13px;line-height:1.5;text-align:left;' +
                 'background:#101116;border-radius:4px;box-shadow:0 2px 10px rgba(0,0,0,0.3);' +
                 'padding:4px 8px;pointer-events:auto;';

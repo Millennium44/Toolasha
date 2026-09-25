@@ -366,6 +366,11 @@ describe('panel placement', () => {
         expect(panel.previousElementSibling).toBe(currentItem);
         expect(currentItem.contains(panel)).toBe(false);
         expect(panel.style.position).not.toBe('absolute');
+        // Anchored to the end (right) of the grid's column 3, so it shares that
+        // cell with the bid-side count (queue-length-estimator.js, start/left of
+        // the same cell) instead of overlapping it.
+        expect(panel.style.gridColumn).toBe('3');
+        expect(panel.style.justifySelf).toBe('end');
     });
 });
 

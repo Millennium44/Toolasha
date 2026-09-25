@@ -156,8 +156,10 @@ class QueueLengthEstimator {
         // Nothing to say about this item means saying nothing — not leaving the
         // last item's figures standing under the button. Every "we don't know"
         // path below wipes first, because the container is shared between items
-        // and enhancement levels.
-        const forget = () => buttonContainer.querySelectorAll('.mwi-queue-length').forEach((el) => el.remove());
+        // and enhancement levels. Queried document-wide, not scoped to
+        // buttonContainer, because a display can also live in the info-container
+        // grid host (see getGridHost()).
+        const forget = () => document.querySelectorAll('.mwi-queue-length').forEach((el) => el.remove());
 
         // Get current item and order book data from estimated-listing-age module
         const currentItemHrid = this.getCurrentItemHrid();
@@ -187,25 +189,44 @@ class QueueLengthEstimator {
         // Mark as processed
         buttonContainer.classList.add('mwi-queue-length-set');
 
-        // Calculate and display queue lengths
-        this.displayQueueLength(buttonContainer, orderBookAtLevel.asks, true);
-        this.displayQueueLength(buttonContainer, orderBookAtLevel.bids, false);
+        // Calculate and display queue lengths. Prefer the info-container grid
+        // (counts sit beside the item icon, clear of the trade-stats table);
+        // fall back to the old button-row insertion when that grid isn't found.
+        const host = this.getGridHost();
+        this.displayQueueLength(buttonContainer, orderBookAtLevel.asks, true, host);
+        this.displayQueueLength(buttonContainer, orderBookAtLevel.bids, false, host);
+    }
+
+    /**
+     * Find the marketplace order book's info-container grid, if the current
+     * item is inside one.
+     * @returns {{infoContainer: HTMLElement}|null}
+     */
+    getGridHost() {
+        const currentItemElement = document.querySelector(GAME.MARKETPLACE_CURRENT_ITEM);
+        const infoContainer = currentItemElement?.closest('[class*="MarketplacePanel_infoContainer"]');
+        return infoContainer ? { infoContainer } : null;
     }
 
     /**
      * Calculate and display queue length for asks or bids
-     * @param {HTMLElement} buttonContainer - Button container element
+     * @param {HTMLElement} buttonContainer - Button container element (used for the fallback insertion)
      * @param {Array} listings - Array of listings (asks or bids)
      * @param {boolean} isAsk - True for asks (sell side), false for bids (buy side)
+     * @param {{infoContainer: HTMLElement}|null} [host] - Grid host from getGridHost(), or null to fall back
+     *   to inserting into the button row
      */
-    displayQueueLength(buttonContainer, listings, isAsk) {
+    displayQueueLength(buttonContainer, listings, isAsk, host = null) {
+        const className = `mwi-queue-length-${isAsk ? 'ask' : 'bid'}`;
+
         // The old figure goes FIRST, before anything can return early. The
-        // button container outlives the item it is showing (that is why
-        // `repaint()` clears the processed flags rather than trusting React to
-        // throw the row away), so an item whose side of the book is empty used
-        // to leave the previous item's queue length sitting under the button —
-        // a number the player reads as this item's depth.
-        buttonContainer.querySelector(`.mwi-queue-length-${isAsk ? 'ask' : 'bid'}`)?.remove();
+        // button container and grid host both outlive the item they are
+        // showing (that is why `repaint()` clears the processed flags rather
+        // than trusting React to throw the row away), so an item whose side of
+        // the book is empty used to leave the previous item's queue length
+        // sitting on screen — a number the player reads as this item's depth.
+        // Queried document-wide since the element can be in either location.
+        document.querySelectorAll(`.${className}`).forEach((el) => el.remove());
 
         if (!listings || listings.length === 0) {
             return;
@@ -243,7 +264,7 @@ class QueueLengthEstimator {
         }
 
         const displayElement = document.createElement('div');
-        displayElement.classList.add('mwi-queue-length', `mwi-queue-length-${isAsk ? 'ask' : 'bid'}`);
+        displayElement.classList.add('mwi-queue-length', className);
         displayElement.style.fontSize = '1.2rem';
         displayElement.style.textAlign = 'center';
 
@@ -263,13 +284,23 @@ class QueueLengthEstimator {
             displayElement.title = `Total quantity at best ${isAsk ? 'sell' : 'buy'} price`;
         }
 
-        // Insert into button container
-        // Ask goes before the first button (sell button), bid goes before the last button (buy button)
-        if (isAsk) {
-            // Insert before the second child (between first button and sell button)
+        if (host) {
+            // Info-container grid: row 2, beside the item icon (column 2). Ask
+            // sits left of the icon (column 1), bid sits right of it (column 3),
+            // both bottom-aligned in their cell — clear of the trade-stats table,
+            // which anchors to the top/end of column 3 (see market-volume-stats.js).
+            displayElement.style.gridRow = '2';
+            displayElement.style.gridColumn = isAsk ? '1' : '3';
+            displayElement.style.justifySelf = isAsk ? 'end' : 'start';
+            displayElement.style.alignSelf = 'end';
+            displayElement.style.margin = isAsk ? '0 8px 0 0' : '0 0 0 8px';
+            host.infoContainer.appendChild(displayElement);
+        } else if (isAsk) {
+            // Fallback: no info-container grid found. Insert into the button row.
+            // Ask goes before the second child (between first button and sell button)
             buttonContainer.insertBefore(displayElement, buttonContainer.children[1]);
         } else {
-            // Insert before the last child (before buy button)
+            // Bid goes before the last child (before buy button)
             buttonContainer.insertBefore(displayElement, buttonContainer.lastChild);
         }
     }
