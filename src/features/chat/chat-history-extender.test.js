@@ -73,7 +73,9 @@ vi.mock('../../utils/profile-command.js', () => ({
 }));
 
 import chatHistoryExtender, { tabKeyForChannel } from './chat-history-extender.js';
-import chatHistoryPersistence from './chat-history-persistence.js';
+import chatHistoryPersistence, { CHAT_HISTORY_KEY_BASE } from './chat-history-persistence.js';
+
+const STORAGE_KEY = `${CHAT_HISTORY_KEY_BASE}_char1`;
 
 /**
  * Build a minimal fiber tree and wire it under `#root._reactRootContainer`
@@ -309,12 +311,73 @@ describe('chat-history-extender: message identity and deletion', () => {
         chatHistoryExtender.initialize();
         await settle();
 
-        wsHandlers.chat_message_received({ message: { id: 'msg-1', chan: '/chat_channel_types/trade' } });
+        wsHandlers.chat_message_received({
+            message: { id: 'msg-1', chan: '/chat_channel_types/trade', m: 'selling cheese' },
+        });
         const node = makeMessage('selling cheese');
         container.appendChild(node);
         await settle();
 
         expect(node.dataset.mwiMsgId).toBe('msg-1');
+    });
+
+    test('a queued id is only claimed by a node whose content actually matches it', async () => {
+        const container = buildChannelChat('/chat_channel_types/trade');
+        chatHistoryExtender.initialize();
+        await settle();
+
+        // Queued for the channel, but nothing renders while the tab stays open
+        // showing something else — simulated here simply by never appending a
+        // node for it before a second, unrelated node arrives.
+        wsHandlers.chat_message_received({
+            message: {
+                id: 'msg-mismatch',
+                chan: '/chat_channel_types/trade',
+                sName: 'Bob',
+                m: 'a totally different message',
+            },
+        });
+        const node = makeMessage('selling cheese');
+        container.appendChild(node);
+        await settle();
+
+        // The queued entry's content does not appear in this node's text, so
+        // it is left untagged rather than wrongly claiming msg-mismatch's id —
+        // an untagged node can never be purged by a later deletion for an id
+        // it was never actually the message for.
+        expect(node.dataset.mwiMsgId).toBeUndefined();
+    });
+
+    test("a batch of several nodes added at once cannot let one steal another's id (the reported misattribution)", async () => {
+        // The exact shape a backlog render takes: several messages the
+        // correlator has queued ids for, but no DOM node yet — because the
+        // tab was not showing this channel while they arrived — followed by
+        // every one of them appearing in a single mutation batch once the tab
+        // opens. A blind FIFO claim (the pre-fix behavior) would hand the
+        // first-queued id to whichever node came first in that batch,
+        // regardless of which message it actually was.
+        const container = buildChannelChat('/chat_channel_types/trade');
+        chatHistoryExtender.initialize();
+        await settle();
+
+        wsHandlers.chat_message_received({
+            message: { id: 'msg-old', chan: '/chat_channel_types/trade', m: 'old backlog line' },
+        });
+        wsHandlers.chat_message_received({
+            message: { id: 'msg-new', chan: '/chat_channel_types/trade', m: 'brand new message' },
+        });
+
+        // Appended in the OPPOSITE order from how their ids were queued, and
+        // synchronously — so they land in one mutation batch together, and a
+        // position-based claim is provably wrong if it ever matches.
+        const nodeA = makeMessage('brand new message');
+        const nodeB = makeMessage('old backlog line');
+        container.appendChild(nodeA);
+        container.appendChild(nodeB);
+        await settle();
+
+        expect(nodeA.dataset.mwiMsgId).toBe('msg-new');
+        expect(nodeB.dataset.mwiMsgId).toBe('msg-old');
     });
 
     test('a whisper/name tab is never tagged — no reliable channel correlation', async () => {
@@ -346,7 +409,12 @@ describe('chat-history-extender: message identity and deletion', () => {
         await settle();
 
         wsHandlers.chat_message_received({
-            message: { id: 'msg-1', chan: '/chat_channel_types/trade', isDeleted: true },
+            message: {
+                id: 'msg-1',
+                chan: '/chat_channel_types/trade',
+                isDeleted: true,
+                m: 'a moderator sees this, deleted',
+            },
         });
         const node = makeMessage('a moderator sees this, deleted');
         container.appendChild(node);
@@ -367,7 +435,9 @@ describe('chat-history-extender: message identity and deletion', () => {
         chatHistoryExtender.initialize();
         await settle();
 
-        wsHandlers.chat_message_received({ message: { id: 'msg-1', chan: '/chat_channel_types/trade' } });
+        wsHandlers.chat_message_received({
+            message: { id: 'msg-1', chan: '/chat_channel_types/trade', m: 'selling cheese' },
+        });
         const node = makeMessage('selling cheese');
         container.appendChild(node);
         await settle();
@@ -386,12 +456,50 @@ describe('chat-history-extender: message identity and deletion', () => {
         expect(db.settings[Object.keys(db.settings)[0]].tabs[tabKey]).toBeUndefined();
     });
 
+    test('a deletion arriving while the initial restore is still in flight is not restored anyway', async () => {
+        // Pre-populate storage the way an earlier session would have left it —
+        // this is what the in-flight restore below is racing to insert.
+        const tabKey = tabKeyForChannel('/chat_channel_types/trade');
+        db.settings[STORAGE_KEY] = {
+            v: 1,
+            savedAt: 1,
+            tabs: {
+                [tabKey]: ['<div class="ChatMessage_chatMessage__x" data-mwi-msg-id="msg-1">selling cheese</div>'],
+            },
+        };
+
+        const container = buildChannelChat('/chat_channel_types/trade');
+        // initialize() kicks off the tab handler's restore() fire-and-forget;
+        // it awaits chatHistoryPersistence.load(), which awaits storage.get()
+        // — both still pending microtasks at this point, nothing has
+        // resolved yet.
+        chatHistoryExtender.initialize();
+
+        // The deletion's own handler runs synchronously up to its first
+        // await (see _handleMessageUpdated: `this.deletedIds?.add(...)` runs
+        // before anything else), so calling it here — still inside the same
+        // synchronous stretch initialize() ran in, before any microtask from
+        // restore()'s load() has had a chance to run — reproduces the race:
+        // purgeMessageById mutates `chatHistoryPersistence.tabs`, a different
+        // object than the snapshot restore() is about to read from load().
+        // Only the tombstone this handler adds to can stop that snapshot's
+        // stale copy from being inserted regardless.
+        await wsHandlers.chat_message_updated({
+            message: { id: 'msg-1', chan: '/chat_channel_types/trade', isDeleted: true },
+        });
+        await settle();
+
+        expect(container.querySelector('.mwi-history-buffer').textContent).not.toContain('selling cheese');
+    });
+
     test('deleting a still-live (not yet evicted) message flags it so eviction never stores it', async () => {
         const container = buildChannelChat('/chat_channel_types/trade');
         chatHistoryExtender.initialize();
         await settle();
 
-        wsHandlers.chat_message_received({ message: { id: 'msg-1', chan: '/chat_channel_types/trade' } });
+        wsHandlers.chat_message_received({
+            message: { id: 'msg-1', chan: '/chat_channel_types/trade', m: 'selling cheese' },
+        });
         const node = makeMessage('selling cheese');
         container.appendChild(node);
         await settle();
@@ -414,7 +522,9 @@ describe('chat-history-extender: message identity and deletion', () => {
         chatHistoryExtender.initialize();
         await settle();
 
-        wsHandlers.chat_message_received({ message: { id: 'msg-1', chan: '/chat_channel_types/trade' } });
+        wsHandlers.chat_message_received({
+            message: { id: 'msg-1', chan: '/chat_channel_types/trade', m: 'selling cheese' },
+        });
         const node = makeMessage('selling cheese');
         container.appendChild(node);
         await settle();

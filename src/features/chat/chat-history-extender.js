@@ -11,6 +11,7 @@ import webSocketHook from '../../core/websocket.js';
 import { addStyles, removeStyles } from '../../utils/dom.js';
 import { createTimerRegistry } from '../../utils/timer-registry.js';
 import chatHistoryPersistence, {
+    extractStoredMessageId,
     handleRestoredClick,
     parseStoredMessage,
     rewireRestoredMessage,
@@ -184,52 +185,165 @@ const PENDING_ID_MAX_PER_CHANNEL = 50;
  * One instance per `ChatHistoryExtender` session (see its `messageIds`
  * field), fed by a `chat_message_received` listener and drained by
  * {@link ChatTabHandler#_tagMessageId} the moment a channel tab's DOM
- * actually renders the next message. FIFO within a channel: the socket
- * delivers a channel's messages in the same order the game renders them, and
- * only one tab (hence one channel's worth of DOM) is ever live at a time —
- * see {@link chatTabKey}'s "one container" model.
+ * actually renders the next message.
+ *
+ * Matching is by *content*, not queue position. A channel's queue can hold
+ * ids for messages that arrived while its tab was not open (nothing renders
+ * them, so nothing claims them), and opening — or switching to — that tab
+ * then renders its whole visible backlog as one batch of `addedNodes`: a
+ * mutation batch that can mix nodes the game already knew about with a
+ * genuinely new one. A blind FIFO shift for every node in that batch, in DOM
+ * order, has no reason to land on the node the front-of-queue id actually
+ * names; get it wrong and a later deletion purges — or skip-stores — a
+ * completely unrelated player's message. See {@link claim}.
  */
 class PendingMessageIds {
     constructor() {
-        /** @type {Map<string, Array<{id: string|number, isDeleted: boolean, ts: number}>>} */
+        /** @type {Map<string, Array<{id: string|number, isDeleted: boolean, sName: string, m: string, ts: number}>>} */
         this.byChannel = new Map();
     }
 
     /**
-     * Record one message's id as soon as it is seen on the socket, before the
-     * DOM node it will render into exists.
+     * Record one message's id (and enough of its content to match against a
+     * DOM node later) as soon as it is seen on the socket, before the node it
+     * will render into exists.
      * @param {string} chan
      * @param {string|number} id
      * @param {boolean} isDeleted - True for a message that arrived pre-deleted
+     * @param {string} [sName] - Sender name, as `chat_message_received` carries it
+     * @param {string} [m] - Message text, as `chat_message_received` carries it
      */
-    note(chan, id, isDeleted) {
+    note(chan, id, isDeleted, sName, m) {
         if (!chan || id == null) return;
         let queue = this.byChannel.get(chan);
         if (!queue) {
             queue = [];
             this.byChannel.set(chan, queue);
         }
-        queue.push({ id, isDeleted: !!isDeleted, ts: Date.now() });
+        queue.push({ id, isDeleted: !!isDeleted, sName: sName || '', m: m || '', ts: Date.now() });
         if (queue.length > PENDING_ID_MAX_PER_CHANNEL) queue.shift();
     }
 
     /**
-     * Claim the next id queued for a channel.
+     * Claim the queued entry whose content matches a just-rendered node, if
+     * any — never just the front of the queue. A node's rendered text is
+     * checked for both the sender name and the message text `note()` recorded
+     * for a candidate entry; a candidate with neither (a system message,
+     * whose `m` is a translation key the DOM never shows verbatim) can never
+     * match and is correctly skipped, same as a node that matches nothing at
+     * all — left untagged, which is always safe: see `purgeMessageById` /
+     * `findLiveMessageNode`, which only ever touch a node already carrying
+     * `data-mwi-msg-id`.
      * @param {string} chan
+     * @param {Element} node - The message node just added to the DOM
      * @returns {{id: string|number, isDeleted: boolean}|null}
      */
-    take(chan) {
+    claim(chan, node) {
         const queue = this.byChannel.get(chan);
-        if (!queue) return null;
+        if (!queue || !queue.length) return null;
+
         const now = Date.now();
         while (queue.length && now - queue[0].ts > PENDING_ID_TTL_MS) queue.shift();
         if (!queue.length) return null;
-        return queue.shift();
+
+        const text = node?.textContent || '';
+        const index = queue.findIndex((entry) => {
+            if (!entry.sName && !entry.m) return false;
+            if (entry.sName && !text.includes(entry.sName)) return false;
+            if (entry.m && !text.includes(entry.m)) return false;
+            return true;
+        });
+        if (index === -1) return null;
+
+        return queue.splice(index, 1)[0];
+    }
+
+    /**
+     * Drop everything queued for one channel. A tab opening, or switching
+     * into, that channel is about to render its whole visible backlog in one
+     * batch — any id queued for it before that moment predates this
+     * correlator being able to say anything useful about which node (if any)
+     * it belongs to. `claim`'s content match already keeps a wrong node from
+     * being tagged even without this; this just keeps a channel nobody has
+     * opened from accumulating queue entries against nothing.
+     * @param {string} chan
+     */
+    discardChannel(chan) {
+        if (chan) this.byChannel.delete(chan);
     }
 
     /** Drop everything queued — a character switch means none of it is ours any more. */
     clear() {
         this.byChannel.clear();
+    }
+}
+
+/**
+ * How long a deleted message's id is remembered, so a `restore()` whose
+ * `chatHistoryPersistence.load()` was already in flight when the deletion
+ * arrived does not insert that message anyway.
+ *
+ * `chatHistoryPersistence.purgeMessageById` mutates the persistence layer's
+ * working `tabs` object; a `restore()` already awaiting `load()` reads the
+ * *snapshot* `load()` resolves with instead — a separate object, taken once
+ * and never touched by a later purge (see chat-history-persistence.js's
+ * `load()`). So the purge alone cannot stop that restore from rendering the
+ * very message it just removed from storage. This tombstone is what does:
+ * `restore()` skips any stored entry whose id it names. Generous next to how
+ * long a single IndexedDB read actually takes — this only needs to outlive
+ * one, not a whole session.
+ */
+const DELETED_ID_TTL_MS = 60000;
+
+/** Ceiling on remembered deletions, so a very active moderator cannot grow this without bound. */
+const DELETED_ID_MAX = 200;
+
+/**
+ * A short-lived record of ids `chat_message_updated` has marked deleted this
+ * session — see {@link DELETED_ID_TTL_MS} for why `restore()` needs it.
+ */
+class DeletedMessageIds {
+    constructor() {
+        /** @type {Array<{id: string, ts: number}>} Insertion order, oldest first */
+        this.entries = [];
+        this.ids = new Set();
+    }
+
+    /** @param {string|number} id */
+    add(id) {
+        if (id == null) return;
+        const key = String(id);
+        if (this.ids.has(key)) return;
+        this.ids.add(key);
+        this.entries.push({ id: key, ts: Date.now() });
+        if (this.entries.length > DELETED_ID_MAX) {
+            const dropped = this.entries.shift();
+            this.ids.delete(dropped.id);
+        }
+    }
+
+    /**
+     * @param {string|number|null} id
+     * @returns {boolean}
+     */
+    has(id) {
+        if (id == null) return false;
+        this._prune();
+        return this.ids.has(String(id));
+    }
+
+    _prune() {
+        const now = Date.now();
+        while (this.entries.length && now - this.entries[0].ts > DELETED_ID_TTL_MS) {
+            const dropped = this.entries.shift();
+            this.ids.delete(dropped.id);
+        }
+    }
+
+    /** Drop everything remembered — a character switch means none of it is ours any more. */
+    clear() {
+        this.entries = [];
+        this.ids.clear();
     }
 }
 
@@ -278,13 +392,15 @@ class ChatTabHandler {
      * @param {() => number} getMaxHistory - Returns current max history setting
      * @param {string|null} tabKey - Persistence key for this tab, from {@link chatTabKey}
      * @param {PendingMessageIds} messageIds - Shared id correlator, from {@link ChatHistoryExtender}
+     * @param {DeletedMessageIds} deletedIds - Shared deletion tombstone, from {@link ChatHistoryExtender}
      */
-    constructor(containerEl, interactionCache, getMaxHistory, tabKey = null, messageIds = null) {
+    constructor(containerEl, interactionCache, getMaxHistory, tabKey = null, messageIds = null, deletedIds = null) {
         this.container = containerEl;
         this.interactionCache = interactionCache;
         this.getMaxHistory = getMaxHistory;
         this.tabKey = tabKey;
         this.messageIds = messageIds;
+        this.deletedIds = deletedIds;
         /** Whether a restore has already been fired for this tab; see {@link _resolveTabKey}. */
         this.restoreStarted = false;
 
@@ -382,6 +498,16 @@ class ChatTabHandler {
             this.restoreStarted = false;
         }
 
+        // A tab becoming this container's key for the first time (attach,
+        // late naming, or a switch) is about to render that channel's whole
+        // visible backlog as one mutation batch — see PendingMessageIds'
+        // class doc for why a queue built up before this moment cannot be
+        // trusted against it.
+        if (key) {
+            const chan = channelFromTabKey(key);
+            if (chan) this.messageIds?.discardChannel(chan);
+        }
+
         if (key && !this.restoreStarted) {
             this.restore(key).catch((error) => {
                 console.error('[ChatHistoryExtender] Late restore failed:', error);
@@ -419,6 +545,14 @@ class ChatTabHandler {
         let restored = 0;
         for (const html of stored) {
             try {
+                // A deletion that arrived while the `load()` above was still
+                // in flight has already purged `chatHistoryPersistence.tabs`
+                // — a different in-memory object than the snapshot `stored`
+                // was read from, and untouched by that purge (see
+                // DeletedMessageIds' class doc). Without this check, that
+                // deleted message would be restored anyway.
+                if (this.deletedIds?.has(extractStoredMessageId(html))) continue;
+
                 const el = parseStoredMessage(html);
                 if (!el) continue;
                 rewireRestoredMessage(el);
@@ -525,7 +659,7 @@ class ChatTabHandler {
         const chan = channelFromTabKey(tabKey);
         if (!chan) return;
 
-        const claimed = this.messageIds.take(chan);
+        const claimed = this.messageIds.claim(chan, node);
         if (!claimed) return;
 
         if (claimed.isDeleted) {
@@ -727,6 +861,8 @@ class ChatHistoryExtender {
         this.activeHandlers = new Set();
         /** @type {PendingMessageIds|null} */
         this.messageIds = null;
+        /** @type {DeletedMessageIds|null} */
+        this.deletedIds = null;
         this._onChatMessageReceived = null;
         this._onChatMessageUpdated = null;
     }
@@ -746,6 +882,7 @@ class ChatHistoryExtender {
         chatHistoryPersistence.enable(getMaxHistory);
 
         this.messageIds = new PendingMessageIds();
+        this.deletedIds = new DeletedMessageIds();
         this._onChatMessageReceived = (data) => this._handleMessageReceived(data?.message);
         webSocketHook.on('chat_message_received', this._onChatMessageReceived);
         this._onChatMessageUpdated = (data) => this._handleMessageUpdated(data?.message);
@@ -758,7 +895,8 @@ class ChatHistoryExtender {
                 this.interactionCache,
                 getMaxHistory,
                 chatTabKey(containerEl),
-                this.messageIds
+                this.messageIds,
+                this.deletedIds
             );
             this.tabHandlers.set(containerEl, handler);
             this.activeHandlers.add(handler);
@@ -816,11 +954,11 @@ class ChatHistoryExtender {
      * Handle `chat_message_received`: queue the id for {@link ChatTabHandler#_tagMessageId}
      * to claim once the DOM node it belongs to is actually rendered. See
      * {@link PendingMessageIds}.
-     * @param {{id?: string|number, chan?: string, isDeleted?: boolean}|null} message
+     * @param {{id?: string|number, chan?: string, isDeleted?: boolean, sName?: string, m?: string}|null} message
      */
     _handleMessageReceived(message) {
         if (!message || message.id == null || !message.chan || !this.messageIds) return;
-        this.messageIds.note(message.chan, message.id, !!message.isDeleted);
+        this.messageIds.note(message.chan, message.id, !!message.isDeleted, message.sName, message.m);
     }
 
     /**
@@ -846,6 +984,13 @@ class ChatHistoryExtender {
             }
             return;
         }
+
+        // First, and synchronously (before any await below): a restore whose
+        // `chatHistoryPersistence.load()` is already in flight reads this
+        // tombstone once that await resolves, and needs to see this id
+        // whether its own load() settles before or after this handler's own
+        // awaits do — see DeletedMessageIds' class doc.
+        this.deletedIds?.add(message.id);
 
         for (const handler of this.activeHandlers) {
             const live = handler.findLiveMessageNode(key);
@@ -887,6 +1032,8 @@ class ChatHistoryExtender {
             }
             this.messageIds?.clear();
             this.messageIds = null;
+            this.deletedIds?.clear();
+            this.deletedIds = null;
             removeStyles(STYLE_ID);
             this.isInitialized = false;
         } catch (error) {
