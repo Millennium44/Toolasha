@@ -14,7 +14,12 @@
  */
 import { vi } from 'vitest';
 
-vi.mock('./src/utils/server-gate.js', () => ({ isMarketplacePatchLive: () => true }));
+vi.mock('./src/utils/server-gate.js', () => ({
+    isMarketplacePatchLive: () => true,
+    // The September 2026 market patch is test-server only: the suite runs on live rules
+    // (5% tax, the old price ladder). Tests of the new rules re-mock this module.
+    isSeptember2026MarketPatchLive: () => false,
+}));
 
 /**
  * happy-dom's MutationObserver stops delivering after a garbage collection.

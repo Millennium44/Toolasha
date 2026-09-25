@@ -54,7 +54,10 @@ vi.mock('../../utils/game-lookups.js', () => ({ getShopCoinCost: () => 0 }));
 // The shrine fold into the total is gated on the marketplace patch being live.
 // Default the gate on, so the folding assertions test the patched behaviour; a
 // single test flips it off to pin the pre-patch (comparable-score) rule.
-vi.mock('../../utils/server-gate.js', () => ({ isMarketplacePatchLive: () => mocks.patchLive }));
+vi.mock('../../utils/server-gate.js', () => ({
+    isMarketplacePatchLive: () => mocks.patchLive,
+    isSeptember2026MarketPatchLive: () => false,
+}));
 vi.mock('../../utils/guild-credit-pricing.js', () => ({
     buildGoldPerCredit: () => ({ '/items/guild_credit_1': 750 }),
     priceGuildCreditCosts: (costs, { goldPerCredit }) => ({

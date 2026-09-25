@@ -3,16 +3,17 @@
  * Shared constants used across profit calculators
  */
 
-import { isMarketplacePatchLive } from './server-gate.js';
+import { isMarketplacePatchLive, isSeptember2026MarketPatchLive } from './server-gate.js';
 
 /**
- * Marketplace tax rate. Raised from 2% to 5% in the 8/13/2026 marketplace update,
- * now live on both servers — see {@link isMarketplacePatchLive}, which reads true
- * everywhere. The gate is kept in the expression so the rate can be re-staged in
- * one place if a future update needs it. This is the single source of truth; read
- * it here rather than hardcoding a percentage.
+ * Marketplace tax rate. Raised from 2% to 5% in the 8/13/2026 marketplace update
+ * (live on both servers — {@link isMarketplacePatchLive} reads true everywhere),
+ * and cut to 4% by the September 2026 market patch, which is staged per server by
+ * {@link isSeptember2026MarketPatchLive}. Evaluated once at module load; the
+ * hostname the gates read cannot change within a page load. This is the single
+ * source of truth; read it here rather than hardcoding a percentage.
  */
-export const MARKET_TAX = isMarketplacePatchLive() ? 0.05 : 0.02;
+export const MARKET_TAX = !isMarketplacePatchLive() ? 0.02 : isSeptember2026MarketPatchLive() ? 0.04 : 0.05;
 
 /**
  * Bag of 10 Cowbells item HRID (subject to 18% market tax)

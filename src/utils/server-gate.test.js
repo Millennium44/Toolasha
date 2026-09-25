@@ -3,7 +3,7 @@ import { describe, test, expect, vi, afterEach } from 'vitest';
 // The global setup mocks this module patch-live for the rest of the suite; here
 // we test the real hostname logic, so use the actual implementation.
 vi.unmock('./server-gate.js');
-const { isMarketplacePatchLive } = await vi.importActual('./server-gate.js');
+const { isMarketplacePatchLive, isSeptember2026MarketPatchLive } = await vi.importActual('./server-gate.js');
 
 afterEach(() => {
     vi.unstubAllGlobals();
@@ -29,5 +29,24 @@ describe('isMarketplacePatchLive', () => {
 
         vi.stubGlobal('location', {});
         expect(isMarketplacePatchLive()).toBe(true);
+    });
+});
+
+describe('isSeptember2026MarketPatchLive', () => {
+    // Staged on the test server only until the main server takes the patch.
+    test('true on the test server', () => {
+        vi.stubGlobal('location', { hostname: 'test.milkywayidle.com' });
+        expect(isSeptember2026MarketPatchLive()).toBe(true);
+    });
+
+    test('false on the live server', () => {
+        vi.stubGlobal('location', { hostname: 'www.milkywayidle.com' });
+        expect(isSeptember2026MarketPatchLive()).toBe(false);
+    });
+
+    test('false with no location at all, never throws', () => {
+        vi.stubGlobal('location', undefined);
+        expect(() => isSeptember2026MarketPatchLive()).not.toThrow();
+        expect(isSeptember2026MarketPatchLive()).toBe(false);
     });
 });

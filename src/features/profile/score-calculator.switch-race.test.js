@@ -59,7 +59,10 @@ vi.mock('../enhancement/tooltip-enhancement.js', () => ({
     getRealisticBaseItemPrice: (hrid) => (hrid === '/items/philosophers_mirror' ? 1e12 : 0),
 }));
 vi.mock('../../utils/game-lookups.js', () => ({ getShopCoinCost: () => 0 }));
-vi.mock('../../utils/server-gate.js', () => ({ isMarketplacePatchLive: () => true }));
+vi.mock('../../utils/server-gate.js', () => ({
+    isMarketplacePatchLive: () => true,
+    isSeptember2026MarketPatchLive: () => false,
+}));
 vi.mock('../../utils/guild-credit-pricing.js', () => ({
     buildGoldPerCredit: () => ({}),
     priceGuildCreditCosts: () => ({ lines: [], total: null, unpriced: [] }),
