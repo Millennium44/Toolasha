@@ -47,7 +47,6 @@ import { calculateOfflineEconomics } from '../../utils/offline-economics-calcula
 import { createChunkedHistory, timeChunkId } from '../../utils/chunked-history.js';
 import { getItemPrice } from '../../utils/market-data.js';
 import { parseItemHash } from '../../utils/item-hash.js';
-import { resolveActionContext } from '../../utils/action-context.js';
 import { getDrinkConcentration, parseArtisanBonus, parseGourmetBonus } from '../../utils/tea-parser.js';
 import { PRODUCTION_TYPES } from '../../utils/profit-constants.js';
 import { localDayId, dayStart } from './gold-sources.js';
@@ -113,15 +112,42 @@ function upgradeLevelFromAction(upgradeItemHrid, action) {
 }
 
 /**
+ * The gear and drinks the character has on right now, for an action type.
+ *
+ * Not `resolveActionContext`: that prefers a saved loadout for the skill —
+ * including a non-default one the action never selected — because it answers
+ * "what would this action wear", which is right for a forecast and wrong for a
+ * record. When a queued action does carry a loadout, the game puts it on as the
+ * action starts and says so (`items_updated`,
+ * `action_type_consumable_slots_updated`), so what is worn at completion is
+ * already the loadout's, and anything else was never worn at all.
+ *
+ * A drink counts while it can still buff the action: in stock, or out of stock
+ * with its last cup's buff still running — the same rule the forecasts apply.
+ *
+ * @param {string} actionType - e.g. `/action_types/cooking`
+ * @returns {{equipment: Map, drinks: Array}}
+ */
+function wornContext(actionType) {
+    const inventory = dataManager.getInventory?.() || [];
+    const inStock = (hrid) => inventory.some((i) => i.itemHrid === hrid && (i.count || 0) > 0);
+    const stillRunning = (d) => d?.isActive === true && (d?.duration || 0) > 0;
+    const drinks = (dataManager.getActionDrinkSlots?.(actionType) || []).filter(
+        (d) => d?.itemHrid && (inStock(d.itemHrid) || stillRunning(d))
+    );
+    return { equipment: dataManager.getEquipment?.() || new Map(), drinks };
+}
+
+/**
  * Artisan and Gourmet as they stand for an action type, from the drinks and gear
- * the forecasts read, so a day's margin is on the same footing as the panel's.
+ * the character is actually wearing as the action completes.
  * @param {string} actionType - e.g. `/action_types/cooking`
  * @returns {{artisan: number, gourmet: number}} Both as decimals
  */
 function recipeBuffs(actionType) {
     try {
         const itemDetailMap = dataManager.getInitClientData?.()?.itemDetailMap || {};
-        const { equipment, drinks } = resolveActionContext(actionType);
+        const { equipment, drinks } = wornContext(actionType);
         const concentration = getDrinkConcentration(equipment, itemDetailMap);
         const artisan = parseArtisanBonus(drinks, itemDetailMap, concentration) || 0;
         const gourmet =

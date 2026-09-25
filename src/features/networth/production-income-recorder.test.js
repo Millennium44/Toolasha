@@ -13,6 +13,11 @@ const state = vi.hoisted(() => ({
     gourmet: 0,
     personalGourmet: 0,
     queue: [],
+    equipment: new Map(),
+    drinkSlots: {},
+    inventory: [],
+    parsedDrinks: null,
+    parsedEquipment: null,
 }));
 
 vi.mock('../../core/storage.js', () => ({
@@ -28,6 +33,9 @@ vi.mock('../../core/data-manager.js', () => ({
         getInitClientData: () => ({ itemDetailMap: {} }),
         getCurrentActions: () => state.queue.map((action) => ({ ...action })),
         getPersonalBuffFlatBoost: (type, buff) => (buff === '/buff_types/gourmet' ? state.personalGourmet : 0),
+        getEquipment: () => new Map(state.equipment),
+        getActionDrinkSlots: (type) => state.drinkSlots[type] || [],
+        getInventory: () => state.inventory,
         on: vi.fn(),
         off: vi.fn(),
     },
@@ -35,12 +43,27 @@ vi.mock('../../core/data-manager.js', () => ({
 vi.mock('../../utils/offline-economics-calculator.js', () => ({
     calculateOfflineEconomics: ({ offlineItems }) => ({ profit: offlineItems.length * 1000 }),
 }));
+// A saved loadout the forecasts would prefer. A recorded run must never read it
 vi.mock('../../utils/action-context.js', () => ({
-    resolveActionContext: () => ({ equipment: new Map(), drinks: [] }),
+    resolveActionContext: () => ({
+        equipment: new Map([
+            [
+                '/equipment_types/pouch',
+                { itemLocationHrid: '/equipment_types/pouch', itemHrid: '/items/guzzling_pouch' },
+            ],
+        ]),
+        drinks: [{ itemHrid: '/items/artisan_tea' }],
+    }),
 }));
 vi.mock('../../utils/tea-parser.js', () => ({
-    getDrinkConcentration: () => 0,
-    parseArtisanBonus: () => state.artisan,
+    getDrinkConcentration: (equipment) => {
+        state.parsedEquipment = equipment;
+        return 0;
+    },
+    parseArtisanBonus: (drinks) => {
+        state.parsedDrinks = drinks;
+        return state.artisan;
+    },
     parseGourmetBonus: () => state.gourmet,
 }));
 vi.mock('../../utils/market-data.js', () => ({
@@ -89,6 +112,11 @@ beforeEach(() => {
     state.gourmet = 0;
     state.personalGourmet = 0;
     state.queue = [];
+    state.equipment = new Map();
+    state.drinkSlots = {};
+    state.inventory = [];
+    state.parsedDrinks = null;
+    state.parsedEquipment = null;
     recorder._forget();
 });
 
@@ -174,6 +202,41 @@ describe('recording production', () => {
         const row = state.saved.rows.find((entry) => entry.d === TODAY);
         expect(row.inputValue).toBeCloseTo(72); // 2 × 40 × 0.9
         expect(row.outputValue).toBeCloseTo(115); // 100 × 1.15
+    });
+
+    test('buffs come from what is worn at completion, never a saved loadout the run did not use', async () => {
+        const tool = {
+            itemLocationHrid: '/equipment_types/main_hand',
+            itemHrid: '/items/holy_spatula',
+            enhancementLevel: 5,
+        };
+        state.equipment = new Map([['/equipment_types/main_hand', tool]]);
+        state.drinkSlots = {
+            '/action_types/cooking': [
+                { itemHrid: '/items/gourmet_tea', isActive: true, duration: 0 },
+                // Out of stock and its buff has run out: brews nothing
+                { itemHrid: '/items/efficiency_tea', isActive: false, duration: 0 },
+                null,
+            ],
+        };
+        state.inventory = [{ itemHrid: '/items/gourmet_tea', count: 12 }];
+        await recorder._onActionCompleted({
+            endCharacterAction: { id: 14, actionHrid: '/actions/cooking/cheese', currentCount: 1 },
+        });
+
+        expect(state.parsedDrinks.map((d) => d.itemHrid)).toEqual(['/items/gourmet_tea']);
+        expect([...state.parsedEquipment.keys()]).toEqual(['/equipment_types/main_hand']);
+    });
+
+    test('a drink out of stock still counts while its last buff is running', async () => {
+        state.drinkSlots = {
+            '/action_types/cooking': [{ itemHrid: '/items/artisan_tea', isActive: true, duration: 300e9 }],
+        };
+        await recorder._onActionCompleted({
+            endCharacterAction: { id: 15, actionHrid: '/actions/cooking/cheese', currentCount: 1 },
+        });
+
+        expect(state.parsedDrinks.map((d) => d.itemHrid)).toEqual(['/items/artisan_tea']);
     });
 
     test('a jump in the action counter counts every action it covers', async () => {
