@@ -458,27 +458,51 @@ class InventorySort {
     }
 
     /**
-     * Find the container that owns a category's button and item grid.
-     *
-     * The real nesting (checked live, both DOM shapes) is `Inventory_categoryButton` inside
-     * `Inventory_label` inside `Inventory_itemGrid`, with the item tiles as the grid's *other*
-     * direct children alongside that label — so the item grid itself is already the smallest
-     * element that owns both the button and the tiles. Only the wrapper divs *above* the grid
-     * differ: none in the old DOM (the grid is a direct child of Inventory_items), several in the
-     * new native-inventory-tabs DOM (2026-09 patch), where the grid sits inside the selected
-     * TabsComponent panel. `closest()` checks the button's ancestors including itself, so it
-     * lands on the grid in both shapes without needing to know which one is live.
-     *
-     * A descendant search from a *wrapper* div, by contrast, is wrong in the new DOM: a wrapper
-     * above the grid is also an ancestor of every sibling category's grid, so every category
-     * resolved to the same over-broad container and each category's own shouldSort/reset in turn
-     * clobbered every other category's tile order — measured live as zero tiles ending up with
-     * any order at all, since whichever category is processed last always wins.
-     * @param {Element} categoryButton - An `Inventory_categoryButton` element
-     * @returns {Element|null} The category's `Inventory_itemGrid`, or null if none is found
+     * Native-tab icon ids (from the selected tab's sprite `<use href="...#id">`) that must never
+     * sort, mapped to `false`. `item_category_equipment` is handled separately, since it is
+     * setting-gated rather than an outright never. Every id not listed here — including
+     * `inventory_all`, `favorites_tab` (a mixed set, same as every other category that isn't
+     * explicitly carved out — nothing suggests price sorting is any less useful there), and every
+     * other `item_category_*` — defaults to sort. Keyed on the id itself, never on hostname or
+     * DOM shape.
      */
-    findCategoryContainer(categoryButton) {
-        return categoryButton.closest('[class*="Inventory_itemGrid"]');
+    static NEVER_SORT_TAB_ICON_IDS = new Set(['item_category_loot']);
+
+    /**
+     * The selected native tab's icon id, if the inventory has a tab strip at all.
+     *
+     * Old DOM has no tabs, so this returns null there — harmless, since every grid in the old DOM
+     * has its own category button and never needs this fallback (see `shouldSortCategory`).
+     * @param {Element} inventoryElem - The Inventory_items element
+     * @returns {string|null} The id after the `#` in the selected tab's sprite href, or null
+     */
+    selectedTabIconId(inventoryElem) {
+        const selectedTab = inventoryElem.querySelector('[role="tab"][aria-selected="true"]');
+        const href = selectedTab?.querySelector('use')?.getAttribute('href');
+        return href?.match(/#(.+)$/)?.[1] ?? null;
+    }
+
+    /**
+     * Whether a category's tiles should be price-sorted.
+     *
+     * Prefers the category's own button text, exactly as before (`Equipment` /
+     * `Loots`) — but a single-category native tab's grid has neither an `Inventory_label` nor an
+     * `Inventory_categoryButton` at all (checked live: `Resources`, 136 tiles), so a button-driven
+     * search finds nothing for it and it never sorted. When there is no button, fall back to the
+     * selected tab's icon id instead — see `NEVER_SORT_TAB_ICON_IDS`.
+     * @param {Element|null} categoryButton - The grid's own `Inventory_categoryButton`, if any
+     * @param {string|null} selectedTabIconId - `selectedTabIconId()` for the current inventory
+     * @returns {boolean}
+     */
+    shouldSortCategory(categoryButton, selectedTabIconId) {
+        if (categoryButton) {
+            const categoryName = categoryButton.textContent.trim();
+            if (categoryName === 'Loots') return false;
+            if (categoryName === 'Equipment') return config.getSetting('invSort_sortEquipment');
+            return true;
+        }
+        if (selectedTabIconId === 'item_category_equipment') return config.getSetting('invSort_sortEquipment');
+        return !InventorySort.NEVER_SORT_TAB_ICON_IDS.has(selectedTabIconId);
     }
 
     /**
@@ -560,38 +584,29 @@ class InventorySort {
             return;
         }
 
-        // Process each category. Found structurally by its Inventory_categoryButton rather
-        // than by walking inventoryElem.children: the old DOM has category divs as direct
-        // children of Inventory_items, but the new native-inventory-tabs DOM (2026-09 patch)
-        // nests them inside the selected TabsComponent panel instead, and only that panel
-        // renders any tiles — so a plain descendant search finds exactly the categories that
-        // are actually on screen in either shape.
-        const categoryButtons = inventoryElem.querySelectorAll('[class*="Inventory_categoryButton"]');
+        // Process each category by its own Inventory_itemGrid — the grid is already the smallest
+        // container that owns a category's label, button (when it has one) and tiles, in both DOM
+        // shapes (see shouldSortCategory for why grids, not buttons: a single-category native
+        // tab's grid has no button or label at all). A plain descendant search from inventoryElem
+        // finds exactly the categories that are actually on screen, whichever shape is live: the
+        // old DOM has grids as direct children of Inventory_items, the new native-inventory-tabs
+        // DOM (2026-09 patch) nests them inside the selected TabsComponent panel instead, and only
+        // that panel renders any tiles.
+        const grids = inventoryElem.querySelectorAll('[class*="Inventory_itemGrid"]');
+        const selectedTabIconId = this.selectedTabIconId(inventoryElem);
 
-        for (const categoryButton of categoryButtons) {
-            const categoryDiv = this.findCategoryContainer(categoryButton);
-            if (!categoryDiv || !inventoryElem.contains(categoryDiv)) continue;
-
-            const categoryName = categoryButton.textContent.trim();
-
-            // Equipment category: check setting for whether to enable sorting
-            // Loots category: always disable sorting (but allow badges)
-            const isEquipmentCategory = categoryName === 'Equipment';
-            const isLootsCategory = categoryName === 'Loots';
-            const shouldSort = isLootsCategory
-                ? false
-                : isEquipmentCategory
-                  ? config.getSetting('invSort_sortEquipment')
-                  : true;
+        for (const grid of grids) {
+            const categoryButton = grid.querySelector('[class*="Inventory_categoryButton"]');
+            const shouldSort = this.shouldSortCategory(categoryButton, selectedTabIconId);
 
             // Ensure category label stays at top
-            const label = categoryDiv.querySelector('[class*="Inventory_label"]');
+            const label = grid.querySelector('[class*="Inventory_label"]');
             if (label) {
                 label.style.order = Number.MIN_SAFE_INTEGER;
             }
 
             // Get all item elements
-            const itemElems = categoryDiv.querySelectorAll('[class*="Item_itemContainer"]');
+            const itemElems = grid.querySelectorAll('[class*="Item_itemContainer"]');
 
             if (shouldSort && this.currentMode !== 'none') {
                 // Sort by price (prices already calculated by badge manager)
