@@ -241,3 +241,13 @@ describe('snapPriceTier under the September 2026 market patch', () => {
         expect(snapPriceTier(1234, 'down', 5)).toBe(1230);
     });
 });
+
+describe('snapPriceTier with off-grid (pre-patch) prices', () => {
+    test('snaps an old-ladder price onto the new bins', () => {
+        gates.september = true;
+        expect(snapPriceTier(1005, 'down')).toBe(1004);
+        expect(snapPriceTier(1005, 'up')).toBe(1008);
+        expect(snapPriceTier(44700, 'down')).toBe(44640);
+        expect(snapPriceTier(44700, 'up')).toBe(44800);
+    });
+});

@@ -25,10 +25,10 @@
  *
  * The September 2026 market patch replaces the ladder with finer bins and a
  * 5x step for enhanced items (see {@link priceIncrement}); it is staged per
- * server by {@link isSeptember2026MarketPatchLive}. Under that patch the order
- * book also carries the band itself (`priceBandMins`/`priceBandMaxs` per level),
- * which this module does not read — the band here is still derived from the
- * value, now on the new ladder.
+ * server by {@link isSeptember2026MarketPatchLive}. Under that patch every pushed
+ * order book also carries the game's own band (`priceBandMins`/`priceBandMaxs`
+ * per level); while one is under an hour old it is used as is, and the band is
+ * computed from the value only when none is at hand.
  *
  * The map is reached through the game's own `localStorageUtil.getMarketItemValues()`
  * (via dataManager), which decompresses the localStorage blob for us — reading it
@@ -224,32 +224,118 @@ export function nextPriceDown(price, enhancementLevel = 0) {
 
 /**
  * The tradable range implied by a market value, as the game computes it:
- * ±10%, snapped outward to the increment ladder, then one increment wider on
- * each side. The increment is taken from the raw ±10% figure before snapping —
- * mirroring `getBinnedPrice`, which sizes the step from its input.
+ * ±10%, snapped outward to the increment ladder, then one bin wider on each side.
+ *
+ * The outward snap sizes its step from the raw ±10% figure, as `getBinnedPrice`
+ * sizes the step from its input, and keeps the float product (460 × 1.1 lands a
+ * hair above 506 and snaps a step further out, which the game does too).
+ *
+ * The widening step differs by server. Under the September 2026 market patch it
+ * is one bin from the snapped edge, sized by the gap of the price it reaches: an
+ * enhanced min snapped to 300,000 widens to 295,000 by the 5,000 gap below
+ * 300,000, not by the 6,000 gap at the raw figure. The min is also floored at the
+ * item's vendor sell price. Both were measured against the game's own
+ * `priceBandMins`/`priceBandMaxs` on the test server (2026-09-25). On live the
+ * earlier rule stands — one step of the raw figure's size, no vendor floor — as
+ * verified there on 8/18/2026; nothing measured on live says otherwise.
  * @param {number|null} value - Market value
  * @param {number} [enhancementLevel=0] - Enhancement level the value is for
+ * @param {number} [vendorPrice=0] - The item's shop sell price; floors the min on the patched server
  * @returns {{min:number, max:number}|null}
  */
-export function bandFromValue(value, enhancementLevel = 0) {
+export function bandFromValue(value, enhancementLevel = 0, vendorPrice = 0) {
     if (!(value > 0)) return null;
     const rawMax = value * BAND_FACTOR;
     const maxStep = priceIncrement(rawMax, enhancementLevel);
+    const snappedMax = Math.ceil(rawMax / maxStep) * maxStep;
     const rawMin = value / BAND_FACTOR;
     const minStep = priceIncrement(rawMin, enhancementLevel);
-    return {
-        min: Math.max(0, Math.floor(rawMin / minStep) * minStep - minStep),
-        max: Math.ceil(rawMax / maxStep) * maxStep + maxStep,
-    };
+    const snappedMin = Math.floor(rawMin / minStep) * minStep;
+    if (!isSeptember2026MarketPatchLive()) {
+        return { min: Math.max(0, snappedMin - minStep), max: snappedMax + maxStep };
+    }
+    const below = snappedMin - 1;
+    let min = below > 0 ? below - (below % priceIncrement(below, enhancementLevel)) : 0;
+    if (vendorPrice > 0 && min < vendorPrice) min = vendorPrice;
+    const max = Math.max(min, snappedMax + priceIncrement(snappedMax, enhancementLevel));
+    return { min, max };
 }
 
 /**
- * The tradable range of one item at one level, memoised per value map.
+ * The game's own bands from pushed order books: `${itemHrid}:${level}` → bounds
+ * and arrival time. Preferred over a computed band while fresh.
+ * @type {Map<string, {min:number, max:number, at:number}>}
+ */
+let wireBands = new Map();
+
+/**
+ * How long a pushed band is trusted: the game recalibrates bands hourly
+ * (`recalibrationIntervalMinutes: 60`), so an older one may have moved.
+ */
+const WIRE_BAND_TTL_MS = 60 * 60_000;
+
+/**
+ * Record the bands a `market_item_order_books_updated` message carries.
+ *
+ * The patched server sends `priceBandMins`/`priceBandMaxs` keyed by enhancement
+ * level (as a string) beside the order books. A level whose bounds are missing,
+ * non-positive or inverted is skipped rather than recorded.
+ * @param {Object} data - `{ marketItemOrderBooks: { itemHrid, priceBandMins, priceBandMaxs } }`
+ * @param {number} [now=Date.now()] - Arrival time
+ * @returns {number} How many levels were recorded
+ */
+function applyOrderBookBands(data, now = Date.now()) {
+    const books = data?.marketItemOrderBooks;
+    const itemHrid = books?.itemHrid;
+    const mins = books?.priceBandMins;
+    const maxs = books?.priceBandMaxs;
+    if (typeof itemHrid !== 'string' || !mins || typeof mins !== 'object' || !maxs || typeof maxs !== 'object') {
+        return 0;
+    }
+    let recorded = 0;
+    for (const [level, min] of Object.entries(mins)) {
+        const max = maxs[level];
+        if (!(typeof min === 'number' && min > 0 && typeof max === 'number' && max >= min)) continue;
+        wireBands.set(`${itemHrid}:${Number(level)}`, { min, max, at: now });
+        recorded++;
+    }
+    return recorded;
+}
+
+/**
+ * The game's pushed band for one item and level, while fresh.
+ * @param {string} itemHrid - Item HRID
+ * @param {number} enhancementLevel - Enhancement level
+ * @param {number} [now=Date.now()] - Current time
+ * @returns {{min:number, max:number}|null}
+ */
+function wireBandFor(itemHrid, enhancementLevel, now = Date.now()) {
+    const band = wireBands.get(`${itemHrid}:${enhancementLevel}`);
+    if (!band || now - band.at > WIRE_BAND_TTL_MS) return null;
+    return { min: band.min, max: band.max };
+}
+
+/**
+ * The item's vendor sell price, or 0 when the item data is not at hand.
+ * @param {string} itemHrid - Item HRID
+ * @returns {number}
+ */
+function vendorPriceOf(itemHrid) {
+    if (typeof dataManager?.getItemDetails !== 'function') return 0;
+    const sellPrice = dataManager.getItemDetails(itemHrid)?.sellPrice;
+    return typeof sellPrice === 'number' && sellPrice > 0 ? sellPrice : 0;
+}
+
+/**
+ * The tradable range of one item at one level: the game's own pushed band while
+ * fresh, else the band computed from the value (memoised per value map).
  * @param {string} itemHrid - Item HRID
  * @param {number} enhancementLevel - Enhancement level
  * @returns {{min:number, max:number}|null}
  */
 function bandFor(itemHrid, enhancementLevel) {
+    const wire = wireBandFor(itemHrid, enhancementLevel);
+    if (wire) return wire;
     let perLevel = bandCache.get(itemHrid);
     if (perLevel === undefined) {
         perLevel = [];
@@ -257,7 +343,7 @@ function bandFor(itemHrid, enhancementLevel) {
     }
     let band = perLevel[enhancementLevel];
     if (band === undefined) {
-        band = bandFromValue(marketValueFor(itemHrid, enhancementLevel), enhancementLevel);
+        band = bandFromValue(marketValueFor(itemHrid, enhancementLevel), enhancementLevel, vendorPriceOf(itemHrid));
         perLevel[enhancementLevel] = band;
     }
     return band;
@@ -270,7 +356,8 @@ function bandFor(itemHrid, enhancementLevel) {
  * outside the band is pulled to the nearest edge (as far as an order could
  * actually reach); a missing price stays missing — this never invents a
  * price, so callers that treat null as "no market" keep that meaning.
- * Pass-through until the patch is live or when the item has no official value.
+ * Pass-through until the patch is live or when the item has no band (no pushed
+ * band and no official value).
  *
  * @param {number|null} price - A raw ask or bid
  * @param {string} itemHrid - Item HRID
@@ -299,11 +386,13 @@ export function clampToBand(price, itemHrid, enhancementLevel = 0) {
 /**
  * Reconcile a raw order-book ask/bid pair against the official value.
  *
- * A pass-through until the patch is live or when the item has no official value.
- * Otherwise each present side is clamped into the tradable range (a stale price
+ * A pass-through until the patch is live or when the item has neither an official
+ * value nor a pushed band. Otherwise each present side is clamped into the tradable range (a stale price
  * parked outside it is pulled to the nearest edge, which is as far as an order
  * could actually reach), and a missing side is filled with the value itself — so
- * an item with an empty book is still priced the way the game prices it.
+ * an item with an empty book is still priced the way the game prices it. With a
+ * pushed band but no value, present sides are clamped and a missing side stays
+ * missing.
  *
  * @param {number|null} ask - Raw best ask
  * @param {number|null} bid - Raw best bid
@@ -326,16 +415,19 @@ export function reconcileBook(ask, bid, itemHrid, enhancementLevel = 0) {
         return { ask, bid, askSource: sourceOf(ask), bidSource: sourceOf(bid) };
     }
     const value = marketValueFor(itemHrid, enhancementLevel);
-    if (value === null) return { ask, bid, askSource: sourceOf(ask), bidSource: sourceOf(bid) };
     const band = bandFor(itemHrid, enhancementLevel);
+    if (!band) return { ask, bid, askSource: sourceOf(ask), bidSource: sourceOf(bid) };
     const clamp = (x) => (typeof x === 'number' && x > 0 ? Math.min(Math.max(x, band.min), band.max) : null);
     const askIsBook = typeof ask === 'number' && ask > 0;
     const bidIsBook = typeof bid === 'number' && bid > 0;
+    // A pushed band can arrive for an item with no value in the map: clamp what
+    // the book has, but there is nothing to fill a missing side with
+    const sourceFor = (isBook) => (isBook ? 'book' : value === null ? null : 'value');
     return {
         ask: askIsBook ? clamp(ask) : value,
         bid: bidIsBook ? clamp(bid) : value,
-        askSource: askIsBook ? 'book' : 'value',
-        bidSource: bidIsBook ? 'book' : 'value',
+        askSource: sourceFor(askIsBook),
+        bidSource: sourceFor(bidIsBook),
     };
 }
 
@@ -386,11 +478,13 @@ export function applyMarketValuesMessage(payload) {
 // methods its own subject calls from failing at import time.
 if (typeof dataManager?.on === 'function') {
     dataManager.on('market_item_values_updated', (payload) => applyMarketValuesMessage(payload));
+    dataManager.on('market_item_order_books_updated', (data) => applyOrderBookBands(data));
 }
 
 /** Reset the cache and refresh throttle. Tests only. */
 export function _resetMarketValues() {
     cache = { version: null, values: null };
     bandCache = new Map();
+    wireBands = new Map();
     lastRefresh = 0;
 }
