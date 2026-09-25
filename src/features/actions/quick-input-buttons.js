@@ -1209,19 +1209,27 @@ class QuickInputButtons {
             // slot) is billed once here — the artisan-reduced input count plus the unreduced +1
             // for the upgrade slot — rather than as two independent constraints against the same
             // stock, which let the less-restrictive of the two hide the real per-action cost.
+            // Only +0 copies in the bag are spendable: the character item list also carries
+            // equipped gear, and an enhanced copy is never drawn as an input or upgrade.
+            const spendableCount = (itemHrid) =>
+                inventory.reduce(
+                    (total, item) =>
+                        item.itemHrid === itemHrid &&
+                        item.itemLocationHrid === '/item_locations/inventory' &&
+                        !(Number(item.enhancementLevel) > 0)
+                            ? total + (item.count || 0)
+                            : total,
+                    0
+                );
+
             let upgradeAccountedFor = false;
             if (actionDetails.inputItems && actionDetails.inputItems.length > 0) {
                 for (const input of actionDetails.inputItems) {
-                    // Find ALL items with this HRID (different enhancement levels stack separately)
-                    const allMatchingItems = inventory.filter((item) => item.itemHrid === input.itemHrid);
-
-                    // Sum up counts across all enhancement levels
-                    const availableAmount = allMatchingItems.reduce((total, item) => total + (item.count || 0), 0);
+                    const availableAmount = spendableCount(input.itemHrid);
                     const baseRequirement = input.count;
 
-                    // Apply Artisan reduction
-                    // Materials are consumed PER ACTION (including instant repeats)
-                    // Efficiency gives bonus actions for FREE (no material cost)
+                    // Every completion, efficiency repeats included, consumes a full set of
+                    // inputs, and the Max field counts completions
                     let materialsPerAction = baseRequirement * (1 - artisanBonus);
                     if (actionDetails.upgradeItemHrid === input.itemHrid) {
                         materialsPerAction += 1;
@@ -1240,15 +1248,8 @@ class QuickInputButtons {
             // Check upgrade item (e.g., Crimson Staff → Azure Staff) — skipped when it was
             // already folded into an input's per-action cost above.
             if (actionDetails.upgradeItemHrid && !upgradeAccountedFor) {
-                // Upgrade recipes require base item (enhancement level 0)
-                const upgradeItem = inventory.find(
-                    (item) => item.itemHrid === actionDetails.upgradeItemHrid && item.enhancementLevel === 0
-                );
-                const availableAmount = upgradeItem?.count || 0;
-
-                // Upgrade items are NOT affected by Artisan Tea (only regular inputItems are)
-                // Materials are consumed PER ACTION (including instant repeats)
-                // Efficiency gives bonus actions for FREE (no material cost)
+                // The +0 stack; upgrade items are NOT affected by Artisan Tea
+                const availableAmount = spendableCount(actionDetails.upgradeItemHrid);
                 const possibleActions = affordableActions(availableAmount, 1);
                 maxActions = Math.min(maxActions, possibleActions);
             }
