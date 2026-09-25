@@ -19,6 +19,7 @@ const mocks = vi.hoisted(() => ({
     chainTimes: {},
     skills: null,
     efficiencyContext: {},
+    buyMode: 'ask',
 }));
 
 vi.mock('../../core/config.js', () => ({
@@ -37,12 +38,16 @@ vi.mock('../../api/marketplace.js', () => ({ default: { getPrice: () => null } }
 vi.mock('../../utils/efficiency.js', () => ({ getActionEfficiencyContext: () => mocks.efficiencyContext }));
 vi.mock('../../utils/bonus-revenue-calculator.js', () => ({ calculateBonusRevenue: () => null }));
 vi.mock('../enhancement/tooltip-enhancement.js', () => ({
-    getProductionCost: (hrid) => mocks.productionCosts[hrid] ?? 0,
+    getProductionCost: (hrid, mode) => {
+        const cost = mocks.productionCosts[hrid];
+        return (typeof cost === 'object' ? cost[mode] : cost) ?? 0;
+    },
     getProductionChainTime: (hrid) => mocks.chainTimes[hrid] ?? 0,
 }));
 vi.mock('../../utils/market-data.js', () => ({
     getItemPrice: (hrid) => mocks.marketPrices[hrid] ?? null,
     getItemPrices: (hrid) => mocks.itemPrices?.[hrid] ?? null,
+    getPricingMode: (context, side) => (side === 'buy' ? mocks.buyMode : 'ask'),
 }));
 vi.mock('../../utils/profit-constants.js', () => ({ MARKET_TAX: 0.02 }));
 vi.mock('../../utils/profit-helpers.js', () => ({
@@ -72,6 +77,7 @@ beforeEach(() => {
     mocks.chainTimes = {};
     mocks.skills = [];
     mocks.efficiencyContext = {};
+    mocks.buyMode = 'ask';
     profitCalculator._itemDetailMap = null;
     profitCalculator._actionDetailMap = null;
     profitCalculator._communityBuffMap = null;
@@ -434,6 +440,30 @@ describe('calculateProfit — upgrade-item crafting chain time', () => {
 
         expect(result.actionTime).toBeCloseTo(20, 6);
     });
+
+    test('guild action speed shortens the crafting chain like it shortens the action', async () => {
+        upgradeRecipe();
+        mocks.efficiencyContext.guildSpeedBonus = 0.5;
+
+        const result = await profitCalculator.calculateProfit('/items/upgraded');
+
+        // 20s action (already sped up in effCtx) + 30s chain / 1.5
+        expect(result.actionTime).toBeCloseTo(40, 6);
+    });
+
+    test('a bid-side buy mode decides craft-vs-buy on the bid-priced craft cost', async () => {
+        upgradeRecipe();
+        mocks.buyMode = 'bid';
+        mocks.resolvedPrices['/items/rune'] = 1000; // bid-side market price
+        mocks.productionCosts['/items/rune'] = { ask: 1050, bid: 850 };
+
+        const result = await profitCalculator.calculateProfit('/items/upgraded');
+
+        // Crafting at bid (850) beats buying at bid (1000): chain time charged, cost 850
+        expect(result.actionTime).toBeCloseTo(50, 6);
+        expect(result.materialCosts[0].isCrafted).toBe(true);
+        expect(result.materialCosts[0].askPrice).toBe(850);
+    });
 });
 
 describe('calculateProfit — itemPrice reconciliation', () => {
@@ -503,6 +533,18 @@ describe('calculateProfit — itemPrice reconciliation', () => {
         const result = await profitCalculator.calculateProfit('/items/cheese');
 
         expect(result.itemPrice).toEqual({ ask: 120, bid: 110, average: 115, askEstimated: true, bidEstimated: true });
+    });
+
+    test('material cost per unit spreads the inputs over the gourmet copies too', async () => {
+        simpleRecipe();
+        mocks.efficiencyContext.gourmetBonus = 0.25;
+        mocks.initData.actionDetailMap['/actions/cheesesmithing/cheese'].inputItems[0].count = 10;
+
+        const result = await profitCalculator.calculateProfit('/items/cheese');
+
+        // 10 milk × 10 = 100 per action, 1.25 cheese per action
+        expect(result.costPerItem).toBeCloseTo(80, 6);
+        expect(result.totalItemsPerHour).toBeCloseTo(360 * 1.25, 6);
     });
 
     test('falls back to {ask: 0, bid: 0} when even the reconciled lookup has nothing', async () => {

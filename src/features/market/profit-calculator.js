@@ -9,7 +9,7 @@ import { getCommunityProductionEfficiency } from '../../utils/community-buffs.js
 import { getActionEfficiencyContext } from '../../utils/efficiency.js';
 import { calculateBonusRevenue } from '../../utils/bonus-revenue-calculator.js';
 import { getProductionCost, getProductionChainTime } from '../enhancement/tooltip-enhancement.js';
-import { getItemPrice, getItemPrices } from '../../utils/market-data.js';
+import { getItemPrice, getItemPrices, getPricingMode } from '../../utils/market-data.js';
 import { MARKET_TAX } from '../../utils/profit-constants.js';
 import {
     calculateActionsPerHour,
@@ -138,6 +138,7 @@ class ProfitCalculator {
             baseRequirement,
             speedBonus: equipmentSpeedBonus,
             personalSpeedBonus,
+            guildSpeedBonus = 0,
             efficiencyBreakdown,
             efficiencyMultiplier,
         } = effCtx;
@@ -154,9 +155,12 @@ class ProfitCalculator {
             const upgradeChainTime = getProductionChainTime(actionDetails.upgradeItemHrid);
             if (upgradeChainTime > 0) {
                 const resolved = resolveItemPrice(actionDetails.upgradeItemHrid, { context: 'profit', side: 'buy' });
-                const craftCost = getProductionCost(actionDetails.upgradeItemHrid, 'ask');
+                // Same craft-vs-buy decision as calculateMaterialCosts, so the chain time is
+                // charged exactly when the upgrade item is costed as crafted
+                const craftCost = getProductionCost(actionDetails.upgradeItemHrid, getPricingMode('profit', 'buy'));
                 if (craftCost > 0 && (!(resolved.price > 0) || craftCost < resolved.price)) {
-                    const chainTimeWithSpeed = upgradeChainTime / (1 + equipmentSpeedBonus + personalSpeedBonus);
+                    const chainTimeWithSpeed =
+                        upgradeChainTime / (1 + equipmentSpeedBonus + personalSpeedBonus + guildSpeedBonus);
                     effectiveActionTime += chainTimeWithSpeed;
                 }
             }
@@ -208,8 +212,9 @@ class ProfitCalculator {
         // Apply market tax on sales
         const priceAfterTax = calculatePriceAfterTax(outputPrice);
 
-        // Cost per item (without efficiency scaling)
-        const costPerItem = totalMaterialCost / outputAmount;
+        // Material cost per unit made. Gourmet copies come out of the same inputs, so they
+        // divide the cost; efficiency does not (each repeat consumes its own inputs).
+        const costPerItem = totalMaterialCost / (outputAmount * (1 + gourmetBonus));
 
         // Material costs per hour (accounting for efficiency multiplier)
         // Efficiency repeats the action, consuming materials each time
@@ -471,7 +476,11 @@ class ProfitCalculator {
                     const craftEnabled =
                         config.getSetting('profitCalc_craftUpgradeItems') &&
                         !config.getSetting('itemTooltip_detailedProfitFlat');
-                    const craftCost = craftEnabled ? getProductionCost(actionDetails.upgradeItemHrid, 'ask') : 0;
+                    // Inputs of the craft are bought on the same side the market price above is
+                    // quoted on, or a bid-side mode compares a bid purchase with an ask craft
+                    const craftCost = craftEnabled
+                        ? getProductionCost(actionDetails.upgradeItemHrid, getPricingMode('profit', 'buy'))
+                        : 0;
                     isCrafted = craftCost > 0 && (!(resolved.price > 0) || craftCost < resolved.price);
                     if (isCrafted) {
                         resolved = { price: craftCost, custom: false, missing: false, estimated: true };
