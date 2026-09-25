@@ -556,12 +556,32 @@ class InventorySort {
      * @param {Element} inventoryElem - The inventory element this refresh is for
      */
     async _refreshPricesInBackground(inventoryElem) {
-        try {
-            await withBoundedWait(inventoryBadgeManager.renderAllBadges(), this.BADGE_RENDER_TIMEOUT_MS);
+        const reapply = () => {
             // Only reapply if nothing else moved on in the meantime: a different inventory is now
             // showing, or another pass is already in flight and will see the fresh values itself.
             if (this.currentInventoryElem === inventoryElem && !this.isCalculating) {
                 this._applyCategoryOrderPass(inventoryElem);
+            }
+        };
+        try {
+            const render = Promise.resolve(inventoryBadgeManager.renderAllBadges());
+            const finished = (async () => {
+                await render;
+                return true;
+            })();
+            const settled = await withBoundedWait(finished, this.BADGE_RENDER_TIMEOUT_MS);
+            reapply();
+            // The bound only releases this task; a render that legitimately ran past it is still
+            // filling in values, so the order is corrected again when it does finish
+            if (settled !== true) {
+                (async () => {
+                    try {
+                        await render;
+                        reapply();
+                    } catch (error) {
+                        console.error('[InventorySort] Late price refresh failed:', error);
+                    }
+                })();
             }
         } catch (error) {
             console.error('[InventorySort] Background price refresh failed:', error);
