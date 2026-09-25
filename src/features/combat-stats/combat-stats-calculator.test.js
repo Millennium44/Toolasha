@@ -9,7 +9,7 @@
  * with the numbers.
  */
 
-import { describe, test, expect, beforeEach, vi } from 'vitest';
+import { describe, test, expect, beforeEach, afterEach, vi } from 'vitest';
 
 const keys = vi.hoisted(() => ({ mode: 'ask', basis: 'market', costs: {}, calls: [] }));
 const ev = vi.hoisted(() => ({ value: 0 }));
@@ -44,6 +44,15 @@ vi.mock('../../api/marketplace.js', () => ({ default: { getPrice: (hrid) => mark
 const salesTax = vi.hoisted(() => ({ netted: false }));
 vi.mock('./sales-tax-view.js', () => ({ salesTaxNetted: () => salesTax.netted }));
 
+// Iron Cow valuation is not what most tests are about; default both answers to
+// "not an Iron Cow character, no book price" (the real module's answer with no
+// character loaded) and let the sum-equivalence test below opt one item in.
+const ironCow = vi.hoisted(() => ({ book: {}, isCharacter: false }));
+vi.mock('../../utils/ironcow-valuation.js', () => ({
+    ironCowBook: (itemHrid) => ironCow.book[itemHrid] || null,
+    isIronCowCharacter: () => ironCow.isCharacter,
+}));
+
 vi.mock('../../core/data-manager.js', () => ({
     default: { getItemDetails: (hrid) => ({ name: hrid, isOpenable: hrid.includes('chest') }) },
 }));
@@ -71,6 +80,7 @@ const {
     calculateKeyCosts,
     calculatePlayerStats,
     calculateIncome,
+    calculateIncomeItems,
     calculateIncomeBreakdown,
     describeLuckAdjustment,
     calculateConsumableCosts,
@@ -114,6 +124,8 @@ beforeEach(() => {
     ev.value = 0;
     luck.enabled = false;
     luck.measured = null;
+    ironCow.book = {};
+    ironCow.isCharacter = false;
 });
 
 describe('calculateKeyCosts', () => {
@@ -444,5 +456,60 @@ describe('income and the market sale tax', () => {
         const income = calculateIncome(loot('/items/coin', 5000));
         expect(income.ask).toBe(5000);
         expect(income.bid).toBe(5000);
+    });
+});
+
+describe('calculateIncomeItems rows sum to calculateIncome', () => {
+    // `calculatePlayerStats` now builds its `income` total by summing these
+    // rows instead of also calling `calculateIncome` — this pins that the two
+    // can never drift apart, across the pricing rules a lootMap can mix:
+    // coin, an openable priced by measured luck, an Iron Cow character's own
+    // valuation (untaxed), and an ordinary taxed market item.
+    const IRON_COW_ITEM = '/items/iron_cow_only_item';
+
+    const mixedLoot = () => ({
+        coin: { itemHrid: '/items/coin', count: 12345 },
+        chest: { itemHrid: CHIMERICAL_CHEST, count: 2 },
+        ironCowItem: { itemHrid: IRON_COW_ITEM, count: 3 },
+        ordinary: { itemHrid: '/items/cheese', count: 7 },
+    });
+
+    const sumRows = (items, side) => items.reduce((sum, item) => sum + item.totalValue[side], 0);
+
+    beforeEach(() => {
+        ev.value = 100000;
+        luck.enabled = true;
+        luck.measured = { ratio: 0.926, opened: 5490 };
+        ironCow.book[IRON_COW_ITEM] = { ask: 400, bid: 400 };
+        market.prices['/items/cheese'] = { ask: 1000, bid: 900 };
+    });
+
+    afterEach(() => {
+        salesTax.netted = false;
+    });
+
+    test('with the sale tax off', () => {
+        salesTax.netted = false;
+
+        const totals = calculateIncome(mixedLoot());
+        const items = calculateIncomeItems(mixedLoot());
+
+        expect(sumRows(items, 'ask')).toBeCloseTo(totals.ask, 6);
+        expect(sumRows(items, 'bid')).toBeCloseTo(totals.bid, 6);
+    });
+
+    test('with the sale tax on — the Iron Cow item stays untaxed among taxed neighbors', () => {
+        salesTax.netted = true;
+
+        const totals = calculateIncome(mixedLoot());
+        const items = calculateIncomeItems(mixedLoot());
+
+        expect(sumRows(items, 'ask')).toBeCloseTo(totals.ask, 6);
+        expect(sumRows(items, 'bid')).toBeCloseTo(totals.bid, 6);
+
+        // Sanity check that the Iron Cow row really did dodge the tax, so the
+        // sum-equivalence above is not accidentally comparing two zeroes
+        const ironCowRow = items.find((item) => item.itemHrid === IRON_COW_ITEM);
+        expect(ironCowRow.totalValue.ask).toBe(400 * 3);
     });
 });

@@ -462,8 +462,19 @@ export function formatLootList(lootMap) {
  * @returns {Object} Calculated statistics
  */
 export function calculatePlayerStats(playerData, durationSeconds = null) {
-    // Calculate income
-    const income = calculateIncome(playerData.loot);
+    // Every drop and coin, with a unit and total value at both prices — the
+    // itemized form of `income` below, for a per-character breakdown display
+    const incomeItems = calculateIncomeItems(playerData.loot);
+
+    // Income is the itemized rows summed rather than a second call to
+    // `calculateIncome` over the same lootMap: both walk the same entries
+    // through the same `valueOfLoot`, so summing here is exactly `calculateIncome`'s
+    // total and a card's headline figure can never drift from what its own
+    // breakdown rows add up to.
+    const income = incomeItems.reduce(
+        (sum, item) => ({ ask: sum.ask + item.totalValue.ask, bid: sum.bid + item.totalValue.bid }),
+        { ask: 0, bid: 0 }
+    );
     const incomeBreakdownData = calculateIncomeBreakdown(playerData.loot);
 
     // Every chest whose EV was scaled by the player's measured luck, so each
@@ -522,10 +533,6 @@ export function calculatePlayerStats(playerData, durationSeconds = null) {
 
     // Format loot list
     const lootList = formatLootList(playerData.loot);
-
-    // Every drop and coin, with a unit and total value at both prices — the
-    // itemized form of `income` above, for a per-character breakdown display
-    const incomeItems = calculateIncomeItems(playerData.loot);
 
     return {
         name: playerData.name,
