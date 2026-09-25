@@ -10,7 +10,14 @@
 import { describe, test, expect, vi, beforeEach } from 'vitest';
 import { MARKET_TAX } from './profit-constants.js';
 
-const state = vi.hoisted(() => ({ gameData: null, skills: [], houseRooms: new Map(), actions: [] }));
+const state = vi.hoisted(() => ({
+    gameData: null,
+    skills: [],
+    houseRooms: new Map(),
+    actions: [],
+    personalBuffs: {},
+    characterData: {},
+}));
 const prices = vi.hoisted(() => ({ byHrid: {}, estimated: new Set() }));
 
 vi.mock('../core/data-manager.js', () => ({
@@ -22,8 +29,10 @@ vi.mock('../core/data-manager.js', () => ({
         getCurrentActions: () => state.actions,
         getCommunityBuffLevel: () => 0,
         getAchievementBuffFlatBoost: () => 0,
-        getPersonalBuffFlatBoost: () => 0,
-        characterData: {},
+        getPersonalBuffFlatBoost: (type, buff) => state.personalBuffs[`${type}|${buff}`] || 0,
+        get characterData() {
+            return state.characterData;
+        },
     },
 }));
 
@@ -89,6 +98,8 @@ beforeEach(() => {
     state.skills = [];
     state.houseRooms = new Map();
     state.actions = [];
+    state.personalBuffs = {};
+    state.characterData = {};
     prices.byHrid = {};
     prices.estimated = new Set();
     alchemyCalc.decompose = null;
@@ -1050,5 +1061,43 @@ describe('calculateSkillPerformance — the house override', () => {
         });
 
         expect(one.xpPerHour).toBeGreaterThan(none.xpPerHour);
+    });
+});
+
+describe('calculateSkillPerformance — seal and guild buffs', () => {
+    // The action panel (getActionEfficiencyContext) counts personal (seal) and guild
+    // efficiency and action speed; the optimizer scored the same action without them.
+    beforeEach(() => {
+        state.gameData.itemDetailMap['/items/egg'] = {};
+        state.gameData.itemDetailMap['/items/omelet'] = {};
+        state.gameData.actionDetailMap = {
+            '/actions/cooking/omelet': {
+                type: '/action_types/cooking',
+                name: 'Omelet',
+                levelRequirement: { level: 1 },
+                baseTimeCost: 10e9,
+                experienceGain: { skillHrid: '/skills/cooking', value: 10 },
+                inputItems: [{ itemHrid: '/items/egg', count: 1 }],
+                outputItems: [{ itemHrid: '/items/omelet', count: 1 }],
+            },
+        };
+        state.skills = [{ skillHrid: '/skills/cooking', level: 1 }];
+        prices.byHrid = { '/items/egg': 100, '/items/omelet': 300 };
+    });
+
+    test('a production score counts seal efficiency and guild action speed', () => {
+        state.personalBuffs['/action_types/cooking|/buff_types/efficiency'] = 0.1;
+        state.characterData = {
+            guildActionTypeBuffsMap: {
+                '/action_types/cooking': [{ typeHrid: '/buff_types/action_speed', flatBoost: 0.25 }],
+            },
+        };
+
+        const result = calculateSkillPerformance('cooking', new Map(), [], 1);
+
+        // 10s / 1.25 = 8s → 450 actions/h, × 1.1 efficiency = 495 completions/h
+        const expected = 495 * 300 * (1 - MARKET_TAX) - 495 * 100;
+        expect(result.goldPerHour).toBeCloseTo(expected, 6);
+        expect(result.xpPerHour).toBeCloseTo(495 * 10, 6);
     });
 });

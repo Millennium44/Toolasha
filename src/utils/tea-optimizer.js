@@ -289,6 +289,8 @@ function calculateXpPerHour(actionDetails, buffs, playerLevel, otherEfficiency, 
         teaEfficiency: buffs.efficiency,
         communityEfficiency: otherEfficiency.community || 0,
         achievementEfficiency: otherEfficiency.achievement || 0,
+        personalEfficiency: otherEfficiency.personal || 0,
+        guildEfficiency: otherEfficiency.guild || 0,
     });
 
     const totalEfficiency = efficiencyData.totalEfficiency;
@@ -296,7 +298,13 @@ function calculateXpPerHour(actionDetails, buffs, playerLevel, otherEfficiency, 
 
     // Calculate actions per hour with equipment speed bonus
     const baseTime = (actionDetails.baseTimeCost || 3e9) / 1e9;
-    const actionTime = baseTime / (1 + equipmentSpeedBonus + (otherEfficiency.houseSpeed || 0));
+    const actionTime =
+        baseTime /
+        (1 +
+            equipmentSpeedBonus +
+            (otherEfficiency.houseSpeed || 0) +
+            (otherEfficiency.personalSpeed || 0) +
+            (otherEfficiency.guildSpeed || 0));
     const baseActionsPerHour = calculateActionsPerHour(actionTime);
     const actionsPerHour = calculateEffectiveActionsPerHour(baseActionsPerHour, efficiencyMultiplier);
 
@@ -351,6 +359,8 @@ function calculateGatheringGoldPerHour(actionDetails, buffs, playerLevel, otherE
         teaEfficiency: buffs.efficiency,
         communityEfficiency: otherEfficiency.community || 0,
         achievementEfficiency: otherEfficiency.achievement || 0,
+        personalEfficiency: otherEfficiency.personal || 0,
+        guildEfficiency: otherEfficiency.guild || 0,
     });
 
     const totalEfficiency = efficiencyData.totalEfficiency;
@@ -358,7 +368,13 @@ function calculateGatheringGoldPerHour(actionDetails, buffs, playerLevel, otherE
 
     // Calculate actions per hour (with speed bonus, WITHOUT efficiency - efficiency applied to outputs)
     const baseTime = (actionDetails.baseTimeCost || 3e9) / 1e9;
-    const actionTime = baseTime / (1 + equipmentSpeedBonus + (otherEfficiency.houseSpeed || 0));
+    const actionTime =
+        baseTime /
+        (1 +
+            equipmentSpeedBonus +
+            (otherEfficiency.houseSpeed || 0) +
+            (otherEfficiency.personalSpeed || 0) +
+            (otherEfficiency.guildSpeed || 0));
     const actionsPerHour = calculateActionsPerHour(actionTime);
 
     // Calculate revenue from drops
@@ -457,6 +473,8 @@ function calculateProductionGoldPerHour(actionDetails, buffs, playerLevel, other
         teaEfficiency: buffs.efficiency,
         communityEfficiency: otherEfficiency.community || 0,
         achievementEfficiency: otherEfficiency.achievement || 0,
+        personalEfficiency: otherEfficiency.personal || 0,
+        guildEfficiency: otherEfficiency.guild || 0,
     });
 
     const totalEfficiency = efficiencyData.totalEfficiency;
@@ -464,7 +482,13 @@ function calculateProductionGoldPerHour(actionDetails, buffs, playerLevel, other
 
     // Calculate actions per hour (with speed bonus, WITHOUT efficiency - efficiency applied to outputs)
     const baseTime = (actionDetails.baseTimeCost || 3e9) / 1e9;
-    const actionTime = baseTime / (1 + equipmentSpeedBonus + (otherEfficiency.houseSpeed || 0));
+    const actionTime =
+        baseTime /
+        (1 +
+            equipmentSpeedBonus +
+            (otherEfficiency.houseSpeed || 0) +
+            (otherEfficiency.personalSpeed || 0) +
+            (otherEfficiency.guildSpeed || 0));
     const actionsPerHour = calculateActionsPerHour(actionTime);
 
     // Calculate input costs (with artisan reduction for regular inputs)
@@ -695,11 +719,19 @@ function calculateAlchemyXpPerHour(alchemyContext, buffs, playerLevel, otherEffi
         teaEfficiency: buffs.efficiency,
         communityEfficiency: otherEfficiency.community || 0,
         achievementEfficiency: otherEfficiency.achievement || 0,
+        personalEfficiency: otherEfficiency.personal || 0,
+        guildEfficiency: otherEfficiency.guild || 0,
     });
 
     const efficiencyMultiplier = calculateEfficiencyMultiplier(efficiencyData.totalEfficiency);
     const baseTime = (actionDetails.baseTimeCost || 20e9) / 1e9;
-    const actionTime = baseTime / (1 + equipmentSpeedBonus + (otherEfficiency.houseSpeed || 0));
+    const actionTime =
+        baseTime /
+        (1 +
+            equipmentSpeedBonus +
+            (otherEfficiency.houseSpeed || 0) +
+            (otherEfficiency.personalSpeed || 0) +
+            (otherEfficiency.guildSpeed || 0));
     const baseActionsPerHour = calculateActionsPerHour(actionTime);
     const actionsPerHour = calculateEffectiveActionsPerHour(baseActionsPerHour, efficiencyMultiplier);
 
@@ -964,9 +996,23 @@ function getOtherEfficiencySources(actionType, houseRoomLevels = null) {
         achievement: 0,
         wisdom: 0,
         gathering: 0,
+        personal: 0,
+        personalSpeed: 0,
+        guild: 0,
+        guildSpeed: 0,
     };
 
     if (!gameData) return result;
+
+    // Seal (personal) and guild buffs: the same sources getActionEfficiencyContext and
+    // calculateActionStats count, so a combo scored here matches the action panel's figure
+    result.personal = dataManager.getPersonalBuffFlatBoost(actionType, '/buff_types/efficiency') * 100;
+    result.personalSpeed = dataManager.getPersonalBuffFlatBoost(actionType, '/buff_types/action_speed');
+    for (const buff of dataManager.characterData?.guildActionTypeBuffsMap?.[actionType] || []) {
+        const boost = (buff.flatBoost || 0) + (buff.ratioBoost || 0);
+        if (buff.typeHrid === '/buff_types/efficiency') result.guild += boost * 100;
+        if (buff.typeHrid === '/buff_types/action_speed') result.guildSpeed += boost;
+    }
 
     // House efficiency
     if (houseRoomLevels) {
