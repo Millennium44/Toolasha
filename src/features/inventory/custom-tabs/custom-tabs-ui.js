@@ -1243,6 +1243,8 @@ export default class CustomTabsUI {
      * callback (which fires before the browser paints, eliminating flicker when
      * React swaps tile elements during enhancement).
      * @param {HTMLElement} invContainer
+     * @returns {boolean} false when the pass handed off to a native re-render (a tab or category
+     *   click) instead of laying out; the caller must not hold the layout lock waiting on badges
      */
     _applyLayoutSync(invContainer) {
         // Compare BEFORE assignment — otherwise isSameNode is always true
@@ -1269,11 +1271,13 @@ export default class CustomTabsUI {
 
         // Native inventory tabs render tiles for the selected tab only. Switch to "All" and let
         // the re-render drive the real pass, the same hand-off as the collapsed-category path.
+        // The tile observer goes on first so the re-render's tile mutations lay out before paint.
+        this._observeTiles(invContainer);
         if (this._selectNativeAllTab(invContainer)) {
             requestAnimationFrame(() => {
                 if (this._isActive && this._findInvContainer() === invContainer) this._applyLayout();
             });
-            return;
+            return false;
         }
 
         if (needsFullRebuild) {
@@ -1295,7 +1299,7 @@ export default class CustomTabsUI {
             requestAnimationFrame(() => {
                 if (this._isActive && this._findInvContainer() === invContainer) this._applyLayout();
             });
-            return;
+            return false;
         }
 
         // Reset all tiles: remove visible class, clear inline order, and drag state
@@ -1368,10 +1372,17 @@ export default class CustomTabsUI {
             this._updateTileVisibility(invContainer, tileMap);
         }
 
-        // Attach tile observer if not already watching this container.
-        // The observer fires synchronously (as a microtask) after React swaps a tile
-        // element, BEFORE the browser paints — so we can restore toolasha-ct-visible
-        // with zero visible frames of invisibility.
+        this._observeTiles(invContainer);
+        return true;
+    }
+
+    /**
+     * Attach the tile observer if not already watching this container.
+     * The observer fires as a microtask after React swaps a tile element, BEFORE the browser
+     * paints — so toolasha-ct-visible is restored with zero visible frames of invisibility.
+     * @param {HTMLElement} invContainer
+     */
+    _observeTiles(invContainer) {
         if (this._tileObserver === null || this._observedContainer !== invContainer) {
             this._tileObserver?.disconnect();
             this._observedContainer = invContainer;
@@ -1419,7 +1430,10 @@ export default class CustomTabsUI {
             const invContainer = this._findInvContainer();
             if (!invContainer) return;
 
-            this._applyLayoutSync(invContainer);
+            // A hand-off to a native re-render returns at once: the badge manager is busy pricing
+            // the re-rendered tiles, and waiting on it here held the lock that the follow-up pass
+            // (rAF / tile observer) needs, leaving the view blank for seconds.
+            if (!this._applyLayoutSync(invContainer)) return;
 
             // Run badge manager AFTER visibility is restored — badges are independent of tile
             // order/visibility, and running them before caused React tile replacements (on

@@ -85,9 +85,14 @@ vi.mock('../../../core/data-manager.js', () => ({
     },
 }));
 vi.mock('../inventory-sort.js', () => ({ default: { currentMode: 'none', onModeChange: () => () => {} } }));
-vi.mock('../inventory-badge-manager.js', () => ({
-    default: { currentInventoryElem: {}, renderAllBadges: async () => {} },
+/** The badge manager, busy pricing tiles when a test says so */
+const badges = vi.hoisted(() => ({
+    currentInventoryElem: {},
+    isCalculating: false,
+    isRendering: false,
+    renderAllBadges: async () => {},
 }));
+vi.mock('../inventory-badge-manager.js', () => ({ default: badges }));
 vi.mock('../../combat/loadout-snapshot.js', () => ({ default: {} }));
 vi.mock('../../../utils/bundle-bridge.js', () => ({
     loadoutSnapshot: () => ({ onUpdate: () => {}, offUpdate: () => {} }),
@@ -274,6 +279,7 @@ beforeEach(() => {
     storageMock.delete.mockClear();
     game.charId = 'char-1';
     game.settings.inventoryTabs_defaultTab = false;
+    badges.isCalculating = false;
     observer.classHandlers.clear();
     observer.readyHandlers.length = 0;
     rafQueue = [];
@@ -327,6 +333,31 @@ describe('native inventory tabs (post-patch DOM)', () => {
         // Injected elements sit beside the TabsComponent, inside Inventory_items
         expect(fixture.inv.querySelector(':scope > .toolasha-ct-section-header')).not.toBeNull();
         expect(fixture.inv.querySelector(':scope > .toolasha-ct-unorg-header')).not.toBeNull();
+    });
+
+    test('entering from another native tab lays out as soon as the All tiles render', async () => {
+        // Switching to All re-renders every tile, and the badge manager spends seconds pricing
+        // them. The layout must not queue behind that: measured live, it left the view blank
+        // for ~3.5 s after the game had already rendered all 533 tiles.
+        const { inventoryPanel } = buildCharacterPanel();
+        const fixture = buildNewInventory(inventoryPanel, 'item_category_loot');
+        badges.isCalculating = true;
+        const ui = newUI();
+        ui._isActive = false;
+
+        ui._activatePanel();
+        await Promise.resolve();
+        await Promise.resolve();
+
+        expect(fixture.selected()).toBe('inventory_all');
+        expectLaidOut(fixture.inv);
+
+        // The rAF follow-up is not locked out either
+        expect(ui._isApplying).toBe(false);
+        const layout = vi.spyOn(ui, '_applyLayoutSync');
+        for (const fn of rafQueue.splice(0)) fn();
+        expect(layout).toHaveBeenCalledTimes(1);
+        badges.isCalculating = false;
     });
 
     test('leaves the native selection alone when "All" is already selected', () => {
