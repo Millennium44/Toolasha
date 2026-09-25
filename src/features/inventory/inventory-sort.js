@@ -404,23 +404,25 @@ class InventorySort {
     /**
      * Find the container that owns a category's button and item grid.
      *
-     * Old DOM: category divs are direct children of Inventory_items, and the div itself already
-     * holds the label, button and item grid. New DOM (2026-09 native inventory tabs): category
-     * divs sit inside the selected TabsComponent panel, one level deeper, but the button's own
-     * parent still holds the label and item grid as siblings — so climbing from the button until
-     * an ancestor's subtree contains an item grid finds the right scope in both shapes without
-     * caring which one is live.
+     * The real nesting (checked live, both DOM shapes) is `Inventory_categoryButton` inside
+     * `Inventory_label` inside `Inventory_itemGrid`, with the item tiles as the grid's *other*
+     * direct children alongside that label — so the item grid itself is already the smallest
+     * element that owns both the button and the tiles. Only the wrapper divs *above* the grid
+     * differ: none in the old DOM (the grid is a direct child of Inventory_items), several in the
+     * new native-inventory-tabs DOM (2026-09 patch), where the grid sits inside the selected
+     * TabsComponent panel. `closest()` checks the button's ancestors including itself, so it
+     * lands on the grid in both shapes without needing to know which one is live.
+     *
+     * A descendant search from a *wrapper* div, by contrast, is wrong in the new DOM: a wrapper
+     * above the grid is also an ancestor of every sibling category's grid, so every category
+     * resolved to the same over-broad container and each category's own shouldSort/reset in turn
+     * clobbered every other category's tile order — measured live as zero tiles ending up with
+     * any order at all, since whichever category is processed last always wins.
      * @param {Element} categoryButton - An `Inventory_categoryButton` element
-     * @param {Element} root - The Inventory_items element to stop climbing at
-     * @returns {Element|null} The category's item scope, or null if none is found
+     * @returns {Element|null} The category's `Inventory_itemGrid`, or null if none is found
      */
-    findCategoryContainer(categoryButton, root) {
-        let node = categoryButton.parentElement;
-        while (node && node !== root.parentElement) {
-            if (node.querySelector('[class*="Inventory_itemGrid"]')) return node;
-            node = node.parentElement;
-        }
-        return null;
+    findCategoryContainer(categoryButton) {
+        return categoryButton.closest('[class*="Inventory_itemGrid"]');
     }
 
     /**
@@ -454,8 +456,8 @@ class InventorySort {
             const categoryButtons = inventoryElem.querySelectorAll('[class*="Inventory_categoryButton"]');
 
             for (const categoryButton of categoryButtons) {
-                const categoryDiv = this.findCategoryContainer(categoryButton, inventoryElem);
-                if (!categoryDiv) continue;
+                const categoryDiv = this.findCategoryContainer(categoryButton);
+                if (!categoryDiv || !inventoryElem.contains(categoryDiv)) continue;
 
                 const categoryName = categoryButton.textContent.trim();
 

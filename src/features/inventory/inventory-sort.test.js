@@ -10,9 +10,20 @@
  * (e.g. "Currencies") — measured live giving every tile in Loots and Equipment an inline `order`,
  * though Loots must never sort and Equipment must not sort with `invSort_sortEquipment` off.
  *
- * The fix finds category containers structurally (the element that owns an
- * `Inventory_categoryButton` and an `Inventory_itemGrid`), which resolves correctly whichever DOM
- * shape is live, detected by structure rather than hostname.
+ * A first fix climbed from the button looking for an ancestor whose *subtree contained* an
+ * `Inventory_itemGrid` — but the real nesting (checked live on the new DOM) is
+ * `Inventory_categoryButton` inside `Inventory_label` inside `Inventory_itemGrid`, with the tiles
+ * as the grid's other direct children. That climb necessarily skips the grid itself (a
+ * descendant search never matches the node it starts from) and lands one level too high, on a
+ * wrapper div that is also an ancestor of every *sibling* category's grid — so every category
+ * resolved to the same over-broad container, and each category's own shouldSort/reset in turn
+ * clobbered every other category's order. Measured live: zero tiles ended up with any order at
+ * all, since whichever category is processed last always wins.
+ *
+ * The real fix: `categoryButton.closest('[class*="Inventory_itemGrid"]')`. `closest()` checks the
+ * element itself before its ancestors, so it lands on the grid — already the smallest container
+ * that owns both the button and the tiles, in both DOM shapes, since only the wrapper divs above
+ * the grid differ between them.
  */
 
 import { describe, test, expect, beforeEach, afterEach, vi } from 'vitest';
@@ -81,44 +92,54 @@ function tile(hrid, askValue) {
     return node;
 }
 
-/** A category's inner container: label, button and item grid as siblings, matching both DOM shapes */
+/**
+ * A category, built to the real measured nesting: the button lives inside the label, and the
+ * label and the item tiles are direct siblings inside the item grid. The grid is the returned
+ * element — it is already the container that owns both the button (via the label) and the tiles.
+ */
 function category(name, items) {
-    const inner = el('div');
+    const grid = el('div', 'Inventory_itemGrid__g');
     const label = el('div', 'Inventory_label__q');
-    label.textContent = name;
     const button = el('button', 'Inventory_categoryButton__r');
     button.textContent = name;
-    const grid = el('div', 'Inventory_itemGrid__g');
+    label.append(button);
+    grid.append(label);
     for (const [hrid, value] of items) grid.appendChild(tile(hrid, value));
-    inner.append(label, button, grid);
-    return inner;
+    return grid;
 }
 
-/** Pre-patch DOM (still live on the main server until it updates): category divs are direct children */
+/** Pre-patch DOM (still live on the main server until it updates): item grids are direct children */
 function buildOldInventory(categories) {
     const inv = el('div', 'Inventory_items__6SXv0');
-    for (const [name, items] of categories) {
-        const wrap = el('div');
-        wrap.appendChild(category(name, items));
-        inv.appendChild(wrap);
-    }
+    for (const [name, items] of categories) inv.appendChild(category(name, items));
     document.body.appendChild(inv);
     return inv;
 }
 
-/** Post-patch DOM (2026-09 native inventory tabs): categories nest inside the selected tab panel */
+/**
+ * Post-patch DOM (2026-09 native inventory tabs): every category's grid is a direct sibling
+ * under one shared wrapper div, itself inside another wrapper under the selected tab panel — the
+ * measured live chain is `categoryButton < label < itemGrid < div (shared) < div < TabPanel_tabPanel
+ * < TabsComponent_tabPanelsContainer`. Only these extra layers above the grid differ from the old
+ * DOM; the grid's own contents (label+button, tiles) are unchanged.
+ *
+ * The shared immediate wrapper matters: it is what made the first attempt at this fix (climbing
+ * from the button until an ancestor's subtree *contains* an item grid, rather than checking the
+ * button's ancestors for being one) land on the same container for every category — see the file
+ * header.
+ */
 function buildNewInventory(categories) {
     const inv = el('div', 'Inventory_items__6SXv0');
     const tabsComponent = el('div', 'TabsComponent_tabsComponent__x TabsComponent_compact__y');
     const panelsContainer = el('div', 'TabsComponent_tabPanelsContainer__b');
     const panel = el('div', 'TabPanel_tabPanel__t');
-    const listWrap = el('div');
+    const outerWrap = el('div'); // transitively "contains a grid" too, matching the measured depth
+    const listWrap = el('div'); // shared immediate parent of every category's grid in this panel
     for (const [name, items] of categories) {
-        const wrap = el('div');
-        wrap.appendChild(category(name, items));
-        listWrap.appendChild(wrap);
+        listWrap.appendChild(category(name, items));
     }
-    panel.appendChild(listWrap);
+    outerWrap.appendChild(listWrap);
+    panel.appendChild(outerWrap);
     panelsContainer.appendChild(panel);
     tabsComponent.appendChild(panelsContainer);
     inv.appendChild(tabsComponent);
@@ -190,9 +211,8 @@ describe('InventorySort.applyCurrentSort — category scoping', () => {
     });
 
     test('new DOM (native inventory tabs): same per-category behavior as old DOM', async () => {
-        // Pre-fix, `inventoryElem.children` has one child (the TabsComponent), so the whole
-        // inventory was named after whichever categoryButton `querySelector` found first and
-        // every tile in every category was sorted or reset together as that one category.
+        // Regression for the bug described above: every category must resolve to its own grid,
+        // not a shared wrapper, or Loots/Equipment either get sorted or wipe Currencies' order.
         const { inv } = buildNewInventory(CATEGORIES);
         inventorySort.currentInventoryElem = inv;
 
@@ -201,8 +221,6 @@ describe('InventorySort.applyCurrentSort — category scoping', () => {
         const items = itemsByHrid(inv);
         expect(items.get('c2').style.order).toBe('0');
         expect(items.get('c1').style.order).toBe('1');
-        // The bug this regression guards: Loots and Equipment tiles got an inline order too,
-        // because they were folded into the single "Currencies" category found by querySelector.
         expect(items.get('l1').style.order).toBe('');
         expect(items.get('l2').style.order).toBe('');
         expect(items.get('e1').style.order).toBe('');
@@ -222,6 +240,30 @@ describe('InventorySort.applyCurrentSort — category scoping', () => {
         // Loots still never sorts
         expect(items.get('l1').style.order).toBe('');
         expect(items.get('l2').style.order).toBe('');
+    });
+
+    test('new DOM: a sorting category does not clobber a non-sorting sibling sharing a wrapper', async () => {
+        // The specific failure mode measured live: if categories resolved to a shared ancestor,
+        // processing Loots (shouldSort=false) after Currencies (shouldSort=true) would remove the
+        // order Currencies had just set, because both categories' "itemElems" were the same set.
+        const { inv } = buildNewInventory([
+            [
+                'Currencies',
+                [
+                    ['c1', 10],
+                    ['c2', 30],
+                ],
+            ],
+            ['Loots', [['l1', 5]]],
+        ]);
+        inventorySort.currentInventoryElem = inv;
+
+        await inventorySort.applyCurrentSort();
+
+        const items = itemsByHrid(inv);
+        expect(items.get('c2').style.order).toBe('0');
+        expect(items.get('c1').style.order).toBe('1');
+        expect(items.get('l1').style.order).toBe('');
     });
 
     test('mode "none" clears a previously-assigned inline order rather than pinning it at "0"', async () => {
@@ -284,14 +326,12 @@ describe('InventorySort — reapplies sort when a native tab switch re-renders t
         // tiles. Inventory_items itself is not re-inserted, so only the categoryButton watcher —
         // not the Inventory_items one — sees this.
         listWrap.replaceChildren();
-        const wrap = el('div');
-        wrap.appendChild(
+        listWrap.appendChild(
             category('Currencies', [
                 ['c3', 5],
                 ['c4', 40],
             ])
         );
-        listWrap.appendChild(wrap);
         const newButton = panel.querySelector('[class*="Inventory_categoryButton"]');
         observer.classHandlers.get('InventorySortTabSwitch:Inventory_categoryButton')(newButton);
 
