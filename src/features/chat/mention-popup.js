@@ -82,6 +82,29 @@ class MentionPopup {
     }
 
     /**
+     * Refresh the popup's content in place, but only if it is currently open
+     * for this exact channel — otherwise a no-op.
+     *
+     * `open()`'s replace-content path only runs when a caller re-opens the
+     * popup (a badge click); nothing calls it when the mention *list* for an
+     * already-open popup changes underneath it, which is exactly what a
+     * `chat_message_updated` deletion does. Without this, a deleted mention
+     * stayed visible — and in the copy button's output — until the popup was
+     * closed and reopened. `currentMentions`/`currentDisplayName` are updated
+     * too, since `_copyToClipboard` reads them, not the DOM.
+     *
+     * @param {string} channel - Channel HRID
+     * @param {Array<{sName: string, m: string, t: string}>} mentions - Updated mention list
+     * @param {string} channelDisplayName - Human-readable channel name
+     */
+    updateIfOpen(channel, mentions, channelDisplayName) {
+        if (!this.container || this.currentChannel !== channel) return;
+        this.currentMentions = mentions;
+        this.currentDisplayName = channelDisplayName;
+        this._updateContent(mentions, channelDisplayName);
+    }
+
+    /**
      * Close the popup and invoke the onClose callback
      */
     close() {

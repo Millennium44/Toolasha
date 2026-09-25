@@ -197,3 +197,62 @@ describe('mention popup copy button', () => {
         }
     });
 });
+
+/**
+ * A September 2026 patch lets a player delete their own Trade/Recruit
+ * messages, on top of moderator deletion. mention-tracker.js drops a deleted
+ * message's mention from its log and calls `updateIfOpen` so a popup already
+ * showing that mention notices — `open()`'s replace-content path only runs
+ * when the popup is re-opened (a badge click), not when the list changes
+ * underneath an already-open one.
+ */
+describe('mention popup: updateIfOpen (deletion refresh)', () => {
+    test('refreshes the body and the copy-button source when the popup is open for that channel', async () => {
+        mentionPopup.open(
+            '/chat_channel_types/general',
+            [
+                { sName: 'Someone', m: 'hi @Me', t: '2026-01-01T00:00:00.000Z' },
+                { sName: 'Another', m: 'yo @Me', t: '2026-01-01T00:01:00.000Z' },
+            ],
+            'General',
+            () => {}
+        );
+        expect(document.body.textContent).toContain('hi @Me');
+
+        const remaining = [{ sName: 'Another', m: 'yo @Me', t: '2026-01-01T00:01:00.000Z' }];
+        mentionPopup.updateIfOpen('/chat_channel_types/general', remaining, 'General');
+
+        expect(document.body.textContent).not.toContain('hi @Me');
+        expect(document.body.textContent).toContain('yo @Me');
+
+        // _copyToClipboard reads currentMentions/currentDisplayName, not the DOM.
+        const writeText = vi.fn().mockResolvedValue();
+        Object.defineProperty(navigator, 'clipboard', { value: { writeText }, configurable: true });
+        const copyBtn = document.querySelector('#mwi-mention-popup-header button[title="Copy mentions to clipboard"]');
+        copyBtn.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+        await Promise.resolve();
+        await Promise.resolve();
+
+        expect(writeText).toHaveBeenCalledWith('Mentions — General\n[12:00 PM] Another: yo @Me');
+        expect(writeText.mock.calls[0][0]).not.toContain('hi @Me');
+    });
+
+    test('does nothing when the popup is closed', () => {
+        expect(() => mentionPopup.updateIfOpen('/chat_channel_types/general', [], 'General')).not.toThrow();
+        expect(document.querySelector('#mwi-mention-popup')).toBeNull();
+    });
+
+    test('does nothing when the popup is open for a different channel', () => {
+        mentionPopup.open(
+            '/chat_channel_types/general',
+            [{ sName: 'Someone', m: 'hi @Me', t: '2026-01-01T00:00:00.000Z' }],
+            'General',
+            () => {}
+        );
+
+        mentionPopup.updateIfOpen('/chat_channel_types/party', [], 'Party');
+
+        expect(document.body.textContent).toContain('hi @Me');
+        expect(document.querySelector('#mwi-mention-popup-title').textContent).toBe('Mentions — General');
+    });
+});
