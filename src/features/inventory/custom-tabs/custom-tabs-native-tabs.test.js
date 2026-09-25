@@ -548,6 +548,26 @@ describe('a page that starts outside the Toolasha view', () => {
         ui.cleanup();
     });
 
+    test('a view opened before the inventory mounts switches to All when the strip appears', async () => {
+        // Default-tab opens the view before the inventory exists; the player's native tab
+        // (Loots) holds no tiles, so no tile mutation ever announces the inventory.
+        game.settings.inventoryTabs_defaultTab = true;
+        const { inventoryPanel } = buildCharacterPanel();
+        const ui = new CustomTabsUI();
+        await ui.initialize();
+        for (const fn of observer.readyHandlers) fn();
+        await vi.waitFor(() => expect(ui._isApplying).toBe(false));
+        expect(ui._isActive).toBe(true);
+
+        const fixture = buildNewInventory(inventoryPanel, 'item_category_loot');
+        expect(fixture.inv.querySelector('[class*="Item_itemContainer"]')).toBeNull();
+        renderStrips();
+
+        await vi.waitFor(() => expect(fixture.selected()).toBe('inventory_all'));
+        await vi.waitFor(() => expect(fixture.inv.querySelectorAll('.toolasha-ct-visible')).toHaveLength(3));
+        ui.cleanup();
+    });
+
     test('when the view opens first, the stored choice waits for its exit', async () => {
         game.settings.inventoryTabs_defaultTab = true;
         storageMock.map.set('toolasha_local_inventoryNativeTab_char-1', 'item_category_loot');
