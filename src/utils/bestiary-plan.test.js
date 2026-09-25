@@ -395,6 +395,19 @@ describe('planning to a points target', () => {
         expect(text).toContain('Best single zone: none reaches 4 points');
     });
 
+    test('with totals, copied text names the total goal rather than the gap it planned for', () => {
+        const plan = planBestiaryRoute({
+            zones: [zone('slow', { '/monsters/snail': 1e-6 })],
+            counts: {},
+            targetPoints: 4,
+        });
+        const text = formatPlanText(plan, { totals: { currentTotal: 896, wanted: 900 } });
+        expect(text).toContain('Bestiary plan — 897 total (+1, 900 wanted)');
+        expect(text).toContain('(900 total not reachable)');
+        expect(text).toContain('Best single zone: none reaches 900 total');
+        expect(text).not.toContain('4 points');
+    });
+
     test('the single-zone comparison is the soonest one zone gets there alone', () => {
         const plan = planBestiaryRoute({
             zones: [zone('slow', { '/monsters/bee': 1 }, 'Hive'), zone('fast', { '/monsters/fly': 10 }, 'Farm')],

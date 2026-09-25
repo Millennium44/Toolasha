@@ -4152,7 +4152,9 @@ class CombatSimUI {
      */
     _bestiaryPlanText() {
         const plan = this._currentBestiaryPlan();
-        return plan ? formatPlanText(plan, { monsterName: (hrid) => this._bestiaryMonsterName(hrid) }) : '';
+        if (!plan) return '';
+        const totals = this._bestiaryPlanMode === 'total' ? this._bestiaryTotalGap() : null;
+        return formatPlanText(plan, { monsterName: (hrid) => this._bestiaryMonsterName(hrid), totals });
     }
 
     /**
@@ -4279,25 +4281,27 @@ class CombatSimUI {
             .join('');
         // Points mode compares in time, not in points: the single zone that
         // reaches the same target soonest, or that it never does
+        // Total mode names the goal as a total everywhere, not the gap it plans for
+        const totals = this._bestiaryPlanMode === 'total' ? this._bestiaryTotalGap() : null;
+        const goal = totals ? `${totals.wanted} total` : `${plan.targetPoints}`;
         let single;
         if (!plan.bestSingle) {
             single = plan.mode === 'points' ? 'no single zone reaches it' : 'no single zone earns a point';
         } else if (plan.mode === 'points') {
             single =
                 plan.bestSingle.hours === null || plan.bestSingle.hours === undefined
-                    ? `no single zone reaches ${plan.targetPoints}`
-                    : `best single zone ${esc(plan.bestSingle.name)} reaches ${plan.targetPoints} in ` +
+                    ? `no single zone reaches ${goal}`
+                    : `best single zone ${esc(plan.bestSingle.name)} reaches ${goal} in ` +
                       `<span style="color:#e0e0e0;">${formatPlanHours(plan.bestSingle.hours)} h</span>`;
         } else {
             single = `best single zone ${esc(plan.bestSingle.name)}: <span style="color:#e0e0e0;">${plan.bestSingle.points}</span>`;
         }
         const shortfall = plan.unreachable
             ? `<div style="color:#ffb74d; font-size:10px; margin-top:2px;">Every zone ran dry before ` +
-              `${plan.targetPoints} points — this is as far as they get.</div>`
+              `${totals ? goal : `${plan.targetPoints} points`} — this is as far as they get.</div>`
             : '';
         // Total mode talks in totals, not the gap: where the route actually ends (thresholds give
         // points in steps, so it can pass the target by a few) and what was asked for.
-        const totals = this._bestiaryPlanMode === 'total' ? this._bestiaryTotalGap() : null;
         const routeAmount = totals
             ? `${totals.currentTotal + plan.totalPoints} total (+${plan.totalPoints}, ${totals.wanted} wanted)`
             : `${plan.totalPoints} points`;
