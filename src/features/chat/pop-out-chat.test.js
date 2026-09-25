@@ -18,7 +18,13 @@ vi.mock('../../core/config.js', () => ({
     },
 }));
 vi.mock('../../core/data-manager.js', () => ({ default: { getCurrentCharacterName: () => 'Tester' } }));
-vi.mock('../../core/websocket.js', () => ({ default: { on: () => {}, off: () => {} } }));
+const wsState = vi.hoisted(() => ({ on: [], off: [] }));
+vi.mock('../../core/websocket.js', () => ({
+    default: {
+        on: (event, handler) => wsState.on.push([event, handler]),
+        off: (event, handler) => wsState.off.push([event, handler]),
+    },
+}));
 vi.mock('../../core/dom-observer.js', () => ({ default: { onClass: () => () => {} } }));
 const blockState = vi.hoisted(() => ({ blockedNames: new Set() }));
 vi.mock('./chat-block-list.js', () => ({
@@ -390,6 +396,146 @@ describe('pop-out chat window: blocked-message count', () => {
         expect(html).toContain('id="blocked-count"');
         expect(html).toContain("data.type === 'blocked_count'");
         expect(html).toContain('function setBlockedCount(count)');
+    });
+});
+
+/**
+ * A September 2026 patch lets a player delete their own Trade/Recruit
+ * messages, on top of the moderator deletion that already existed. It
+ * arrives as `chat_message_updated`, carrying `{ id, chan, isDeleted }` for
+ * the message it targets. The game-tab side purges its own `messageBuffer`
+ * and relays a `chat_message_deleted` event; the pop-out window (a separate
+ * document — see the file header) can only be exercised through the HTML its
+ * embedded `<script>` produces, the same way the rest of this file does.
+ */
+describe('pop-out chat window: chat_message_updated (deletion)', () => {
+    test('id rides along on every resolved message, for later deletion to key on', () => {
+        const chat = new PopOutChat();
+        chat.relayChannel = { postMessage: vi.fn() };
+
+        chat._onChatMessage({
+            message: { id: 'msg-1', chan: '/chat_channel_types/general', sName: 'Alice', m: 'hi' },
+        });
+
+        expect(chat.messageBuffer.get('/chat_channel_types/general')[0]).toMatchObject({ id: 'msg-1' });
+        const relayed = chat.relayChannel.postMessage.mock.calls.map((c) => c[0]);
+        expect(relayed).toContainEqual(expect.objectContaining({ id: 'msg-1' }));
+    });
+
+    test('a message that arrives already deleted is never buffered or relayed', () => {
+        const chat = new PopOutChat();
+        chat.relayChannel = { postMessage: vi.fn() };
+
+        chat._onChatMessage({
+            message: {
+                id: 'msg-1',
+                chan: '/chat_channel_types/general',
+                sName: 'Alice',
+                m: 'hi',
+                isDeleted: true,
+            },
+        });
+
+        expect(chat.messageBuffer.has('/chat_channel_types/general')).toBe(false);
+        expect(chat.relayChannel.postMessage).not.toHaveBeenCalled();
+    });
+
+    test('a deletion purges the matching buffered message and relays chat_message_deleted', () => {
+        const chat = new PopOutChat();
+        chat.relayChannel = { postMessage: vi.fn() };
+        chat._onChatMessage({
+            message: { id: 'msg-1', chan: '/chat_channel_types/general', sName: 'Alice', m: 'hi' },
+        });
+        chat._onChatMessage({
+            message: { id: 'msg-2', chan: '/chat_channel_types/general', sName: 'Bob', m: 'bye' },
+        });
+        chat.relayChannel.postMessage.mockClear();
+
+        chat._onChatMessageUpdated({
+            message: { id: 'msg-1', chan: '/chat_channel_types/general', isDeleted: true },
+        });
+
+        const remaining = chat.messageBuffer.get('/chat_channel_types/general');
+        expect(remaining).toHaveLength(1);
+        expect(remaining[0].id).toBe('msg-2');
+        expect(chat.relayChannel.postMessage).toHaveBeenCalledWith(
+            expect.objectContaining({
+                type: 'chat_message_deleted',
+                channel: '/chat_channel_types/general',
+                id: 'msg-1',
+            })
+        );
+    });
+
+    test('a deletion for an id not in the buffer still relays the event, without throwing', () => {
+        const chat = new PopOutChat();
+        chat.relayChannel = { postMessage: vi.fn() };
+
+        expect(() =>
+            chat._onChatMessageUpdated({
+                message: { id: 'msg-nonexistent', chan: '/chat_channel_types/general', isDeleted: true },
+            })
+        ).not.toThrow();
+        expect(chat.relayChannel.postMessage).toHaveBeenCalledWith(
+            expect.objectContaining({ type: 'chat_message_deleted' })
+        );
+    });
+
+    test('an undelete is ignored — nothing to purge and nothing to restore', () => {
+        const chat = new PopOutChat();
+        chat.relayChannel = { postMessage: vi.fn() };
+        chat._onChatMessage({
+            message: { id: 'msg-1', chan: '/chat_channel_types/general', sName: 'Alice', m: 'hi' },
+        });
+        chat.relayChannel.postMessage.mockClear();
+
+        chat._onChatMessageUpdated({
+            message: { id: 'msg-1', chan: '/chat_channel_types/general', isDeleted: false },
+        });
+
+        expect(chat.messageBuffer.get('/chat_channel_types/general')).toHaveLength(1);
+        expect(chat.relayChannel.postMessage).not.toHaveBeenCalled();
+    });
+
+    test('malformed chat_message_updated payloads are ignored, not thrown', () => {
+        const chat = new PopOutChat();
+        chat.relayChannel = { postMessage: vi.fn() };
+
+        expect(() => chat._onChatMessageUpdated({})).not.toThrow();
+        expect(() => chat._onChatMessageUpdated({ message: {} })).not.toThrow();
+        expect(() => chat._onChatMessageUpdated({ message: { isDeleted: true } })).not.toThrow();
+        expect(chat.relayChannel.postMessage).not.toHaveBeenCalled();
+    });
+
+    test('disable() unregisters chat_message_updated alongside chat_message_received', () => {
+        wsState.off = [];
+        const chat = new PopOutChat();
+        // Registration itself happens in initialize(), which also stands up
+        // BroadcastChannel/domObserver plumbing this test does not need —
+        // simulating just the two handlers initialize() would have assigned
+        // is enough to exercise disable()'s teardown of both.
+        const originalHandler = vi.fn();
+        chat.wsHandler = originalHandler;
+        chat.wsUpdateHandler = vi.fn();
+
+        chat.disable();
+
+        expect(wsState.off).toContainEqual(['chat_message_received', originalHandler]);
+        expect(wsState.off.map(([event]) => event)).toContain('chat_message_updated');
+    });
+
+    test('the generated pop-out script drops a deleted message from the buffer and re-renders the pane', () => {
+        const chat = new PopOutChat();
+        const html = chat._buildPopoutHTML();
+
+        expect(html).toContain("data.type === 'chat_message_deleted'");
+        expect(html).toContain('refilterPane(p)');
+
+        // Exercise the relay handler in isolation, the same way the file's other
+        // "syntactically valid JavaScript" test does — without the popout's
+        // BroadcastChannel/DOM runtime.
+        const script = html.match(/<script>([\s\S]*?)<\/script>/)[1];
+        expect(() => new Function(script)).not.toThrow();
     });
 });
 
