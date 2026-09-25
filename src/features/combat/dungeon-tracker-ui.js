@@ -687,9 +687,16 @@ class DungeonTrackerUI {
 
         // Update wave counter
         const waveCounter = this.container.querySelector('#mwi-dt-wave-counter');
-        if (waveCounter && run.maxWaves) {
-            waveCounter.textContent = `Wave ${run.currentWave}/${run.maxWaves}`;
-            waveCounter.title = '';
+        if (waveCounter) {
+            if (run.maxWaves) {
+                waveCounter.textContent = `Wave ${run.currentWave}/${run.maxWaves}`;
+                waveCounter.title = '';
+            } else {
+                // maxWaves not known yet: clear any leftover gap text ("next run
+                // starting…") rather than let it linger over the new run.
+                waveCounter.textContent = '';
+                waveCounter.title = '';
+            }
         }
 
         // Update current elapsed time
