@@ -764,7 +764,7 @@ export const settingsGroups = {
                 label: 'Show effective (after-tax) prices',
                 type: 'checkbox',
                 default: false,
-                help: 'Shows what you actually receive after the 5% marketplace tax next to ask/bid prices in item tooltips',
+                help: 'Shows what you actually receive after the marketplace tax next to ask/bid prices in item tooltips',
             },
             itemTooltip_artisanPrices: {
                 id: 'itemTooltip_artisanPrices',
@@ -928,7 +928,7 @@ export const settingsGroups = {
                 label: 'Include marketplace tax in minimum sell price',
                 type: 'checkbox',
                 default: false,
-                help: 'Accounts for the 5% marketplace seller tax so listing at minimum sell still nets your target rate after tax',
+                help: 'Accounts for the marketplace seller tax so listing at minimum sell still nets your target rate after tax',
             },
             itemTooltip_pinTop: {
                 id: 'itemTooltip_pinTop',
@@ -1562,7 +1562,7 @@ export const settingsGroups = {
                 label: 'Market: Bulk sell to vendor when market is no better',
                 type: 'checkbox',
                 default: true,
-                help: 'When the game vendor pays at least as much per item as the market would net after market tax (e.g. vendor 96 vs ask 100 → 95 net at 5%), the Bulk Sell Assistant opens the item\'s inventory menu with "All" selected so one click on "Sell For … Coins" vendors the whole stack instead. Only applies to unenhanced items.',
+                help: 'When the game vendor pays at least as much per item as the market would net after market tax (e.g. vendor 96 vs ask 100 → 95 net at a 5% tax), the Bulk Sell Assistant opens the item\'s inventory menu with "All" selected so one click on "Sell For … Coins" vendors the whole stack instead. Only applies to unenhanced items.',
             },
             market_bulkSellMinListingValue: {
                 id: 'market_bulkSellMinListingValue',
@@ -3746,7 +3746,7 @@ export const settingsGroups = {
                 label: 'Guild Shop: Show exchange advisor (sell → rebuy comparison)',
                 type: 'checkbox',
                 default: true,
-                help: 'When the selected item is not the cheapest option, shows whether selling it and rebuying the best item would yield more credits (accounts for 5% seller tax).',
+                help: 'When the selected item is not the cheapest option, shows whether selling it and rebuying the best item would yield more credits (accounts for the market seller tax).',
             },
             guildShrineUpgradePlanner: {
                 id: 'guildShrineUpgradePlanner',
