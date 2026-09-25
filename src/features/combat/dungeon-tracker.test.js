@@ -3207,6 +3207,64 @@ describe('a repeating dungeon action, run after run', () => {
         expect(tracker.currentRun.wavesCompleted).toBe(4);
     });
 
+    test('a short, failed wave carrying only the retry’s entry key, no chest, does not end the run', async () => {
+        // A death that does not end the repeating action can carry the next
+        // attempt's -1 entry key in the same failed wave's action_completed.
+        // Only the completion chest is proof of a finished run — the wave
+        // reported is short of maxWaves, so this is not the (separate, and
+        // covered elsewhere) `wave: 0` final-wave mapping.
+        beTracking({ currentWave: 9, wavesCompleted: 8, maxWaves: 10, battleId: 1, partyNames: ['Marketcow'] });
+
+        tracker.onActionCompleted({
+            endCharacterAction: { actionHrid: DEN, wave: 9, isDone: false },
+            endCharacterItems: [item('/items/chimerical_entry_key', 6893)],
+        });
+        await flush();
+
+        expect(tracker.isTracking).toBe(true);
+        expect(game.savedRuns).toEqual([]);
+    });
+
+    test('an entry-key decrement on the first wave does not end the run', async () => {
+        // The game can spend the run's entry key inside the first wave's
+        // action_completed rather than on the last wave. Key alone is never
+        // proof of a completion, wherever in the run it shows up.
+        beTracking({ currentWave: 1, wavesCompleted: 0, maxWaves: 10, battleId: 1, partyNames: ['Marketcow'] });
+
+        tracker.onActionCompleted({
+            endCharacterAction: { actionHrid: DEN, wave: 1, isDone: false },
+            endCharacterItems: [item('/items/chimerical_entry_key', 6892)],
+        });
+        await flush();
+
+        expect(tracker.isTracking).toBe(true);
+        expect(game.savedRuns).toEqual([]);
+        expect(tracker.currentRun.wavesCompleted).toBe(1);
+    });
+
+    test('a boss-wave death followed by the next battle’s wave 1 is discarded, not saved', async () => {
+        // wavesCompleted sits one short of maxWaves — the player died on the
+        // last wave and the repeating action requeued anyway. The backstop no
+        // longer treats "a new wave 1 arrived" as proof by itself; only an
+        // actually-cleared wave count saves the run here.
+        beTracking({ currentWave: 10, wavesCompleted: 9, maxWaves: 10, battleId: 1, partyNames: ['Marketcow'] });
+
+        await tracker.onNewBattle({
+            wave: 1,
+            battleId: 2,
+            combatStartTime: '2026-08-04T10:00:00.000Z',
+            players: [{ character: { name: 'Marketcow' } }],
+        });
+        await flush();
+
+        expect(game.savedRuns).toEqual([]);
+        // The new run still starts tracking cleanly rather than getting stuck
+        expect(tracker.isTracking).toBe(true);
+        expect(tracker.currentBattleId).toBe(2);
+        expect(tracker.currentRun.currentWave).toBe(1);
+        expect(tracker.currentRun.wavesCompleted).toBe(0);
+    });
+
     test('a solo run ends on its last wave, and the next run’s Elapsed starts there', async () => {
         const end = await waves(1, { battleId: 1, at: T0 });
 
@@ -3228,7 +3286,13 @@ describe('a repeating dungeon action, run after run', () => {
         expect(tracker.getCurrentRun().totalElapsed).toBe(5_000);
     });
 
-    test('a solo run whose last completion never arrived still ends when the next run begins', async () => {
+    test('a solo run whose last completion never arrived is discarded, not saved, when the next run begins', async () => {
+        // Indistinguishable from a boss-wave death: the tracker never saw wave
+        // 10 cleared (wavesCompleted stayed at 9), so a wave-1 battle that
+        // follows is not proof of a completion — only the last wave's own
+        // chest, or a genuinely cleared wave count, is. The run is dropped
+        // rather than risk banking a death as a full clear; the next run still
+        // starts tracking cleanly.
         const end = await waves(1, { battleId: 1, at: T0, skipLastCompletion: true });
         expect(tracker.isTracking).toBe(true);
 
@@ -3236,8 +3300,7 @@ describe('a repeating dungeon action, run after run', () => {
         await tracker.onNewBattle({ wave: 1, battleId: 2, combatStartTime: COMBAT_START, players: SOLO });
         await flush();
 
-        expect(game.savedRuns).toHaveLength(1);
-        expect(game.savedRuns[0].run.duration).toBe(end - T0);
+        expect(game.savedRuns).toEqual([]);
         expect(tracker.isTracking).toBe(true);
         expect(tracker.currentBattleId).toBe(2);
         expect(tracker.currentRun.startTime).toBe(end);
