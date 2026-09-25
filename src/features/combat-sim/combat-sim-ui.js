@@ -3438,28 +3438,41 @@ class CombatSimUI {
 
         // Six columns of zeros is what a single-style build normally produces,
         // and it is why the table needed a horizontal scrollbar
+        //
+        // The three dungeon-only metrics (clears/fails per day, avg clear) are
+        // useless noise — every cell reads "—" — on an all-zones run that has
+        // no dungeon rows at all, e.g. an ordinary "Sim All Zones" pass. Decide
+        // per render from the actual rows, not the run mode: a mixed all-zones
+        // run can still include dungeons even when the mode itself isn't
+        // "dungeons only".
+        const hasDungeonRows = rows.some((row) => row._dungeon);
         const cols = [
             { key: 'zone', label: 'Zone' },
             { key: 'tier', label: 'T' },
             { key: 'encounters', label: 'Enc/hr' },
             { key: 'deaths', label: 'Deaths/hr' },
-            {
-                key: 'clearsPerDay',
-                label: 'Clears/day',
-                title: 'Dungeon runs cleared per day in the sim. Non-dungeon rows show —.',
-            },
-            {
-                key: 'failsPerDay',
-                label: 'Fails/day',
-                title: 'Runs that ended in a wipe per day in the sim. Non-dungeon rows show —.',
-            },
-            {
-                key: 'avgClearTime',
-                label: 'Avg clear',
-                title:
-                    'Average simulated time per cleared run (completion-to-completion, wipes excluded). Simulated, ' +
-                    'not a live measurement — the sim runs dungeon clears about 6% long. Non-dungeon rows show —.',
-            },
+            ...(hasDungeonRows
+                ? [
+                      {
+                          key: 'clearsPerDay',
+                          label: 'Clears/day',
+                          title: 'Dungeon runs cleared per day in the sim. Non-dungeon rows show —.',
+                      },
+                      {
+                          key: 'failsPerDay',
+                          label: 'Fails/day',
+                          title: 'Runs that ended in a wipe per day in the sim. Non-dungeon rows show —.',
+                      },
+                      {
+                          key: 'avgClearTime',
+                          label: 'Avg clear',
+                          title:
+                              'Average simulated time per cleared run (completion-to-completion, wipes excluded). ' +
+                              'Simulated, not a live measurement — the sim runs dungeon clears about 6% long. ' +
+                              'Non-dungeon rows show —.',
+                      },
+                  ]
+                : []),
             { key: 'totalXP', label: 'Total XP/hr' },
             { key: 'profitDay', label: 'Profit/day' },
             {
@@ -3497,6 +3510,14 @@ class CombatSimUI {
         ];
 
         // Sort
+        // A saved sort on one of the dungeon-only columns doesn't survive
+        // those columns being hidden — fall back to the table's default sort
+        // (Score, descending) rather than sorting by a column nobody can see.
+        const dungeonOnlyCols = new Set(['clearsPerDay', 'failsPerDay', 'avgClearTime']);
+        if (!hasDungeonRows && dungeonOnlyCols.has(this._allZonesSortCol)) {
+            this._allZonesSortCol = 'score';
+            this._allZonesSortAsc = false;
+        }
         if (this._allZonesSortCol) {
             const col = this._allZonesSortCol;
             const asc = this._allZonesSortAsc;
@@ -3507,11 +3528,10 @@ class CombatSimUI {
             // ascending sort; missing values now sort after every measured
             // one regardless of sort direction, same as the Bestiary column
             // sends its "no first point" rows last below.
-            const dungeonMetricCols = new Set(['clearsPerDay', 'failsPerDay', 'avgClearTime']);
             rows.sort((a, b) => {
                 const rawA = a[col];
                 const rawB = b[col];
-                if (dungeonMetricCols.has(col)) {
+                if (dungeonOnlyCols.has(col)) {
                     const missingA = rawA === null || rawA === undefined;
                     const missingB = rawB === null || rawB === undefined;
                     if (missingA !== missingB) return missingA ? 1 : -1;
