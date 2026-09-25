@@ -98,6 +98,17 @@ const SAMPLE_MS = 5000;
 /** How many segments the combat bar is divided into, as GWhiz draws it */
 const BAR_SEGMENTS = 10;
 
+/**
+ * How long a number box waits after the last step or keystroke before the
+ * full render that settles it.
+ *
+ * Long enough that a held spinner arrow — which steps the value and fires
+ * again every render frame or so while the button is down — never sees the
+ * gap between two of its own steps, so the hold is never cut short by a
+ * render that lands mid-hold and replaces the element under the mouse.
+ */
+const TARGET_SETTLE_MS = 400;
+
 const COLORS = {
     background: 'rgba(14, 16, 22, 0.97)',
     card: 'rgba(255, 255, 255, 0.04)',
@@ -864,38 +875,60 @@ class CombatLevelPanel {
         );
         picker.style.width = '128px';
 
-        const level = this._number(target, 'ttl-level', (value) => {
-            select({ skill: chosen, level: value });
-            this._render();
-        });
+        const answer = this._value('', COLORS.accent);
+        // Always in the DOM, so a step can show or hide it without touching
+        // the level box beside it
+        const when = this._value('', COLORS.textDim);
+        when.title = 'When the target is reached, if the rate above holds.';
+
+        /**
+         * Recomputed on every step of the level box — typed or spinner-held —
+         * so the answer reads live without the full re-render, and the
+         * persisted selection, that a step would otherwise cost.
+         * @param {number} levelValue - The level box's current value
+         */
+        const updateAnswer = (levelValue) => {
+            const resolved = resolveTarget(state, chosen, levelValue) || { seconds: null, perHour: undefined };
+            const seconds = resolved.seconds;
+            answer.textContent = seconds === null ? '—' : shortDuration(seconds);
+            answer.title =
+                chosen === COMBAT_TARGET
+                    ? 'Combat level has no experience table of its own — this runs the clock forward at the rates ' +
+                      'below and asks the formula when it crosses.'
+                    : resolved.perHour
+                      ? `At ${formatWithSeparator(Math.round(resolved.perHour))} exp/hr.`
+                      : 'Nothing is pointed at this skill, so there is no honest time to give. Assign it a share under Time to Level.';
+
+            // The clock time that duration lands on. "8h 16m" answers how
+            // long; whether that is before bed is the question actually being
+            // asked, and it is the one figure the player would otherwise work
+            // out by hand.
+            if (seconds !== null && Number.isFinite(seconds) && seconds >= 0) {
+                const done = new Date(Date.now() + seconds * 1000);
+                const isToday = done.toDateString() === new Date().toDateString();
+                when.textContent = formatDateTime(done, {
+                    includeDate: !isToday,
+                    includeTime: true,
+                    includeSeconds: false,
+                });
+            } else {
+                when.textContent = '';
+            }
+        };
+        updateAnswer(target);
+
+        const level = this._number(
+            target,
+            'ttl-level',
+            (value) => {
+                select({ skill: chosen, level: value });
+                this._render();
+            },
+            (value) => updateAnswer(value)
+        );
         level.style.width = '68px';
 
-        const seconds = answering.seconds;
-        const answer = this._value(seconds === null ? '—' : shortDuration(seconds), COLORS.accent);
-        answer.title =
-            chosen === COMBAT_TARGET
-                ? 'Combat level has no experience table of its own — this runs the clock forward at the rates ' +
-                  'below and asks the formula when it crosses.'
-                : answering.perHour
-                  ? `At ${formatWithSeparator(Math.round(answering.perHour))} exp/hr.`
-                  : 'Nothing is pointed at this skill, so there is no honest time to give. Assign it a share under Time to Level.';
-
-        line.append(picker, level, answer);
-
-        // The clock time that duration lands on. "8h 16m" answers how long;
-        // whether that is before bed is the question actually being asked, and
-        // it is the one figure the player would otherwise work out by hand.
-        if (seconds !== null && Number.isFinite(seconds) && seconds >= 0) {
-            const done = new Date(Date.now() + seconds * 1000);
-            const isToday = done.toDateString() === new Date().toDateString();
-            const when = this._value(
-                formatDateTime(done, { includeDate: !isToday, includeTime: true, includeSeconds: false }),
-                COLORS.textDim
-            );
-            when.title = 'When the target is reached, if the rate above holds.';
-            line.append(when);
-        }
-
+        line.append(picker, level, answer, when);
         card.appendChild(line);
         return card;
     }
@@ -1273,26 +1306,46 @@ class CombatLevelPanel {
                 ? 'More levels than the search looks ahead, so no honest number to give.'
                 : `Each level is worth ${worth.toFixed(1)} combat levels right now.`;
 
+        const time = this._cell('');
+
+        /**
+         * Recomputed on every step of the target box — typed or
+         * spinner-held — so holding the arrow reads live, without the full
+         * re-render that would replace the box out from under the hold.
+         * @param {number} targetValue - The target box's current value
+         */
+        const updateTime = (targetValue) => {
+            const seconds = timeToTargetLevel({
+                experience: skill.experience,
+                target: targetValue,
+                table: state.table,
+                perHour: projected,
+            });
+            time.textContent = seconds === null ? '—' : shortDuration(seconds);
+            time.style.color = seconds === null ? COLORS.textDim : COLORS.accent;
+
+            const owed = experienceBetween(skill.level, targetValue, state.table);
+            time.title =
+                owed === null
+                    ? 'That level is not on the game’s experience table.'
+                    : `${formatWithSeparator(owed)} experience from level ${skill.level} to ${targetValue}.`;
+        };
+
         const target = this.targets[skill.name] ?? skill.level + 1;
-        const targetInput = this._number(target, `target-${skill.name}`, (value) => {
-            this.targets[skill.name] = value;
-            this._render();
-        });
+        updateTime(target);
 
-        const seconds = timeToTargetLevel({
-            experience: skill.experience,
+        const targetInput = this._number(
             target,
-            table: state.table,
-            perHour: projected,
-        });
-        const time = this._cell(seconds === null ? '—' : shortDuration(seconds));
-        time.style.color = seconds === null ? COLORS.textDim : COLORS.accent;
-
-        const owed = experienceBetween(skill.level, target, state.table);
-        time.title =
-            owed === null
-                ? 'That level is not on the game’s experience table.'
-                : `${formatWithSeparator(owed)} experience from level ${skill.level} to ${target}.`;
+            `target-${skill.name}`,
+            (value) => {
+                this.targets[skill.name] = value;
+                this._render();
+            },
+            (value) => {
+                this.targets[skill.name] = value;
+                updateTime(value);
+            }
+        );
 
         line.append(name, level, rate, toCombat, targetInput, time);
         return line;
@@ -1423,43 +1476,69 @@ class CombatLevelPanel {
         card.appendChild(this._foldHeading('Exp Lookup', 'lookup'));
         if (this.collapsed.lookup) return card;
 
-        const from = this.lookup.from ?? 1;
-        const to = this.lookup.to ?? Math.min(from + 99, state.table.length - 1);
+        let from = this.lookup.from ?? 1;
+        let to = this.lookup.to ?? Math.min(from + 99, state.table.length - 1);
 
         const line = document.createElement('div');
         Object.assign(line.style, { display: 'flex', alignItems: 'center', gap: '8px' });
-
-        const fromInput = this._number(from, 'lookup-from', (value) => {
-            this.lookup.from = value;
-            this._render();
-        });
-        fromInput.style.width = '72px';
-
-        const toInput = this._number(to, 'lookup-to', (value) => {
-            this.lookup.to = value;
-            this._render();
-        });
-        toInput.style.width = '72px';
-
-        line.append(fromInput, this._label('→'), toInput);
-        card.appendChild(line);
 
         // The subtraction rather than only its result, because the thresholds
         // are the answer to the next question you were going to ask
         const answer = document.createElement('div');
         answer.style.marginTop = '3px';
-        const owed = experienceBetween(from, to, state.table);
-        if (owed === null) {
-            answer.append(this._value('One of those levels is not on the game’s table.', COLORS.textDim));
-        } else {
-            answer.append(
-                this._value(formatWithSeparator(state.table[to]), ROW_COLORS.good),
-                this._label(' − '),
-                this._value(formatWithSeparator(state.table[from]), ROW_COLORS.good),
-                this._label(' = '),
-                this._value(`${formatWithSeparator(owed)} exp`, ROW_COLORS.gold)
-            );
-        }
+
+        /**
+         * Recomputed on every step of either box — typed or spinner-held —
+         * so holding an arrow reads live, without the full re-render that
+         * would replace the box out from under the hold.
+         */
+        const updateAnswer = () => {
+            answer.replaceChildren();
+            const owed = experienceBetween(from, to, state.table);
+            if (owed === null) {
+                answer.append(this._value('One of those levels is not on the game’s table.', COLORS.textDim));
+            } else {
+                answer.append(
+                    this._value(formatWithSeparator(state.table[to]), ROW_COLORS.good),
+                    this._label(' − '),
+                    this._value(formatWithSeparator(state.table[from]), ROW_COLORS.good),
+                    this._label(' = '),
+                    this._value(`${formatWithSeparator(owed)} exp`, ROW_COLORS.gold)
+                );
+            }
+        };
+        updateAnswer();
+
+        const fromInput = this._number(
+            from,
+            'lookup-from',
+            (value) => {
+                this.lookup.from = value;
+                this._render();
+            },
+            (value) => {
+                from = value;
+                updateAnswer();
+            }
+        );
+        fromInput.style.width = '72px';
+
+        const toInput = this._number(
+            to,
+            'lookup-to',
+            (value) => {
+                this.lookup.to = value;
+                this._render();
+            },
+            (value) => {
+                to = value;
+                updateAnswer();
+            }
+        );
+        toInput.style.width = '72px';
+
+        line.append(fromInput, this._label('→'), toInput);
+        card.appendChild(line);
         card.appendChild(answer);
         return card;
     }
@@ -1608,16 +1687,28 @@ class CombatLevelPanel {
     /**
      * A level box.
      *
-     * Committed on change and on Enter rather than on every keystroke, because
-     * re-rendering mid-type takes the caret away — and typing "120" through a
-     * live render means being told about levels 1 and 12 on the way.
+     * The full commit (`onCommit`, which is what triggers `_render()` and
+     * whatever else a caller does with the settled value) does not fire on
+     * every step. Holding the native spinner arrow, or typing a number
+     * digit by digit, fires `input` — and for the arrow, `change` too — once
+     * per step; if any of those rebuilt the panel, the rebuild would replace
+     * this very element out from under the click or keystroke that caused
+     * it, and the browser's hold-to-repeat (which is tied to the original
+     * element) would die right there. So a step instead calls the cheap
+     * `onStep`, if the caller gave one, to update just what depends on this
+     * box — and only settles into a full `onCommit` on blur, on Enter (which
+     * blurs), or after `TARGET_SETTLE_MS` of no further steps. Typing "120"
+     * this way updates a live preview at 1, 12 and 120 rather than committing
+     * each of them.
      *
      * @param {number} value - What it starts at
      * @param {string} control - Stable id, so focus survives the redraw
-     * @param {Function} onCommit - Called with the new number
+     * @param {Function} onCommit - Called with the settled number
+     * @param {Function} [onStep] - Called with every intermediate number, for
+     *   a cheap update that does not touch this element
      * @returns {HTMLElement}
      */
-    _number(value, control, onCommit) {
+    _number(value, control, onCommit, onStep) {
         const input = document.createElement('input');
         input.type = 'number';
         input.min = '1';
@@ -1635,12 +1726,37 @@ class CombatLevelPanel {
             fontVariantNumeric: 'tabular-nums',
         });
 
-        const commit = () => {
+        const parse = () => {
             const parsed = Math.max(1, Math.round(Number(input.value)));
-            if (!Number.isFinite(parsed)) return;
+            return Number.isFinite(parsed) ? parsed : null;
+        };
+
+        let settleTimer = null;
+        const cancelSettle = () => {
+            if (settleTimer === null) return;
+            clearTimeout(settleTimer);
+            settleTimer = null;
+        };
+        const settle = () => {
+            cancelSettle();
+            const parsed = parse();
+            if (parsed === null) return;
             onCommit(parsed);
         };
-        input.addEventListener('change', commit);
+        const step = () => {
+            const parsed = parse();
+            if (parsed === null) return;
+            onStep?.(parsed);
+            cancelSettle();
+            settleTimer = setTimeout(settle, TARGET_SETTLE_MS);
+        };
+
+        // `input` covers typing and the spinner's own repeat; `change` is
+        // added because the spinner also fires it per step in some browsers —
+        // both are treated as a step rather than a commit, which is the point
+        input.addEventListener('input', step);
+        input.addEventListener('change', step);
+        input.addEventListener('blur', settle);
         input.addEventListener('keydown', (event) => {
             if (event.key === 'Enter') {
                 event.preventDefault();

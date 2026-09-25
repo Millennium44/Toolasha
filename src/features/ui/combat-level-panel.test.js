@@ -468,6 +468,119 @@ describe('the controls', () => {
     });
 });
 
+describe("holding a target box's spinner", () => {
+    // Mirrors the production constant in combat-level-panel.js — the wait
+    // after the last step before the settle that fires the full render.
+    const TARGET_SETTLE_MS = 400;
+
+    const inputs = () => [...combatLevelPanel.panel.querySelectorAll('input[type="number"]')];
+
+    /** Give Stamina a measured rate, so its row has a target time to hold steady on */
+    function trainStamina() {
+        grant('stamina', 1_000_000);
+        vi.setSystemTime(Date.now() + 5 * 60 * 1000);
+        combatLevelPanel._render();
+    }
+
+    test('a step keeps the same element and updates the row live', () => {
+        // The bug: the row's `onCommit` fired a full `_render()` on every
+        // step, which rebuilt the whole panel and replaced this very input —
+        // so a held spinner arrow died after one step, because the browser's
+        // hold-to-repeat is tied to the element the mouse is still down on.
+        combatLevelPanel.show();
+        trainStamina();
+
+        const box = inputs()[1]; // Stamina's target box, past the selector's own
+        box.focus();
+        const before = rowFor('Stamina');
+
+        box.value = '130';
+        box.dispatchEvent(new Event('input'));
+
+        // Still the same node — no rebuild happened — and the row's time cell
+        // already reflects the new target
+        expect(inputs()[1]).toBe(box);
+        expect(document.activeElement).toBe(box);
+        expect(rowFor('Stamina')).not.toBe(before);
+
+        const afterFirstStep = rowFor('Stamina');
+        box.value = '160';
+        box.dispatchEvent(new Event('input'));
+
+        expect(inputs()[1]).toBe(box);
+        expect(rowFor('Stamina')).not.toBe(afterFirstStep);
+    });
+
+    test('the full render does not fire while steps keep coming', () => {
+        combatLevelPanel.show();
+        trainStamina();
+
+        const box = inputs()[1];
+        box.focus();
+        const render = vi.spyOn(combatLevelPanel, '_render');
+
+        for (const value of ['131', '132', '133', '134', '135']) {
+            box.value = value;
+            box.dispatchEvent(new Event('input'));
+            // Well inside the settle window, as a held key or spinner would land
+            vi.advanceTimersByTime(50);
+        }
+
+        expect(render).not.toHaveBeenCalled();
+        // The in-memory target is live even though nothing has settled yet
+        expect(combatLevelPanel.targets.stamina).toBe(135);
+    });
+
+    test('it settles into one full render after the steps stop', () => {
+        combatLevelPanel.show();
+        trainStamina();
+
+        const box = inputs()[1];
+        box.focus();
+        box.value = '142';
+        box.dispatchEvent(new Event('input'));
+
+        vi.advanceTimersByTime(TARGET_SETTLE_MS);
+
+        expect(combatLevelPanel.targets.stamina).toBe(142);
+        // The settle rebuilt the row, so the target box holding 142 is a
+        // fresh element — its value is what proves the settle actually ran
+        expect(inputs()[1].value).toBe('142');
+    });
+
+    test('blur settles immediately rather than waiting out the idle window', () => {
+        combatLevelPanel.show();
+        trainStamina();
+
+        const box = inputs()[1];
+        box.focus();
+        box.value = '150';
+        box.dispatchEvent(new Event('input'));
+        box.dispatchEvent(new Event('blur'));
+
+        expect(combatLevelPanel.targets.stamina).toBe(150);
+        // The row was rebuilt as part of settling, so the box is a new element
+        expect(inputs()[1]).not.toBe(box);
+    });
+
+    test('the panel’s own five-second redraw never lands mid-hold', () => {
+        combatLevelPanel.show();
+        trainStamina();
+
+        const box = inputs()[1];
+        box.focus();
+        box.value = '170';
+        box.dispatchEvent(new Event('input'));
+
+        // The periodic clock ticking while the box is still focused and the
+        // settle timer has not fired yet
+        combatLevelPanel._refresh();
+
+        expect(inputs()[1]).toBe(box);
+        expect(document.activeElement).toBe(box);
+    });
+});
+
 describe('a redraw the user asked for is not the five-second one', () => {
     /** Move the clock on and grant, so there are rates to look at */
     function train(minutes, perMinute) {
