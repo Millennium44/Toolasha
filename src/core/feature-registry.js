@@ -73,6 +73,54 @@ const startedKeys = new Set();
 const liveStartsInFlight = new Set();
 
 /**
+ * Settle-only promises for the `initialize()` calls a live start or a retry has
+ * in flight. A switch's teardown waits these out before disabling: torn down
+ * mid-initialize, a feature finishes building after its disable() has run and
+ * keeps running for the arriving character, outside `startedKeys`.
+ * @type {Set<Promise<void>>}
+ */
+const inFlightStarts = new Set();
+
+/**
+ * Longest a switch's teardown waits for in-flight starts. Past it the teardown
+ * goes ahead — a stuck initializer must not hold the switch.
+ */
+const IN_FLIGHT_START_WAIT_MS = 5000;
+
+/**
+ * Call a feature's `initialize()` and track it until it settles.
+ * @param {Object} feature - Registry entry
+ * @returns {Promise<*>} What `initialize()` resolves to; a synchronous throw rejects it
+ */
+function trackedInitialize(feature) {
+    const started = (async () => feature.initialize())();
+    const settled = started.then(
+        () => {},
+        () => {}
+    );
+    inFlightStarts.add(settled);
+    settled.then(() => inFlightStarts.delete(settled));
+    return started;
+}
+
+/**
+ * Wait, bounded, for every tracked start to settle.
+ * @returns {Promise<void>}
+ */
+async function waitForInFlightStarts() {
+    if (inFlightStarts.size === 0) return;
+    let timer = null;
+    const timeout = new Promise((resolve) => {
+        timer = setTimeout(resolve, IN_FLIGHT_START_WAIT_MS);
+    });
+    try {
+        await Promise.race([Promise.all([...inFlightStarts]), timeout]);
+    } finally {
+        clearTimeout(timer);
+    }
+}
+
+/**
  * Whether a character switch has taken the feature layer down and not yet
  * brought it back up. Owned by `setupCharacterSwitchHandler`; read by live starts,
  * which must not initialize anything into a layer the switch is about to rebuild
@@ -551,6 +599,8 @@ function setupCharacterSwitchHandler(onInitFailures, onBeforeSettingsLoad) {
             // settling switch bring the layer back up for whoever is current.
             if (layerTornDown) return;
             layerTornDown = true;
+            // Set first, so no pass or retry begins another start meanwhile
+            await waitForInFlightStarts();
             await disableAllFeatures();
         });
     });
@@ -692,7 +742,7 @@ async function runLiveStarts() {
         startedKeys.add(feature.key);
         liveStartsInFlight.add(feature.key);
         try {
-            await feature.initialize();
+            await trackedInitialize(feature);
         } catch (error) {
             console.error(`[Toolasha] Failed to initialize ${feature.name} after a setting change:`, error);
             failures.push({ key: feature.key, name: feature.name, reason: `Initialization threw: ${error?.message}` });
@@ -853,7 +903,7 @@ async function retryFailedFeatures(failedFeatures) {
         startedKeys.add(feature.key);
         liveStartsInFlight.add(feature.key);
         try {
-            await feature.initialize();
+            await trackedInitialize(feature);
 
             // Verify the retry actually worked by running health check
             if (feature.healthCheck) {
