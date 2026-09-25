@@ -330,18 +330,14 @@ describe('stale response guard', () => {
 });
 
 describe('panel placement', () => {
-    test('the panel sits below the current-item card, never overlapping the ask/bid counts or tradable range', async () => {
+    test('the panel is an absolutely-positioned overlay anchored to the item card, adding no height to the page', async () => {
         document.body.innerHTML = '';
         const infoContainer = document.createElement('div');
         infoContainer.className = 'MarketplacePanel_infoContainer__q';
 
         const currentItem = document.createElement('div');
         currentItem.className = 'MarketplacePanel_currentItem__abc';
-        currentItem.innerHTML = `
-            <span class="mwi-ask-count">140</span>
-            <svg><use href="#coin"></use></svg>
-            <span class="mwi-bid-count">15</span>
-        `;
+        currentItem.innerHTML = `<svg><use href="#coin"></use></svg>`;
         const use = currentItem.querySelector('use');
         Object.defineProperty(use, 'href', { value: { baseVal: use.getAttribute('href') } });
 
@@ -359,18 +355,31 @@ describe('panel placement', () => {
 
         const panel = document.querySelector('.mwi-volume-stats');
         expect(panel).not.toBeNull();
-        // A sibling placed right after the current-item card, not a child of it:
-        // it can only ever push later siblings (the range line) down, never sit
-        // on top of the counts baked into the card itself.
-        expect(panel.parentElement).toBe(infoContainer);
-        expect(panel.previousElementSibling).toBe(currentItem);
-        expect(currentItem.contains(panel)).toBe(false);
-        expect(panel.style.position).not.toBe('absolute');
-        // Anchored to the end (right) of the grid's column 3, so it shares that
-        // cell with the bid-side count (queue-length-estimator.js, start/left of
-        // the same cell) instead of overlapping it.
-        expect(panel.style.gridColumn).toBe('3');
-        expect(panel.style.justifySelf).toBe('end');
+        // A child of the item card, absolutely positioned over its top-right
+        // corner: it never pushes the "Tradable range" line (or anything else
+        // in the info container) down, unlike the in-flow grid placement this
+        // replaces.
+        expect(currentItem.contains(panel)).toBe(true);
+        expect(panel.style.position).toBe('absolute');
+        expect(range.previousElementSibling).toBe(currentItem);
+    });
+
+    test('re-attaching does not duplicate the panel or leave a stray copy elsewhere', async () => {
+        document.body.innerHTML = '';
+        const currentItem = document.createElement('div');
+        currentItem.className = 'MarketplacePanel_currentItem__abc';
+        currentItem.innerHTML = `<svg><use href="#coin"></use></svg>`;
+        const use = currentItem.querySelector('use');
+        Object.defineProperty(use, 'href', { value: { baseVal: use.getAttribute('href') } });
+        document.body.appendChild(currentItem);
+
+        historyApi.rows = [{ a: 110, b: 90, p: 100, v: 10, time: Math.floor(Date.now() / 1000) - 3600 }];
+        await marketVolumeStats.initialize();
+        marketVolumeStats.currentKey = '/items/coin:0';
+        await marketVolumeStats.fetchAndRender(currentItem, '/items/coin', 0, '/items/coin:0', false);
+        marketVolumeStats.attachPanel(currentItem);
+
+        expect(document.querySelectorAll('.mwi-volume-stats')).toHaveLength(1);
     });
 });
 

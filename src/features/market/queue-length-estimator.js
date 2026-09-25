@@ -6,6 +6,15 @@
  * - Estimates total queue depth when all 20 visible listings have the same price
  * - Uses listing timestamps to extrapolate queue length
  * Ported from Ranged Way Idle's estimateQueueLength feature
+ *
+ * Layout has two modes, chosen live by `isVolumeStatsPanelActive()`
+ * (market-volume-stats.js):
+ * - Trade-stats overlay off: the original layout — ask sits left of center,
+ *   bid sits right of center, no labels.
+ * - Trade-stats overlay on: that overlay anchors to the current-item card's
+ *   top-right corner, which is the icon corner the bid count used to sit
+ *   next to below the buttons. The two counts collapse into one "Ask 1.1K ·
+ *   Bid 15" group in the ask's old spot so nothing sits under the overlay.
  */
 
 import dataManager from '../../core/data-manager.js';
@@ -14,6 +23,7 @@ import config from '../../core/config.js';
 import { formatKMB } from '../../utils/formatters.js';
 import { createCleanupRegistry } from '../../utils/cleanup-registry.js';
 import { GAME } from '../../utils/selectors.js';
+import { isVolumeStatsPanelActive } from './market-volume-stats.js';
 
 /**
  * How long order-book messages are gathered before the display is redrawn.
@@ -50,6 +60,7 @@ class QueueLengthEstimator {
 
         this.setupWebSocketListeners();
         this.setupObserver();
+        this.setupVolumeStatsListener();
     }
 
     /**
@@ -83,6 +94,22 @@ class QueueLengthEstimator {
                 this.unregisterWebSocket();
                 this.unregisterWebSocket = null;
             }
+        });
+    }
+
+    /**
+     * Redraw whenever the trade-stats overlay (market-volume-stats.js) is
+     * switched on or off — that is what decides whether the counts are shown
+     * combined or separate — so the layout updates immediately rather than on
+     * the next order-book message.
+     */
+    setupVolumeStatsListener() {
+        const handleChange = () => this.repaint();
+        const unregisterPooledHistory = config.onSettingChange('market_pooledHistory', handleChange);
+        const unregisterVolumeStats = config.onSettingChange('market_volumeStats', handleChange);
+        this.cleanupRegistry.registerCleanup(() => {
+            unregisterPooledHistory();
+            unregisterVolumeStats();
         });
     }
 
@@ -156,10 +183,8 @@ class QueueLengthEstimator {
         // Nothing to say about this item means saying nothing — not leaving the
         // last item's figures standing under the button. Every "we don't know"
         // path below wipes first, because the container is shared between items
-        // and enhancement levels. Queried document-wide, not scoped to
-        // buttonContainer, because a display can also live in the info-container
-        // grid host (see getGridHost()).
-        const forget = () => document.querySelectorAll('.mwi-queue-length').forEach((el) => el.remove());
+        // and enhancement levels.
+        const forget = () => buttonContainer.querySelectorAll('.mwi-queue-length').forEach((el) => el.remove());
 
         // Get current item and order book data from estimated-listing-age module
         const currentItemHrid = this.getCurrentItemHrid();
@@ -189,47 +214,40 @@ class QueueLengthEstimator {
         // Mark as processed
         buttonContainer.classList.add('mwi-queue-length-set');
 
-        // Calculate and display queue lengths. Prefer the info-container grid
-        // (counts sit beside the item icon, clear of the trade-stats table);
-        // fall back to the old button-row insertion when that grid isn't found.
-        const host = this.getGridHost();
-        this.displayQueueLength(buttonContainer, orderBookAtLevel.asks, true, host);
-        this.displayQueueLength(buttonContainer, orderBookAtLevel.bids, false, host);
+        this.renderQueueLengths(buttonContainer, orderBookAtLevel.asks, orderBookAtLevel.bids);
     }
 
     /**
-     * Find the marketplace order book's info-container grid, if the current
-     * item is inside one.
-     * @returns {{infoContainer: HTMLElement}|null}
+     * Draw the ask/bid counts in whichever of the two layouts currently
+     * applies. Always wipes first: the container is shared between items and
+     * this can be reached from a settings toggle as well as a fresh order
+     * book, and the previous layout's elements must not linger alongside (or
+     * instead of) the new one's.
+     * @param {HTMLElement} buttonContainer
+     * @param {Array} asks
+     * @param {Array} bids
      */
-    getGridHost() {
-        const currentItemElement = document.querySelector(GAME.MARKETPLACE_CURRENT_ITEM);
-        const infoContainer = currentItemElement?.closest('[class*="MarketplacePanel_infoContainer"]');
-        return infoContainer ? { infoContainer } : null;
+    renderQueueLengths(buttonContainer, asks, bids) {
+        buttonContainer.querySelectorAll('.mwi-queue-length').forEach((el) => el.remove());
+
+        if (isVolumeStatsPanelActive()) {
+            this.displayCombinedQueueLength(buttonContainer, asks, bids);
+        } else {
+            this.displayQueueLength(buttonContainer, asks, true);
+            this.displayQueueLength(buttonContainer, bids, false);
+        }
     }
 
     /**
-     * Calculate and display queue length for asks or bids
-     * @param {HTMLElement} buttonContainer - Button container element (used for the fallback insertion)
+     * Work out the displayed queue length and whether it is estimated, the
+     * same RWI-derived formula for either side of the book.
      * @param {Array} listings - Array of listings (asks or bids)
-     * @param {boolean} isAsk - True for asks (sell side), false for bids (buy side)
-     * @param {{infoContainer: HTMLElement}|null} [host] - Grid host from getGridHost(), or null to fall back
-     *   to inserting into the button row
+     * @returns {{queueLength: number, isEstimated: boolean, visibleCount: number}|null}
+     *   null when there is nothing resting on this side.
      */
-    displayQueueLength(buttonContainer, listings, isAsk, host = null) {
-        const className = `mwi-queue-length-${isAsk ? 'ask' : 'bid'}`;
-
-        // The old figure goes FIRST, before anything can return early. The
-        // button container and grid host both outlive the item they are
-        // showing (that is why `repaint()` clears the processed flags rather
-        // than trusting React to throw the row away), so an item whose side of
-        // the book is empty used to leave the previous item's queue length
-        // sitting on screen — a number the player reads as this item's depth.
-        // Queried document-wide since the element can be in either location.
-        document.querySelectorAll(`.${className}`).forEach((el) => el.remove());
-
+    computeQueueStats(listings) {
         if (!listings || listings.length === 0) {
-            return;
+            return null;
         }
 
         // Calculate visible count at top price
@@ -263,46 +281,126 @@ class QueueLengthEstimator {
             }
         }
 
+        return { queueLength, isEstimated, visibleCount: listings.length };
+    }
+
+    /**
+     * Original layout: one unlabeled figure per side, ask left of center and
+     * bid right of center in the button row.
+     * @param {HTMLElement} buttonContainer - Button container element
+     * @param {Array} listings - Array of listings (asks or bids)
+     * @param {boolean} isAsk - True for asks (sell side), false for bids (buy side)
+     */
+    displayQueueLength(buttonContainer, listings, isAsk) {
+        // The old figure goes FIRST, before anything can return early — an item
+        // whose side of the book is empty must not leave the previous item's
+        // queue length sitting under the button.
+        buttonContainer.querySelector(`.mwi-queue-length-${isAsk ? 'ask' : 'bid'}`)?.remove();
+
+        const stats = this.computeQueueStats(listings);
+        if (!stats) {
+            return;
+        }
+
         const displayElement = document.createElement('div');
-        displayElement.classList.add('mwi-queue-length', className);
+        displayElement.classList.add('mwi-queue-length', `mwi-queue-length-${isAsk ? 'ask' : 'bid'}`);
         displayElement.style.fontSize = '1.2rem';
         displayElement.style.textAlign = 'center';
+        displayElement.textContent = formatKMB(stats.queueLength, 1);
+        displayElement.style.color = this.colorFor(stats.isEstimated);
+        displayElement.title = this.tooltipFor(stats, isAsk);
 
-        // Format the count
-        const formattedCount = formatKMB(queueLength, 1);
-        displayElement.textContent = formattedCount;
-
-        // Apply color based on whether it's estimated
-        const colorSetting = isEstimated ? 'color_queueLength_estimated' : 'color_queueLength_known';
-        const color = config.getSettingValue(colorSetting, isEstimated ? '#60a5fa' : '#ffffff');
-        displayElement.style.color = color;
-
-        // Add tooltip
-        if (isEstimated) {
-            displayElement.title = `Estimated total queue depth (extrapolated from ${listings.length} visible orders)`;
-        } else {
-            displayElement.title = `Total quantity at best ${isAsk ? 'sell' : 'buy'} price`;
-        }
-
-        if (host) {
-            // Info-container grid: row 2, beside the item icon (column 2). Ask
-            // sits left of the icon (column 1), bid sits right of it (column 3),
-            // both bottom-aligned in their cell — clear of the trade-stats table,
-            // which anchors to the top/end of column 3 (see market-volume-stats.js).
-            displayElement.style.gridRow = '2';
-            displayElement.style.gridColumn = isAsk ? '1' : '3';
-            displayElement.style.justifySelf = isAsk ? 'end' : 'start';
-            displayElement.style.alignSelf = 'end';
-            displayElement.style.margin = isAsk ? '0 8px 0 0' : '0 0 0 8px';
-            host.infoContainer.appendChild(displayElement);
-        } else if (isAsk) {
-            // Fallback: no info-container grid found. Insert into the button row.
-            // Ask goes before the second child (between first button and sell button)
+        // Ask goes before the second child (between first button and sell button),
+        // bid goes before the last child (before buy button)
+        if (isAsk) {
             buttonContainer.insertBefore(displayElement, buttonContainer.children[1]);
         } else {
-            // Bid goes before the last child (before buy button)
             buttonContainer.insertBefore(displayElement, buttonContainer.lastChild);
         }
+    }
+
+    /**
+     * Compact layout used while the trade-stats overlay (market-volume-stats.js)
+     * is on screen: both sides in one "Ask 1.1K · Bid 15" group, in the ask's
+     * original spot, so the button row's other side keeps only the Buy button
+     * clear of the overlay.
+     * @param {HTMLElement} buttonContainer
+     * @param {Array} asks
+     * @param {Array} bids
+     */
+    displayCombinedQueueLength(buttonContainer, asks, bids) {
+        buttonContainer.querySelector('.mwi-queue-length-combined')?.remove();
+
+        const askStats = this.computeQueueStats(asks);
+        const bidStats = this.computeQueueStats(bids);
+        if (!askStats && !bidStats) {
+            return;
+        }
+
+        const wrapper = document.createElement('div');
+        wrapper.classList.add('mwi-queue-length', 'mwi-queue-length-combined');
+        wrapper.style.cssText = 'display:flex;align-items:center;gap:6px;font-size:1.2rem;';
+
+        if (askStats) {
+            wrapper.appendChild(this.buildLabeledSide('Ask', askStats, true));
+        }
+        if (askStats && bidStats) {
+            const separator = document.createElement('span');
+            separator.textContent = '·';
+            separator.style.color = '#AAAAAA';
+            wrapper.appendChild(separator);
+        }
+        if (bidStats) {
+            wrapper.appendChild(this.buildLabeledSide('Bid', bidStats, false));
+        }
+
+        buttonContainer.insertBefore(wrapper, buttonContainer.children[1]);
+    }
+
+    /**
+     * One "Ask 1.1K" (or "Bid 15") span for the combined layout: a small dim
+     * label plus the figure in its usual color, sharing the figure's tooltip.
+     * @param {string} label - "Ask" or "Bid"
+     * @param {{queueLength: number, isEstimated: boolean, visibleCount: number}} stats
+     * @param {boolean} isAsk
+     * @returns {HTMLElement}
+     */
+    buildLabeledSide(label, stats, isAsk) {
+        const side = document.createElement('span');
+        side.classList.add(`mwi-queue-length-${isAsk ? 'ask' : 'bid'}`);
+        side.title = this.tooltipFor(stats, isAsk);
+
+        const labelEl = document.createElement('span');
+        labelEl.textContent = `${label} `;
+        labelEl.style.cssText = 'font-size:0.8em;color:#AAAAAA;';
+        side.appendChild(labelEl);
+
+        const valueEl = document.createElement('span');
+        valueEl.textContent = formatKMB(stats.queueLength, 1);
+        valueEl.style.color = this.colorFor(stats.isEstimated);
+        side.appendChild(valueEl);
+
+        return side;
+    }
+
+    /**
+     * @param {boolean} isEstimated
+     * @returns {string} The configured (or default) color for a known vs. estimated figure
+     */
+    colorFor(isEstimated) {
+        const colorSetting = isEstimated ? 'color_queueLength_estimated' : 'color_queueLength_known';
+        return config.getSettingValue(colorSetting, isEstimated ? '#60a5fa' : '#ffffff');
+    }
+
+    /**
+     * @param {{isEstimated: boolean, visibleCount: number}} stats
+     * @param {boolean} isAsk
+     * @returns {string}
+     */
+    tooltipFor(stats, isAsk) {
+        return stats.isEstimated
+            ? `Estimated total queue depth (extrapolated from ${stats.visibleCount} visible orders)`
+            : `Total quantity at best ${isAsk ? 'sell' : 'buy'} price`;
     }
 
     /**

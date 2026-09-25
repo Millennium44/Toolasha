@@ -1,8 +1,9 @@
 /** @vitest-environment happy-dom */
 /**
  * Queue Length Estimator — the queue-depth extrapolation formula, driven
- * through `displayQueueLength` against a real (happy-dom) button container.
- * WebSocket wiring and the DOM observer are not exercised here.
+ * through `displayQueueLength`/`displayCombinedQueueLength` against a real
+ * (happy-dom) button container. WebSocket wiring and the DOM observer are not
+ * exercised here.
  */
 
 import { describe, test, expect, vi } from 'vitest';
@@ -16,8 +17,27 @@ const dataManagerMock = vi.hoisted(() => ({
 }));
 vi.mock('../../core/data-manager.js', () => ({ default: dataManagerMock }));
 vi.mock('../../core/dom-observer.js', () => ({ default: { onClass: () => () => {} } }));
+
+const settingChangeCallbacks = vi.hoisted(() => ({}));
 vi.mock('../../core/config.js', () => ({
-    default: { getSetting: () => true, getSettingValue: (key, fallback) => fallback },
+    default: {
+        getSetting: () => true,
+        getSettingValue: (key, fallback) => fallback,
+        onSettingChange: (key, callback) => {
+            (settingChangeCallbacks[key] ||= []).push(callback);
+            return () => {
+                settingChangeCallbacks[key] = (settingChangeCallbacks[key] || []).filter((cb) => cb !== callback);
+            };
+        },
+    },
+}));
+
+// market-volume-stats.js's gating is exercised by its own tests; here it is a
+// simple switch so the two layouts (and the switch between them) can be
+// driven directly.
+const volumeStatsMock = vi.hoisted(() => ({ active: false }));
+vi.mock('./market-volume-stats.js', () => ({
+    isVolumeStatsPanelActive: () => volumeStatsMock.active,
 }));
 
 const { default: queueLengthEstimator } = await import('./queue-length-estimator.js');
@@ -82,7 +102,7 @@ function buttonContainer() {
 
 const askListing = (price, quantity, createdTimestamp) => ({ price, quantity, createdTimestamp });
 
-describe('displayQueueLength', () => {
+describe('displayQueueLength (trade-stats overlay off — original, unlabeled layout)', () => {
     test('when fewer than 20 listings are visible, the count is exact — not estimated', () => {
         const container = buttonContainer();
         const listings = [askListing(100, 5, '2026-01-01T00:00:00Z'), askListing(100, 3, '2026-01-01T00:00:00Z')];
@@ -150,13 +170,19 @@ describe('displayQueueLength', () => {
         expect(container.querySelector('.mwi-queue-length-ask')).toBeNull();
     });
 
-    test('ask and bid displays are independent and both can coexist', () => {
+    test('ask and bid displays are independent and both can coexist, ask left of center and bid right of it', () => {
         const container = buttonContainer();
         queueLengthEstimator.displayQueueLength(container, [askListing(100, 5, '2026-01-01T00:00:00Z')], true);
         queueLengthEstimator.displayQueueLength(container, [askListing(90, 3, '2026-01-01T00:00:00Z')], false);
 
-        expect(container.querySelector('.mwi-queue-length-ask').textContent).toBe('5');
-        expect(container.querySelector('.mwi-queue-length-bid').textContent).toBe('3');
+        const ask = container.querySelector('.mwi-queue-length-ask');
+        const bid = container.querySelector('.mwi-queue-length-bid');
+        expect(ask.textContent).toBe('5');
+        expect(bid.textContent).toBe('3');
+        expect(ask.textContent).not.toMatch(/Ask/); // no label in this layout
+        // Ask sits before the Sell button (index 1), bid before the Buy button (last child)
+        expect([...container.children].indexOf(ask)).toBe(1);
+        expect(bid.nextElementSibling.textContent).toBe('Buy 20');
     });
 
     test('re-displaying replaces the previous element rather than duplicating it', () => {
@@ -170,88 +196,176 @@ describe('displayQueueLength', () => {
     });
 });
 
-describe('displayQueueLength with a grid host', () => {
-    /** @returns {{infoContainer: HTMLElement, host: {infoContainer: HTMLElement}}} */
-    const gridHost = () => {
-        const infoContainer = document.createElement('div');
-        infoContainer.className = 'MarketplacePanel_infoContainer__q';
-        document.body.appendChild(infoContainer);
-        return { infoContainer, host: { infoContainer } };
-    };
+describe('displayCombinedQueueLength (trade-stats overlay on — combined, labeled layout)', () => {
+    test('both sides present renders "Ask <n> · Bid <n>" as one group in the ask slot', () => {
+        const container = buttonContainer();
+        queueLengthEstimator.displayCombinedQueueLength(
+            container,
+            [askListing(100, 5, '2026-01-01T00:00:00Z')],
+            [askListing(90, 3, '2026-01-01T00:00:00Z')]
+        );
 
-    test('ask is placed left of the icon (column 1, end/end), bid right of it (column 3, start/end)', () => {
-        const { infoContainer, host } = gridHost();
-        const buttons = buttonContainer();
+        const group = container.querySelector('.mwi-queue-length-combined');
+        expect(group).not.toBeNull();
+        expect([...container.children].indexOf(group)).toBe(1);
+        expect(group.textContent).toContain('Ask');
+        expect(group.textContent).toContain('5');
+        expect(group.textContent).toContain('Bid');
+        expect(group.textContent).toContain('3');
 
-        queueLengthEstimator.displayQueueLength(buttons, [askListing(100, 5, '2026-01-01T00:00:00Z')], true, host);
-        queueLengthEstimator.displayQueueLength(buttons, [askListing(90, 3, '2026-01-01T00:00:00Z')], false, host);
+        const ask = group.querySelector('.mwi-queue-length-ask');
+        const bid = group.querySelector('.mwi-queue-length-bid');
+        expect(ask.title).toMatch(/Total quantity/);
+        expect(bid.title).toMatch(/Total quantity/);
 
-        const ask = infoContainer.querySelector('.mwi-queue-length-ask');
-        const bid = infoContainer.querySelector('.mwi-queue-length-bid');
-        expect(ask).not.toBeNull();
-        expect(bid).not.toBeNull();
-        expect(ask.style.gridColumn).toBe('1');
-        expect(ask.style.justifySelf).toBe('end');
-        expect(ask.style.alignSelf).toBe('end');
-        expect(bid.style.gridColumn).toBe('3');
-        expect(bid.style.justifySelf).toBe('start');
-        expect(bid.style.alignSelf).toBe('end');
-        // Never inserted into the button row when a grid host is available
-        expect(buttons.querySelector('.mwi-queue-length')).toBeNull();
-
-        infoContainer.remove();
+        // Nothing left for the Buy side of the row — the overlay owns that corner.
+        expect(container.lastElementChild.textContent).toBe('Buy 20');
     });
 
-    test('re-rendering into the grid host replaces the previous element rather than duplicating it', () => {
-        const { infoContainer, host } = gridHost();
-        const buttons = buttonContainer();
+    test('only the ask side has listings: only "Ask" is shown, no dangling separator', () => {
+        const container = buttonContainer();
+        queueLengthEstimator.displayCombinedQueueLength(container, [askListing(100, 5, '2026-01-01T00:00:00Z')], []);
 
-        queueLengthEstimator.displayQueueLength(buttons, [askListing(100, 5, '2026-01-01T00:00:00Z')], true, host);
-        queueLengthEstimator.displayQueueLength(buttons, [askListing(100, 9, '2026-01-01T00:00:00Z')], true, host);
-
-        const els = infoContainer.querySelectorAll('.mwi-queue-length-ask');
-        expect(els).toHaveLength(1);
-        expect(els[0].textContent).toBe('9');
-
-        infoContainer.remove();
+        const group = container.querySelector('.mwi-queue-length-combined');
+        expect(group.textContent).toContain('Ask');
+        expect(group.textContent).not.toContain('Bid');
+        expect(group.textContent).not.toContain('·');
     });
 
-    test('an empty listings array removes any existing element from the grid host and adds nothing', () => {
-        const { infoContainer, host } = gridHost();
-        const buttons = buttonContainer();
+    test('only the bid side has listings: only "Bid" is shown', () => {
+        const container = buttonContainer();
+        queueLengthEstimator.displayCombinedQueueLength(container, [], [askListing(90, 3, '2026-01-01T00:00:00Z')]);
 
-        queueLengthEstimator.displayQueueLength(buttons, [askListing(100, 5, '2026-01-01T00:00:00Z')], true, host);
-        expect(infoContainer.querySelector('.mwi-queue-length-ask')).not.toBeNull();
-
-        queueLengthEstimator.displayQueueLength(buttons, [], true, host);
-        expect(infoContainer.querySelector('.mwi-queue-length-ask')).toBeNull();
-
-        infoContainer.remove();
+        const group = container.querySelector('.mwi-queue-length-combined');
+        expect(group.textContent).toContain('Bid');
+        expect(group.textContent).not.toContain('Ask');
     });
 
-    test('getGridHost finds the info container and getGridHost returns null without one', () => {
-        document.body.innerHTML = '';
-        expect(queueLengthEstimator.getGridHost()).toBeNull();
-
-        const infoContainer = document.createElement('div');
-        infoContainer.className = 'MarketplacePanel_infoContainer__q';
-        const currentItem = document.createElement('div');
-        currentItem.className = 'MarketplacePanel_currentItem__x';
-        infoContainer.appendChild(currentItem);
-        document.body.appendChild(infoContainer);
-
-        expect(queueLengthEstimator.getGridHost()).toEqual({ infoContainer });
-        document.body.innerHTML = '';
+    test('neither side has listings: nothing is injected', () => {
+        const container = buttonContainer();
+        queueLengthEstimator.displayCombinedQueueLength(container, [], []);
+        expect(container.querySelector('.mwi-queue-length-combined')).toBeNull();
     });
 
-    test('no grid host present falls back to the button row', () => {
-        document.body.innerHTML = '';
-        const buttons = buttonContainer();
+    test('an estimated side keeps the estimated color and tooltip, independent of the other side', () => {
+        const container = buttonContainer();
+        const now = new Date('2026-01-01T10:00:00Z').getTime();
+        vi.useFakeTimers();
+        vi.setSystemTime(now);
+        const first = now - 100 * 60 * 1000;
+        const last = now - 10 * 60 * 1000;
+        const saturatedAsks = Array.from({ length: 20 }, (_, i) => {
+            const t = first + ((last - first) * i) / 19;
+            return askListing(100, 1, new Date(t).toISOString());
+        });
 
-        expect(queueLengthEstimator.getGridHost()).toBeNull();
-        queueLengthEstimator.displayQueueLength(buttons, [askListing(100, 5, '2026-01-01T00:00:00Z')], true, null);
+        queueLengthEstimator.displayCombinedQueueLength(container, saturatedAsks, [
+            askListing(90, 3, '2026-01-01T00:00:00Z'),
+        ]);
 
-        expect(buttons.querySelector('.mwi-queue-length-ask')).not.toBeNull();
+        const group = container.querySelector('.mwi-queue-length-combined');
+        const ask = group.querySelector('.mwi-queue-length-ask');
+        const bid = group.querySelector('.mwi-queue-length-bid');
+        expect(ask.title).toMatch(/Estimated/);
+        expect(bid.title).toMatch(/Total quantity/);
+        vi.useRealTimers();
+    });
+
+    test('re-rendering through renderQueueLengths replaces the previous group rather than duplicating it', () => {
+        volumeStatsMock.active = true;
+        try {
+            const container = buttonContainer();
+            queueLengthEstimator.renderQueueLengths(container, [askListing(100, 5, '2026-01-01T00:00:00Z')], []);
+            queueLengthEstimator.renderQueueLengths(container, [askListing(100, 9, '2026-01-01T00:00:00Z')], []);
+
+            const groups = container.querySelectorAll('.mwi-queue-length-combined');
+            expect(groups).toHaveLength(1);
+            expect(groups[0].textContent).toContain('9');
+        } finally {
+            volumeStatsMock.active = false;
+        }
+    });
+});
+
+describe('renderQueueLengths switches layout on isVolumeStatsPanelActive()', () => {
+    test('overlay off renders the separate, unlabeled layout', () => {
+        volumeStatsMock.active = false;
+        const container = buttonContainer();
+        queueLengthEstimator.renderQueueLengths(
+            container,
+            [askListing(100, 5, '2026-01-01T00:00:00Z')],
+            [askListing(90, 3, '2026-01-01T00:00:00Z')]
+        );
+
+        expect(container.querySelector('.mwi-queue-length-combined')).toBeNull();
+        expect(container.querySelector('.mwi-queue-length-ask').textContent).toBe('5');
+        expect(container.querySelector('.mwi-queue-length-bid').textContent).toBe('3');
+    });
+
+    test('overlay on renders the combined, labeled layout', () => {
+        volumeStatsMock.active = true;
+        try {
+            const container = buttonContainer();
+            queueLengthEstimator.renderQueueLengths(
+                container,
+                [askListing(100, 5, '2026-01-01T00:00:00Z')],
+                [askListing(90, 3, '2026-01-01T00:00:00Z')]
+            );
+
+            const group = container.querySelector('.mwi-queue-length-combined');
+            expect(group).not.toBeNull();
+            expect(group.textContent).toContain('Ask');
+            expect(group.textContent).toContain('Bid');
+        } finally {
+            volumeStatsMock.active = false;
+        }
+    });
+
+    test('re-rendering after the setting flips tears down the old layout instead of stacking it', () => {
+        const container = buttonContainer();
+        volumeStatsMock.active = false;
+        queueLengthEstimator.renderQueueLengths(
+            container,
+            [askListing(100, 5, '2026-01-01T00:00:00Z')],
+            [askListing(90, 3, '2026-01-01T00:00:00Z')]
+        );
+        expect(container.querySelectorAll('.mwi-queue-length')).toHaveLength(2);
+
+        volumeStatsMock.active = true;
+        try {
+            queueLengthEstimator.renderQueueLengths(
+                container,
+                [askListing(100, 5, '2026-01-01T00:00:00Z')],
+                [askListing(90, 3, '2026-01-01T00:00:00Z')]
+            );
+            expect(container.querySelectorAll('.mwi-queue-length')).toHaveLength(1);
+            expect(container.querySelector('.mwi-queue-length-combined')).not.toBeNull();
+        } finally {
+            volumeStatsMock.active = false;
+        }
+    });
+});
+
+describe('setupVolumeStatsListener', () => {
+    test('flipping either gating setting repaints the queue-length display', () => {
+        const container = document.createElement('div');
+        container.className = 'MarketplacePanel_orderBooksContainer__abc';
+        document.body.appendChild(container);
+        try {
+            const repaint = vi.spyOn(queueLengthEstimator, 'repaint').mockImplementation(() => {});
+            queueLengthEstimator.setupVolumeStatsListener();
+
+            for (const callback of settingChangeCallbacks.market_pooledHistory || []) callback(true);
+            expect(repaint).toHaveBeenCalled();
+
+            repaint.mockClear();
+            for (const callback of settingChangeCallbacks.market_volumeStats || []) callback(true);
+            expect(repaint).toHaveBeenCalled();
+
+            repaint.mockRestore();
+        } finally {
+            container.remove();
+        }
     });
 });
 
@@ -333,85 +447,6 @@ describe('the figure under the button belongs to the item on screen', () => {
             queueLengthEstimator.repaint();
 
             expect(buttons.querySelector('.mwi-queue-length-ask')).toBeNull();
-        } finally {
-            queueLengthEstimator.orderBooksCache = {};
-            cleanup();
-        }
-    });
-});
-
-describe('processOrderBook with an info-container grid present', () => {
-    /**
-     * @param {string} iconName - Sprite id the marketplace panel is showing
-     * @returns {{infoContainer: HTMLElement, buttons: HTMLElement, cleanup: Function}}
-     */
-    const gridPanel = (iconName) => {
-        document.body.textContent = '';
-        const infoContainer = document.createElement('div');
-        infoContainer.className = 'MarketplacePanel_infoContainer__q';
-        const currentItem = document.createElement('div');
-        currentItem.className = 'MarketplacePanel_currentItem__x';
-        currentItem.innerHTML = `<svg><use href="#${iconName}"></use></svg>`;
-        infoContainer.appendChild(currentItem);
-        document.body.appendChild(infoContainer);
-
-        const buttons = document.createElement('div');
-        buttons.className = 'MarketplacePanel_newListingButtonsContainer__y';
-        buttons.appendChild(document.createElement('button'));
-        buttons.appendChild(document.createElement('button'));
-        const books = document.createElement('div');
-        books.className = 'MarketplacePanel_orderBooksContainer__z';
-        document.body.append(books, buttons);
-        return {
-            infoContainer,
-            buttons,
-            cleanup: () => {
-                document.body.textContent = '';
-            },
-        };
-    };
-
-    test('counts go into the grid host, not the button row, when an info container is present', () => {
-        const { infoContainer, buttons, cleanup } = gridPanel('cheese');
-        try {
-            queueLengthEstimator.orderBooksCache = {
-                '/items/cheese': {
-                    data: {
-                        orderBooks: [
-                            {
-                                asks: [{ price: 10, quantity: 500, createdTimestamp: 1 }],
-                                bids: [{ price: 9, quantity: 400, createdTimestamp: 1 }],
-                            },
-                        ],
-                    },
-                },
-            };
-            queueLengthEstimator.processOrderBook();
-
-            expect(infoContainer.querySelector('.mwi-queue-length-ask').textContent).toBe('500');
-            expect(infoContainer.querySelector('.mwi-queue-length-bid').textContent).toBe('400');
-            expect(buttons.querySelector('.mwi-queue-length')).toBeNull();
-        } finally {
-            queueLengthEstimator.orderBooksCache = {};
-            cleanup();
-        }
-    });
-
-    test('disable() / clearDisplays() removes counts from the grid host too', () => {
-        const { infoContainer, cleanup } = gridPanel('cheese');
-        try {
-            queueLengthEstimator.orderBooksCache = {
-                '/items/cheese': {
-                    data: {
-                        orderBooks: [{ asks: [{ price: 10, quantity: 5, createdTimestamp: 1 }], bids: [] }],
-                    },
-                },
-            };
-            queueLengthEstimator.processOrderBook();
-            expect(infoContainer.querySelector('.mwi-queue-length-ask')).not.toBeNull();
-
-            queueLengthEstimator.clearDisplays();
-            expect(infoContainer.querySelector('.mwi-queue-length-ask')).toBeNull();
         } finally {
             queueLengthEstimator.orderBooksCache = {};
             cleanup();

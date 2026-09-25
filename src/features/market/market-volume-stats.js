@@ -124,6 +124,18 @@ class MarketVolumeStats {
     }
 
     /**
+     * Whether the trade-stats overlay is showing (or would show, once an item is
+     * selected) — the same two settings as `enabled`, exposed for
+     * queue-length-estimator.js: its ask/bid counts collapse into one combined,
+     * labeled group only while this overlay's icon-corner placement is the thing
+     * they would otherwise flank.
+     * @returns {boolean}
+     */
+    isPanelActive() {
+        return this.enabled;
+    }
+
+    /**
      * React to either gating setting changing mid-session.
      *
      * The registry key this module is registered under (`marketVolumeStats`) has
@@ -346,47 +358,34 @@ class MarketVolumeStats {
     }
 
     /**
-     * Ensure the panel div exists directly below the current-item card, creating
+     * Ensure the panel div exists as a child of the current-item card, creating
      * it on first use.
      *
-     * Placed as the current-item card's next sibling in normal flow, not as an
-     * absolutely-positioned overlay inside it: the card carries the ask-side
-     * count to the icon's left and the bid-side count to its right (see
-     * queue-length-estimator.js's getGridHost()/displayQueueLength()), and an
-     * overlay anchored to the icon used to cover the bid count. A sibling in
-     * normal flow only ever pushes whatever came after it (the "Tradable range"
-     * line, if present) further down — it can never sit on top of anything.
+     * An absolutely-positioned overlay anchored to the card's top-right corner,
+     * not a sibling in normal flow: a sibling is taller than the icon and pushes
+     * the whole info area down, adding height to the page for no gain. The
+     * ask/bid "for sale" counts (queue-length-estimator.js) live in the button
+     * row below, not on this card, so the overlay has nothing there to collide
+     * with.
      * @param {HTMLElement} currentItemElement
      * @returns {HTMLElement} The panel's content container
      */
     attachPanel(currentItemElement) {
-        const host =
-            currentItemElement.closest('[class*="MarketplacePanel_infoContainer"]') ||
-            currentItemElement.parentElement ||
-            currentItemElement;
-
-        let panel = document.querySelector('.mwi-volume-stats');
+        let panel = currentItemElement.querySelector('.mwi-volume-stats');
         if (!panel) {
             panel = document.createElement('div');
             panel.className = 'mwi-volume-stats';
             panel.style.cssText =
-                // The info container is a 3-column grid (side | icon | side), row 2.
-                // queue-length-estimator.js puts the bid-side "for sale" count at the
-                // start (left, near the icon) of this same column-3 cell, bottom-aligned;
-                // this table anchors to the end (right) of that cell, top-aligned, so the
-                // two share the cell without overlapping as long as the column is wide
-                // enough for both (~365px table + ~80px count at typical widths). Outside
-                // a grid these placement properties are ignored.
-                'display:block;width:fit-content;margin:4px 8px 4px 0;z-index:20;' +
-                'grid-column:3;grid-row:2;justify-self:end;align-self:start;' +
+                'position:absolute;left:100%;top:-20px;margin-left:85px;z-index:20;' +
                 'white-space:nowrap;font-size:13px;line-height:1.5;text-align:left;' +
                 'background:#101116;border-radius:4px;box-shadow:0 2px 10px rgba(0,0,0,0.3);' +
                 'padding:4px 8px;pointer-events:auto;';
-        }
-
-        if (panel.parentElement !== host || panel.previousElementSibling !== currentItemElement) {
-            if (currentItemElement.nextSibling) host.insertBefore(panel, currentItemElement.nextSibling);
-            else host.appendChild(panel);
+            if (getComputedStyle(currentItemElement).position === 'static') {
+                currentItemElement.style.position = 'relative';
+            }
+            currentItemElement.appendChild(panel);
+        } else if (panel.parentElement !== currentItemElement) {
+            currentItemElement.appendChild(panel);
         }
         return panel;
     }
@@ -583,3 +582,15 @@ function escapeHtml(text) {
 const marketVolumeStats = new MarketVolumeStats();
 marketVolumeStats.setupSettingListener();
 export default marketVolumeStats;
+
+/**
+ * Whether the trade-stats overlay is showing or would show once an item is
+ * selected (`market_pooledHistory` and `market_volumeStats` both on).
+ * A free function so queue-length-estimator.js can import it without pulling
+ * in the whole singleton, or reading its two settings out of `config.js`
+ * itself and risking the two checks drifting apart.
+ * @returns {boolean}
+ */
+export function isVolumeStatsPanelActive() {
+    return marketVolumeStats.isPanelActive();
+}
