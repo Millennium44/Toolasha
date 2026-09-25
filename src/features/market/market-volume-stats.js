@@ -174,7 +174,9 @@ class MarketVolumeStats {
         const handleChange = () => {
             if (this.enabled) {
                 this.initialize();
-            } else if (this.isInitialized) {
+            } else if (this.isInitialized || this.initPromise) {
+                // An initialize() still awaiting storage must be invalidated too,
+                // or its tail registers the observer after the setting went off.
                 this.disable();
             }
         };
@@ -216,7 +218,7 @@ class MarketVolumeStats {
         // not register into a cleanup registry the teardown already emptied.
         const ticket = captureOwner(this);
         await this.loadColumnPrefs();
-        if (!stillOurs(ticket)) return;
+        if (!stillOurs(ticket) || !this.enabled) return;
 
         this.isInitialized = true;
         this.setupObserver();

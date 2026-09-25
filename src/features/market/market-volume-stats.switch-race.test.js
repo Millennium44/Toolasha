@@ -16,8 +16,15 @@ import { describe, test, expect, vi } from 'vitest';
 
 const gate = vi.hoisted(() => ({ promise: null, resolve: null }));
 
+const settings = vi.hoisted(() => ({ values: { market_volumeStats: true }, listeners: {} }));
 vi.mock('../../core/config.js', () => ({
-    default: { getSetting: () => true, onSettingChange: () => () => {} },
+    default: {
+        getSetting: (key) => settings.values[key] ?? true,
+        onSettingChange: (key, cb) => {
+            settings.listeners[key] = cb;
+            return () => {};
+        },
+    },
 }));
 vi.mock('../../core/storage.js', () => ({
     default: {
@@ -62,6 +69,26 @@ describe('character-switch race in initialize()', () => {
 
         expect(observerRegistrations.count).toBe(0);
         expect(marketVolumeStats.isInitialized).toBe(false);
+    });
+
+    test('switching the setting off inside the storage read leaves no observer registered when it resumes', async () => {
+        gate.promise = new Promise((resolve) => {
+            gate.resolve = resolve;
+        });
+        observerRegistrations.count = 0;
+
+        const initializing = marketVolumeStats.initialize();
+
+        // isInitialized is still false here, so the listener must not skip disable()
+        settings.values.market_volumeStats = false;
+        settings.listeners.market_volumeStats();
+
+        gate.resolve();
+        await initializing;
+
+        expect(observerRegistrations.count).toBe(0);
+        expect(marketVolumeStats.isInitialized).toBe(false);
+        settings.values.market_volumeStats = true;
     });
 
     test('an uninterrupted initialize() does register normally', async () => {
