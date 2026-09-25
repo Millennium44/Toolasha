@@ -346,7 +346,7 @@ class QueueLengthEstimator {
         // after it puts the group in the middle of the left half instead, where
         // the ask count sits in the separate layout.
         wrapper.style.cssText =
-            'display:flex;flex:1;justify-content:center;align-items:center;gap:6px;font-size:1.2rem;min-width:0;';
+            'display:flex;flex:1;justify-content:center;align-items:center;gap:5px;font-size:0.95rem;min-width:0;';
 
         if (askStats) {
             wrapper.appendChild(this.buildLabeledSide('Ask', askStats, true));
