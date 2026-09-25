@@ -284,3 +284,103 @@ describe('mention tracker — tabs and badges', () => {
         expect(mentionTracker.mentionLog.size).toBe(0);
     });
 });
+
+describe('mention tracker — chat_message_updated (deletion)', () => {
+    function buildTabs(names) {
+        const container = document.createElement('div');
+        container.className = 'Chat_tabsComponentContainer__3ZoKe';
+        for (const name of names) {
+            const btn = document.createElement('button');
+            btn.className = 'MuiButtonBase-root';
+            btn.textContent = name;
+            container.appendChild(btn);
+        }
+        document.body.appendChild(container);
+        return container;
+    }
+
+    beforeEach(async () => {
+        game.setting = true;
+        game.characterName = 'Millennium44';
+        game.wsHandlers = {};
+        game.observers = {};
+        game.readyHandlers = [];
+        game.domReady = true;
+        mentionTracker.disable();
+        document.body.innerHTML = '';
+        await mentionTracker.initialize();
+    });
+
+    test('registers and unregisters chat_message_updated alongside chat_message_received', async () => {
+        expect(game.wsHandlers.chat_message_updated).toBeTypeOf('function');
+        mentionTracker.disable();
+        expect(game.wsHandlers.chat_message_updated).toBeUndefined();
+    });
+
+    test('a deletion drops the matching mention and its badge count', () => {
+        const container = buildTabs(['Party']);
+        game.observers['Chat_tabsComponentContainer'](container);
+        game.wsHandlers.chat_message_received(
+            chatMessage({ m: '@Millennium44 hi', chan: '/chat_channel_types/party', id: 'msg-1' })
+        );
+        const btn = container.querySelector('button');
+        expect(btn.querySelector('.mwi-mention-badge').textContent).toBe('1');
+
+        game.wsHandlers.chat_message_updated({
+            message: { id: 'msg-1', chan: '/chat_channel_types/party', isDeleted: true },
+        });
+
+        expect(mentionTracker.mentionLog.get('/chat_channel_types/party')).toHaveLength(0);
+        expect(btn.querySelector('.mwi-mention-badge')).toBeNull();
+    });
+
+    test('a deletion of an id with no logged mention is a no-op', () => {
+        const container = buildTabs(['Party']);
+        game.observers['Chat_tabsComponentContainer'](container);
+        game.wsHandlers.chat_message_received(
+            chatMessage({ m: '@Millennium44 hi', chan: '/chat_channel_types/party', id: 'msg-1' })
+        );
+
+        expect(() =>
+            game.wsHandlers.chat_message_updated({
+                message: { id: 'msg-nonexistent', chan: '/chat_channel_types/party', isDeleted: true },
+            })
+        ).not.toThrow();
+        expect(mentionTracker.mentionLog.get('/chat_channel_types/party')).toHaveLength(1);
+    });
+
+    test('an undelete restores nothing — the log entry is already gone', () => {
+        const container = buildTabs(['Party']);
+        game.observers['Chat_tabsComponentContainer'](container);
+        game.wsHandlers.chat_message_received(
+            chatMessage({ m: '@Millennium44 hi', chan: '/chat_channel_types/party', id: 'msg-1' })
+        );
+        game.wsHandlers.chat_message_updated({
+            message: { id: 'msg-1', chan: '/chat_channel_types/party', isDeleted: true },
+        });
+
+        expect(() =>
+            game.wsHandlers.chat_message_updated({
+                message: { id: 'msg-1', chan: '/chat_channel_types/party', isDeleted: false },
+            })
+        ).not.toThrow();
+        expect(mentionTracker.mentionLog.get('/chat_channel_types/party')).toHaveLength(0);
+    });
+
+    test('a message that arrives already deleted is never logged as a mention', () => {
+        const container = buildTabs(['Party']);
+        game.observers['Chat_tabsComponentContainer'](container);
+        game.wsHandlers.chat_message_received(
+            chatMessage({ m: '@Millennium44 hi', chan: '/chat_channel_types/party', id: 'msg-1', isDeleted: true })
+        );
+
+        expect(mentionTracker.mentionLog.get('/chat_channel_types/party') || []).toHaveLength(0);
+        expect(container.querySelector('.mwi-mention-badge')).toBeNull();
+    });
+
+    test('malformed chat_message_updated payloads are ignored, not thrown', () => {
+        expect(() => game.wsHandlers.chat_message_updated({})).not.toThrow();
+        expect(() => game.wsHandlers.chat_message_updated({ message: {} })).not.toThrow();
+        expect(() => game.wsHandlers.chat_message_updated({ message: { isDeleted: true } })).not.toThrow();
+    });
+});
