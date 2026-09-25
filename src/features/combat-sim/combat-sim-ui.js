@@ -5062,7 +5062,8 @@ class CombatSimUI {
                 playerDTOs = Object.values(editedDTOs);
                 // The roster the bestiary pace matches recorded runs against (`runMatchesSimParty`);
                 // the single-zone path copies it the same way, this one used to leave it empty
-                this._playerInfo = this._editor?.getPlayerInfo() || [];
+                // A copy: the editor mutates its own array in place when a player is imported later
+                this._playerInfo = [...(this._editor?.getPlayerInfo() || [])];
                 // Revenue/drops below are computed for whichever player
                 // `_activePlayerTab` names, and that field doubles as "which
                 // player's tab is open in a previous single-zone result" — left
