@@ -180,48 +180,46 @@ const PENDING_ID_TTL_MS = 15000;
 const PENDING_ID_MAX_PER_CHANNEL = 50;
 
 /**
- * Chat link types whose payload names an item — rendered as the game's own
- * `Item_itemContainer` icon+label component, the same one item links inside
- * restored chat markup already resolve through (see `itemHridFrom` in
- * chat-history-persistence.js). `/chat_link_types/ability` and the other
- * link types are not: nothing here claims to know how they render, so a
- * message carrying one simply keeps failing the item-count check below and
- * stays untagged, same as before this existed.
- */
-const ITEM_LINK_TYPES = new Set([
-    '/chat_link_types/item',
-    '/chat_link_types/market_listing',
-    '/chat_link_types/collection',
-]);
-
-/**
- * How many item-shaped links a `chat_message_received` message's raw
- * `linksMetadata` names — a structural fingerprint {@link claim} can compare
- * against how many `Item_itemContainer` elements a candidate DOM node
- * actually contains, without needing to reconstruct the exact label text
- * those elements render (their formatting — enhancement, count, price — is
- * this script's own separate concern in chat-history-persistence.js, not
- * duplicated here).
- * @param {string|undefined} linksMetadataJSON - `message.linksMetadata`, as sent
+ * How many links a `chat_message_received` message's raw `linksMetadata`
+ * names — every link type (item, market listing, ability, …) renders inside
+ * its own `ChatMessage_linkContainer` wrapper (confirmed against a live
+ * `/chat_link_types/item` post: `ChatMessage_linkContainer > Item_itemContainer
+ * > … > Item_name`), so {@link claim} compares this against the DOM's own
+ * link-container count rather than trying to tell link types apart or
+ * reconstruct any of their rendered label text.
+ * @param {string|undefined} linksMetadataJSON - `message.linksMetadata`, as sent (a JSON string)
  * @returns {number}
  */
-function countItemLinks(linksMetadataJSON) {
+function countLinks(linksMetadataJSON) {
     if (!linksMetadataJSON) return 0;
     try {
         const links = JSON.parse(linksMetadataJSON);
-        if (!Array.isArray(links)) return 0;
-        return links.filter((link) => ITEM_LINK_TYPES.has(link?.linkType)).length;
+        return Array.isArray(links) ? links.length : 0;
     } catch {
         return 0;
     }
 }
 
 /**
+ * `chat_message_received`'s own `m` field carries a `{{N}}` placeholder
+ * everywhere a link renders (`N` indexing into `linksMetadata`) — confirmed
+ * against a live post: `m: "{{0}} test link, please ignore"` for a message
+ * with one link. The DOM never shows `{{0}}` literally, so it has to come out
+ * before any text comparison, same as the link's own rendered content does
+ * (see {@link extractSenderAndBody}).
+ * @param {string} text
+ * @returns {string}
+ */
+function stripLinkPlaceholders(text) {
+    return (text || '').replace(/\{\{\d+\}\}/g, '');
+}
+
+/**
  * Collapse whitespace runs to a single space and trim — applied to both
- * sides of a body comparison so that stripping an item-container element out
- * of the DOM (see {@link extractSenderAndBody}) cannot turn a run of
- * collapsed spacing into a mismatch against `entry.m`, which never had that
- * element's markup to begin with.
+ * sides of a body comparison so that stripping a link container out of the
+ * DOM, or a `{{N}}` placeholder out of `m` (see {@link extractSenderAndBody}
+ * and {@link stripLinkPlaceholders}), cannot turn the resulting gap into a
+ * mismatch neither side actually disagrees about.
  * @param {string} text
  * @returns {string}
  */
@@ -244,20 +242,22 @@ function normalizeSpacing(text) {
  * format turned out to be.
  *
  * A Trade/Recruit post naming an item (most of them do) also renders that
- * item's icon+label inline — text `chat_message_received`'s own `m` field
- * never contained, since the game keeps prose and links separate on the wire
- * (see `resolveMessage`/`appendMessage` in pop-out-chat.js, which render them
- * as two different things for exactly this reason). Comparing the *whole*
- * line's text against `m` would therefore reject every linked message. Every
- * `Item_itemContainer` element is cut out of a clone before reading text, so
- * the body extracted here is prose only, matching what `m` actually holds;
- * how many such elements the node held is returned separately; `claim`
- * requires it to match the candidate's own count from `linksMetadata` as a
- * structural check that does not depend on reconstructing the elements'
+ * link inline, wrapped in its own `ChatMessage_linkContainer` — text
+ * `chat_message_received`'s own `m` field never contained; the game sends a
+ * `{{N}}` placeholder in `m` for it instead (see
+ * {@link stripLinkPlaceholders}) and keeps the two fields separate on the
+ * wire (the same split `resolveMessage`/`appendMessage` in pop-out-chat.js
+ * draw). Comparing the whole line's rendered text against `m` verbatim would
+ * therefore reject every linked message. Every `ChatMessage_linkContainer`
+ * element is cut out of a clone before reading text, so the body extracted
+ * here is prose only, matching what a placeholder-stripped `m` holds; how
+ * many such elements the node held is returned separately, and `claim`
+ * requires it to match the candidate's own link count from `linksMetadata` —
+ * a structural check that does not depend on reconstructing any link's
  * exact rendered label text.
  *
  * @param {Element} node - A `ChatMessage_chatMessage` node
- * @returns {{sender: string, body: string, itemLinkCount: number}|null} Null
+ * @returns {{sender: string, body: string, linkCount: number}|null} Null
  *   when the node carries no sender element at all (a system message) or the
  *   extraction otherwise fails — both correctly mean "cannot be matched",
  *   not "matches anything".
@@ -274,14 +274,14 @@ function extractSenderAndBody(node) {
     const sender = senderNameFrom(senderEl);
     if (!sender) return null;
 
-    let itemLinkCount = 0;
+    let linkCount = 0;
     let textSource = node;
     try {
-        const itemContainers = node.querySelectorAll('[class*="Item_itemContainer"]');
-        itemLinkCount = itemContainers.length;
-        if (itemLinkCount) {
+        const linkContainers = node.querySelectorAll('[class*="ChatMessage_linkContainer"]');
+        linkCount = linkContainers.length;
+        if (linkCount) {
             const clone = node.cloneNode(true);
-            clone.querySelectorAll('[class*="Item_itemContainer"]').forEach((el) => el.remove());
+            clone.querySelectorAll('[class*="ChatMessage_linkContainer"]').forEach((el) => el.remove());
             textSource = clone;
         }
     } catch {
@@ -294,7 +294,7 @@ function extractSenderAndBody(node) {
     if (idx === -1) return null;
 
     const body = normalizeSpacing(fullText.slice(idx + sender.length).replace(/^[:\s]+/, ''));
-    return { sender, body, itemLinkCount };
+    return { sender, body, linkCount };
 }
 
 /**
@@ -326,14 +326,14 @@ function extractSenderAndBody(node) {
  * candidate matches exactly (two genuinely identical messages), claims
  * neither: which one is which cannot be told apart, so tagging either would
  * be a guess, and an untagged node is always the safe outcome. A message
- * naming an item also has to match on how many item links it carries — see
- * {@link extractSenderAndBody} and {@link countItemLinks} — or a Trade post
+ * naming a link also has to match on how many links it carries — see
+ * {@link extractSenderAndBody} and {@link countLinks} — or a Trade post
  * (most of which name an item) would never satisfy the text comparison at
- * all, since the game keeps prose and links as separate fields.
+ * all, since the game keeps prose and links as separate fields on the wire.
  */
 class PendingMessageIds {
     constructor() {
-        /** @type {Map<string, Array<{id: string|number, isDeleted: boolean, sName: string, m: string, itemLinkCount: number, ts: number}>>} */
+        /** @type {Map<string, Array<{id: string|number, isDeleted: boolean, sName: string, m: string, linkCount: number, ts: number}>>} */
         this.byChannel = new Map();
     }
 
@@ -345,7 +345,8 @@ class PendingMessageIds {
      * @param {string|number} id
      * @param {boolean} isDeleted - True for a message that arrived pre-deleted
      * @param {string} [sName] - Sender name, as `chat_message_received` carries it
-     * @param {string} [m] - Message text, as `chat_message_received` carries it
+     * @param {string} [m] - Message text, as `chat_message_received` carries it — may
+     *   contain `{{N}}` link placeholders, stripped before storing
      * @param {string} [linksMetadata] - Raw `linksMetadata`, as `chat_message_received` carries it
      */
     note(chan, id, isDeleted, sName, m, linksMetadata) {
@@ -359,8 +360,8 @@ class PendingMessageIds {
             id,
             isDeleted: !!isDeleted,
             sName: sName || '',
-            m: normalizeSpacing(m),
-            itemLinkCount: countItemLinks(linksMetadata),
+            m: normalizeSpacing(stripLinkPlaceholders(m)),
+            linkCount: countLinks(linksMetadata),
             ts: Date.now(),
         });
         if (queue.length > PENDING_ID_MAX_PER_CHANNEL) queue.shift();
@@ -398,7 +399,7 @@ class PendingMessageIds {
             if (!entry.sName && !entry.m) continue;
             if (entry.sName !== rendered.sender) continue;
             if (entry.m !== rendered.body) continue;
-            if (entry.itemLinkCount !== rendered.itemLinkCount) continue;
+            if (entry.linkCount !== rendered.linkCount) continue;
             matches.push(i);
         }
         // Zero: nothing describes this node. More than one: two queued
