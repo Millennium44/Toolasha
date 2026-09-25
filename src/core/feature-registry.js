@@ -73,34 +73,28 @@ const startedKeys = new Set();
 const liveStartsInFlight = new Set();
 
 /**
- * Settle-only promises for the `initialize()` calls a live start or a retry has
- * in flight. A switch's teardown waits these out before disabling: torn down
- * mid-initialize, a feature finishes building after its disable() has run and
- * keeps running for the arriving character, outside `startedKeys`.
- * @type {Set<Promise<void>>}
+ * Per-key registry work in flight: every `initialize()` any path calls — the
+ * startup and re-init batch, a live start, a retry, a late-start restart — and
+ * every disable a late start owes. Each entry is a never-rejecting promise.
+ *
+ * Two things read it. A switch's teardown waits all of it out (bounded) before
+ * disabling: torn down mid-initialize, a feature finishes building after its
+ * disable() has run and keeps running for the arriving character. And a later
+ * start of the same key waits out what is already in flight on it (bounded), so a
+ * singleton module is never initialized under a disable or another start of itself.
+ * @type {Map<string, Set<Promise<void>>>}
  */
-const inFlightStarts = new Set();
+const keyWork = new Map();
 
 /**
- * Longest a switch's teardown waits for in-flight starts. Past it the teardown
- * goes ahead — a stuck initializer must not hold the switch.
+ * Longest a teardown, or a start queued behind other work on its key, waits.
+ * Past it they go ahead — a stuck initializer must not hold the switch — and a
+ * start that settles after a teardown is handled by `trackStart`.
  */
 const IN_FLIGHT_START_WAIT_MS = 5000;
 
-/**
- * Resolve once `promise` settles, regardless of outcome. Used to build a tracking promise that
- * never rejects, so `waitForInFlightStarts`'s `Promise.all` cannot reject on a failed initializer.
- * @param {Promise} promise
- * @returns {Promise<void>}
- */
-async function swallowRejection(promise) {
-    try {
-        await promise;
-    } catch {
-        // Ignored: only the settling matters here, not the outcome — `started`'s own rejection
-        // still reaches whoever awaits `trackedInitialize()`'s return value.
-    }
-}
+/** What a tracked start resolves to when a teardown ran while it waited, so it never called `initialize()`. */
+const START_SKIPPED = Symbol('start skipped');
 
 /**
  * Bumped by every `disableAllFeatures()`. A tracked start records it when it
@@ -110,15 +104,7 @@ async function swallowRejection(promise) {
  */
 let teardownGeneration = 0;
 
-/**
- * Settle-only promise of the latest `initialize()` call per key, from any start
- * path — so a late start can wait out the arriving character's own start of the
- * same feature before restarting it (see `settleLateStart`).
- * @type {Map<string, Promise<void>>}
- */
-const latestStarts = new Map();
-
-/** Keys `settleLateStart` is disabling and restarting, so no live pass or retry touches them meanwhile. */
+/** Keys `restartForArrival` is disabling and restarting, so no live pass or retry touches them meanwhile. */
 const lateRestartsInFlight = new Set();
 
 /**
@@ -131,15 +117,52 @@ function startInFlight(key) {
 }
 
 /**
- * Record `settled` as the latest start of `key` until it settles.
+ * Hold `settled` in `keyWork` under `key` until it settles. Registers synchronously.
  * @param {string} key - Feature key
- * @param {Promise<void>} settled - Never-rejecting settle promise of the start
+ * @param {Promise<void>} settled - Never-rejecting settle promise of the work
  * @returns {Promise<void>}
  */
-async function recordLatestStart(key, settled) {
-    latestStarts.set(key, settled);
-    await settled;
-    if (latestStarts.get(key) === settled) latestStarts.delete(key);
+async function holdKeyWork(key, settled) {
+    let work = keyWork.get(key);
+    if (!work) {
+        work = new Set();
+        keyWork.set(key, work);
+    }
+    work.add(settled);
+    try {
+        await settled;
+    } finally {
+        work.delete(settled);
+        if (work.size === 0 && keyWork.get(key) === work) keyWork.delete(key);
+    }
+}
+
+/**
+ * Snapshot of the work in flight on `key`.
+ * @param {string} key - Feature key
+ * @returns {Array<Promise<void>>} Settle promises
+ */
+function keyWorkOf(key) {
+    return [...(keyWork.get(key) ?? [])];
+}
+
+/**
+ * Wait for `promises` to settle, for at most `ms`.
+ * @param {Array<Promise<void>>} promises - Never-rejecting settle promises
+ * @param {number} [ms] - Bound
+ * @returns {Promise<void>}
+ */
+async function waitBounded(promises, ms = IN_FLIGHT_START_WAIT_MS) {
+    if (promises.length === 0) return;
+    let timer = null;
+    const timeout = new Promise((resolve) => {
+        timer = setTimeout(resolve, ms);
+    });
+    try {
+        await Promise.race([Promise.all(promises), timeout]);
+    } finally {
+        clearTimeout(timer);
+    }
 }
 
 /**
@@ -159,35 +182,45 @@ async function disableFeature(feature) {
 }
 
 /**
- * Take down what a start built after the teardown it outlived had already run.
- *
- * With the key out of `startedKeys`, the arriving character has not started the
- * feature: disable it. With the key back, the arriving character has started it
- * too, and a feature module is a singleton holding both starts' resources — no
- * disable can tell them apart. So once that own start has settled, disable the
- * lot and start it again for the arriving character through the tracked path,
- * unless its gate has closed meanwhile, or a teardown since has taken both down.
+ * `disableFeature`, held in `keyWork` from the call on, so a teardown waits for it
+ * and a start of the same key queues behind it.
  * @param {Object} feature - Registry entry
- * @param {Promise<void>} ownSettled - The late start's own settle promise
  * @returns {Promise<void>}
  */
-async function settleLateStart(feature, ownSettled) {
+function trackedDisable(feature) {
+    return holdKeyWork(feature.key, disableFeature(feature));
+}
+
+/**
+ * Generation in which `initialize()` was last actually called, per key — so a
+ * late start can tell whether the arriving character's instance is already built
+ * (and would be torn down with its own leftovers) or only queued behind it.
+ * @type {Map<string, number>}
+ */
+const initializedIn = new Map();
+
+/**
+ * Restart a feature the arriving character had already built when a start from a
+ * torn-down generation settled on top of it.
+ *
+ * A feature module is a singleton holding both starts' resources, and no disable
+ * can tell them apart. So once the arriving character's own start has settled,
+ * disable the lot and start it again for them through the tracked path — unless
+ * its gate has closed meanwhile, or a teardown since has taken both down.
+ * @param {Object} feature - Registry entry
+ * @returns {Promise<void>}
+ */
+async function restartForArrival(feature) {
     const { key } = feature;
-    if (!startedKeys.has(key)) {
-        await disableFeature(feature);
-        return;
-    }
     // Another late start is already restarting it; that restart's disable covers this one
     if (lateRestartsInFlight.has(key)) return;
-    const arrival = teardownGeneration;
-    const arrivingStart = latestStarts.get(key);
-    if (arrivingStart && arrivingStart !== ownSettled) await arrivingStart;
-    // A teardown since has disabled everything; a live stop has disabled it and dropped its key
-    if (teardownGeneration !== arrival || !startedKeys.has(key) || lateRestartsInFlight.has(key)) return;
-
     lateRestartsInFlight.add(key);
+    const arrival = teardownGeneration;
     try {
-        await disableFeature(feature);
+        await waitBounded(keyWorkOf(key));
+        // A teardown since has disabled everything; a live stop has disabled it and dropped its key
+        if (teardownGeneration !== arrival || !startedKeys.has(key)) return;
+        await trackedDisable(feature);
         // A teardown ran during the disable. One queued but not yet run is safe to start
         // under: it waits for this tracked start before disabling. `liveStartAllowed()` is
         // no guard here — it stays false until the arriving character's re-init returns.
@@ -218,43 +251,83 @@ async function settleLateStart(feature, ownSettled) {
 }
 
 /**
- * Call a feature's `initialize()` and track it in `inFlightStarts` until it
- * settles — and if a teardown ran in the meantime, take down what it built (see
- * `settleLateStart`) before the caller resumes. The caller must not resume
+ * Hold a start in `keyWork` until it settles, and until a teardown it outlived
+ * has been made good.
+ *
+ * A start that settles in a later generation than it began in built what it built
+ * for a character already torn down. If nobody has called `initialize()` on the
+ * key since, its disable runs inside this same held work, so a start of the key
+ * queued behind it — the arriving character's re-init, a live start — begins
+ * only once the leftovers are gone. If the arriving character's instance is
+ * already built, see `restartForArrival`.
+ *
+ * All of it finishes before the caller resumes. The caller must not resume
  * first: a live start's caller holds the key in `liveStartsInFlight` until it
- * does and then runs a stop pass, which would disable the feature a second time
- * alongside `settleLateStart`.
+ * does and then runs a stop pass, which would disable the feature a second time.
  * @param {Object} feature - Registry entry
- * @returns {Promise<*>} What `initialize()` resolves to; a synchronous throw rejects it
+ * @param {Promise<*>} started - The start: what `initialize()` returned, or `START_SKIPPED`
+ * @param {number} generation - `teardownGeneration` when the start was reserved
+ * @returns {Promise<*>} What `initialize()` resolved to (undefined if skipped)
  */
-async function trackedInitialize(feature) {
-    const generation = teardownGeneration;
-    const started = (async () => feature.initialize())();
-    const settled = swallowRejection(started);
-    inFlightStarts.add(settled);
-    recordLatestStart(feature.key, settled);
-    try {
-        return await started;
-    } finally {
-        inFlightStarts.delete(settled);
-        if (generation !== teardownGeneration) await settleLateStart(feature, settled);
-    }
+async function trackStart(feature, started, generation) {
+    const { key } = feature;
+    let restart = false;
+    const work = (async () => {
+        let skipped = false;
+        try {
+            skipped = (await started) === START_SKIPPED;
+        } catch {
+            // The rejection reaches the caller through `started` below
+        }
+        if (skipped || generation === teardownGeneration) return;
+        if (initializedIn.get(key) === teardownGeneration) {
+            restart = true;
+            return;
+        }
+        await disableFeature(feature);
+    })();
+    await holdKeyWork(key, work);
+    if (restart) await restartForArrival(feature);
+    const result = await started;
+    return result === START_SKIPPED ? undefined : result;
 }
 
 /**
- * Wait, bounded, for every tracked start to settle.
+ * Call a feature's `initialize()`, held in `keyWork` from this call on. Work
+ * already in flight on its key is waited out first (bounded); should a teardown
+ * run meanwhile, the start is dropped without calling `initialize()` — it was for
+ * the departing character.
+ * @param {Object} feature - Registry entry
+ * @returns {Promise<*>} What `initialize()` resolves to; a synchronous throw rejects it
+ */
+function trackedInitialize(feature) {
+    const generation = teardownGeneration;
+    const prior = keyWorkOf(feature.key);
+    const started = (async () => {
+        if (prior.length > 0) {
+            await waitBounded(prior);
+            if (generation !== teardownGeneration) return START_SKIPPED;
+        }
+        initializedIn.set(feature.key, generation);
+        return feature.initialize();
+    })();
+    return trackStart(feature, started, generation);
+}
+
+/**
+ * Wait, bounded as a whole, for all work in `keyWork` — including work that
+ * begins while waiting — to settle.
  * @returns {Promise<void>}
  */
 async function waitForInFlightStarts() {
-    if (inFlightStarts.size === 0) return;
-    let timer = null;
-    const timeout = new Promise((resolve) => {
-        timer = setTimeout(resolve, IN_FLIGHT_START_WAIT_MS);
-    });
-    try {
-        await Promise.race([Promise.all([...inFlightStarts]), timeout]);
-    } finally {
-        clearTimeout(timer);
+    const deadline = Date.now() + IN_FLIGHT_START_WAIT_MS;
+    while (keyWork.size > 0) {
+        const remaining = deadline - Date.now();
+        if (remaining <= 0) return;
+        await waitBounded(
+            [...keyWork.values()].flatMap((work) => [...work]),
+            remaining
+        );
     }
 }
 
@@ -397,6 +470,10 @@ async function runFeatureInitialization() {
     // registry order however the promises happen to settle.
     const slots = [];
     const pending = [];
+    // A switch's teardown can run while this batch is still going — the startup
+    // batch runs outside the switch lifecycle chain. What it starts afterwards
+    // would run for the departing character, so it stops at the first sign of one.
+    const batchGeneration = teardownGeneration;
 
     /**
      * Record what a feature's initializer cost, once it has finished.
@@ -426,6 +503,8 @@ async function runFeatureInitialization() {
     };
 
     for (const feature of featureRegistry) {
+        if (dataManager.getIsCharacterSwitching() || teardownGeneration !== batchGeneration) break;
+
         const isEnabled = (() => {
             try {
                 return feature.customCheck ? feature.customCheck() : config.isFeatureEnabled(feature.key);
@@ -444,8 +523,31 @@ async function runFeatureInitialization() {
         slots.push(slot);
 
         const startedAt = performanceMonitor.sinceBoot();
+
+        // Other work still in flight on this key (a late start of the departing
+        // character, or the disable it owes): queue behind it through the tracked path.
+        if (keyWork.has(feature.key)) {
+            const queued = (async () => {
+                try {
+                    await trackedInitialize(feature);
+                } catch (error) {
+                    slot.reason = `Initialization threw: ${error?.message}`;
+                    console.error(`[Toolasha] Failed to initialize ${feature.name}:`, error);
+                } finally {
+                    recordTiming(feature, startedAt, 0);
+                }
+            })();
+            if (feature.concurrent) {
+                pending.push(queued);
+            } else {
+                await queued;
+            }
+            continue;
+        }
+
         let started;
         try {
+            initializedIn.set(feature.key, batchGeneration);
             started = feature.initialize();
         } catch (error) {
             // A synchronous throw never becomes a promise, so it is settled here.
@@ -459,18 +561,20 @@ async function runFeatureInitialization() {
             recordTiming(feature, startedAt, ownMs);
             continue;
         }
-        recordLatestStart(feature.key, swallowRejection(started));
 
-        // Attach the handlers now rather than at the end: an initializer that
-        // rejects before anything awaits it is an unhandled rejection otherwise.
-        const settled = started.then(
-            () => recordTiming(feature, startedAt, ownMs),
-            (error) => {
+        // Attached now rather than at the end: an initializer that rejects before
+        // anything awaits it is an unhandled rejection otherwise. Held in `keyWork`,
+        // so a teardown landing mid-batch waits for it.
+        const settled = (async () => {
+            try {
+                await trackStart(feature, started, batchGeneration);
+                recordTiming(feature, startedAt, ownMs);
+            } catch (error) {
                 recordTiming(feature, startedAt, ownMs);
                 slot.reason = `Initialization threw: ${error?.message}`;
                 console.error(`[Toolasha] Failed to initialize ${feature.name}:`, error);
             }
-        );
+        })();
 
         if (feature.concurrent) {
             pending.push(settled);
@@ -481,6 +585,13 @@ async function runFeatureInitialization() {
 
     if (pending.length > 0) {
         await Promise.all(pending);
+    }
+
+    // Cut short by a teardown: its failures are the departing character's, and a
+    // retry of them would start features into the arriving one.
+    if (teardownGeneration !== batchGeneration) {
+        performanceMonitor.mark('features:done', { failed: 0 });
+        return [];
     }
 
     const errors = slots.filter((slot) => slot.reason !== null).map(({ key, name, reason }) => ({ key, name, reason }));

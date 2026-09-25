@@ -952,6 +952,55 @@ describe('a setting switched on mid-session', () => {
     });
 
     describe('a character switch landing while a live start is in flight', () => {
+        test('a switch during the startup batch waits for its start and stops the batch', async () => {
+            vi.useFakeTimers();
+            try {
+                const fresh = await freshRegistry();
+                state.currentCharacterId = 'A';
+                state.enabledFeatures = new Set(['first', 'second']);
+                const order = [];
+                let releaseFirst;
+                const first = vi.fn(() => {
+                    order.push('first:init');
+                    if (first.mock.calls.length > 1) return undefined;
+                    return new Promise((resolve) => {
+                        releaseFirst = () => {
+                            order.push('first:built');
+                            resolve();
+                        };
+                    });
+                });
+                const second = vi.fn();
+                fresh.replaceFeatures([
+                    { key: 'first', name: 'First', initialize: first, disable: () => order.push('first:disable') },
+                    { key: 'second', name: 'Second', initialize: second },
+                ]);
+                fresh.setupCharacterSwitchHandler();
+
+                const boot = fresh.initializeFeatures();
+                await vi.advanceTimersByTimeAsync(0);
+                state.isCharacterSwitching = true;
+                const teardown = state.handlers.character_switching();
+                await vi.advanceTimersByTimeAsync(0);
+                expect(order).toEqual(['first:init']);
+
+                releaseFirst();
+                await teardown;
+                expect(await boot).toEqual([]);
+                expect(order).toEqual(['first:init', 'first:built', 'first:disable']);
+                expect(second).not.toHaveBeenCalled();
+
+                state.isCharacterSwitching = false;
+                state.currentCharacterId = 'B';
+                state.handlers.character_switched({ newId: 'B' });
+                await vi.advanceTimersByTimeAsync(100);
+                expect(first).toHaveBeenCalledTimes(2);
+                expect(second).toHaveBeenCalledTimes(1);
+            } finally {
+                vi.useRealTimers();
+            }
+        });
+
         test('the teardown waits for the start, so it takes down what the start built', async () => {
             const fresh = await freshRegistry();
             state.currentCharacterId = 'A';
@@ -1064,10 +1113,13 @@ describe('a setting switched on mid-session', () => {
 
             /**
              * Set up character A with `slow` live-started and hanging, then switch to B with it on.
+             * B's re-init queues its start of `slow` behind A's; with `builtByB`, that queued
+             * start's wait runs out and B builds its own instance on top.
              * @param {Function} initialize - `slow`'s initializer
+             * @param {{builtByB?: boolean}} [options]
              * @returns {Promise<{fresh: Object, disable: Function}>}
              */
-            const lateStartIntoB = async (initialize) => {
+            const lateStartIntoB = async (initialize, { builtByB = false } = {}) => {
                 const fresh = await freshRegistry();
                 state.currentCharacterId = 'A';
                 const disable = vi.fn();
@@ -1077,34 +1129,71 @@ describe('a setting switched on mid-session', () => {
                 await fresh.initializeFeatures();
                 changeSetting('slow', true);
                 await vi.advanceTimersByTimeAsync(0);
-                await switchToB(); // B has it on: the re-init starts it again
+                await switchToB();
+                if (builtByB) await vi.advanceTimersByTimeAsync(5_000);
                 return { fresh, disable };
             };
 
-            test('the instance of the arriving character is torn down with it and started again, once', async () => {
+            /**
+             * An initializer whose first call (A's) hangs until `releaseA()`; later calls return at once.
+             * @returns {{initialize: Function, releaseA: Function}}
+             */
+            const slowFirstStart = () => {
+                const handle = { releaseA: null };
+                handle.initialize = vi.fn(() =>
+                    handle.initialize.mock.calls.length === 1
+                        ? new Promise((resolve) => {
+                              handle.releaseA = resolve;
+                          })
+                        : undefined
+                );
+                return handle;
+            };
+
+            test('the arriving character start queues behind it and begins after its disable', async () => {
                 vi.useFakeTimers();
                 try {
-                    let releaseA;
-                    const initialize = vi.fn(() =>
-                        initialize.mock.calls.length === 1
-                            ? new Promise((resolve) => {
-                                  releaseA = resolve;
-                              })
-                            : undefined
-                    );
-                    const { disable } = await lateStartIntoB(initialize);
-                    expect(initialize).toHaveBeenCalledTimes(2);
+                    const handle = slowFirstStart();
+                    const { disable } = await lateStartIntoB(handle.initialize);
+                    expect(handle.initialize).toHaveBeenCalledTimes(1);
                     expect(disable).toHaveBeenCalledTimes(1);
 
-                    releaseA();
+                    handle.releaseA();
                     await vi.advanceTimersByTimeAsync(0);
                     expect(disable).toHaveBeenCalledTimes(2);
-                    expect(initialize).toHaveBeenCalledTimes(3);
+                    expect(handle.initialize).toHaveBeenCalledTimes(2);
+                    expect(disable.mock.invocationCallOrder[1]).toBeLessThan(
+                        handle.initialize.mock.invocationCallOrder[1]
+                    );
 
                     // Counted as started once: a live pass leaves it, switching it off stops it once
                     changeSetting('unrelated', true);
                     await vi.advanceTimersByTimeAsync(0);
-                    expect(initialize).toHaveBeenCalledTimes(3);
+                    expect(handle.initialize).toHaveBeenCalledTimes(2);
+                    changeSetting('slow', false);
+                    await vi.advanceTimersByTimeAsync(0);
+                    expect(disable).toHaveBeenCalledTimes(3);
+                } finally {
+                    vi.useRealTimers();
+                }
+            });
+
+            test('an instance the arriving character already built is torn down with it and restarted once', async () => {
+                vi.useFakeTimers();
+                try {
+                    const handle = slowFirstStart();
+                    const { disable } = await lateStartIntoB(handle.initialize, { builtByB: true });
+                    expect(handle.initialize).toHaveBeenCalledTimes(2);
+                    expect(disable).toHaveBeenCalledTimes(1);
+
+                    handle.releaseA();
+                    await vi.advanceTimersByTimeAsync(0);
+                    expect(disable).toHaveBeenCalledTimes(2);
+                    expect(handle.initialize).toHaveBeenCalledTimes(3);
+
+                    changeSetting('unrelated', true);
+                    await vi.advanceTimersByTimeAsync(0);
+                    expect(handle.initialize).toHaveBeenCalledTimes(3);
                     changeSetting('slow', false);
                     await vi.advanceTimersByTimeAsync(0);
                     expect(disable).toHaveBeenCalledTimes(3);
@@ -1117,7 +1206,7 @@ describe('a setting switched on mid-session', () => {
                 vi.useFakeTimers();
                 try {
                     const { initialize, release } = slowStart();
-                    const { disable } = await lateStartIntoB(initialize);
+                    const { disable } = await lateStartIntoB(initialize, { builtByB: true });
                     expect(initialize).toHaveBeenCalledTimes(2);
 
                     release(); // A's
@@ -1137,29 +1226,22 @@ describe('a setting switched on mid-session', () => {
             test('switched off by the arriving character meanwhile, it is disabled and not restarted', async () => {
                 vi.useFakeTimers();
                 try {
-                    let releaseA;
-                    const initialize = vi.fn(() =>
-                        initialize.mock.calls.length === 1
-                            ? new Promise((resolve) => {
-                                  releaseA = resolve;
-                              })
-                            : undefined
-                    );
-                    const { disable } = await lateStartIntoB(initialize);
+                    const handle = slowFirstStart();
+                    const { disable } = await lateStartIntoB(handle.initialize, { builtByB: true });
                     // The stop pass skips it: A's live start still holds it in flight
                     changeSetting('slow', false);
                     await vi.advanceTimersByTimeAsync(0);
                     expect(disable).toHaveBeenCalledTimes(1);
 
-                    releaseA();
+                    handle.releaseA();
                     await vi.advanceTimersByTimeAsync(0);
                     expect(disable).toHaveBeenCalledTimes(2);
-                    expect(initialize).toHaveBeenCalledTimes(2);
+                    expect(handle.initialize).toHaveBeenCalledTimes(2);
 
                     // Not left counted as started: switching it on starts it once
                     changeSetting('slow', true);
                     await vi.advanceTimersByTimeAsync(0);
-                    expect(initialize).toHaveBeenCalledTimes(3);
+                    expect(handle.initialize).toHaveBeenCalledTimes(3);
                 } finally {
                     vi.useRealTimers();
                 }
@@ -1168,15 +1250,8 @@ describe('a setting switched on mid-session', () => {
             test('a teardown landing during the restart leaves the feature down', async () => {
                 vi.useFakeTimers();
                 try {
-                    let releaseA;
-                    const initialize = vi.fn(() =>
-                        initialize.mock.calls.length === 1
-                            ? new Promise((resolve) => {
-                                  releaseA = resolve;
-                              })
-                            : undefined
-                    );
-                    const { fresh, disable } = await lateStartIntoB(initialize);
+                    const handle = slowFirstStart();
+                    const { fresh, disable } = await lateStartIntoB(handle.initialize, { builtByB: true });
                     let releaseDisable;
                     disable.mockImplementationOnce(
                         () =>
@@ -1185,7 +1260,7 @@ describe('a setting switched on mid-session', () => {
                             })
                     );
 
-                    releaseA();
+                    handle.releaseA();
                     await vi.advanceTimersByTimeAsync(0);
                     expect(disable).toHaveBeenCalledTimes(2); // the restart's, still running
 
@@ -1193,7 +1268,52 @@ describe('a setting switched on mid-session', () => {
                     expect(disable).toHaveBeenCalledTimes(3);
                     releaseDisable();
                     await vi.advanceTimersByTimeAsync(0);
-                    expect(initialize).toHaveBeenCalledTimes(2);
+                    expect(handle.initialize).toHaveBeenCalledTimes(2);
+                } finally {
+                    vi.useRealTimers();
+                }
+            });
+
+            test('the arriving re-init waits for a late disable still running when it reaches the key', async () => {
+                vi.useFakeTimers();
+                try {
+                    const fresh = await freshRegistry();
+                    state.currentCharacterId = 'A';
+                    const handle = slowFirstStart();
+                    let releaseDisable = null;
+                    const disable = vi.fn(() =>
+                        disable.mock.calls.length === 2
+                            ? new Promise((resolve) => {
+                                  releaseDisable = resolve;
+                              })
+                            : undefined
+                    );
+                    fresh.replaceFeatures([
+                        { key: 'slow', name: 'Slow', initialize: handle.initialize, disable, liveStop: true },
+                    ]);
+                    fresh.setupCharacterSwitchHandler();
+                    fresh.setupLiveFeatureStart();
+                    await fresh.initializeFeatures();
+                    changeSetting('slow', true);
+                    await vi.advanceTimersByTimeAsync(0);
+
+                    // Teardown gives up on A's start; A settles before B's re-init begins
+                    const teardown = state.handlers.character_switching();
+                    await vi.advanceTimersByTimeAsync(6_000);
+                    await teardown;
+                    handle.releaseA();
+                    await vi.advanceTimersByTimeAsync(0);
+                    expect(disable).toHaveBeenCalledTimes(2); // A's late disable, suspended
+
+                    state.currentCharacterId = 'B';
+                    state.handlers.character_switched({ newId: 'B' });
+                    await vi.advanceTimersByTimeAsync(100);
+                    expect(handle.initialize).toHaveBeenCalledTimes(1);
+
+                    releaseDisable();
+                    await vi.advanceTimersByTimeAsync(0);
+                    expect(handle.initialize).toHaveBeenCalledTimes(2);
+                    expect(disable).toHaveBeenCalledTimes(2);
                 } finally {
                     vi.useRealTimers();
                 }
