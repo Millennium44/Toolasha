@@ -25,6 +25,10 @@ const dataManagerMock = vi.hoisted(() => ({
     // Nothing in the bag by default: addToQueue returns before touching the marketplace
     inventory: [],
     getInventory: () => dataManagerMock.inventory,
+    // `itemHrid:enhancementLevel` keys locked for the lock-gating tests; empty by default,
+    // which matches a server that has not shipped item marks
+    lockedKeys: new Set(),
+    isItemLocked: (itemHrid, enhancementLevel = 0) => dataManagerMock.lockedKeys.has(`${itemHrid}:${enhancementLevel}`),
     on: (event, handler) => {
         const held = switchState.handlers.get(event) || [];
         held.push(handler);
@@ -140,6 +144,7 @@ beforeEach(() => {
     tabsState.cleanups.length = 0;
     tabsState.unregisters.length = 0;
     dataManagerMock.inventory = [];
+    dataManagerMock.lockedKeys.clear();
     socketState.handler = null;
     sellQueue.initialize();
 });
@@ -456,6 +461,18 @@ describe('the tab badge and the sold-out check count plain copies only', () => {
                 count: 5,
             },
         ];
+
+        await queueCheese();
+
+        expect(document.querySelector('[data-item-hrid="/items/cheese"]')).toBeNull();
+        expect(ledger.reserved).toHaveLength(0);
+    });
+
+    test('a Locked item is never queued, even Shift+RightClicked', async () => {
+        dataManagerMock.inventory = [
+            { itemHrid: '/items/cheese', itemLocationHrid: '/item_locations/inventory', count: 12 },
+        ];
+        dataManagerMock.lockedKeys.add('/items/cheese:0');
 
         await queueCheese();
 

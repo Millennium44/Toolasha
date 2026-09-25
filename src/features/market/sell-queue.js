@@ -510,6 +510,11 @@ function initialize() {
         const itemDetails = gameData?.itemDetailMap?.[currentItemHrid];
         if (!itemDetails) return;
         if (!itemDetails.isTradable) return;
+        // The queue only ever sells the plain (+0) copy — see QUEUED_ENHANCEMENT_LEVEL —
+        // so that is the only level worth checking here. A Locked item cannot be sold or
+        // listed at all; `isItemLocked` reports false on a server that has not shipped
+        // item marks yet, so this is a no-op there.
+        if (dataManager.isItemLocked(currentItemHrid, QUEUED_ENHANCEMENT_LEVEL)) return;
 
         addToQueue(currentItemHrid, itemDetails.name);
     };

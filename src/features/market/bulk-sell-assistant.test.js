@@ -18,6 +18,9 @@ const game = vi.hoisted(() => ({
     tabsByCharacter: {},
     loadoutsReady: true,
     readyWaiters: [],
+    // `itemHrid:enhancementLevel` keys the Locked-item tests mark; empty by default,
+    // which matches a server that has not shipped item marks
+    locked: new Set(),
 }));
 /** The settings store, so a per-character key can be proved to be per character */
 const store = vi.hoisted(() => ({ data: {} }));
@@ -39,6 +42,7 @@ vi.mock('../../core/data-manager.js', () => ({
         get characterItems() {
             return game.items;
         },
+        isItemLocked: (itemHrid, enhancementLevel = 0) => game.locked.has(`${itemHrid}:${enhancementLevel}`),
     },
 }));
 vi.mock('../../core/dom-observer.js', () => ({ default: { onClass: () => () => {}, register: () => () => {} } }));
@@ -141,6 +145,7 @@ beforeEach(() => {
     game.readyWaiters = [];
     game.characterId = 'char';
     game.tabsByCharacter = {};
+    game.locked.clear();
     store.data = {};
     bulkSell._tabPrefLoaded = false;
 });
@@ -210,6 +215,48 @@ describe('selling what the watchlist is tracking', () => {
         await bulkSell._start();
 
         expect(queued()).not.toContain('/items/bound');
+    });
+});
+
+describe('Locked items are never queued', () => {
+    test('a locked item at its locked level is skipped, and counted', async () => {
+        game.locked.add('/items/milk:0');
+        bulkSell.selectedTabId = 'all';
+        await bulkSell._start();
+
+        expect(queued()).not.toContain('/items/milk');
+        expect(queued()).toContain('/items/cheese');
+        expect(bulkSell.lockedSkipped).toBe(5); // inventory() defaults to count 5
+    });
+
+    test('an all-levels lock (min 0, max 1000) skips every level of the item', async () => {
+        game.items.push(inventory('/items/milk', 3, 7));
+        game.locked.add('/items/milk:0');
+        game.locked.add('/items/milk:7');
+        bulkSell.selectedTabId = 'all';
+        await bulkSell._start();
+
+        expect(queued()).not.toContain('/items/milk');
+    });
+
+    test('a single-level lock leaves the other levels sellable', async () => {
+        game.items.push(inventory('/items/milk', 3, 7));
+        game.locked.add('/items/milk:0'); // only the +0 stack is locked
+        bulkSell.selectedTabId = 'all';
+        await bulkSell._start();
+
+        // The +0 stack is held out, but the +7 stack of the same item still queues
+        const milkEntries = bulkSell.queue.filter((entry) => entry.itemHrid === '/items/milk');
+        expect(milkEntries).toHaveLength(1);
+        expect(milkEntries[0].enhancementLevel).toBe(7);
+    });
+
+    test('no marks at all is unchanged from today — nothing is skipped as locked', async () => {
+        bulkSell.selectedTabId = 'all';
+        await bulkSell._start();
+
+        expect(queued()).toEqual(expect.arrayContaining(['/items/cheese', '/items/milk', '/items/sword']));
+        expect(bulkSell.lockedSkipped).toBe(0);
     });
 });
 

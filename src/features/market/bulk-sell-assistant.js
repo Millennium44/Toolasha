@@ -241,6 +241,8 @@ class BulkSellAssistant {
         this.loadoutsChecked = true;
         /** Enhanced gear quantity the watchlist source declined to sweep up (item count, not stack count) */
         this.enhancedSkipped = 0;
+        /** Locked item quantity left out of the queue — the game refuses to sell these (item count, not stack count) */
+        this.lockedSkipped = 0;
         this._hasTabs = false;
         this._tabPrefLoaded = false;
         this.toggleBtn = null;
@@ -292,6 +294,9 @@ class BulkSellAssistant {
         if (!this.loadoutsChecked) parts.push('loadouts not checked (Loadout Snapshot is off)');
         if (this.enhancedSkipped > 0) {
             parts.push(`${this.enhancedSkipped} enhanced item${this.enhancedSkipped === 1 ? '' : 's'} skipped`);
+        }
+        if (this.lockedSkipped > 0) {
+            parts.push(`${this.lockedSkipped} locked item${this.lockedSkipped === 1 ? '' : 's'} skipped`);
         }
         if (!parts.length) return '';
         return bare ? parts.join(' · ') : ` (${parts.join(', ')})`;
@@ -1217,11 +1222,20 @@ class BulkSellAssistant {
         );
         let held = 0;
         let enhanced = 0;
+        let locked = 0;
         const items = (dataManager.characterItems || []).filter((item) => {
             if (item.itemLocationHrid !== '/item_locations/inventory') return false;
             if ((item.count || 0) <= 0) return false;
             if (item.itemHrid === '/items/coin') return false;
             if (!clientData?.itemDetailMap?.[item.itemHrid]?.isTradable) return false;
+            // A Locked item cannot be sold to the shop or listed on the market — the game
+            // itself refuses the sale, so never queue it. `characterItemMarks` never
+            // arrives on a server that has not shipped item marks yet, and
+            // `isItemLocked` then always reports false, so this is a no-op there.
+            if (dataManager.isItemLocked(item.itemHrid, item.enhancementLevel || 0)) {
+                locked += item.count || 0;
+                return false;
+            }
             const key = holdKey(item.itemHrid, item.enhancementLevel);
             // Held items are counted, not silently dropped: an item vanishing
             // from the sell queue with no explanation is indistinguishable from
@@ -1255,6 +1269,7 @@ class BulkSellAssistant {
         });
         this.heldCount = held;
         this.enhancedSkipped = enhanced;
+        this.lockedSkipped = locked;
         // Most expensive stack first: cached market unit price (ask, else bid) × count
         this.queue = items
             .map((item) => {
