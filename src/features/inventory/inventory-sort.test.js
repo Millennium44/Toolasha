@@ -205,6 +205,49 @@ const CATEGORIES = [
     ],
 ];
 
+function iconSvg(id) {
+    const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+    const use = document.createElementNS('http://www.w3.org/2000/svg', 'use');
+    use.setAttribute('href', `/static/media/sprites.abc.svg#${id}`);
+    svg.appendChild(use);
+    return svg;
+}
+
+/**
+ * A single-category native tab's panel (checked live: "Resources", 136 tiles). Unlike a
+ * multi-category panel, the grid here has no Inventory_label and no Inventory_categoryButton at
+ * all — the only signal for what category this is is the selected tab's icon.
+ * @param {string} selectedIconId - The icon id after "#" in the selected tab's sprite href
+ * @param {Array<[string, number]>} items - [hrid, askValue] pairs
+ */
+function buildSingleCategoryInventory(selectedIconId, items) {
+    const inv = el('div', 'Inventory_items__6SXv0');
+    const tabsComponent = el('div', 'TabsComponent_tabsComponent__x TabsComponent_compact__y');
+    const tabsContainer = el('div', 'TabsComponent_tabsContainer__a');
+    const tabList = el('div');
+    tabList.setAttribute('role', 'tablist');
+    const otherTab = el('button');
+    otherTab.setAttribute('role', 'tab');
+    otherTab.setAttribute('aria-selected', 'false');
+    otherTab.appendChild(iconSvg('inventory_all'));
+    const selectedTab = el('button');
+    selectedTab.setAttribute('role', 'tab');
+    selectedTab.setAttribute('aria-selected', 'true');
+    selectedTab.appendChild(iconSvg(selectedIconId));
+    tabList.append(otherTab, selectedTab);
+    tabsContainer.appendChild(tabList);
+    const panelsContainer = el('div', 'TabsComponent_tabPanelsContainer__b');
+    const panel = el('div', 'TabPanel_tabPanel__t');
+    const grid = el('div', 'Inventory_itemGrid__g'); // no label, no button
+    for (const [hrid, value] of items) grid.appendChild(tile(hrid, value));
+    panel.appendChild(grid);
+    panelsContainer.appendChild(panel);
+    tabsComponent.append(tabsContainer, panelsContainer);
+    inv.appendChild(tabsComponent);
+    document.body.appendChild(inv);
+    return inv;
+}
+
 function itemsByHrid(root) {
     const map = new Map();
     for (const node of root.querySelectorAll('[class*="Item_itemContainer"]')) {
@@ -587,5 +630,95 @@ describe('InventorySort — reapplies sort when a native tab switch re-renders t
 
         // Nothing to reapply: the existing tile's order is untouched by this out-of-scope click.
         expect(itemsByHrid(inv).get('c1').style.order).toBe('0');
+    });
+});
+
+describe('InventorySort.applyCurrentSort — single-category native tab (no category button)', () => {
+    // Live symptom: a single-category native tab's grid ("Resources", 136 tiles) has no
+    // Inventory_label or Inventory_categoryButton at all, so the button-driven category search
+    // found zero categories there and it never sorted. The fix iterates Inventory_itemGrid
+    // elements directly and, when a grid has no button, falls back to the selected
+    // [role="tab"][aria-selected="true"]'s icon id.
+    beforeEach(() => {
+        document.body.innerHTML = '';
+        settings.invSort = true;
+        settings.invSort_sortEquipment = false;
+        inventorySort.currentMode = 'ask';
+        inventorySort.isCalculating = false;
+    });
+
+    afterEach(() => {
+        inventorySort.currentInventoryElem = null;
+    });
+
+    test('a button-less grid sorts using the selected tab icon (item_category_resource)', async () => {
+        const inv = buildSingleCategoryInventory('item_category_resource', [
+            ['r1', 10],
+            ['r2', 30],
+        ]);
+        inventorySort.currentInventoryElem = inv;
+
+        await inventorySort.applyCurrentSort();
+
+        const items = itemsByHrid(inv);
+        expect(items.get('r2').style.order).toBe('0'); // value 30, highest first
+        expect(items.get('r1').style.order).toBe('1');
+    });
+
+    test('a button-less Loots grid (item_category_loot) never sorts', async () => {
+        const inv = buildSingleCategoryInventory('item_category_loot', [
+            ['l1', 5],
+            ['l2', 50],
+        ]);
+        inventorySort.currentInventoryElem = inv;
+
+        await inventorySort.applyCurrentSort();
+
+        const items = itemsByHrid(inv);
+        expect(items.get('l1').style.order).toBe('');
+        expect(items.get('l2').style.order).toBe('');
+    });
+
+    test('a button-less Equipment grid (item_category_equipment) respects invSort_sortEquipment off', async () => {
+        const inv = buildSingleCategoryInventory('item_category_equipment', [
+            ['e1', 100],
+            ['e2', 1],
+        ]);
+        inventorySort.currentInventoryElem = inv;
+
+        await inventorySort.applyCurrentSort();
+
+        const items = itemsByHrid(inv);
+        expect(items.get('e1').style.order).toBe('');
+        expect(items.get('e2').style.order).toBe('');
+    });
+
+    test('a button-less Equipment grid sorts once invSort_sortEquipment is on', async () => {
+        settings.invSort_sortEquipment = true;
+        const inv = buildSingleCategoryInventory('item_category_equipment', [
+            ['e1', 100],
+            ['e2', 1],
+        ]);
+        inventorySort.currentInventoryElem = inv;
+
+        await inventorySort.applyCurrentSort();
+
+        const items = itemsByHrid(inv);
+        expect(items.get('e1').style.order).toBe('0'); // value 100, highest first
+        expect(items.get('e2').style.order).toBe('1');
+    });
+
+    test('favorites_tab (a mixed category) sorts like any other category', async () => {
+        const inv = buildSingleCategoryInventory('favorites_tab', [
+            ['f1', 10],
+            ['f2', 30],
+        ]);
+        inventorySort.currentInventoryElem = inv;
+
+        await inventorySort.applyCurrentSort();
+
+        const items = itemsByHrid(inv);
+        expect(items.get('f2').style.order).toBe('0');
+        expect(items.get('f1').style.order).toBe('1');
     });
 });
