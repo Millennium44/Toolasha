@@ -250,4 +250,26 @@ describe('combatScore switched live with abilities & triggers on', () => {
         expect(skillerToggle.style.display).toBe('');
         expect(toggle.textContent.trim().startsWith('+ ')).toBe(true);
     });
+
+    test('disable() during handleProfileShared leaves the resumed call with nothing to draw', async () => {
+        combatScore.disable();
+        settings.combatScore = true;
+        settings.abilitiesTriggers = true;
+        combatScore.initialize();
+        mountProfilePanel();
+
+        const handler = wsHandlers.get('profile_shared');
+        const pending = handler(profileSharedData());
+
+        // The last setting the module serves goes off while handleProfileShared is still
+        // suspended on its internal awaits (storage.set, waitForProfilePanel).
+        combatScore.disable();
+
+        await pending;
+        await new Promise((resolve) => setTimeout(resolve, 0));
+        await new Promise((resolve) => setTimeout(resolve, 0));
+
+        expect(document.getElementById('mwi-combat-score-panel')).toBeNull();
+        expect(document.getElementById('mwi-abilities-triggers-panel')).toBeNull();
+    });
 });

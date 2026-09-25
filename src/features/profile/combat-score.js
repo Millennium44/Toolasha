@@ -60,6 +60,10 @@ class CombatScore {
         this.isInitialized = false;
         this.profileSharedHandler = null; // Store handler reference for cleanup
         this.timerRegistry = createTimerRegistry();
+        // Bumped by disable() so a handleProfileShared()/handleProfileOpen() call already
+        // suspended on an await (storage, waitForProfilePanel's up-to-2s poll, calculateCombatScore)
+        // knows its render is stale and must not append a panel after the module was switched off.
+        this._renderGeneration = 0;
     }
 
     /**
@@ -151,6 +155,10 @@ class CombatScore {
      * @param {Object} profileData - Profile data from WebSocket
      */
     async handleProfileShared(profileData) {
+        // Captured before any await: disable() bumping this means every render below is stale,
+        // even once a later initialize() has isInitialized true again for an unrelated open.
+        const generation = this._renderGeneration;
+
         // Extract character ID from profile data
         const characterId =
             profileData.profile.sharableCharacter?.id ||
@@ -159,11 +167,13 @@ class CombatScore {
 
         // Store the profile ID so export button can find it
         await storage.set('currentProfileId', characterId, 'combatExport', true);
+        if (generation !== this._renderGeneration) return;
 
         // Note: Memory cache is handled by websocket.js listener (don't duplicate here)
 
         // Wait for profile panel to appear in DOM
         const profilePanel = await this.waitForProfilePanel();
+        if (generation !== this._renderGeneration) return;
         if (!profilePanel) {
             console.error('[CombatScore] Could not find profile panel');
             return;
@@ -177,7 +187,7 @@ class CombatScore {
             profilePanel.parentElement;
 
         if (modalContainer) {
-            await this.handleProfileOpen(profileData, modalContainer);
+            await this.handleProfileOpen(profileData, modalContainer, generation);
         }
     }
 
@@ -200,11 +210,14 @@ class CombatScore {
      * Handle profile modal opening
      * @param {Object} profileData - Profile data from WebSocket
      * @param {Element} modalContainer - Modal container element
+     * @param {number} generation - `_renderGeneration` at the start of this render pass; a value
+     *   the module has since moved past means disable() ran mid-flight and this pass must not draw
      */
-    async handleProfileOpen(profileData, modalContainer) {
+    async handleProfileOpen(profileData, modalContainer, generation) {
         try {
             // Calculate combat score
             const scoreData = await calculateCombatScore(profileData);
+            if (generation !== this._renderGeneration) return;
 
             // Display score panel
             this.showScorePanel(profileData, scoreData, modalContainer);
@@ -1792,6 +1805,11 @@ class CombatScore {
      */
     disable() {
         try {
+            // Invalidate any handleProfileShared()/handleProfileOpen() call still suspended on an
+            // await; it checks this after every await and bails instead of drawing a panel that
+            // isInitialized alone would call unexpected but nothing was there to stop.
+            this._renderGeneration++;
+
             if (this.profileSharedHandler) {
                 webSocketHook.off('profile_shared', this.profileSharedHandler);
                 this.profileSharedHandler = null;
