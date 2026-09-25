@@ -42,6 +42,20 @@ const FETCH_DAYS = 5;
 /** How long order-book DOM churn is gathered before recomputing the current item */
 const UPDATE_DEBOUNCE_MS = 50;
 
+/**
+ * Follow-up delays (ms) for re-checking the current item after a fresh selection.
+ *
+ * Direct in-page navigation to an item (clicking it inside the marketplace's own
+ * list, or `handleGoToMarketplace` landing on it) reuses the existing
+ * `MarketplacePanel_currentItem` node and updates its enhancement-level badge text
+ * in place rather than inserting new elements — `domObserver` only watches
+ * `addedNodes`, so that settle never produces a mutation this module's observer
+ * would see. A pop-out/tab view that paints the badge once on first mount has no
+ * such gap, which is why only direct navigation showed the stall. These bounded
+ * follow-up passes catch a badge that finishes settling after the first read.
+ */
+const SETTLE_CHECK_DELAYS_MS = [150, 400];
+
 /** Where column visibility preferences are kept */
 const COLUMN_PREFS_KEY = 'market_volumeStats_columns';
 
@@ -93,7 +107,13 @@ class MarketVolumeStats {
         this.currentKey = null;
         /** Bumped on every new selection and on disable(), so a stale fetch cannot render */
         this.generation = 0;
+        /** Highest generation whose `fetchAndRender` has reached its `finally` — `< generation` means one is still in flight */
+        this.settledGeneration = 0;
+        /** Key whose fetch last reached a terminal render (table, status, or error) */
+        this.loadedKey = null;
         this.updateTimer = null;
+        /** Pending settle-check timers from `scheduleSettleChecks()` */
+        this.settleTimers = new Set();
         this.visibleColumnIds = new Set(DEFAULT_COLUMN_IDS);
         this.columnPrefsLoaded = false;
     }
@@ -197,11 +217,44 @@ class MarketVolumeStats {
         const key = `${itemHrid}:${enhancementLevel}`;
         if (key === this.currentKey) {
             this.attachPanel(currentItemElement);
+            // A fetch for this key can have been discarded mid-flight (superseded by
+            // another for the same key, e.g. a redundant retrigger racing a
+            // "Refresh now") — nothing else would ever refetch it, and the panel
+            // would sit on "Loading" forever. Refetch whenever the most recent fetch
+            // has already settled without producing a render for this key.
+            const fetchPending = this.settledGeneration < this.generation;
+            if (!fetchPending && this.loadedKey !== key) {
+                this.fetchAndRender(currentItemElement, itemHrid, enhancementLevel, key, false);
+            }
             return;
         }
 
         this.currentKey = key;
+        this.loadedKey = null;
         this.fetchAndRender(currentItemElement, itemHrid, enhancementLevel, key, false);
+        this.scheduleSettleChecks();
+    }
+
+    /**
+     * Re-run `update()` a couple more times shortly after a fresh selection, to
+     * catch an enhancement-level badge that finishes rendering after the first
+     * read (see `SETTLE_CHECK_DELAYS_MS`).
+     */
+    scheduleSettleChecks() {
+        this.clearSettleChecks();
+        for (const delay of SETTLE_CHECK_DELAYS_MS) {
+            const timer = setTimeout(() => {
+                this.settleTimers.delete(timer);
+                this.update();
+            }, delay);
+            this.settleTimers.add(timer);
+        }
+    }
+
+    /** Cancel any pending settle-check timers from `scheduleSettleChecks()` */
+    clearSettleChecks() {
+        for (const timer of this.settleTimers) clearTimeout(timer);
+        this.settleTimers.clear();
     }
 
     /**
@@ -222,32 +275,43 @@ class MarketVolumeStats {
         const panel = this.attachPanel(currentItemElement);
         this.renderLoading(panel);
 
-        const source = marketHistoryAPI.currentSource();
-        const rows = await marketHistoryAPI.fetchHistory(itemHrid, enhancementLevel, FETCH_DAYS, { force });
+        try {
+            const source = marketHistoryAPI.currentSource();
+            const rows = await marketHistoryAPI.fetchHistory(itemHrid, enhancementLevel, FETCH_DAYS, { force });
 
-        // A slower response for an item the player has since navigated away
-        // from (or a teardown mid-flight) must not overwrite what is shown now.
-        if (generation !== this.generation || this.currentKey !== key) return;
+            // A slower response for an item the player has since navigated away
+            // from (or a teardown mid-flight) must not overwrite what is shown now.
+            if (generation !== this.generation || this.currentKey !== key) return;
 
-        const freshPanel = this.attachPanel(currentItemElement);
-        if (rows === null) {
-            const cooldownMs = marketHistoryAPI.cooldownRemainingMs(source.key);
-            if (cooldownMs > 0) {
-                this.renderStatus(
-                    freshPanel,
-                    `the shared price-history server is busy; retrying in ${describeCooldown(cooldownMs)}`
-                );
-            } else {
-                this.renderStatus(freshPanel, 'could not reach the shared price-history server');
+            const freshPanel = this.attachPanel(currentItemElement);
+            if (rows === null) {
+                const cooldownMs = marketHistoryAPI.cooldownRemainingMs(source.key);
+                if (cooldownMs > 0) {
+                    this.renderStatus(
+                        freshPanel,
+                        `the shared price-history server is busy; retrying in ${describeCooldown(cooldownMs)}`
+                    );
+                } else {
+                    this.renderStatus(freshPanel, 'could not reach the shared price-history server');
+                }
+                this.loadedKey = key;
+                return;
             }
-            return;
-        }
 
-        const windows = computeAllWindows(rows);
-        // Cached so a column-visibility toggle can redraw without a refetch
-        this.lastWindows = windows;
-        this.lastSource = source;
-        this.renderTable(freshPanel, windows, source);
+            const windows = computeAllWindows(rows);
+            // Cached so a column-visibility toggle can redraw without a refetch
+            this.lastWindows = windows;
+            this.lastSource = source;
+            this.renderTable(freshPanel, windows, source);
+            this.loadedKey = key;
+        } finally {
+            // Recorded even for a discarded fetch (the generation/key mismatch above
+            // returned early) — that is what lets `update()` notice this generation
+            // never produced a render and retry. Out-of-order settling (an older
+            // request answering after a newer one already has) must not regress this
+            // backward, hence the max rather than a plain assignment.
+            this.settledGeneration = Math.max(this.settledGeneration, generation);
+        }
     }
 
     /** Redraw the table from the last fetched data, e.g. after a column-visibility change */
@@ -446,9 +510,12 @@ class MarketVolumeStats {
         this.closeColumnMenu();
         this.removePanel();
         this.cleanupRegistry.cleanupAll();
+        this.clearSettleChecks();
         this.isInitialized = false;
         this.currentKey = null;
+        this.loadedKey = null;
         this.generation += 1;
+        this.settledGeneration = this.generation;
     }
 
     cleanup() {

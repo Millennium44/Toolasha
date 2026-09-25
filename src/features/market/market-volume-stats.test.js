@@ -220,4 +220,89 @@ describe('stale response guard', () => {
 
         expect(document.querySelector('.mwi-volume-stats')).toBeNull();
     });
+
+    test('an enhancement badge that settles without ever inserting a node is still picked up, not left on the first read forever', async () => {
+        // `domObserver` (src/core/dom-observer.js) only watches `addedNodes` —
+        // it has no `attributes: true` anywhere. Direct in-page navigation to an
+        // equipment item reuses the existing current-item node and updates the
+        // enhancement-level badge's *text* in place once the tile finishes
+        // rendering, which produces no mutation this module's observer would
+        // ever see. A pop-out/tab view paints the badge once on first mount and
+        // has no such gap, which is why only direct navigation showed the
+        // stall. Without the bounded settle-check re-running `update()`, this
+        // module would stay on whatever it first read (or whatever that first,
+        // possibly-discarded fetch produced) forever.
+        vi.useFakeTimers();
+        try {
+            const currentItem = buildCurrentItem('/items/stalactite_spear', 0);
+            currentItem.querySelector('[class*="Item_enhancementLevel"]').remove();
+            await marketVolumeStats.initialize();
+
+            historyApi.rows = [{ a: 110, b: 90, p: 100, v: 10, time: Math.floor(Date.now() / 1000) - 3600 }];
+            marketVolumeStats.update();
+            await vi.advanceTimersByTimeAsync(0);
+            expect(marketVolumeStats.currentKey).toBe('/items/stalactite_spear:0');
+
+            // The badge settles by mutating existing text -- no added node, so
+            // domObserver's `MarketplacePanel_orderBooksContainer` watch never
+            // fires again for this.
+            const badge = document.createElement('div');
+            badge.className = 'Item_enhancementLevel__x';
+            badge.textContent = '+20';
+            currentItem.appendChild(badge);
+
+            // Nothing but the bounded settle-check will ever call `update()` again.
+            await vi.advanceTimersByTimeAsync(500);
+
+            expect(marketVolumeStats.currentKey).toBe('/items/stalactite_spear:20');
+            expect(panelText()).not.toContain('Loading');
+            expect(panelText()).toContain('1d');
+        } finally {
+            vi.useRealTimers();
+        }
+    });
+
+    test('a response discarded while `currentKey` was briefly elsewhere does not leave the panel stuck on Loading forever', async () => {
+        // The exact shape the maintainer traced through: `currentKey` moves
+        // away and back before a request answers (the current-item element
+        // briefly vanishing mid-render and reappearing on the same item and
+        // level is one way this happens; `removePanel()` nulling `currentKey`
+        // is the specific path in `update()`). `fetchAndRender`'s guard
+        // correctly discards the response, since it no longer matches what is
+        // current at the moment it checks — but once `currentKey` settles back
+        // to that same key, nothing else was ever going to fetch it again.
+        const currentItem = buildCurrentItem('/items/stalactite_spear', 0);
+        await marketVolumeStats.initialize();
+        marketVolumeStats.currentKey = '/items/stalactite_spear:0';
+
+        let resolveFetch;
+        historyApi.fetchHistory.mockImplementationOnce(
+            () =>
+                new Promise((resolve) => {
+                    resolveFetch = resolve;
+                })
+        );
+        const pending = marketVolumeStats.fetchAndRender(
+            currentItem,
+            '/items/stalactite_spear',
+            0,
+            '/items/stalactite_spear:0',
+            false
+        );
+        expect(panelText()).toContain('Loading');
+
+        marketVolumeStats.currentKey = '/items/other:0';
+        resolveFetch([{ a: 999, b: 999, p: 999, v: 999, time: Math.floor(Date.now() / 1000) - 3600 }]);
+        await pending;
+        marketVolumeStats.currentKey = '/items/stalactite_spear:0';
+        expect(panelText()).toContain('Loading'); // discarded: nothing rendered for it yet
+
+        // The observer fires again for this exact, unchanged key (an order-book
+        // mutation, say). Pre-fix, `update()` sees `key === currentKey` and
+        // simply reattaches this same stale "Loading" panel, forever.
+        historyApi.rows = [{ a: 110, b: 90, p: 100, v: 10, time: Math.floor(Date.now() / 1000) - 3600 }];
+        marketVolumeStats.update();
+        await vi.waitFor(() => expect(panelText()).toContain('1d'));
+        expect(panelText()).not.toContain('Loading');
+    });
 });
