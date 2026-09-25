@@ -43,6 +43,11 @@ class MentionTracker {
         this.handlers.chatMessage = (data) => this.onChatMessage(data);
         webSocketHook.on('chat_message_received', this.handlers.chatMessage);
 
+        // A deletion (self, Trade/Recruit; or moderator, anywhere) drops the
+        // mention it logged, if any — see onChatMessageUpdated.
+        this.handlers.chatMessageUpdated = (data) => this.onChatMessageUpdated(data);
+        webSocketHook.on('chat_message_updated', this.handlers.chatMessageUpdated);
+
         // The name the pattern matches follows the character
         this.handlers.characterSwitched = () => {
             this.characterName = dataManager.getCurrentCharacterName();
@@ -81,13 +86,41 @@ class MentionTracker {
         // Skip system messages
         if (message.isSystemMessage || !message.sName) return;
 
+        // Arrived already deleted (e.g. a moderator's view of a channel's
+        // backlog) — never log a mention nobody else will ever see rendered.
+        if (message.isDeleted) return;
+
         const text = message.m || '';
         const channel = message.chan || '';
 
         if (this.isMentioned(text)) {
             const log = this.mentionLog.get(channel) || [];
-            log.push({ sName: message.sName, m: text, t: message.t });
+            log.push({ sName: message.sName, m: text, t: message.t, id: message.id });
             this.mentionLog.set(channel, log);
+            this.updateBadge(channel);
+        }
+    }
+
+    /**
+     * Handle `chat_message_updated`: a deletion drops that message's mention
+     * from the log (and its badge count) if it logged one. An undelete
+     * restores nothing — a mention already shown to the player is not put
+     * back by the sender changing their mind again, and this log is not a
+     * persisted store to begin with.
+     * @param {Object} data - WebSocket message data
+     */
+    onChatMessageUpdated(data) {
+        const message = data?.message;
+        if (!message || !message.isDeleted || message.id == null) return;
+
+        const channel = message.chan || '';
+        const log = this.mentionLog.get(channel);
+        if (!log || !log.length) return;
+
+        const key = String(message.id);
+        const filtered = log.filter((entry) => entry.id == null || String(entry.id) !== key);
+        if (filtered.length !== log.length) {
+            this.mentionLog.set(channel, filtered);
             this.updateBadge(channel);
         }
     }
@@ -292,6 +325,10 @@ class MentionTracker {
             if (this.handlers.chatMessage) {
                 webSocketHook.off('chat_message_received', this.handlers.chatMessage);
                 this.handlers.chatMessage = null;
+            }
+            if (this.handlers.chatMessageUpdated) {
+                webSocketHook.off('chat_message_updated', this.handlers.chatMessageUpdated);
+                this.handlers.chatMessageUpdated = null;
             }
             if (this.handlers.characterSwitched) {
                 dataManager.off('character_switched', this.handlers.characterSwitched);
