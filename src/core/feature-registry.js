@@ -786,7 +786,17 @@ function scheduleLiveStart() {
 function setupLiveFeatureStart(onInitFailures) {
     unregisterLiveStart?.();
     liveStartFailureHandler = onInitFailures ?? null;
-    unregisterLiveStart = config.onAnySettingChange(() => scheduleLiveStart());
+    const offAnyChange = config.onAnySettingChange(() => scheduleLiveStart());
+    // A whole-map reload fires no any-setting change, and not every reload is
+    // followed by a re-init: a settings-mirror restore accepted after startup
+    // replaces the map mid-session. During a switch or at boot the pass stands
+    // down or waits, and the re-init covers it.
+    const offLoaded =
+        typeof config.onSettingsLoaded === 'function' ? config.onSettingsLoaded(() => scheduleLiveStart()) : null;
+    unregisterLiveStart = () => {
+        offAnyChange?.();
+        offLoaded?.();
+    };
     return () => {
         unregisterLiveStart?.();
         unregisterLiveStart = null;
