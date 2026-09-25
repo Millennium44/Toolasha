@@ -314,7 +314,7 @@ describe('combatSessionText', () => {
         encountersPerHour: 10,
         income: { ask: 1000, bid: 900 },
         dailyIncome: { ask: 24000, bid: 21600 },
-        consumableCosts: 50,
+        consumableCosts: { ask: 50, bid: 50 },
         dailyProfit: { ask: 23000, bid: 20600 },
         totalExp: 500,
         expPerHour: 500,
@@ -344,6 +344,8 @@ describe('combatSessionText', () => {
         const text = combatSessionText([stats('A')], { formatNum: (n) => `<${n}>` });
         expect(text).toContain('Encounters/hour: <10>');
         expect(text).toContain('Total EXP: <500>');
+        // The calculator hands consumables over as {ask, bid}, like income
+        expect(text).toContain('Consumable costs: <50>');
     });
 });
 

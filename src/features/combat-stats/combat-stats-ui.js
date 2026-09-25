@@ -131,7 +131,7 @@ export function combatSessionText(
         lines.push(`  Encounters/hour: ${formatNum(stats.encountersPerHour)}`);
         lines.push(`  Income (${priceKey}): ${formatNum(stats.income?.[priceKey])}`);
         lines.push(`  Daily income: ${formatNum(stats.dailyIncome?.[priceKey])}/d`);
-        lines.push(`  Consumable costs: ${formatNum(stats.consumableCosts)}`);
+        lines.push(`  Consumable costs: ${formatNum(stats.consumableCosts?.[priceKey] ?? 0)}`);
         lines.push(`  Daily profit: ${formatNum(stats.dailyProfit?.[priceKey])}/d`);
         lines.push(`  Total EXP: ${formatNum(stats.totalExp)}`);
         lines.push(`  EXP/hour: ${formatNum(stats.expPerHour)}`);
@@ -1318,7 +1318,7 @@ class CombatStatsUI {
             { label: 'Daily Income', value: `${formatNum(stats.dailyIncome[priceKey])}/d`, note: luckNote },
             {
                 label: 'Consumable Costs',
-                value: formatNumDecimals(stats.consumableCosts),
+                value: formatNumDecimals(stats.consumableCosts?.[priceKey] ?? 0),
                 color: '#ff6b6b',
                 expandable: true,
                 breakdown: stats.consumableBreakdown,

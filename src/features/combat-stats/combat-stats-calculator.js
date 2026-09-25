@@ -429,9 +429,16 @@ export function calculatePlayerStats(playerData, durationSeconds = null) {
     const dailyIncomeAsk = duration > 0 ? calculateDailyRate(income.ask, duration) : 0;
     const dailyIncomeBid = duration > 0 ? calculateDailyRate(income.bid, duration) : 0;
 
-    // Calculate consumable costs based on ACTUAL consumption
+    // Calculate consumable costs based on ACTUAL consumption.
+    //
+    // Returned as `{ask, bid}`, the same shape as `keyCosts`, because every
+    // banked figure (Party Loot, the Total Profit tile) reads `.bid` off both.
+    // As a bare number `.bid` was undefined and those figures charged a run
+    // nothing for its food and drink. Both sides carry the one figure: a
+    // consumable is bought, so it is priced at the ask whichever side the
+    // income is read at — the same price `dailyConsumableCosts` uses.
     const consumableData = calculateConsumableCosts(playerData.consumables, duration);
-    const consumableCosts = consumableData.total;
+    const consumableCosts = { ask: consumableData.total, bid: consumableData.total };
     const consumableBreakdown = consumableData.breakdown;
 
     // Calculate daily consumable costs using pre-calculated per-day rates (MCS-style)
