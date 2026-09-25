@@ -322,27 +322,38 @@ class MarketVolumeStats {
     }
 
     /**
-     * Ensure the panel div exists as a child of the current-item card,
-     * creating it on first use.
+     * Ensure the panel div exists directly below the current-item card, creating
+     * it on first use.
+     *
+     * Placed as the current-item card's next sibling in normal flow, not as an
+     * absolutely-positioned overlay inside it: the card carries the ask-side
+     * count to the icon's left and the bid-side count to its right, and an
+     * overlay anchored to the icon covered the bid count. A sibling in normal
+     * flow only ever pushes whatever came after it (the "Tradable range" line,
+     * if present) further down — it can never sit on top of anything.
      * @param {HTMLElement} currentItemElement
      * @returns {HTMLElement} The panel's content container
      */
     attachPanel(currentItemElement) {
-        let panel = currentItemElement.querySelector('.mwi-volume-stats');
+        const host =
+            currentItemElement.closest('[class*="MarketplacePanel_infoContainer"]') ||
+            currentItemElement.parentElement ||
+            currentItemElement;
+
+        let panel = document.querySelector('.mwi-volume-stats');
         if (!panel) {
             panel = document.createElement('div');
             panel.className = 'mwi-volume-stats';
             panel.style.cssText =
-                'position:absolute;left:100%;top:-20px;margin-left:85px;z-index:20;' +
+                'display:inline-block;margin:4px 0;z-index:20;' +
                 'white-space:nowrap;font-size:13px;line-height:1.5;text-align:left;' +
                 'background:#101116;border-radius:4px;box-shadow:0 2px 10px rgba(0,0,0,0.3);' +
                 'padding:4px 8px;pointer-events:auto;';
-            if (getComputedStyle(currentItemElement).position === 'static') {
-                currentItemElement.style.position = 'relative';
-            }
-            currentItemElement.appendChild(panel);
-        } else if (panel.parentElement !== currentItemElement) {
-            currentItemElement.appendChild(panel);
+        }
+
+        if (panel.parentElement !== host || panel.previousElementSibling !== currentItemElement) {
+            if (currentItemElement.nextSibling) host.insertBefore(panel, currentItemElement.nextSibling);
+            else host.appendChild(panel);
         }
         return panel;
     }

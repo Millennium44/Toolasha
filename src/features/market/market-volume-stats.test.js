@@ -306,3 +306,43 @@ describe('stale response guard', () => {
         expect(panelText()).not.toContain('Loading');
     });
 });
+
+describe('panel placement', () => {
+    test('the panel sits below the current-item card, never overlapping the ask/bid counts or tradable range', async () => {
+        document.body.innerHTML = '';
+        const infoContainer = document.createElement('div');
+        infoContainer.className = 'MarketplacePanel_infoContainer__q';
+
+        const currentItem = document.createElement('div');
+        currentItem.className = 'MarketplacePanel_currentItem__abc';
+        currentItem.innerHTML = `
+            <span class="mwi-ask-count">140</span>
+            <svg><use href="#coin"></use></svg>
+            <span class="mwi-bid-count">15</span>
+        `;
+        const use = currentItem.querySelector('use');
+        Object.defineProperty(use, 'href', { value: { baseVal: use.getAttribute('href') } });
+
+        const range = document.createElement('div');
+        range.className = 'MarketplacePanel_tradableRange__z';
+        range.textContent = 'Tradable range: 100 - 200';
+
+        infoContainer.append(currentItem, range);
+        document.body.appendChild(infoContainer);
+
+        historyApi.rows = [{ a: 110, b: 90, p: 100, v: 10, time: Math.floor(Date.now() / 1000) - 3600 }];
+        await marketVolumeStats.initialize();
+        marketVolumeStats.currentKey = '/items/coin:0';
+        await marketVolumeStats.fetchAndRender(currentItem, '/items/coin', 0, '/items/coin:0', false);
+
+        const panel = document.querySelector('.mwi-volume-stats');
+        expect(panel).not.toBeNull();
+        // A sibling placed right after the current-item card, not a child of it:
+        // it can only ever push later siblings (the range line) down, never sit
+        // on top of the counts baked into the card itself.
+        expect(panel.parentElement).toBe(infoContainer);
+        expect(panel.previousElementSibling).toBe(currentItem);
+        expect(currentItem.contains(panel)).toBe(false);
+        expect(panel.style.position).not.toBe('absolute');
+    });
+});
