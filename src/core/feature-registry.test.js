@@ -1011,6 +1011,128 @@ describe('a setting switched on mid-session', () => {
                 vi.useRealTimers();
             }
         });
+
+        describe('a start that outlives the teardown and settles afterwards', () => {
+            /**
+             * Run a whole switch to `B` on fake timers, past the in-flight wait.
+             * @returns {Promise<void>}
+             */
+            const switchToB = async () => {
+                const teardown = state.handlers.character_switching();
+                await vi.advanceTimersByTimeAsync(6_000);
+                await teardown;
+                state.currentCharacterId = 'B';
+                state.handlers.character_switched({ newId: 'B' });
+                await vi.advanceTimersByTimeAsync(100);
+            };
+
+            /**
+             * A feature whose `initialize()` hangs until `release()` is called.
+             * @returns {{initialize: Function, release: Function}}
+             */
+            const slowStart = () => {
+                const resolvers = [];
+                const initialize = vi.fn(() => new Promise((resolve) => resolvers.push(resolve)));
+                return { initialize, release: () => resolvers.shift()() };
+            };
+
+            test('a live start is disabled once it settles, for an arriving character without it', async () => {
+                vi.useFakeTimers();
+                try {
+                    const fresh = await freshRegistry();
+                    state.currentCharacterId = 'A';
+                    const { initialize, release } = slowStart();
+                    const disable = vi.fn();
+                    fresh.replaceFeatures([{ key: 'slow', name: 'Slow', initialize, disable, liveStop: true }]);
+                    fresh.setupCharacterSwitchHandler();
+                    fresh.setupLiveFeatureStart();
+                    await fresh.initializeFeatures();
+
+                    changeSetting('slow', true);
+                    await vi.advanceTimersByTimeAsync(0);
+                    state.enabledFeatures.delete('slow'); // B has it off
+                    await switchToB();
+                    expect(disable).toHaveBeenCalledTimes(1);
+
+                    release();
+                    await vi.advanceTimersByTimeAsync(0);
+                    expect(disable).toHaveBeenCalledTimes(2);
+                } finally {
+                    vi.useRealTimers();
+                }
+            });
+
+            test('is not disabled when the arriving character started the feature itself', async () => {
+                vi.useFakeTimers();
+                try {
+                    const fresh = await freshRegistry();
+                    state.currentCharacterId = 'A';
+                    const { initialize, release } = slowStart();
+                    const disable = vi.fn();
+                    fresh.replaceFeatures([{ key: 'slow', name: 'Slow', initialize, disable, liveStop: true }]);
+                    fresh.setupCharacterSwitchHandler();
+                    fresh.setupLiveFeatureStart();
+                    await fresh.initializeFeatures();
+
+                    changeSetting('slow', true);
+                    await vi.advanceTimersByTimeAsync(0);
+                    await switchToB(); // B has it on: the re-init starts it again
+                    expect(initialize).toHaveBeenCalledTimes(2);
+                    expect(disable).toHaveBeenCalledTimes(1);
+
+                    release();
+                    await vi.advanceTimersByTimeAsync(0);
+                    expect(disable).toHaveBeenCalledTimes(1);
+
+                    // Still counted as B's: switching it off stops it exactly once
+                    release();
+                    changeSetting('slow', false);
+                    await vi.advanceTimersByTimeAsync(0);
+                    expect(disable).toHaveBeenCalledTimes(2);
+                } finally {
+                    vi.useRealTimers();
+                }
+            });
+
+            test('a retry is disabled once it settles, and the rest of its list is dropped', async () => {
+                vi.useFakeTimers();
+                try {
+                    const fresh = await freshRegistry();
+                    state.currentCharacterId = 'A';
+                    state.enabledFeatures = new Set(['slow', 'other']);
+                    const { initialize, release } = slowStart();
+                    const disable = vi.fn();
+                    const otherInit = vi.fn();
+                    fresh.replaceFeatures([
+                        { key: 'slow', name: 'Slow', initialize: vi.fn(), disable },
+                        { key: 'other', name: 'Other', initialize: otherInit },
+                    ]);
+                    fresh.setupCharacterSwitchHandler();
+                    await fresh.initializeFeatures();
+                    fresh.getFeature('slow').initialize = initialize;
+                    otherInit.mockClear();
+
+                    const retrying = fresh.retryFailedFeatures([
+                        { key: 'slow', name: 'Slow' },
+                        { key: 'other', name: 'Other' },
+                    ]);
+                    await vi.advanceTimersByTimeAsync(0);
+                    state.enabledFeatures = new Set(['other']); // B has slow off
+                    await switchToB();
+                    expect(disable).toHaveBeenCalledTimes(1);
+                    expect(otherInit).toHaveBeenCalledTimes(1); // B's re-init
+
+                    release();
+                    const stillFailed = await retrying;
+                    await vi.advanceTimersByTimeAsync(0);
+                    expect(disable).toHaveBeenCalledTimes(2);
+                    expect(otherInit).toHaveBeenCalledTimes(1);
+                    expect(stillFailed).toEqual([]);
+                } finally {
+                    vi.useRealTimers();
+                }
+            });
+        });
     });
 
     describe('the failed-feature retry', () => {
