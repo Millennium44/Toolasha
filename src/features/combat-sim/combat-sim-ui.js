@@ -3133,6 +3133,19 @@ class CombatSimUI {
                     ? { completions: sim.dungeonsCompleted || 0, simHours, name: r.zone.name }
                     : null;
 
+                // Clears/Fails per day and the average clear time, dungeon rows
+                // only. The average uses the clean completion-to-completion
+                // pairing (dungeonCleanClearTimeTotal/Count, see sim-result.js)
+                // rather than simulatedTime/dungeonsCompleted, which also
+                // counts failed-run time and the unfinished tail and so reads
+                // systematically longer than a real clear.
+                const clearsPerDay = sim.isDungeon ? ((sim.dungeonsCompleted || 0) / simHours) * 24 : null;
+                const failsPerDay = sim.isDungeon ? ((sim.dungeonsFailed || 0) / simHours) * 24 : null;
+                const avgClearTime =
+                    sim.isDungeon && sim.dungeonCleanClearCount > 0
+                        ? sim.dungeonCleanClearTimeTotal / sim.dungeonCleanClearCount / 1e9
+                        : null;
+
                 return {
                     zone: dungeon ? `[D] ${r.zone.name}` : r.zone.name,
                     zoneHrid: r.zone.zoneHrid || r.zone.hrid,
@@ -3141,6 +3154,9 @@ class CombatSimUI {
                     encounters,
                     deaths: playerDeaths,
                     totalXP,
+                    clearsPerDay,
+                    failsPerDay,
+                    avgClearTime,
                     bestiary: bestiary ? bestiary.pointsPerDay : null,
                     _bestiary: bestiary,
                     _creditsPerHour: creditsPerHour,
@@ -3236,6 +3252,23 @@ class CombatSimUI {
             { key: 'tier', label: 'T' },
             { key: 'encounters', label: 'Enc/hr' },
             { key: 'deaths', label: 'Deaths/hr' },
+            {
+                key: 'clearsPerDay',
+                label: 'Clears/day',
+                title: 'Dungeon runs cleared per day in the sim. Non-dungeon rows show —.',
+            },
+            {
+                key: 'failsPerDay',
+                label: 'Fails/day',
+                title: 'Runs that ended in a wipe per day in the sim. Non-dungeon rows show —.',
+            },
+            {
+                key: 'avgClearTime',
+                label: 'Avg clear',
+                title:
+                    'Average simulated time per cleared run (completion-to-completion, wipes excluded). Simulated, ' +
+                    'not a live measurement — the sim runs dungeon clears about 6% long. Non-dungeon rows show —.',
+            },
             { key: 'totalXP', label: 'Total XP/hr' },
             { key: 'profitDay', label: 'Profit/day' },
             {
@@ -3398,6 +3431,24 @@ class CombatSimUI {
                             } else {
                                 style += ' color:#e0e0e0;';
                             }
+                        } else if (col.key === 'clearsPerDay' || col.key === 'failsPerDay') {
+                            style += ' text-align:right; font-variant-numeric:tabular-nums;';
+                            if (!row._dungeon) {
+                                display = '—';
+                                style += ' color:#666;';
+                            } else {
+                                display = val.toFixed(1);
+                                style += col.key === 'failsPerDay' && val > 0 ? ' color:#f44336;' : ' color:#e0e0e0;';
+                            }
+                        } else if (col.key === 'avgClearTime') {
+                            style += ' text-align:right; font-variant-numeric:tabular-nums;';
+                            if (!row._dungeon || val === null || val === undefined) {
+                                display = '—';
+                                style += ' color:#666;';
+                            } else {
+                                display = timeReadable(val);
+                                style += ' color:#e0e0e0;';
+                            }
                         } else {
                             // The Score is a placing out of 100, not a quantity
                             // of anything, so it is never abbreviated
@@ -3478,6 +3529,9 @@ class CombatSimUI {
                 ...(maxTierFood ? [{ key: 'food', label: 'Food' }] : []),
                 { key: 'encounters', label: 'Encounters/hr' },
                 { key: 'deaths', label: 'Deaths/hr' },
+                { key: 'clearsPerDay', label: 'Clears/day' },
+                { key: 'failsPerDay', label: 'Fails/day' },
+                { key: 'avgClearTime', label: 'Avg Clear Time (s)' },
                 { key: 'score', label: 'Score' },
                 { key: 'totalXP', label: 'Total XP/hr' },
                 { key: 'stamina', label: 'Stamina XP/hr' },
