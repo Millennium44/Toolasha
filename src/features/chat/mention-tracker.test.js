@@ -56,10 +56,11 @@ vi.mock('../../core/dom-observer.js', () => ({
     },
 }));
 vi.mock('./mention-popup.js', () => ({
-    default: { open: vi.fn(), close: vi.fn() },
+    default: { open: vi.fn(), close: vi.fn(), updateIfOpen: vi.fn() },
 }));
 
 const mentionTracker = (await import('./mention-tracker.js')).default;
+const mentionPopup = (await import('./mention-popup.js')).default;
 
 function chatMessage(overrides = {}) {
     return {
@@ -332,6 +333,21 @@ describe('mention tracker — chat_message_updated (deletion)', () => {
 
         expect(mentionTracker.mentionLog.get('/chat_channel_types/party')).toHaveLength(0);
         expect(btn.querySelector('.mwi-mention-badge')).toBeNull();
+    });
+
+    test('a deletion tells an open popup for that channel to refresh, not just the badge', () => {
+        mentionPopup.updateIfOpen.mockClear();
+        const container = buildTabs(['Party']);
+        game.observers['Chat_tabsComponentContainer'](container);
+        game.wsHandlers.chat_message_received(
+            chatMessage({ m: '@Millennium44 hi', chan: '/chat_channel_types/party', id: 'msg-1' })
+        );
+
+        game.wsHandlers.chat_message_updated({
+            message: { id: 'msg-1', chan: '/chat_channel_types/party', isDeleted: true },
+        });
+
+        expect(mentionPopup.updateIfOpen).toHaveBeenCalledWith('/chat_channel_types/party', [], 'Party');
     });
 
     test('a deletion of an id with no logged mention is a no-op', () => {

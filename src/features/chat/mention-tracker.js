@@ -103,7 +103,11 @@ class MentionTracker {
 
     /**
      * Handle `chat_message_updated`: a deletion drops that message's mention
-     * from the log (and its badge count) if it logged one. An undelete
+     * from the log (and its badge count) if it logged one, and refreshes an
+     * already-open popup for that channel — `mentionPopup` renders its own
+     * copy once at open time and does not notice the log changing under it
+     * on its own, so a deleted mention stayed visible (and in the copy
+     * button's output) until the popup was closed and reopened. An undelete
      * restores nothing — a mention already shown to the player is not put
      * back by the sender changing their mind again, and this log is not a
      * persisted store to begin with.
@@ -122,6 +126,7 @@ class MentionTracker {
         if (filtered.length !== log.length) {
             this.mentionLog.set(channel, filtered);
             this.updateBadge(channel);
+            mentionPopup.updateIfOpen(channel, filtered, this.getChannelDisplayName(channel));
         }
     }
 
