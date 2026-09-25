@@ -88,18 +88,43 @@ const inFlightStarts = new Set();
 const IN_FLIGHT_START_WAIT_MS = 5000;
 
 /**
+ * Resolve once `promise` settles, regardless of outcome. Used to build a tracking promise that
+ * never rejects, so `waitForInFlightStarts`'s `Promise.all` cannot reject on a failed initializer.
+ * @param {Promise} promise
+ * @returns {Promise<void>}
+ */
+async function swallowRejection(promise) {
+    try {
+        await promise;
+    } catch {
+        // Ignored: only the settling matters here, not the outcome — `started`'s own rejection
+        // still reaches whoever awaits `trackedInitialize()`'s return value.
+    }
+}
+
+/**
+ * Track `started` in `inFlightStarts` until it settles, then remove it.
+ * @param {Promise} started - The `initialize()` call this tracks
+ * @returns {Promise<void>}
+ */
+async function trackInFlightStart(started) {
+    const settled = swallowRejection(started);
+    inFlightStarts.add(settled);
+    try {
+        await settled;
+    } finally {
+        inFlightStarts.delete(settled);
+    }
+}
+
+/**
  * Call a feature's `initialize()` and track it until it settles.
  * @param {Object} feature - Registry entry
  * @returns {Promise<*>} What `initialize()` resolves to; a synchronous throw rejects it
  */
 function trackedInitialize(feature) {
     const started = (async () => feature.initialize())();
-    const settled = started.then(
-        () => {},
-        () => {}
-    );
-    inFlightStarts.add(settled);
-    settled.then(() => inFlightStarts.delete(settled));
+    trackInFlightStart(started);
     return started;
 }
 
