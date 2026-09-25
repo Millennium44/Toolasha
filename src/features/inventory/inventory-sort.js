@@ -32,6 +32,7 @@ class InventorySort {
         this.itemsUpdatedDebounceTimer = null; // Debounce timer for items_updated events
         this.priceUpdateHandler = null; // Handler for market price updates
         this.priceUpdateDebounceTimer = null; // Debounce timer for price updates
+        this.tabSwitchDebounceTimer = null; // Debounce timer for native-inventory-tab switches
         this.DEBOUNCE_DELAY = 300; // 300ms debounce for event handlers
         this.timerRegistry = createTimerRegistry();
     }
@@ -138,6 +139,23 @@ class InventorySort {
             this.applyCurrentSort();
         });
         this.unregisterHandlers.push(unregister);
+
+        // Native inventory tabs (2026-09 patch) re-render the selected tab's category tiles
+        // in place when the player switches tabs — Inventory_items itself is never re-inserted,
+        // so the watcher above only fires once, on the first open. A category button landing
+        // anywhere inside the still-mounted inventory means a panel just (re)rendered its tiles,
+        // in both the old DOM (initial category mount) and the new one (every tab switch), so
+        // reuse that signal to reapply sort and badges. Structural (a class match), never keyed
+        // on hostname, since the old and new DOM shapes can both be live depending on the server.
+        const unregisterTabSwitch = domObserver.onClass(
+            'InventorySortTabSwitch',
+            'Inventory_categoryButton',
+            (elem) => {
+                if (!this.currentInventoryElem || !this.currentInventoryElem.contains(elem)) return;
+                this.scheduleApplyCurrentSort();
+            }
+        );
+        this.unregisterHandlers.push(unregisterTabSwitch);
 
         // Store handler reference for cleanup with debouncing
         this.itemsUpdatedHandler = () => {
@@ -369,6 +387,43 @@ class InventorySort {
     }
 
     /**
+     * Debounced trigger for a native-tab switch: invalidates the badge cache and reapplies sort,
+     * the same way a debounced `items_updated` does. Coalesces the several category-button
+     * insertions a single tab switch produces into one reapply.
+     */
+    scheduleApplyCurrentSort() {
+        clearTimeout(this.tabSwitchDebounceTimer);
+        this.tabSwitchDebounceTimer = setTimeout(() => {
+            if (this.currentInventoryElem) {
+                inventoryBadgeManager.invalidateCache();
+                this.applyCurrentSort();
+            }
+        }, this.DEBOUNCE_DELAY);
+    }
+
+    /**
+     * Find the container that owns a category's button and item grid.
+     *
+     * Old DOM: category divs are direct children of Inventory_items, and the div itself already
+     * holds the label, button and item grid. New DOM (2026-09 native inventory tabs): category
+     * divs sit inside the selected TabsComponent panel, one level deeper, but the button's own
+     * parent still holds the label and item grid as siblings — so climbing from the button until
+     * an ancestor's subtree contains an item grid finds the right scope in both shapes without
+     * caring which one is live.
+     * @param {Element} categoryButton - An `Inventory_categoryButton` element
+     * @param {Element} root - The Inventory_items element to stop climbing at
+     * @returns {Element|null} The category's item scope, or null if none is found
+     */
+    findCategoryContainer(categoryButton, root) {
+        let node = categoryButton.parentElement;
+        while (node && node !== root.parentElement) {
+            if (node.querySelector('[class*="Inventory_itemGrid"]')) return node;
+            node = node.parentElement;
+        }
+        return null;
+    }
+
+    /**
      * Apply current sort mode to inventory
      */
     async applyCurrentSort() {
@@ -390,11 +445,17 @@ class InventorySort {
                 return;
             }
 
-            // Process each category
-            for (const categoryDiv of inventoryElem.children) {
-                // Get category name
-                const categoryButton = categoryDiv.querySelector('[class*="Inventory_categoryButton"]');
-                if (!categoryButton) continue;
+            // Process each category. Found structurally by its Inventory_categoryButton rather
+            // than by walking inventoryElem.children: the old DOM has category divs as direct
+            // children of Inventory_items, but the new native-inventory-tabs DOM (2026-09 patch)
+            // nests them inside the selected TabsComponent panel instead, and only that panel
+            // renders any tiles — so a plain descendant search finds exactly the categories that
+            // are actually on screen in either shape.
+            const categoryButtons = inventoryElem.querySelectorAll('[class*="Inventory_categoryButton"]');
+
+            for (const categoryButton of categoryButtons) {
+                const categoryDiv = this.findCategoryContainer(categoryButton, inventoryElem);
+                if (!categoryDiv) continue;
 
                 const categoryName = categoryButton.textContent.trim();
 
@@ -421,9 +482,12 @@ class InventorySort {
                     // Sort by price (prices already calculated by badge manager)
                     this.sortItemsByPrice(itemElems, this.currentMode);
                 } else {
-                    // Reset to default order
+                    // Reset to default order. Removed rather than pinned at "0": every tile
+                    // already defaults to order 0, so leaving an inline "0" behind is inert but
+                    // leftover — clearing the property is the honest reset and does not shadow
+                    // an order another feature sets later.
                     itemElems.forEach((itemElem) => {
-                        itemElem.style.order = 0;
+                        itemElem.style.removeProperty('order');
                     });
                 }
             }
@@ -558,6 +622,8 @@ class InventorySort {
             this.itemsUpdatedDebounceTimer = null;
             clearTimeout(this.priceUpdateDebounceTimer);
             this.priceUpdateDebounceTimer = null;
+            clearTimeout(this.tabSwitchDebounceTimer);
+            this.tabSwitchDebounceTimer = null;
 
             if (this.itemsUpdatedHandler) {
                 dataManager.off('items_updated', this.itemsUpdatedHandler);
