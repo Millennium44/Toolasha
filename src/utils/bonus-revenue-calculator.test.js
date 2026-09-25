@@ -39,7 +39,10 @@ vi.mock('./house-efficiency.js', () => ({
 vi.mock('../core/config.js', () => ({
     default: { getSettingValue: (key) => settings.values[key] },
 }));
-vi.mock('./server-gate.js', () => ({ isMarketplacePatchLive: () => false }));
+vi.mock('./server-gate.js', () => ({
+    isMarketplacePatchLive: () => false,
+    isSeptember2026MarketPatchLive: () => false,
+}));
 vi.mock('../features/settings/custom-price-overrides.js', () => ({ getCustomPrice: () => null }));
 
 describe('calculateBonusRevenue', () => {

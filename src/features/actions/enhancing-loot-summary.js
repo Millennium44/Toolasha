@@ -15,6 +15,8 @@
  * protect-from (the player's real choice is not recorded).
  */
 
+import { MARKET_TAX } from '../../utils/profit-constants.js';
+
 /**
  * Recover the item, target level, success and attempt count from a loot-log
  * entry's drops.
@@ -117,7 +119,7 @@ export function countProtections(levelCounts, protectFrom, targetLevel, success)
  * @param {(hrid: string, level: number) => number|null} deps.itemValue - Market
  *   resale (bid) value of the item at a level, or null when unlisted
  * @param {Object} deps.itemDetails - itemDetailMap entry for the enhanced item
- * @param {number} [deps.marketTax=0.05] - Sell fee (see profit-constants MARKET_TAX)
+ * @param {number} [deps.marketTax=MARKET_TAX] - Sell fee
  * @returns {Object|null}
  */
 export function computeEnhancingSummary(run, deps) {
@@ -128,7 +130,7 @@ export function computeEnhancingSummary(run, deps) {
         protectionPrice,
         itemValue,
         itemDetails,
-        marketTax = 0.05,
+        marketTax = MARKET_TAX,
     } = deps || {};
     if (
         !run ||

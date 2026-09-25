@@ -1503,7 +1503,7 @@ export const settingsGroups = {
                 type: 'number',
                 default: 0,
                 min: 0,
-                help: 'The spread rule in absolute coins: what the whole stack would earn by waiting in the sell queue instead of insta-selling — (ask − bid) × count, after the 5% tax. Under this amount the Bulk Sell Assistant insta-sells: the premium is not worth a listing slot and the wait. 0 turns this rule off. Default: 0.',
+                help: 'The spread rule in absolute coins: what the whole stack would earn by waiting in the sell queue instead of insta-selling — (ask − bid) × count, after market tax. Under this amount the Bulk Sell Assistant insta-sells: the premium is not worth a listing slot and the wait. 0 turns this rule off. Default: 0.',
             },
             consumables_labPerRunBasis: {
                 id: 'consumables_labPerRunBasis',
@@ -1562,7 +1562,7 @@ export const settingsGroups = {
                 label: 'Market: Bulk sell to vendor when market is no better',
                 type: 'checkbox',
                 default: true,
-                help: 'When the game vendor pays at least as much per item as the market would net after the 5% tax (e.g. vendor 96 vs ask 100 → 95 net), the Bulk Sell Assistant opens the item\'s inventory menu with "All" selected so one click on "Sell For … Coins" vendors the whole stack instead. Only applies to unenhanced items.',
+                help: 'When the game vendor pays at least as much per item as the market would net after market tax (e.g. vendor 96 vs ask 100 → 95 net at 5%), the Bulk Sell Assistant opens the item\'s inventory menu with "All" selected so one click on "Sell For … Coins" vendors the whole stack instead. Only applies to unenhanced items.',
             },
             market_bulkSellMinListingValue: {
                 id: 'market_bulkSellMinListingValue',
@@ -1595,7 +1595,7 @@ export const settingsGroups = {
                 label: 'Market: Record trade ledger (realized flip profit)',
                 type: 'checkbox',
                 default: true,
-                help: 'Passively records every fill on your own listings (partial fills included) and adds a "Ledger" tab to the marketplace showing per-item realized profit — sells matched against your average recorded buy cost, proceeds net of the 5% market tax — with weekly totals and CSV export.',
+                help: 'Passively records every fill on your own listings (partial fills included) and adds a "Ledger" tab to the marketplace showing per-item realized profit — sells matched against your average recorded buy cost, proceeds net of the market tax — with weekly totals and CSV export.',
             },
             market_staleCapital: {
                 id: 'market_staleCapital',

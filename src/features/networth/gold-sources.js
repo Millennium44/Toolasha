@@ -99,6 +99,7 @@
 /** Milliseconds in a day */
 import { localDayKey, localDayStart } from './networth-calendar.js';
 import { ownPlayer } from '../../utils/combat-players.js';
+import { MARKET_TAX } from '../../utils/profit-constants.js';
 
 /**
  * How many archived combat runs the history keeps, when the caller does not
@@ -568,7 +569,7 @@ export function enhancementSessionNet(session, price, basisPrice = price) {
  * counted; its tax is real coins either way and still counts.
  *
  * @param {Array<Object>} fills - Trade ledger fill records, any order
- * @param {number} marketTax - Sell tax rate, e.g. 0.05
+ * @param {number} marketTax - Sell tax rate, e.g. MARKET_TAX
  * @param {Function} [value] - `(itemHrid, enhancementLevel) => number|null`, what net
  *   worth carries one unit at
  * @returns {Object<string, {value: number, tax: number, unpriced: number}>} Keyed by day id
@@ -1493,7 +1494,7 @@ export function attributeGoldSources(input) {
         // What net worth carries an item at, for gains the market cannot price
         // — see `createHoldingPricer`. Defaults to the plain pricer.
         holdingPrice = price,
-        marketTax = 0.05,
+        marketTax = MARKET_TAX,
     } = input || {};
 
     /**

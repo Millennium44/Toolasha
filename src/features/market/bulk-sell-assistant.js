@@ -115,7 +115,7 @@ const TUNABLES = [
         fallback: 0,
         label: 'Insta-sell when a listing earns under',
         suffix: 'coins',
-        title: 'The same idea in coins: what the whole stack would earn by waiting in the queue instead of selling instantly — (ask − bid) × count, after the 5% tax. Under this amount, insta-sell. 0 turns the rule off.',
+        title: 'The same idea in coins: what the whole stack would earn by waiting in the queue instead of selling instantly — (ask − bid) × count, after market tax. Under this amount, insta-sell. 0 turns the rule off.',
     },
 ];
 const MS_PER_DAY = 86400000;
@@ -1502,7 +1502,7 @@ class BulkSellAssistant {
      * "Sell For … Coins" button (the one server action). Falls back to the
      * normal market flow when the inventory tile or menu can't be found.
      * @param {number} vendorPrice - Per-item vendor price
-     * @param {number} marketNet - Per-item market price net of the 5% tax
+     * @param {number} marketNet - Per-item market price net of market tax
      * @returns {boolean} Whether the vendor flow was opened
      */
     _openVendorSell(vendorPrice, marketNet) {
