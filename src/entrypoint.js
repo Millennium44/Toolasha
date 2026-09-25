@@ -1949,13 +1949,8 @@ function registerFeatures() {
             category: 'Tasks',
             module: UI.taskProfitDisplay,
             async: false,
-            customCheck: () =>
-                config.getSetting('taskProfitCalculator') ||
-                config.getSetting('taskGoMerge') ||
-                config.getSetting('taskQueuedIndicator') ||
-                config.getSetting('taskMaterialsIndicator') ||
-                config.getSetting('taskEfficiencyRating') ||
-                config.getSetting('taskCombatEstimate'),
+            // The module's own list, so the gate and its switch-off teardown cannot drift apart
+            customCheck: () => UI.taskProfitDisplay.shouldEnable(),
         },
         {
             key: 'taskRerollTracker',

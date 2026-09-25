@@ -56,6 +56,20 @@ function getLoadoutSnapshot() {
     return loadoutSnapshot() || loadoutSnapshotLocal;
 }
 
+/**
+ * Every setting that draws something on a task card through this module. Any one of them on keeps
+ * the module running; the registry gate, initialize() and the teardown on a switch-off all read this
+ * one list, so a setting added here cannot be left out of one of them.
+ */
+const TASK_DISPLAY_SETTING_KEYS = [
+    'taskProfitCalculator',
+    'taskGoMerge',
+    'taskQueuedIndicator',
+    'taskMaterialsIndicator',
+    'taskEfficiencyRating',
+    'taskCombatEstimate',
+];
+
 // Compiled regex pattern (created once, reused for performance)
 const REGEX_TASK_PROGRESS = /(\d+)\s*\/\s*(\d+)/;
 const RATING_MODE_TOKENS = 'tokens';
@@ -559,27 +573,12 @@ class TaskProfitDisplay {
      * Setup settings listeners for feature toggle and color changes
      */
     setupSettingListener() {
-        config.onSettingChange('taskProfitCalculator', (value) => {
-            if (value) {
-                this.initialize();
-                this.updateTaskProfits(true);
-            } else if (
-                config.getSetting('taskGoMerge') ||
-                config.getSetting('taskQueuedIndicator') ||
-                config.getSetting('taskMaterialsIndicator') ||
-                config.getSetting('taskEfficiencyRating')
-            ) {
-                this.updateTaskProfits(true);
-            } else {
-                this.disable();
-            }
-        });
-
-        config.onSettingChange('taskEfficiencyRating', () => {
-            if (this.isInitialized) {
-                this.updateTaskProfits(true);
-            }
-        });
+        // Each of these starts the module when it is the first one on and stops it when it is the
+        // last one off. The registry records the module as started once it has initialized it and
+        // never starts it again, so after this module has stopped itself only this can restart it.
+        for (const key of TASK_DISPLAY_SETTING_KEYS) {
+            config.onSettingChange(key, (value) => this.applyDisplaySetting(key, value));
+        }
 
         config.onSettingChange('taskEfficiencyRatingMode', () => {
             if (this.isInitialized) {
@@ -590,19 +589,6 @@ class TaskProfitDisplay {
         config.onSettingChange('taskEfficiencyGradient', () => {
             if (this.isInitialized) {
                 this.updateEfficiencyGradientColors();
-            }
-        });
-
-        config.onSettingChange('taskQueuedIndicator', (value) => {
-            if (this.isInitialized) {
-                if (value) {
-                    this.updateQueuedIndicators();
-                } else {
-                    // Remove all queued indicators
-                    document.querySelectorAll('.mwi-task-queued-indicator').forEach((el) => el.remove());
-                }
-            } else if (value) {
-                this.initialize();
             }
         });
 
@@ -631,6 +617,41 @@ class TaskProfitDisplay {
     }
 
     /**
+     * Whether any task-card setting this module draws for is on — the registry's gate as well as
+     * this module's own.
+     * @returns {boolean}
+     */
+    shouldEnable() {
+        return TASK_DISPLAY_SETTING_KEYS.some((key) => Boolean(config.getSetting(key)));
+    }
+
+    /**
+     * Bring the module in line with one task-card setting after it changed: start it, stop it, or
+     * redraw what the setting draws.
+     * @param {string} key - One of TASK_DISPLAY_SETTING_KEYS
+     * @param {*} value - Its new value
+     */
+    applyDisplaySetting(key, value) {
+        if (!this.shouldEnable()) {
+            this.disable();
+            return;
+        }
+        if (!this.isInitialized) {
+            this.initialize();
+            return;
+        }
+        if (key === 'taskQueuedIndicator') {
+            if (value) {
+                this.updateQueuedIndicators();
+            } else {
+                document.querySelectorAll('.mwi-task-queued-indicator').forEach((el) => el.remove());
+            }
+            return;
+        }
+        this.updateTaskProfits(true);
+    }
+
+    /**
      * Initialize task profit display
      */
     initialize() {
@@ -643,14 +664,7 @@ class TaskProfitDisplay {
         // worst case an early card renders with the default before this lands)
         this._loadEstimateMode();
 
-        if (
-            !config.getSetting('taskProfitCalculator') &&
-            !config.getSetting('taskGoMerge') &&
-            !config.getSetting('taskQueuedIndicator') &&
-            !config.getSetting('taskMaterialsIndicator') &&
-            !config.getSetting('taskEfficiencyRating') &&
-            !config.getSetting('taskCombatEstimate')
-        ) {
+        if (!this.shouldEnable()) {
             return;
         }
 
