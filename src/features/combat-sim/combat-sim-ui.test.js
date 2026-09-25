@@ -2663,6 +2663,8 @@ describe('the all-zones table', () => {
             await ui._onSimulateAllZones();
 
             expect(ui._playerInfo.map((p) => p.hrid)).toEqual(['player1', 'player2']);
+            // A snapshot, not the editor's live array
+            expect(ui._playerInfo).not.toBe(ui._editor.getPlayerInfo());
         });
 
         test('All Zones prices the run for the character being optimized, not a stale results tab', async () => {
