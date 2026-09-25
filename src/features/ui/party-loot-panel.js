@@ -417,12 +417,13 @@ function playerBreakdown(stats, banked) {
             wrap.appendChild(panelNote('Chests at opening value.'));
         }
         for (const item of incomeItems) {
+            const unpriced = item.totalValue.bid <= 0;
             wrap.appendChild(
                 breakdownRow(
                     item.itemName,
                     formatCount(item.count),
-                    formatKMB(item.unitValue.bid),
-                    formatKMB(item.totalValue.bid),
+                    unpriced ? '—' : formatKMB(item.unitValue.bid),
+                    unpriced ? '—' : formatKMB(item.totalValue.bid),
                     ROW_COLORS.gold
                 )
             );
@@ -431,12 +432,12 @@ function playerBreakdown(stats, banked) {
         wrap.appendChild(panelNote('Nothing dropped yet.'));
     }
 
-    // Consumables: what was eaten and drunk to get it. A party member's own
-    // count comes from combat events; everyone else's is read off inventory
-    // snapshots between waves, which is an estimate rather than a count —
-    // see `combat-stats-data-collector.js`'s party tracker.
+    // Consumables: what was eaten and drunk to get it. Every count here —
+    // the current player's included — comes from a consumption *rate* times
+    // the run's duration (see `combat-stats-data-collector.js`), not a tally
+    // of actual events, so both sections carry the same "estimated" label.
     const consumableItems = stats.consumableBreakdown || [];
-    wrap.appendChild(breakdownHeading(stats.isCurrentPlayer ? 'Consumables' : 'Consumables (estimated)'));
+    wrap.appendChild(breakdownHeading('Consumables (estimated)'));
     if (consumableItems.length) {
         for (const item of consumableItems) {
             wrap.appendChild(
@@ -458,12 +459,12 @@ function playerBreakdown(stats, banked) {
     // Keys: entry keys (one per regular dungeon chest received) and chest
     // keys (one per chest, regular or refinement) charged separately, each
     // priced at whichever of buying and crafting was cheaper
+    // keyBreakdown only ever contains entry keys and chest keys (see
+    // `calculateKeyCosts`), so entry keys are simply listed before chest keys —
+    // there is no third kind to account for.
     const keyItems = stats.keyBreakdown || [];
     const entryKeys = keyItems.filter((item) => ENTRY_KEY_HRIDS.has(item.itemHrid));
     const chestKeys = keyItems.filter((item) => CHEST_KEY_HRIDS.has(item.itemHrid));
-    const otherKeys = keyItems.filter(
-        (item) => !ENTRY_KEY_HRIDS.has(item.itemHrid) && !CHEST_KEY_HRIDS.has(item.itemHrid)
-    );
 
     wrap.appendChild(breakdownHeading('Keys'));
     if (keyItems.length) {
@@ -477,13 +478,8 @@ function playerBreakdown(stats, banked) {
                 ROW_COLORS.bad
             );
         };
-        if (entryKeys.length) {
-            for (const item of entryKeys) wrap.appendChild(keyRow(item));
-        }
-        if (chestKeys.length) {
-            for (const item of chestKeys) wrap.appendChild(keyRow(item));
-        }
-        for (const item of otherKeys) wrap.appendChild(keyRow(item));
+        for (const item of entryKeys) wrap.appendChild(keyRow(item));
+        for (const item of chestKeys) wrap.appendChild(keyRow(item));
     } else {
         wrap.appendChild(panelNote('None spent.'));
     }
@@ -537,6 +533,9 @@ function drawPlayer(body, stats) {
         userSelect: 'none',
     });
     heading.title = expanded ? 'Click to collapse.' : 'Click for a full income/cost breakdown.';
+    heading.setAttribute('role', 'button');
+    heading.setAttribute('tabindex', '0');
+    heading.setAttribute('aria-expanded', String(expanded));
 
     const caret = document.createElement('span');
     caret.textContent = expanded ? '▾' : '▸';
@@ -546,10 +545,16 @@ function drawPlayer(body, stats) {
     label.textContent = nameKey;
 
     heading.append(caret, label);
-    heading.addEventListener('click', () => {
+    const toggle = () => {
         if (expandedNames.has(nameKey)) expandedNames.delete(nameKey);
         else expandedNames.add(nameKey);
         partyLootPanel.render();
+    };
+    heading.addEventListener('click', toggle);
+    heading.addEventListener('keydown', (event) => {
+        if (event.key !== 'Enter' && event.key !== ' ') return;
+        event.preventDefault();
+        toggle();
     });
     card.appendChild(heading);
 
