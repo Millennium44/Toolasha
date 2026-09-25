@@ -162,3 +162,18 @@ describe('patientTickPrice under the September 2026 market patch', () => {
         expect(patientTickPrice(1000, 'buy', 'bid', { ask: 1010 })).toBe(1004);
     });
 });
+
+describe('patientTickPrice against an off-grid book (pre-patch listings)', () => {
+    test('ticks from an old-ladder price to the nearest new bin past it', () => {
+        mocks.september = true;
+        expect(patientTickPrice(1005, 'sell', 'ask', { bid: 900 })).toBe(1004);
+        expect(patientTickPrice(1005, 'buy', 'bid', { ask: 1100 })).toBe(1008);
+        expect(patientTickPrice(1003, 'sell', 'ask', { bid: 900, enhancementLevel: 2 })).toBe(1000);
+    });
+
+    test('an off-grid other side one new bin away still blocks the cross', () => {
+        mocks.september = true;
+        expect(patientTickPrice(1000, 'buy', 'bid', { ask: 1003 })).toBe(1000);
+        expect(patientTickPrice(1005, 'sell', 'ask', { bid: 1004 })).toBe(1005);
+    });
+});
