@@ -480,6 +480,31 @@ describe('the tab badge and the sold-out check count plain copies only', () => {
         expect(ledger.reserved).toHaveLength(0);
     });
 
+    test('an item locked while the marketplace is opening is not queued', async () => {
+        dataManagerMock.inventory = [
+            { itemHrid: '/items/cheese', itemLocationHrid: '/item_locations/inventory', count: 12 },
+        ];
+        // Start outside the marketplace, so the first item waits for it to open. The
+        // lock lands during that wait, before the inventory listener is installed.
+        tabsState.container = null;
+        const nav = document.createElement('div');
+        nav.className = 'NavigationBar_nav__3uuUl';
+        nav.innerHTML = '<svg aria-label="navigationBar.marketplace"></svg>';
+        nav.addEventListener('click', () => {
+            tabsState.container = marketplaceStrip();
+            dataManagerMock.lockedKeys.add('/items/cheese:0');
+        });
+        document.body.appendChild(nav);
+
+        observerState.handler(popper('<a href="/items/cheese">Cheese</a>'));
+        shiftRightClickInventory();
+        await new Promise((resolve) => setTimeout(resolve, 260));
+
+        expect(document.querySelector('[data-item-hrid="/items/cheese"]')).toBeNull();
+        expect(ledger.reserved.filter((claim) => claim.lines?.length)).toHaveLength(0);
+        nav.remove();
+    });
+
     test('an item locked after it is already queued is dropped and its claim given back', async () => {
         dataManagerMock.inventory = [
             { itemHrid: '/items/cheese', itemLocationHrid: '/item_locations/inventory', count: 12 },
