@@ -757,13 +757,19 @@ export function formatPlanHours(hours) {
  * @param {Function} [options.monsterName] - monsterHrid → display name
  * @returns {string}
  */
-export function formatPlanText(plan, { monsterName = (hrid) => hrid } = {}) {
+export function formatPlanText(plan, { monsterName = (hrid) => hrid, totals = null } = {}) {
     if (!plan) return '';
     const points = plan.mode === 'points';
+    // A total-points plan is a points plan for the gap; with `totals` it is described in totals
+    // ("1001 total (+107, 1000 wanted)") so copied text names the goal that was actually set.
+    const goal = totals ? `${totals.wanted} total` : `${plan.targetPoints} points`;
+    const amount = totals
+        ? `${totals.currentTotal + plan.totalPoints} total (+${plan.totalPoints}, ${totals.wanted} wanted)`
+        : `${plan.totalPoints} points`;
     const lines = [
         points
-            ? `Bestiary plan — ${plan.totalPoints} points in ${formatPlanHours(plan.hoursUsed)} h` +
-              (plan.unreachable ? ` (${plan.targetPoints} not reachable)` : '')
+            ? `Bestiary plan — ${amount} in ${formatPlanHours(plan.hoursUsed)} h` +
+              (plan.unreachable ? ` (${goal} not reachable)` : '')
             : `Bestiary plan — ${formatPlanHours(plan.hours)} h, ${plan.totalPoints} points`,
     ];
     plan.segments.forEach((segment, index) => {
@@ -791,8 +797,8 @@ export function formatPlanText(plan, { monsterName = (hrid) => hrid } = {}) {
     if (plan.bestSingle && points) {
         lines.push(
             plan.bestSingle.hours === null || plan.bestSingle.hours === undefined
-                ? `Best single zone: none reaches ${plan.targetPoints} points`
-                : `Best single zone: ${plan.bestSingle.name} — reaches ${plan.targetPoints} in ` +
+                ? `Best single zone: none reaches ${goal}`
+                : `Best single zone: ${plan.bestSingle.name} — reaches ${totals ? goal : plan.targetPoints} in ` +
                       `${formatPlanHours(plan.bestSingle.hours)} h`
         );
     } else if (plan.bestSingle) {
