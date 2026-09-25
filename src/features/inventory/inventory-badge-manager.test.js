@@ -128,14 +128,20 @@ describe('renderAllBadges cooldown/concurrency', () => {
         inventoryBadgeManager.currentInventoryElem = null;
         inventoryBadgeManager.isRendering = false;
         inventoryBadgeManager.lastRenderTime = 0;
+        inventoryBadgeManager.rerenderRequested = false;
+        inventoryBadgeManager._rerenderDeferred = null;
+        vi.restoreAllMocks();
     });
 
-    test('a call that bails because a render is already in flight does not consume the cooldown', async () => {
+    test('a call that bails because a render is already in flight does not consume the cooldown', () => {
         inventoryBadgeManager.currentInventoryElem = document.createElement('div');
         inventoryBadgeManager.lastRenderTime = 0;
         inventoryBadgeManager.isRendering = true;
 
-        await inventoryBadgeManager.renderAllBadges();
+        // Not awaited: this call now shares a promise with the eventual coalesced rerun (see
+        // below), which nothing here ever triggers, so awaiting it would hang. Everything this
+        // test checks happens synchronously before that promise is even created.
+        inventoryBadgeManager.renderAllBadges();
 
         // Bailing on a concurrent render must not itself count as a render — a
         // burst of triggers while one is in flight would otherwise keep pushing
@@ -174,12 +180,13 @@ describe('renderAllBadges cooldown/concurrency', () => {
         // instead, and must not itself start a second concurrent pricing pass.
         // Deliberately inside the cooldown window of the in-flight render: that is exactly when a
         // popper-close refresh arrives, and the cooldown must not drop it before it is queued
-        await inventoryBadgeManager.renderAllBadges();
+        const secondCall = inventoryBadgeManager.renderAllBadges();
         expect(inventoryBadgeManager.rerenderRequested).toBe(true);
         expect(calcSpy).toHaveBeenCalledTimes(1);
 
         releaseFirstCalc();
         await firstRender;
+        await secondCall; // must have settled too by now (see the P1-round-two test below)
 
         // The coalesced rerun ran once the first pass finished, pricing whatever is current then
         // — not dropped, and not looping forever either (called exactly twice: once for the
@@ -187,6 +194,123 @@ describe('renderAllBadges cooldown/concurrency', () => {
         expect(calcSpy).toHaveBeenCalledTimes(2);
         expect(inventoryBadgeManager.rerenderRequested).toBe(false);
         expect(inventoryBadgeManager.isRendering).toBe(false);
+    });
+
+    /**
+     * Codex P1, round two: the fix above still resolved a coalesced caller's own promise
+     * immediately, before the rerun it asked for had priced anything. Inventory Sort's background
+     * price refresh awaits `renderAllBadges()` and reapplies tile order once it resolves, so a
+     * caller who coalesced into a queued rerun getting an "it's done" signal before the rerun ran
+     * means the sort corrects the order from *stale* data — exactly the bug this whole chain
+     * exists to fix, just one layer further out.
+     */
+    test("a coalesced caller's promise does not settle before the queued rerun actually finishes", async () => {
+        inventoryBadgeManager.currentInventoryElem = document.createElement('div');
+        inventoryBadgeManager.lastRenderTime = 0;
+
+        let releaseFirstCalc;
+        let releaseRerunCalc;
+        const firstCalc = new Promise((resolve) => {
+            releaseFirstCalc = resolve;
+        });
+        const rerunCalc = new Promise((resolve) => {
+            releaseRerunCalc = resolve;
+        });
+        const calcSpy = vi.spyOn(inventoryBadgeManager, 'calculatePricesForAllItems');
+        calcSpy.mockImplementationOnce(() => firstCalc);
+        calcSpy.mockImplementationOnce(() => rerunCalc);
+
+        const firstRender = inventoryBadgeManager.renderAllBadges();
+        await Promise.resolve();
+
+        const secondCall = inventoryBadgeManager.renderAllBadges();
+        let secondSettled = false;
+        secondCall.then(() => {
+            secondSettled = true;
+        });
+
+        // The ORIGINAL caller's own promise also waits for the rerun it triggers (unchanged from
+        // the first coalescing fix), so it is not awaited here — doing so would hang on the same
+        // still-pending rerun this test is about to inspect.
+        releaseFirstCalc();
+
+        // Give the drain enough microtask ticks to reach the rerun's own (still-pending) await.
+        await Promise.resolve();
+        await Promise.resolve();
+        await Promise.resolve();
+        expect(calcSpy).toHaveBeenCalledTimes(2);
+        expect(secondSettled).toBe(false);
+
+        releaseRerunCalc();
+        await firstRender;
+        await secondCall;
+
+        expect(secondSettled).toBe(true);
+    });
+
+    /**
+     * Codex P2: the coalesced rerun must still price the tiles it exists to price even when it
+     * lands inside `calculatePricesForAllItems`'s own 250ms cooldown — measured from the render
+     * that just finished moments ago, so an un-forced rerun would otherwise silently skip pricing
+     * entirely, same shape as the isRendering-drops-the-request bug this whole fix addresses.
+     */
+    test('the coalesced rerun bypasses the calculation cooldown, not just the render one', async () => {
+        inventoryBadgeManager.currentInventoryElem = document.createElement('div');
+        inventoryBadgeManager.lastRenderTime = 0;
+
+        let releaseFirstCalc;
+        const firstCalc = new Promise((resolve) => {
+            releaseFirstCalc = resolve;
+        });
+        const calcSpy = vi.spyOn(inventoryBadgeManager, 'calculatePricesForAllItems');
+        calcSpy.mockImplementationOnce(() => firstCalc);
+        calcSpy.mockImplementation(async () => {});
+
+        const firstRender = inventoryBadgeManager.renderAllBadges();
+        await Promise.resolve();
+        inventoryBadgeManager.renderAllBadges(); // coalesces into a rerun
+
+        releaseFirstCalc();
+        await firstRender;
+
+        // The rerun landed well inside calculatePricesForAllItems's own 250ms cooldown (this
+        // whole test runs in a few ms), so it must have been called with force=true.
+        expect(calcSpy).toHaveBeenCalledTimes(2);
+        expect(calcSpy.mock.calls[1][0]).toBe(true);
+    });
+
+    /**
+     * Codex P2: the original code let a pricing failure propagate straight out of the try/finally,
+     * skipping the `rerenderRequested` drain entirely — a request that had coalesced while this
+     * pass was failing was lost along with the error, and the rerun that would have corrected the
+     * still-live tiles never ran. The drain must run either way, and the two outcomes must not be
+     * mixed up: the caller of the pass that actually failed still needs to see that failure, while
+     * whoever coalesced into the rerun gets the rerun's own (successful) outcome instead.
+     */
+    test('a calculation failure still drains a coalesced rerun, without masking the original failure', async () => {
+        inventoryBadgeManager.currentInventoryElem = document.createElement('div');
+        inventoryBadgeManager.lastRenderTime = 0;
+
+        const failure = new Error('pricing boom');
+        let releaseFirstCalc;
+        const firstCalc = new Promise((_resolve, reject) => {
+            releaseFirstCalc = () => reject(failure);
+        });
+        const calcSpy = vi.spyOn(inventoryBadgeManager, 'calculatePricesForAllItems');
+        calcSpy.mockImplementationOnce(() => firstCalc);
+        calcSpy.mockImplementation(async () => {}); // the rerun succeeds
+
+        const firstRender = inventoryBadgeManager.renderAllBadges();
+        await Promise.resolve();
+        const secondCall = inventoryBadgeManager.renderAllBadges();
+
+        releaseFirstCalc();
+
+        await expect(firstRender).rejects.toThrow('pricing boom');
+        await expect(secondCall).resolves.toBeUndefined();
+        expect(calcSpy).toHaveBeenCalledTimes(2); // the rerun still ran despite the failure
+        expect(inventoryBadgeManager.isRendering).toBe(false);
+        expect(inventoryBadgeManager.rerenderRequested).toBe(false);
     });
 });
 

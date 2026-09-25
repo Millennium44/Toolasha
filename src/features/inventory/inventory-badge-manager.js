@@ -29,6 +29,23 @@ import { ironCowBook, isIronCowCharacter } from '../../utils/ironcow-valuation.j
 const RENDER_TIME_BUDGET_MS = 8;
 
 /**
+ * A promise together with the functions that settle it — for handing a pending result to a
+ * caller from code that cannot itself `await` the work that will eventually produce it. Used by
+ * `renderAllBadges()` to share one outcome across every caller that coalesces into the same
+ * queued rerun, so none of them resolves before that rerun actually finishes.
+ * @returns {{promise: Promise<void>, resolve: Function, reject: Function}}
+ */
+function createDeferred() {
+    let resolve;
+    let reject;
+    const promise = new Promise((res, rej) => {
+        resolve = res;
+        reject = rej;
+    });
+    return { promise, resolve, reject };
+}
+
+/**
  * InventoryBadgeManager class manages all inventory item badges from multiple features
  */
 class InventoryBadgeManager {
@@ -47,6 +64,10 @@ class InventoryBadgeManager {
         // pass finishes (or gives up) whatever it started with, then runs once more against the
         // *current* tiles instead of the request being silently dropped. See renderAllBadges.
         this.rerenderRequested = false;
+        // The shared deferred every caller coalesced into the current queued rerun is waiting on
+        // — created by the first of them, settled once that rerun actually finishes. See
+        // renderAllBadges.
+        this._rerenderDeferred = null;
         this.lastRenderTime = 0; // Timestamp of last render
         this.RENDER_COOLDOWN = 100; // 100ms minimum between render calls
         this.inventoryLookupCache = null; // Cached inventory lookup map
@@ -161,12 +182,20 @@ class InventoryBadgeManager {
      * it prices detached tiles nobody can see; the new tab's tiles are never priced by anyone,
      * and stay unbadged/unsorted until some unrelated later event happens to trigger a refresh.
      *
-     * Now a request that arrives mid-render is not dropped: it sets `rerenderRequested`, and the
+     * A request that arrives mid-render is not dropped: it sets `rerenderRequested`, and the
      * in-flight render (once it finishes — or, from the caller's side, gives up on via
      * `withBoundedWait`) runs once more against `this.currentInventoryElem`'s *current* children,
      * which is whichever tab is showing by the time it actually runs. Bounded and not a busy loop:
      * `_runRenderAllBadges` only re-enters itself once per request that arrived during its own
      * run, so the chain's length tracks real requests, not how long a render happens to take.
+     *
+     * Codex P1 (round two): that first fix still resolved a coalesced caller's own promise right
+     * away, before the rerun it asked for had run at all — Inventory Sort's background price
+     * refresh awaits this call and reapplies tile order once it resolves, so a caller who
+     * coalesced into a queued rerun would get an "it's done" signal, and correct the order from
+     * *stale* data, before the rerun had priced anything. Every caller that coalesces into the
+     * same queued rerun now shares one promise (`_rerenderDeferred`), settled only once that
+     * rerun itself completes.
      */
     async renderAllBadges() {
         if (!this.currentInventoryElem) return;
@@ -184,7 +213,10 @@ class InventoryBadgeManager {
         // measured from a render that never happened.
         if (this.isRendering) {
             this.rerenderRequested = true;
-            return;
+            if (!this._rerenderDeferred) {
+                this._rerenderDeferred = createDeferred();
+            }
+            return this._rerenderDeferred.promise;
         }
 
         // Cooldown check for renderAllBadges
@@ -202,15 +234,20 @@ class InventoryBadgeManager {
      * cooldown/isRendering checks in the public method on purpose: a rerun exists specifically to
      * correct a render that already ran (or gave up) while stale, so it must not be blocked by
      * the same gate that a fresh, unrelated call is subject to.
+     * @param {boolean} [force] - Passed through to `calculatePricesForAllItems` — see there.
      * @private
      */
-    async _runRenderAllBadges() {
+    async _runRenderAllBadges(force = false) {
         this.lastRenderTime = Date.now();
         this.isRendering = true;
 
+        // Recorded rather than left to propagate through the `finally` below (Codex P2): letting
+        // it propagate straight out skipped the `rerenderRequested` drain entirely, so a request
+        // that had coalesced while this pass was failing would be lost along with the error.
+        let renderError = null;
         try {
             // Calculate prices for all items
-            await this.calculatePricesForAllItems();
+            await this.calculatePricesForAllItems(force);
 
             const itemElems = this.currentInventoryElem.querySelectorAll('[class*="Item_itemContainer"]');
 
@@ -240,6 +277,8 @@ class InventoryBadgeManager {
                 // Mark as processed
                 this.processedItems.add(itemElem);
             }
+        } catch (error) {
+            renderError = error;
         } finally {
             // Clear rendering guard even on error so later renders are not blocked forever
             this.isRendering = false;
@@ -247,14 +286,36 @@ class InventoryBadgeManager {
 
         if (this.rerenderRequested) {
             this.rerenderRequested = false;
-            await this._runRenderAllBadges();
+            // Claimed before recursing: a request that coalesces into a *further* rerun (arriving
+            // while this one runs) creates its own fresh deferred, and must not settle this one.
+            const deferred = this._rerenderDeferred;
+            this._rerenderDeferred = null;
+            try {
+                // Bypasses the calculation cooldown too (Codex P2): this rerun exists to price
+                // tiles a render that just finished never got to, and a cooldown measured from
+                // that same render would otherwise silently skip it.
+                await this._runRenderAllBadges(true);
+                deferred?.resolve();
+            } catch (rerunError) {
+                deferred?.reject(rerunError);
+                // The original pass's own failure, if it had one, still takes priority below —
+                // this rerun's failure only needs to reach whoever was waiting on it specifically.
+                if (!renderError) throw rerunError;
+            }
         }
+
+        if (renderError) throw renderError;
     }
 
     /**
-     * Calculate prices for all items in inventory
+     * Calculate prices for all items in inventory.
+     * @param {boolean} [force] - Skip the calculation cooldown. Used only by the coalesced rerun
+     *   in `_runRenderAllBadges`: that rerun exists specifically to price tiles a render that
+     *   finished (or gave up) moments ago never got to, so a cooldown measured from that same
+     *   moment would otherwise silently skip it — see Codex P2 on PR 204. `isCalculating` is
+     *   still checked either way, so two calculations never run concurrently.
      */
-    async calculatePricesForAllItems() {
+    async calculatePricesForAllItems(force = false) {
         if (!this.currentInventoryElem) return;
 
         // Prevent recursive calls
@@ -265,7 +326,7 @@ class InventoryBadgeManager {
         // Cooldown check - prevent spamming during rapid events
         const now = Date.now();
         const timeSinceLastCalc = now - this.lastCalculationTime;
-        if (timeSinceLastCalc < this.CALCULATION_COOLDOWN) {
+        if (!force && timeSinceLastCalc < this.CALCULATION_COOLDOWN) {
             return;
         }
         this.lastCalculationTime = now;
