@@ -13,6 +13,7 @@ import { createTimerRegistry } from '../../utils/timer-registry.js';
 import chatHistoryPersistence, {
     extractStoredMessageId,
     handleRestoredClick,
+    itemHridFrom,
     parseStoredMessage,
     rewireRestoredMessage,
     SENDER_SELECTOR,
@@ -201,6 +202,76 @@ function countLinks(linksMetadataJSON) {
 }
 
 /**
+ * Per-link identity from a `chat_message_received` message's raw
+ * `linksMetadata`, in the same order `countLinks` counts — lets {@link claim}
+ * tell apart two batched, same-sender, same-prose posts that link *different*
+ * items (a known gap from PR 199: identical sender+body+count alone cannot
+ * tell those apart, so both used to stay untagged).
+ *
+ * Only an item-type link's identity can be read back off the rendered DOM
+ * (see {@link linkIdentitiesFromDom}), so only `/chat_link_types/item` links
+ * get a non-null entry here; every other link type is `null`, which
+ * {@link linksMatch} treats as unverifiable and falls back to the
+ * count-only rule for that one link — this only removes false ambiguity, it
+ * never adds any.
+ * @param {string|undefined} linksMetadataJSON
+ * @returns {Array<string|null>}
+ */
+function linkIdentitiesFromMetadata(linksMetadataJSON) {
+    if (!linksMetadataJSON) return [];
+    try {
+        const links = JSON.parse(linksMetadataJSON);
+        if (!Array.isArray(links)) return [];
+        return links.map((link) =>
+            link && link.linkType === '/chat_link_types/item' && link.itemHrid ? link.itemHrid : null
+        );
+    } catch {
+        return [];
+    }
+}
+
+/**
+ * Per-link identity read back off a rendered node's own
+ * `ChatMessage_linkContainer` elements, in document order — the DOM-side
+ * counterpart to {@link linkIdentitiesFromMetadata}. An item link wraps an
+ * `Item_itemContainer` whose sprite reference {@link itemHridFrom} already
+ * knows how to read (the same handle `chat-history-persistence.js` uses to
+ * re-wire a restored link); a container without one — a link type this
+ * build cannot identify from the DOM — contributes `null`.
+ * @param {Iterable<Element>} linkContainers - `ChatMessage_linkContainer` elements, in order
+ * @returns {Array<string|null>}
+ */
+function linkIdentitiesFromDom(linkContainers) {
+    return [...linkContainers].map((container) => {
+        try {
+            const itemContainer = container.querySelector('[class*="Item_itemContainer"]');
+            return itemContainer ? itemHridFrom(itemContainer) : null;
+        } catch {
+            return null;
+        }
+    });
+}
+
+/**
+ * Whether two same-length per-link identity arrays could describe the same
+ * message. A pair of positions is a mismatch only when **both** sides could
+ * identify that link and disagree; a position either side could not
+ * identify (`null`) is unverifiable and never blocks a match, which is what
+ * keeps this a strict tightening of the old count-only rule rather than a
+ * new way to reject a match the old rule accepted.
+ * @param {Array<string|null>} a
+ * @param {Array<string|null>} b
+ * @returns {boolean}
+ */
+function linksMatch(a, b) {
+    if (!Array.isArray(a) || !Array.isArray(b) || a.length !== b.length) return true;
+    for (let i = 0; i < a.length; i += 1) {
+        if (a[i] != null && b[i] != null && a[i] !== b[i]) return false;
+    }
+    return true;
+}
+
+/**
  * `chat_message_received`'s own `m` field carries a `{{N}}` placeholder
  * everywhere a link renders (`N` indexing into `linksMetadata`) — confirmed
  * against a live post: `m: "{{0}} test link, please ignore"` for a message
@@ -257,10 +328,10 @@ function normalizeSpacing(text) {
  * exact rendered label text.
  *
  * @param {Element} node - A `ChatMessage_chatMessage` node
- * @returns {{sender: string, body: string, linkCount: number}|null} Null
- *   when the node carries no sender element at all (a system message) or the
- *   extraction otherwise fails — both correctly mean "cannot be matched",
- *   not "matches anything".
+ * @returns {{sender: string, body: string, linkCount: number, linkIds: Array<string|null>}|null}
+ *   Null when the node carries no sender element at all (a system message)
+ *   or the extraction otherwise fails — both correctly mean "cannot be
+ *   matched", not "matches anything".
  */
 function extractSenderAndBody(node) {
     let senderEl;
@@ -275,11 +346,13 @@ function extractSenderAndBody(node) {
     if (!sender) return null;
 
     let linkCount = 0;
+    let linkIds = [];
     let textSource = node;
     try {
         const linkContainers = node.querySelectorAll('[class*="ChatMessage_linkContainer"]');
         linkCount = linkContainers.length;
         if (linkCount) {
+            linkIds = linkIdentitiesFromDom(linkContainers);
             const clone = node.cloneNode(true);
             clone.querySelectorAll('[class*="ChatMessage_linkContainer"]').forEach((el) => el.remove());
             textSource = clone;
@@ -295,7 +368,7 @@ function extractSenderAndBody(node) {
 
     // Exactly one rendered separator: a body that itself starts with a colon (":D") keeps it
     const body = normalizeSpacing(fullText.slice(idx + sender.length).replace(/^\s*:\s*/, ''));
-    return { sender, body, linkCount };
+    return { sender, body, linkCount, linkIds };
 }
 
 /**
@@ -331,10 +404,18 @@ function extractSenderAndBody(node) {
  * {@link extractSenderAndBody} and {@link countLinks} — or a Trade post
  * (most of which name an item) would never satisfy the text comparison at
  * all, since the game keeps prose and links as separate fields on the wire.
+ * Where a link's identity can be read on both sides (currently: item links,
+ * via {@link linkIdentitiesFromMetadata} and {@link linkIdentitiesFromDom}),
+ * {@link linksMatch} also requires it to agree — otherwise two batched posts
+ * from one sender with identical prose and the same link count but
+ * *different* linked items would both match every candidate and neither
+ * would ever be tagged (accepted at PR 199 as a known limit; this is what
+ * closes it for item links, while an unidentifiable link type still falls
+ * back to the old count-only rule and keeps that ambiguity untagged).
  */
 class PendingMessageIds {
     constructor() {
-        /** @type {Map<string, Array<{id: string|number, isDeleted: boolean, sName: string, m: string, linkCount: number, ts: number}>>} */
+        /** @type {Map<string, Array<{id: string|number, isDeleted: boolean, sName: string, m: string, linkCount: number, linkIds: Array<string|null>, ts: number}>>} */
         this.byChannel = new Map();
     }
 
@@ -363,6 +444,7 @@ class PendingMessageIds {
             sName: sName || '',
             m: normalizeSpacing(stripLinkPlaceholders(m)),
             linkCount: countLinks(linksMetadata),
+            linkIds: linkIdentitiesFromMetadata(linksMetadata),
             ts: Date.now(),
         });
         if (queue.length > PENDING_ID_MAX_PER_CHANNEL) queue.shift();
@@ -401,6 +483,7 @@ class PendingMessageIds {
             if (entry.sName !== rendered.sender) continue;
             if (entry.m !== rendered.body) continue;
             if (entry.linkCount !== rendered.linkCount) continue;
+            if (!linksMatch(entry.linkIds, rendered.linkIds)) continue;
             matches.push(i);
         }
         // Zero: nothing describes this node. More than one: two queued

@@ -292,8 +292,10 @@ describe('chat-history-extender: message identity and deletion', () => {
      * @param {string} sender
      * @param {string} prose
      * @param {number} [linkCount] - How many link elements to render
+     * @param {string} [itemSlug] - Sprite id after the `#`; use a distinct one per
+     *   link when a test needs the rendered links to be tellable apart by item
      */
-    function makeLinkedMessage(sender, prose, linkCount = 1) {
+    function makeLinkedMessage(sender, prose, linkCount = 1, itemSlug = 'cheese') {
         const el = document.createElement('div');
         el.className = 'ChatMessage_chatMessage__xyz';
         const links = Array.from(
@@ -301,7 +303,7 @@ describe('chat-history-extender: message identity and deletion', () => {
             () =>
                 '<div class="ChatMessage_linkContainer__1">' +
                 '<div class="Item_itemContainer__1">' +
-                '<svg><use href="/static/media/items_sprite.svg#cheese"></use></svg>' +
+                `<svg><use href="/static/media/items_sprite.svg#${itemSlug}"></use></svg>` +
                 '<span class="Item_count__1">13928</span>' +
                 '<span class="Item_name__1">Cheese</span></div></div>'
         ).join('');
@@ -323,13 +325,14 @@ describe('chat-history-extender: message identity and deletion', () => {
      * richer `market_listing` variant; this is the plain `item` shape that
      * was actually confirmed live.
      * @param {number} [count]
+     * @param {string} [itemSlug] - Matches {@link makeLinkedMessage}'s `itemSlug`
      * @returns {string} A JSON string — `linksMetadata` is sent as one on the wire
      */
-    function itemLinksMetadata(count = 1) {
+    function itemLinksMetadata(count = 1, itemSlug = 'cheese') {
         return JSON.stringify(
             Array.from({ length: count }, () => ({
                 linkType: '/chat_link_types/item',
-                itemHrid: '/items/cheese',
+                itemHrid: `/items/${itemSlug}`,
                 itemCount: 13928,
             }))
         );
@@ -584,6 +587,45 @@ describe('chat-history-extender: message identity and deletion', () => {
         await settle();
 
         expect(node.dataset.mwiMsgId).toBeUndefined();
+    });
+
+    test('two batched same-sender, same-prose posts linking different items each get their own id', async () => {
+        // The gap accepted on PR 199: sender + body + link COUNT alone cannot
+        // tell apart two batched posts that share prose and link count but
+        // link different items. Comparing item identity (metadata itemHrid
+        // vs. the rendered link's own sprite href, both via itemHridFrom)
+        // closes it for item-shaped links.
+        const container = buildChannelChat('/chat_channel_types/trade');
+        chatHistoryExtender.initialize();
+        await settle();
+
+        wsHandlers.chat_message_received({
+            message: {
+                id: 'msg-cheese',
+                chan: '/chat_channel_types/trade',
+                sName: 'Alice',
+                m: messageWithPlaceholders(1, 'test link, please ignore'),
+                linksMetadata: itemLinksMetadata(1, 'cheese'),
+            },
+        });
+        wsHandlers.chat_message_received({
+            message: {
+                id: 'msg-milk',
+                chan: '/chat_channel_types/trade',
+                sName: 'Alice',
+                m: messageWithPlaceholders(1, 'test link, please ignore'),
+                linksMetadata: itemLinksMetadata(1, 'milk'),
+            },
+        });
+
+        const cheeseNode = makeLinkedMessage('Alice', 'test link, please ignore', 1, 'cheese');
+        const milkNode = makeLinkedMessage('Alice', 'test link, please ignore', 1, 'milk');
+        container.appendChild(cheeseNode);
+        container.appendChild(milkNode);
+        await settle();
+
+        expect(cheeseNode.dataset.mwiMsgId).toBe('msg-cheese');
+        expect(milkNode.dataset.mwiMsgId).toBe('msg-milk');
     });
 
     test("a batch of several nodes added at once cannot let one steal another's id (the reported misattribution)", async () => {

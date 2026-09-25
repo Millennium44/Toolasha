@@ -350,10 +350,15 @@ export function parseStoredMessage(html) {
  * `features/alchemy/alchemy-success-stamp.js`): item icons carry the sprite id
  * on `xlink:href`, and only some also carry a plain `href`.
  *
+ * Exported for chat-history-extender.js's id correlator, which reads the same
+ * sprite reference off a rendered item link to compare against a queued
+ * `chat_message_received`'s `linksMetadata.itemHrid` — see that module's
+ * `linkIdentitiesFromDom`.
+ *
  * @param {Element} container - An `Item_itemContainer` element
  * @returns {string|null} Item HRID, or null when no item sprite is drawn
  */
-function itemHridFrom(container) {
+export function itemHridFrom(container) {
     const use = container.querySelector('svg use[href], svg use[xlink\\:href]');
     const href = use?.getAttribute('href') || use?.getAttribute('xlink:href') || '';
     const slug = href.match(/#(.+)$/)?.[1];
