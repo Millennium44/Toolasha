@@ -989,6 +989,26 @@ describe('opening, folding and switching', () => {
         expect(document.querySelectorAll('#toolasha-combat-level-panel')).toHaveLength(1);
     });
 
+    test('a pending settle timer from before a character switch does not restore onto the new character', () => {
+        // The bug: `_number()`'s settle timer was local to the input, and
+        // nothing cancelled it when a character switch tore the row down and
+        // reset `targets`. It fired 400ms later anyway and wrote the
+        // departed character's typed level onto the arriving character's
+        // panel.
+        combatLevelPanel.show();
+        const box = combatLevelPanel.panel.querySelector('[data-control="target-melee"]');
+        box.focus();
+        box.value = '177';
+        box.dispatchEvent(new Event('input'));
+
+        dataManager.emit('character_switched', {});
+        expect(combatLevelPanel.targets).toEqual({});
+
+        vi.advanceTimersByTime(401);
+
+        expect(combatLevelPanel.targets).toEqual({});
+    });
+
     test('switching character does not open a panel that was closed', () => {
         expect(combatLevelPanel.panel).toBe(null);
 

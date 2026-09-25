@@ -552,6 +552,25 @@ class CombatLevelPanel {
         this.lookup = { from: null, to: null };
         /** Sections folded away */
         this.collapsed = {};
+        /**
+         * Cancel functions for `_number()`'s pending `TARGET_SETTLE_MS` timers,
+         * so a rebuild or a teardown can stop every one of them rather than
+         * leaving them to fire later against DOM the panel no longer owns.
+         */
+        this._pendingSettles = new Set();
+        /**
+         * Bumped by every `_render()` and `_remove()`. A `_number()` box
+         * captures the value live when it was built; a settle timer whose
+         * value no longer matches belongs to a body the panel already
+         * replaced or a character it already left, and is a no-op.
+         */
+        this._generation = 0;
+    }
+
+    /** Stop every `_number()` box's pending settle timer and forget them. */
+    _cancelPendingSettles() {
+        for (const cancel of this._pendingSettles) cancel();
+        this._pendingSettles.clear();
     }
 
     /** Open the panel, or raise it if it is already up */
@@ -727,6 +746,13 @@ class CombatLevelPanel {
 
     _render() {
         if (!this.bodyEl) return;
+
+        // Every `_number()` box about to be torn down and rebuilt below takes
+        // its pending settle timer with it; a stale one otherwise survives
+        // the rebuild and commits later against a body (or, on a character
+        // switch, a character) that has already moved on
+        this._generation += 1;
+        this._cancelPendingSettles();
 
         // The control being used, so it can be handed its focus back after the
         // rebuild that its own change asked for
@@ -1731,14 +1757,19 @@ class CombatLevelPanel {
             return Number.isFinite(parsed) ? parsed : null;
         };
 
+        // Captured live: a timer that fires after the panel has rebuilt or
+        // moved to another character no longer matches `this._generation`
+        const generation = this._generation;
         let settleTimer = null;
         const cancelSettle = () => {
             if (settleTimer === null) return;
             clearTimeout(settleTimer);
             settleTimer = null;
+            this._pendingSettles.delete(cancelSettle);
         };
         const settle = () => {
             cancelSettle();
+            if (generation !== this._generation) return;
             const parsed = parse();
             if (parsed === null) return;
             onCommit(parsed);
@@ -1749,6 +1780,7 @@ class CombatLevelPanel {
             onStep?.(parsed);
             cancelSettle();
             settleTimer = setTimeout(settle, TARGET_SETTLE_MS);
+            this._pendingSettles.add(cancelSettle);
         };
 
         // `input` covers typing and the spinner's own repeat; `change` is
@@ -1802,6 +1834,8 @@ class CombatLevelPanel {
     }
 
     _remove() {
+        this._generation += 1;
+        this._cancelPendingSettles();
         clearInterval(this.refreshId);
         this.refreshId = null;
         this.detachDrag?.();
