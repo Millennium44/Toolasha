@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Party Loot subtracts food and drink from banked profit
+
+- Party Loot's banked coin (each card, the party total, copied text and CSV) and the Total Profit tile now subtract the consumables eaten during the session; they were counted as 0 there even though the /day rates already took them off.
+
 ### Dungeon columns only when dungeons are in the results
 
 - The sim's all-zones table hides Clears/day, Fails/day and Avg clear when none of the results are dungeons.
