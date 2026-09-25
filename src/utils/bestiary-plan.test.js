@@ -451,15 +451,38 @@ describe('a dungeon at your own clear time', () => {
         expect(scaled.creditsPerHour['/monsters/king']).toBeCloseTo(3, 9);
     });
 
-    test('a tier with no runs falls back to the dungeon median, and says so', () => {
+    test("a tier with no runs keeps the sim's pace rather than borrowing another tier's", () => {
+        // T0 clears in twenty minutes say nothing about a T2 clear, which is
+        // several times slower: borrowing them inflated every T2 rate
         const runs = [
             { tier: 0, duration: 1_200_000 },
             { tier: 0, totalTime: 1_200_000 },
         ];
         const scaled = rescaleDungeonRates({ creditsPerHour: sim, simClearsPerHour: 6, runs, tier: 2 });
-        expect(scaled.source).toBe('measured-all-tiers');
-        expect(scaled.runs).toBe(2);
-        expect(scaled.clearsPerHour).toBeCloseTo(3, 9);
+        expect(scaled.source).toBe('sim');
+        expect(scaled.runs).toBe(0);
+        expect(scaled.clearsPerHour).toBeCloseTo(6, 9);
+        expect(scaled.creditsPerHour['/monsters/goblin']).toBeCloseTo(60, 9);
+    });
+
+    test('a run that wiped is stretched by its clean clear time, not charged to its few clears', () => {
+        // 24 h, 20 clears among 59 attempts, a clean clear of 24 minutes, and
+        // 7.75 credits/hr of a monster killed in every attempt. At your own
+        // 10-minute clear the pace is 2.4x the sim's: 18.6 credits/hr and 2
+        // clears an hour. Dividing by completions instead (0.833/hr) and
+        // multiplying by your 6 clears/hr gave 55.8 — the wipes' kills handed
+        // to the clears.
+        const scaled = rescaleDungeonRates({
+            creditsPerHour: { '/monsters/jackalope': 7.75 },
+            simClearsPerHour: 20 / 24,
+            simClearSeconds: 1440,
+            runs: [{ tier: 2, duration: 600_000 }],
+            tier: 2,
+        });
+        expect(scaled.source).toBe('measured');
+        expect(scaled.creditsPerHour['/monsters/jackalope']).toBeCloseTo(18.6, 9);
+        expect(scaled.clearsPerHour).toBeCloseTo(2, 9);
+        expect(scaled.clearSeconds).toBe(600);
     });
 
     test('with no runs at all the sim clear time stands, unchanged', () => {

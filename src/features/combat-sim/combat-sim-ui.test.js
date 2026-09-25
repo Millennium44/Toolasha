@@ -5932,6 +5932,179 @@ describe('dungeons in the all-zones run and in the plan', () => {
     });
 });
 
+describe('the Bestiary column and the plan read one set of dungeon rates', () => {
+    const HOUR_NS = 3600 * 1e9;
+    const DEN = '/actions/combat/chimerical_den';
+    const COVE = '/actions/combat/pirate_cove';
+    const gameData = {
+        combatMonsterDetailMap: {
+            '/monsters/jackalope': { name: 'Jackalope' },
+            '/monsters/dodocamel': { name: 'Dodocamel' },
+            '/monsters/manticore': { name: 'Manticore' },
+            '/monsters/brine_marksman': { name: 'Brine Marksman' },
+        },
+    };
+    /**
+     * A 24-hour solo Chimerical Den T2 run the way the sim hands it back
+     * (`sim-result.js`): 123 waves an hour, and a party that wipes often
+     * enough that only 20 of 59 attempts finish. The clean completion-to-
+     * completion pairs average 24 minutes a clear. `deaths` is bodies at T2.
+     */
+    const denT2 = () => ({
+        zone: { name: 'Chimerical Den', difficultyTier: 2, zoneHrid: DEN },
+        simResult: {
+            simulatedTime: 24 * HOUR_NS,
+            encounters: 123 * 24,
+            isDungeon: true,
+            dungeonsCompleted: 20,
+            dungeonsFailed: 39,
+            dungeonCleanClearTimeTotal: 12 * 1440 * 1e9,
+            dungeonCleanClearCount: 12,
+            numberOfPlayers: 1,
+            deaths: {
+                player1: 39,
+                '/monsters/jackalope': 62,
+                '/monsters/dodocamel': 40,
+                '/monsters/manticore': 20,
+            },
+            experienceGained: { player1: { defense: 100 } },
+        },
+        revenue: { netPerHour: 1, revenuePerHour: 1, costPerHour: 0, dropEntries: [] },
+    });
+    /** Pirate Cove T1 that never finishes a run: 98 waves an hour, every attempt a wipe */
+    const coveT1 = () => ({
+        zone: { name: 'Pirate Cove', difficultyTier: 1, zoneHrid: COVE },
+        simResult: {
+            simulatedTime: 24 * HOUR_NS,
+            encounters: 98 * 24,
+            isDungeon: true,
+            dungeonsCompleted: 0,
+            dungeonsFailed: 60,
+            dungeonCleanClearTimeTotal: 0,
+            dungeonCleanClearCount: 0,
+            numberOfPlayers: 1,
+            deaths: { player1: 60, '/monsters/brine_marksman': 30 },
+            experienceGained: { player1: { defense: 100 } },
+        },
+        revenue: { netPerHour: 1, revenuePerHour: 1, costPerHour: 0, dropEntries: [] },
+    });
+    const click = (selector) =>
+        ui.panel.querySelector(selector).dispatchEvent(new window.Event('click', { bubbles: true }));
+    const bestiaryCell = (plainName) => {
+        const headers = [...ui.panel.querySelectorAll('#mwi-csim-results th')].map((th) => th.dataset.col);
+        const index = headers.indexOf('bestiary');
+        const row = [...ui.panel.querySelectorAll('#mwi-csim-results tbody tr')].find((tr) =>
+            tr.cells[0].textContent.includes(plainName)
+        );
+        return row?.cells[index];
+    };
+    const planRows = () =>
+        [...ui.panel.querySelectorAll('#mwi-csim-bestiary-plan-out tbody tr')].map((tr) =>
+            [...tr.querySelectorAll('td')].map((td) => td.textContent.trim())
+        );
+
+    beforeEach(() => {
+        mocks.store.set('settings:combatSimBestiaryPlanHours', 24);
+        mocks.store.set('settings:combatSimBestiaryPlanMode', 'points');
+        mocks.store.set('settings:combatSimBestiaryPlanPoints', 1);
+        ui.buildPanel();
+        ui._allZonesSortCol = null;
+        ui._bestiaryPlanMode = 'points';
+        ui._bestiaryPlanPoints = 1;
+        ui._bestiaryPlanTolerance = 0;
+        mocks.monsters = [
+            { monsterHrid: '/monsters/jackalope', count: 810 },
+            { monsterHrid: '/monsters/dodocamel', count: 663 },
+            { monsterHrid: '/monsters/manticore', count: 496 },
+            { monsterHrid: '/monsters/brine_marksman', count: 79 },
+        ];
+    });
+
+    afterEach(() => {
+        ui.destroy();
+        ui._allZonesMode = null;
+        mocks.dungeonRuns = [];
+        mocks.monsters = null;
+        vi.restoreAllMocks();
+    });
+
+    test('a wiping dungeon at a measured pace: the column and the plan name the same first point', async () => {
+        // Ten minutes a clear at T2 is 2.4x the sim's clean 24 minutes, so the
+        // Jackalope's 7.75 credits/hr (62 bodies x 3 over 24 h) become 18.6 and
+        // its 190 credits to 1,000 take 10.2 h, in the column and in the plan.
+        // Charging the 39 wiped attempts' kills to the 20 clears, as the plan
+        // used to, made it 55.8/hr and three thresholds in a few hours while
+        // the column still said a day away.
+        mocks.dungeonRuns = [
+            { dungeonName: 'Chimerical Den', tier: 2, duration: 600_000 },
+            { dungeonName: 'Chimerical Den', tier: 2, duration: 600_000 },
+        ];
+        await ui._displayAllZonesResults([denT2()], 24, gameData);
+
+        expect(bestiaryCell('Chimerical Den').textContent).toContain('1st 10.2h');
+
+        click('#mwi-csim-bestiary-plan-btn');
+        const rows = planRows();
+        expect(rows).toHaveLength(1);
+        expect(rows[0][2]).toBe('10:13');
+        expect(rows[0][4]).toBe('+4');
+        expect(rows[0][5]).toContain('Jackalope 810 → 1000');
+        expect(rows[0][5]).not.toContain('Manticore 496 → 1000');
+    });
+
+    test('another tier’s runs do not set a T2 dungeon’s pace', async () => {
+        // Only T0 runs on record: a T0 clear says nothing about a T2 one, so
+        // the sim's own pace stands and both read 24.5 h
+        mocks.dungeonRuns = [
+            { dungeonName: 'Chimerical Den', tier: 0, duration: 300_000 },
+            { dungeonName: 'Chimerical Den', tier: 0, duration: 300_000 },
+        ];
+        await ui._displayAllZonesResults([denT2()], 24, gameData);
+
+        expect(bestiaryCell('Chimerical Den').textContent).toContain('1st 24.5h');
+        click('#mwi-csim-bestiary-plan-btn');
+        expect(planRows()[0][2]).toBe('24:31');
+        const fightsCell = ui.panel.querySelectorAll('#mwi-csim-bestiary-plan-out tbody tr td')[3];
+        expect(fightsCell.getAttribute('title')).toContain('sim clear time');
+    });
+
+    test('the plan quotes a dungeon in clears, never in waves', async () => {
+        // 20 clears in 24 h at the sim's pace: the day-long stay is a couple
+        // of dozen clears, not the three thousand waves fought in it
+        await ui._displayAllZonesResults([denT2()], 24, gameData);
+        click('#mwi-csim-bestiary-plan-btn');
+        const quoted = planRows()[0][3];
+        expect(quoted).toMatch(/clears$/);
+        const clears = Number(quoted.replace(/[^0-9]/g, ''));
+        // 24.5 h at 20/24 clears an hour is ~20.4; padding may add a few
+        expect(clears).toBeGreaterThanOrEqual(20);
+        expect(clears).toBeLessThan(40);
+    });
+
+    test('a dungeon the sim never cleared quotes no clear count, not its waves as clears', async () => {
+        await ui._displayAllZonesResults([coveT1()], 24, gameData);
+        click('#mwi-csim-bestiary-plan-btn');
+
+        const rows = planRows();
+        expect(rows).toHaveLength(1);
+        expect(rows[0][1]).toBe('[D] Pirate Cove T1');
+        expect(rows[0][3]).toBe('—');
+        expect(ui.panel.querySelectorAll('.mwi-csim-plan-open-btn')).toHaveLength(0);
+        const nameCell = ui.panel.querySelectorAll('#mwi-csim-bestiary-plan-out tbody tr td')[1];
+        expect(nameCell.getAttribute('title')).toContain('never cleared in the sim');
+    });
+
+    test('a Dungeons run does not offer the Include dungeons switch it would ignore', async () => {
+        ui._allZonesMode = 'dungeons';
+        await ui._displayAllZonesResults([denT2()], 24, gameData);
+        expect(ui.panel.querySelector('#mwi-csim-bestiary-plan-dungeons')).toBeNull();
+
+        ui._allZonesMode = 'solo';
+        await ui._displayAllZonesResults([denT2()], 24, gameData);
+        expect(ui.panel.querySelector('#mwi-csim-bestiary-plan-dungeons')).not.toBeNull();
+    });
+});
+
 describe('remembered-run banner', () => {
     test('names the character and zone with tier when meta is present', () => {
         const html = ui._restoredUpgradeNote(null, {
