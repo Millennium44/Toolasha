@@ -17,7 +17,7 @@ import { describe, test, expect, vi } from 'vitest';
 const gate = vi.hoisted(() => ({ promise: null, resolve: null }));
 
 vi.mock('../../core/config.js', () => ({
-    default: { getSetting: () => true },
+    default: { getSetting: () => true, onSettingChange: () => () => {} },
 }));
 vi.mock('../../core/storage.js', () => ({
     default: {

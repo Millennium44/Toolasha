@@ -11,6 +11,9 @@ import { describe, test, expect, beforeEach, afterEach, vi } from 'vitest';
 
 const settings = vi.hoisted(() => ({ market_pooledHistory: true, market_volumeStats: true }));
 
+/** Per-key subscriber lists, so a test can flip a setting and fire the module's own listener. */
+const settingChangeCallbacks = vi.hoisted(() => ({}));
+
 const historyApi = vi.hoisted(() => ({
     rows: null,
     cooldownMs: 0,
@@ -24,7 +27,26 @@ const storageMock = vi.hoisted(() => ({
     setJSON: vi.fn(async () => true),
 }));
 
-vi.mock('../../core/config.js', () => ({ default: { getSetting: (key) => settings[key] } }));
+vi.mock('../../core/config.js', () => ({
+    default: {
+        getSetting: (key) => settings[key],
+        onSettingChange: (key, callback) => {
+            (settingChangeCallbacks[key] ||= []).push(callback);
+            return () => {};
+        },
+    },
+}));
+
+/**
+ * Set a setting and fire the module's own `onSettingChange` subscribers for it,
+ * the way `config.js` would when the player flips it mid-session.
+ * @param {string} key
+ * @param {boolean} value
+ */
+function setSetting(key, value) {
+    settings[key] = value;
+    for (const callback of settingChangeCallbacks[key] || []) callback(value);
+}
 vi.mock('../../core/dom-observer.js', () => ({ default: { onClass: vi.fn(() => () => {}) } }));
 vi.mock('../../core/storage.js', () => ({ default: storageMock }));
 vi.mock('./mooket/market-history-api.js', () => ({ default: historyApi }));
@@ -344,5 +366,34 @@ describe('panel placement', () => {
         expect(panel.previousElementSibling).toBe(currentItem);
         expect(currentItem.contains(panel)).toBe(false);
         expect(panel.style.position).not.toBe('absolute');
+    });
+});
+
+describe('mid-session live start', () => {
+    test('turning Price History on after a start with it off initializes the module without a reload', async () => {
+        settings.market_pooledHistory = false;
+        buildCurrentItem('/items/coin');
+        await marketVolumeStats.initialize();
+        expect(marketVolumeStats.isInitialized).toBe(false);
+        expect(document.querySelector('.mwi-volume-stats')).toBeNull();
+
+        setSetting('market_pooledHistory', true);
+        // The listener's own `initialize()` call is async (it awaits column
+        // prefs); let it finish.
+        await Promise.resolve();
+        await Promise.resolve();
+
+        expect(marketVolumeStats.isInitialized).toBe(true);
+    });
+
+    test('turning either gating setting off stops the module cleanly', async () => {
+        buildCurrentItem('/items/coin');
+        await marketVolumeStats.initialize();
+        expect(marketVolumeStats.isInitialized).toBe(true);
+
+        setSetting('market_volumeStats', false);
+
+        expect(marketVolumeStats.isInitialized).toBe(false);
+        expect(document.querySelector('.mwi-volume-stats')).toBeNull();
     });
 });

@@ -123,6 +123,30 @@ class MarketVolumeStats {
         return config.getSetting('market_pooledHistory') === true && config.getSetting('market_volumeStats') === true;
     }
 
+    /**
+     * React to either gating setting changing mid-session.
+     *
+     * The registry key this module is registered under (`marketVolumeStats`) has
+     * no matching schema entry, so `config.isFeatureEnabled` always answers true
+     * for it and the registry calls `initialize()` exactly once, at startup or on
+     * a character switch. `initialize()` itself self-gates on `market_pooledHistory`
+     * and `market_volumeStats` and returns early when either is off — which the
+     * registry still counts as "started". Flipping Price History on afterward
+     * never got a second call, so the table stayed off until a reload. This
+     * listens for both settings directly instead of relying on the registry.
+     */
+    setupSettingListener() {
+        const handleChange = () => {
+            if (this.enabled) {
+                this.initialize();
+            } else if (this.isInitialized) {
+                this.disable();
+            }
+        };
+        config.onSettingChange('market_pooledHistory', handleChange);
+        config.onSettingChange('market_volumeStats', handleChange);
+    }
+
     async initialize() {
         if (this.isInitialized) return;
         if (!this.enabled) return;
@@ -548,4 +572,5 @@ function escapeHtml(text) {
 }
 
 const marketVolumeStats = new MarketVolumeStats();
+marketVolumeStats.setupSettingListener();
 export default marketVolumeStats;
