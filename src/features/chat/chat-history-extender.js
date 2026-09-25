@@ -411,6 +411,50 @@ class PendingMessageIds {
     }
 
     /**
+     * Mark a queued entry deleted in place, without removing it from the
+     * queue — a `chat_message_updated` deletion can arrive for an id before
+     * the node it targets has ever rendered (see
+     * `ChatHistoryExtender#_handleMessageUpdated`), and a still-pending entry
+     * is exactly what `claim` will hand back to `_tagMessageId` once that
+     * node finally does render. Without this, that later claim would return
+     * an entry that still reads `isDeleted: false`, so `_tagMessageId` would
+     * stamp an id instead of `data-mwi-skip-store` — {@link DeletedMessageIds}
+     * covers that gap too, but only for the length of its own TTL, and a
+     * node the game keeps showing (an author's own deleted message never
+     * gets removed) can sit live for far longer than that before it is
+     * finally evicted.
+     *
+     * Searches every channel, not just the one the update named: nothing
+     * here is scoped by channel elsewhere either — {@link DeletedMessageIds}
+     * is a flat id set — and an id is unique regardless of which channel a
+     * caller happens to pass.
+     * @param {string|number} id
+     */
+    markDeleted(id) {
+        const key = String(id);
+        for (const queue of this.byChannel.values()) {
+            for (const entry of queue) {
+                if (String(entry.id) === key) entry.isDeleted = true;
+            }
+        }
+    }
+
+    /**
+     * The undo of {@link markDeleted} — a moderator's undelete arriving for
+     * an id that is still only pending (never rendered) should not leave it
+     * permanently flagged deleted.
+     * @param {string|number} id
+     */
+    markUndeleted(id) {
+        const key = String(id);
+        for (const queue of this.byChannel.values()) {
+            for (const entry of queue) {
+                if (String(entry.id) === key) entry.isDeleted = false;
+            }
+        }
+    }
+
+    /**
      * Drop everything queued for one channel. A tab opening, or switching
      * into, that channel is about to render its whole visible backlog in one
      * batch — any id queued for it before that moment predates this
@@ -833,7 +877,17 @@ class ChatTabHandler {
         const claimed = this.messageIds.claim(chan, node);
         if (!claimed) return;
 
-        if (claimed.isDeleted) {
+        // Either the pending entry itself was marked deleted (the normal
+        // path — see PendingMessageIds#markDeleted) or, failing that, the
+        // deletion tombstone already knows this id: a `chat_message_updated`
+        // deletion that arrived before this node ever rendered adds to both,
+        // but the tombstone is the one that also catches an id this build
+        // never queued content for in the first place (e.g. a moderator
+        // deleting a message in a channel no active handler correlated at
+        // all). Checking it here, not just relying on markDeleted having
+        // run, is what keeps a node from being tagged with a bare id instead
+        // of skip-store if it somehow raced ahead of that.
+        if (claimed.isDeleted || this.deletedIds?.has(claimed.id)) {
             node.dataset.mwiSkipStore = '1';
         } else {
             node.dataset.mwiMsgId = String(claimed.id);
@@ -1176,6 +1230,7 @@ class ChatHistoryExtender {
             // the deletion tombstone, or the eviction handler's tombstone
             // check would keep treating it as deleted regardless.
             this.deletedIds?.remove(message.id);
+            this.messageIds?.markUndeleted(message.id);
             for (const handler of this.activeHandlers) {
                 const live = handler.findLiveMessageNode(key);
                 if (live) delete live.dataset.mwiSkipStore;
@@ -1187,8 +1242,11 @@ class ChatHistoryExtender {
         // `chatHistoryPersistence.load()` is already in flight reads this
         // tombstone once that await resolves, and needs to see this id
         // whether its own load() settles before or after this handler's own
-        // awaits do — see DeletedMessageIds' class doc.
+        // awaits do — see DeletedMessageIds' class doc. Marking the pending
+        // entry deleted too covers the id before it has even rendered a node
+        // — see PendingMessageIds#markDeleted.
         this.deletedIds?.add(message.id);
+        this.messageIds?.markDeleted(message.id);
 
         for (const handler of this.activeHandlers) {
             const live = handler.findLiveMessageNode(key);

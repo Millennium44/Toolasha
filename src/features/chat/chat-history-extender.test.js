@@ -787,6 +787,96 @@ describe('chat-history-extender: message identity and deletion', () => {
         expect(db.settings[Object.keys(db.settings)[0]]?.tabs ?? {}).toEqual({});
     });
 
+    test('a deletion arriving before its message has ever rendered still tags the node skip-store, not a bare id', async () => {
+        // The order that matters: chat_message_received queues a pending
+        // entry (isDeleted: false), then chat_message_updated marks that same
+        // id deleted BEFORE any node for it has rendered — a real race, since
+        // the DOM paint chat-history-extender observes is not synchronous
+        // with the websocket handlers that process both events. Without
+        // PendingMessageIds#markDeleted, the later claim() would hand back
+        // the stale isDeleted: false entry and _tagMessageId would stamp a
+        // bare id instead of skip-store.
+        const container = buildChannelChat('/chat_channel_types/trade');
+        chatHistoryExtender.initialize();
+        await settle();
+
+        wsHandlers.chat_message_received({
+            message: { id: 'msg-1', chan: '/chat_channel_types/trade', sName: 'Alice', m: 'selling cheese' },
+        });
+
+        // The deletion arrives before the node has rendered at all.
+        await wsHandlers.chat_message_updated({
+            message: { id: 'msg-1', chan: '/chat_channel_types/trade', isDeleted: true },
+        });
+
+        // Only now does the node actually render — the author's own view of
+        // a message the game deleted moments after it was posted, say.
+        const node = makeMessage('Alice', 'selling cheese');
+        container.appendChild(node);
+        await settle();
+
+        expect(node.dataset.mwiMsgId).toBeUndefined();
+        expect(node.dataset.mwiSkipStore).toBe('1');
+    });
+
+    test('a node tagged skip-store this way stays untouched even after the deletion tombstone TTL expires', async () => {
+        // The long-tail bug: the author's own view of a deleted message is
+        // never removed by the game, so it can sit live for far longer than
+        // DeletedMessageIds' 60-second TTL before it is finally evicted
+        // (buffer capacity, say). The flag stamped directly on the node at
+        // tag time must not depend on the tombstone still being there later.
+        const container = buildChannelChat('/chat_channel_types/trade');
+        chatHistoryExtender.initialize();
+        await settle();
+
+        wsHandlers.chat_message_received({
+            message: { id: 'msg-1', chan: '/chat_channel_types/trade', sName: 'Alice', m: 'selling cheese' },
+        });
+        await wsHandlers.chat_message_updated({
+            message: { id: 'msg-1', chan: '/chat_channel_types/trade', isDeleted: true },
+        });
+        const node = makeMessage('Alice', 'selling cheese');
+        container.appendChild(node);
+        await settle();
+        expect(node.dataset.mwiSkipStore).toBe('1');
+
+        try {
+            vi.setSystemTime(Date.now() + 61000);
+            await evict(container, node);
+            await chatHistoryPersistence.flush();
+            expect(container.querySelector('.mwi-history-buffer').textContent).not.toContain('selling cheese');
+            expect(db.settings[Object.keys(db.settings)[0]]?.tabs ?? {}).toEqual({});
+        } finally {
+            vi.useRealTimers();
+        }
+    });
+
+    test('an undelete clears a still-pending entry too, not just a live node', async () => {
+        // Codex's markDeleted/markUndeleted pairing: an id marked deleted
+        // before it ever rendered must not stay permanently flagged if a
+        // moderator undeletes it before the node renders either.
+        const container = buildChannelChat('/chat_channel_types/trade');
+        chatHistoryExtender.initialize();
+        await settle();
+
+        wsHandlers.chat_message_received({
+            message: { id: 'msg-1', chan: '/chat_channel_types/trade', sName: 'Alice', m: 'selling cheese' },
+        });
+        await wsHandlers.chat_message_updated({
+            message: { id: 'msg-1', chan: '/chat_channel_types/trade', isDeleted: true },
+        });
+        await wsHandlers.chat_message_updated({
+            message: { id: 'msg-1', chan: '/chat_channel_types/trade', isDeleted: false },
+        });
+
+        const node = makeMessage('Alice', 'selling cheese');
+        container.appendChild(node);
+        await settle();
+
+        expect(node.dataset.mwiMsgId).toBe('msg-1');
+        expect(node.dataset.mwiSkipStore).toBeUndefined();
+    });
+
     test('an undelete clears the skip-store flag so a later eviction stores normally', async () => {
         const container = buildChannelChat('/chat_channel_types/trade');
         chatHistoryExtender.initialize();

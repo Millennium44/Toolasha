@@ -1155,4 +1155,30 @@ describe('message identity: extractStoredMessageId and purgeMessageById', () => 
     test('purgeMessageById on a disabled/unloaded persistence is a safe no-op', async () => {
         expect(await chatHistoryPersistence.purgeMessageById('tab2:ch:/chat_channel_types/trade', '1')).toBe(false);
     });
+
+    test('purgeMessageById loads the record itself when nothing has called load() yet', async () => {
+        // The exact gap Codex found: enable() has run (a character is loaded)
+        // but no chat container has ever called restore()/load() — the game
+        // is still mounting its chat UI, say — so loadPromise and tabs are
+        // both still null. A deletion arriving in that window used to just
+        // return false without ever touching storage; the message stored
+        // from an earlier session stayed on disk, papered over only by the
+        // deletion tombstone's 60-second window in chat-history-extender.js.
+        const tabKey = tabKeyForChannel('/chat_channel_types/trade');
+        db.settings[STORAGE_KEY] = {
+            v: 1,
+            savedAt: 1,
+            tabs: { [tabKey]: ['<div class="ChatMessage_chatMessage__x" data-mwi-msg-id="1">selling cheese</div>'] },
+        };
+        chatHistoryPersistence.enable(() => MAX_MESSAGES_PER_TAB);
+        expect(chatHistoryPersistence.tabs).toBeNull();
+
+        const removed = await chatHistoryPersistence.purgeMessageById(tabKey, '1');
+
+        expect(removed).toBe(true);
+        expect(chatHistoryPersistence.tabs[tabKey]).toBeUndefined();
+
+        await chatHistoryPersistence.flush();
+        expect(db.settings[STORAGE_KEY].tabs[tabKey]).toBeUndefined();
+    });
 });

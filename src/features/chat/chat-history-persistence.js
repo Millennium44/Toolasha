@@ -807,11 +807,21 @@ class ChatHistoryPersistence {
      */
     async purgeMessageById(tabKey, id) {
         if (!this.enabled || !tabKey || id == null) return false;
-        // A read may still be in flight. Purging `this.tabs` now and letting
-        // that read land afterwards would put the deleted message straight
-        // back — the same race `load()`'s "pending" merge exists to survive,
-        // just from the other direction.
-        if (this.loadPromise) await this.loadPromise;
+        // Always load, not just await a read someone else already started.
+        // A deletion can arrive before any chat container has ever called
+        // `restore()` — the game is still mounting its chat UI, say — in
+        // which case `loadPromise` is null and `this.tabs` is too: the old
+        // guard here returned straight away, leaving whatever was on disk
+        // from an earlier session untouched. The deletion tombstone
+        // (chat-history-extender.js's `DeletedMessageIds`) can paper over
+        // that for the 60 seconds it lasts, by keeping a late `restore()`
+        // from re-inserting the message — but the record on disk itself was
+        // never touched, and a session that starts more than 60 seconds
+        // after this runs would restore it anyway. `load()` is safe to call
+        // unconditionally: it no-ops if disabled, and returns the in-flight
+        // promise if a read is already running, the same race `load()`'s own
+        // "pending" merge exists to survive, just from the other direction.
+        await this.load();
         if (!this.tabs || !this.tabs[tabKey]) return false;
 
         const key = String(id);
