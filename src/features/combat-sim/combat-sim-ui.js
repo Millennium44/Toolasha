@@ -4001,9 +4001,10 @@ class CombatSimUI {
         });
         input.addEventListener('input', () => {
             if (this._bestiaryPlanMode !== 'total') return;
+            // Preview only: the target is committed by Plan (readInput), like the other modes, so the
+            // route on screen and what Copy copies never describe different targets
             const value = parseFloat(input.value);
-            this._bestiaryPlanTotal = value > 0 ? value : this._bestiaryPlanTotal;
-            this._updateBestiaryTotalNote(totalNote);
+            this._updateBestiaryTotalNote(totalNote, value > 0 ? value : null);
         });
         box.querySelector('#mwi-csim-bestiary-plan-dungeons')?.addEventListener('change', (event) => {
             event.stopPropagation();
@@ -4075,10 +4076,10 @@ class CombatSimUI {
      * @returns {{currentTotal: number, wanted: number, gap: number}|null}
      * @private
      */
-    _bestiaryTotalGap() {
+    _bestiaryTotalGap(wantedOverride = null) {
         if (!this._bestiaryPlanCounts) return null;
         const currentTotal = totalBestiaryPoints(this._bestiaryPlanCounts);
-        const wanted = this._bestiaryPlanTotal || BESTIARY_PLAN_DEFAULT_TOTAL;
+        const wanted = wantedOverride || this._bestiaryPlanTotal || BESTIARY_PLAN_DEFAULT_TOTAL;
         return { currentTotal, wanted, gap: wanted - currentTotal };
     }
 
@@ -4090,13 +4091,13 @@ class CombatSimUI {
      * @param {HTMLElement|null} el
      * @private
      */
-    _updateBestiaryTotalNote(el) {
+    _updateBestiaryTotalNote(el, wantedPreview = null) {
         if (!el) return;
         if (this._bestiaryPlanMode !== 'total') {
             el.textContent = '';
             return;
         }
-        const totals = this._bestiaryTotalGap();
+        const totals = this._bestiaryTotalGap(wantedPreview);
         if (!totals) {
             el.textContent = '';
             return;
