@@ -373,6 +373,22 @@ describe('between two runs of a repeating dungeon', () => {
 
         expect(ui.container.style.display).toBe('none');
     });
+
+    test('the gap text is cleared once the next run’s update arrives without a maxWaves yet', async () => {
+        // The "next run starting…" text is set directly on the element, not
+        // reset by anything in ui.update()'s normal path — only its own branch
+        // touches it. Before dungeon info (and maxWaves) has loaded for the new
+        // run, ui.update() must still clear it rather than leave it lingering
+        // under a run that has already started.
+        ui.show();
+        world.pending = between;
+        ui.dungeonUpdateHandler(null, finished);
+        await vi.waitFor(() => expect(text('#mwi-dt-wave-counter')).toBe('next run starting…'));
+
+        await ui.update(run({ maxWaves: null, currentWave: 1, wavesCompleted: 0 }), false);
+
+        expect(text('#mwi-dt-wave-counter')).toBe('');
+    });
 });
 
 describe('the ROI board redraws on a pricing change made elsewhere', () => {
