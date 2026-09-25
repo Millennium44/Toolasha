@@ -1572,25 +1572,32 @@ class DungeonTracker {
             // start.
             const sameBattle = data.battleId !== undefined && data.battleId === this.currentBattleId;
 
-            // A solo run that reached its last wave, followed by wave 1 of a new
-            // battle, is the next run of a repeating dungeon action — the game
-            // numbers each run's battle afresh (1, 2, 3 in a recorded solo
-            // session) and restarts the wave count. It is not a resend. The
-            // last wave's own completion normally ends the run first (see
-            // onActionCompleted); this catches a run whose final completion
-            // never reached us. Party runs are left to their "Key counts"
-            // message, which may arrive after this battle and must still find
-            // the run to validate it.
+            // A solo run still tracking, followed by wave 1 of a new battle, is
+            // the boundary between one run of a repeating dungeon action and the
+            // next — the game numbers each run's battle afresh (1, 2, 3 in a
+            // recorded solo session) and restarts the wave count. It is not a
+            // resend. Party runs are left to their "Key counts" message, which
+            // may arrive after this battle and must still find the run to
+            // validate it.
             const nextRunOfSoloDungeon =
                 this.isTracking &&
                 !sameBattle &&
                 data.battleId !== undefined &&
                 this.currentBattleId !== null &&
-                this.isSoloRun() &&
-                (this.isFinalWaveCleared() ||
-                    (Boolean(this.currentRun.maxWaves) && this.currentRun.currentWave >= this.currentRun.maxWaves));
+                this.isSoloRun();
             if (nextRunOfSoloDungeon) {
-                await this.completeDungeon();
+                // Only a run that actually cleared its last wave is saved here —
+                // this is the backstop for a final completion that never reached
+                // us (its own action_completed handles the common case). A wave-1
+                // battle arriving with the last wave NOT cleared means the player
+                // died (commonly on the boss wave) and the repeating action
+                // requeued anyway: that run is discarded, unsaved, exactly like
+                // any other early exit.
+                if (this.isFinalWaveCleared()) {
+                    await this.completeDungeon();
+                } else {
+                    await this.resetTracking();
+                }
                 if (currentOwner() !== owner) return;
                 this.startDungeon(data);
                 return;
@@ -1952,15 +1959,17 @@ class DungeonTracker {
     /**
      * Whether an `action_completed` carries the end of a dungeon run in its items.
      *
-     * Only a finished run moves the dungeon's entry key (spent on the next run) or
-     * its completion chest, and `endCharacterItems` lists only items whose count
-     * changed — live, a solo Chimerical Den's last wave arrived with
-     * `chimerical_chest` and `chimerical_entry_key` together. The chest is the
-     * reward table's guaranteed entry (`dungeonChestItems`), not the whole table:
-     * a refinement chest is not a completion's payout.
+     * Only the completion chest is proof of a finished run — it is the reward
+     * table's guaranteed entry (`dungeonChestItems`), which a refinement chest is
+     * excluded from. The entry key alone is NOT proof: a solo death that does not
+     * end the repeating action can carry the next attempt's −1 entry key in the
+     * same failed wave's `action_completed`, with no chest, and the key can also
+     * move on the very first wave when the game spends it early. On a genuine
+     * success the chest and the key change together (measured live), so requiring
+     * the chest costs nothing there.
      *
      * @param {Object} data - `action_completed` message data
-     * @returns {boolean} True when the tracked dungeon's key or completion chest changed
+     * @returns {boolean} True when the tracked dungeon's completion chest changed
      */
     runRewardArrived(data) {
         const items = data?.endCharacterItems;
@@ -1968,8 +1977,6 @@ class DungeonTracker {
         if (!Array.isArray(items) || items.length === 0 || !run?.dungeonHrid) return false;
         const actionDetail = dataManager.getActionDetails?.(run.dungeonHrid);
         const runItems = new Set(dungeonChestItems(actionDetail, run.tier ?? 0));
-        const keyItemHrid = actionDetail?.combatZoneInfo?.dungeonInfo?.keyItemHrid;
-        if (keyItemHrid) runItems.add(keyItemHrid);
         return items.some((item) => runItems.has(item?.itemHrid));
     }
 
