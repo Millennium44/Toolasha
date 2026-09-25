@@ -593,4 +593,17 @@ describe('the per-character breakdown', () => {
         expect(text()).toContain('Mystery Tea');
         expect(text()).toContain('—');
     });
+
+    test('an estimated fractional consumable count is shown rounded with ≈, the cost left exact', () => {
+        // Live: "Spaceberry Cake 3.676" — the count is a rate-based estimate
+        game.data.players[1].consumableBreakdown = [
+            { itemHrid: '/items/cake', itemName: 'Spaceberry Cake', count: 3.676, pricePerItem: 166, totalCost: 610 },
+        ];
+        partyLootPanel.show();
+        nameHeading('Millennium44').click();
+
+        expect(text()).toContain('≈4');
+        expect(text()).not.toContain('3.676');
+        expect(text()).toContain('610');
+    });
 });

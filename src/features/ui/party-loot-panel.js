@@ -442,7 +442,9 @@ function playerBreakdown(stats, banked) {
             wrap.appendChild(
                 breakdownRow(
                     item.itemName,
-                    formatCount(item.count),
+                    // The count is a rate-based estimate, so it can be fractional ("3.676 cakes");
+                    // shown rounded with "≈" while the cost beside it stays exact
+                    Number.isInteger(item.count) ? formatCount(item.count) : `≈${formatCount(Math.round(item.count))}`,
                     item.pricePerItem !== null ? formatKMB(item.pricePerItem) : '—',
                     item.pricePerItem !== null ? formatKMB(item.totalCost) : '—',
                     ROW_COLORS.bad
