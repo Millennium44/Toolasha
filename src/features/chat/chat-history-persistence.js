@@ -360,8 +360,14 @@ function itemHridFrom(container) {
     return slug ? `/items/${slug}` : null;
 }
 
-/** The game's sender-name element on a chat line — the one it makes clickable. */
-const SENDER_SELECTOR = '[class*="ChatMessage_name"]';
+/**
+ * The game's sender-name element on a chat line — the one it makes clickable.
+ * Exported for chat-history-extender.js's id correlator, which needs the same
+ * exact sender-name extraction {@link senderNameFrom} does to match a live
+ * node's content against a queued `chat_message_received` — see that
+ * module's "Message identity and deletion" section.
+ */
+export const SENDER_SELECTOR = '[class*="ChatMessage_name"]';
 
 /** The name itself, inside the sender element; a rank badge or icon sits beside it. */
 const CHARACTER_NAME_SELECTOR = '[class*="CharacterName_name"]';
@@ -384,7 +390,7 @@ const CLICKABLE_CLASS_PREFIX = 'ChatMessage_clickable';
  * @param {Element} sender - A `ChatMessage_name` element
  * @returns {string} The name, or '' when the markup does not yield one
  */
-function senderNameFrom(sender) {
+export function senderNameFrom(sender) {
     const inner = sender.querySelector(CHARACTER_NAME_SELECTOR) || sender;
     const raw = inner.getAttribute?.('data-name') || inner.textContent || '';
     // The fallback path can pick up the separator the game draws after the name.
