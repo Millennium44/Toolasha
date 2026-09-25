@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Party Loot shows where the profit comes from
+
+- Click a character in Party Loot to expand a breakdown: every drop and chest, each consumable used, entry and chest keys (crafted or bought), and the loot − consumables − keys = net lines that match the card.
+
 ### Dungeon Tracker times every solo run
 
 - On a repeating solo dungeon the tracker now ends each run at its last wave, so Elapsed restarts for the next run and Last/Avg Run update after every run; the panel stays up between runs instead of blinking off.
