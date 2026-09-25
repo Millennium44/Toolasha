@@ -135,6 +135,10 @@ class MarketVolumeStats {
         this.settleTimers = new Set();
         this.visibleColumnIds = new Set(DEFAULT_COLUMN_IDS);
         this.columnPrefsLoaded = false;
+        /** The in-flight initialize() promise, so a second call while one awaits shares it instead of racing */
+        this.initPromise = null;
+        /** Whether `watchPanelFit()` has already registered its one teardown cleanup */
+        this.fitCleanupRegistered = false;
     }
 
     /** @returns {boolean} Whether the panel may be shown at all */
@@ -178,10 +182,35 @@ class MarketVolumeStats {
         config.onSettingChange('market_volumeStats', handleChange);
     }
 
+    /**
+     * `isInitialized` is only set after `loadColumnPrefs()` resolves, so two
+     * calls landing before that — `loadSettings()` fires both
+     * `market_pooledHistory` and `market_volumeStats` change callbacks
+     * synchronously in the same fan-out when a character switch or a bulk
+     * settings import changes both at once — share the first call's promise
+     * instead of each registering its own `setupObserver()`.
+     * @returns {Promise<void>}
+     */
     async initialize() {
         if (this.isInitialized) return;
         if (!this.enabled) return;
+        if (this.initPromise) return this.initPromise;
 
+        const pending = this._initialize();
+        this.initPromise = pending;
+        try {
+            await pending;
+        } finally {
+            if (this.initPromise === pending) this.initPromise = null;
+        }
+    }
+
+    /**
+     * The body of `initialize()`.
+     * @returns {Promise<void>}
+     * @private
+     */
+    async _initialize() {
         // A character switch can tear this feature down while `loadColumnPrefs`
         // is still awaiting storage; the ticket makes sure a resumed tail does
         // not register into a cleanup registry the teardown already emptied.
@@ -522,11 +551,22 @@ class MarketVolumeStats {
         this.fitObservedArea = area;
         this.fitObserver = new ResizeObserver(() => this.fitPanel(document.querySelector('.mwi-volume-stats')));
         this.fitObserver.observe(area);
-        this.cleanupRegistry.registerCleanup(() => {
-            this.fitObserver?.disconnect();
-            this.fitObserver = null;
-            this.fitObservedArea = null;
-        });
+        // Registered once per lifetime, not once per area: every item change whose
+        // React re-creates the info-container swaps in a new `area` object, so this
+        // runs many times per session while a single teardown callback (reading
+        // `this.fitObserver`/`this.fitObservedArea` live rather than closing over
+        // this call's values) still covers all of them. Registering here on every
+        // call grew `cleanupRegistry`'s custom-cleanup list without bound for the
+        // life of the tab.
+        if (!this.fitCleanupRegistered) {
+            this.fitCleanupRegistered = true;
+            this.cleanupRegistry.registerCleanup(() => {
+                this.fitObserver?.disconnect();
+                this.fitObserver = null;
+                this.fitObservedArea = null;
+                this.fitCleanupRegistered = false;
+            });
+        }
     }
 
     /**
@@ -622,6 +662,7 @@ class MarketVolumeStats {
 
     disable() {
         noteTeardown(this);
+        this.initPromise = null;
         this.closeColumnMenu();
         this.removePanel();
         this.cleanupRegistry.cleanupAll();
