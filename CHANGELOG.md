@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Sell queue and item locks hold up during fast switches
+
+- A sell-queue item locked while the marketplace opens no longer drops another queued item's reservation, and a Favorite/Lock change made during quick back-to-back character switches lands on the right character.
+
 ### A slow feature cleanup no longer undoes the next character's start
 
 - When a feature takes over five seconds to shut down during a character switch, the arriving character's copy of it is rebuilt afterwards instead of being left broken.
