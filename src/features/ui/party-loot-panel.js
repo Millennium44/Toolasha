@@ -29,6 +29,7 @@
  * (a chest is worth what is in it), everything else at the market.
  */
 
+import config from '../../core/config.js';
 import { formatKMB, formatWithSeparator } from '../../utils/formatters.js';
 import { itemIcon, linkToMarketplace, shortDuration, ROW_COLORS, GLYPHS } from '../../utils/overlay-format.js';
 import { navigateToMarketplace } from '../../utils/marketplace-tabs.js';
@@ -38,6 +39,11 @@ import { DUNGEON_CHEST_ENTRY_KEYS, DUNGEON_CHEST_CHEST_KEYS } from '../../utils/
 import combatStatsDataCollector from '../combat-stats/combat-stats-data-collector.js';
 import { calculatePlayerStats } from '../combat-stats/combat-stats-calculator.js';
 import { loadSessions, combineSessions, describeSession } from '../combat-stats/combat-session-history.js';
+import {
+    createPricingQuickSettings,
+    PRICING_QUICK_SETTINGS_KEYS,
+    PRICING_QUICK_SETTINGS_TOOLTIP_KEYS,
+} from './pricing-quick-settings.js';
 
 /** Every entry-key hrid a regular dungeon chest implies, for splitting the Keys section */
 const ENTRY_KEY_HRIDS = new Set(Object.values(DUNGEON_CHEST_ENTRY_KEYS));
@@ -626,6 +632,7 @@ function drawTopBar(body, party) {
     Object.assign(bar.style, {
         display: 'flex',
         alignItems: 'center',
+        flexWrap: 'wrap',
         gap: '8px',
         paddingBottom: '6px',
         marginBottom: '6px',
@@ -683,6 +690,13 @@ function drawTopBar(body, party) {
     meta.textContent = snapshot?.durationSeconds ? shortDuration(snapshot.durationSeconds) : '';
 
     bar.append(picker, meta);
+
+    const pricing = createPricingQuickSettings({
+        selectCssText:
+            'background: rgba(255, 255, 255, 0.06); color: #e8ecf5; border: 1px solid rgba(255, 255, 255, 0.15); ' +
+            'border-radius: 4px; padding: 2px 4px; font-size: 11px; max-width: 92px;',
+    });
+    bar.appendChild(pricing.element);
 
     // Only when there is something on screen to send — a button that copies
     // nothing would read as the button breaking, and there is no such thing
@@ -754,6 +768,24 @@ function drawTopBar(body, party) {
 
     body.appendChild(bar);
 }
+
+/**
+ * Re-render whenever a pricing setting changes, wherever it was changed —
+ * this panel's own quick-settings row, the main settings panel, or the
+ * combat simulator's copy of the same row. `render()` no-ops while the panel
+ * is closed (`draw` only runs once there is a body to draw into), and every
+ * figure on screen is recomputed from `calculatePlayerStats` on each render,
+ * so a resync here is simply asking for the redraw the panel already knows
+ * how to do — nothing is cached across a pricing change.
+ *
+ * Module scope, not `initialize()`/`cleanup()`: this panel has neither, and
+ * lives for the life of the tab like the shell itself (`simple-panel.js`
+ * subscribes to `character_switched` the same way, at module scope).
+ */
+for (const key of [...PRICING_QUICK_SETTINGS_KEYS, ...PRICING_QUICK_SETTINGS_TOOLTIP_KEYS]) {
+    config.onSettingChange(key, () => partyLootPanel.render());
+}
+config.onSettingsLoaded(() => partyLootPanel.render());
 
 /**
  * What everyone picked up.

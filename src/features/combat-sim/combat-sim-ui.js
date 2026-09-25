@@ -117,6 +117,11 @@ import { applyMaxTierFood } from './food-optimizer.js';
 import { simulateZoneRate } from './zone-rate-sim.js';
 import { SimEditor } from './sim-editor.js';
 import storage from '../../core/storage.js';
+import {
+    createPricingQuickSettings,
+    PRICING_QUICK_SETTINGS_KEYS,
+    PRICING_QUICK_SETTINGS_TOOLTIP_KEYS,
+} from '../ui/pricing-quick-settings.js';
 
 const PANEL_ID = 'mwi-combat-sim-panel';
 const ACCENT = '#4a9eff';
@@ -2001,6 +2006,10 @@ class CombatSimUI {
         this._upgradeRunning = false;
         this._detachDrag = null;
         this._unsubscribeSkipSkillingRooms = null;
+        // The Buy/Sell/Key pricing row above the results — see buildPanel() and
+        // _subscribePricingQuickSettings()
+        this._pricingQuickSettings = null;
+        this._unsubscribePricingQuickSettings = [];
         this.elapsedTimer = null;
         this._activePlayerTab = 'player1';
         this._playerInfo = [];
@@ -2290,6 +2299,24 @@ class CombatSimUI {
                     flex-shrink:0;">Stop</button>
             </div>
         `;
+
+        // Pricing quick settings — Buy/Sell/Key, right above the results the
+        // profit figures below them are priced from. `_displayResults` prices
+        // from `simResult` (raw kills/drops) each time it runs rather than
+        // baking a price into it, so a change here just asks for the same
+        // redraw a tab switch already triggers — no re-simulation needed.
+        const resultsPricingRow = document.createElement('div');
+        resultsPricingRow.id = 'mwi-csim-results-pricing';
+        resultsPricingRow.style.cssText = 'flex-shrink:0; padding:6px 14px 0;';
+        this._pricingQuickSettings = createPricingQuickSettings({
+            selectCssText:
+                'background:#1a1a2e; color:#e0e0e0; border:1px solid #444; border-radius:4px; padding:2px 4px; ' +
+                'font-size:11px; max-width:96px;',
+            onChange: () => this._redisplayLastResults(),
+        });
+        resultsPricingRow.appendChild(this._pricingQuickSettings.element);
+        resultsContent.appendChild(resultsPricingRow);
+        this._subscribePricingQuickSettings();
 
         // Results container
         const resultsContainer = document.createElement('div');
@@ -5540,6 +5567,46 @@ class CombatSimUI {
         }
     }
 
+    /**
+     * Re-price whatever is already on screen, without re-running the simulation.
+     *
+     * `_displayResults` recomputes revenue/expenses/profit from `simResult`
+     * (raw kills and drops) using the *current* pricing settings every time it
+     * is called — the tab-switch and comparison handlers above already lean on
+     * that to redraw after changing which detail is shown. A pricing change is
+     * the same kind of redraw: cheap, and nothing to re-simulate.
+     *
+     * A no-op before any run has produced a result, so a pricing dropdown
+     * touched while the Configure tab is still open does not throw reaching
+     * for a result that is not there yet.
+     */
+    _redisplayLastResults() {
+        if (!this._lastSimResult) return;
+        this._displayResults(this._lastSimResult, this._lastSimHours, this._lastGameData);
+    }
+
+    /**
+     * Keep the pricing row in sync with a pricing setting changed anywhere else
+     * — the main settings panel, the Party Loot panel's own copy of this row,
+     * or (moot, since there is only one, but consistent) another instance of
+     * this one. Re-prices the displayed results the same way the row's own
+     * `onChange` does; {@link PRICING_QUICK_SETTINGS_TOOLTIP_KEYS} only move a
+     * dropdown's tooltip; `sync()` alone covers those.
+     */
+    _subscribePricingQuickSettings() {
+        this._unsubscribePricingQuickSettings.forEach((unsubscribe) => unsubscribe());
+        const resync = () => this._pricingQuickSettings?.sync();
+        const resyncAndReprice = () => {
+            resync();
+            this._redisplayLastResults();
+        };
+        this._unsubscribePricingQuickSettings = [
+            ...PRICING_QUICK_SETTINGS_KEYS.map((key) => config.onSettingChange(key, resyncAndReprice)),
+            ...PRICING_QUICK_SETTINGS_TOOLTIP_KEYS.map((key) => config.onSettingChange(key, resync)),
+            config.onSettingsLoaded(resyncAndReprice),
+        ];
+    }
+
     _displayResults(simResult, hours, gameData) {
         // If an active detail index is set, show that history entry's details instead
         let partyWarnings = this._lastPartyWarnings || [];
@@ -7360,6 +7427,9 @@ class CombatSimUI {
         this._detachDrag = null;
         this._unsubscribeSkipSkillingRooms?.();
         this._unsubscribeSkipSkillingRooms = null;
+        this._unsubscribePricingQuickSettings.forEach((unsubscribe) => unsubscribe());
+        this._unsubscribePricingQuickSettings = [];
+        this._pricingQuickSettings = null;
         cleanupUpgradeMarketAutofill();
         if (this.panel) {
             unregisterFloatingPanel(this.panel);
