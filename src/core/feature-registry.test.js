@@ -1062,33 +1062,138 @@ describe('a setting switched on mid-session', () => {
                 }
             });
 
-            test('is not disabled when the arriving character started the feature itself', async () => {
+            /**
+             * Set up character A with `slow` live-started and hanging, then switch to B with it on.
+             * @param {Function} initialize - `slow`'s initializer
+             * @returns {Promise<{fresh: Object, disable: Function}>}
+             */
+            const lateStartIntoB = async (initialize) => {
+                const fresh = await freshRegistry();
+                state.currentCharacterId = 'A';
+                const disable = vi.fn();
+                fresh.replaceFeatures([{ key: 'slow', name: 'Slow', initialize, disable, liveStop: true }]);
+                fresh.setupCharacterSwitchHandler();
+                fresh.setupLiveFeatureStart();
+                await fresh.initializeFeatures();
+                changeSetting('slow', true);
+                await vi.advanceTimersByTimeAsync(0);
+                await switchToB(); // B has it on: the re-init starts it again
+                return { fresh, disable };
+            };
+
+            test('the instance of the arriving character is torn down with it and started again, once', async () => {
                 vi.useFakeTimers();
                 try {
-                    const fresh = await freshRegistry();
-                    state.currentCharacterId = 'A';
-                    const { initialize, release } = slowStart();
-                    const disable = vi.fn();
-                    fresh.replaceFeatures([{ key: 'slow', name: 'Slow', initialize, disable, liveStop: true }]);
-                    fresh.setupCharacterSwitchHandler();
-                    fresh.setupLiveFeatureStart();
-                    await fresh.initializeFeatures();
-
-                    changeSetting('slow', true);
-                    await vi.advanceTimersByTimeAsync(0);
-                    await switchToB(); // B has it on: the re-init starts it again
+                    let releaseA;
+                    const initialize = vi.fn(() =>
+                        initialize.mock.calls.length === 1
+                            ? new Promise((resolve) => {
+                                  releaseA = resolve;
+                              })
+                            : undefined
+                    );
+                    const { disable } = await lateStartIntoB(initialize);
                     expect(initialize).toHaveBeenCalledTimes(2);
                     expect(disable).toHaveBeenCalledTimes(1);
 
-                    release();
+                    releaseA();
+                    await vi.advanceTimersByTimeAsync(0);
+                    expect(disable).toHaveBeenCalledTimes(2);
+                    expect(initialize).toHaveBeenCalledTimes(3);
+
+                    // Counted as started once: a live pass leaves it, switching it off stops it once
+                    changeSetting('unrelated', true);
+                    await vi.advanceTimersByTimeAsync(0);
+                    expect(initialize).toHaveBeenCalledTimes(3);
+                    changeSetting('slow', false);
+                    await vi.advanceTimersByTimeAsync(0);
+                    expect(disable).toHaveBeenCalledTimes(3);
+                } finally {
+                    vi.useRealTimers();
+                }
+            });
+
+            test('the restart waits for the own start of the arriving character to settle', async () => {
+                vi.useFakeTimers();
+                try {
+                    const { initialize, release } = slowStart();
+                    const { disable } = await lateStartIntoB(initialize);
+                    expect(initialize).toHaveBeenCalledTimes(2);
+
+                    release(); // A's
+                    await vi.advanceTimersByTimeAsync(0);
+                    expect(disable).toHaveBeenCalledTimes(1);
+                    expect(initialize).toHaveBeenCalledTimes(2);
+
+                    release(); // B's
+                    await vi.advanceTimersByTimeAsync(0);
+                    expect(disable).toHaveBeenCalledTimes(2);
+                    expect(initialize).toHaveBeenCalledTimes(3);
+                } finally {
+                    vi.useRealTimers();
+                }
+            });
+
+            test('switched off by the arriving character meanwhile, it is disabled and not restarted', async () => {
+                vi.useFakeTimers();
+                try {
+                    let releaseA;
+                    const initialize = vi.fn(() =>
+                        initialize.mock.calls.length === 1
+                            ? new Promise((resolve) => {
+                                  releaseA = resolve;
+                              })
+                            : undefined
+                    );
+                    const { disable } = await lateStartIntoB(initialize);
+                    // The stop pass skips it: A's live start still holds it in flight
+                    changeSetting('slow', false);
                     await vi.advanceTimersByTimeAsync(0);
                     expect(disable).toHaveBeenCalledTimes(1);
 
-                    // Still counted as B's: switching it off stops it exactly once
-                    release();
-                    changeSetting('slow', false);
+                    releaseA();
                     await vi.advanceTimersByTimeAsync(0);
                     expect(disable).toHaveBeenCalledTimes(2);
+                    expect(initialize).toHaveBeenCalledTimes(2);
+
+                    // Not left counted as started: switching it on starts it once
+                    changeSetting('slow', true);
+                    await vi.advanceTimersByTimeAsync(0);
+                    expect(initialize).toHaveBeenCalledTimes(3);
+                } finally {
+                    vi.useRealTimers();
+                }
+            });
+
+            test('a teardown landing during the restart leaves the feature down', async () => {
+                vi.useFakeTimers();
+                try {
+                    let releaseA;
+                    const initialize = vi.fn(() =>
+                        initialize.mock.calls.length === 1
+                            ? new Promise((resolve) => {
+                                  releaseA = resolve;
+                              })
+                            : undefined
+                    );
+                    const { fresh, disable } = await lateStartIntoB(initialize);
+                    let releaseDisable;
+                    disable.mockImplementationOnce(
+                        () =>
+                            new Promise((resolve) => {
+                                releaseDisable = resolve;
+                            })
+                    );
+
+                    releaseA();
+                    await vi.advanceTimersByTimeAsync(0);
+                    expect(disable).toHaveBeenCalledTimes(2); // the restart's, still running
+
+                    await fresh.disableAllFeatures();
+                    expect(disable).toHaveBeenCalledTimes(3);
+                    releaseDisable();
+                    await vi.advanceTimersByTimeAsync(0);
+                    expect(initialize).toHaveBeenCalledTimes(2);
                 } finally {
                     vi.useRealTimers();
                 }
