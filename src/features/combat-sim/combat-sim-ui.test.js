@@ -2205,15 +2205,23 @@ describe('the all-zones table', () => {
 
     describe('dungeon clears, fails and average clear time', () => {
         const HOUR_NS = 3600 * 1e9;
+        // Production shape, from combat-sim-adapter.js: `zone.name` is the
+        // plain name ("Pirate Cove") and `zone.zoneHrid` is the full
+        // snake-case action hrid the game uses (action.actionHrid) — the
+        // renderer is what prefixes a dungeon row with "[D] " (see `dungeon
+        // ? \`[D] ${r.zone.name}\` : r.zone.name` above). A fixture that
+        // already carries "[D] " in the name would double the prefix and
+        // produce an hrid the game never emits.
+        const slug = (name) => name.toLowerCase().replace(/\s+/g, '_');
         // Zone/tier is not a dungeon by default; a dungeon result carries
         // isDungeon plus the counters the engine already tracks per run —
         // see sim-result.js's dungeonsCompleted/dungeonsFailed/
         // dungeonCleanClearTimeTotal/dungeonCleanClearCount.
         const dungeonResult = (
             name,
-            { simHours = 1, completed = 0, failed = 0, cleanTotalNs = 0, cleanCount = 0 }
+            { simHours = 1, completed = 0, failed = 0, cleanTotalNs = 0, cleanCount = 0 } = {}
         ) => ({
-            zone: { name, difficultyTier: 1, zoneHrid: `/actions/combat/${name}` },
+            zone: { name, difficultyTier: 1, zoneHrid: `/actions/combat/${slug(name)}` },
             simResult: {
                 simulatedTime: HOUR_NS * simHours,
                 encounters: 10,
@@ -2228,7 +2236,7 @@ describe('the all-zones table', () => {
             revenue: { netPerHour: 0, revenuePerHour: 0, costPerHour: 0, dropEntries: [] },
         });
         const zoneResult = (name) => ({
-            zone: { name, difficultyTier: 1, zoneHrid: `/actions/combat/${name}` },
+            zone: { name, difficultyTier: 1, zoneHrid: `/actions/combat/${slug(name)}` },
             simResult: {
                 simulatedTime: HOUR_NS,
                 encounters: 10,
@@ -2238,12 +2246,17 @@ describe('the all-zones table', () => {
             revenue: { netPerHour: 0, revenuePerHour: 0, costPerHour: 0, dropEntries: [] },
         });
 
-        /** The drawn cell for a zone row and column, by header position */
-        function cell(zoneName, colKey) {
+        /** The rendered zone-name cell (column 0) for a row, matched on the plain name. */
+        function zoneCell(plainName) {
+            const rows = [...ui.panel.querySelectorAll('#mwi-csim-results tbody tr')];
+            return rows.find((tr) => tr.cells[0].textContent.includes(plainName))?.cells[0];
+        }
+
+        /** The drawn cell for a zone row and column, by header position, matched on the plain name. */
+        function cell(plainName, colKey) {
             const headers = [...ui.panel.querySelectorAll('#mwi-csim-results th')].map((th) => th.dataset.col);
             const index = headers.indexOf(colKey);
-            const rows = [...ui.panel.querySelectorAll('#mwi-csim-results tbody tr')];
-            const row = rows.find((tr) => tr.cells[0].textContent.includes(zoneName));
+            const row = zoneCell(plainName)?.closest('tr');
             return row?.cells[index];
         }
 
@@ -2255,12 +2268,20 @@ describe('the all-zones table', () => {
             ui.destroy();
         });
 
+        test('a dungeon row is marked with exactly one [D] prefix, not a doubled one', async () => {
+            await ui._displayAllZonesResults([dungeonResult('Pirate Cove', { simHours: 1 })], 1, {});
+
+            const text = zoneCell('Pirate Cove').textContent;
+            expect(text.startsWith('[D] Pirate Cove')).toBe(true);
+            expect(text.match(/\[D\]/g)).toHaveLength(1);
+        });
+
         test('a dungeon row shows clears/day, fails/day and the clean average clear time', async () => {
             // 24 completions and 8 fails over 4 simulated hours → 144/day and
-            // 48/day; 3600 s of clean-pair time over 6 pairs → 600 s average
+            // 48/day; 600 s of clean-pair time over 6 pairs → 100 s average
             await ui._displayAllZonesResults(
                 [
-                    dungeonResult('[D] Pirate Cove', {
+                    dungeonResult('Pirate Cove', {
                         simHours: 4,
                         completed: 24,
                         failed: 8,
@@ -2280,6 +2301,7 @@ describe('the all-zones table', () => {
         test('a non-dungeon row shows — in all three columns', async () => {
             await ui._displayAllZonesResults([zoneResult('Fly')], 1, {});
 
+            expect(zoneCell('Fly').textContent).not.toContain('[D]');
             expect(cell('Fly', 'clearsPerDay').textContent).toBe('—');
             expect(cell('Fly', 'failsPerDay').textContent).toBe('—');
             expect(cell('Fly', 'avgClearTime').textContent).toBe('—');
@@ -2287,7 +2309,7 @@ describe('the all-zones table', () => {
 
         test('a dungeon with no clean pair yet (first run still in progress) reads — for the average', async () => {
             await ui._displayAllZonesResults(
-                [dungeonResult('[D] Sinister Circus', { simHours: 1, completed: 0, failed: 0 })],
+                [dungeonResult('Sinister Circus', { simHours: 1, completed: 0, failed: 0 })],
                 1,
                 {}
             );
@@ -2305,7 +2327,7 @@ describe('the all-zones table', () => {
 
             await ui._displayAllZonesResults(
                 [
-                    dungeonResult('[D] Pirate Cove', {
+                    dungeonResult('Pirate Cove', {
                         simHours: 4,
                         completed: 24,
                         failed: 8,
@@ -2323,8 +2345,9 @@ describe('the all-zones table', () => {
             const keys = columns.map((c) => c.key);
             expect(keys).toEqual(expect.arrayContaining(['clearsPerDay', 'failsPerDay', 'avgClearTime']));
 
-            const dungeonRow = rows.find((r) => r.zone.includes('Pirate Cove'));
+            const dungeonRow = rows.find((r) => r.zone === '[D] Pirate Cove');
             const zoneRow = rows.find((r) => r.zone === 'Fly');
+            expect(dungeonRow).toBeTruthy();
             expect(dungeonRow.clearsPerDay).toBeCloseTo(144);
             expect(dungeonRow.failsPerDay).toBeCloseTo(48);
             expect(dungeonRow.avgClearTime).toBeCloseTo(600);
@@ -2333,6 +2356,85 @@ describe('the all-zones table', () => {
             expect(zoneRow.avgClearTime).toBeNull();
 
             delete ui._wireCsvButton;
+        });
+
+        describe('sorting missing (non-dungeon) values to the bottom', () => {
+            /**
+             * Plain zone names in row order, top to bottom. The zone cell's
+             * name is a leading text node; badges and the ⊚/▶ buttons that
+             * can follow it are separate child elements, so reading just the
+             * first child node avoids picking up their symbols.
+             */
+            function renderedOrder() {
+                return [...ui.panel.querySelectorAll('#mwi-csim-results tbody tr')].map((tr) =>
+                    tr.cells[0].childNodes[0].textContent.replace(/^\[D\] /, '').trim()
+                );
+            }
+
+            beforeEach(async () => {
+                // A slow dungeon (long clears, few per day), a fast dungeon,
+                // a dungeon that has not completed a clean pair yet (0/null),
+                // and a non-dungeon zone (null on all three columns) — real
+                // measured values and genuinely-missing ones side by side.
+                await ui._displayAllZonesResults(
+                    [
+                        dungeonResult('Slow Dungeon', {
+                            simHours: 1,
+                            completed: 6,
+                            failed: 0,
+                            cleanTotalNs: 3600 * 5 * 1e9,
+                            cleanCount: 5,
+                        }),
+                        dungeonResult('Fast Dungeon', {
+                            simHours: 1,
+                            completed: 60,
+                            failed: 0,
+                            cleanTotalNs: 60 * 50 * 1e9,
+                            cleanCount: 50,
+                        }),
+                        dungeonResult('Fresh Dungeon', { simHours: 1, completed: 0, failed: 0 }),
+                        zoneResult('Open Zone'),
+                    ],
+                    1,
+                    {}
+                );
+            });
+
+            test('ascending Avg clear puts the fastest dungeon first and non-dungeon/no-pair rows last', async () => {
+                ui._allZonesSortCol = 'avgClearTime';
+                ui._allZonesSortAsc = true;
+                await ui._displayAllZonesResults(ui._allZonesResults, 1, {});
+
+                const order = renderedOrder();
+                expect(order.slice(0, 2)).toEqual(['Fast Dungeon', 'Slow Dungeon']);
+                // The two rows with no clean-pair average (Fresh Dungeon has
+                // none yet, Open Zone is not a dungeon at all) sort after
+                // every measured time, in either direction — never at 0.
+                expect(order.slice(2)).toEqual(expect.arrayContaining(['Fresh Dungeon', 'Open Zone']));
+            });
+
+            test('descending Avg clear still keeps the missing rows last, not first', async () => {
+                ui._allZonesSortCol = 'avgClearTime';
+                ui._allZonesSortAsc = false;
+                await ui._displayAllZonesResults(ui._allZonesResults, 1, {});
+
+                const order = renderedOrder();
+                expect(order.slice(0, 2)).toEqual(['Slow Dungeon', 'Fast Dungeon']);
+                expect(order.slice(2)).toEqual(expect.arrayContaining(['Fresh Dungeon', 'Open Zone']));
+            });
+
+            test('ascending Clears/day keeps the real zero-rate dungeon ahead of the non-dungeon blank', async () => {
+                ui._allZonesSortCol = 'clearsPerDay';
+                ui._allZonesSortAsc = true;
+                await ui._displayAllZonesResults(ui._allZonesResults, 1, {});
+
+                const order = renderedOrder();
+                // Fresh Dungeon measured 0 clears/day — a real number — and
+                // sorts with the other measured rows; Open Zone has no
+                // clears/day at all (not a dungeon) and goes last regardless.
+                expect(order.indexOf('Fresh Dungeon')).toBeLessThan(order.indexOf('Open Zone'));
+                expect(order[order.length - 1]).toBe('Open Zone');
+            });
         });
     });
 
