@@ -2300,10 +2300,37 @@ describe('the all-zones table', () => {
             expect(cell('Pirate Cove', 'avgClearTime').textContent).toBe('0h 10m 00s');
         });
 
-        test('a non-dungeon row shows — in all three columns', async () => {
+        test('a run with no dungeon rows at all hides the three dungeon-only columns', async () => {
             await ui._displayAllZonesResults([zoneResult('Fly')], 1, {});
 
             expect(zoneCell('Fly').textContent).not.toContain('[D]');
+            const headers = [...ui.panel.querySelectorAll('#mwi-csim-results th')].map((th) => th.dataset.col);
+            expect(headers).not.toEqual(expect.arrayContaining(['clearsPerDay', 'failsPerDay', 'avgClearTime']));
+        });
+
+        test('a saved sort on a now-hidden dungeon column falls back to the default Score sort', async () => {
+            ui._allZonesSortCol = 'avgClearTime';
+            ui._allZonesSortAsc = true;
+
+            await ui._displayAllZonesResults([zoneResult('Fly'), zoneResult('Ant')], 1, {});
+
+            // The column no longer exists on screen, and the UI stops trying
+            // to sort by it rather than silently sorting by a hidden column.
+            expect(ui._allZonesSortCol).toBe('score');
+            expect(ui._allZonesSortAsc).toBe(false);
+            const headers = [...ui.panel.querySelectorAll('#mwi-csim-results th')].map((th) => th.dataset.col);
+            expect(headers).not.toEqual(expect.arrayContaining(['clearsPerDay', 'failsPerDay', 'avgClearTime']));
+        });
+
+        test('a mixed run keeps the dungeon-only columns and shows — for the non-dungeon row', async () => {
+            await ui._displayAllZonesResults(
+                [dungeonResult('Pirate Cove', { simHours: 1, completed: 6, failed: 0 }), zoneResult('Fly')],
+                1,
+                {}
+            );
+
+            const headers = [...ui.panel.querySelectorAll('#mwi-csim-results th')].map((th) => th.dataset.col);
+            expect(headers).toEqual(expect.arrayContaining(['clearsPerDay', 'failsPerDay', 'avgClearTime']));
             expect(cell('Fly', 'clearsPerDay').textContent).toBe('—');
             expect(cell('Fly', 'failsPerDay').textContent).toBe('—');
             expect(cell('Fly', 'avgClearTime').textContent).toBe('—');
