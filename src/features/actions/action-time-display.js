@@ -858,6 +858,17 @@ class ActionTimeDisplay {
             return;
         }
 
+        this._stripQueueAnnotations(queueMenu);
+    }
+
+    /**
+     * Strip everything `injectQueueTimes` added to an open QueuedActions edit menu: the per-row
+     * time/profit/xp divs, the zone-sim rows and header, and the total-time element. The
+     * width-pin marker is handled by the caller (toggled in `revisitOpenQueueMenu`, removed
+     * outright in `disable`) since the two teardowns want it left in different states.
+     * @param {Element} queueMenu - The QueuedActions edit menu element
+     */
+    _stripQueueAnnotations(queueMenu) {
         queueMenu.querySelectorAll('.mwi-queue-action-time').forEach((el) => el.remove());
         queueMenu.querySelectorAll('.mwi-queue-action-profit').forEach((el) => el.remove());
         queueMenu.querySelectorAll('.mwi-queue-action-xp').forEach((el) => el.remove());
@@ -5914,6 +5925,19 @@ class ActionTimeDisplay {
      */
     disable() {
         try {
+            // A QueuedActions edit menu opened before this module was switched off keeps its
+            // injected rows and width-pin marker forever otherwise: applyEnabledSettings() only
+            // revisits an open menu when `actionQueue` itself changes, and cleanupAll() below only
+            // tears down observers/listeners, never DOM this module already wrote into that menu.
+            const queueMenu = this._lastQueueMenu?.isConnected
+                ? this._lastQueueMenu
+                : document.querySelector('[class*="QueuedActions_queuedActionsEditMenu"]');
+            if (queueMenu?.isConnected) {
+                queueMenu.classList.remove(QUEUE_EDIT_MENU_MARKER_CLASS);
+                this._stripQueueAnnotations(queueMenu);
+            }
+            this._lastQueueMenu = null;
+
             this.cleanupRegistry.cleanupAll();
             this.barCleanupRegistry.cleanupAll();
             this.displayElement = null;
