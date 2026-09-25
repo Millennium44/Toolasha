@@ -740,6 +740,52 @@ export function gearFingerprint(playerDTOs) {
 }
 
 /**
+ * Whether a recorded dungeon run can set the pace of the simulated party.
+ *
+ * The run history is shared by every character on the account and every party
+ * they ran with, and a pace only transfers to the same people: an alt's fast T2
+ * clears say nothing about this character's slower build. So a run counts only
+ * when it is this character's own — its `recordedBy` stamp, or for a legacy run
+ * without one, this character's name on its roster (the dungeon tracker's
+ * `runMatchesCharacter` rule, restated here because that module lives in
+ * another bundle) — and was run by a team the size of the simulated one. When
+ * the simulated roster's names are known, the team must be exactly that roster
+ * (`teamKey`-style, names sorted). Nothing matching leaves the sim's own pace.
+ *
+ * @param {Object} run - A stored run (`recordedBy`, `team`, `teamKey`, …)
+ * @param {Object} who
+ * @param {string|null} who.characterId - The character the panel speaks for
+ * @param {string|null} who.characterName - Their in-game name
+ * @param {number} who.partySize - Players the sim ran with
+ * @param {Array<string>|null} [who.roster] - The simulated party's names, when known
+ * @returns {boolean}
+ */
+export function runMatchesSimParty(
+    run,
+    { characterId = null, characterName = null, partySize = 1, roster = null } = {}
+) {
+    if (!run) return false;
+    const team = Array.isArray(run.team)
+        ? run.team.map(String)
+        : typeof run.teamKey === 'string' && run.teamKey
+          ? run.teamKey.split(',')
+          : null;
+
+    const mine = run.recordedBy
+        ? characterId != null && String(run.recordedBy) === String(characterId)
+        : Boolean(characterName) && Boolean(team?.includes(characterName));
+    if (!mine) return false;
+
+    const size = Math.max(1, Math.floor(Number(partySize) || 1));
+    if (!team || team.length !== size) return false;
+    if (Array.isArray(roster) && roster.length === size && roster.every(Boolean)) {
+        const want = [...roster].map(String).sort().join(',');
+        if ([...team].sort().join(',') !== want) return false;
+    }
+    return true;
+}
+
+/**
  * One results-table row as a Bestiary planner zone, at the rates it should be
  * planned at.
  *
@@ -750,11 +796,14 @@ export function gearFingerprint(playerDTOs) {
  * kill rates (from the attempts that failed) but no clear rate at all, so it
  * quotes no clear count rather than quoting its waves as clears.
  *
+ * Only runs {@link runMatchesSimParty} accepts for `who` set a dungeon's pace.
+ *
  * @param {Object} row - A results-table row (`_creditsPerHour`, `_creditsPerKill`, `_dungeon`, …)
  * @param {Array<Object>} [runs] - The dungeon run history, every dungeon
+ * @param {Object} [who] - The simulated character and party, see {@link runMatchesSimParty}
  * @returns {Object} A `planBestiaryRoute` zone
  */
-export function bestiaryPlanZoneForRow(row, runs = []) {
+export function bestiaryPlanZoneForRow(row, runs = [], who = {}) {
     const partySizeNote = row._partySizeUnknown
         ? 'party size not recorded — assumed solo, may undercount a party run'
         : null;
@@ -788,7 +837,11 @@ export function bestiaryPlanZoneForRow(row, runs = []) {
         simClearsPerHour: simHours > 0 ? completions / simHours : 0,
         simClearSeconds: hasClean ? cleanSeconds : null,
         runs: pacable
-            ? (runs || []).filter((run) => run?.dungeonName === row._dungeon.name || run?.dungeonHrid === row.zoneHrid)
+            ? (runs || []).filter(
+                  (run) =>
+                      (run?.dungeonName === row._dungeon.name || run?.dungeonHrid === row.zoneHrid) &&
+                      runMatchesSimParty(run, { ...who, partySize: row._partySize ?? who.partySize ?? 1 })
+              )
             : [],
         tier: row.tier,
     });
@@ -3282,6 +3335,8 @@ class CombatSimUI {
                     // `rawPartySize` — but the plan says so rather than
                     // quoting a party's kills as a solo player's if it is
                     _partySizeUnknown: partySizeUnknown,
+                    // Whose recorded runs may set a dungeon's pace — see runMatchesSimParty
+                    _partySize: resolvedPartySize,
                     stamina: (xp.stamina || 0) / simHours,
                     intelligence: (xp.intelligence || 0) / simHours,
                     attack: (xp.attack || 0) / simHours,
@@ -3749,7 +3804,14 @@ class CombatSimUI {
             }
         }
 
-        return rows.map((row) => bestiaryPlanZoneForRow(row, runs));
+        // Only this character's runs, with this party, may set the pace
+        const roster = Array.isArray(this._playerInfo) ? this._playerInfo.map((p) => p?.name || null) : null;
+        const who = {
+            characterId: dataManager.getCurrentCharacterId?.() ?? null,
+            characterName: dataManager.getCurrentCharacterName?.() ?? null,
+            roster,
+        };
+        return rows.map((row) => bestiaryPlanZoneForRow(row, runs, who));
     }
 
     /**
