@@ -6,6 +6,11 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Audit round: settings that work on their own now switch cleanly both ways
+
+- Task card displays no longer lose the combat estimate when another task setting is switched off, and come back when any of them is switched on again.
+- Loot Log statistics and history each switch on and off without a reload; collection badges and the Collections filters no longer leak into each other; the gear score switch hides and shows the score on an open profile; and the queued-actions menu keeps its normal width with the queue annotations off.
+
 ### Sim results show dungeon clears, fails and clear time
 
 - The combat sim's all-zones and all-dungeons results now show clears/day, fails/day and average clear time for each dungeon row (also in the CSV export).
