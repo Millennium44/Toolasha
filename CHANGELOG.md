@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Dungeon Tracker times every solo run
+
+- On a repeating solo dungeon the tracker now ends each run at its last wave, so Elapsed restarts for the next run and Last/Avg Run update after every run; the panel stays up between runs instead of blinking off.
+
 ### Party Loot subtracts food and drink from banked profit
 
 - Party Loot's banked coin (each card, the party total, copied text and CSV) and the Total Profit tile now subtract the consumables eaten during the session; they were counted as 0 there even though the /day rates already took them off.
