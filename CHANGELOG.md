@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Sim results show dungeon clears, fails and clear time
+
+- The combat sim's all-zones and all-dungeons results now show clears/day, fails/day and average clear time for each dungeon row (also in the CSV export).
+
 ### Fixes from the 3.60.0 release review
 
 - Production income applies Artisan and Gourmet from the gear and drinks actually worn, not a saved loadout, and prices an enhanced upgrade item at its real enhancement level.
