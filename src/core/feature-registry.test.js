@@ -10,6 +10,7 @@ const state = vi.hoisted(() => ({
     handlers: {},
     calls: [],
     anySettingListeners: [],
+    settingsLoadedListeners: [],
 }));
 
 vi.mock('./config.js', () => ({
@@ -22,6 +23,12 @@ vi.mock('./config.js', () => ({
             state.anySettingListeners.push(callback);
             return () => {
                 state.anySettingListeners = state.anySettingListeners.filter((cb) => cb !== callback);
+            };
+        },
+        onSettingsLoaded: (callback) => {
+            state.settingsLoadedListeners.push(callback);
+            return () => {
+                state.settingsLoadedListeners = state.settingsLoadedListeners.filter((cb) => cb !== callback);
             };
         },
     },
@@ -54,6 +61,7 @@ beforeEach(() => {
     state.handlers = {};
     state.calls = [];
     state.anySettingListeners = [];
+    state.settingsLoadedListeners = [];
     featureRegistry.replaceFeatures([]);
 });
 
@@ -924,6 +932,62 @@ describe('a setting switched on mid-session', () => {
             expect(failingDisable).toHaveBeenCalledTimes(1);
             expect(otherDisable).toHaveBeenCalledTimes(1);
             expect(fresh.getDisableFailures()).toContain('broken');
+        });
+    });
+
+    describe('a whole-map settings load outside a switch', () => {
+        /**
+         * What config does after `loadSettings()` replaces the map: no
+         * any-setting change, only the settings-loaded channel.
+         * @returns {void}
+         */
+        const bulkLoad = () => {
+            for (const listener of [...state.settingsLoadedListeners]) listener();
+        };
+
+        test('starts a feature the loaded map switches on', async () => {
+            const fresh = await freshRegistry();
+            const initialize = vi.fn();
+            fresh.replaceFeatures([{ key: 'restored', name: 'Restored', initialize }]);
+            fresh.setupLiveFeatureStart();
+            await fresh.initializeFeatures();
+
+            state.enabledFeatures.add('restored');
+            bulkLoad();
+            await settle();
+
+            expect(initialize).toHaveBeenCalledTimes(1);
+        });
+
+        test('stops a liveStop feature the loaded map switches off', async () => {
+            const fresh = await freshRegistry();
+            const disable = vi.fn();
+            state.enabledFeatures = new Set(['dropped']);
+            fresh.replaceFeatures([{ key: 'dropped', name: 'Dropped', initialize: vi.fn(), disable, liveStop: true }]);
+            fresh.setupLiveFeatureStart();
+            await fresh.initializeFeatures();
+
+            state.enabledFeatures.delete('dropped');
+            bulkLoad();
+            await settle();
+
+            expect(disable).toHaveBeenCalledTimes(1);
+        });
+
+        test('the uninstall function stops listening to loads too', async () => {
+            const fresh = await freshRegistry();
+            const initialize = vi.fn();
+            fresh.replaceFeatures([{ key: 'restored', name: 'Restored', initialize }]);
+            const uninstall = fresh.setupLiveFeatureStart();
+            await fresh.initializeFeatures();
+            uninstall();
+
+            state.enabledFeatures.add('restored');
+            bulkLoad();
+            await settle();
+
+            expect(initialize).not.toHaveBeenCalled();
+            expect(state.settingsLoadedListeners).toHaveLength(0);
         });
     });
 
