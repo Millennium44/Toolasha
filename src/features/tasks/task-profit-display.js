@@ -648,6 +648,9 @@ class TaskProfitDisplay {
             }
             return;
         }
+        if (key === 'taskCombatEstimate' && !value) {
+            this._cardEstimates = new WeakMap();
+        }
         this.updateTaskProfits(true);
     }
 
@@ -988,6 +991,9 @@ class TaskProfitDisplay {
      * @private
      */
     _resolveGoEstimate(taskNode) {
+        // Checked here, not only when drawing: a simulation still in flight when the
+        // setting went off stores its estimate after the redraw that cleared the rest
+        if (!config.getSetting('taskCombatEstimate')) return null;
         const estimate = this._cardEstimates.get(taskNode);
         if (!estimate || !estimate.zoneHrid || !Number.isFinite(estimate.predictedFights)) return null;
 
