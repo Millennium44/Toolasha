@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Deleted chat messages leave Toolasha too
+
+- A chat message deleted by its author or a moderator is removed from Toolasha's saved chat history, the mention log and the pop-out chat, and one that arrives already deleted is never saved.
+
 ### Locked items are never sold (test server first)
 
 - Items you Lock in the game's new Favorite / Lock menu are skipped by the bulk sell assistant and can't be added to the sell queue.
