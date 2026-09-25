@@ -615,6 +615,8 @@ export default class CustomTabsUI {
         this._expandedSearchHrids = null; // Set of base hrids expanded in the item picker
         this._isApplying = false; // Guard against concurrent _applyLayout calls
         this._needsAnotherPass = false; // Deferred layout re-run flag
+        this._badgeRefreshRunning = false; // A post-layout badge render is waiting or rendering
+        this._badgeRefreshWanted = false; // Another badge render was requested meanwhile
         this._lastRebuildTileCount = 0; // Tile count at last full rebuild (detects inventory changes)
         this._actionBtnsEl = null; // +Tab/Export/Import appended to sort controls row on Toolasha tab
         this._tileObserver = null; // MutationObserver for instant tile visibility on React swaps
@@ -1421,7 +1423,7 @@ export default class CustomTabsUI {
         // by `character_initialized` redraws once the right config is in hand.
         if (!this._isConfigForCurrentCharacter()) return;
 
-        // Guard against concurrent calls — defer and re-run after current pass
+        // Guard against re-entry from inside the synchronous pass — defer and re-run after it
         if (this._isApplying) {
             this._needsAnotherPass = true;
             return;
@@ -1429,39 +1431,63 @@ export default class CustomTabsUI {
         this._isApplying = true;
         this._needsAnotherPass = false;
 
+        // The lock covers the synchronous layout only. It used to be held across the badge wait
+        // below as well, so any pass arriving while the badge manager was busy (pricing tiles a
+        // native tab switch had just re-rendered, for seconds) queued behind it and left the view
+        // blank. A hand-off to a native re-render (false) draws nothing and needs no badges.
+        let invContainer = null;
+        let laidOut = false;
         try {
-            const invContainer = this._findInvContainer();
-            if (!invContainer) return;
-
-            // A hand-off to a native re-render returns at once: the badge manager is busy pricing
-            // the re-rendered tiles, and waiting on it here held the lock that the follow-up pass
-            // (rAF / tile observer) needs, leaving the view blank for seconds.
-            if (!this._applyLayoutSync(invContainer)) return;
-
-            // Run badge manager AFTER visibility is restored — badges are independent of tile
-            // order/visibility, and running them before caused React tile replacements (on
-            // enhancement level changes) to appear as a ~16ms flicker in the custom tab.
-            if (!inventoryBadgeManager.currentInventoryElem) {
-                inventoryBadgeManager.currentInventoryElem = invContainer;
-            }
-            // Deadline-capped wait — if the badge manager's guard flags ever stick
-            // (e.g. an uncaught throw), give up instead of spinning forever.
-            const waitDeadline = Date.now() + 5000;
-            while (
-                (inventoryBadgeManager.isRendering || inventoryBadgeManager.isCalculating) &&
-                Date.now() < waitDeadline
-            ) {
-                await new Promise((resolve) => setTimeout(resolve, 20));
-            }
-            inventoryBadgeManager.lastRenderTime = 0;
-            inventoryBadgeManager.lastCalculationTime = 0;
-            await inventoryBadgeManager.renderAllBadges();
+            invContainer = this._findInvContainer();
+            if (invContainer) laidOut = this._applyLayoutSync(invContainer);
         } finally {
             this._isApplying = false;
             if (this._needsAnotherPass) {
                 this._needsAnotherPass = false;
                 this._applyLayout();
             }
+        }
+        if (laidOut) await this._refreshBadgesWhenSettled(invContainer);
+    }
+
+    /**
+     * Re-render inventory badges once the badge manager is idle, after a layout pass. Runs
+     * outside the layout lock; requests arriving while one is waiting or rendering are folded
+     * into one more render, so the newest layout always gets badges.
+     *
+     * Runs AFTER visibility is restored — badges are independent of tile order/visibility, and
+     * running them before caused React tile replacements (on enhancement level changes) to
+     * appear as a ~16ms flicker in the custom tab.
+     * @param {HTMLElement} invContainer
+     * @returns {Promise<void>}
+     */
+    async _refreshBadgesWhenSettled(invContainer) {
+        this._badgeRefreshWanted = true;
+        if (this._badgeRefreshRunning) return;
+        this._badgeRefreshRunning = true;
+        try {
+            while (this._badgeRefreshWanted) {
+                if (!inventoryBadgeManager.currentInventoryElem) {
+                    inventoryBadgeManager.currentInventoryElem = invContainer;
+                }
+                // Deadline-capped wait — if the badge manager's guard flags ever stick
+                // (e.g. an uncaught throw), give up instead of spinning forever.
+                const waitDeadline = Date.now() + 5000;
+                while (
+                    (inventoryBadgeManager.isRendering || inventoryBadgeManager.isCalculating) &&
+                    Date.now() < waitDeadline
+                ) {
+                    await new Promise((resolve) => setTimeout(resolve, 20));
+                }
+                if (!this._isActive) return;
+                // Requests made during the wait are served by this render
+                this._badgeRefreshWanted = false;
+                inventoryBadgeManager.lastRenderTime = 0;
+                inventoryBadgeManager.lastCalculationTime = 0;
+                await inventoryBadgeManager.renderAllBadges();
+            }
+        } finally {
+            this._badgeRefreshRunning = false;
         }
     }
 

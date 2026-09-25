@@ -358,6 +358,36 @@ describe('native inventory tabs (post-patch DOM)', () => {
         for (const fn of rafQueue.splice(0)) fn();
         expect(layout).toHaveBeenCalledTimes(1);
         badges.isCalculating = false;
+        ui.cleanup();
+    });
+
+    test('re-entering on All while badges are still busy draws the layout at once', async () => {
+        // Measured live: switch the native tab to All, enter within a second → ~3.7 s blank.
+        // The re-render keeps the badge manager busy, and a layout pass still waiting on it
+        // (here, from the previous visit) used to hold the layout lock the new entry needs.
+        const { characterTabList, inventoryPanel } = buildCharacterPanel();
+        const fixture = buildNewInventory(inventoryPanel, 'inventory_all');
+        badges.isCalculating = true;
+        const render = vi.spyOn(badges, 'renderAllBadges');
+        const ui = newUI();
+        ui._isActive = false;
+
+        ui._activatePanel();
+        expectLaidOut(fixture.inv);
+        ui._deactivatePanel(characterTabList.querySelector('[role="tab"]'));
+        expect(fixture.inv.classList.contains('toolasha-ct-active')).toBe(false);
+
+        ui._activatePanel();
+        expectLaidOut(fixture.inv);
+        expect(render).not.toHaveBeenCalled();
+
+        // Badges follow once the manager settles — one render for both passes
+        badges.isCalculating = false;
+        await vi.waitFor(() => expect(render).toHaveBeenCalled());
+        await new Promise((resolve) => setTimeout(resolve, 60));
+        expect(render).toHaveBeenCalledTimes(1);
+        render.mockRestore();
+        ui.cleanup();
     });
 
     test('leaves the native selection alone when "All" is already selected', () => {
