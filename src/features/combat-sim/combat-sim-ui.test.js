@@ -5693,6 +5693,59 @@ describe('planning to a points target from the panel', () => {
         expect(footer).toContain('best single zone Farm T0 reaches 2 in 0:12 h');
         expect(mocks.store.get('settings:combatSimBestiaryPlanPoints')).toBe(2);
     });
+
+    test('total mode plans for the gap between the Bestiary’s current total and the target', async () => {
+        // Fly at 8 kills is worth 1 point so far (pointsFromCount(8) === 1);
+        // asking for a total of 3 should ask the planner for a gap of 2, not 3.
+        mocks.monsters = [{ monsterHrid: '/monsters/fly', count: 8 }];
+        await ui._displayAllZonesResults([result('Farm', { '/monsters/fly': 10 })], 1, gameData);
+
+        ui.panel.querySelector('#mwi-csim-bestiary-plan-mode').value = 'total';
+        change('#mwi-csim-bestiary-plan-mode');
+        const label = ui.panel.querySelector('#mwi-csim-bestiary-plan-label');
+        expect(label.textContent).toBe('Total wanted');
+
+        const note = ui.panel.querySelector('#mwi-csim-bestiary-plan-total-note');
+        expect(note.textContent).toBe('you have 1 · need 999');
+
+        ui.panel.querySelector('#mwi-csim-bestiary-plan-value').value = '3';
+        click('#mwi-csim-bestiary-plan-btn');
+
+        const plan = ui._currentBestiaryPlan();
+        expect(plan.targetPoints).toBe(2);
+
+        const footer = ui.panel.querySelector('#mwi-csim-bestiary-plan-footer').textContent;
+        expect(footer).toContain('3 total (+2)');
+        expect(mocks.store.get('settings:combatSimBestiaryPlanTotal')).toBe(3);
+    });
+
+    test('a target at or below the current total shows an "already at" note and no route', async () => {
+        // Fly at 8 kills is worth 1 point so far; asking for a total of 1 is
+        // already reached and should never reach the planner.
+        mocks.monsters = [{ monsterHrid: '/monsters/fly', count: 8 }];
+        await ui._displayAllZonesResults([result('Farm', { '/monsters/fly': 10 })], 1, gameData);
+
+        ui.panel.querySelector('#mwi-csim-bestiary-plan-mode').value = 'total';
+        change('#mwi-csim-bestiary-plan-mode');
+        ui.panel.querySelector('#mwi-csim-bestiary-plan-value').value = '1';
+        click('#mwi-csim-bestiary-plan-btn');
+
+        expect(ui._currentBestiaryPlan()).toBeNull();
+        const out = ui.panel.querySelector('#mwi-csim-bestiary-plan-out').textContent;
+        expect(out).toContain('already at 1');
+        expect(ui.panel.querySelectorAll('#mwi-csim-bestiary-plan-out tbody tr')).toHaveLength(0);
+    });
+
+    test('total mode persists its own mode and target separately from points mode', async () => {
+        mocks.monsters = [{ monsterHrid: '/monsters/fly', count: 8 }];
+        await ui._displayAllZonesResults([result('Farm', { '/monsters/fly': 10 })], 1, gameData);
+
+        ui.panel.querySelector('#mwi-csim-bestiary-plan-mode').value = 'total';
+        change('#mwi-csim-bestiary-plan-mode');
+        await Promise.resolve();
+        expect(mocks.store.get('settings:combatSimBestiaryPlanMode')).toBe('total');
+        expect(ui._bestiaryPlanMode).toBe('total');
+    });
 });
 
 describe('dungeons in the all-zones run and in the plan', () => {

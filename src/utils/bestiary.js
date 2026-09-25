@@ -72,6 +72,26 @@ export function nextPointCount(count) {
 }
 
 /**
+ * The Bestiary's current total points: {@link pointsFromCount} summed over
+ * every monster's count.
+ *
+ * Takes the same `monsterHrid → count` map {@link countsByMonster} produces —
+ * a monster the game has never sent a `monsters_updated` row for (never
+ * fought) has no entry and correctly contributes 0, since `countsByMonster`
+ * only ever holds rows the game actually sent. There is no separate "every
+ * monster the game knows about" source to reconcile against: an unfought
+ * monster's count is 0 either way, and `pointsFromCount(0)` is 0.
+ *
+ * @param {Object} counts - monsterHrid → defeated count (see {@link countsByMonster})
+ * @returns {number} Total points earned so far
+ */
+export function totalBestiaryPoints(counts) {
+    let total = 0;
+    for (const count of Object.values(counts || {})) total += pointsFromCount(count);
+    return total;
+}
+
+/**
  * What one kill is worth to *your* Bestiary, in credits.
  *
  * The game's Bestiary help states both halves:
