@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Inventory sort works with the game's new inventory tabs (test server first)
+
+- Sorting by Ask/Bid follows each category again under the game's new tabs, including single-category tabs, keeps Loots unsorted and Equipment on its own setting, and re-sorts as soon as you switch tabs; it no longer waits on badge pricing or gets stuck.
+
 ### Combat sim bestiary plan and column agree for dungeons
 
 - The bestiary plan no longer credits a dungeon's wiped attempts to its few finished clears or borrows another tier's clear times, so its steps match the Bestiary pts/day column; a dungeon the sim never cleared shows "—" instead of a wave count labelled as clears.
