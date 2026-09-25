@@ -103,6 +103,13 @@ const SINGLE_COPY_FEATURES = new Set([
 
 const ALLOWLIST = new Map([
     [
+        'src/utils/item-hash.js',
+        // One pure string parser over an action's item hash, no module state.
+        // The ui bundle (action time display) and the market bundle (production
+        // income recorder) each read the upgrade stack's level with it.
+        'stateless item-hash parser; no module state to share',
+    ],
+    [
         'src/utils/gathering-processing.js',
         // Processing estimates are pure arithmetic over one drop-table row and
         // its bonuses. Actions and market bundle copies share the same source
