@@ -452,9 +452,27 @@ describe('the progress strip counts stacks, not items', () => {
             { itemHrid: '/items/milk', enhancementLevel: 0, count: 100, name: 'Milk', stackValue: 1 },
         ];
         bulkSell.index = 2; // past the end of the queue
+        bulkSell.heldCount = 0;
+        bulkSell.enhancedSkipped = 0;
+        bulkSell.lockedSkipped = 0;
+        bulkSell.loadoutsChecked = true;
         bulkSell._prepareCurrent();
 
         expect(bulkSell.statusNote).toBe('Done — 2 stacks processed');
+    });
+
+    test('the finished message keeps the locked-skip summary the first step cleared', () => {
+        // Start sets the summary as the status, but every step clears transient status,
+        // so without saying it again at the end a run with locked stacks just looks short
+        bulkSell.queue = [{ itemHrid: '/items/milk', enhancementLevel: 0, count: 100, name: 'Milk', stackValue: 1 }];
+        bulkSell.index = 1;
+        bulkSell.heldCount = 0;
+        bulkSell.enhancedSkipped = 0;
+        bulkSell.lockedSkipped = 12;
+        bulkSell.loadoutsChecked = true;
+        bulkSell._prepareCurrent();
+
+        expect(bulkSell.statusNote).toBe('Done — 1 stacks processed (12 locked items skipped)');
     });
 });
 
