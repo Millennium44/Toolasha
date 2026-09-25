@@ -134,7 +134,9 @@ describe('a character switch landing inside the stored-settings read', () => {
 
         expect(inventorySort.isInitialized).toBe(true);
         expect(inventorySort.currentMode).toBe('value');
-        expect(observerMock.live).toBe(2);
+        // onReady catch-up + onClass('Inventory_items') + onClass('Inventory_categoryButton')
+        // (the native-tab-switch watcher), registered once and not doubled by the re-initialise
+        expect(observerMock.live).toBe(3);
         expect(badgeMock.providers.has('inventory-stack-price')).toBe(true);
     });
 });
