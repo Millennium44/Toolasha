@@ -67,6 +67,7 @@ class InventorySort {
         this.priceUpdateHandler = null; // Handler for market price updates
         this.priceUpdateDebounceTimer = null; // Debounce timer for price updates
         this.tabSwitchDebounceTimer = null; // Debounce timer for native-inventory-tab switches
+        this.tabClickHandler = null; // Capture-phase click fallback for native tab switches
         this.DEBOUNCE_DELAY = 300; // 300ms debounce for event handlers
         this.timerRegistry = createTimerRegistry();
     }
@@ -190,6 +191,27 @@ class InventorySort {
             }
         );
         this.unregisterHandlers.push(unregisterTabSwitch);
+
+        // A second, independent trigger for the same reapply: switching to a single-category
+        // native tab (e.g. "Resources") was measured live to produce no detectable mutation at
+        // all — no fresh Inventory_categoryButton insertion, unlike the multi-category "All" tab,
+        // which does re-render its category divs wholesale. Whatever the game does differently for
+        // a single panel (React reusing/patching existing nodes instead of replacing them is the
+        // likely cause, though it was not directly observable), a click on the tab strip itself is
+        // a reliable signal regardless: capture-phase so it is seen even if the game's own handler
+        // stops propagation, structural (role="tab", not a class name the game could rename), and
+        // scoped to the current inventory so it ignores the character panel's own Inventory/
+        // Equipment tab strip, which sits outside Inventory_items entirely.
+        this.tabClickHandler = (event) => {
+            const tab = event.target?.closest?.('[role="tab"]');
+            if (!tab || !this.currentInventoryElem?.contains(tab)) return;
+            this.scheduleApplyCurrentSort();
+        };
+        document.addEventListener('click', this.tabClickHandler, true);
+        this.unregisterHandlers.push(() => {
+            document.removeEventListener('click', this.tabClickHandler, true);
+            this.tabClickHandler = null;
+        });
 
         // Store handler reference for cleanup with debouncing
         this.itemsUpdatedHandler = () => {
@@ -462,12 +484,19 @@ class InventorySort {
     /**
      * Apply current sort mode to inventory.
      *
-     * `isCalculating` is only ever set/cleared synchronously around `_sortInventoryOnce()`, whose
-     * own badge-manager wait is bounded by `withBoundedWait` — so this method's `finally` always
-     * runs and the guard can never stick. A call that arrives while one is already running is not
-     * dropped: it sets `rerunRequested`, and the in-flight run (once it finishes, whether that is
-     * because the work actually finished or because the bounded wait gave up on it) runs once more
-     * before returning, so a legitimate request made during that window is not lost.
+     * The category/order pass is synchronous and does not wait on the badge manager: live testing
+     * measured 3–5 s for a re-sort with badge display OFF, because the old code awaited
+     * `renderAllBadges()` — dominated by per-item price calculation, not by anything the order
+     * pass itself needs beyond the `data-ask-value`/`data-bid-value` a tile already carries from
+     * its last pricing pass — before touching a single tile's `order`. Pricing now runs in the
+     * background (`_refreshPricesInBackground`) and corrects the order once real values land, so
+     * the visible reorder is bounded by the debounce (~300 ms) instead of by pricing.
+     *
+     * `isCalculating` is only ever set/cleared synchronously around `_applyCategoryOrderPass()`,
+     * which does no awaiting at all — so this method's `finally` always runs and the guard can
+     * never stick. A call that arrives while one is already running is not dropped: it sets
+     * `rerunRequested`, and the in-flight run performs one more pass before returning, so a
+     * legitimate request made during that window is not lost.
      */
     async applyCurrentSort() {
         if (!this.currentInventoryElem) return;
@@ -478,8 +507,9 @@ class InventorySort {
         }
         this.isCalculating = true;
 
+        const inventoryElem = this.currentInventoryElem;
         try {
-            await this._sortInventoryOnce();
+            this._applyCategoryOrderPass(inventoryElem);
         } finally {
             this.isCalculating = false;
         }
@@ -487,22 +517,45 @@ class InventorySort {
         if (this.rerunRequested) {
             this.rerunRequested = false;
             await this.applyCurrentSort();
+            return; // the rerun's own background refresh below covers this pass too
+        }
+
+        // Fire-and-forget: never awaited, so the visible reorder above is never held up by it.
+        this._refreshPricesInBackground(inventoryElem);
+    }
+
+    /**
+     * Refresh prices (and, if enabled, badges) in the background, then correct the order pass
+     * once real values land. Not awaited by `applyCurrentSort()` — see there for why. Bounded by
+     * `withBoundedWait`, and applied at most once per call (it does not re-schedule itself), so a
+     * still-in-cooldown or no-op refresh cannot loop.
+     * @param {Element} inventoryElem - The inventory element this refresh is for
+     */
+    async _refreshPricesInBackground(inventoryElem) {
+        try {
+            await withBoundedWait(inventoryBadgeManager.renderAllBadges(), this.BADGE_RENDER_TIMEOUT_MS);
+            // Only reapply if nothing else moved on in the meantime: a different inventory is now
+            // showing, or another pass is already in flight and will see the fresh values itself.
+            if (this.currentInventoryElem === inventoryElem && !this.isCalculating) {
+                this._applyCategoryOrderPass(inventoryElem);
+            }
+        } catch (error) {
+            console.error('[InventorySort] Background price refresh failed:', error);
         }
     }
 
     /**
-     * The body of `applyCurrentSort()`, run under its guard.
+     * The category/order pass: no awaiting, so it can never hold `isCalculating` open. Uses
+     * whatever `data-ask-value`/`data-bid-value` each tile currently carries — freshly-mounted
+     * tiles (e.g. right after a native tab switch) may not have those yet, in which case this
+     * pass is a harmless no-op (ties keep DOM order) until `_refreshPricesInBackground` corrects
+     * it once real values land.
+     * @param {Element} inventoryElem - The Inventory_items element to sort
      * @private
      */
-    async _sortInventoryOnce() {
-        const inventoryElem = this.currentInventoryElem;
-
-        // Trigger badge manager to calculate prices and render badges. Bounded: see
-        // withBoundedWait — a hung render must not hold isCalculating open forever.
-        await withBoundedWait(inventoryBadgeManager.renderAllBadges(), this.BADGE_RENDER_TIMEOUT_MS);
-
+    _applyCategoryOrderPass(inventoryElem) {
         // Skip order assignments when custom tabs has taken over the layout —
-        // badges are still updated above, but tile order is managed by custom tabs.
+        // badges are still refreshed in the background, but tile order is managed by custom tabs.
         if (inventoryElem.classList.contains('toolasha-ct-active')) {
             return;
         }

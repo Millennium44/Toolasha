@@ -26,14 +26,23 @@
  * the grid differ between them.
  *
  * A THIRD live symptom (still zero tiles ordered, after the above fix): `applyCurrentSort()`
- * holds `isCalculating` across an `await inventoryBadgeManager.renderAllBadges()`, inside a
+ * held `isCalculating` across an `await inventoryBadgeManager.renderAllBadges()`, inside a
  * try/finally most callers assume always clears the guard — but a finally block never runs while
  * its function is suspended on an await that never settles. One `renderAllBadges()` call (likely
  * from startup, competing with the extra calls the tab-switch watcher above makes) got a promise
  * that never resolved, so `isCalculating` stuck `true` forever and every later sort request was
- * silently dropped by the reentrancy guard. The fix bounds that await (`withBoundedWait`) so the
- * function is always resumed, and coalesces a request that arrives mid-run into exactly one more
- * pass afterward instead of dropping it.
+ * silently dropped by the reentrancy guard.
+ *
+ * A FOURTH live symptom, after bounding that wait: re-sorting still took 3–5 s (target: the
+ * ~300 ms debounce), because the order pass still *awaited* `renderAllBadges()` before touching
+ * any tile — and that call is dominated by per-item price calculation, not by anything the order
+ * pass needs beyond the `data-ask-value`/`data-bid-value` a tile already carries from its last
+ * pricing pass. The order pass is now synchronous and never awaits the badge manager at all;
+ * pricing runs in the background afterward and corrects the order once real values land. A FIFTH
+ * symptom: switching to a single-category native tab (e.g. "Resources") produced no detectable
+ * mutation for the `Inventory_categoryButton` watcher to see at all — a capture-phase click
+ * listener on `[role="tab"]` inside the inventory is a second, independent trigger for the same
+ * reapply, regardless of how the game ends up re-rendering that panel's tiles.
  */
 
 import { describe, test, expect, beforeEach, afterEach, vi } from 'vitest';
@@ -41,8 +50,12 @@ import { describe, test, expect, beforeEach, afterEach, vi } from 'vitest';
 const settings = vi.hoisted(() => ({ invSort: true, invSort_sortEquipment: false }));
 /** Callbacks registered with the DOM observer, so a test can play a class match or a tab switch */
 const observer = vi.hoisted(() => ({ classHandlers: new Map() }));
-/** Controls the mocked badge manager's renderAllBadges(): resolves normally unless `hang` is set */
-const badgeManager = vi.hoisted(() => ({ hang: false, calls: 0 }));
+/**
+ * Controls the mocked badge manager's renderAllBadges(): resolves normally (running `onRender`
+ * first, so a test can simulate prices landing) unless `hang` is set, in which case it never
+ * settles at all.
+ */
+const badgeManager = vi.hoisted(() => ({ hang: false, calls: 0, onRender: null }));
 
 vi.mock('../../core/config.js', () => ({
     default: {
@@ -75,11 +88,15 @@ vi.mock('./inventory-badge-manager.js', () => ({
         unregisterProvider: () => {},
         invalidateCache: () => {},
         clearProcessedTracking: () => {},
-        renderAllBadges: () => {
+        renderAllBadges: async () => {
             badgeManager.calls += 1;
-            // A promise that never resolves, matching the live symptom: renderAllBadges() got
-            // stuck and never settled.
-            return badgeManager.hang ? new Promise(() => {}) : Promise.resolve();
+            if (badgeManager.hang) {
+                // A promise that never resolves, matching the live symptom: renderAllBadges() got
+                // stuck and never settled.
+                return new Promise(() => {});
+            }
+            await Promise.resolve();
+            badgeManager.onRender?.();
         },
     },
 }));
@@ -202,6 +219,7 @@ describe('InventorySort.applyCurrentSort — category scoping', () => {
         settings.invSort = true;
         settings.invSort_sortEquipment = false;
         badgeManager.hang = false;
+        badgeManager.onRender = null;
         badgeManager.calls = 0;
         inventorySort.currentMode = 'ask';
         inventorySort.isCalculating = false;
@@ -319,6 +337,7 @@ describe('InventorySort.applyCurrentSort — cannot wedge on a hung badge render
         settings.invSort = true;
         settings.invSort_sortEquipment = false;
         badgeManager.hang = false;
+        badgeManager.onRender = null;
         badgeManager.calls = 0;
         inventorySort.currentMode = 'ask';
         inventorySort.isCalculating = false;
@@ -331,7 +350,7 @@ describe('InventorySort.applyCurrentSort — cannot wedge on a hung badge render
         inventorySort.currentInventoryElem = null;
     });
 
-    test('a renderAllBadges() that never resolves does not block this sort forever', async () => {
+    test('the order pass does not wait on badge pricing: a hung renderAllBadges() never blocks it', async () => {
         badgeManager.hang = true;
         const inv = buildOldInventory([
             [
@@ -344,43 +363,103 @@ describe('InventorySort.applyCurrentSort — cannot wedge on a hung badge render
         ]);
         inventorySort.currentInventoryElem = inv;
 
-        const applyPromise = inventorySort.applyCurrentSort();
+        // Resolves right away — the tiles already carry their price data, and the order pass
+        // never awaits the (hung) badge manager to use it.
+        await inventorySort.applyCurrentSort();
 
-        // Still inside the bounded wait — the hung renderAllBadges() has not resolved.
-        await Promise.resolve();
-        expect(inventorySort.isCalculating).toBe(true);
-
-        await vi.advanceTimersByTimeAsync(inventorySort.BADGE_RENDER_TIMEOUT_MS);
-        await applyPromise;
-
-        // The bounded wait gave up and the sort still ran and completed.
         expect(inventorySort.isCalculating).toBe(false);
         const items = itemsByHrid(inv);
         expect(items.get('c2').style.order).toBe('0');
         expect(items.get('c1').style.order).toBe('1');
+
+        // The background price refresh is still in flight (hung); letting its bound elapse must
+        // not throw or leave stray state.
+        await vi.advanceTimersByTimeAsync(inventorySort.BADGE_RENDER_TIMEOUT_MS);
+        expect(inventorySort.isCalculating).toBe(false);
     });
 
-    test('a wedged render does not leave isCalculating stuck: a later call is not dropped forever', async () => {
+    test('a hung background refresh does not block or drop a later sort request', async () => {
         badgeManager.hang = true;
         const inv = buildOldInventory([['Currencies', [['c1', 10]]]]);
         inventorySort.currentInventoryElem = inv;
 
-        const firstApply = inventorySort.applyCurrentSort();
-        await Promise.resolve();
+        await inventorySort.applyCurrentSort(); // starts a background refresh that never resolves
 
-        // A second request arrives while the first is still (bounded-)waiting on the hung render.
-        // It must not be lost: applyCurrentSort() coalesces it into a rerun after the first pass.
-        const secondApply = inventorySort.applyCurrentSort();
-        expect(inventorySort.rerunRequested).toBe(true);
-
-        await vi.advanceTimersByTimeAsync(inventorySort.BADGE_RENDER_TIMEOUT_MS);
-        // The coalesced rerun makes its own (also hung) renderAllBadges() call, bounded the same way.
-        await vi.advanceTimersByTimeAsync(inventorySort.BADGE_RENDER_TIMEOUT_MS);
-        await Promise.all([firstApply, secondApply]);
+        // A second, unrelated sort request must work normally — isCalculating is not held open by
+        // the background refresh the first call kicked off.
+        inventorySort.currentMode = 'none';
+        await inventorySort.applyCurrentSort();
 
         expect(inventorySort.isCalculating).toBe(false);
-        expect(inventorySort.rerunRequested).toBe(false);
-        expect(itemsByHrid(inv).get('c1').style.order).toBe('0');
+        expect(itemsByHrid(inv).get('c1').style.order).toBe('');
+    });
+
+    test('a call arriving while isCalculating is true is coalesced into a rerun, not dropped', async () => {
+        const inv = buildOldInventory([['Currencies', [['c1', 10]]]]);
+        inventorySort.currentInventoryElem = inv;
+        inventorySort.isCalculating = true; // simulate a pass already in flight
+
+        await inventorySort.applyCurrentSort();
+
+        // Not dropped, and not run twice on top of the in-flight one either — just remembered.
+        expect(inventorySort.rerunRequested).toBe(true);
+        expect(itemsByHrid(inv).get('c1').style.order).toBe('');
+    });
+});
+
+describe('InventorySort.applyCurrentSort — background price refresh corrects the order', () => {
+    beforeEach(() => {
+        document.body.innerHTML = '';
+        settings.invSort = true;
+        settings.invSort_sortEquipment = false;
+        badgeManager.hang = false;
+        badgeManager.onRender = null;
+        badgeManager.calls = 0;
+        inventorySort.currentMode = 'ask';
+        inventorySort.isCalculating = false;
+        inventorySort.rerunRequested = false;
+        vi.useFakeTimers();
+    });
+
+    afterEach(() => {
+        vi.useRealTimers();
+        inventorySort.currentInventoryElem = null;
+    });
+
+    test('freshly-mounted tiles with no price data yet get ordered once pricing lands in the background', async () => {
+        // Simulates a tab switch: the new tiles carry no data-ask-value/data-bid-value at all yet.
+        const inv = buildOldInventory([
+            [
+                'Currencies',
+                [
+                    ['c1', 0],
+                    ['c2', 0],
+                ],
+            ],
+        ]);
+        const items = itemsByHrid(inv);
+        items.get('c1').removeAttribute('data-ask-value');
+        items.get('c2').removeAttribute('data-ask-value');
+        inventorySort.currentInventoryElem = inv;
+
+        // Once the background "pricing" pass lands, give the tiles their real values.
+        badgeManager.onRender = () => {
+            items.get('c1').dataset.askValue = '10';
+            items.get('c2').dataset.askValue = '30';
+        };
+
+        await inventorySort.applyCurrentSort();
+
+        // Immediate pass: no price data yet, so the tiles are tied — the stable sort keeps them
+        // in DOM order (c1, then c2) rather than reflecting the real prices that land afterward.
+        expect(items.get('c1').style.order).toBe('0');
+        expect(items.get('c2').style.order).toBe('1');
+
+        // Let the background refresh's microtasks (and its own bounded wait) settle.
+        await vi.advanceTimersByTimeAsync(0);
+
+        expect(items.get('c2').style.order).toBe('0'); // value 30, highest first
+        expect(items.get('c1').style.order).toBe('1');
     });
 });
 
@@ -391,6 +470,7 @@ describe('InventorySort — reapplies sort when a native tab switch re-renders t
         settings.invSort = true;
         settings.invSort_sortEquipment = false;
         badgeManager.hang = false;
+        badgeManager.onRender = null;
         badgeManager.calls = 0;
         inventorySort.currentMode = 'none';
         inventorySort.isCalculating = false;
@@ -454,5 +534,58 @@ describe('InventorySort — reapplies sort when a native tab switch re-renders t
         // Nothing to reapply: the existing tile's order is untouched by this no-op trigger.
         const items = itemsByHrid(inv);
         expect(items.get('c1').style.order).toBe('0');
+    });
+
+    test('a click on the tab strip reapplies sort even when no mutation is observed', async () => {
+        // Live symptom: switching to a single-category native tab ("Resources") produced no
+        // detectable Inventory_categoryButton insertion at all -- unlike the multi-category "All"
+        // tab, which does rebuild its category divs wholesale. This test never fires the
+        // categoryButton watcher, so it only passes if the click listener itself is the trigger.
+        await inventorySort.initialize();
+
+        const { inv, panel } = buildNewInventory([['Currencies', [['c1', 10]]]]);
+        observer.classHandlers.get('InventorySort:Inventory_items')(inv);
+        inventorySort.currentMode = 'ask';
+        // Let the initial mount's own sort pass fully settle before mutating further, so what
+        // follows is unambiguously the click's doing and not a stray in-flight pass picking up
+        // the later DOM change on its own.
+        await vi.advanceTimersByTimeAsync(0);
+
+        // Stand in for whatever the game did to the panel's tiles: change a value and add a tile,
+        // without going through the categoryButton observer.
+        const grid = panel.querySelector('[class*="Inventory_itemGrid"]');
+        grid.appendChild(tile('c5', 999));
+
+        const tabButton = document.createElement('button');
+        tabButton.setAttribute('role', 'tab');
+        inv.appendChild(tabButton); // inside the inventory, so it is in scope
+        tabButton.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+
+        await vi.advanceTimersByTimeAsync(inventorySort.DEBOUNCE_DELAY);
+
+        const items = itemsByHrid(inv);
+        expect(items.get('c5').style.order).toBe('0'); // value 999, highest first
+        expect(items.get('c1').style.order).toBe('1');
+    });
+
+    test('a tab click outside the current inventory element is ignored', async () => {
+        await inventorySort.initialize();
+
+        const { inv } = buildNewInventory([['Currencies', [['c1', 10]]]]);
+        observer.classHandlers.get('InventorySort:Inventory_items')(inv);
+        inventorySort.currentMode = 'ask';
+        await vi.advanceTimersByTimeAsync(0);
+
+        // e.g. the CharacterManagement panel's own Inventory/Equipment tab strip, outside
+        // Inventory_items entirely.
+        const strayTab = document.createElement('button');
+        strayTab.setAttribute('role', 'tab');
+        document.body.appendChild(strayTab);
+        strayTab.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+
+        await vi.advanceTimersByTimeAsync(inventorySort.DEBOUNCE_DELAY);
+
+        // Nothing to reapply: the existing tile's order is untouched by this out-of-scope click.
+        expect(itemsByHrid(inv).get('c1').style.order).toBe('0');
     });
 });
