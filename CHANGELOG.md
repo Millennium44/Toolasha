@@ -6,6 +6,12 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Fixes from the 3.60.0 release review
+
+- Production income applies Artisan and Gourmet from the gear and drinks actually worn, not a saved loadout, and prices an enhanced upgrade item at its real enhancement level.
+- A Combat Level panel target typed just before a character switch no longer lands on the next character.
+- Pinned actions rank every row by the same liquidity-capped profit, whether or not its skill tab was browsed first.
+
 ### Trade stats table starts and stops cleanly
 
 - The marketplace trade stats table no longer registers twice when two settings change at once, no longer leaks a cleanup per item viewed, and stays off when switched off while it is still starting up.
