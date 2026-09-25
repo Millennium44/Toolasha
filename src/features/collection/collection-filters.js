@@ -1012,8 +1012,11 @@ class CollectionFilters {
 
         // Badges alone only need the counts scanned above. The checkboxes, the sort row, the saved
         // sort order and the remembered "show uncollected" belong to filters and favorites, and
-        // must not rearrange the grid for a player who switched both off.
+        // must not rearrange the grid for a player who switched both off. The sort controls are
+        // gone too, so any inline order/margin/overflow left from a prior sort must be cleared here
+        // — nothing else will ever reset them.
         if (!this._filtersEnabled && !this._favoritesEnabled) {
+            this._clearSortStyles(catsEl);
             this._watchForTiles(panelEl, catsEl, tileCount);
             return;
         }
@@ -1216,21 +1219,32 @@ class CollectionFilters {
     // -------------------------------------------------------------------------
 
     /**
+     * Remove every inline style and badge a prior sort mode left on the tiles: the CSS `order`,
+     * the time-to-next-tier margin/overflow overrides, and the badge elements themselves.
+     * @param {Element} catsEl — the .AchievementsPanel_categories__34hno element
+     */
+    _clearSortStyles(catsEl) {
+        catsEl.querySelectorAll('.Collection_collectionContainer__3ZlUO').forEach((el) => {
+            el.style.removeProperty('order');
+        });
+        catsEl.querySelectorAll('.toolasha-cf.time-to-tier').forEach((el) => {
+            el.parentElement?.style.removeProperty('margin-bottom');
+            el.parentElement?.style.removeProperty('overflow');
+            el.remove();
+        });
+    }
+
+    /**
      * Apply CSS order to collection tiles based on the current sortMode.
      * @param {Element} catsEl — the .AchievementsPanel_categories__34hno element
      */
     _applySorting(catsEl) {
         const tiles = Array.from(catsEl.querySelectorAll('.Collection_collectionContainer__3ZlUO'));
 
-        // Always clear time badges and margin overrides so they disappear when switching modes
-        catsEl.querySelectorAll('.toolasha-cf.time-to-tier').forEach((el) => {
-            el.parentElement?.style.removeProperty('margin-bottom');
-            el.parentElement?.style.removeProperty('overflow');
-            el.remove();
-        });
+        // Always clear order, time badges and margin overrides so they disappear when switching modes
+        this._clearSortStyles(catsEl);
 
         if (this.sortMode === 'default') {
-            tiles.forEach((el) => el.style.removeProperty('order'));
             return;
         }
 
