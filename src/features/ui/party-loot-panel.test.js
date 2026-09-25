@@ -539,6 +539,24 @@ describe('the per-character breakdown', () => {
         expect(cardCoinLine).toBeTruthy();
     });
 
+    test('an unpriced drop in the breakdown is shown as unpriced rather than as worth 0', () => {
+        game.data.players[1].incomeItems = [
+            {
+                itemHrid: '/items/mystery_drop',
+                itemName: 'Mystery Drop',
+                count: 1,
+                isOpenable: false,
+                unitValue: { bid: 0 },
+                totalValue: { bid: 0 },
+            },
+        ];
+        partyLootPanel.show();
+        nameHeading('Millennium44').click();
+
+        expect(text()).toContain('Mystery Drop');
+        expect(text()).toContain('—');
+    });
+
     test('keys are split entry vs chest, each labelled crafted or market', () => {
         partyLootPanel.show();
         nameHeading('Millennium44').click();
@@ -563,12 +581,31 @@ describe('the per-character breakdown', () => {
         expect(text()).toContain('Consumables (estimated)');
     });
 
-    test('the current player is not labelled as an estimate', () => {
+    test('the current player is also labelled as an estimate', () => {
+        // The current player's counts are a consumption-rate estimate too
+        // (rate × duration), not a tally of actual events — see
+        // combat-stats-data-collector.js — so the label reads the same for
+        // every player.
         partyLootPanel.show();
         nameHeading('Millennium44').click();
 
-        expect(text()).toContain('Consumables');
-        expect(text()).not.toContain('Consumables (estimated)');
+        expect(text()).toContain('Consumables (estimated)');
+    });
+
+    test('the name heading is keyboard accessible and Enter toggles it like a click', () => {
+        partyLootPanel.show();
+        const heading = nameHeading('Millennium44');
+
+        expect(heading.getAttribute('role')).toBe('button');
+        expect(heading.getAttribute('tabindex')).toBe('0');
+        expect(heading.getAttribute('aria-expanded')).toBe('false');
+
+        heading.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+        expect(text()).toContain('Income');
+        expect(nameHeading('Millennium44').getAttribute('aria-expanded')).toBe('true');
+
+        nameHeading('Millennium44').dispatchEvent(new KeyboardEvent('keydown', { key: ' ', bubbles: true }));
+        expect(text()).not.toContain('Income');
     });
 
     test('expanded state survives a redraw of the live session', () => {
