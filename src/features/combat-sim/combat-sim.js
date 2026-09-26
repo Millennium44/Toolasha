@@ -9,6 +9,7 @@ import combatSimUI from './combat-sim-ui.js';
 import { cancelSimulation } from './combat-sim-runner.js';
 import { cancelAllZonesSimulation } from './all-zones-runner.js';
 import { registerCommand, unregisterCommand } from '../../utils/command-registry.js';
+import { watchLoadoutModals } from './loadout-sim-button.js';
 
 const BUTTON_CLASS = 'toolasha-combat-sim-btn';
 
@@ -45,6 +46,9 @@ class CombatSim {
             this._injectButton(node);
         });
         this.unregisterHandlers.push(unregister);
+
+        // "Open in sim" on the game's View Loadout modal; inert on a build without View Loadout
+        this.unregisterHandlers.push(watchLoadoutModals());
 
         // @run-at document-start: a combat panel rendered before the shared observer attaches to
         // document.body is invisible to the class watcher, so the catch-up scan waits for the

@@ -114,6 +114,17 @@ vi.mock('../../utils/bundle-bridge.js', () => ({
     loadoutSnapshot: () => ({ getAllSnapshots: () => bridge.snapshots, resolveEquipment: () => [] }),
 }));
 
+// The game's View Loadout: whether this build has it, and what a fetch answers
+const viewLoadout = vi.hoisted(() => ({ available: false, fetches: [], result: null }));
+vi.mock('../../utils/view-loadout.js', () => ({
+    VIEW_LOADOUT_CONTEXT: { Party: 'party', GuildTrial: 'guild_trial' },
+    isViewLoadoutAvailable: () => viewLoadout.available,
+    fetchLoadouts: async (members, context, kind) => {
+        viewLoadout.fetches.push({ members, context, kind });
+        return viewLoadout.result;
+    },
+}));
+
 const { SimEditor } = await import('./sim-editor.js');
 
 const emptyDTO = (hrid) => ({
@@ -144,6 +155,9 @@ function editorWithStrangers() {
 }
 
 beforeEach(() => {
+    viewLoadout.available = false;
+    viewLoadout.fetches = [];
+    viewLoadout.result = null;
     bridge.snapshots = [];
     bridge.applied = [];
     settings.values.clear();
@@ -1096,5 +1110,70 @@ describe('guild shrines', () => {
 
             expect(el.textContent).not.toContain('saved reading');
         });
+    });
+});
+
+describe('Fetch party loadouts', () => {
+    const FETCH_BTN = '[data-fetch-loadouts]';
+
+    beforeEach(() => {
+        game.battleParty = [
+            { characterID: 'me', characterName: 'Milkman' },
+            { characterID: 'a', characterName: 'Ally' },
+        ];
+    });
+
+    test('is not offered on a game build without View Loadout, and nothing is requested', async () => {
+        const el = document.createElement('div');
+        const editor = new SimEditor({ editorEl: el });
+        await editor.initEditor();
+
+        expect(el.querySelector(FETCH_BTN)).toBeNull();
+        expect(await editor.fetchPartyLoadouts()).toBeNull();
+        expect(viewLoadout.fetches).toEqual([]);
+    });
+
+    test('asks for the other members as party loadouts, then reloads the party and says what it got', async () => {
+        viewLoadout.available = true;
+        viewLoadout.result = {
+            status: 'done',
+            loadouts: [{ characterId: 'a', name: 'Ally', hasLoadout: true }],
+            missed: [],
+        };
+        game.allPlayers.profileStatus = [
+            {
+                hrid: 'player2',
+                name: 'Partner',
+                found: true,
+                capturedAt: Date.now(),
+                gearless: false,
+                gearSource: 'loadout',
+                loadoutCapturedAt: Date.now(),
+            },
+        ];
+        const el = document.createElement('div');
+        const editor = new SimEditor({ editorEl: el });
+        await editor.initEditor();
+
+        el.querySelector(FETCH_BTN).click();
+        await vi.waitFor(() => expect(el.textContent).toContain('Fetched 1 party loadout(s).'));
+
+        expect(viewLoadout.fetches).toEqual([
+            { members: [{ characterID: 'a', characterName: 'Ally' }], context: 'party', kind: '' },
+        ]);
+        expect(el.textContent).toContain('(party loadout,');
+        expect(el.querySelector('[data-edit-tab="player2"]').getAttribute('title')).toContain(
+            'gear from party loadout'
+        );
+    });
+
+    test('is not offered solo', async () => {
+        viewLoadout.available = true;
+        game.battleParty = null;
+        const el = document.createElement('div');
+        const editor = new SimEditor({ editorEl: el });
+        await editor.initEditor();
+
+        expect(el.querySelector(FETCH_BTN)).toBeNull();
     });
 });
