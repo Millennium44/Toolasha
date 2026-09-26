@@ -426,8 +426,9 @@ export function gradientLadders(rows, scoredKeys) {
  *
  * A labyrinth plan has one axis — attempts saved — because every fight is the
  * same kind of failure. A combat zone does not: the same 500M spent for DPS,
- * for profit and for EXP buys three different lists, and which one is right is
- * the player's question, not the panel's. So the axis is a choice, and each
+ * for profit, for EXP, for encounters/hr, for fewer deaths/hr, or for the
+ * balanced Score buys six different lists, and which one is right is the
+ * player's question, not the panel's. So the axis is a choice, and each
  * entry knows how to read its gain off a result row and how to say it.
  */
 export const UPGRADE_PLAN_METRICS = [
@@ -449,6 +450,31 @@ export const UPGRADE_PLAN_METRICS = [
         label: 'EXP/hr',
         gain: (row, baseline) => (row?.metrics?.xpPerHour ?? 0) - (baseline?.xpPerHour ?? 0),
         format: (value) => `+${formatKMB(Math.round(value))} EXP/hr`,
+    },
+    {
+        key: 'encounters',
+        label: 'EPH',
+        gain: (row, baseline) => (row?.metrics?.encountersPerHour ?? 0) - (baseline?.encountersPerHour ?? 0),
+        format: (value) => `+${value.toFixed(2)}/hr encounters`,
+    },
+    {
+        key: 'deaths',
+        label: 'Deaths/hr (fewer)',
+        // A death avoided is the gain, so the row's rate is subtracted from the
+        // baseline's — the same flip the Gold/0.01% DPH column already applies.
+        gain: (row, baseline) => (baseline?.deathsPerHour ?? 0) - (row?.metrics?.deathsPerHour ?? 0),
+        format: (value) => `${value.toFixed(2)}/hr fewer deaths`,
+    },
+    {
+        key: 'score',
+        label: 'Score (balanced)',
+        gain: (row) => row?.score ?? 0,
+        format: (value) => `${Math.round(value)} score points`,
+        // Score is an ordinal rank-sum (see `assignRankScores`), not a percentage
+        // delta on a metric the noise model knows how to size an error bar for —
+        // there is no "0.01% of a score" the way there is 0.01% of DPS. Rows
+        // aren't discarded by the significance check on this axis.
+        significant: () => true,
     },
 ];
 
@@ -498,8 +524,11 @@ export function planUpgradeBudget(rows, budget, { baseline = {}, metricKey = 'pr
             // "Inside the error" is a question about one metric at a time — a
             // swap can move DPS well clear of the noise while its profit delta
             // is pure sampling. The axis being shopped for is the one that has
-            // to clear it
-            significant: row.significantBy?.[metric.key] ?? row.significant ?? true,
+            // to clear it. A metric can override this outright (Score has no
+            // percentage delta for the noise model to size an error bar on).
+            significant: metric.significant
+                ? metric.significant(row, baseline)
+                : (row.significantBy?.[metric.key] ?? row.significant ?? true),
         }));
     const coins = Number.isFinite(budget) ? budget : 0;
 
