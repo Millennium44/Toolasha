@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Key pricing means what it says
+
+- "Ask" and "Bid" key pricing now value a dungeon key at its market price, and the combat sim follows the Key pricing setting too; before, Party Loot silently used the crafting cost whenever it was cheaper while the sim used your general buy price, so the two disagreed on dungeon profit. Pick "What it costs you to craft one" to price keys as crafted.
+
 ### Pricing settings inside Party Loot and the combat sim
 
 - Party Loot and the combat sim now carry a compact Buy / Sell / Keys pricing row; changing it updates the setting everywhere and re-prices the panel on the spot, without re-running the sim.
