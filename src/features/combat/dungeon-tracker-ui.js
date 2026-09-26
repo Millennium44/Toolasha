@@ -608,7 +608,7 @@ class DungeonTrackerUI {
         try {
             const drawn = await this.drawHistoryStats(ticket, character);
             if (!drawn) return;
-            await this.updateRunHistory();
+            await this.updateRunHistory(ticket, character);
             await this.updateRoiBoard();
         } catch (error) {
             console.error('[Toolasha Dungeon Tracker UI] Pending-run history failed to draw:', error);
@@ -668,7 +668,7 @@ class DungeonTrackerUI {
         try {
             const drawn = await this.drawHistoryStats(ticket, character);
             if (!drawn) return;
-            await this.updateRunHistory();
+            await this.updateRunHistory(ticket, character);
             await this.updateRoiBoard();
         } catch (error) {
             console.error('[Toolasha Dungeon Tracker UI] Between-runs history failed to draw:', error);
@@ -873,7 +873,7 @@ class DungeonTrackerUI {
         this.updatePaceChip(run, drawn.allRuns, drawn.averageLimits, character);
 
         // Update run history list
-        await this.updateRunHistory();
+        await this.updateRunHistory(ticket, character);
 
         // The board reads the same runs; a completed run moves its row
         await this.updateRoiBoard();
@@ -1131,8 +1131,14 @@ class DungeonTrackerUI {
 
     /**
      * Update run history display
+     *
+     * @param {Object} [ticket] - From `captureOwner`, when the caller already
+     *   holds one (the pending-card and between-runs draws do); a fresh one is
+     *   taken otherwise
+     * @param {{id: string|null, name: string|null}} [character] - Whose stats
+     *   to redraw on a filter reset when there is no current run
      */
-    async updateRunHistory() {
+    async updateRunHistory(ticket = captureOwner(this), character = currentCharacter()) {
         await this.history.update(this.container);
         // A stale filter reset to 'all' while the list was built: everything else
         // that reads the filters was drawn before that, so bring it level and save
@@ -1141,7 +1147,16 @@ class DungeonTrackerUI {
         this.interactions?.updateFilterIndicator?.();
         this.updateChart();
         const run = dungeonTracker.getCurrentRun();
-        if (run) await this.update(run);
+        if (run) {
+            await this.update(run);
+            return;
+        }
+        // No live run to redraw through update() — this is the pending card (a
+        // dungeon running but not yet tracked) or the gap between two runs of a
+        // repeating dungeon. Both draw Last/Avg/Runs through drawHistoryStats,
+        // which the list rebuild above has not touched, so it is left showing
+        // the stale filter's figures (often zeros) unless redrawn here too.
+        await this.drawHistoryStats(ticket, character);
     }
 
     /**
