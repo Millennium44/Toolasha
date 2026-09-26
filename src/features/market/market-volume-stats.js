@@ -139,6 +139,12 @@ class MarketVolumeStats {
         this.initPromise = null;
         /** Whether `watchPanelFit()` has already registered its one teardown cleanup */
         this.fitCleanupRegistered = false;
+        /** The current-item element `watchItemChanges()` last attached its observer to */
+        this.itemChangeObserved = null;
+        /** Watches the current-item card for in-place item/level swaps `domObserver` cannot see */
+        this.itemChangeObserver = null;
+        /** Whether `watchItemChanges()` has already registered its one teardown cleanup */
+        this.itemChangeCleanupRegistered = false;
     }
 
     /** @returns {boolean} Whether the panel may be shown at all */
@@ -292,6 +298,7 @@ class MarketVolumeStats {
         }
 
         const currentItemElement = document.querySelector(GAME.MARKETPLACE_CURRENT_ITEM);
+        this.watchItemChanges(currentItemElement);
         const itemHrid = this.getCurrentItemHrid();
         if (!currentItemElement || !itemHrid) {
             this.removePanel();
@@ -319,6 +326,57 @@ class MarketVolumeStats {
         this.loadedKey = null;
         this.fetchAndRender(currentItemElement, itemHrid, enhancementLevel, key, false);
         this.scheduleSettleChecks();
+    }
+
+    /**
+     * Watch the current-item card directly for the item/level swaps that leave
+     * no `addedNodes` mutation for `domObserver` to see.
+     *
+     * Reaching an equipment order book through the game's "View All
+     * Enhancement Levels" list and then picking a level reuses the same
+     * current-item card and order-book container the list itself was already
+     * showing: only the `<use>` icon href and the enhancement-level badge
+     * *text* change in place. `domObserver` (`core/dom-observer.js`) dispatches
+     * on `addedNodes` only, so that swap produces no mutation this module's
+     * `MarketplacePanel_orderBooksContainer` watch would ever fire for, and
+     * `update()` — along with the settle checks it alone schedules — never
+     * runs again. That is a different gap from the one `SETTLE_CHECK_DELAYS_MS`
+     * covers: those bounded retries only help once `update()` has already run
+     * at least once for a new key, which direct item-to-item navigation does
+     * through some other `addedNodes` mutation but this reused-container path
+     * does not.
+     *
+     * The fix is the same one `equipment-level-display.js` uses for icons that
+     * get re-equipped in place: a dedicated `MutationObserver` scoped to the
+     * card, watching the icon's href attribute and the badge's text directly,
+     * so a swap is caught however it renders. Scoping it to the current-item
+     * card itself (rather than `document.body`, as that module does for every
+     * equipment icon on the page) keeps a `characterData` watch — needed for
+     * the badge's plain text, which carries no attribute to filter on — from
+     * seeing chat, timers, or anything else unrelated.
+     * @param {HTMLElement|null} currentItemElement
+     */
+    watchItemChanges(currentItemElement) {
+        if (!currentItemElement || this.itemChangeObserved === currentItemElement) return;
+        this.itemChangeObserver?.disconnect();
+        this.itemChangeObserved = currentItemElement;
+        this.itemChangeObserver = new MutationObserver(() => this.scheduleUpdate());
+        this.itemChangeObserver.observe(currentItemElement, {
+            subtree: true,
+            attributes: true,
+            attributeFilter: ['href', 'xlink:href'],
+            characterData: true,
+            characterDataOldValue: false,
+        });
+        if (!this.itemChangeCleanupRegistered) {
+            this.itemChangeCleanupRegistered = true;
+            this.cleanupRegistry.registerCleanup(() => {
+                this.itemChangeObserver?.disconnect();
+                this.itemChangeObserver = null;
+                this.itemChangeObserved = null;
+                this.itemChangeCleanupRegistered = false;
+            });
+        }
     }
 
     /**

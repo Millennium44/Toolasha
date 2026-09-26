@@ -332,6 +332,60 @@ describe('stale response guard', () => {
     });
 });
 
+describe('navigating from "View All Enhancement Levels"', () => {
+    test('picking a level from the all-levels list reuses the same card — no added node for domObserver to see — and is still picked up', async () => {
+        // On live, an equipment order book reached by opening "View All
+        // Enhancement Levels" and then clicking one level reuses the same
+        // current-item card and order-book container the list itself was
+        // already showing: only the icon's `<use>` href and the
+        // enhancement-level badge *text* change in place. `domObserver`
+        // dispatches on `addedNodes` only (its mock here always returns a
+        // no-op unregister, standing in for that), so nothing in this test
+        // ever calls `scheduleUpdate()` through that channel after the first
+        // mount — only `watchItemChanges()`'s own `MutationObserver` can pick
+        // this up.
+        const currentItem = buildCurrentItem('/items/furious_spear', 0);
+        await marketVolumeStats.initialize();
+
+        historyApi.rows = [
+            { a: 620_000_000, b: 600_000_000, p: 600_000_000, v: 1, time: Math.floor(Date.now() / 1000) - 3600 },
+        ];
+        // Stand-in for the initial mount's own `addedNodes` mutation, the one
+        // real event this module ever gets from `domObserver` for this card.
+        marketVolumeStats.update();
+        await vi.waitFor(() => expect(marketVolumeStats.currentKey).toBe('/items/furious_spear:0'));
+
+        // Picking level 10 from the all-levels list: same node, same href
+        // target item, only the badge text changes.
+        historyApi.rows = [
+            { a: 1_280_000_000, b: 1_200_000_000, p: 0, v: 0, time: Math.floor(Date.now() / 1000) - 3600 },
+        ];
+        currentItem.querySelector('[class*="Item_enhancementLevel"]').textContent = '+10';
+
+        await vi.waitFor(() => expect(marketVolumeStats.currentKey).toBe('/items/furious_spear:10'));
+        expect(panelText()).not.toContain('Loading');
+    });
+
+    test('switching to a different item entirely through the same reused card is also picked up', async () => {
+        const currentItem = buildCurrentItem('/items/furious_spear', 0);
+        await marketVolumeStats.initialize();
+        historyApi.rows = [{ a: 100, b: 80, p: 90, v: 3, time: Math.floor(Date.now() / 1000) - 3600 }];
+        marketVolumeStats.update();
+        await vi.waitFor(() => expect(marketVolumeStats.currentKey).toBe('/items/furious_spear:0'));
+
+        // The item icon's `<use>` href swaps in place, no node added/removed.
+        // The attribute itself is what the observer watches; `href.baseVal` is
+        // the fixed stand-in object `buildCurrentItem` gave it for happy-dom
+        // (see there) and is mutated the same way the browser's own
+        // `SVGAnimatedString` would reflect the attribute change.
+        const use = currentItem.querySelector('use');
+        use.setAttribute('href', '#coin');
+        use.href.baseVal = '#coin';
+
+        await vi.waitFor(() => expect(marketVolumeStats.currentKey).toBe('/items/coin:0'));
+    });
+});
+
 describe('panel placement', () => {
     test('the panel is an absolutely-positioned overlay anchored to the item card, adding no height to the page', async () => {
         document.body.innerHTML = '';
