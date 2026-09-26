@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Dungeon Tracker averages the dungeon you are running
+
+- During a run, Last/Avg Run, Runs and the stats grid now default to that dungeon and tier (all teams), matching the pace chip, instead of averaging every dungeon together; a Dungeon or Tier filter you pick yourself is kept, and a saved Team filter now survives a reload.
+
 ### Key pricing means what it says
 
 - "Ask" and "Bid" key pricing now value a dungeon key at its market price, and the combat sim follows the Key pricing setting too; before, Party Loot silently used the crafting cost whenever it was cheaper while the sim used your general buy price, so the two disagreed on dungeon profit. Pick "What it costs you to craft one" to price keys as crafted.
