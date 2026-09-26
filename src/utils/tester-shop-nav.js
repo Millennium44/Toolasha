@@ -53,7 +53,10 @@ export function findTesterTab() {
  * @returns {boolean} Whether a filter box was there to type into
  */
 export function setShopFilter(itemName) {
-    const input = Array.from(document.querySelectorAll('input')).find(
+    // The Shop's own filter only. Its Dungeon tab hides that box, and the first
+    // visible "Item Filter" on the page is then the inventory's (measured on the
+    // test server) — typing the item there filtered the wrong panel.
+    const input = Array.from(document.querySelectorAll('[class*="ShopPanel_"] input')).find(
         (el) => el.offsetParent !== null && /filter/i.test(el.placeholder || '')
     );
     if (input) setReactInputValue(input, itemName || '');
