@@ -18,6 +18,9 @@ const history = vi.hoisted(() => ({
     rows: {},
     calls: [],
     hasVolume: true,
+    // Whether pooled history is switched on at all, independent of which pool
+    // (mooket I/II) is selected.
+    enabled: true,
     // A request that must not settle until the test releases it, so a test can
     // observe several in-flight at once instead of only ever seeing them one at
     // a time (the mock has no real network delay to make that visible otherwise).
@@ -32,6 +35,7 @@ vi.mock('../market/mooket/market-history-api.js', () => ({
     default: {
         fetchHistory: async (itemHrid, level, days) => {
             history.calls.push({ itemHrid, level, days });
+            if (!history.enabled) return null;
             if (history.failFor === itemHrid) throw new Error('the pool did not answer in time');
             if (history.hang) {
                 return new Promise((resolve) => {
@@ -41,6 +45,9 @@ vi.mock('../market/mooket/market-history-api.js', () => ({
             return history.rows[itemHrid] ?? null;
         },
         currentSource: () => ({ key: history.hasVolume ? 'mooket2' : 'mooket1', hasVolume: history.hasVolume }),
+        get enabled() {
+            return history.enabled;
+        },
     },
 }));
 
@@ -79,6 +86,7 @@ beforeEach(() => {
     history.rows = {};
     history.calls = [];
     history.hasVolume = true;
+    history.enabled = true;
     history.hang = false;
     history.pending = [];
     history.failFor = null;
@@ -139,6 +147,51 @@ describe('measuring how fast an item sells', () => {
 
         expect(volume.known).toBe(false);
         expect(absorbablePerHour(volume)).toBe(Infinity);
+    });
+
+    test('a measurement from while pooled history was on is not served back once it is turned off', async () => {
+        history.rows['/items/log'] = tradedAt(240);
+        expect((await dailyVolume('/items/log')).known).toBe(true);
+
+        // Turning pooled history off must not let the stale "known" answer from
+        // while it was on keep bounding rates — the module's own contract is
+        // that disabled history means nothing is known about anything.
+        history.enabled = false;
+        const disabled = await dailyVolume('/items/log');
+        expect(disabled.known).toBe(false);
+
+        const { measured } = await applyLiquidityLimits([
+            { label: 'Cut logs', goldPerHour: 100, sells: [{ itemHrid: '/items/log', unitsPerHour: 1 }] },
+        ]);
+        expect(measured).toBe(false);
+
+        // Turning it back on must not still be blocked by anything filed under
+        // the disabled state either.
+        history.enabled = true;
+        expect((await dailyVolume('/items/log')).known).toBe(true);
+    });
+
+    test('an in-flight lookup started while history was on settles under the on state, not the off one', async () => {
+        history.rows['/items/log'] = tradedAt(240);
+        history.hang = true;
+
+        const inFlight = dailyVolume('/items/log');
+        await Promise.resolve();
+        await Promise.resolve();
+
+        // The setting flips while the request from before the flip is still out
+        history.enabled = false;
+
+        history.pending.forEach((entry) => entry.resolve());
+        history.pending = [];
+        history.hang = false;
+        const resolved = await inFlight;
+        expect(resolved.known).toBe(true);
+
+        // The answer that just landed must not be handed back to a caller
+        // asking under the now-current (disabled) state.
+        const askedNow = await dailyVolume('/items/log');
+        expect(askedNow.known).toBe(false);
     });
 
     test('an unknown answer is asked again later, so turning history on is picked up', async () => {
