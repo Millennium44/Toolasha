@@ -103,7 +103,8 @@ const { resetPlanUi, resetChipUi, resetFetchNext } = await import('./guild-trial
 const guildTrialPlan = (await import('./guild-trial-plan.js')).default;
 const { REQUEST_TIMEOUT_MS } = await import('./guild-member-skills.js');
 const memberSkills = (await import('./guild-member-skills.js')).default;
-const { handleLoadoutShared, _resetViewLoadout } = await import('../../utils/view-loadout.js');
+const { handleLoadoutShared, _resetViewLoadout, fetchLoadout, VIEW_LOADOUT_CONTEXT } =
+    await import('../../utils/view-loadout.js');
 
 /** A `loadout_shared` reply for a guild-trial capture, in the shape measured on the test server */
 function loadoutReply(characterId, name, abilities = []) {
@@ -1273,6 +1274,119 @@ describe('trial abilities panel', () => {
 
                 // Alice has none set; the next press goes to Bob, not Alice again
                 expect(fetchNextButton().textContent).toBe('Fetch next: Bob');
+            });
+
+            test('a no-loadout answer captured before this panel existed is adopted, and skipped the same way', async () => {
+                // Regression: the live capture listener added a no-loadout name to the
+                // skip set, but adoptViewLoadoutCaptures — the path that picks up a
+                // capture already sitting in the store when the panel's own listener
+                // was not yet wired (a reload, or a click made before this session) —
+                // did not, so Fetch next kept re-asking for a player who had already
+                // answered "nothing to use".
+                viewLoadoutState.core = {
+                    handleViewProfile: () => {},
+                    handleViewLoadout: vi.fn((characterId) => {
+                        const reply = loadoutReply(characterId, 'Alice', []);
+                        reply.loadout.hasLoadout = false;
+                        setTimeout(() => handleLoadoutShared(reply), 10);
+                    }),
+                };
+
+                // Captured before this panel's feature.initialize() ever ran, so the
+                // live onViewLoadoutCaptured listener was not subscribed to see it.
+                const early = fetchLoadout(
+                    { characterId: 1, name: 'Alice' },
+                    VIEW_LOADOUT_CONTEXT.GuildTrial,
+                    COMBAT_TRIAL_KIND,
+                    { closeGameModal: false }
+                );
+                await vi.advanceTimersByTimeAsync(10);
+                await early;
+
+                await feature.initialize('Cats');
+                guildTrialAbilities.setRoster([
+                    { characterId: 1, name: 'Alice' },
+                    { characterId: 2, name: 'Bob' },
+                ]);
+                vi.setSystemTime(NOW + 6000);
+                openTrialAbilitiesPanel();
+
+                // Adopted on the first draw: Fetch next moves straight to Bob
+                expect(fetchNextButton().textContent).toBe('Fetch next: Bob');
+            });
+
+            test('a no-loadout answer that itself rolls the session over is not wiped by that same rollover', async () => {
+                // Regression: onViewLoadoutCaptured added the answering player to
+                // the skip set BEFORE calling recordCapture, but recordCapture can
+                // itself start a fresh trial session (a capture arriving more than
+                // SESSION_MAX_AGE_MS after the last one). The render() called right
+                // after then hit the rollover check and cleared the whole skip set
+                // in the same synchronous handler, wiping out the entry that was
+                // just added for the very capture that caused the rollover.
+                //
+                // Fetched directly rather than through the "Fetch next" button, so
+                // the button's own extra render (fired immediately on click, before
+                // the reply lands) cannot itself run into the store's stale entries
+                // at a session boundary and muddy what this test is isolating.
+                viewLoadoutState.core = {
+                    handleViewProfile: () => {},
+                    handleViewLoadout: vi.fn((characterId) => {
+                        const name = characterId === 1 ? 'Alice' : 'Bob';
+                        const reply = loadoutReply(characterId, name, []);
+                        reply.loadout.hasLoadout = false;
+                        setTimeout(() => handleLoadoutShared(reply), 10);
+                    }),
+                };
+                await feature.initialize('Cats');
+                guildTrialAbilities.setRoster([
+                    { characterId: 1, name: 'Alice' },
+                    { characterId: 2, name: 'Bob' },
+                ]);
+                vi.setSystemTime(NOW + 6000);
+                openTrialAbilitiesPanel();
+
+                // Alice answers "nothing to use" first, opening the session
+                const aliceFetch = fetchLoadout(
+                    { characterId: 1, name: 'Alice' },
+                    VIEW_LOADOUT_CONTEXT.GuildTrial,
+                    COMBAT_TRIAL_KIND,
+                    { closeGameModal: false }
+                );
+                await vi.advanceTimersByTimeAsync(10);
+                await aliceFetch;
+                expect(fetchNextButton().textContent).toBe('Fetch next: Bob');
+
+                // Long enough later that Bob's answer rolls the session over —
+                // recordCapture starts a fresh session inside the very handler
+                // that is about to add Bob to the skip set.
+                vi.setSystemTime(NOW + 6000 + SESSION_MAX_AGE_MS + 60_000);
+                const bobFetch = fetchLoadout(
+                    { characterId: 2, name: 'Bob' },
+                    VIEW_LOADOUT_CONTEXT.GuildTrial,
+                    COMBAT_TRIAL_KIND,
+                    { closeGameModal: false }
+                );
+                await vi.advanceTimersByTimeAsync(10);
+                await bobFetch;
+
+                // Alice's answer belonged to the session that just ended and is
+                // correctly forgotten — she is a candidate again. Bob's answer
+                // belongs to the new session and must survive the rollover it
+                // caused: he must not be offered again. Roster order always
+                // offers Alice first regardless, so capture her for real too and
+                // check what is left — if Bob's answer was wiped, he reappears.
+                expect(fetchNextButton().textContent).toBe('Fetch next: Alice');
+                viewLoadoutState.core.handleViewLoadout.mockImplementation((characterId) => {
+                    setTimeout(() => {
+                        handleLoadoutShared(
+                            loadoutReply(characterId, 'Alice', [{ hrid: '/abilities/fierce_aura', level: 80 }])
+                        );
+                    }, 10);
+                });
+                fetchNextButton().click();
+                await vi.advanceTimersByTimeAsync(3000);
+
+                expect(fetchNextButton().textContent).toBe('All fetched');
             });
 
             test('is not offered when View Loadout is unavailable', async () => {
