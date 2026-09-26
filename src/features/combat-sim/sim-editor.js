@@ -2864,11 +2864,18 @@ export class SimEditor {
         if (!dto) return false;
         const applied = applyLoadoutSnapshotToDTO(dto, loadoutName, gameData) !== false;
         if (applied) {
-            // Recorded post-apply so `generateSimLabel` can diff hand edits made
-            // after this point, rather than the loadout's own gear, against
-            // current gear.
+            // The baseline is the loadout applied to current gear, not a copy of
+            // the edited DTO: a loadout replaces only gear, abilities and
+            // consumables, so cloning the edited DTO would absorb earlier
+            // what-if edits (levels, house, buffs) and hide them from the label.
+            const original = this._originalDTOs?.[this._activeEditPlayer];
+            let baseline = structuredClone(dto);
+            if (original) {
+                const fromOriginal = structuredClone(original);
+                if (applyLoadoutSnapshotToDTO(fromOriginal, loadoutName, gameData) !== false) baseline = fromOriginal;
+            }
             if (!this._loadoutBaselineDTOs) this._loadoutBaselineDTOs = {};
-            this._loadoutBaselineDTOs[this._activeEditPlayer] = structuredClone(dto);
+            this._loadoutBaselineDTOs[this._activeEditPlayer] = baseline;
         }
         return applied;
     }
