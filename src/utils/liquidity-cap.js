@@ -145,6 +145,27 @@ export function sellsFromProfitData(profitData) {
 }
 
 /**
+ * How many units of an item change hands in a day, from the shared volume cache.
+ *
+ * The planner's own measurement (`dailyVolume`), reached through the one copy
+ * that holds the cache — for a surface that wants the raw figure rather than a
+ * throttled rate. Never throws: a failed lookup answers "unknown".
+ *
+ * @param {string} itemHrid - The item
+ * @param {number} [enhancementLevel=0] - Which variant
+ * @returns {Promise<{itemHrid: string, unitsPerDay: number, days: number, known: boolean}>}
+ *   `known` is false when nothing could be measured, which is not a measured zero
+ */
+export async function itemDailyVolume(itemHrid, enhancementLevel = 0) {
+    try {
+        return await liquidity().dailyVolume(itemHrid, enhancementLevel);
+    } catch (error) {
+        console.error(`[LiquidityCap] Measuring volume for ${itemHrid} failed:`, error);
+        return { itemHrid, unitsPerDay: 0, days: 0, known: false };
+    }
+}
+
+/**
  * Warm the shared volume cache for a batch of items, before bounding a lot of
  * rows one at a time.
  *
@@ -372,6 +393,7 @@ export default {
     LIQUIDITY_CAP_SETTING,
     liquidityCapEnabled,
     sellsFromProfitData,
+    itemDailyVolume,
     prefetchLiquidity,
     capProfitRate,
     capProfitRateCached,

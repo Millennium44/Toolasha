@@ -40,6 +40,8 @@ vi.mock('../../utils/tester-shop.js', () => ({
     testerShopCoinCost: () => 0,
 }));
 vi.mock('../../utils/tester-shop-nav.js', () => ({
+    findShopTab: () => null,
+    openShopTab: async () => null,
     openTesterShopPage: async () => null,
     setShopFilter: () => {},
 }));

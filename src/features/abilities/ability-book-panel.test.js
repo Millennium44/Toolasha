@@ -39,6 +39,8 @@ vi.mock('../../utils/tester-shop.js', () => ({
     testerShopCoinCost: (itemHrid) => game.shopCosts[itemHrid] || 0,
 }));
 vi.mock('../../utils/tester-shop-nav.js', () => ({
+    findShopTab: () => null,
+    openShopTab: async () => null,
     openTesterShopPage: async () => {
         shop.opened++;
         return document.createElement('div');

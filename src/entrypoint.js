@@ -770,6 +770,13 @@ function registerFeatures() {
             module: Market.dungeonTokenTooltips,
             async: true,
         },
+        {
+            key: 'dungeonShopPlanner',
+            name: 'Dungeon Shop Planner',
+            category: 'Inventory',
+            module: Market.dungeonShopPlanner,
+            async: false,
+        },
         { key: 'marketFilter', name: 'Market Filter', category: 'Market', module: Market.marketFilter, async: false },
         { key: 'marketSort', name: 'Market Sort', category: 'Market', module: Market.marketSort, async: false },
         {

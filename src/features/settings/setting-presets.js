@@ -203,6 +203,7 @@ const MARKET_EXTRAS = [
     'expectedValue_includeCowbells',
     'itemTooltip_enhancementPath',
     'dungeonTokenTooltips',
+    'dungeonShopPlanner',
     'itemDictionary_transmuteRates',
     'itemDictionary_transmuteIncludeBaseRate',
     // Inventory value & net worth

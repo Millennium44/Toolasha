@@ -2,9 +2,10 @@
  * Getting to the Tester shop, and narrowing it to one item.
  *
  * The DOM half of `tester-shop.js`: that module prices against the shop, this
- * one walks there. Two surfaces need the same walk — the missing-materials
- * bill and the Item Dictionary's ability-book panel — so it lives here rather
- * than as a copy in each.
+ * one walks there. Several surfaces need the same walk — the missing-materials
+ * bill and the Item Dictionary's ability-book panel to the Tester tab, the
+ * dungeon-token spend planner to the Dungeon tab — so it lives here rather than
+ * as a copy in each.
  *
  * Nothing here buys anything. The walk ends with the shop filtered to the item
  * and (the caller's job) a quantity armed; the player presses Buy. One click,
@@ -25,16 +26,25 @@ function wait(ms) {
 }
 
 /**
+ * A Shop tab by its label, when its strip is on screen.
+ * @param {RegExp} label - Matches the tab's whole text, e.g. `/^\s*tester\s*$/i`
+ * @returns {HTMLElement|null}
+ */
+export function findShopTab(label) {
+    for (const container of document.querySelectorAll('.MuiTabs-flexContainer[role="tablist"]')) {
+        if (container.offsetParent === null) continue;
+        const tab = Array.from(container.children).find((el) => label.test(el.textContent || ''));
+        if (tab) return tab;
+    }
+    return null;
+}
+
+/**
  * The Shop's Tester tab, when its strip is on screen.
  * @returns {HTMLElement|null}
  */
 export function findTesterTab() {
-    for (const container of document.querySelectorAll('.MuiTabs-flexContainer[role="tablist"]')) {
-        if (container.offsetParent === null) continue;
-        const tab = Array.from(container.children).find((el) => /^\s*tester\s*$/i.test(el.textContent || ''));
-        if (tab) return tab;
-    }
-    return null;
+    return findShopTab(/^\s*tester\s*$/i);
 }
 
 /**
@@ -51,15 +61,16 @@ export function setShopFilter(itemName) {
 }
 
 /**
- * Open the Shop on its Tester tab.
+ * Open the Shop on one of its tabs.
  *
- * The shop's nav entry, then the tab that says Tester. Each step that cannot
+ * The shop's nav entry, then the tab whose text matches. Each step that cannot
  * be found is logged and reported as a failure, so the caller can fall back
- * to the marketplace rather than leave the player nowhere.
+ * rather than leave the player nowhere.
  *
- * @returns {Promise<HTMLElement|null>} The Tester tab once selected, else null
+ * @param {RegExp} label - Matches the tab's whole text
+ * @returns {Promise<HTMLElement|null>} The tab once selected, else null
  */
-export async function openTesterShopPage() {
+export async function openShopTab(label) {
     const navButtons = document.querySelectorAll('.NavigationBar_nav__3uuUl');
     const shopButton = Array.from(navButtons).find((nav) => nav.querySelector('svg[aria-label="navigationBar.shop"]'));
     if (!shopButton) {
@@ -70,15 +81,23 @@ export async function openTesterShopPage() {
 
     for (let i = 0; i < 30; i++) {
         await wait(100);
-        const testerTab = findTesterTab();
-        if (testerTab) {
-            testerTab.click();
+        const tab = findShopTab(label);
+        if (tab) {
+            tab.click();
             await wait(150);
-            return testerTab;
+            return tab;
         }
     }
-    console.error('[TesterShopNav] Tester shop tab not found');
+    console.error(`[TesterShopNav] Shop tab ${label} not found`);
     return null;
 }
 
-export default { findTesterTab, setShopFilter, openTesterShopPage };
+/**
+ * Open the Shop on its Tester tab.
+ * @returns {Promise<HTMLElement|null>} The Tester tab once selected, else null
+ */
+export async function openTesterShopPage() {
+    return openShopTab(/^\s*tester\s*$/i);
+}
+
+export default { findShopTab, findTesterTab, setShopFilter, openShopTab, openTesterShopPage };

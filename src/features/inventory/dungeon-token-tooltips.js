@@ -11,6 +11,7 @@ import dom from '../../utils/dom.js';
 import { formatKMB } from '../../utils/formatters.js';
 import { getItemPrices } from '../../utils/market-data.js';
 import expectedValueCalculator from '../market/expected-value-calculator.js';
+import { dungeonShopOffers } from './dungeon-shop-offers.js';
 
 /**
  * Token types and their shop data sources
@@ -163,6 +164,18 @@ class DungeonTokenTooltips {
         if (!shopItems || shopItems.length === 0) return;
 
         this._injectShopTable(tooltipElement, shopItems, 'Token Shop Value:', 'Gold/Token', isCollectionTooltip);
+        // A tooltip closes as the pointer leaves it, so the planner cannot be a
+        // button here; the line says where the button is instead
+        if (config.getSetting('dungeonShopPlanner', true)) {
+            const injected = tooltipElement.querySelector('.dungeon-token-shop-injected');
+            if (injected && !injected.querySelector('.dungeon-token-plan-hint')) {
+                const hint = document.createElement('div');
+                hint.className = 'dungeon-token-plan-hint';
+                hint.style.cssText = 'font-size: 11px; color: #888; margin-top: 2px;';
+                hint.textContent = 'Plan spend: Shop → Dungeon → Plan spend (volume-capped)';
+                injected.appendChild(hint);
+            }
+        }
         dom.fixTooltipOverflow(tooltipElement);
     }
 
@@ -261,31 +274,11 @@ class DungeonTokenTooltips {
     /**
      * Get shop items from shopItemDetailMap (dungeon tokens)
      * @param {string} tokenHrid - Dungeon token HRID
-     * @returns {Array} Shop items with pricing data
+     * @returns {Array} Priced shop items, best gold/token first
      */
     _getDungeonShopItems(tokenHrid) {
-        const gameData = dataManager.getInitClientData();
-        if (!gameData?.shopItemDetailMap || !gameData?.itemDetailMap) return [];
-
-        return Object.values(gameData.shopItemDetailMap)
-            .filter((shopItem) => shopItem.costs && shopItem.costs[0]?.itemHrid === tokenHrid)
-            .map((shopItem) => {
-                const itemDetails = gameData.itemDetailMap[shopItem.itemHrid];
-                const tokenCost = shopItem.costs[0].count;
-
-                const prices = getItemPrices(shopItem.itemHrid, 0);
-                const askPrice = prices?.ask || null;
-
-                if (!askPrice || askPrice <= 0) return null;
-
-                return {
-                    name: itemDetails?.name || 'Unknown Item',
-                    cost: tokenCost,
-                    askPrice,
-                    goldPerToken: askPrice / tokenCost,
-                };
-            })
-            .filter(Boolean)
+        return dungeonShopOffers(tokenHrid)
+            .filter((offer) => offer.askPrice > 0)
             .sort((a, b) => b.goldPerToken - a.goldPerToken);
     }
 
