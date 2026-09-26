@@ -9,7 +9,8 @@
  * when there is no profile to take levels from.
  *
  * Found by its title text through `findLoadoutModals`, never by a hashed class
- * beyond `Modal_modalContainer`, and only on a game build that has View Loadout.
+ * beyond the modal container (`SharableProfile_modalContainer` on the build measured),
+ * and only on a game build that has View Loadout.
  */
 
 import domObserver from '../../core/dom-observer.js';
@@ -116,7 +117,12 @@ export function watchLoadoutModals() {
     const unregisterers = [
         domObserver.onClass(
             'LoadoutSimButton',
-            ['Modal_modalContainer', 'Modal_modalContent'],
+            [
+                'SharableProfile_modalContainer',
+                'SharableProfile_modalContent',
+                'Modal_modalContainer',
+                'Modal_modalContent',
+            ],
             () => injectLoadoutSimButtons(),
             { debounce: true, debounceDelay: 100 }
         ),

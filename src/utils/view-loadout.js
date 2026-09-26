@@ -346,6 +346,9 @@ export function getLoadout(characterIdOrName, context) {
     return pool.reduce((newest, entry) => (entry.capturedAt >= newest.capturedAt ? entry : newest));
 }
 
+/** Where the game's loadout modal is mounted; the generic modal kept as a fallback */
+export const LOADOUT_MODAL_SELECTOR = '[class*="SharableProfile_modalContainer"], [class*="Modal_modalContainer"]';
+
 /**
  * The game's open loadout modals.
  * @param {ParentNode} [root=document]
@@ -354,7 +357,9 @@ export function getLoadout(characterIdOrName, context) {
 export function findLoadoutModals(root = document) {
     if (!root?.querySelectorAll) return [];
     const found = [];
-    for (const container of root.querySelectorAll('[class*="Modal_modalContainer"]')) {
+    // Measured on the test server: the game builds this modal from its profile-modal
+    // parts (`SharableProfile_modalContainer`), not the generic `Modal_` ones
+    for (const container of root.querySelectorAll(LOADOUT_MODAL_SELECTOR)) {
         const title = findLoadoutTitle(container);
         if (title) found.push({ container, ...title });
     }
@@ -385,6 +390,7 @@ export function findLoadoutTitle(container) {
  */
 function closeModal(modal) {
     const button =
+        modal.container.querySelector('[class*="SharableProfile_closeButton"]') ||
         modal.container.querySelector('[class*="Modal_closeButton"]') ||
         modal.container.querySelector('button[aria-label*="lose"]');
     if (!button) return false;
