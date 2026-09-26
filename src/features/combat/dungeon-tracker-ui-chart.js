@@ -26,6 +26,13 @@ class DungeonTrackerUIChart {
         // disposed section's tail is reading its own flag and can neither
         // overwrite nor destroy the new section's chart.
         this.disposed = false;
+        // Bumped on every pop-out open and close. renderModalChart snapshots it
+        // before its await and compares after: a close (destroys/clears
+        // modalChartInstance) or a close-then-reopen (builds its own chart under
+        // a newer generation) landing inside that await must not let the stale
+        // call touch modalChartInstance or construct against its now-detached
+        // canvas.
+        this.modalGeneration = 0;
     }
 
     /**
@@ -301,6 +308,9 @@ class DungeonTrackerUIChart {
             font-weight: bold;
         `;
         const closeModal = () => {
+            // Invalidate any renderModalChart call still awaiting its storage
+            // read, so it does not act on the modalChartInstance/canvas below
+            this.modalGeneration++;
             // Destroy chart before removing modal
             if (this.modalChartInstance) {
                 this.modalChartInstance.destroy();
@@ -334,6 +344,9 @@ class DungeonTrackerUIChart {
         modal.appendChild(canvasContainer);
         document.body.appendChild(modal);
 
+        // A new pop-out; invalidate any render left over from a previous one
+        this.modalGeneration++;
+
         // Render chart in modal
         this.renderModalChart(canvas);
 
@@ -353,12 +366,19 @@ class DungeonTrackerUIChart {
     async renderModalChart(canvas) {
         // Settled before the read, for the same reason render() does it
         const character = currentCharacter();
+        // Snapshotted before the read; compared after against this.modalGeneration
+        const generation = this.modalGeneration;
 
         // Get filtered runs (same as main chart)
         const allRuns = await dungeonTrackerStorage.getAllRuns();
         // Same reason as render(): a section torn down inside the read must not
-        // construct a chart the teardown has already gone past destroying
-        if (this.disposed) return;
+        // construct a chart the teardown has already gone past destroying.
+        // A pop-out closed (and possibly reopened) inside the read bumps
+        // modalGeneration: closing already destroyed/cleared modalChartInstance,
+        // and a reopen has built its own chart under a newer generation, so a
+        // stale call here must not destroy that live chart or construct one
+        // against this now-detached canvas.
+        if (this.disposed || generation !== this.modalGeneration) return;
         // Narrowed to the character the panel is speaking for before anything
         // else, so the chart plots the same runs the list beneath it counts
         let filteredRuns = filterRunsForCharacter(allRuns, this.state.filterCharacter, character);

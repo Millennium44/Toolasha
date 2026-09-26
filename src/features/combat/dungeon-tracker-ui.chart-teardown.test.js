@@ -238,3 +238,63 @@ describe('the pop-out chart, when the teardown lands inside its run read', () =>
         expect(chart.modalChartInstance).toBe(null);
     });
 });
+
+describe('the pop-out chart, when it is closed (and possibly reopened) during its run read', () => {
+    test('closing without reopening leaves no chart built on the way out', async () => {
+        const chart = ui.chart;
+        const release = holdTheRead();
+        chart.createPopoutModal();
+        // createPopoutModal does not await the render it starts; let it reach
+        // and park on the gated read
+        await Promise.resolve();
+        await Promise.resolve();
+        expect(built).toHaveLength(0);
+
+        // Closed before the read ever comes back — modalChartInstance is
+        // already null and the modal element already removed
+        chart.closeModal();
+
+        release();
+        await Promise.resolve();
+        await Promise.resolve();
+        await Promise.resolve();
+
+        // The resumed, now-stale render must not construct a Chart against the
+        // closed modal's detached canvas
+        expect(built).toHaveLength(0);
+        expect(chart.modalChartInstance).toBe(null);
+    });
+
+    test('closing and reopening: the stale render neither destroys nor duplicates the reopened chart', async () => {
+        const chart = ui.chart;
+        const release = holdTheRead();
+        chart.createPopoutModal();
+        await Promise.resolve();
+        await Promise.resolve();
+        expect(built).toHaveLength(0);
+
+        chart.closeModal();
+        // Reopen: the gate was a one-shot consumed by the first read, so this
+        // second read is not held and resolves ahead of the first
+        chart.createPopoutModal();
+        await Promise.resolve();
+        await Promise.resolve();
+        await Promise.resolve();
+
+        expect(built).toHaveLength(1);
+        const reopened = built[0];
+        expect(chart.modalChartInstance).toBe(reopened);
+
+        // Now the stale first render resumes
+        release();
+        await Promise.resolve();
+        await Promise.resolve();
+        await Promise.resolve();
+
+        // No second Chart.js instance, and the live one from the reopen is
+        // neither destroyed nor replaced by the stale render on its way out
+        expect(built).toHaveLength(1);
+        expect(reopened.destroyed).toBe(false);
+        expect(chart.modalChartInstance).toBe(reopened);
+    });
+});
