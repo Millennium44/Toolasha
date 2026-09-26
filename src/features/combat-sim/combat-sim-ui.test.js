@@ -2285,6 +2285,43 @@ describe('the all-zones table', () => {
                 expect(shown).toContain('Fly');
                 expect(shown).not.toContain('288.0K'); // recomputed to the mock's 0, not left stale
             });
+
+            test('a sort click during a pending reprice redraw does not resurrect the stale table', async () => {
+                // A sort header's click handler closes over the `zoneResults` its own
+                // render was called with. If a reprice (`_repriceAllZonesResults`)
+                // starts a new `_displayAllZonesResults` and a sort click lands on the
+                // still-visible old table before that redraw's own await
+                // (`_buildBestiaryPlanZones`) resolves, the click used to redraw from
+                // that stale closed-over array — reviving the pre-reprice figures.
+                await ui._displayAllZonesResults([result('Fly', { xp: { defense: 900 }, profit: 12_000 })], 1, {});
+                expect(ui.panel.querySelector('#mwi-csim-results').textContent).toContain('288.0K');
+
+                let releaseReprice;
+                vi.spyOn(ui, '_buildBestiaryPlanZones').mockImplementationOnce(
+                    () => new Promise((resolve) => (releaseReprice = resolve))
+                );
+                // Starts the reprice; `this._allZonesResults` is updated synchronously
+                // at the top of `_displayAllZonesResults`, before the redraw stalls
+                // on the mocked await
+                const repriceDone = ui._repriceAllZonesResults();
+                await vi.waitFor(() => expect(releaseReprice).toBeTypeOf('function'));
+
+                // Click a sort header on the table still on screen — the OLD one,
+                // since the reprice redraw has not written the DOM yet
+                const scoreHeader = ui.panel.querySelector('#mwi-csim-results th[data-col="score"]');
+                scoreHeader.dispatchEvent(new Event('click', { bubbles: true }));
+                await flush();
+
+                // Let the stalled reprice redraw finish too, and make sure it cannot
+                // clobber the sort click's own (newer) redraw
+                releaseReprice([]);
+                await repriceDone;
+                await flush();
+
+                const shown = ui.panel.querySelector('#mwi-csim-results').textContent;
+                expect(shown).toContain('Fly');
+                expect(shown).not.toContain('288.0K'); // the mocked calculateSimRevenue always re-prices to 0
+            });
         });
 
         describe('the market-volume cap', () => {
