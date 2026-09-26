@@ -2666,7 +2666,7 @@ export function calculateUpgradeCost(candidate, gameData, isSelf = true) {
         const currentMarket = getItemPrices(candidate.currentHrid, candidate.currentLevel);
 
         if (upgradedMarket?.ask > 0 && currentMarket?.bid > 0) {
-            return upgradedMarket.ask - currentMarket.bid;
+            return upgradedMarket.ask - capEnhancementCredit(upgradedMarket.ask, currentMarket.bid).credit;
         }
 
         // Fallback: enhancement cost estimate with protection
@@ -2685,6 +2685,27 @@ export function calculateUpgradeCost(candidate, gameData, isSelf = true) {
     }
 
     return buyPrice - resaleCredit(candidate);
+}
+
+/**
+ * The trade-in credit for the level an enhancement row leaves, capped at what
+ * the level it buys costs.
+ *
+ * Selling into the bid is right in an ordinary market, and the row is priced
+ * that way. But the same item at a *lower* level fetching more than the higher
+ * level asks is not a market, it is a stale, troll or one-off order: a +10
+ * Philosopher's Necklace bid at 312B against a +12 asked at 108M (test server,
+ * 2026-09-26) ranked "+10 → +12" as handing back 311.9B, showed it free on
+ * every ladder and put it at the top of the budget planner. Capping the credit
+ * at the purchase leaves such a row at zero net cost — the most the trade can
+ * honestly be said to be worth — and keeps the bid for the breakdown to name.
+ *
+ * @param {number} ask - Ask for the target level
+ * @param {number} bid - Bid for the current level
+ * @returns {{credit: number, capped: boolean}} Credit to apply, and whether the bid was cut down to it
+ */
+function capEnhancementCredit(ask, bid) {
+    return bid > ask ? { credit: ask, capped: true } : { credit: bid, capped: false };
 }
 
 /**
@@ -3009,6 +3030,7 @@ export function explainUpgradeCost(candidate, gameData, isSelf = true) {
         const current = getItemPrices(candidate.currentHrid, candidate.currentLevel);
         if (upgraded?.ask > 0 && current?.bid > 0) {
             const name = nameOf(candidate.currentHrid);
+            const { credit, capped } = capEnhancementCredit(upgraded.ask, current.bid);
             return {
                 buys: [
                     {
@@ -3020,13 +3042,23 @@ export function explainUpgradeCost(candidate, gameData, isSelf = true) {
                     },
                 ],
                 credits: [
-                    { hrid: candidate.currentHrid, name, enhancementLevel: candidate.currentLevel, price: current.bid },
+                    {
+                        hrid: candidate.currentHrid,
+                        name,
+                        enhancementLevel: candidate.currentLevel,
+                        price: credit,
+                        rawPrice: current.bid,
+                    },
                 ],
                 gross: upgraded.ask,
-                credit: current.bid,
-                net: upgraded.ask - current.bid,
+                credit,
+                net: upgraded.ask - credit,
                 unpriced: [],
                 creditApplied: true,
+                // The current level's bid outbid the target's ask and was cut
+                // down to it; `rawCredit` is the bid as the order book had it
+                creditCapped: capped,
+                rawCredit: current.bid,
                 source: 'market',
                 enhanceSource: null,
             };
