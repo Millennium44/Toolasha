@@ -193,23 +193,39 @@ export function splitBuySellVolume(rows) {
 
 /**
  * @typedef {Object} MarketWindowStats
+ * @property {boolean} hasData - Whether any row fell in this window at all
+ * @property {boolean} hasTrades - Whether any of those rows carry a real trade price
  * @property {number} volume - Total traded volume (Σv over every row)
- * @property {number} avgPrice - Volume-weighted average of priced rows
- * @property {number} medianPrice - Volume-weighted median of priced rows
+ * @property {number} avgPrice - Volume-weighted average of priced rows, or the
+ *   ask/bid midpoint when `hasTrades` is false and both sides are quoted
+ * @property {number} medianPrice - Volume-weighted median of priced rows, or the
+ *   same ask/bid midpoint as `avgPrice` when `hasTrades` is false
  * @property {number} buyVolume - Estimated buyer-initiated volume
  * @property {number} sellVolume - Estimated seller-initiated volume
- * @property {number} minPrice - Lowest traded price, snapped down a tier
- * @property {number} maxPrice - Highest traded price, snapped up a tier
+ * @property {number} minPrice - Lowest traded price, snapped down a tier, or
+ *   `NaN` when `hasTrades` is false (there is no trade price to derive it from)
+ * @property {number} maxPrice - Highest traded price, snapped up a tier, or
+ *   `NaN` when `hasTrades` is false
  */
 
 /**
  * All five stats for one already-windowed set of rows.
+ *
+ * A row set can have ask/bid quotes with no trades in them at all — an
+ * enhanced item nobody happened to buy or sell in the window, which the pool
+ * still reports on (`a`/`b` present, `p` and `v` both 0 on every row; see the
+ * live probe this shipped from). `avgPrice`/`medianPrice` fall back to the
+ * mean ask/bid midpoint in that case so the panel still has a price to show;
+ * `minPrice`/`maxPrice` do not, since the module has never defined a
+ * traded-range figure in terms of ask/bid and manufacturing one here would be
+ * a new, unverified claim rather than a fallback.
  * @param {Array<Object>} rows - Rows already filtered to the window (see `filterWindow`)
  * @param {number} [enhancementLevel=0] - Enhancement level, for snapping min/max to its price tiers
  * @returns {MarketWindowStats}
  */
 export function computeMarketStats(rows, enhancementLevel = 0) {
     const safeRows = Array.isArray(rows) ? rows : [];
+    const hasData = safeRows.length > 0;
 
     const volume = safeRows.reduce((sum, row) => sum + (Number(row.v) || 0), 0);
 
@@ -225,26 +241,42 @@ export function computeMarketStats(rows, enhancementLevel = 0) {
     // ones (an ordinary gap in mooket II's data) keeps real volume-weighting,
     // since `anyVolume` is true and those hours simply weigh 0.
     const pricedRows = safeRows.filter((row) => row.p > 0);
+    const hasTrades = pricedRows.length > 0;
     const anyVolume = pricedRows.some((row) => row.v > 0);
     const weightFn = (row) => (anyVolume ? Math.max(0, Number(row.v) || 0) : 1);
 
     const totalWeight = pricedRows.reduce((sum, row) => sum + weightFn(row), 0);
-    const avgPrice =
-        totalWeight > 0 ? pricedRows.reduce((sum, row) => sum + row.p * weightFn(row), 0) / totalWeight : 0;
+    let avgPrice = totalWeight > 0 ? pricedRows.reduce((sum, row) => sum + row.p * weightFn(row), 0) / totalWeight : 0;
 
-    const medianPrice = weightedMedianPrice(safeRows, weightFn);
+    let medianPrice = weightedMedianPrice(safeRows, weightFn);
 
-    const positivePrices = safeRows.map((row) => row.p).filter((p) => p > 0);
     let minPrice = 0;
     let maxPrice = 0;
-    if (positivePrices.length) {
+    if (hasTrades) {
+        const positivePrices = pricedRows.map((row) => row.p);
         minPrice = snapPriceTier(Math.min(...positivePrices), 'down', enhancementLevel);
         maxPrice = snapPriceTier(Math.max(...positivePrices), 'up', enhancementLevel);
+    } else if (hasData) {
+        // Sightings fell in the window but none of them was a trade, though the
+        // order book itself is still sighted (an enhanced item's ask/bid is
+        // polled regardless of whether anyone traded at it) — a plain ask/bid
+        // mean, not a proper median, is "the available price basis" left once
+        // there is nothing traded to weigh or sort. A window with no rows at
+        // all (`hasData` false) has no ask/bid to fall back to either, and
+        // keeps the plain 0s above — the panel never renders it regardless
+        // (see market-volume-stats.js's `hasAnyData` gate).
+        const meanAsk = meanOfPositive(safeRows, 'a');
+        const meanBid = meanOfPositive(safeRows, 'b');
+        const mid = meanAsk > 0 && meanBid > 0 ? (meanAsk + meanBid) / 2 : NaN;
+        avgPrice = mid;
+        medianPrice = mid;
+        minPrice = NaN;
+        maxPrice = NaN;
     }
 
     const { buyVolume, sellVolume } = splitBuySellVolume(safeRows);
 
-    return { volume, avgPrice, medianPrice, buyVolume, sellVolume, minPrice, maxPrice };
+    return { hasData, hasTrades, volume, avgPrice, medianPrice, buyVolume, sellVolume, minPrice, maxPrice };
 }
 
 /** The windows the panel shows, in days */

@@ -514,7 +514,11 @@ class MarketVolumeStats {
 
     renderTable(panel, windows, source) {
         this.closeColumnMenu();
-        const hasAnyData = windows.some(({ stats }) => stats.volume > 0 || stats.avgPrice > 0 || stats.medianPrice > 0);
+        // Distinct from "no trades": an item can have ask/bid sightings with no
+        // trade among them (see market-volume-stats-math.js), which still has
+        // something worth showing. Only a window with nothing sighted at all
+        // (`hasData` false in every window) has truly nothing to render.
+        const hasAnyData = windows.some(({ stats }) => stats.hasData);
         if (!hasAnyData) {
             panel.innerHTML = '<span style="color:#AAAAAA;font-size:11px;">No trades in this window</span>';
             return;
@@ -538,9 +542,19 @@ class MarketVolumeStats {
             })
             .join('');
 
-        const note = !source.hasVolume
-            ? `<div style="color:#AAAAAA;font-size:10px;margin-top:2px;">` +
-              `${source.label} has no volume data — Volume and Bought/Sold are not shown.</div>`
+        const noTradeDays = windows
+            .filter(({ stats }) => stats.hasData && !stats.hasTrades)
+            .map(({ days }) => `${days}d`);
+
+        const notes = [];
+        if (!source.hasVolume) {
+            notes.push(`${source.label} has no volume data — Volume and Bought/Sold are not shown.`);
+        }
+        if (noTradeDays.length) {
+            notes.push(`${noTradeDays.join('/')}: no trades — ask/bid only.`);
+        }
+        const note = notes.length
+            ? `<div style="color:#AAAAAA;font-size:10px;margin-top:2px;">${notes.join(' ')}</div>`
             : '';
 
         panel.innerHTML =

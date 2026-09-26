@@ -157,6 +157,8 @@ describe('computeMarketStats — golden test against the source formulas', () =>
 
     test('an empty window is all zeros', () => {
         expect(computeMarketStats([])).toEqual({
+            hasData: false,
+            hasTrades: false,
             volume: 0,
             avgPrice: 0,
             medianPrice: 0,
@@ -169,6 +171,62 @@ describe('computeMarketStats — golden test against the source formulas', () =>
 
     test('tolerates a non-array input', () => {
         expect(computeMarketStats(null).volume).toBe(0);
+    });
+
+    describe('rows with ask/bid but no trades (p and v both 0 on every row)', () => {
+        // The live shape a September 2026 probe found for an equipment order
+        // book nobody traded in the window: `/items/furious_spear` level 10
+        // returned 120 rows shaped like `{a: 626000000, b: 606000000, p: 0, v:
+        // 0, time}` — the pool still sights the ask/bid, it just has no trade
+        // to report.
+        const untradedRows = [
+            { a: 620_000_000, b: 600_000_000, p: 0, v: 0, time: hour * 3600 },
+            { a: 630_000_000, b: 610_000_000, p: 0, v: 0, time: hour * 3600 + 10 },
+        ];
+
+        test('hasData is true and hasTrades is false', () => {
+            const stats = computeMarketStats(untradedRows);
+            expect(stats.hasData).toBe(true);
+            expect(stats.hasTrades).toBe(false);
+        });
+
+        test('average and median fall back to the mean ask/bid midpoint', () => {
+            const stats = computeMarketStats(untradedRows);
+            const meanAsk = (620_000_000 + 630_000_000) / 2;
+            const meanBid = (600_000_000 + 610_000_000) / 2;
+            const mid = (meanAsk + meanBid) / 2;
+            expect(stats.avgPrice).toBeCloseTo(mid, 5);
+            expect(stats.medianPrice).toBeCloseTo(mid, 5);
+        });
+
+        test('min/max are not manufactured from ask/bid — NaN, not a fabricated range', () => {
+            const stats = computeMarketStats(untradedRows);
+            expect(stats.minPrice).toBeNaN();
+            expect(stats.maxPrice).toBeNaN();
+        });
+
+        test('volume and buy/sell stay 0, not fallback values', () => {
+            const stats = computeMarketStats(untradedRows);
+            expect(stats.volume).toBe(0);
+            expect(stats.buyVolume).toBe(0);
+            expect(stats.sellVolume).toBe(0);
+        });
+
+        test('a window with no ask/bid quoted either has no fallback price (NaN, not 0 read as real)', () => {
+            const stats = computeMarketStats([{ a: 0, b: 0, p: 0, v: 0, time: hour * 3600 }]);
+            expect(stats.hasData).toBe(true);
+            expect(stats.hasTrades).toBe(false);
+            expect(stats.avgPrice).toBeNaN();
+            expect(stats.medianPrice).toBeNaN();
+        });
+
+        test('a traded item is unaffected: hasTrades is true and min/max are the real trade range', () => {
+            const stats = computeMarketStats(rows);
+            expect(stats.hasData).toBe(true);
+            expect(stats.hasTrades).toBe(true);
+            expect(stats.minPrice).toBe(100);
+            expect(stats.maxPrice).toBe(120);
+        });
     });
 });
 
