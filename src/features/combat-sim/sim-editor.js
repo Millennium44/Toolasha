@@ -107,6 +107,13 @@ export class SimEditor {
         // Progress or outcome of the last "Fetch <name>'s loadout" click
         this._loadoutFetchNote = '';
         this._fetchingLoadouts = false;
+        // Bumped by every action that replaces the loaded player scenario
+        // (importPlayers, resetToSelf, resetToParty/initEditor,
+        // openWithExternalDTO): a party-loadout fetch captures this before its
+        // await and only rebuilds the party if it is still the scenario the
+        // fetch was started for, so a reply that lands after the user has
+        // moved on cannot overwrite what they moved on to.
+        this._scenarioToken = 0;
     }
 
     getEditedDTOs() {
@@ -382,6 +389,7 @@ export class SimEditor {
             this._externalNote = '';
             this._partyKeyAtLoad = this._partySignature().key;
             this._editorInitialized = true;
+            this._scenarioToken++;
 
             this.renderEditor();
             if (restoreLoadout) await this._restoreLoadoutMemory();
@@ -416,6 +424,7 @@ export class SimEditor {
         this._externalNote = note || '';
         this._loadoutFetchNote = '';
         this._editorInitialized = true;
+        this._scenarioToken++;
         this.renderEditor();
     }
 
@@ -462,6 +471,7 @@ export class SimEditor {
         this._partyKeyAtLoad = null;
         this._editorInitialized = true;
         this._selectedLoadoutName = '';
+        this._scenarioToken++;
 
         this.renderEditor();
     }
@@ -537,6 +547,7 @@ export class SimEditor {
         this._selectedLoadoutName = '';
         this._partyKeyAtLoad = this._partySignature().key;
         this._editorInitialized = true;
+        this._scenarioToken++;
 
         this.renderEditor();
         this._saveLoadoutMemory();
@@ -583,6 +594,7 @@ export class SimEditor {
         this._partyKeyAtLoad = null;
         this._externalNote = '';
         this._loadoutFetchNote = '';
+        this._scenarioToken++;
     }
 
     /**
@@ -627,6 +639,11 @@ export class SimEditor {
         if (!member || this._fetchingLoadouts || !isViewLoadoutAvailable()) return null;
 
         const owner = dataManager.getCurrentCharacterId?.() ?? null;
+        // The scenario this fetch is for — importing players, resetting to self
+        // or opening an external DTO while the reply is in flight bumps this,
+        // and a reply that lands after must not resetToParty over whatever the
+        // user moved on to in the meantime
+        const scenario = this._scenarioToken;
         const name = member.characterName || String(member.characterID);
         this._fetchingLoadouts = true;
         this._loadoutFetchNote = `Fetching ${name}'s loadout…`;
@@ -641,6 +658,11 @@ export class SimEditor {
         }
         if ((dataManager.getCurrentCharacterId?.() ?? null) !== owner) {
             this._loadoutFetchNote = '';
+            return result;
+        }
+        if (this._scenarioToken !== scenario) {
+            // The party scenario this fetch was asked for is gone; the reply
+            // says nothing about whatever is loaded now
             return result;
         }
 
