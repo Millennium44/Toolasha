@@ -141,6 +141,16 @@ describe('measuring how fast an item sells', () => {
         expect(absorbablePerHour(volume)).toBe(Infinity);
     });
 
+    test('an unknown answer is asked again later, so turning history on is picked up', async () => {
+        const first = await dailyVolume('/items/later');
+        expect(first.known).toBe(false);
+
+        // Pooled history switched on: the next ask measures instead of repeating "unknown"
+        history.rows['/items/later'] = tradedAt(5);
+        const second = await dailyVolume('/items/later');
+        expect(second.known).toBe(true);
+    });
+
     test('history showing no trades is an answer, and bounds all the way down', async () => {
         history.rows['/items/dust'] = tradedAt(0);
         const volume = await dailyVolume('/items/dust');
