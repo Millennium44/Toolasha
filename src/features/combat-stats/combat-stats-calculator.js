@@ -12,6 +12,7 @@ import { describeKeyCost, resolveKeyPricing } from '../../utils/key-cost.js';
 import { treasureTracker } from '../../utils/bundle-bridge.js';
 import { MARKET_TAX, COWBELL_BAG_HRID, COWBELL_BAG_TAX } from '../../utils/profit-constants.js';
 import { ironCowBook, isIronCowCharacter } from '../../utils/ironcow-valuation.js';
+import { getItemPrice } from '../../utils/market-data.js';
 import { salesTaxNetted } from './sales-tax-view.js';
 
 /**
@@ -69,44 +70,56 @@ export function describeLuckAdjustment(adjustment) {
 }
 
 /**
- * What one loot entry is worth, both sides of the book.
+ * What one loot entry is worth, both sides of the book — plus `value`, what it
+ * is worth at the Buy/Sell pricing the player has actually configured.
  *
  * The one place this pricing rule is written. `calculateIncome` sums it and
  * `calculateIncomeItems` lists it per item, so the total shown on a card and
  * the rows an expanded breakdown adds up can never disagree about what a
  * single drop was worth — they read the same number.
  *
+ * `ask`/`bid` stay the raw book sides (Combat Revenue's Lazy/Mid/Patient
+ * scenario picker and the Combat Statistics popup's own Ask/Bid toggle read
+ * these directly, and must keep seeing the true book, not a reading of the
+ * global Buy/Sell setting). `value` is the new, third figure: the same
+ * pricing everywhere else profit is priced — `getItemPrice`'s `'sell'` side,
+ * which follows `profitCalc_pricingMode` and the per-side patient tick — so
+ * Party Loot's banked figure moves when that setting does, the way the combat
+ * sim's drop values already do.
+ *
  * @param {Object} loot - One entry from a lootMap (`{itemHrid, count}`)
- * @returns {{ask: number, bid: number}}
+ * @returns {{ask: number, bid: number, value: number}}
  */
 function valueOfLoot(loot) {
     const itemCount = loot.count;
 
-    // Coins are revenue at face value (1 coin = 1 gold)
+    // Coins are revenue at face value (1 coin = 1 gold), on every reading
     if (loot.itemHrid === '/items/coin') {
-        return { ask: itemCount, bid: itemCount };
+        return { ask: itemCount, bid: itemCount, value: itemCount };
     }
 
     const itemDetails = dataManager.getItemDetails(loot.itemHrid);
     if (itemDetails?.isOpenable) {
-        // Openable containers (chests, crates, etc.): use expected value
+        // Openable containers (chests, crates, etc.): use expected value —
+        // side-independent, so `value` reads the same as `ask`/`bid`
         const ev =
             expectedValueCalculator.getCachedValue(loot.itemHrid) ||
             expectedValueCalculator.calculateSingleContainer(loot.itemHrid);
-        if (ev === null || ev <= 0) return { ask: 0, bid: 0 };
+        if (ev === null || ev <= 0) return { ask: 0, bid: 0, value: 0 };
 
         // A dungeon chest may be worth what *this player* measures it at
         // rather than what the table promises — see `chestLuckAdjustment`;
         // null means no adjustment
         const adjustment = chestLuckAdjustment(loot.itemHrid);
         const adjustedEv = adjustment ? ev * adjustment.ratio : ev;
-        return { ask: adjustedEv * itemCount, bid: adjustedEv * itemCount };
+        const total = adjustedEv * itemCount;
+        return { ask: total, bid: total, value: total };
     }
 
     // Other items: market price, or an Iron Cow character's own valuation
     const ironCow = ironCowBook(loot.itemHrid);
     const prices = ironCow ?? marketAPI.getPrice(loot.itemHrid);
-    if (!prices) return { ask: 0, bid: 0 };
+    if (!prices) return { ask: 0, bid: 0, value: 0 };
 
     // Drops are sold on the market, so the sale tax comes off what they fetch
     // when the reader has asked for net income. Coin is handled above (face
@@ -118,29 +131,38 @@ function valueOfLoot(loot) {
         !ironCow && !isIronCowCharacter() && salesTaxNetted()
             ? 1 - (loot.itemHrid === COWBELL_BAG_HRID ? COWBELL_BAG_TAX : MARKET_TAX)
             : 1;
-    return { ask: prices.ask * itemCount * mult, bid: prices.bid * itemCount * mult };
+
+    // The configured sell side — `getItemPrice` already folds in custom price
+    // overrides, the Iron Cow valuation and the patient tick, so this is
+    // exactly what every other profit figure in the script reads
+    const configuredPrice = getItemPrice(loot.itemHrid, { context: 'profit', side: 'sell' });
+    const value = typeof configuredPrice === 'number' && configuredPrice >= 0 ? configuredPrice * itemCount * mult : 0;
+
+    return { ask: prices.ask * itemCount * mult, bid: prices.bid * itemCount * mult, value };
 }
 
 /**
  * Calculate total income from loot
  * @param {Object} lootMap - totalLootMap from player data
- * @returns {Object} { ask: number, bid: number }
+ * @returns {Object} { ask: number, bid: number, value: number }
  */
 export function calculateIncome(lootMap) {
     let totalAsk = 0;
     let totalBid = 0;
+    let totalValue = 0;
 
     if (!lootMap) {
-        return { ask: 0, bid: 0 };
+        return { ask: 0, bid: 0, value: 0 };
     }
 
     for (const loot of Object.values(lootMap)) {
         const value = valueOfLoot(loot);
         totalAsk += value.ask;
         totalBid += value.bid;
+        totalValue += value.value;
     }
 
-    return { ask: totalAsk, bid: totalBid };
+    return { ask: totalAsk, bid: totalBid, value: totalValue };
 }
 
 /**
@@ -155,7 +177,7 @@ export function calculateIncome(lootMap) {
  *
  * @param {Object} lootMap - totalLootMap from player data
  * @returns {Array<Object>} `{itemHrid, itemName, count, isOpenable,
- *   unitValue: {ask, bid}, totalValue: {ask, bid}}`
+ *   unitValue: {ask, bid, value}, totalValue: {ask, bid, value}}`
  */
 export function calculateIncomeItems(lootMap) {
     if (!lootMap) return [];
@@ -171,12 +193,17 @@ export function calculateIncomeItems(lootMap) {
             itemName: itemDetails?.name || (loot.itemHrid === '/items/coin' ? 'Coin' : loot.itemHrid),
             count,
             isOpenable: Boolean(itemDetails?.isOpenable),
-            unitValue: count > 0 ? { ask: totalValue.ask / count, bid: totalValue.bid / count } : { ask: 0, bid: 0 },
+            unitValue:
+                count > 0
+                    ? { ask: totalValue.ask / count, bid: totalValue.bid / count, value: totalValue.value / count }
+                    : { ask: 0, bid: 0, value: 0 },
             totalValue,
         });
     }
 
-    items.sort((a, b) => b.totalValue.bid - a.totalValue.bid || a.itemName.localeCompare(b.itemName));
+    // Sorted by the figure Party Loot actually shows, so the biggest
+    // contributor to the card's own total reads first under any pricing setting
+    items.sort((a, b) => b.totalValue.value - a.totalValue.value || a.itemName.localeCompare(b.itemName));
     return items;
 }
 
@@ -311,16 +338,25 @@ export function calculateKeyCosts(lootMap, durationSeconds) {
 /**
  * Calculate consumable costs based on actual consumption with baseline estimates
  * Uses weighted average: 90% actual data + 10% baseline estimate (like MCS)
+ *
+ * `pricePerItem`/`totalCost` stay the raw ask (unchanged — the Combat Profit
+ * panel's Lazy/Mid/Patient scenarios and the Combat Statistics popup's own
+ * Ask/Bid toggle read these). `priceValue`/`totalCostValue` are the new,
+ * third figure: consumables are a purchase, so they are costed at the
+ * configured *buy* side (`getItemPrice`'s `'buy'`) — the same setting Party
+ * Loot's loot income now follows on the sell side.
+ *
  * @param {Array} consumables - combatConsumables array from player data (with consumed field)
  * @param {number} durationSeconds - Combat duration in seconds
- * @returns {Object} { total: number, breakdown: Array } Total cost and per-item breakdown
+ * @returns {Object} { total: number, totalValue: number, breakdown: Array }
  */
 export function calculateConsumableCosts(consumables, durationSeconds) {
     if (!consumables || consumables.length === 0 || !durationSeconds || durationSeconds <= 0) {
-        return { total: 0, breakdown: [] };
+        return { total: 0, totalValue: 0, breakdown: [] };
     }
 
     let totalCost = 0;
+    let totalCostValue = 0;
     const breakdown = [];
 
     for (const consumable of consumables) {
@@ -345,6 +381,14 @@ export function calculateConsumableCosts(consumables, durationSeconds) {
 
         totalCost += itemCost;
 
+        // Same null-means-unpriced rule as above, at whichever side the Buy
+        // setting resolves to (Instant/Patient/Patient +1)
+        const configuredPrice = getItemPrice(consumable.itemHrid, { context: 'profit', side: 'buy' });
+        const priceValue = typeof configuredPrice === 'number' && configuredPrice > 0 ? configuredPrice : null;
+        const itemCostValue = priceValue === null ? 0 : priceValue * consumed;
+
+        totalCostValue += itemCostValue;
+
         // Get item name from data manager
         const itemDetails = dataManager.getItemDetails(consumable.itemHrid);
         const itemName = itemDetails?.name || consumable.itemHrid;
@@ -356,6 +400,8 @@ export function calculateConsumableCosts(consumables, durationSeconds) {
             consumedPerDay: consumable.consumedPerDay || 0,
             pricePerItem: itemPrice,
             totalCost: itemCost,
+            priceValue,
+            totalCostValue: itemCostValue,
             startingCount: consumable.startingCount,
             currentCount: consumable.currentCount,
             actualConsumed: actualConsumed,
@@ -367,7 +413,7 @@ export function calculateConsumableCosts(consumables, durationSeconds) {
         });
     }
 
-    return { total: totalCost, breakdown };
+    return { total: totalCost, totalValue: totalCostValue, breakdown };
 }
 
 /**
@@ -472,8 +518,12 @@ export function calculatePlayerStats(playerData, durationSeconds = null) {
     // total and a card's headline figure can never drift from what its own
     // breakdown rows add up to.
     const income = incomeItems.reduce(
-        (sum, item) => ({ ask: sum.ask + item.totalValue.ask, bid: sum.bid + item.totalValue.bid }),
-        { ask: 0, bid: 0 }
+        (sum, item) => ({
+            ask: sum.ask + item.totalValue.ask,
+            bid: sum.bid + item.totalValue.bid,
+            value: sum.value + item.totalValue.value,
+        }),
+        { ask: 0, bid: 0, value: 0 }
     );
     const incomeBreakdownData = calculateIncomeBreakdown(playerData.loot);
 
@@ -489,17 +539,19 @@ export function calculatePlayerStats(playerData, durationSeconds = null) {
     // Calculate daily income
     const dailyIncomeAsk = duration > 0 ? calculateDailyRate(income.ask, duration) : 0;
     const dailyIncomeBid = duration > 0 ? calculateDailyRate(income.bid, duration) : 0;
+    const dailyIncomeValue = duration > 0 ? calculateDailyRate(income.value, duration) : 0;
 
     // Calculate consumable costs based on ACTUAL consumption.
     //
-    // Returned as `{ask, bid}`, the same shape as `keyCosts`, because every
-    // banked figure (Party Loot, the Total Profit tile) reads `.bid` off both.
-    // As a bare number `.bid` was undefined and those figures charged a run
-    // nothing for its food and drink. Both sides carry the one figure: a
-    // consumable is bought, so it is priced at the ask whichever side the
-    // income is read at — the same price `dailyConsumableCosts` uses.
+    // Returned as `{ask, bid, value}`, because every banked figure (Party Loot,
+    // the Total Profit tile) reads a side off it. As a bare number `.bid` was
+    // undefined and those figures charged a run nothing for its food and
+    // drink. `ask` and `bid` carry the one raw-ask figure (a consumable is
+    // bought, so the Lazy/Mid/Patient scenarios and the Ask/Bid popup toggle
+    // both price it at the ask whichever side they read income at); `value` is
+    // the configured Buy-side figure Party Loot now reads instead.
     const consumableData = calculateConsumableCosts(playerData.consumables, duration);
-    const consumableCosts = { ask: consumableData.total, bid: consumableData.total };
+    const consumableCosts = { ask: consumableData.total, bid: consumableData.total, value: consumableData.totalValue };
     const consumableBreakdown = consumableData.breakdown;
 
     // Calculate daily consumable costs using pre-calculated per-day rates (MCS-style)
@@ -510,10 +562,19 @@ export function calculatePlayerStats(playerData, durationSeconds = null) {
         (sum, item) => sum + (item.consumedPerDay || 0) * item.pricePerItem,
         0
     );
+    // The same daily rate, at the configured Buy side rather than the raw ask
+    const dailyConsumableCostsValue = consumableBreakdown.reduce(
+        (sum, item) => sum + (item.consumedPerDay || 0) * item.priceValue,
+        0
+    );
 
     // Calculate entry key costs (1:1 with regular dungeon chests dropped)
     const keyData = calculateKeyCosts(playerData.loot, duration);
-    const keyCosts = { ask: keyData.ask, bid: keyData.bid };
+    // Keys already follow their own `profitCalc_keyPricingMode` setting rather
+    // than the Buy/Sell one — `ask` and `bid` are already the one costed
+    // figure (see `calculateKeyCosts`), and `value` is the same number so a
+    // generic reader of `.value` does not have to special-case keys
+    const keyCosts = { ask: keyData.ask, bid: keyData.bid, value: keyData.ask };
     const dailyKeyCosts = keyData.dailyCost;
     const keyBreakdown = keyData.breakdown;
     const keyPricingMode = keyData.pricingMode;
@@ -521,6 +582,7 @@ export function calculatePlayerStats(playerData, durationSeconds = null) {
     // Calculate daily profit (income minus consumables and key costs)
     const dailyProfitAsk = dailyIncomeAsk - dailyConsumableCosts - dailyKeyCosts;
     const dailyProfitBid = dailyIncomeBid - dailyConsumableCosts - dailyKeyCosts;
+    const dailyProfitValue = dailyIncomeValue - dailyConsumableCostsValue - dailyKeyCosts;
 
     // Calculate total experience
     const totalExp = calculateTotalExperience(playerData.experience);
@@ -539,14 +601,17 @@ export function calculatePlayerStats(playerData, durationSeconds = null) {
         income: {
             ask: income.ask,
             bid: income.bid,
+            value: income.value,
         },
         dailyIncome: {
             ask: dailyIncomeAsk,
             bid: dailyIncomeBid,
+            value: dailyIncomeValue,
         },
         consumableCosts,
         consumableBreakdown,
         dailyConsumableCosts,
+        dailyConsumableCostsValue,
         keyCosts,
         dailyKeyCosts,
         keyBreakdown,
@@ -554,6 +619,7 @@ export function calculatePlayerStats(playerData, durationSeconds = null) {
         dailyProfit: {
             ask: dailyProfitAsk,
             bid: dailyProfitBid,
+            value: dailyProfitValue,
         },
         totalExp,
         expPerHour,

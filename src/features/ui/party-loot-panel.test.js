@@ -60,10 +60,23 @@ vi.mock('../combat-stats/combat-stats-calculator.js', () => ({
     calculatePlayerStats: (player, duration) => ({
         name: player.name,
         isCurrentPlayer: player.isCurrentPlayer,
-        income: { bid: player.income ?? 0, ask: player.income ?? 0 },
-        consumableCosts: { bid: player.consumableCosts ?? 1000, ask: player.consumableCosts ?? 1000 },
-        keyCosts: { bid: player.keyCosts ?? 500, ask: player.keyCosts ?? 500 },
-        dailyProfit: { bid: (player.income ?? 0) * 10, ask: 0 },
+        // `.value` is what the panel actually reads (the configured Buy/Sell
+        // price); `.ask`/`.bid` ride along because the real shape carries all
+        // three, and defaulting `.value` to `player.income` (the same figure
+        // `.ask`/`.bid` default to) keeps every test that isn't about pricing
+        // itself unaffected by the switch
+        income: { bid: player.income ?? 0, ask: player.income ?? 0, value: player.incomeValue ?? player.income ?? 0 },
+        consumableCosts: {
+            bid: player.consumableCosts ?? 1000,
+            ask: player.consumableCosts ?? 1000,
+            value: player.consumableCostsValue ?? player.consumableCosts ?? 1000,
+        },
+        keyCosts: {
+            bid: player.keyCosts ?? 500,
+            ask: player.keyCosts ?? 500,
+            value: player.keyCostsValue ?? player.keyCosts ?? 500,
+        },
+        dailyProfit: { bid: (player.income ?? 0) * 10, ask: 0, value: (player.incomeValue ?? player.income ?? 0) * 10 },
         lootList: player.lootList || [],
         incomeItems: player.incomeItems || [],
         consumableBreakdown: player.consumableBreakdown || [],
@@ -435,10 +448,10 @@ describe('the session-history CSV rows', () => {
     // expected figures are on the page
     const statsFor = (player) => ({
         name: player.name,
-        income: { bid: player.income, ask: player.income },
-        consumableCosts: { bid: 1000 },
-        keyCosts: { bid: 500 },
-        dailyProfit: { bid: player.income * 10 },
+        income: { bid: player.income, ask: player.income, value: player.income },
+        consumableCosts: { bid: 1000, value: 1000 },
+        keyCosts: { bid: 500, value: 500 },
+        dailyProfit: { bid: player.income * 10, value: player.income * 10 },
     });
 
     test('no archive is no rows', () => {
@@ -495,10 +508,10 @@ describe('the session-history CSV rows', () => {
 describe('the plain-text summary', () => {
     const stats = (overrides) => ({
         name: 'Briggsy99',
-        income: { bid: 8_000_000 },
-        consumableCosts: { bid: 1000 },
-        keyCosts: { bid: 500 },
-        dailyProfit: { bid: 80_000_000 },
+        income: { bid: 8_000_000, value: 8_000_000 },
+        consumableCosts: { bid: 1000, value: 1000 },
+        keyCosts: { bid: 500, value: 500 },
+        dailyProfit: { bid: 80_000_000, value: 80_000_000 },
         lootList: [CHEST],
         ...overrides,
     });
@@ -562,16 +575,16 @@ describe('the per-character breakdown', () => {
                     itemName: 'Enchanted Chest',
                     count: 2,
                     isOpenable: true,
-                    unitValue: { bid: 3_700_000 },
-                    totalValue: { bid: 7_400_000 },
+                    unitValue: { bid: 3_700_000, value: 3_700_000 },
+                    totalValue: { bid: 7_400_000, value: 7_400_000 },
                 },
                 {
                     itemHrid: '/items/coin',
                     itemName: 'Coin',
                     count: 2_600_000,
                     isOpenable: false,
-                    unitValue: { bid: 1 },
-                    totalValue: { bid: 2_600_000 },
+                    unitValue: { bid: 1, value: 1 },
+                    totalValue: { bid: 2_600_000, value: 2_600_000 },
                 },
             ],
             consumableBreakdown: [
@@ -626,6 +639,44 @@ describe('the per-character breakdown', () => {
         expect(cardCoinLine).toBeTruthy();
     });
 
+    test('still sums exactly to the banked figure under a patient-sell setting, where value disagrees with bid', () => {
+        // Simulates "Sell: Patient" moving loot income above the raw bid, and
+        // "Buy: Patient" moving consumables below the raw ask — `.value` now
+        // disagrees with `.bid` on every line, and the breakdown must still
+        // foot to the card's own net rather than silently mixing the two.
+        game.data.players[1].incomeValue = 11_000_000;
+        game.data.players[1].consumableCostsValue = 1_800_000;
+        game.data.players[1].keyCostsValue = 350_000;
+        game.data.players[1].incomeItems[0].unitValue.value = 4_200_000;
+        game.data.players[1].incomeItems[0].totalValue.value = 8_400_000;
+        game.data.players[1].incomeItems[1].totalValue.value = 2_600_000;
+
+        partyLootPanel.show();
+        nameHeading('Millennium44').click();
+
+        const banked = 11_000_000 - 1_800_000 - 350_000;
+        expect(text()).toContain(formatKMB(11_000_000)); // Loot total, at the configured sell price
+        expect(text()).toContain(formatKMB(1_800_000)); // Consumables, at the configured buy price
+        expect(text()).toContain(formatKMB(banked));
+        const cardCoinLine = [...partyLootPanel.panel.querySelectorAll('span')].find((el) =>
+            el.textContent.includes(formatKMB(banked))
+        );
+        expect(cardCoinLine).toBeTruthy();
+    });
+
+    test('a Buy/Sell setting change moves the card, not just the daily rate — fails on the raw bid', () => {
+        // Before `.value` existed, every one of these readers was pinned to
+        // `.bid`: changing the Buy/Sell quick-settings row moved nothing on
+        // the card at all. Standing in for that setting change here by simply
+        // giving `.value` a different figure than `.bid` is enough to prove
+        // the card actually reads the configured price rather than the book.
+        game.data.players[1].incomeValue = 12_500_000;
+        partyLootPanel.show();
+
+        expect(text()).toContain(formatKMB(12_500_000 - 2_000_000 - 350_000));
+        expect(text()).not.toContain(formatKMB(10_000_000 - 2_000_000 - 350_000));
+    });
+
     test('an unpriced drop in the breakdown is shown as unpriced rather than as worth 0', () => {
         game.data.players[1].incomeItems = [
             {
@@ -633,8 +684,8 @@ describe('the per-character breakdown', () => {
                 itemName: 'Mystery Drop',
                 count: 1,
                 isOpenable: false,
-                unitValue: { bid: 0 },
-                totalValue: { bid: 0 },
+                unitValue: { bid: 0, value: 0 },
+                totalValue: { bid: 0, value: 0 },
             },
         ];
         partyLootPanel.show();

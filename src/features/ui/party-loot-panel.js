@@ -26,7 +26,13 @@
  *
  * The pricing follows the same rule as everywhere else: coins at face value,
  * openable containers at their expected value rather than their sale price
- * (a chest is worth what is in it), everything else at the market.
+ * (a chest is worth what is in it), everything else at the market — read off
+ * `.value` on the stats objects, which is loot priced at the configured Buy/Sell
+ * quick-settings row's Sell side and consumables at its Buy side (the same
+ * `getItemPrice`-backed pricing the combat sim's drop values use), not the raw
+ * `.ask`/`.bid` those objects also carry for the Combat Profit panel's own
+ * Lazy/Mid/Patient scenario picker and the Combat Statistics popup's Ask/Bid
+ * toggle.
  */
 
 import config from '../../core/config.js';
@@ -72,8 +78,8 @@ export const SESSION_HISTORY_COLUMNS = [
  * The archived runs as CSV rows, one per session.
  *
  * The per-player figures are the ones the panel's cards show: loot income less
- * consumables and keys ("banked"), and the daily rate, both at bid — packed
- * `Name: value` into two columns, because the roster changes run to run and a
+ * consumables and keys ("banked"), and the daily rate, both at the configured
+ * Buy/Sell pricing — packed `Name: value` into two columns, because the roster changes run to run and a
  * column per player would give every export a different shape. The numbers
  * inside are raw integers, not the panel's `1.2M`.
  *
@@ -87,7 +93,9 @@ export function buildSessionHistoryRows(sessionList, statsFor = calculatePlayerS
         .map((session) => {
             const stats = session.players.map((player) => statsFor(player, session.durationSeconds || 0));
             const banked = (playerStats) =>
-                playerStats.income.bid - (playerStats.consumableCosts?.bid || 0) - (playerStats.keyCosts?.bid || 0);
+                playerStats.income.value -
+                (playerStats.consumableCosts?.value || 0) -
+                (playerStats.keyCosts?.value || 0);
 
             const started = new Date(session.combatStartTime);
             const zoneHrid = session.actionHrid || '';
@@ -106,7 +114,7 @@ export function buildSessionHistoryRows(sessionList, statsFor = calculatePlayerS
                     .map((playerStats) => `${playerStats.name || '?'}: ${Math.round(banked(playerStats))}`)
                     .join('; '),
                 perPlayerDaily: stats
-                    .map((playerStats) => `${playerStats.name || '?'}: ${Math.round(playerStats.dailyProfit.bid)}`)
+                    .map((playerStats) => `${playerStats.name || '?'}: ${Math.round(playerStats.dailyProfit.value)}`)
                     .join('; '),
             };
         });
@@ -131,11 +139,11 @@ export function buildSummaryText(party, label) {
 
     const lines = [`Party Loot — ${label}`];
     for (const stats of party) {
-        const banked = stats.income.bid - (stats.consumableCosts?.bid || 0) - (stats.keyCosts?.bid || 0);
+        const banked = stats.income.value - (stats.consumableCosts?.value || 0) - (stats.keyCosts?.value || 0);
         lines.push(
             '',
             `${stats.name || '?'}: ${formatWithSeparator(Math.round(banked))} coins ` +
-                `(${formatWithSeparator(Math.round(stats.dailyProfit.bid))}/day)`
+                `(${formatWithSeparator(Math.round(stats.dailyProfit.value))}/day)`
         );
 
         const items = stats.lootList || [];
@@ -423,13 +431,13 @@ function playerBreakdown(stats, banked) {
             wrap.appendChild(panelNote('Chests at opening value.'));
         }
         for (const item of incomeItems) {
-            const unpriced = item.totalValue.bid <= 0;
+            const unpriced = item.totalValue.value <= 0;
             wrap.appendChild(
                 breakdownRow(
                     item.itemName,
                     formatCount(item.count),
-                    unpriced ? '—' : formatKMB(item.unitValue.bid),
-                    unpriced ? '—' : formatKMB(item.totalValue.bid),
+                    unpriced ? '—' : formatKMB(item.unitValue.value),
+                    unpriced ? '—' : formatKMB(item.totalValue.value),
                     ROW_COLORS.gold
                 )
             );
@@ -494,15 +502,17 @@ function playerBreakdown(stats, banked) {
     // `banked` is that exact figure, not recomputed, so the two can never
     // read differently
     wrap.appendChild(breakdownHeading('Summary'));
-    wrap.appendChild(breakdownRow('Loot total', '', '', formatKMB(stats.income.bid), ROW_COLORS.gold));
-    wrap.appendChild(breakdownRow('− Consumables', '', '', formatKMB(stats.consumableCosts?.bid || 0), ROW_COLORS.bad));
-    wrap.appendChild(breakdownRow('− Keys', '', '', formatKMB(stats.keyCosts?.bid || 0), ROW_COLORS.bad));
+    wrap.appendChild(breakdownRow('Loot total', '', '', formatKMB(stats.income.value), ROW_COLORS.gold));
+    wrap.appendChild(
+        breakdownRow('− Consumables', '', '', formatKMB(stats.consumableCosts?.value || 0), ROW_COLORS.bad)
+    );
+    wrap.appendChild(breakdownRow('− Keys', '', '', formatKMB(stats.keyCosts?.value || 0), ROW_COLORS.bad));
     wrap.appendChild(breakdownRow('= Net', '', '', formatKMB(banked), banked >= 0 ? ROW_COLORS.good : ROW_COLORS.bad));
 
     const rateLine = document.createElement('div');
     Object.assign(rateLine.style, { fontSize: '11px', color: ROW_COLORS.dim, marginTop: '2px' });
     const sessionLength = Number.isFinite(stats.duration) && stats.duration > 0 ? shortDuration(stats.duration) : '—';
-    rateLine.textContent = `${formatKMB(Math.round(stats.dailyProfit.bid))}/day over ${sessionLength}`;
+    rateLine.textContent = `${formatKMB(Math.round(stats.dailyProfit.value))}/day over ${sessionLength}`;
     wrap.appendChild(rateLine);
 
     return wrap;
@@ -566,7 +576,7 @@ function drawPlayer(body, stats) {
 
     // Both cost figures are `{ask, bid}` rather than numbers; subtracting the
     // objects gives NaN, which is how this last went wrong on the tile
-    const banked = stats.income.bid - (stats.consumableCosts?.bid || 0) - (stats.keyCosts?.bid || 0);
+    const banked = stats.income.value - (stats.consumableCosts?.value || 0) - (stats.keyCosts?.value || 0);
 
     const summary = document.createElement('div');
     Object.assign(summary.style, {
@@ -583,14 +593,14 @@ function drawPlayer(body, stats) {
     coin.style.color = banked >= 0 ? ROW_COLORS.good : ROW_COLORS.bad;
 
     const rate = document.createElement('span');
-    rate.textContent = `${formatKMB(Math.round(stats.dailyProfit.bid))}/day`;
+    rate.textContent = `${formatKMB(Math.round(stats.dailyProfit.value))}/day`;
     rate.style.color = ROW_COLORS.dim;
 
     summary.append(coin, rate);
     summary.title =
-        `${formatWithSeparator(Math.round(stats.income.bid))} of loot, less ` +
-        `${formatWithSeparator(Math.round(stats.consumableCosts?.bid || 0))} of consumables and ` +
-        `${formatWithSeparator(Math.round(stats.keyCosts?.bid || 0))} of keys.`;
+        `${formatWithSeparator(Math.round(stats.income.value))} of loot, less ` +
+        `${formatWithSeparator(Math.round(stats.consumableCosts?.value || 0))} of consumables and ` +
+        `${formatWithSeparator(Math.round(stats.keyCosts?.value || 0))} of keys.`;
 
     // A key is costed at the cheaper of buying and crafting it, and which one
     // that was changes the figure above — so say so rather than leave the
@@ -818,10 +828,11 @@ export const partyLootPanel = createPanel({
         // as somebody who looted a hundred.
         if (party.length > 1) {
             const total = party.reduce(
-                (sum, stats) => sum + stats.income.bid - (stats.consumableCosts?.bid || 0) - (stats.keyCosts?.bid || 0),
+                (sum, stats) =>
+                    sum + stats.income.value - (stats.consumableCosts?.value || 0) - (stats.keyCosts?.value || 0),
                 0
             );
-            const perDay = party.reduce((sum, stats) => sum + stats.dailyProfit.bid, 0);
+            const perDay = party.reduce((sum, stats) => sum + stats.dailyProfit.value, 0);
 
             const card = panelCard(body, `Party of ${party.length}`, ACCENT);
             const line = document.createElement('div');

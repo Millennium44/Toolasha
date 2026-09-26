@@ -39,6 +39,17 @@ vi.mock('../../utils/key-cost.js', () => ({
 const market = vi.hoisted(() => ({ prices: {} }));
 vi.mock('../../api/marketplace.js', () => ({ default: { getPrice: (hrid) => market.prices[hrid] || null } }));
 
+// The configured Buy/Sell pricing (`.value`) is read through `getItemPrice`
+// rather than the raw book — mocked directly here rather than exercising the
+// real `market-data.js`, which pulls in custom price overrides, the value-map
+// band clamp and the patient tick, none of which this file is about.
+// `configured.price(itemHrid, side)` lets a test hand back whatever the
+// pricing setting under test would resolve to.
+const configured = vi.hoisted(() => ({ price: () => null }));
+vi.mock('../../utils/market-data.js', () => ({
+    getItemPrice: (itemHrid, options) => configured.price(itemHrid, options?.side),
+}));
+
 // The sale-tax netting is a shared flag; default it off so the existing income
 // tests read gross, and the tax tests below turn it on explicitly.
 const salesTax = vi.hoisted(() => ({ netted: false }));
@@ -126,6 +137,17 @@ beforeEach(() => {
     luck.measured = null;
     ironCow.book = {};
     ironCow.isCharacter = false;
+    // Mirrors the real `getItemPrice`'s shape closely enough for these tests:
+    // an Iron Cow item values the same on both sides, and otherwise 'buy'
+    // reads the ask and 'sell' the bid — the `hybrid` pricing mode's mapping,
+    // which is the schema default. A test after the configured price itself
+    // (rather than this approximation) overrides `configured.price` directly.
+    configured.price = (itemHrid, side) => {
+        if (ironCow.book[itemHrid]) return ironCow.book[itemHrid].ask;
+        const prices = market.prices[itemHrid];
+        if (!prices) return null;
+        return side === 'buy' ? prices.ask : prices.bid;
+    };
 });
 
 describe('calculateKeyCosts', () => {
@@ -335,7 +357,7 @@ describe('what a dungeon run banked, as the Party Loot panel and the Total Profi
         );
 
         const eaten = 43 * 2000 + 41 * 40000;
-        expect(stats.consumableCosts).toEqual({ ask: eaten, bid: eaten });
+        expect(stats.consumableCosts).toEqual({ ask: eaten, bid: eaten, value: eaten });
 
         // 8 entry keys at 20,000 and 8 chest keys crafted at 5,000
         expect(stats.keyCosts.bid).toBe(8 * 20000 + 8 * 5000);
@@ -345,7 +367,7 @@ describe('what a dungeon run banked, as the Party Loot panel and the Total Profi
 
     test('a run that has eaten nothing reports zero on both sides, not undefined', () => {
         const stats = calculatePlayerStats({ name: 'You', loot: {}, deathCount: 0, consumables: [] }, 600);
-        expect(stats.consumableCosts).toEqual({ ask: 0, bid: 0 });
+        expect(stats.consumableCosts).toEqual({ ask: 0, bid: 0, value: 0 });
     });
 });
 
@@ -496,6 +518,7 @@ describe('calculateIncomeItems rows sum to calculateIncome', () => {
 
         expect(sumRows(items, 'ask')).toBeCloseTo(totals.ask, 6);
         expect(sumRows(items, 'bid')).toBeCloseTo(totals.bid, 6);
+        expect(sumRows(items, 'value')).toBeCloseTo(totals.value, 6);
     });
 
     test('with the sale tax on — the Iron Cow item stays untaxed among taxed neighbors', () => {
@@ -506,10 +529,92 @@ describe('calculateIncomeItems rows sum to calculateIncome', () => {
 
         expect(sumRows(items, 'ask')).toBeCloseTo(totals.ask, 6);
         expect(sumRows(items, 'bid')).toBeCloseTo(totals.bid, 6);
+        expect(sumRows(items, 'value')).toBeCloseTo(totals.value, 6);
 
         // Sanity check that the Iron Cow row really did dodge the tax, so the
         // sum-equivalence above is not accidentally comparing two zeroes
         const ironCowRow = items.find((item) => item.itemHrid === IRON_COW_ITEM);
         expect(ironCowRow.totalValue.ask).toBe(400 * 3);
+    });
+});
+
+describe('the configured Buy/Sell price (`.value`)', () => {
+    // Party Loot and the Total Profit tile used to read `.bid` unconditionally,
+    // so changing the Buy/Sell quick-settings row never moved a single figure
+    // on either — only `keyCosts`, via `key-cost.js`, actually followed a
+    // setting. `.value` is what fixes that: loot priced at `getItemPrice`'s
+    // 'sell' side, consumables at its 'buy' side, whatever that setting says.
+    test('loot income follows the configured sell side, not the raw bid', () => {
+        market.prices['/items/cheese'] = { ask: 1000, bid: 900 };
+
+        // 'Instant' sell reads the bid
+        configured.price = () => 900;
+        const instant = calculateIncome({ a: { itemHrid: '/items/cheese', count: 2 } });
+        expect(instant.value).toBe(1800);
+        expect(instant.bid).toBe(1800); // the raw bid happens to agree here…
+
+        // …but 'Patient' sell reads the ask, which the raw bid above cannot
+        // reflect — this is the setting actually taking hold
+        configured.price = () => 1000;
+        const patient = calculateIncome({ a: { itemHrid: '/items/cheese', count: 2 } });
+        expect(patient.value).toBe(2000);
+        expect(patient.bid).toBe(1800); // unchanged: `.bid` is still the raw book
+    });
+
+    test('consumable costs follow the configured buy side, not the raw ask', () => {
+        market.prices['/items/priced_food'] = { ask: 120, bid: 100 };
+
+        // 'Instant' buy reads the ask
+        configured.price = () => 120;
+        const instant = calculateConsumableCosts(
+            [{ itemHrid: '/items/priced_food', consumed: 10, consumedPerDay: 240 }],
+            3600
+        );
+        expect(instant.totalValue).toBe(1200);
+        expect(instant.total).toBe(1200); // the raw ask happens to agree here…
+
+        // …but 'Patient' buy reads the bid, which the raw ask above cannot
+        // reflect
+        configured.price = () => 100;
+        const patient = calculateConsumableCosts(
+            [{ itemHrid: '/items/priced_food', consumed: 10, consumedPerDay: 240 }],
+            3600
+        );
+        expect(patient.totalValue).toBe(1000);
+        expect(patient.total).toBe(1200); // unchanged: `.total` is still the raw ask
+    });
+
+    test('a Buy/Sell change moves the card figures `calculatePlayerStats` hands Party Loot', () => {
+        market.prices['/items/cheese'] = { ask: 1000, bid: 900 };
+        const player = { name: 'You', loot: { a: { itemHrid: '/items/cheese', count: 2 } }, deathCount: 0 };
+
+        configured.price = () => 900; // Sell: Instant
+        const instant = calculatePlayerStats(player, 3600);
+
+        configured.price = () => 1000; // Sell: Patient
+        const patient = calculatePlayerStats(player, 3600);
+
+        expect(patient.income.value).toBeGreaterThan(instant.income.value);
+        expect(patient.dailyProfit.value).toBeGreaterThan(instant.dailyProfit.value);
+        // `.bid` never moved — it is not what the setting is supposed to touch
+        expect(patient.income.bid).toBe(instant.income.bid);
+    });
+
+    test('coins and openable chests price the same on every side — nothing to configure', () => {
+        ev.value = 100000;
+        const stats = calculatePlayerStats(
+            {
+                name: 'You',
+                loot: {
+                    coin: { itemHrid: '/items/coin', count: 500 },
+                    chest: { itemHrid: CHIMERICAL_CHEST, count: 1 },
+                },
+                deathCount: 0,
+            },
+            3600
+        );
+
+        expect(stats.income.value).toBe(stats.income.bid);
+        expect(stats.income.value).toBe(500 + 100000);
     });
 });

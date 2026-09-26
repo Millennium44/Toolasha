@@ -130,15 +130,19 @@ function currentStats() {
 /**
  * What a run has actually banked, after what it burned to get there.
  *
- * Both cost figures are `{ask, bid}` rather than numbers; subtracting the
- * objects gave NaN. Pulled out of the Total Profit render so its `version` can
- * quote the same figure rather than a second copy of the arithmetic.
+ * Reads `.value` — loot at the configured Sell side and consumables at the
+ * configured Buy side (see `combat-stats-calculator.js`) — the same figure
+ * Party Loot's own cards show, since this tile opens straight into that panel
+ * and a mismatch between the two would be visible the moment it did. Both
+ * cost figures are objects rather than numbers; subtracting them directly
+ * gave NaN. Pulled out of the Total Profit render so its `version` can quote
+ * the same figure rather than a second copy of the arithmetic.
  *
  * @param {Object} stats - From `calculatePlayerStats`
  * @returns {number} Coins
  */
 function bankedTotal(stats) {
-    return stats.income.bid - (stats.consumableCosts?.bid || 0) - (stats.keyCosts?.bid || 0);
+    return stats.income.value - (stats.consumableCosts?.value || 0) - (stats.keyCosts?.value || 0);
 }
 
 /**
@@ -396,7 +400,7 @@ registerRow({
                 stats.name || 'You',
                 stats.isCurrentPlayer ? 1 : 0,
                 Math.round(bankedTotal(stats)),
-                Math.round(stats.dailyProfit.bid),
+                Math.round(stats.dailyProfit.value),
             ].join('~')
         );
         const luckNotes = [
@@ -429,7 +433,7 @@ registerRow({
                         color: banked >= 0 ? ROW_COLORS.good : ROW_COLORS.bad,
                     },
                     {
-                        text: `${formatLargeNumber(Math.round(stats.dailyProfit.bid))}/day`,
+                        text: `${formatLargeNumber(Math.round(stats.dailyProfit.value))}/day`,
                         color: ROW_COLORS.dim,
                         push: true,
                     },
