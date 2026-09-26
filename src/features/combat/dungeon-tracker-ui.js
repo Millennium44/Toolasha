@@ -1117,6 +1117,14 @@ class DungeonTrackerUI {
      */
     async updateRunHistory() {
         await this.history.update(this.container);
+        // A stale filter reset to 'all' while the list was built: everything else
+        // that reads the filters was drawn before that, so bring it level and save
+        if (!this.history.consumeFilterReset?.()) return;
+        this.state.save();
+        this.interactions?.updateFilterIndicator?.();
+        this.updateChart();
+        const run = dungeonTracker.getCurrentRun();
+        if (run) await this.update(run);
     }
 
     /**

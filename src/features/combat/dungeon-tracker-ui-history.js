@@ -174,6 +174,18 @@ class DungeonTrackerUIHistory {
     }
 
     /**
+     * Whether the last update reset a stale filter to 'all', cleared on read. The
+     * header, chart and saved state are drawn from the filters before the list is,
+     * so the caller has to redraw them when this is true.
+     * @returns {boolean}
+     */
+    consumeFilterReset() {
+        const reset = Boolean(this.filtersReset);
+        this.filtersReset = false;
+        return reset;
+    }
+
+    /**
      * Update run history display with grouping and filtering
      * @param {HTMLElement} container - Main container element
      */
@@ -211,7 +223,7 @@ class DungeonTrackerUIHistory {
             const tiers = [...new Set(allRuns.map((r) => r.tier).filter((t) => t !== null && t !== undefined))].sort(
                 (a, b) => a - b
             );
-            this.updateFilterDropdowns(container, dungeons, teams, tiers);
+            if (this.updateFilterDropdowns(container, dungeons, teams, tiers)) this.filtersReset = true;
 
             if (allRuns.length === 0) {
                 runList.innerHTML =
@@ -271,8 +283,10 @@ class DungeonTrackerUIHistory {
      * @param {HTMLElement} container - Main container element
      * @param {Array} dungeons - List of dungeon names
      * @param {Array} teams - List of team keys
+     * @returns {boolean} Whether a stale filter was reset to 'all'
      */
     updateFilterDropdowns(container, dungeons, teams, tiers = []) {
+        let reset = false;
         // Update dungeon filter. Restored from state, not the DOM's own live
         // value — `autoScopeToRun` writes state directly, and reading the DOM
         // here would miss that until something else re-synced the select first.
@@ -297,6 +311,7 @@ class DungeonTrackerUIHistory {
                 dungeonFilter.value = desired;
             } else {
                 this.state.filterDungeon = 'all';
+                reset = true;
                 // Reset, not just discarded: clearing the manual flag lets
                 // auto-scope resume choosing this dimension on the next run.
                 this.state.isDungeonFilterManual = false;
@@ -325,6 +340,7 @@ class DungeonTrackerUIHistory {
                 // The saved tier no longer exists in the data — fall back to all,
                 // and clear the manual flag so auto-scope can resume for tier.
                 this.state.filterTier = 'all';
+                reset = true;
                 this.state.isTierFilterManual = false;
                 tierFilter.value = 'all';
             }
@@ -346,9 +362,11 @@ class DungeonTrackerUIHistory {
                 teamFilter.value = desired;
             } else {
                 this.state.filterTeam = 'all';
+                reset = true;
                 teamFilter.value = 'all';
             }
         }
+        return reset;
     }
 
     /**

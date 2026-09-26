@@ -474,6 +474,23 @@ describe('history filters auto-scope to the run being shown', () => {
         state.autoScopeToRun.mockReset().mockReturnValue(false);
     });
 
+    test('a stale filter reset while the list is built saves and redraws what read the old filter', async () => {
+        const history = ui.history;
+        const save = vi.spyOn(state, 'save');
+        const chart = vi.spyOn(ui, 'updateChart').mockResolvedValue(undefined);
+        ui.history = { update: async () => {}, consumeFilterReset: () => true };
+        try {
+            await ui.updateRunHistory();
+        } finally {
+            ui.history = history;
+        }
+
+        expect(save).toHaveBeenCalled();
+        expect(chart).toHaveBeenCalled();
+        chart.mockRestore();
+        save.mockRestore();
+    });
+
     test('a live run points the header at its own dungeon and tier, not every dungeon ever run', async () => {
         // A faster run of a different dungeon must not pull this dungeon's
         // average down once the header is scoped to the run in progress
