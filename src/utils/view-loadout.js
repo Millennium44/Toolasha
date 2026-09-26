@@ -253,9 +253,25 @@ export function handleLoadoutShared(data) {
 
     const name = loadout.sharableCharacter?.name || null;
     const rowId = characterIdFromLoadout(loadout);
-    const request = answers(inFlight, rowId, name) ? inFlight : null;
     const now = Date.now();
-    const click = !request && lastUserClick && now - lastUserClick.at <= USER_CLICK_WINDOW_MS ? lastUserClick : null;
+
+    // The game does not echo which click or request a reply is for, so a
+    // manual "View Loadout" click in a different context — the roster page,
+    // say, while a Toolasha fetch for the same player is out for a trial —
+    // can equally be what this specific reply answers. A click made *after*
+    // the in-flight request was sent is the more recent ask and wins the
+    // correlation; the in-flight request is left standing for its own reply,
+    // rather than being satisfied and mislabeled with the click's context.
+    const recentClick = lastUserClick && now - lastUserClick.at <= USER_CLICK_WINDOW_MS ? lastUserClick : null;
+    const clickIsNewer =
+        recentClick && inFlight && recentClick.context !== inFlight.context && recentClick.at > inFlight.sentAt;
+
+    const request = !clickIsNewer && answers(inFlight, rowId, name) ? inFlight : null;
+    const click = !request && recentClick ? recentClick : null;
+    // Claimed by this reply: the in-flight request's own answer is still to
+    // come, and must not find this same click again and be attributed to it
+    // a second time — a click answers at most one reply.
+    if (clickIsNewer) lastUserClick = null;
 
     /** @type {CapturedLoadout} */
     const entry = {
@@ -440,6 +456,9 @@ function requestOne(core, member, context, kind, timeoutMs) {
             context,
             kind,
             owner: currentOwner(),
+            // When this request went out, so a reply that could equally be a
+            // more recent manual click's own answer can be told apart from it
+            sentAt: Date.now(),
             resolve: (entry) => {
                 clearTimeout(timer);
                 resolve(entry);

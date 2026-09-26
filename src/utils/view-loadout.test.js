@@ -230,6 +230,50 @@ describe('fetchLoadout', () => {
         expect(isFetchingLoadout()).toBe(false);
     });
 
+    test('a manual click in a different context, made after the request, claims the next reply instead of the request', async () => {
+        // Regression: a manual "View Loadout" click from the roster (party
+        // context) landing while a Toolasha fetch for the same player was out
+        // for a trial used to satisfy the in-flight request (matched by
+        // character id alone) and get mislabeled with the request's context —
+        // recording a party loadout as a guild-trial one, or the reverse.
+        game.core = { handleViewProfile: () => {}, handleViewLoadout: vi.fn() };
+
+        const run = fetchLoadout({ characterID: 7, characterName: 'Ally' }, VIEW_LOADOUT_CONTEXT.GuildTrial, 'trial', {
+            closeGameModal: false,
+        });
+        await vi.advanceTimersByTimeAsync(50);
+
+        // A manual click on the roster's own "View Loadout", after the request
+        // above was already sent
+        const button = document.createElement('div');
+        button.className = 'Party_memberCard';
+        button.textContent = 'View Loadout';
+        document.body.appendChild(button);
+        const click = new MouseEvent('click', { bubbles: true });
+        Object.defineProperty(click, 'isTrusted', { value: true });
+        button.dispatchEvent(click);
+
+        // The click's own reply lands first
+        deliver(reply(7, 'Ally'));
+
+        // Attributed to the click, not the still-pending guild-trial fetch
+        expect(getLoadout(7, VIEW_LOADOUT_CONTEXT.Party)).toMatchObject({ requested: false, context: 'party' });
+        expect(getLoadout(7, VIEW_LOADOUT_CONTEXT.GuildTrial)).toBeNull();
+        expect(isFetchingLoadout()).toBe(true);
+
+        // The request's own reply then lands and resolves it normally
+        deliver(reply(7, 'Ally'));
+        await vi.advanceTimersByTimeAsync(10);
+        const result = await run;
+
+        expect(result.status).toBe('done');
+        expect(result.entry).toMatchObject({ context: 'guild_trial', requested: true });
+        expect(getLoadout(7, VIEW_LOADOUT_CONTEXT.GuildTrial)).toMatchObject({
+            requested: true,
+            context: 'guild_trial',
+        });
+    });
+
     test("another player's reply arriving mid-request is captured under its own character, not the one asked for", async () => {
         game.core = makeCore({ players, latencyMs: 300 });
 
