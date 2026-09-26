@@ -408,6 +408,24 @@ describe('navigating from "View All Enhancement Levels"', () => {
         expect(panelText()).not.toContain('Loading');
     });
 
+    test('a +0 card gaining its level badge as a new node is picked up (measured on the game client)', async () => {
+        // In the game a +0 order book has no badge element at all; picking +20 from
+        // the all-levels list inserts one, so no text or href changes in place
+        const currentItem = buildCurrentItem('/items/furious_spear', 0);
+        currentItem.querySelector('[class*="Item_enhancementLevel"]').remove();
+        await marketVolumeStats.initialize();
+        historyApi.rows = [{ a: 100, b: 80, p: 90, v: 3, time: Math.floor(Date.now() / 1000) - 3600 }];
+        marketVolumeStats.update();
+        await vi.waitFor(() => expect(marketVolumeStats.currentKey).toBe('/items/furious_spear:0'));
+
+        const badge = document.createElement('div');
+        badge.className = 'Item_enhancementLevel__x';
+        badge.textContent = '+20';
+        currentItem.appendChild(badge);
+
+        await vi.waitFor(() => expect(marketVolumeStats.currentKey).toBe('/items/furious_spear:20'));
+    });
+
     test('switching to a different item entirely through the same reused card is also picked up', async () => {
         const currentItem = buildCurrentItem('/items/furious_spear', 0);
         await marketVolumeStats.initialize();

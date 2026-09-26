@@ -360,9 +360,24 @@ class MarketVolumeStats {
         if (!currentItemElement || this.itemChangeObserved === currentItemElement) return;
         this.itemChangeObserver?.disconnect();
         this.itemChangeObserved = currentItemElement;
-        this.itemChangeObserver = new MutationObserver(() => this.scheduleUpdate());
+        // A level picked from "View All Enhancement Levels" adds the "+N" badge as a new
+        // node (a +0 card has none), so child additions count too — except this panel's
+        // own redraws, which live inside the same card
+        const ownNode = (node) => {
+            const el = node?.nodeType === 1 ? node : node?.parentElement;
+            return Boolean(el?.closest?.('.mwi-volume-stats, .mwi-volume-stats-menu'));
+        };
+        this.itemChangeObserver = new MutationObserver((records) => {
+            const relevant = records.some((record) => {
+                if (record.type !== 'childList') return !ownNode(record.target);
+                const changed = [...record.addedNodes, ...record.removedNodes];
+                return !ownNode(record.target) && changed.some((node) => !ownNode(node));
+            });
+            if (relevant) this.scheduleUpdate();
+        });
         this.itemChangeObserver.observe(currentItemElement, {
             subtree: true,
+            childList: true,
             attributes: true,
             attributeFilter: ['href', 'xlink:href'],
             characterData: true,
