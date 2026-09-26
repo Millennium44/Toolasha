@@ -509,6 +509,35 @@ describe('history filters auto-scope to the run being shown', () => {
         save.mockRestore();
     });
 
+    test('a stale filter reset with no current run still redraws Last/Avg/Runs (the pending/between-runs card)', async () => {
+        // Regression: with no `getCurrentRun()`, updateRunHistory() only redrew
+        // the header stats through update(run) — the pending card (a dungeon
+        // running but not yet tracked) and the between-runs gap both have no
+        // current run, so a stale filter reset left them at whatever the
+        // earlier, stale-filtered drawHistoryStats() call had drawn (often
+        // zeros) until the next full update() cycle.
+        world.currentRun = null;
+        world.runs = [{ dungeonName: 'Pirate Cove', tier: 1, duration: 300_000, timestamp: new Date().toISOString() }];
+
+        // Simulate the stale draw the pending-card path leaves on screen before
+        // the list rebuild resets the filter
+        ui.container.querySelector('#mwi-dt-header-last').textContent = '--:--';
+        ui.container.querySelector('#mwi-dt-header-avg').textContent = '--:--';
+        ui.container.querySelector('#mwi-dt-header-runs').textContent = '0';
+
+        const history = ui.history;
+        ui.history = { update: async () => {}, consumeFilterReset: () => true };
+        try {
+            await ui.updateRunHistory();
+        } finally {
+            ui.history = history;
+        }
+
+        expect(text('#mwi-dt-header-last')).toBe('05:00');
+        expect(text('#mwi-dt-header-avg')).toBe('05:00');
+        expect(text('#mwi-dt-header-runs')).toBe('1');
+    });
+
     test('a live run points the header at its own dungeon and tier, not every dungeon ever run', async () => {
         // A faster run of a different dungeon must not pull this dungeon's
         // average down once the header is scoped to the run in progress
