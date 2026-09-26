@@ -39,7 +39,8 @@ vi.mock('./profile-command.js', () => ({ getGameCore: () => game.core }));
 
 const viewLoadout = await import('./view-loadout.js');
 const {
-    fetchLoadouts,
+    fetchLoadout,
+    isFetchingLoadout,
     getLoadout,
     getLoadouts,
     isViewLoadoutAvailable,
@@ -179,91 +180,87 @@ describe('passive capture', () => {
     });
 });
 
-describe('fetchLoadouts', () => {
+describe('fetchLoadout', () => {
     const players = { 7: 'Ally', 8: 'Buddy', 9: 'Chum' };
 
-    test('asks one member at a time, matches each reply, and closes each modal', async () => {
+    test('sends exactly one request, matches its reply, and closes the modal', async () => {
         game.core = makeCore({ players });
 
-        const run = fetchLoadouts(
-            [
-                { characterID: 7, characterName: 'Ally' },
-                { characterID: 8, characterName: 'Buddy' },
-            ],
-            VIEW_LOADOUT_CONTEXT.Party
-        );
-
-        // Only the first request goes out until its reply lands
+        const run = fetchLoadout({ characterID: 7, characterName: 'Ally' }, VIEW_LOADOUT_CONTEXT.Party);
         expect(game.core.handleViewLoadout).toHaveBeenCalledTimes(1);
         expect(game.core.handleViewLoadout).toHaveBeenLastCalledWith(7, 'party', '');
-        await vi.advanceTimersByTimeAsync(99);
-        expect(game.core.handleViewLoadout).toHaveBeenCalledTimes(1);
 
         await vi.advanceTimersByTimeAsync(1000);
         const result = await run;
 
         expect(result.status).toBe('done');
-        expect(result.missed).toEqual([]);
-        expect(result.loadouts.map((entry) => [entry.characterId, entry.name, entry.context])).toEqual([
-            ['7', 'Ally', 'party'],
-            ['8', 'Buddy', 'party'],
-        ]);
-        expect(game.core.handleViewLoadout.mock.calls.map((call) => call[0])).toEqual([7, 8]);
+        expect(result.entry).toMatchObject({ characterId: '7', name: 'Ally', context: 'party', requested: true });
+        expect(game.core.handleViewLoadout).toHaveBeenCalledTimes(1);
         expect(findLoadoutModals()).toEqual([]);
-        expect(getLoadout(8, VIEW_LOADOUT_CONTEXT.Party)?.requested).toBe(true);
+        expect(getLoadout(7, VIEW_LOADOUT_CONTEXT.Party)?.requested).toBe(true);
     });
 
-    test('a member who never answers is skipped after the timeout, and the run goes on', async () => {
+    test('a player who never answers comes back as no_reply after the timeout', async () => {
         game.core = makeCore({ players, silent: [8] });
 
-        const run = fetchLoadouts([{ characterID: 8 }, { characterID: 9 }], 'party', '', { timeoutMs: 5000 });
+        const run = fetchLoadout({ characterID: 8 }, 'party', '', { timeoutMs: 5000 });
         await vi.advanceTimersByTimeAsync(4999);
-        expect(game.core.handleViewLoadout).toHaveBeenCalledTimes(1);
-        await vi.advanceTimersByTimeAsync(3000);
+        expect(isFetchingLoadout()).toBe(true);
+        await vi.advanceTimersByTimeAsync(10);
         const result = await run;
 
-        expect(result.missed).toEqual([{ characterId: '8', name: null }]);
-        expect(result.loadouts.map((entry) => entry.name)).toEqual(['Chum']);
+        expect(result).toEqual({ status: 'no_reply', entry: null });
+        expect(isFetchingLoadout()).toBe(false);
     });
 
     test("another player's reply arriving mid-request is captured under its own character, not the one asked for", async () => {
         game.core = makeCore({ players, latencyMs: 300 });
 
-        const run = fetchLoadouts([{ characterID: 7, characterName: 'Ally' }], 'guild_trial', 'trial');
+        const run = fetchLoadout({ characterID: 7, characterName: 'Ally' }, 'guild_trial', 'trial');
         await vi.advanceTimersByTimeAsync(50);
         deliver(reply(9, 'Chum'));
         await vi.advanceTimersByTimeAsync(2000);
         const result = await run;
 
-        expect(result.loadouts.map((entry) => entry.name)).toEqual(['Ally']);
+        expect(result.entry.name).toBe('Ally');
         expect(getLoadout(9)).toMatchObject({ requested: false, context: null });
         expect(getLoadout(7, 'guild_trial')).toMatchObject({ kind: 'trial', requested: true });
     });
 
-    test('a second run while one is going is refused and requests nothing', async () => {
+    test('a second call while one is in flight is refused and requests nothing', async () => {
         game.core = makeCore({ players });
 
-        const first = fetchLoadouts([{ characterID: 7 }]);
-        const second = await fetchLoadouts([{ characterID: 8 }]);
+        const first = fetchLoadout({ characterID: 7 });
+        const second = await fetchLoadout({ characterID: 8 });
 
-        expect(second.status).toBe('busy');
+        expect(second).toEqual({ status: 'busy', entry: null });
         expect(game.core.handleViewLoadout).toHaveBeenCalledTimes(1);
         await vi.advanceTimersByTimeAsync(2000);
         expect((await first).status).toBe('done');
+        // Only once the first has finished does a new click get its own request
+        const third = fetchLoadout({ characterID: 8 });
+        await vi.advanceTimersByTimeAsync(2000);
+        expect((await third).entry.name).toBe('Buddy');
+        expect(game.core.handleViewLoadout).toHaveBeenCalledTimes(2);
     });
 
-    test('a character switch stops the run before the next request', async () => {
+    test('a character switch while waiting answers character_switched and stores nothing', async () => {
         game.core = makeCore({ players });
 
-        const run = fetchLoadouts([{ characterID: 7 }, { characterID: 8 }, { characterID: 9 }]);
+        const run = fetchLoadout({ characterID: 7 });
         await vi.advanceTimersByTimeAsync(50);
         game.charId = 200;
         await vi.advanceTimersByTimeAsync(5000);
         const result = await run;
 
         expect(result.status).toBe('character_switched');
-        expect(game.core.handleViewLoadout).toHaveBeenCalledTimes(1);
-        expect(result.missed.map((member) => member.characterId)).toEqual(['7', '8', '9']);
+        expect(getLoadouts()).toEqual([]);
+    });
+
+    test('a member with no id requests nothing', async () => {
+        game.core = makeCore({ players });
+        expect((await fetchLoadout({ characterName: 'Ally' })).status).toBe('invalid');
+        expect(game.core.handleViewLoadout).not.toHaveBeenCalled();
     });
 });
 
@@ -272,7 +269,7 @@ describe('a game build without View Loadout', () => {
         game.core = { handleViewProfile: vi.fn() };
 
         expect(isViewLoadoutAvailable()).toBe(false);
-        const result = await fetchLoadouts([{ characterID: 7 }]);
+        const result = await fetchLoadout({ characterID: 7 });
         expect(result.status).toBe('unavailable');
         expect(game.core.handleViewProfile).not.toHaveBeenCalled();
     });

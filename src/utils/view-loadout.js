@@ -21,12 +21,15 @@
  *
  * ## Rules this module keeps
  *
- * - Nothing is ever requested without a user click: {@link fetchLoadouts} is for a
- *   click handler, and it goes through the game's own `handleViewLoadout`, never a
- *   raw socket send.
+ * - One user click, at most one request: {@link fetchLoadout} asks for exactly one
+ *   player, from a click handler, through the game's own `handleViewLoadout` — never
+ *   a raw socket send. The game enforces this too: its `messageSend` flags a message
+ *   `isAuto` when an untrusted click (ours, closing the modal) landed in the last
+ *   100 ms and no trusted one did, and the server does not answer an `isAuto`
+ *   `view_loadout`. Measured on the test server; not something to work around.
  * - Feature-detected: a game build without `handleViewLoadout` (the live server,
  *   until it gets the update) answers `false` from {@link isViewLoadoutAvailable},
- *   {@link fetchLoadouts} requests nothing, and the passive capture never fires
+ *   {@link fetchLoadout} requests nothing, and the passive capture never fires
  *   because no `loadout_shared` ever arrives.
  * - Every `loadout_shared` is remembered, whoever asked for it — the user's own
  *   clicks in game included.
@@ -51,10 +54,10 @@ import { getGameCore } from './profile-command.js';
 /** The game's context enum for `handleViewLoadout` */
 export const VIEW_LOADOUT_CONTEXT = Object.freeze({ Party: 'party', GuildTrial: 'guild_trial' });
 
-/** How long {@link fetchLoadouts} waits for one member's reply before skipping them */
+/** How long {@link fetchLoadout} waits for the reply */
 export const FETCH_TIMEOUT_MS = 5000;
 
-/** How long {@link fetchLoadouts} waits for the game's modal to appear so it can close it */
+/** How long {@link fetchLoadout} waits for the game's modal to appear so it can close it */
 export const MODAL_WAIT_MS = 1500;
 
 /** Poll step while waiting for the modal */
@@ -80,7 +83,7 @@ const AVAILABILITY_TTL_MS = 5000;
  * @property {string|null} context - 'party', 'guild_trial', or null when not known
  * @property {string|null} kind - The request's kind, or null when not known
  * @property {boolean} hasLoadout - The server's own flag; false means there is no loadout to use
- * @property {boolean} requested - True when {@link fetchLoadouts} asked for it
+ * @property {boolean} requested - True when {@link fetchLoadout} asked for it
  * @property {number} capturedAt - Epoch ms
  * @property {string|null} ownerCharacterId - The character that was logged in when it arrived
  * @property {Object} loadout - The raw `loadout` payload; treat as read-only
@@ -92,9 +95,9 @@ const store = new Map();
 const listeners = new Set();
 
 let captureStarted = false;
-/** The request {@link fetchLoadouts} is waiting on: `{characterId, name, context, kind, owner, resolve}` */
+/** The request {@link fetchLoadout} is waiting on: `{characterId, name, context, kind, owner, resolve}` */
 let inFlight = null;
-/** True while a {@link fetchLoadouts} run is going */
+/** True while a {@link fetchLoadout} is waiting on its reply or its modal */
 let running = false;
 /** `{at, context}` of the user's last "View Loadout" click */
 let lastUserClick = null;
@@ -286,7 +289,7 @@ export function handleLoadoutShared(data) {
 
 /**
  * Start remembering every `loadout_shared`. Idempotent; the entrypoint calls it at
- * startup, and {@link fetchLoadouts} makes sure of it.
+ * startup, and {@link fetchLoadout} makes sure of it.
  */
 export function startLoadoutCapture() {
     if (captureStarted) return;
@@ -455,73 +458,55 @@ function requestOne(core, member, context, kind, timeoutMs) {
 
 /**
  * @typedef {Object} FetchResult
- * @property {'done'|'unavailable'|'busy'|'character_switched'} status
- * @property {CapturedLoadout[]} loadouts - What arrived, in request order
- * @property {Array<{characterId: string, name: string|null}>} missed - Members with no reply
- *   (timed out, the call failed, or the run stopped before them)
+ * @property {'done'|'no_reply'|'unavailable'|'busy'|'character_switched'|'invalid'} status
+ *   - 'done': the reply arrived; `entry` is the capture (check `entry.hasLoadout`)
+ *   - 'no_reply': nothing within the timeout, or the game's handler threw
+ *   - 'unavailable': this game build has no View Loadout; nothing was requested
+ *   - 'busy': another fetch is still waiting; nothing was requested
+ *   - 'character_switched': the logged-in character changed while waiting
+ *   - 'invalid': the member had no character id; nothing was requested
+ * @property {CapturedLoadout|null} entry
  */
 
 /**
- * Fetch several players' loadouts through the game's own View Loadout — for a user
- * click only.
+ * Fetch one player's loadout through the game's own View Loadout — call it from a
+ * user's click, once per click.
  *
- * One member at a time: request, wait for the reply (up to `timeoutMs`, then that
- * member is skipped), close the modal the game opened for it, move on. Replies are
- * matched to the member asked for by the rows' `characterID` (or the name when the
- * reply has no rows); anything else that arrives meanwhile is still captured, under
- * its own character. Refuses a second run while one is going, and stops if the
- * logged-in character changes.
+ * Sends exactly one request, waits for the reply (up to `timeoutMs`), and closes the
+ * modal the game opens for it. A reply is matched to the player asked for by its
+ * rows' `characterID`, or by name when it has no rows (`hasLoadout:false`); anything
+ * else arriving meanwhile is still captured, under its own character. A second call
+ * while one is waiting is refused rather than queued: queueing would send a request
+ * with no click behind it, which the game marks `isAuto` and the server ignores.
  *
- * @param {Array<{characterId?: *, characterID?: *, name?: string, characterName?: string}>} members
+ * @param {{characterId?: *, characterID?: *, name?: string, characterName?: string}} member - The
+ *   player; the id is passed to the game as given (party rosters hold numbers)
  * @param {string} [context='party'] - One of {@link VIEW_LOADOUT_CONTEXT}
- * @param {string} [kind=''] - '' for party
+ * @param {string} [kind=''] - '' for party; the roster's kind for a guild trial
  * @param {Object} [options]
  * @param {number} [options.timeoutMs=FETCH_TIMEOUT_MS]
  * @param {number} [options.modalWaitMs=MODAL_WAIT_MS]
- * @param {(progress: {index: number, total: number, member: Object, entry: CapturedLoadout|null}) => void}
- *   [options.onProgress] - Called after each member
+ * @param {boolean} [options.closeGameModal=true] - False leaves the game's modal open for the user
  * @returns {Promise<FetchResult>}
  */
-export async function fetchLoadouts(members, context = VIEW_LOADOUT_CONTEXT.Party, kind = '', options = {}) {
-    const { timeoutMs = FETCH_TIMEOUT_MS, modalWaitMs = MODAL_WAIT_MS, onProgress = null } = options;
-    const list = (Array.isArray(members) ? members : [])
-        .map((member) => {
-            const rawId = member?.characterId ?? member?.characterID;
-            return { characterId: idKey(rawId), rawId, name: member?.name ?? member?.characterName ?? null };
-        })
-        .filter((member) => member.characterId);
-    const result = (status, loadouts = [], missed = []) => ({
-        status,
-        loadouts,
-        missed: missed.map(({ characterId, name }) => ({ characterId, name })),
-    });
+export async function fetchLoadout(member, context = VIEW_LOADOUT_CONTEXT.Party, kind = '', options = {}) {
+    const { timeoutMs = FETCH_TIMEOUT_MS, modalWaitMs = MODAL_WAIT_MS, closeGameModal = true } = options;
+    const rawId = member?.characterId ?? member?.characterID;
+    const target = { characterId: idKey(rawId), rawId, name: member?.name ?? member?.characterName ?? null };
 
-    if (running) return result('busy', [], list);
+    if (!target.characterId) return { status: 'invalid', entry: null };
+    if (running) return { status: 'busy', entry: null };
     const core = viewLoadoutCore();
-    if (!core) return result('unavailable', [], list);
+    if (!core) return { status: 'unavailable', entry: null };
 
     startLoadoutCapture();
     running = true;
     const owner = currentOwner();
-    const loadouts = [];
-    const missed = [];
     try {
-        for (let index = 0; index < list.length; index++) {
-            const member = list[index];
-            if (currentOwner() !== owner)
-                return result('character_switched', loadouts, [...missed, ...list.slice(index)]);
-
-            const entry = await requestOne(core, member, context, kind, timeoutMs);
-            if (currentOwner() !== owner) {
-                return result('character_switched', loadouts, [...missed, ...list.slice(index)]);
-            }
-            if (entry) loadouts.push(entry);
-            else missed.push(member);
-
-            await closeLoadoutModalFor(entry?.name || member.name, entry ? modalWaitMs : 0);
-            onProgress?.({ index, total: list.length, member: { ...member }, entry });
-        }
-        return result('done', loadouts, missed);
+        const entry = await requestOne(core, target, context, kind, timeoutMs);
+        if (currentOwner() !== owner) return { status: 'character_switched', entry: null };
+        if (closeGameModal) await closeLoadoutModalFor(entry?.name || target.name, entry ? modalWaitMs : 0);
+        return entry ? { status: 'done', entry } : { status: 'no_reply', entry: null };
     } finally {
         running = false;
         inFlight = null;
@@ -529,10 +514,10 @@ export async function fetchLoadouts(members, context = VIEW_LOADOUT_CONTEXT.Part
 }
 
 /**
- * Whether a {@link fetchLoadouts} run is going.
+ * Whether a {@link fetchLoadout} is waiting on its reply or its modal.
  * @returns {boolean}
  */
-export function isFetchingLoadouts() {
+export function isFetchingLoadout() {
     return running;
 }
 
