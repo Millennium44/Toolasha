@@ -24,6 +24,9 @@ const settings = vi.hoisted(() => ({
         profitCalc_patientTickSell: false,
         profitCalc_pricingNaming: false,
         profitCalc_keyPricingMode: 'ask',
+        // Iron Cow mode off: the row's Iron Cow lock check reads this key too,
+        // and the mock's fallback for anything unlisted is `true`
+        ironCow_enabled: false,
     },
     changeCallbacks: {},
 }));
@@ -114,6 +117,7 @@ beforeEach(() => {
         profitCalc_patientTickSell: false,
         profitCalc_pricingNaming: false,
         profitCalc_keyPricingMode: 'ask',
+        ironCow_enabled: false,
     };
     game.sessions = [];
     game.combinedResult = undefined;

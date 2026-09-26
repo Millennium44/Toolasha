@@ -19,6 +19,11 @@
 
 import config from '../../core/config.js';
 import { getSettingDefinition } from '../../core/settings-schema.js';
+import ironCowMode, {
+    IRON_COW_ENABLED_SETTING,
+    IRON_COW_SETTINGS,
+    pricingRowsLocked,
+} from '../settings/iron-cow-mode.js';
 import {
     applyPricingSideChoice,
     createPricingSideSelect,
@@ -39,8 +44,32 @@ export const KEY_PRICING_SETTING = 'profitCalc_keyPricingMode';
  */
 export const PRICING_QUICK_SETTINGS_KEYS = Object.freeze([...PRICING_SIDE_SETTING_KEYS, KEY_PRICING_SETTING]);
 
-/** Settings that move only a dropdown's tooltip, not what it shows selected */
-export const PRICING_QUICK_SETTINGS_TOOLTIP_KEYS = PRICING_SIDE_TOOLTIP_SETTING_KEYS;
+/**
+ * Settings that move only a dropdown's tooltip/enabled look, not what it shows
+ * selected. {@link IRON_COW_ENABLED_SETTING} is here rather than in
+ * {@link PRICING_QUICK_SETTINGS_KEYS}: toggling Iron Cow mode changes whether
+ * the three selects are locked, which `sync()` alone repaints, but it writes
+ * nothing this control prices — a host does not need to re-price on it too.
+ */
+export const PRICING_QUICK_SETTINGS_TOOLTIP_KEYS = Object.freeze([
+    ...PRICING_SIDE_TOOLTIP_SETTING_KEYS,
+    IRON_COW_ENABLED_SETTING,
+]);
+
+/**
+ * Whether Iron Cow mode currently owns pricing, so all three quick-settings
+ * selects must show as locked and neither respond nor write. Buy/Sell defer
+ * to {@link pricingRowsLocked} — the same question the Settings panel and
+ * What's New ask, keyed off `profitCalc_pricingMode` rather than either
+ * side's own row id, since a `pricingSide` row stores nothing of its own.
+ * Keys checks {@link KEY_PRICING_SETTING} directly against
+ * {@link IRON_COW_SETTINGS}, the way `handleSettingChange` guards any other
+ * plain setting id.
+ * @returns {boolean}
+ */
+function pricingQuickSettingsLocked() {
+    return pricingRowsLocked() || (ironCowMode.isEnabled() && IRON_COW_SETTINGS.has(KEY_PRICING_SETTING));
+}
 
 /**
  * Build the Key pricing dropdown, synced to the current setting.
@@ -65,19 +94,27 @@ function createKeyPricingSelect(cssText) {
         optionEl.style.color = '#fff';
         select.appendChild(optionEl);
     }
-    if (def?.help) select.title = def.help;
+    select.dataset.helpTitle = def?.help || '';
     syncKeyPricingSelect(select);
     return select;
 }
 
+/** Explains the lock, appended to a select's own tooltip while Iron Cow mode holds it. */
+const IRON_COW_LOCK_TITLE = 'Iron Cow mode sets pricing.';
+
 /**
- * Bring the Key dropdown's selection up to date with the setting.
+ * Bring the Key dropdown's selection, lock state and tooltip up to date with
+ * the setting and Iron Cow mode.
  * @param {HTMLSelectElement} select
  * @returns {void}
  */
 function syncKeyPricingSelect(select) {
     if (!select) return;
     select.value = config.getSettingValue(KEY_PRICING_SETTING, 'ask');
+    const locked = pricingQuickSettingsLocked();
+    select.disabled = locked;
+    const helpTitle = select.dataset.helpTitle || '';
+    select.title = locked ? IRON_COW_LOCK_TITLE : helpTitle;
 }
 
 /**
@@ -108,6 +145,11 @@ export function createPricingQuickSettings({ selectCssText = '', onChange } = {}
     const buySelect = createPricingSideSelect('buy', {
         cssText: selectCssText,
         onChoose: (choice) => {
+            // Pointer-events on a disabled select already stop a click — see
+            // syncPricingSideSelectLock below — but a keyboard or a script can
+            // still reach the element, so the write itself is guarded too,
+            // the same belt-and-braces the Settings panel's own row uses.
+            if (pricingQuickSettingsLocked()) return;
             applyPricingSideChoice('buy', choice);
             sync();
             notify();
@@ -116,6 +158,7 @@ export function createPricingQuickSettings({ selectCssText = '', onChange } = {}
     const sellSelect = createPricingSideSelect('sell', {
         cssText: selectCssText,
         onChoose: (choice) => {
+            if (pricingQuickSettingsLocked()) return;
             applyPricingSideChoice('sell', choice);
             sync();
             notify();
@@ -123,16 +166,38 @@ export function createPricingQuickSettings({ selectCssText = '', onChange } = {}
     });
     const keySelect = createKeyPricingSelect(selectCssText);
     keySelect.addEventListener('change', () => {
+        if (pricingQuickSettingsLocked()) return;
         config.setSettingValue(KEY_PRICING_SETTING, keySelect.value);
         notify();
     });
 
-    /** Resync all three dropdowns to the current settings. */
+    /**
+     * Disable/enable a Buy or Sell select for Iron Cow mode. Kept apart from
+     * `syncPricingSideSelect` (shared with the Settings panel and What's New,
+     * neither of which disables the element itself — they greyed the whole
+     * row instead) so this control's lock look lives beside the lock check
+     * that guards its handlers, rather than inside the shared helper.
+     * @param {HTMLSelectElement} select
+     */
+    function syncPricingSideSelectLock(select) {
+        const locked = pricingQuickSettingsLocked();
+        select.disabled = locked;
+        select.title = locked ? IRON_COW_LOCK_TITLE : select.title;
+    }
+
+    /** Resync all three dropdowns to the current settings and lock state. */
     function sync() {
         syncPricingSideSelect(buySelect);
         syncPricingSideSelect(sellSelect);
+        syncPricingSideSelectLock(buySelect);
+        syncPricingSideSelectLock(sellSelect);
         syncKeyPricingSelect(keySelect);
     }
+
+    // Buy/Sell start unlocked (createPricingSideSelect knows nothing of Iron Cow
+    // Mode); Keys already applied its own lock look in createKeyPricingSelect.
+    syncPricingSideSelectLock(buySelect);
+    syncPricingSideSelectLock(sellSelect);
 
     wrap.append(buySelect, sellSelect, keySelect);
 

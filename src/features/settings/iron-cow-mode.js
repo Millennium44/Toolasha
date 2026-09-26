@@ -11,6 +11,15 @@ import dataManager from '../../core/data-manager.js';
 import { PRICING_MODE_SETTING } from '../../utils/pricing-side-select.js';
 
 /**
+ * The setting that turns Iron Cow mode itself on and off — distinct from
+ * {@link IRON_COW_SETTINGS}, the settings the mode locks once it is on.
+ * Exported so a surface that needs to notice the mode toggling (to resync a
+ * disabled look, say) names the same key `isEnabled()` reads rather than a
+ * second copy of the string.
+ */
+export const IRON_COW_ENABLED_SETTING = 'ironCow_enabled';
+
+/**
  * The complete set of setting IDs that are force-disabled in Iron Cow mode.
  */
 export const IRON_COW_SETTINGS = new Set([
@@ -126,7 +135,7 @@ class IronCowMode {
      * @returns {boolean}
      */
     isEnabled() {
-        return config.getSetting('ironCow_enabled');
+        return config.getSetting(IRON_COW_ENABLED_SETTING);
     }
 
     /**
