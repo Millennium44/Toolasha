@@ -561,6 +561,17 @@ describe('the configured Buy/Sell price (`.value`)', () => {
         expect(patient.bid).toBe(1800); // unchanged: `.bid` is still the raw book
     });
 
+    test('a drop missing from the market snapshot is still valued when the configured price can price it', () => {
+        delete market.prices['/items/override_only'];
+        configured.price = () => 500;
+
+        const income = calculateIncome({ a: { itemHrid: '/items/override_only', count: 2 } });
+
+        // An override or the official value map prices it; the raw book cannot
+        expect(income.value).toBeGreaterThan(0);
+        expect(income.bid).toBe(0);
+    });
+
     test('consumable costs follow the configured buy side, not the raw ask', () => {
         market.prices['/items/priced_food'] = { ask: 120, bid: 100 };
 

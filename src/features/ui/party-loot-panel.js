@@ -121,6 +121,28 @@ export function buildSessionHistoryRows(sessionList, statsFor = calculatePlayerS
 }
 
 /**
+ * A card's drop list, each drop valued the way the card's totals are.
+ *
+ * `stats.lootList` is shared with the Combat Statistics popup and chat line,
+ * which price drops at the raw ask; here each row takes its configured value
+ * from `stats.incomeItems`, so the rows, the copied lines and the banked figure
+ * above them agree. Re-sorted, since a different side can reorder the drops.
+ *
+ * @param {Object} stats - From `calculatePlayerStats`
+ * @returns {Array<Object>} `formatLootList`-shaped entries
+ */
+export function configuredLootList(stats) {
+    const items = stats?.lootList || [];
+    const valued = new Map((stats?.incomeItems || []).map((entry) => [entry.itemHrid, entry.totalValue?.value]));
+    return items
+        .map((item) => {
+            const value = valued.get(item.itemHrid);
+            return typeof value === 'number' ? { ...item, totalValue: value } : item;
+        })
+        .sort((a, b) => b.totalValue - a.totalValue || a.itemName.localeCompare(b.itemName));
+}
+
+/**
  * The view on screen right now, as plain text for pasting into chat.
  *
  * The same figures the cards show — banked and daily rate per player, then
@@ -146,7 +168,7 @@ export function buildSummaryText(party, label) {
                 `(${formatWithSeparator(Math.round(stats.dailyProfit.value))}/day)`
         );
 
-        const items = stats.lootList || [];
+        const items = configuredLootList(stats);
         if (!items.length) {
             lines.push('  Nothing dropped yet.');
             continue;
@@ -460,8 +482,9 @@ function playerBreakdown(stats, banked) {
                     // The count is a rate-based estimate, so it can be fractional ("3.676 cakes");
                     // shown rounded with "≈" while the cost beside it stays exact
                     Number.isInteger(item.count) ? formatCount(item.count) : `≈${formatCount(Math.round(item.count))}`,
-                    item.pricePerItem !== null ? formatKMB(item.pricePerItem) : '—',
-                    item.pricePerItem !== null ? formatKMB(item.totalCost) : '—',
+                    // The configured Buy side, which is what the Summary subtracts
+                    item.priceValue !== null ? formatKMB(item.priceValue) : '—',
+                    item.priceValue !== null ? formatKMB(item.totalCostValue) : '—',
                     ROW_COLORS.bad
                 )
             );
@@ -615,7 +638,7 @@ function drawPlayer(body, stats) {
 
     if (expanded) card.appendChild(playerBreakdown(stats, banked));
 
-    const items = stats.lootList || [];
+    const items = configuredLootList(stats);
     if (!items.length) {
         card.appendChild(panelNote('Nothing dropped yet.'));
         return;
