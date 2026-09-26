@@ -176,6 +176,8 @@ class DungeonShopPlanner {
         if (source === this.volumesSource) return;
         this.volumesSource = source;
         this.volumes.clear();
+        // Lookups still in flight answer for the old source; let them be asked again
+        this.measuring.clear();
     }
 
     /**
@@ -192,9 +194,12 @@ class DungeonShopPlanner {
         if (wanted.length) this.panel?.render();
 
         // One at a time: the pooled-history host has refused bursts before
+        const source = this.volumesSource;
         for (const offer of wanted) {
             const volume = await itemDailyVolume(offer.itemHrid, 0);
             if (!this.initialized) return;
+            // The source changed while this was measuring: its answers belong to the old one
+            if (this.volumesSource !== source) return;
             this.volumes.set(offer.itemHrid, volume);
             this.measuring.delete(offer.itemHrid);
             this.panel?.render();
