@@ -93,6 +93,11 @@ export class SimEditor {
         this._importSkipped = [];
         this._editorInitialized = false;
         this._selectedLoadoutName = '';
+        // Snapshot of each player's DTO taken right after a loadout was applied,
+        // keyed by hrid — `generateSimLabel` diffs against this instead of
+        // `_originalDTOs` while a loadout is selected, so a loadout that
+        // legitimately differs from current gear does not itself read as edited.
+        this._loadoutBaselineDTOs = null;
         // The party the loaded player list was built from, so a party that has
         // moved since can be said out loud rather than sat on. Null means the
         // list makes no claim to be a party (an import, an external DTO).
@@ -2688,7 +2693,13 @@ export class SimEditor {
      */
     generateSimLabel() {
         const selfHrid = this._selfHrid || this._activeEditPlayer;
-        const original = this._originalDTOs?.[selfHrid];
+        // While a loadout is selected, diff against the DTO the loadout itself
+        // produced — not against actual current gear, which the loadout is
+        // usually meant to differ from. Only edits made after applying it
+        // should read as "(edited)".
+        const original = this._selectedLoadoutName
+            ? this._loadoutBaselineDTOs?.[selfHrid] || this._originalDTOs?.[selfHrid]
+            : this._originalDTOs?.[selfHrid];
         const edited = this._editedDTOs?.[selfHrid];
         if (!original || !edited) return this._selectedLoadoutName || 'Current Gear';
 
@@ -2851,6 +2862,14 @@ export class SimEditor {
         if (!gameData) return false;
         const dto = this._editedDTOs?.[this._activeEditPlayer];
         if (!dto) return false;
-        return applyLoadoutSnapshotToDTO(dto, loadoutName, gameData) !== false;
+        const applied = applyLoadoutSnapshotToDTO(dto, loadoutName, gameData) !== false;
+        if (applied) {
+            // Recorded post-apply so `generateSimLabel` can diff hand edits made
+            // after this point, rather than the loadout's own gear, against
+            // current gear.
+            if (!this._loadoutBaselineDTOs) this._loadoutBaselineDTOs = {};
+            this._loadoutBaselineDTOs[this._activeEditPlayer] = structuredClone(dto);
+        }
+        return applied;
     }
 }

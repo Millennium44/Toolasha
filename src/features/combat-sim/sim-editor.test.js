@@ -75,7 +75,12 @@ vi.mock('./combat-sim-adapter.js', () => ({
     // what the remembered-selection restore leans on
     applyLoadoutSnapshotToDTO: (dto, name) => {
         bridge.applied.push(name);
-        return bridge.snapshots.some((snap) => snap.name === name);
+        const found = bridge.snapshots.some((snap) => snap.name === name);
+        // The real function mutates the DTO to match the snapshot; a test that
+        // cares whether a legitimate loadout/current-gear difference gets
+        // mistaken for a hand edit needs that mutation to actually happen.
+        if (found && bridge.mutate) bridge.mutate(dto);
+        return found;
     },
     getGuildBuffDetailMap: () => guild.detailMap,
     guildBuffMaxLevel: () => 20,
@@ -109,7 +114,7 @@ vi.mock('../../utils/character-key.js', () => ({
 }));
 
 // The fed store lives behind the bundle bridge; the picker must read it there.
-const bridge = vi.hoisted(() => ({ snapshots: [], applied: [] }));
+const bridge = vi.hoisted(() => ({ snapshots: [], applied: [], mutate: null }));
 vi.mock('../../utils/bundle-bridge.js', () => ({
     loadoutSnapshot: () => ({ getAllSnapshots: () => bridge.snapshots, resolveEquipment: () => [] }),
 }));
@@ -162,6 +167,7 @@ beforeEach(() => {
     viewLoadout.captured = {};
     bridge.snapshots = [];
     bridge.applied = [];
+    bridge.mutate = null;
     settings.values.clear();
     settings.hold = null;
     guild.detailMap = {};
@@ -802,6 +808,46 @@ describe('the loadout selection is remembered', () => {
         await Promise.resolve();
 
         expect(settings.values.get('simEditorLoadoutName')).toBe('');
+    });
+
+    test('a loadout that legitimately differs from current gear is not marked edited', async () => {
+        // The mocked apply mutates the DTO the way the real one would — the
+        // loadout's attack level differs from `game.selfDTO`'s 90
+        bridge.snapshots = [{ name: 'Bruteforce', actionTypeHrid: '/action_types/combat' }];
+        bridge.mutate = (dto) => {
+            dto.attackLevel = 999;
+        };
+        const { el, editor } = await openEditor();
+
+        const select = el.querySelector('#mwi-csim-loadout-select');
+        select.value = 'Bruteforce';
+        select.dispatchEvent(new Event('change'));
+        await Promise.resolve();
+
+        // Selecting the loadout alone must not read as an edit: the label is
+        // just the loadout's name, with no diff appended
+        expect(editor.generateSimLabel()).toBe('Bruteforce');
+    });
+
+    test('a hand edit made after selecting a loadout still shows in the label', async () => {
+        bridge.snapshots = [{ name: 'Bruteforce', actionTypeHrid: '/action_types/combat' }];
+        bridge.mutate = (dto) => {
+            dto.attackLevel = 999;
+        };
+        const { el, editor } = await openEditor();
+
+        const select = el.querySelector('#mwi-csim-loadout-select');
+        select.value = 'Bruteforce';
+        select.dispatchEvent(new Event('change'));
+        await Promise.resolve();
+
+        // A change made after the loadout was applied is a real edit, on top
+        // of the loadout the plan was picked from
+        editor.getEditedDTOs().player1.attackLevel = 123;
+
+        const label = editor.generateSimLabel();
+        expect(label).not.toBe('Bruteforce');
+        expect(label).toContain('Bruteforce');
     });
 });
 
