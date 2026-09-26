@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Pricing and Dungeon Tracker follow-ups
+
+- The sim's saved comparison runs re-price after chest values refresh, and sorting the All Zones table mid-redraw can no longer bring back old prices; the Dungeon Tracker fills in Last/Avg/Runs when opened mid-run and its pop-out chart follows a new dungeon or tier.
+
 ### Dungeon Tracker averages the dungeon you are running
 
 - During a run, Last/Avg Run, Runs and the stats grid now default to that dungeon and tier (all teams), matching the pace chip, instead of averaging every dungeon together; a Dungeon or Tier filter you pick yourself is kept, and a saved Team filter now survives a reload.
