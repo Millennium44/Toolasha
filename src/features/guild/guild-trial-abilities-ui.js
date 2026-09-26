@@ -1330,7 +1330,7 @@ function fetchNextCandidates(state) {
  * The "Fetch next" control: one click asks {@link fetchLoadout} for the next
  * outstanding participant with a known character id, in players-list order.
  *
- * Drawn in a fixed spot at the top of the Players card so repeated presses
+ * Drawn in a fixed spot first in the Controls card so repeated presses
  * land on the same control rather than chasing it down the list as rows
  * finish capturing. Only offered when this game build has View Loadout at all.
  *
@@ -1419,8 +1419,6 @@ function drawPlayers(body, state, abilityDetailMap) {
         'players'
     );
     if (collapsed) return;
-    const fetchNext = fetchNextRow(state);
-    if (fetchNext) card.appendChild(fetchNext);
     if (!state.participants.length) {
         card.appendChild(panelNote('No participants fed in yet.'));
     }
@@ -1582,6 +1580,9 @@ function drawControls(body, state) {
     if (collapsed) return;
     Object.assign(card.style, { flexDirection: 'row', flexWrap: 'wrap', gap: '6px' });
 
+    // First among the controls: one click, one loadout, and the button never moves
+    const fetchNext = fetchNextRow(state);
+    if (fetchNext) card.appendChild(fetchNext);
     card.appendChild(
         controlButton(
             'Open next Battle Info',
