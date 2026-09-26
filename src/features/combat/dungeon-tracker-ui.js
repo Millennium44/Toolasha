@@ -562,6 +562,10 @@ class DungeonTrackerUI {
             return;
         }
 
+        // A dungeon in progress before tracking could see its first wave still
+        // gets the header scoped to it, the same as a run being drawn live
+        this.syncFilterScope(pending.dungeonName, pending.tier);
+
         const dungeonName = this.container.querySelector('#mwi-dt-dungeon-name');
         if (dungeonName) {
             dungeonName.textContent =
@@ -609,6 +613,10 @@ class DungeonTrackerUI {
         const ticket = captureOwner(this);
         const character = currentCharacter();
 
+        // The next run is the same dungeon+tier as the one that just finished —
+        // keep the header scoped to it through the gap
+        this.syncFilterScope(pending.dungeonName, pending.tier);
+
         const dungeonName = this.container.querySelector('#mwi-dt-dungeon-name');
         if (dungeonName) {
             dungeonName.textContent =
@@ -651,6 +659,50 @@ class DungeonTrackerUI {
     }
 
     /**
+     * Point the Dungeon/Tier history filters at this run, unless the player
+     * chose one by hand (`state.autoScopeToRun` makes that call), and sync the
+     * change into the dropdowns, the "Filtered" chip and storage. Called from a
+     * live run's 1 Hz tick, from the page-load "waiting for next wave" card and
+     * from the gap between two runs of a repeating dungeon — everywhere the
+     * panel is shown a dungeon+tier to point the header at.
+     *
+     * Idempotent: `autoScopeToRun` only reports a change the first time it sets
+     * a value, so repeat calls for the same run do nothing.
+     * @param {string|null|undefined} dungeonName - The run's dungeon name
+     * @param {number|string|null|undefined} tier - The run's tier
+     */
+    syncFilterScope(dungeonName, tier) {
+        // 'Unknown' is the placeholder used before the dungeon is resolved — not
+        // a dungeon to scope to
+        if (!this.container || !dungeonName || dungeonName === 'Unknown') return;
+        if (!this.state.autoScopeToRun(dungeonName, tier)) return;
+
+        const ensureOptionAndSelect = (selectEl, value, label) => {
+            if (!selectEl) return;
+            if (![...selectEl.options].some((option) => option.value === value)) {
+                const option = document.createElement('option');
+                option.value = value;
+                option.textContent = label;
+                selectEl.add(option);
+            }
+            selectEl.value = value;
+        };
+        ensureOptionAndSelect(
+            this.container.querySelector('#mwi-dt-filter-dungeon'),
+            this.state.filterDungeon,
+            this.state.filterDungeon
+        );
+        ensureOptionAndSelect(
+            this.container.querySelector('#mwi-dt-filter-tier'),
+            this.state.filterTier,
+            `T${this.state.filterTier}`
+        );
+
+        this.state.save();
+        this.interactions?.updateFilterIndicator?.();
+    }
+
+    /**
      * Update UI with current run data
      * @param {Object} run - Current run state
      * @param {boolean} refreshHistory - Also refresh stored-history stats and the run list (skip on 1 Hz tick)
@@ -668,6 +720,10 @@ class DungeonTrackerUI {
         // departing character's.
         const ticket = captureOwner(this);
         const character = currentCharacter();
+
+        // Default the history filters to this run's dungeon+tier before drawing
+        // anything below, unless the player picked one by hand
+        this.syncFilterScope(run.dungeonName, run.tier);
 
         // Update dungeon name and tier
         const dungeonName = this.container.querySelector('#mwi-dt-dungeon-name');

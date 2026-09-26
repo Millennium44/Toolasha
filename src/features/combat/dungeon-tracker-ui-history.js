@@ -199,15 +199,29 @@ class DungeonTrackerUIHistory {
                 character
             );
 
+            // Dropdown options and an auto-scoped selection are both built from
+            // the whole (character-narrowed) list, before the dungeon/tier/team
+            // filters below narrow it further — otherwise a run auto-scoped to a
+            // dungeon+tier with no matching history yet took the "no runs match
+            // filters" branch below before ever reaching this, and the dropdown
+            // was left showing whatever it had before (usually "All Dungeons"),
+            // silently disagreeing with the state the header was actually using.
+            const dungeons = [...new Set(allRuns.map((r) => r.dungeonName).filter(Boolean))].sort();
+            const teams = [...new Set(allRuns.map((r) => r.teamKey).filter(Boolean))].sort();
+            const tiers = [...new Set(allRuns.map((r) => r.tier).filter((t) => t !== null && t !== undefined))].sort(
+                (a, b) => a - b
+            );
+            this.updateFilterDropdowns(container, dungeons, teams, tiers);
+
             if (allRuns.length === 0) {
                 runList.innerHTML =
                     '<div style="color: #888; font-style: italic; text-align: center; padding: 8px;">No runs yet</div>';
-                // Update filter dropdowns with empty options
-                this.updateFilterDropdowns(container, [], []);
                 return;
             }
 
-            // Apply filters
+            // Apply filters. Read back from state rather than the arguments
+            // above: updateFilterDropdowns may just have reset a stale manual
+            // filter to 'all'.
             let filteredRuns = allRuns;
             if (this.state.filterDungeon !== 'all') {
                 filteredRuns = filteredRuns.filter((r) => r.dungeonName === this.state.filterDungeon);
@@ -245,14 +259,6 @@ class DungeonTrackerUIHistory {
             // from the grouped data at click time — what the filters allowed,
             // in the order the groups hold it — never from the DOM.
             runList.prepend(this.csvExportBar(groups.flatMap((group) => group.runs)));
-
-            // Update filter dropdowns
-            const dungeons = [...new Set(allRuns.map((r) => r.dungeonName).filter(Boolean))].sort();
-            const teams = [...new Set(allRuns.map((r) => r.teamKey).filter(Boolean))].sort();
-            const tiers = [...new Set(allRuns.map((r) => r.tier).filter((t) => t !== null && t !== undefined))].sort(
-                (a, b) => a - b
-            );
-            this.updateFilterDropdowns(container, dungeons, teams, tiers);
         } catch (error) {
             console.error('[Dungeon Tracker UI History] Update error:', error);
             runList.innerHTML =
@@ -267,22 +273,31 @@ class DungeonTrackerUIHistory {
      * @param {Array} teams - List of team keys
      */
     updateFilterDropdowns(container, dungeons, teams, tiers = []) {
-        // Update dungeon filter
+        // Update dungeon filter. Restored from state, not the DOM's own live
+        // value — `autoScopeToRun` writes state directly, and reading the DOM
+        // here would miss that until something else re-synced the select first.
         const dungeonFilter = container.querySelector('#mwi-dt-filter-dungeon');
         if (dungeonFilter) {
-            const currentValue = dungeonFilter.value;
+            const desired = this.state.filterDungeon;
+            // Auto-scoped to a dungeon with no saved runs yet (its first-ever run,
+            // or the only runs so far are a different character's): offer it as
+            // its own option rather than silently falling back to "All Dungeons"
+            // for lack of history. A manually-chosen dungeon gets no such pass —
+            // if its runs are gone (e.g. deleted), the filter really is stale.
+            const isAutoScoped = desired !== 'all' && !this.state.isDungeonFilterManual;
+            const options = isAutoScoped && !dungeons.includes(desired) ? [...dungeons, desired].sort() : dungeons;
             dungeonFilter.innerHTML =
                 '<option value="all">All Dungeons</option>' +
-                dungeons
+                options
                     .map(
                         (dungeon) => `<option value="${this.escapeHtml(dungeon)}">${this.escapeHtml(dungeon)}</option>`
                     )
                     .join('');
-            // Restore selection if still valid
-            if (dungeons.includes(currentValue)) {
-                dungeonFilter.value = currentValue;
+            if (desired === 'all' || options.includes(desired)) {
+                dungeonFilter.value = desired;
             } else {
                 this.state.filterDungeon = 'all';
+                dungeonFilter.value = 'all';
             }
         }
 
@@ -292,10 +307,16 @@ class DungeonTrackerUIHistory {
             // Restore from state, not the DOM, so a saved tier survives a reload
             // (the select is rebuilt back to "All Tiers" each render).
             const desired = String(this.state.filterTier);
+            // Same auto-scope pass as the dungeon filter above, for a tier this
+            // dungeon has no history at yet.
+            const isAutoScoped = desired !== 'all' && !this.state.isTierFilterManual;
+            const tierStrs = tiers.map(String);
+            const options =
+                isAutoScoped && !tierStrs.includes(desired) ? [...tiers, Number(desired)].sort((a, b) => a - b) : tiers;
             tierFilter.innerHTML =
                 '<option value="all">All Tiers</option>' +
-                tiers.map((tier) => `<option value="${tier}">T${tier}</option>`).join('');
-            if (desired === 'all' || tiers.map(String).includes(desired)) {
+                options.map((tier) => `<option value="${tier}">T${tier}</option>`).join('');
+            if (desired === 'all' || options.map(String).includes(desired)) {
                 tierFilter.value = desired;
             } else {
                 // The saved tier no longer exists in the data — fall back to all

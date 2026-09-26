@@ -33,19 +33,23 @@ describe('hasActiveFilters', () => {
         dungeonTrackerUIState.filterDungeon = 'all';
         dungeonTrackerUIState.filterTier = 'all';
         dungeonTrackerUIState.filterTeam = 'all';
+        dungeonTrackerUIState.isDungeonFilterManual = false;
+        dungeonTrackerUIState.isTierFilterManual = false;
     });
 
     test('false when all filters are all', () => {
         expect(dungeonTrackerUIState.hasActiveFilters()).toBe(false);
     });
 
-    test('true when only the dungeon filter is set', () => {
+    test('true when the dungeon filter is set by hand', () => {
         dungeonTrackerUIState.filterDungeon = 'Chimeratos Lair';
+        dungeonTrackerUIState.isDungeonFilterManual = true;
         expect(dungeonTrackerUIState.hasActiveFilters()).toBe(true);
     });
 
-    test('true when only the tier filter is set', () => {
+    test('true when the tier filter is set by hand', () => {
         dungeonTrackerUIState.filterTier = '2';
+        dungeonTrackerUIState.isTierFilterManual = true;
         expect(dungeonTrackerUIState.hasActiveFilters()).toBe(true);
     });
 
@@ -54,17 +58,28 @@ describe('hasActiveFilters', () => {
         expect(dungeonTrackerUIState.hasActiveFilters()).toBe(true);
     });
 
-    test('true when both filters are set', () => {
+    test('true when both a manual dungeon and a manual team filter are set', () => {
         dungeonTrackerUIState.filterDungeon = 'Chimeratos Lair';
+        dungeonTrackerUIState.isDungeonFilterManual = true;
         dungeonTrackerUIState.filterTeam = 'Solo';
         expect(dungeonTrackerUIState.hasActiveFilters()).toBe(true);
+    });
+
+    test('false for a dungeon/tier auto-scoped to the run in progress, not chosen by hand', () => {
+        dungeonTrackerUIState.filterDungeon = 'Chimeratos Lair';
+        dungeonTrackerUIState.filterTier = '2';
+        // isDungeonFilterManual / isTierFilterManual stay false — as they do
+        // after autoScopeToRun sets these fields
+        expect(dungeonTrackerUIState.hasActiveFilters()).toBe(false);
     });
 });
 
 describe('clearFilters', () => {
-    test('resets every filter back to all', () => {
+    test('resets every filter back to all and returns Dungeon/Tier to auto mode', () => {
         dungeonTrackerUIState.filterDungeon = 'Chimeratos Lair';
+        dungeonTrackerUIState.isDungeonFilterManual = true;
         dungeonTrackerUIState.filterTier = '2';
+        dungeonTrackerUIState.isTierFilterManual = true;
         dungeonTrackerUIState.filterTeam = 'Solo';
 
         dungeonTrackerUIState.clearFilters();
@@ -72,6 +87,8 @@ describe('clearFilters', () => {
         expect(dungeonTrackerUIState.filterDungeon).toBe('all');
         expect(dungeonTrackerUIState.filterTier).toBe('all');
         expect(dungeonTrackerUIState.filterTeam).toBe('all');
+        expect(dungeonTrackerUIState.isDungeonFilterManual).toBe(false);
+        expect(dungeonTrackerUIState.isTierFilterManual).toBe(false);
         expect(dungeonTrackerUIState.hasActiveFilters()).toBe(false);
     });
 
@@ -79,6 +96,58 @@ describe('clearFilters', () => {
         dungeonTrackerUIState.clearFilters();
         expect(dungeonTrackerUIState.filterDungeon).toBe('all');
         expect(dungeonTrackerUIState.filterTeam).toBe('all');
+    });
+});
+
+describe('autoScopeToRun', () => {
+    beforeEach(() => {
+        dungeonTrackerUIState.filterDungeon = 'all';
+        dungeonTrackerUIState.filterTier = 'all';
+        dungeonTrackerUIState.isDungeonFilterManual = false;
+        dungeonTrackerUIState.isTierFilterManual = false;
+    });
+
+    test('points Dungeon and Tier at the run and reports a change', () => {
+        const changed = dungeonTrackerUIState.autoScopeToRun('Chimerical Den', 3);
+        expect(changed).toBe(true);
+        expect(dungeonTrackerUIState.filterDungeon).toBe('Chimerical Den');
+        expect(dungeonTrackerUIState.filterTier).toBe('3');
+        expect(dungeonTrackerUIState.hasActiveFilters()).toBe(false);
+    });
+
+    test('is idempotent: a second call for the same run reports no change', () => {
+        dungeonTrackerUIState.autoScopeToRun('Chimerical Den', 3);
+        const changed = dungeonTrackerUIState.autoScopeToRun('Chimerical Den', 3);
+        expect(changed).toBe(false);
+    });
+
+    test('does not overwrite a manually-chosen dungeon filter', () => {
+        dungeonTrackerUIState.filterDungeon = 'Pirate Cove';
+        dungeonTrackerUIState.isDungeonFilterManual = true;
+
+        const changed = dungeonTrackerUIState.autoScopeToRun('Chimerical Den', 3);
+
+        expect(dungeonTrackerUIState.filterDungeon).toBe('Pirate Cove');
+        // The tier still auto-scopes even though the dungeon filter is manual
+        expect(dungeonTrackerUIState.filterTier).toBe('3');
+        expect(changed).toBe(true);
+    });
+
+    test('does not overwrite a manually-chosen tier filter', () => {
+        dungeonTrackerUIState.filterTier = '5';
+        dungeonTrackerUIState.isTierFilterManual = true;
+
+        dungeonTrackerUIState.autoScopeToRun('Chimerical Den', 3);
+
+        expect(dungeonTrackerUIState.filterTier).toBe('5');
+        expect(dungeonTrackerUIState.filterDungeon).toBe('Chimerical Den');
+    });
+
+    test('does nothing without a dungeon name or tier', () => {
+        expect(dungeonTrackerUIState.autoScopeToRun(null, 3)).toBe(false);
+        expect(dungeonTrackerUIState.autoScopeToRun('Chimerical Den', null)).toBe(false);
+        expect(dungeonTrackerUIState.filterDungeon).toBe('all');
+        expect(dungeonTrackerUIState.filterTier).toBe('all');
     });
 });
 
