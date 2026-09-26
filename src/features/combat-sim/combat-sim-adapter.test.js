@@ -29,6 +29,8 @@ const mocks = vi.hoisted(() => ({
     profileList: [],
     /** Runs inside the profile read, so a test can land a character switch in it */
     onProfileRead: null,
+    /** Captures `view-loadout.js` is holding: `{characterId, context, hasLoadout, capturedAt, loadout}` */
+    sharedLoadouts: [],
 }));
 
 vi.mock('../../core/data-manager.js', () => ({
@@ -78,6 +80,13 @@ vi.mock('../../utils/dungeon-level-gap.js', () => ({ partyLevelGaps: () => ({}) 
 // these market-touching modules at load; stub them so the import graph is inert.
 vi.mock('../../utils/market-data.js', () => ({ getItemPrice: () => 0, getItemPrices: () => ({}) }));
 vi.mock('../enhancement/tooltip-enhancement.js', () => ({ getProductionCost: () => 0 }));
+vi.mock('../../utils/view-loadout.js', () => ({
+    VIEW_LOADOUT_CONTEXT: { Party: 'party', GuildTrial: 'guild_trial' },
+    getLoadout: (id, context) =>
+        mocks.sharedLoadouts.find(
+            (entry) => entry.characterId === String(id) && (context === undefined || entry.context === context)
+        ) ?? null,
+}));
 
 const {
     getGuildBuffDetailMap,
@@ -91,6 +100,8 @@ const {
     buildPlayerDTO,
     buildAllPlayerDTOs,
     buildPlayerDTOFromProfile,
+    buildPlayerDTOFromLoadout,
+    applySharedLoadoutToDTO,
     parseShykaiImport,
     taxedDropValue,
     getCurrentCombatZone,
@@ -125,6 +136,7 @@ describe('the party a sim is built for', () => {
         mocks.partyMembers = [];
         mocks.profileList = [];
         mocks.onProfileRead = null;
+        mocks.sharedLoadouts = [];
     });
 
     test('is the roster dataManager reports, not the login slot map', async () => {
@@ -222,6 +234,181 @@ describe('the party a sim is built for', () => {
 
         expect(players).toHaveLength(1);
         expect(playerInfo[0].name).toBe('Milkman');
+    });
+});
+
+/**
+ * A loadout as the game shares it (`loadout_shared`): gear keyed by item location,
+ * rows carrying the owner's characterID, no skill levels.
+ */
+function sharedLoadout(characterID, overrides = {}) {
+    return {
+        sharableCharacter: { name: 'Ally', gameMode: 'standard', isOnline: true },
+        hasLoadout: true,
+        actionTypeHrid: '/action_types/combat',
+        wearableItemMap: {
+            '/item_locations/main_hand': {
+                itemLocationHrid: '/item_locations/main_hand',
+                itemHrid: '/items/rippling_trident',
+                enhancementLevel: 10,
+                count: 1,
+                characterID,
+            },
+        },
+        missingItemLocationHridMap: {},
+        equippedAbilities: [
+            { abilityHrid: '/abilities/mystic_aura', level: 25, experience: 0, slotNumber: 0, characterID },
+            { abilityHrid: '/abilities/aqua_arrow', level: 60, experience: 0, slotNumber: 1, characterID },
+        ],
+        combatConsumables: [
+            { itemHrid: '/items/spaceberry_cake', itemLocationHrid: '', count: 80 },
+            { itemHrid: '/items/wisdom_coffee', itemLocationHrid: '', count: 40 },
+        ],
+        abilityCombatTriggersMap: {
+            '/abilities/aqua_arrow': [
+                {
+                    dependencyHrid: '/combat_trigger_dependencies/targeted_enemy',
+                    conditionHrid: '/combat_trigger_conditions/current_hp',
+                    comparatorHrid: '/combat_trigger_comparators/greater_than_equal',
+                    value: 1,
+                },
+            ],
+        },
+        consumableCombatTriggersMap: {},
+        ...overrides,
+    };
+}
+
+describe('a party member with a shared party loadout', () => {
+    const clientData = {
+        itemDetailMap: {
+            '/items/granite_bludgeon': { equipmentDetail: { type: '/equipment_types/two_hand' } },
+            '/items/rippling_trident': { equipmentDetail: { type: '/equipment_types/main_hand' } },
+            '/items/spaceberry_cake': { categoryHrid: '/item_categories/food' },
+            '/items/wisdom_coffee': { categoryHrid: '/item_categories/drink' },
+        },
+        abilityDetailMap: { '/abilities/mystic_aura': { isSpecialAbility: true } },
+    };
+    const allyProfile = () => ({
+        characterID: 'ally',
+        characterName: 'Ally',
+        timestamp: Date.now(),
+        profile: {
+            characterSkills: [
+                { skillHrid: '/skills/magic', level: 95 },
+                { skillHrid: '/skills/stamina', level: 88 },
+            ],
+            characterHouseRoomMap: { a: { houseRoomHrid: '/house_rooms/library', level: 6 } },
+            // What they happened to be wearing when the profile was opened
+            wearableItemMap: {
+                '/item_locations/two_hand': {
+                    itemLocationHrid: '/item_locations/two_hand',
+                    itemHrid: '/items/granite_bludgeon',
+                    enhancementLevel: 5,
+                },
+            },
+        },
+    });
+
+    beforeEach(() => {
+        mocks.characterData = { character: { id: 'me', name: 'Milkman' }, characterSkills: [] };
+        mocks.clientData = clientData;
+        mocks.partyMembers = [
+            { characterID: 'me', characterName: 'Milkman' },
+            { characterID: 'ally', characterName: 'Ally' },
+        ];
+        mocks.profileList = [allyProfile()];
+        mocks.onProfileRead = null;
+        mocks.sharedLoadouts = [];
+    });
+
+    test('fights in the loadout gear, abilities and consumables, with the profile levels and house', async () => {
+        mocks.sharedLoadouts = [
+            {
+                characterId: 'ally',
+                context: 'party',
+                hasLoadout: true,
+                capturedAt: 1234,
+                loadout: sharedLoadout('ally'),
+            },
+        ];
+
+        const { players, profileStatus } = await buildAllPlayerDTOs();
+        const ally = players[1];
+
+        expect(ally.equipment).toEqual({
+            '/equipment_types/main_hand': { hrid: '/items/rippling_trident', enhancementLevel: 10 },
+        });
+        expect(ally.abilities[0]).toMatchObject({ hrid: '/abilities/mystic_aura', level: 25 });
+        expect(ally.abilities[1]).toMatchObject({ hrid: '/abilities/aqua_arrow', level: 60 });
+        expect(ally.abilities[1].triggers).toHaveLength(1);
+        expect(ally.food[0]).toMatchObject({ hrid: '/items/spaceberry_cake' });
+        expect(ally.drinks[0]).toMatchObject({ hrid: '/items/wisdom_coffee' });
+        expect(ally.magicLevel).toBe(95);
+        expect(ally.staminaLevel).toBe(88);
+        expect(ally.houseRooms).toEqual({ '/house_rooms/library': 6 });
+        expect(profileStatus[0]).toMatchObject({ name: 'Ally', gearSource: 'loadout', loadoutCapturedAt: 1234 });
+    });
+
+    test('keeps worn gear when the only capture is a trial loadout, and says so', async () => {
+        mocks.sharedLoadouts = [
+            {
+                characterId: 'ally',
+                context: 'guild_trial',
+                hasLoadout: true,
+                capturedAt: 1,
+                loadout: sharedLoadout('ally'),
+            },
+        ];
+
+        const { players, profileStatus } = await buildAllPlayerDTOs();
+
+        expect(players[1].equipment['/equipment_types/two_hand'].hrid).toBe('/items/granite_bludgeon');
+        expect(profileStatus[0]).toMatchObject({ gearSource: 'profile', loadoutCapturedAt: null });
+    });
+
+    test('keeps worn gear when the player has no loadout set', async () => {
+        mocks.sharedLoadouts = [
+            {
+                characterId: 'ally',
+                context: 'party',
+                hasLoadout: false,
+                capturedAt: 1,
+                loadout: sharedLoadout('ally', { hasLoadout: false, wearableItemMap: {}, equippedAbilities: [] }),
+            },
+        ];
+
+        const { players, profileStatus } = await buildAllPlayerDTOs();
+
+        expect(players[1].equipment['/equipment_types/two_hand'].hrid).toBe('/items/granite_bludgeon');
+        expect(profileStatus[0].gearSource).toBe('profile');
+    });
+
+    test('applySharedLoadoutToDTO leaves a DTO alone for hasLoadout:false', () => {
+        const dto = { equipment: { keep: true }, abilities: [], food: [], drinks: [] };
+        expect(applySharedLoadoutToDTO(dto, { hasLoadout: false }, clientData)).toBe(false);
+        expect(dto.equipment).toEqual({ keep: true });
+    });
+
+    test('opening one loadout in the sim takes levels from their cached profile when there is one', async () => {
+        const entry = { characterId: 'ally', name: 'Ally', hasLoadout: true, loadout: sharedLoadout('ally') };
+
+        const built = await buildPlayerDTOFromLoadout(entry);
+
+        expect(built.levelsFrom).toBe('profile');
+        expect(built.dto.magicLevel).toBe(95);
+        expect(built.dto.equipment['/equipment_types/main_hand'].enhancementLevel).toBe(10);
+    });
+
+    test('opening one loadout with no cached profile says the levels are unknown', async () => {
+        mocks.profileList = [];
+        const entry = { characterId: 'ally', name: 'Ally', hasLoadout: true, loadout: sharedLoadout('ally') };
+
+        const built = await buildPlayerDTOFromLoadout(entry);
+
+        expect(built.levelsFrom).toBeNull();
+        expect(built.dto.magicLevel).toBe(1);
+        expect(built.dto.equipment['/equipment_types/main_hand'].hrid).toBe('/items/rippling_trident');
     });
 });
 

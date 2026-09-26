@@ -24,6 +24,7 @@ import { MARKET_TAX, COWBELL_BAG_HRID, COWBELL_BAG_TAX } from '../../utils/profi
 import { calculatePriceAfterTax } from '../../utils/profit-helpers.js';
 import { getItemPrice } from '../../utils/market-data.js';
 import { getKeyUnitCost } from '../../utils/key-cost.js';
+import { getLoadout, VIEW_LOADOUT_CONTEXT } from '../../utils/view-loadout.js';
 
 /**
  * The combat scrolls the player currently has active.
@@ -498,6 +499,48 @@ export function buildPlayerDTOFromProfile(profileData) {
 }
 
 /**
+ * Build a player DTO from a loadout the game shared (View Loadout), for opening
+ * one player in the sim.
+ *
+ * The loadout has the gear, abilities, consumables and triggers; skill levels,
+ * house rooms and buffs come from that player's cached shared profile when
+ * Toolasha has one (matched by character id, else by name). Without one the
+ * levels are left at 1 and `levelsFrom` is null, for the caller to say so.
+ *
+ * @param {Object} entry - A capture from `view-loadout.js` (`getLoadout`)
+ * @returns {Promise<{dto: Object, levelsFrom: 'profile'|null, profileCapturedAt: number|null}|null>}
+ *   Null when there is no loadout to use or game data is not loaded
+ */
+export async function buildPlayerDTOFromLoadout(entry) {
+    if (!entry?.loadout || entry.hasLoadout === false) return null;
+    const clientData = dataManager.getInitClientData();
+    if (!clientData) return null;
+
+    let profileList = [];
+    try {
+        profileList = (await storage.getJSON('profile_list', 'combatExport', null)) || [];
+    } catch (error) {
+        console.error('[CombatSimAdapter] Failed to load profile list:', error);
+    }
+    if (!Array.isArray(profileList)) profileList = [];
+
+    const id = entry.characterId == null ? null : String(entry.characterId);
+    const name = String(entry.name || '').toLowerCase();
+    const profile =
+        (id && profileList.find((p) => String(p?.characterID) === id)) ||
+        (name && profileList.find((p) => String(p?.characterName || '').toLowerCase() === name)) ||
+        null;
+
+    const dto = buildPartyMemberDTO(profile?.profile ? profile : { profile: {} }, clientData, null);
+    applySharedLoadoutToDTO(dto, entry.loadout, clientData);
+    return {
+        dto,
+        levelsFrom: profile?.profile ? 'profile' : null,
+        profileCapturedAt: profile?.profile && typeof profile.timestamp === 'number' ? profile.timestamp : null,
+    };
+}
+
+/**
  * Parse a Shykai-format export string into player DTOs.
  * Accepts the multi-slot format: {"1": "{...}", "2": "{...}", ...}
  * Each slot is a stringified player object with player/food/drinks/abilities/triggerMap/houseRooms.
@@ -695,6 +738,126 @@ export function parseShykaiImport(jsonString) {
 }
 
 /**
+ * Whether a consumable goes in a drink slot rather than a food slot.
+ * @param {string} hrid - Item hrid
+ * @param {Object} itemDetailMap - The game's item map
+ * @returns {boolean}
+ */
+function isDrinkHrid(hrid, itemDetailMap) {
+    return (
+        hrid.includes('/drinks/') ||
+        hrid.includes('coffee') ||
+        Boolean(itemDetailMap[hrid]?.categoryHrid?.includes('drink'))
+    );
+}
+
+/**
+ * Fill a DTO's food and drink slots, three of each, padded with null.
+ * @param {Object} dto - Player DTO; `food` and `drinks` are replaced
+ * @param {Array<string>} hrids - Consumable hrids in slot order
+ * @param {Object} itemDetailMap - The game's item map
+ * @param {(hrid: string) => Array|null} buildTriggers - Trigger DTOs for a hrid
+ */
+function fillConsumables(dto, hrids, itemDetailMap, buildTriggers) {
+    dto.food = [];
+    dto.drinks = [];
+    for (const hrid of hrids) {
+        if (!hrid) continue;
+        const slots = isDrinkHrid(hrid, itemDetailMap) ? dto.drinks : dto.food;
+        if (slots.length < 3) slots.push({ hrid, triggers: buildTriggers(hrid) });
+    }
+    while (dto.food.length < 3) dto.food.push(null);
+    while (dto.drinks.length < 3) dto.drinks.push(null);
+}
+
+/**
+ * Trigger DTOs for a hrid, read off a raw trigger map.
+ * @param {Object} triggerMap - hrid → raw trigger rows
+ * @returns {(hrid: string) => Array|null}
+ */
+function triggerBuilder(triggerMap) {
+    return (hrid) => {
+        const rawTriggers = triggerMap[hrid];
+        if (!Array.isArray(rawTriggers)) return null;
+        return rawTriggers.map((t) => ({
+            dependencyHrid: t.dependencyHrid,
+            conditionHrid: t.conditionHrid,
+            comparatorHrid: t.comparatorHrid,
+            value: t.value || 0,
+        }));
+    };
+}
+
+/**
+ * Fill a DTO's five ability slots: the special ability in slot 0, the rest after it.
+ * @param {Object} dto - Player DTO; `abilities` is replaced
+ * @param {Array<Object>} equippedAbilities - `{abilityHrid, level}` rows
+ * @param {Object} clientData - initClientData
+ * @param {(hrid: string) => Array|null} buildTriggers - Trigger DTOs for a hrid
+ */
+function fillAbilities(dto, equippedAbilities, clientData, buildTriggers) {
+    dto.abilities = [null, null, null, null, null];
+    let normalAbilityIndex = 1;
+    for (const ability of equippedAbilities || []) {
+        if (!ability?.abilityHrid) continue;
+        const isSpecial = clientData?.abilityDetailMap?.[ability.abilityHrid]?.isSpecialAbility || false;
+        const abilityDTO = {
+            hrid: ability.abilityHrid,
+            level: ability.level || 1,
+            triggers: buildTriggers(ability.abilityHrid),
+        };
+        if (isSpecial) {
+            dto.abilities[0] = abilityDTO;
+        } else if (normalAbilityIndex < 5) {
+            dto.abilities[normalAbilityIndex++] = abilityDTO;
+        }
+    }
+}
+
+/**
+ * Put a shared loadout (the game's View Loadout, `loadout_shared`) on a DTO: its
+ * gear with enhancement levels, its abilities with levels, its food and drinks,
+ * and its triggers. Skill levels, house rooms and buffs are left as they are — a
+ * loadout does not carry them.
+ *
+ * Gear goes in by the item's own equipment type, so the loadout's
+ * `/item_locations/<slot>` keys never need translating.
+ *
+ * @param {Object} dto - Player DTO, changed in place
+ * @param {Object} loadout - The `loadout` payload
+ * @param {Object} clientData - initClientData
+ * @returns {boolean} False, and the DTO untouched, when there is no loadout to apply
+ */
+export function applySharedLoadoutToDTO(dto, loadout, clientData) {
+    if (!dto || !loadout || loadout.hasLoadout === false) return false;
+    const itemDetailMap = clientData?.itemDetailMap || {};
+    const buildTriggers = triggerBuilder({
+        ...(loadout.abilityCombatTriggersMap || {}),
+        ...(loadout.consumableCombatTriggersMap || {}),
+    });
+
+    dto.equipment = {};
+    for (const item of Object.values(loadout.wearableItemMap || {})) {
+        const type = itemDetailMap[item?.itemHrid]?.equipmentDetail?.type;
+        if (!type) continue;
+        dto.equipment[type] = { hrid: item.itemHrid, enhancementLevel: item.enhancementLevel || 0 };
+    }
+
+    if (Array.isArray(loadout.combatConsumables)) {
+        fillConsumables(
+            dto,
+            loadout.combatConsumables.map((row) => row?.itemHrid),
+            itemDetailMap,
+            buildTriggers
+        );
+    }
+    if (Array.isArray(loadout.equippedAbilities)) {
+        fillAbilities(dto, loadout.equippedAbilities, clientData, buildTriggers);
+    }
+    return true;
+}
+
+/**
  * Build a player DTO from a cached party member profile.
  * @param {Object} profile - Profile data with .profile sub-object
  * @param {Object} clientData - initClientData
@@ -793,77 +956,15 @@ function buildPartyMemberDTO(profile, clientData, battleData) {
         ...(battlePlayer?.consumableCombatTriggersMap || profile.profile?.consumableCombatTriggersMap || {}),
     };
 
-    const buildTriggerDTOs = (hrid) => {
-        const rawTriggers = triggerMap[hrid];
-        if (!Array.isArray(rawTriggers)) return null;
-        return rawTriggers.map((t) => ({
-            dependencyHrid: t.dependencyHrid,
-            conditionHrid: t.conditionHrid,
-            comparatorHrid: t.comparatorHrid,
-            value: t.value || 0,
-        }));
-    };
+    const buildTriggerDTOs = triggerBuilder(triggerMap);
 
     // Consumables: prefer battle data, fall back to trigger map keys
-    if (battlePlayer?.combatConsumables) {
-        let foodIndex = 0;
-        let drinkIndex = 0;
-        for (const consumable of battlePlayer.combatConsumables) {
-            const hrid = consumable.itemHrid;
-            const isDrink =
-                hrid.includes('/drinks/') ||
-                hrid.includes('coffee') ||
-                itemDetailMap[hrid]?.categoryHrid?.includes('drink');
-            if (isDrink && drinkIndex < 3) {
-                dto.drinks.push({ hrid, triggers: buildTriggerDTOs(hrid) });
-                drinkIndex++;
-            } else if (!isDrink && foodIndex < 3) {
-                dto.food.push({ hrid, triggers: buildTriggerDTOs(hrid) });
-                foodIndex++;
-            }
-        }
-    } else {
-        // Fall back to trigger map keys for consumable HRIDs
-        const consumableHrids = Object.keys(profile.profile?.consumableCombatTriggersMap || {});
-        let foodIndex = 0;
-        let drinkIndex = 0;
-        for (const hrid of consumableHrids) {
-            const isDrink =
-                hrid.includes('/drinks/') ||
-                hrid.includes('coffee') ||
-                itemDetailMap[hrid]?.categoryHrid?.includes('drink');
-            if (isDrink && drinkIndex < 3) {
-                dto.drinks.push({ hrid, triggers: buildTriggerDTOs(hrid) });
-                drinkIndex++;
-            } else if (!isDrink && foodIndex < 3) {
-                dto.food.push({ hrid, triggers: buildTriggerDTOs(hrid) });
-                foodIndex++;
-            }
-        }
-    }
+    const consumableHrids = battlePlayer?.combatConsumables
+        ? battlePlayer.combatConsumables.map((consumable) => consumable.itemHrid)
+        : Object.keys(profile.profile?.consumableCombatTriggersMap || {});
+    fillConsumables(dto, consumableHrids, itemDetailMap, buildTriggerDTOs);
 
-    // Pad remaining slots with null
-    while (dto.food.length < 3) dto.food.push(null);
-    while (dto.drinks.length < 3) dto.drinks.push(null);
-
-    // Extract abilities
-    for (let i = 0; i < 5; i++) dto.abilities.push(null);
-    let normalAbilityIndex = 1;
-    const equippedAbilities = profile.profile?.equippedAbilities || [];
-    for (const ability of equippedAbilities) {
-        if (!ability?.abilityHrid) continue;
-        const isSpecial = clientData?.abilityDetailMap?.[ability.abilityHrid]?.isSpecialAbility || false;
-        const abilityDTO = {
-            hrid: ability.abilityHrid,
-            level: ability.level || 1,
-            triggers: buildTriggerDTOs(ability.abilityHrid),
-        };
-        if (isSpecial) {
-            dto.abilities[0] = abilityDTO;
-        } else if (normalAbilityIndex < 5) {
-            dto.abilities[normalAbilityIndex++] = abilityDTO;
-        }
-    }
+    fillAbilities(dto, profile.profile?.equippedAbilities || [], clientData, buildTriggerDTOs);
 
     // House rooms
     if (profile.profile?.characterHouseRoomMap) {
@@ -913,7 +1014,9 @@ function calcCombatLevel(dto) {
  *
  * `profileStatus` has one entry per other party member, in party order, saying how old their
  * cached profile is and whether it carries any gear — see `shared-profile-status.js`. A member
- * with no cached profile has `hrid: null` and is also named in `missingMembers`.
+ * with no cached profile has `hrid: null` and is also named in `missingMembers`. `gearSource` says
+ * whether a loaded member's gear came from a captured party loadout (`'loadout'`, with its
+ * `loadoutCapturedAt`) or from the gear worn in their profile (`'profile'`).
  *
  * @returns {Promise<{players: Array, playerInfo: Array<{hrid: string, name: string}>, selfHrid: string,
  *   missingMembers: Array<string>, profileStatus: Array<Object>}>} Empty when the character
@@ -992,10 +1095,25 @@ export async function buildAllPlayerDTOs() {
             if (profile) {
                 const memberDTO = buildPartyMemberDTO(profile, clientData, battleData);
                 memberDTO.hrid = 'player' + slotIndex;
+                // A party loadout the game shared (View Loadout) is the build they fight in; the
+                // profile is what they happened to be wearing when it was opened. Levels, house
+                // and buffs stay the profile's — a loadout carries none of them.
+                const shared = getLoadout(member.characterID, VIEW_LOADOUT_CONTEXT.Party);
+                const usedLoadout = shared?.hasLoadout
+                    ? applySharedLoadoutToDTO(memberDTO, shared.loadout, clientData)
+                    : false;
                 players.push(memberDTO);
                 const name = profile.characterName || 'Player ' + slotIndex;
                 playerNames.push(name);
-                profileStatus.push({ hrid: memberDTO.hrid, name, ...sharedProfileStatus(profile, now) });
+                const status = sharedProfileStatus(profile, now);
+                profileStatus.push({
+                    hrid: memberDTO.hrid,
+                    name,
+                    ...status,
+                    gearless: usedLoadout ? !Object.keys(memberDTO.equipment).length : status.gearless,
+                    gearSource: usedLoadout ? 'loadout' : 'profile',
+                    loadoutCapturedAt: usedLoadout ? shared.capturedAt : null,
+                });
             } else {
                 const name = member.characterName || 'Unknown';
                 missingMembers.push(name);
