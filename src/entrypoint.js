@@ -596,7 +596,12 @@ function checkAnchorCanaries() {
             key: 'canaryChatMessage',
             name: 'Chat messages',
             selector: GAME.CHAT_MESSAGE,
-            when: GAME.CHAT_INPUT_CONTAINER,
+            // Gated on a history holding a real message, not just the input box:
+            // a fresh character whose selected channel (e.g. Party) has no
+            // messages yet has the input but nothing to render, which is not
+            // evidence of anything. Toolasha's own `.mwi-history-buffer` child
+            // is excluded so its presence alone does not arm the canary.
+            when: GAME.CHAT_HISTORY_WITH_MESSAGE,
         },
         {
             key: 'canaryCombatUnit',

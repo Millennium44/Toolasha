@@ -101,6 +101,10 @@ export const GAME = {
     // Chat
     CHAT_MESSAGE: '[class*="ChatMessage_chatMessage"]',
     CHAT_INPUT_CONTAINER: '[class*="Chat_chatInputContainer"]',
+    // A history holding at least one real message — excludes Toolasha's own
+    // injected `.mwi-history-buffer` child, which is present even on a fresh
+    // channel with no messages yet (e.g. a new character's Party tab).
+    CHAT_HISTORY_WITH_MESSAGE: '[class*="ChatHistory_chatHistory"] > :not(.mwi-history-buffer)',
 
     // Combat
     COMBAT_UNIT: '[class*="CombatUnit_combatUnit"]',
