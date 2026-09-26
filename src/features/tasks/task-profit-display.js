@@ -603,7 +603,7 @@ class TaskProfitDisplay {
         });
 
         // Pricing settings: task profit/reward figures are computed from the
-        // shared pricing mode and +1 tick toggle, so a change has to force a
+        // shared pricing mode, +1 tick toggle and key pricing (dungeon tasks), so a change has to force a
         // rebuild the same way taskEfficiencyRatingMode already does.
         config.onSettingChange('profitCalc_pricingMode', () => {
             if (this.isInitialized) {
@@ -611,7 +611,7 @@ class TaskProfitDisplay {
             }
         });
 
-        for (const key of [...PATIENT_TICK_SETTING_KEYS, IRONCOW_VALUATION_SETTING]) {
+        for (const key of [...PATIENT_TICK_SETTING_KEYS, IRONCOW_VALUATION_SETTING, 'profitCalc_keyPricingMode']) {
             config.onSettingChange(key, () => {
                 if (this.isInitialized) {
                     this.updateTaskProfits(true);
