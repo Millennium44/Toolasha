@@ -564,9 +564,11 @@ class MarketVolumeStats {
             })
             .join('');
 
-        const noTradeDays = windows
-            .filter(({ stats }) => stats.hasData && !stats.hasTrades)
-            .map(({ days }) => `${days}d`);
+        // No priced trade is not the same as no trade: a volume-bearing source can report
+        // traded volume for hours whose trade price is unavailable
+        const quoteOnly = windows.filter(({ stats }) => stats.hasData && !stats.hasTrades);
+        const noTradeDays = quoteOnly.filter(({ stats }) => !(stats.volume > 0)).map(({ days }) => `${days}d`);
+        const unpricedTradeDays = quoteOnly.filter(({ stats }) => stats.volume > 0).map(({ days }) => `${days}d`);
 
         const notes = [];
         if (!source.hasVolume) {
@@ -574,6 +576,9 @@ class MarketVolumeStats {
         }
         if (noTradeDays.length) {
             notes.push(`${noTradeDays.join('/')}: no trades — ask/bid only.`);
+        }
+        if (unpricedTradeDays.length) {
+            notes.push(`${unpricedTradeDays.join('/')}: trade prices unavailable — average from ask/bid.`);
         }
         const note = notes.length
             ? `<div style="color:#AAAAAA;font-size:10px;margin-top:2px;">${notes.join(' ')}</div>`

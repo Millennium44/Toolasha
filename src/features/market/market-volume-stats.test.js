@@ -168,6 +168,29 @@ describe('rendering', () => {
         expect(panelText()).toContain('No trades');
     });
 
+    test('volume with no trade price is not labelled "no trades"', async () => {
+        // A volume-bearing source can report traded volume for hours whose price is missing
+        const recentHour = Math.floor(Date.now() / 3600_000) - 1;
+        historyApi.rows = [
+            { a: 620_000_000, b: 600_000_000, p: 0, v: 2, time: recentHour * 3600 },
+            { a: 630_000_000, b: 610_000_000, p: 0, v: 1, time: recentHour * 3600 + 10 },
+        ];
+        const currentItem = buildCurrentItem('/items/furious_spear', 10);
+        await marketVolumeStats.initialize();
+        marketVolumeStats.currentKey = '/items/furious_spear:10';
+        await marketVolumeStats.fetchAndRender(
+            currentItem,
+            '/items/furious_spear',
+            10,
+            '/items/furious_spear:10',
+            false
+        );
+
+        const text = panelText();
+        expect(text).not.toContain('no trades');
+        expect(text).toContain('trade prices unavailable');
+    });
+
     test('an item with ask/bid history but no trades in the window still renders the table, not "No trades"', async () => {
         // The live shape a September 2026 probe found: `/items/furious_spear`
         // level 10's order book (Ask 1280M, several bids) has 120 rows of
