@@ -2204,6 +2204,19 @@ describe('the all-zones table', () => {
                 expect(mocks.revenueCalls.length).toBe(1);
             });
 
+            test('a pricing change during run start-up re-prices the still-visible results at once', async () => {
+                mocks.revenueCalls = [];
+                await ui._displayAllZonesResults([result('Fly', { xp: { defense: 900 }, profit: 12_000 })], 1, {});
+                // Start-up can bail (load error, party cap) without a run ever flushing
+                ui._runStarting = true;
+
+                mocks.settingChangeCallbacks.get('profitCalc_keyPricingMode')?.('profitCalc_keyPricingMode', 'craft');
+                await flush();
+
+                expect(mocks.revenueCalls.length).toBe(1);
+                ui._runStarting = false;
+            });
+
             test('a naming-only change resyncs the row without re-pricing the sweep', async () => {
                 mocks.revenueCalls = [];
                 await ui._displayAllZonesResults([result('Fly', { xp: { defense: 900 }, profit: 12_000 })], 1, {});
