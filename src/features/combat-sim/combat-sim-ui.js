@@ -5422,27 +5422,29 @@ class CombatSimUI {
                 const snapshotRows = this._repricePending
                     ? this._repriceZoneEntries(zoneResults, gameData, playerHrid, hours)
                     : zoneResults;
-                await saveAllZonesSnapshot(
-                    buildAllZonesSnapshot(snapshotRows, {
-                        hours,
-                        playerHrid,
-                        fingerprint: gearFingerprint(playerDTOs),
-                        maxTierFood: useMaxTierFood,
-                        // Which gear this run was configured from, recorded as
-                        // it actually is rather than as an id the run does not
-                        // have: the editor's DTOs (optionally started from a
-                        // named loadout) or, with no editor, what the character
-                        // was wearing when the run began. There is no
-                        // `characterLoadoutID` to record — the loadout store is
-                        // keyed by name and drops the server's id.
-                        loadout: editedDTOs
-                            ? {
-                                  source: this._editor?.getSelectedLoadoutName() ? 'loadout' : 'editor',
-                                  name: this._editor?.getSelectedLoadoutName() || null,
-                              }
-                            : { source: 'worn', name: null },
-                    })
-                );
+                // Kept so a later re-price (the pending replay, or any pricing change
+                // while this sweep is shown) rewrites the snapshot with the table
+                const snapshotMeta = {
+                    hours,
+                    playerHrid,
+                    fingerprint: gearFingerprint(playerDTOs),
+                    maxTierFood: useMaxTierFood,
+                    // Which gear this run was configured from, recorded as
+                    // it actually is rather than as an id the run does not
+                    // have: the editor's DTOs (optionally started from a
+                    // named loadout) or, with no editor, what the character
+                    // was wearing when the run began. There is no
+                    // `characterLoadoutID` to record — the loadout store is
+                    // keyed by name and drops the server's id.
+                    loadout: editedDTOs
+                        ? {
+                              source: this._editor?.getSelectedLoadoutName() ? 'loadout' : 'editor',
+                              name: this._editor?.getSelectedLoadoutName() || null,
+                          }
+                        : { source: 'worn', name: null },
+                };
+                this._allZonesSnapshotMeta = { ownerId, meta: snapshotMeta };
+                await saveAllZonesSnapshot(buildAllZonesSnapshot(snapshotRows, snapshotMeta));
             }
 
             if (!this._isCurrentRun(ownerId, startToken)) return;
@@ -5681,6 +5683,22 @@ class CombatSimUI {
         const playerHrid = this._activePlayerTab || 'player1';
         const repriced = this._repriceZoneEntries(this._allZonesResults, args.gameData, playerHrid, args.hours);
         this._displayAllZonesResults(repriced, args.hours, args.gameData);
+        this._resaveAllZonesSnapshot(repriced);
+    }
+
+    /**
+     * Rewrite the saved sweep snapshot at the prices just applied, so the ranked
+     * action list agrees with the table. Only for a sweep this panel ran and
+     * saved, and only while it is still that character's.
+     * @param {Array<Object>} rows - The re-priced sweep rows
+     * @private
+     */
+    _resaveAllZonesSnapshot(rows) {
+        const saved = this._allZonesSnapshotMeta;
+        if (!saved || !this._stillSameCharacter(saved.ownerId)) return;
+        saveAllZonesSnapshot(buildAllZonesSnapshot(rows, saved.meta)).catch((error) => {
+            console.error('[CombatSimUI] Could not re-save the all-zones snapshot:', error);
+        });
     }
 
     /**
@@ -5720,10 +5738,15 @@ class CombatSimUI {
             resync();
             this._scheduleReprice();
         };
+        // Openable drops are valued from the expected-value cache, which rebuilds a
+        // beat after a pricing change; re-price again once it has
+        const repriceOnEv = () => this._scheduleReprice();
+        dataManager.on('expected_value_initialized', repriceOnEv);
         this._unsubscribePricingQuickSettings = [
             ...PRICING_QUICK_SETTINGS_KEYS.map((key) => config.onSettingChange(key, resyncAndReprice)),
             ...PRICING_QUICK_SETTINGS_TOOLTIP_KEYS.map((key) => config.onSettingChange(key, resync)),
             config.onSettingsLoaded(resyncAndReprice),
+            () => dataManager.off('expected_value_initialized', repriceOnEv),
         ];
     }
 

@@ -229,8 +229,12 @@ vi.mock('../../core/data-manager.js', () => ({
         // party member's) must never fall through to this for a room it lacks
         getHouseRoomLevel: (hrid) => mocks.houseRoomLevels?.[hrid] || 0,
         getCharacterMonsters: () => mocks.monsters,
-        on: () => {},
-        off: () => {},
+        // Kept so a test can fire an event the panel listens for
+        on: (event, handler) => {
+            mocks.dataListeners = mocks.dataListeners || new Map();
+            mocks.dataListeners.set(event, handler);
+        },
+        off: (event) => mocks.dataListeners?.delete(event),
     },
 }));
 
@@ -2215,6 +2219,30 @@ describe('the all-zones table', () => {
 
                 expect(mocks.revenueCalls.length).toBe(1);
                 ui._runStarting = false;
+            });
+
+            test('the expected-value cache rebuilding after a pricing change re-prices again', async () => {
+                mocks.revenueCalls = [];
+                await ui._displayAllZonesResults([result('Fly', { xp: { defense: 900 }, profit: 12_000 })], 1, {});
+
+                // Openable drops read that cache, which rebuilds a beat after the change
+                mocks.dataListeners?.get('expected_value_initialized')?.({ timestamp: 1 });
+                await flush();
+
+                expect(mocks.revenueCalls.length).toBe(1);
+            });
+
+            test('a re-priced sweep this panel saved rewrites its snapshot too', async () => {
+                await ui._displayAllZonesResults([result('Fly', { xp: { defense: 900 }, profit: 12_000 })], 1, {});
+                ui._allZonesSnapshotMeta = { ownerId: mocks.characterId, meta: { hours: 1, playerHrid: 'player1' } };
+                mocks.store.delete('combatExport:allZonesSnapshot_' + mocks.characterId);
+
+                mocks.settingChangeCallbacks.get('profitCalc_keyPricingMode')?.('profitCalc_keyPricingMode', 'craft');
+                await flush();
+                await flush();
+
+                expect(mocks.store.has('combatExport:allZonesSnapshot_' + mocks.characterId)).toBe(true);
+                ui._allZonesSnapshotMeta = null;
             });
 
             test('a naming-only change resyncs the row without re-pricing the sweep', async () => {
