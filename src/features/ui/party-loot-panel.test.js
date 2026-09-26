@@ -413,12 +413,17 @@ describe('the pricing quick-settings row', () => {
         expect(keySelect()).toBeTruthy();
     });
 
-    test('changing a pricing setting re-renders the panel', () => {
+    // The re-render is coalesced into a microtask (see `scheduleRerender`), so
+    // every test here lets one tick pass before looking at the redrawn panel.
+    const tick = () => Promise.resolve();
+
+    test('changing a pricing setting re-renders the panel', async () => {
         partyLootPanel.show();
         const before = text();
 
         keySelect().value = 'craft';
         keySelect().dispatchEvent(new Event('change'));
+        await tick();
 
         // Nothing here asserts a figure changed (the mocked calculator ignores
         // pricing) — only that the write reached config and the panel is still
@@ -429,7 +434,7 @@ describe('the pricing quick-settings row', () => {
         expect(text()).toBe(before); // same content, but re-drawn rather than stale
     });
 
-    test('a pricing change made elsewhere (the settings panel, or the sim) also re-renders', () => {
+    test('a pricing change made elsewhere (the settings panel, or the sim) also re-renders', async () => {
         partyLootPanel.show();
 
         // Simulate a write from outside this panel, as the settings panel or
@@ -438,8 +443,33 @@ describe('the pricing quick-settings row', () => {
         (settings.changeCallbacks.profitCalc_keyPricingMode || []).forEach((cb) =>
             cb('profitCalc_keyPricingMode', 'bid')
         );
+        await tick();
 
         expect(keySelect().value).toBe('bid');
+    });
+
+    test('one Buy/Sell choice — which writes both the pricing mode and its patient tick — redraws exactly once', async () => {
+        partyLootPanel.show();
+        const renderSpy = vi.spyOn(partyLootPanel, 'render');
+
+        // Choosing "Patient +1" writes both `profitCalc_pricingMode` and
+        // `profitCalc_patientTickBuy` — two settings, each with its own
+        // `onSettingChange` listener on this panel. Before coalescing, that
+        // was two full panel redraws for one click.
+        const buySelect = [...partyLootPanel.panel.querySelectorAll('select')].find(
+            (el) => el.dataset.mwiPricingSide === 'buy'
+        );
+        buySelect.value = 'patientTick';
+        buySelect.dispatchEvent(new Event('change'));
+        await tick();
+
+        // Starting from the default 'hybrid' (buy: ask, sell: ask), moving buy
+        // to its patient side (bid) while sell stays at ask lands on 'optimistic'
+        expect(settings.values.profitCalc_pricingMode).toBe('optimistic');
+        expect(settings.values.profitCalc_patientTickBuy).toBe(true);
+        expect(renderSpy).toHaveBeenCalledTimes(1);
+
+        renderSpy.mockRestore();
     });
 });
 
