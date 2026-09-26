@@ -168,6 +168,48 @@ describe('rendering', () => {
         expect(panelText()).toContain('No trades');
     });
 
+    test('an item with ask/bid history but no trades in the window still renders the table, not "No trades"', async () => {
+        // The live shape a September 2026 probe found: `/items/furious_spear`
+        // level 10's order book (Ask 1280M, several bids) has 120 rows of
+        // ask/bid with p and v both 0 on every one — no trade to report, but
+        // very much not "no history".
+        const recentHour = Math.floor(Date.now() / 3600_000) - 1;
+        historyApi.rows = [
+            { a: 620_000_000, b: 600_000_000, p: 0, v: 0, time: recentHour * 3600 },
+            { a: 630_000_000, b: 610_000_000, p: 0, v: 0, time: recentHour * 3600 + 10 },
+        ];
+        const currentItem = buildCurrentItem('/items/furious_spear', 10);
+        await marketVolumeStats.initialize();
+        marketVolumeStats.currentKey = '/items/furious_spear:10';
+        await marketVolumeStats.fetchAndRender(
+            currentItem,
+            '/items/furious_spear',
+            10,
+            '/items/furious_spear:10',
+            false
+        );
+
+        const text = panelText();
+        expect(text).not.toContain('No trades in this window');
+        expect(text).not.toContain('could not be drawn');
+        expect(text).toContain('1d');
+        // The per-window note names which windows had nothing traded
+        expect(text).toContain('no trades');
+        expect(text).toContain('ask/bid only');
+        // Ask/bid mid fallback for Average/Median, "—/—" (no basis) for Min/Max,
+        // not a zero read as real data.
+        const rows = [...document.querySelectorAll('.mwi-volume-stats table tr')].map((tr) =>
+            [...tr.querySelectorAll('td')].map((td) => td.textContent)
+        );
+        const oneDayRow = rows.find((r) => r[0] === '1d');
+        const [, avgCell, medianCell, volumeCell, buySellCell, minMaxCell] = oneDayRow;
+        expect(avgCell).toBe('615M');
+        expect(medianCell).toBe('615M');
+        expect(volumeCell).toBe('0');
+        expect(buySellCell).toBe('0/0');
+        expect(minMaxCell).toBe('—/—');
+    });
+
     test('a volume-less source (mooket I) hides Volume/Bought-Sold and notes why, without showing zeros as data', async () => {
         historyApi.currentSource.mockReturnValue({
             key: 'mooket1',
