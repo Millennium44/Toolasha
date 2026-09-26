@@ -219,6 +219,18 @@ describe('the plan', () => {
         expect(qtyOf('/items/kraken_fang')).toBe('—');
     });
 
+    test('volumes measured for one history source are dropped when the source changes mid-lookup', async () => {
+        dungeonShopPlanner.syncVolumeSource();
+        const pending = dungeonShopPlanner.measure('/items/pirate_token');
+        // Switched while the first lookup is still out
+        state.settings.market_historySource = 'mooket1';
+        dungeonShopPlanner.syncVolumeSource();
+        await pending;
+
+        expect(dungeonShopPlanner.volumes.size).toBe(0);
+        expect(dungeonShopPlanner.measuring.size).toBe(0);
+    });
+
     test('an unmeasured item is capped at 0 until it is included, then flagged', async () => {
         delete state.volumes['/items/kraken_fang'];
         await openPirate();

@@ -277,9 +277,13 @@ class DungeonTokenTooltips {
      * @returns {Array} Priced shop items, best gold/token first
      */
     _getDungeonShopItems(tokenHrid) {
-        return dungeonShopOffers(tokenHrid)
-            .filter((offer) => offer.askPrice > 0)
-            .sort((a, b) => b.goldPerToken - a.goldPerToken);
+        return (
+            dungeonShopOffers(tokenHrid)
+                .filter((offer) => offer.askPrice > 0)
+                // The table's Value is what one purchase is worth: every unit it hands over
+                .map((offer) => ({ ...offer, askPrice: offer.askPrice * (offer.outputCount || 1) }))
+                .sort((a, b) => b.goldPerToken - a.goldPerToken)
+        );
     }
 
     /**
