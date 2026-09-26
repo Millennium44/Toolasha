@@ -120,13 +120,27 @@ vi.mock('../../utils/bundle-bridge.js', () => ({
 }));
 
 // The game's View Loadout: whether this build has it, and what a fetch answers
-const viewLoadout = vi.hoisted(() => ({ available: false, fetches: [], result: null, captured: {} }));
+const viewLoadout = vi.hoisted(() => ({
+    available: false,
+    fetches: [],
+    result: null,
+    captured: {},
+    // A reply that must not settle until the test releases it, so a scenario
+    // change can be made to land while the fetch is still out
+    hang: false,
+    pendingResolve: null,
+}));
 vi.mock('../../utils/view-loadout.js', () => ({
     VIEW_LOADOUT_CONTEXT: { Party: 'party', GuildTrial: 'guild_trial' },
     isViewLoadoutAvailable: () => viewLoadout.available,
     getLoadout: (id, context) => (context === 'party' ? (viewLoadout.captured[id] ?? null) : null),
     fetchLoadout: async (member, context, kind) => {
         viewLoadout.fetches.push({ member, context, kind });
+        if (viewLoadout.hang) {
+            return new Promise((resolve) => {
+                viewLoadout.pendingResolve = () => resolve(viewLoadout.result);
+            });
+        }
         return viewLoadout.result;
     },
 }));
@@ -165,6 +179,8 @@ beforeEach(() => {
     viewLoadout.fetches = [];
     viewLoadout.result = null;
     viewLoadout.captured = {};
+    viewLoadout.hang = false;
+    viewLoadout.pendingResolve = null;
     bridge.snapshots = [];
     bridge.applied = [];
     bridge.mutate = null;
@@ -1256,6 +1272,34 @@ describe('Fetch a party loadout', () => {
         expect(el.textContent).toContain("No reply for Ally's loadout.");
         // Nothing arrived, so the user's editor changes stay
         expect(reset).not.toHaveBeenCalled();
+    });
+
+    test('a scenario change while the fetch is pending is not overwritten by its reply', async () => {
+        // Regression: fetchPartyMemberLoadout's own character-switch guard did
+        // not cover the user importing players, resetting to self, or opening
+        // an external DTO while the reply was still out — a successful reply
+        // called resetToParty() unconditionally and threw the newer scenario away.
+        viewLoadout.available = true;
+        viewLoadout.hang = true;
+        viewLoadout.result = { status: 'done', entry: { characterId: 'a', name: 'Ally', hasLoadout: true } };
+        const el = document.createElement('div');
+        const editor = new SimEditor({ editorEl: el });
+        await editor.initEditor();
+
+        const reset = vi.spyOn(editor, 'resetToParty');
+        const fetchPromise = editor.fetchPartyMemberLoadout();
+
+        // The user moves on to a different scenario before the reply lands
+        editor.importPlayers([emptyDTO('stranger1')], ['Stranger A']);
+        const importedNames = editor._editedPlayerInfo.map((p) => p.name);
+
+        viewLoadout.pendingResolve();
+        await fetchPromise;
+
+        expect(reset).not.toHaveBeenCalled();
+        // The imported roster is still what is loaded — resetToParty must not
+        // have overwritten it with the party the fetch was originally for
+        expect(editor._editedPlayerInfo.map((p) => p.name)).toEqual(importedNames);
     });
 
     test('is not offered solo', async () => {
