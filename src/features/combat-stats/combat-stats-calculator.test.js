@@ -488,17 +488,19 @@ describe('income and the market sale tax', () => {
 describe('calculateIncomeItems rows sum to calculateIncome', () => {
     // `calculatePlayerStats` now builds its `income` total by summing these
     // rows instead of also calling `calculateIncome` — this pins that the two
-    // can never drift apart, across the pricing rules a lootMap can mix:
-    // coin, an openable priced by measured luck, an Iron Cow character's own
-    // valuation (untaxed), and an ordinary taxed market item.
+    // can never drift apart, across the pricing rules a lootMap can mix: coin,
+    // an openable priced by measured luck, and an ordinary market item.
+    //
+    // A standard character and an Iron Cow character are exercised as two
+    // separate scenarios rather than one mixed lootMap: `ironCowBook()` only
+    // ever answers non-null for an Iron Cow character (see
+    // `utils/ironcow-valuation.js`), and `valueOfLoot`'s tax check
+    // (`!ironCow && !isIronCowCharacter() && salesTaxNetted()`) untaxes every
+    // item for an Iron Cow character — it has no market to realize a sale tax
+    // through, not just no tax on its own vendor/coinify valuation. A lootMap
+    // with `ironCow.isCharacter` false but an entry in `ironCow.book` (the
+    // shape this block used before) is a state real play can never reach.
     const IRON_COW_ITEM = '/items/iron_cow_only_item';
-
-    const mixedLoot = () => ({
-        coin: { itemHrid: '/items/coin', count: 12345 },
-        chest: { itemHrid: CHIMERICAL_CHEST, count: 2 },
-        ironCowItem: { itemHrid: IRON_COW_ITEM, count: 3 },
-        ordinary: { itemHrid: '/items/cheese', count: 7 },
-    });
 
     const sumRows = (items, side) => items.reduce((sum, item) => sum + item.totalValue[side], 0);
 
@@ -506,7 +508,6 @@ describe('calculateIncomeItems rows sum to calculateIncome', () => {
         ev.value = 100000;
         luck.enabled = true;
         luck.measured = { ratio: 0.926, opened: 5490 };
-        ironCow.book[IRON_COW_ITEM] = { ask: 400, bid: 400 };
         market.prices['/items/cheese'] = { ask: 1000, bid: 900 };
     });
 
@@ -514,31 +515,68 @@ describe('calculateIncomeItems rows sum to calculateIncome', () => {
         salesTax.netted = false;
     });
 
-    test('with the sale tax off', () => {
-        salesTax.netted = false;
+    describe('a standard (market) character', () => {
+        const loot = () => ({
+            coin: { itemHrid: '/items/coin', count: 12345 },
+            chest: { itemHrid: CHIMERICAL_CHEST, count: 2 },
+            ordinary: { itemHrid: '/items/cheese', count: 7 },
+        });
 
-        const totals = calculateIncome(mixedLoot());
-        const items = calculateIncomeItems(mixedLoot());
+        test('with the sale tax off', () => {
+            salesTax.netted = false;
 
-        expect(sumRows(items, 'ask')).toBeCloseTo(totals.ask, 6);
-        expect(sumRows(items, 'bid')).toBeCloseTo(totals.bid, 6);
-        expect(sumRows(items, 'value')).toBeCloseTo(totals.value, 6);
+            const totals = calculateIncome(loot());
+            const items = calculateIncomeItems(loot());
+
+            expect(sumRows(items, 'ask')).toBeCloseTo(totals.ask, 6);
+            expect(sumRows(items, 'bid')).toBeCloseTo(totals.bid, 6);
+            expect(sumRows(items, 'value')).toBeCloseTo(totals.value, 6);
+        });
+
+        test('with the sale tax on — the ordinary market item is taxed', () => {
+            salesTax.netted = true;
+
+            const totals = calculateIncome(loot());
+            const items = calculateIncomeItems(loot());
+
+            expect(sumRows(items, 'ask')).toBeCloseTo(totals.ask, 6);
+            expect(sumRows(items, 'bid')).toBeCloseTo(totals.bid, 6);
+            expect(sumRows(items, 'value')).toBeCloseTo(totals.value, 6);
+
+            // Sanity check that the market row really was taxed, so the
+            // sum-equivalence above is not accidentally comparing two zeroes
+            const ordinaryRow = items.find((item) => item.itemHrid === '/items/cheese');
+            expect(ordinaryRow.totalValue.ask).toBeCloseTo(7 * 1000 * (1 - MARKET_TAX), 6);
+        });
     });
 
-    test('with the sale tax on — the Iron Cow item stays untaxed among taxed neighbors', () => {
-        salesTax.netted = true;
+    describe('an Iron Cow character', () => {
+        const loot = () => ({
+            coin: { itemHrid: '/items/coin', count: 12345 },
+            chest: { itemHrid: CHIMERICAL_CHEST, count: 2 },
+            ironCowItem: { itemHrid: IRON_COW_ITEM, count: 3 },
+        });
 
-        const totals = calculateIncome(mixedLoot());
-        const items = calculateIncomeItems(mixedLoot());
+        beforeEach(() => {
+            ironCow.isCharacter = true;
+            ironCow.book[IRON_COW_ITEM] = { ask: 400, bid: 400 };
+        });
 
-        expect(sumRows(items, 'ask')).toBeCloseTo(totals.ask, 6);
-        expect(sumRows(items, 'bid')).toBeCloseTo(totals.bid, 6);
-        expect(sumRows(items, 'value')).toBeCloseTo(totals.value, 6);
+        test('with the sale tax on — there is no market to tax a sale through', () => {
+            salesTax.netted = true;
 
-        // Sanity check that the Iron Cow row really did dodge the tax, so the
-        // sum-equivalence above is not accidentally comparing two zeroes
-        const ironCowRow = items.find((item) => item.itemHrid === IRON_COW_ITEM);
-        expect(ironCowRow.totalValue.ask).toBe(400 * 3);
+            const totals = calculateIncome(loot());
+            const items = calculateIncomeItems(loot());
+
+            expect(sumRows(items, 'ask')).toBeCloseTo(totals.ask, 6);
+            expect(sumRows(items, 'bid')).toBeCloseTo(totals.bid, 6);
+            expect(sumRows(items, 'value')).toBeCloseTo(totals.value, 6);
+
+            // Sanity check that the Iron Cow row really did dodge the tax, so
+            // the sum-equivalence above is not accidentally comparing two zeroes
+            const ironCowRow = items.find((item) => item.itemHrid === IRON_COW_ITEM);
+            expect(ironCowRow.totalValue.ask).toBe(400 * 3);
+        });
     });
 });
 
