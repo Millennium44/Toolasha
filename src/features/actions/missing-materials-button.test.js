@@ -542,7 +542,11 @@ describe('the Tester shop strip', () => {
         tester.setAttribute('role', 'tab');
         tester.textContent = 'Tester';
         container.appendChild(tester);
-        document.body.appendChild(container);
+        // The Shop's tab strip sits inside its panel (measured on the test server)
+        const shopPanel = document.createElement('div');
+        shopPanel.className = 'ShopPanel_shopPanel__1Wl3r';
+        shopPanel.appendChild(container);
+        document.body.appendChild(shopPanel);
         Object.defineProperty(container, 'offsetParent', { get: () => document.body, configurable: true });
 
         return { container, tester };
