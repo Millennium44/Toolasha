@@ -573,6 +573,15 @@ describe('getKeyUnitCost', () => {
         expect(getKeyUnitCost(CHEST_KEY)).toBe(5000);
     });
 
+    test('falls back to the recipe on a market basis when the key has no quote', () => {
+        delete market.book[CHEST_KEY];
+        invalidateKeyCostCache();
+
+        // The sim reads a null as a free key; the recipe is the replacement cost
+        expect(getKeyUnitCost(CHEST_KEY)).toBe(5000);
+        expect(describeKeyCost(CHEST_KEY).unitCost).toBe(5000);
+    });
+
     test('is null, never zero, for a key nothing can price', () => {
         expect(getKeyUnitCost(SINISTER_KEY)).toBeNull();
         expect(getKeyUnitCost(null)).toBeNull();
