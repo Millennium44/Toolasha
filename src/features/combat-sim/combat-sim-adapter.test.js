@@ -384,6 +384,24 @@ describe('a party member with a shared party loadout', () => {
         expect(profileStatus[0].gearSource).toBe('profile');
     });
 
+    test('loadout abilities go into the sim in slot order, whatever order the payload lists them', () => {
+        const dto = { equipment: {}, abilities: [], food: [], drinks: [] };
+        const loadout = {
+            hasLoadout: true,
+            wearableItemMap: {},
+            combatConsumables: [],
+            equippedAbilities: [
+                { abilityHrid: '/abilities/c', level: 3, slotNumber: 3 },
+                { abilityHrid: '/abilities/a', level: 1, slotNumber: 1 },
+                { abilityHrid: '/abilities/b', level: 2, slotNumber: 2 },
+            ],
+        };
+
+        applySharedLoadoutToDTO(dto, loadout, clientData);
+
+        expect(dto.abilities.slice(1, 4).map((a) => a?.hrid)).toEqual(['/abilities/a', '/abilities/b', '/abilities/c']);
+    });
+
     test('applySharedLoadoutToDTO leaves a DTO alone for hasLoadout:false', () => {
         const dto = { equipment: { keep: true }, abilities: [], food: [], drinks: [] };
         expect(applySharedLoadoutToDTO(dto, { hasLoadout: false }, clientData)).toBe(false);

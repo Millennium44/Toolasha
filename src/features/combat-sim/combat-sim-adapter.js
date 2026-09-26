@@ -791,14 +791,19 @@ function triggerBuilder(triggerMap) {
 /**
  * Fill a DTO's five ability slots: the special ability in slot 0, the rest after it.
  * @param {Object} dto - Player DTO; `abilities` is replaced
- * @param {Array<Object>} equippedAbilities - `{abilityHrid, level}` rows
+ * @param {Array<Object>} equippedAbilities - `{abilityHrid, level, slotNumber?}` rows
  * @param {Object} clientData - initClientData
  * @param {(hrid: string) => Array|null} buildTriggers - Trigger DTOs for a hrid
  */
 function fillAbilities(dto, equippedAbilities, clientData, buildTriggers) {
     dto.abilities = [null, null, null, null, null];
     let normalAbilityIndex = 1;
-    for (const ability of equippedAbilities || []) {
+    // The engine casts in slot order and stops at the first usable ability, so rows
+    // arriving out of slot order would change cast priority. Rows without a slot
+    // number keep their place (the sort is stable).
+    const slotOf = (row) => (Number.isFinite(row?.slotNumber) ? row.slotNumber : Number.MAX_SAFE_INTEGER);
+    const bySlot = [...(equippedAbilities || [])].sort((a, b) => slotOf(a) - slotOf(b));
+    for (const ability of bySlot) {
         if (!ability?.abilityHrid) continue;
         const isSpecial = clientData?.abilityDetailMap?.[ability.abilityHrid]?.isSpecialAbility || false;
         const abilityDTO = {
