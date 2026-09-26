@@ -2013,6 +2013,10 @@ class CombatSimUI {
         this._unsubscribePricingQuickSettings = [];
         // Whether a coalesced reprice is already queued — see _scheduleReprice()
         this._repriceScheduled = false;
+        // Bumped whenever the expected-value cache rebuilds, so cached history
+        // metrics keyed on it are invalidated — see _subscribePricingQuickSettings()
+        // and _ensureHistoryMetrics().
+        this._evGeneration = 0;
         this.elapsedTimer = null;
         this._activePlayerTab = 'player1';
         this._playerInfo = [];
@@ -5740,8 +5744,13 @@ class CombatSimUI {
             this._scheduleReprice();
         };
         // Openable drops are valued from the expected-value cache, which rebuilds a
-        // beat after a pricing change; re-price again once it has
-        const repriceOnEv = () => this._scheduleReprice();
+        // beat after a pricing change; re-price again once it has, and bump the
+        // generation so cached history metrics (table/comparison/CSV) that priced
+        // openable drops under the old cache are recomputed too.
+        const repriceOnEv = () => {
+            this._evGeneration++;
+            this._scheduleReprice();
+        };
         dataManager.on('expected_value_initialized', repriceOnEv);
         this._unsubscribePricingQuickSettings = [
             ...PRICING_QUICK_SETTINGS_KEYS.map((key) => config.onSettingChange(key, resyncAndReprice)),
@@ -6907,6 +6916,9 @@ class CombatSimUI {
             config.getSettingValue('profitCalc_patientTickSell', false) === true,
             // Dungeon key costs follow their own setting, not the pricing mode
             config.getSettingValue('profitCalc_keyPricingMode', 'ask'),
+            // Openable-drop values come from the expected-value cache, which can
+            // rebuild without any of the settings above changing
+            this._evGeneration,
         ].join('|');
         for (const entry of this._simHistory) {
             if (!entry.metrics || entry.metricsTab !== activeTab || entry.metricsPricing !== pricing) {

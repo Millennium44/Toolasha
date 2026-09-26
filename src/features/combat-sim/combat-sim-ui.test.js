@@ -4091,6 +4091,22 @@ describe('the summary at the top of the Results tab', () => {
         mocks.keyPricingMode = before;
     });
 
+    test('an expected-value cache rebuild alone re-prices cached history metrics', () => {
+        // No pricing setting changes here — only the EV cache rebuilding, which
+        // openable-drop revenue depends on but the pricing stamp used to ignore
+        mocks.drops = new Map([['/items/cheese', 100]]);
+        mocks.prices['/items/cheese'] = { bid: 8, ask: 10 };
+        pushHistory('Baseline');
+        const entry = ui._simHistory[ui._simHistory.length - 1];
+
+        ui._ensureHistoryMetrics('player1');
+        const first = entry.metrics;
+
+        mocks.dataListeners?.get('expected_value_initialized')?.({ timestamp: 1 });
+        ui._ensureHistoryMetrics('player1');
+        expect(entry.metrics).not.toBe(first);
+    });
+
     test('XP/hr is the same total the XP section adds up', () => {
         // 1500 xp/hr on the tile, with the two skills still named per day beside it
         const shown = showFight().textContent;
