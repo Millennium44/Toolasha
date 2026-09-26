@@ -6,6 +6,8 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+- **Combat sim comparison labels and budget goals**: each Comparison baseline now names its area, party or solo, and loadout or current gear (e.g. "Current gear · Party (3) · Fly"), and the upgrade budget planner can also aim at encounters/hr, fewer deaths/hr, or overall Score.
+
 - **Upgrade costs no longer go negative on an outlier bid**: when the current item's bid is far above the price of the upgraded one (a 312B bid on a +10 necklace), the resale credit is capped at the purchase, so the row shows as free with a note instead of "earning" billions and skewing the budget plan.
 
 ### Dungeon token spend planner
