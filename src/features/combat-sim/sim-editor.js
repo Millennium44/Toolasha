@@ -639,7 +639,9 @@ export class SimEditor {
             return result;
         }
 
-        await this.resetToParty();
+        // Only a received loadout is worth rebuilding the party for; a failed fetch
+        // must not throw away the user's editor changes
+        if (result?.status === 'done') await this.resetToParty();
         this._loadoutFetchNote = this._describeLoadoutFetch(name, result);
         this.renderEditor();
         return result;

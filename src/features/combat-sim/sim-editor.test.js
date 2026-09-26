@@ -1185,8 +1185,11 @@ describe('Fetch a party loadout', () => {
         const editor = new SimEditor({ editorEl: el });
         await editor.initEditor();
 
+        const reset = vi.spyOn(editor, 'resetToParty');
         await editor.fetchPartyMemberLoadout();
         expect(el.textContent).toContain("No reply for Ally's loadout.");
+        // Nothing arrived, so the user's editor changes stay
+        expect(reset).not.toHaveBeenCalled();
     });
 
     test('is not offered solo', async () => {
