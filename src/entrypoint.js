@@ -2627,6 +2627,10 @@ if (combatSimulatorSite === 'metz') {
     // Initialize network alert (must be early, before market features)
     Market.networkAlert.initialize();
 
+    // Remember every loadout the game shares (View Loadout). Not a registry feature: a loadout the
+    // user opens before settings load, or with every sim feature off, is still one they opened.
+    Utils.viewLoadout?.startLoadoutCapture?.();
+
     // Start capturing client data from localStorage (for Combat Sim export)
     webSocketHook.captureClientDataFromLocalStorage();
 
