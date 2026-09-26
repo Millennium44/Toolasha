@@ -426,6 +426,24 @@ describe('navigating from "View All Enhancement Levels"', () => {
         await vi.waitFor(() => expect(marketVolumeStats.currentKey).toBe('/items/furious_spear:20'));
     });
 
+    test('a new current-item card replacing the old one is picked up (measured on the game client)', async () => {
+        // Going from one item to another can swap in a fresh card while the order-book
+        // container stays, so neither the container match nor the old card's watch fires
+        buildCurrentItem('/items/furious_spear', 20);
+        await marketVolumeStats.initialize();
+        historyApi.rows = [{ a: 100, b: 80, p: 90, v: 3, time: Math.floor(Date.now() / 1000) - 3600 }];
+        marketVolumeStats.update();
+        await vi.waitFor(() => expect(marketVolumeStats.currentKey).toBe('/items/furious_spear:20'));
+
+        const [, classes, onMatch] = domObserver.onClass.mock.calls.at(-1);
+        expect(classes).toContain('MarketplacePanel_currentItem');
+
+        const fresh = buildCurrentItem('/items/eye_watch', 12);
+        onMatch(fresh);
+
+        await vi.waitFor(() => expect(marketVolumeStats.currentKey).toBe('/items/eye_watch:12'));
+    });
+
     test('switching to a different item entirely through the same reused card is also picked up', async () => {
         const currentItem = buildCurrentItem('/items/furious_spear', 0);
         await marketVolumeStats.initialize();

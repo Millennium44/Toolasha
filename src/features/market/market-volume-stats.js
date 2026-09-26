@@ -256,9 +256,16 @@ class MarketVolumeStats {
     }
 
     setupObserver() {
-        const unregister = domObserver.onClass('MarketVolumeStats', 'MarketplacePanel_orderBooksContainer', () => {
-            this.scheduleUpdate();
-        });
+        // The current-item card too: moving between items can swap in a new card while
+        // the order-book container is reused, and the card watch in `watchItemChanges`
+        // is still attached to the old, detached card (measured on the game client)
+        const unregister = domObserver.onClass(
+            'MarketVolumeStats',
+            ['MarketplacePanel_orderBooksContainer', 'MarketplacePanel_currentItem'],
+            () => {
+                this.scheduleUpdate();
+            }
+        );
         this.cleanupRegistry.registerCleanup(unregister);
     }
 
