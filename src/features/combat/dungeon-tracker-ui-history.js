@@ -297,6 +297,9 @@ class DungeonTrackerUIHistory {
                 dungeonFilter.value = desired;
             } else {
                 this.state.filterDungeon = 'all';
+                // Reset, not just discarded: clearing the manual flag lets
+                // auto-scope resume choosing this dimension on the next run.
+                this.state.isDungeonFilterManual = false;
                 dungeonFilter.value = 'all';
             }
         }
@@ -319,8 +322,10 @@ class DungeonTrackerUIHistory {
             if (desired === 'all' || options.map(String).includes(desired)) {
                 tierFilter.value = desired;
             } else {
-                // The saved tier no longer exists in the data — fall back to all
+                // The saved tier no longer exists in the data — fall back to all,
+                // and clear the manual flag so auto-scope can resume for tier.
                 this.state.filterTier = 'all';
+                this.state.isTierFilterManual = false;
                 tierFilter.value = 'all';
             }
         }

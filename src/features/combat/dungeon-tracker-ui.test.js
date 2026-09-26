@@ -534,4 +534,28 @@ describe('history filters auto-scope to the run being shown', () => {
 
         await vi.waitFor(() => expect(state.autoScopeToRun).toHaveBeenCalledWith('Pirate Cove', 1));
     });
+
+    test('a scope change redraws the expanded chart, like a manual filter change does', async () => {
+        state.isChartExpanded = true;
+        ui.chart.render.mockClear();
+        world.runs = [{ dungeonName: 'Pirate Cove', tier: 1, duration: 300_000, timestamp: new Date(1).toISOString() }];
+
+        await ui.update(run(), true);
+
+        expect(state.filterDungeon).toBe('Pirate Cove');
+        expect(ui.chart.render).toHaveBeenCalled();
+        state.isChartExpanded = false;
+    });
+
+    test('an unchanged scope (autoScopeToRun reports no change) does not redraw the chart again', async () => {
+        state.isChartExpanded = true;
+        state.autoScopeToRun.mockReturnValue(false);
+        ui.chart.render.mockClear();
+        world.runs = [];
+
+        await ui.update(run(), true);
+
+        expect(ui.chart.render).not.toHaveBeenCalled();
+        state.isChartExpanded = false;
+    });
 });

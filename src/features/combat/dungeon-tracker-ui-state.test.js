@@ -199,3 +199,42 @@ describe('the panel’s preferences across a character switch', () => {
         expect(dungeonTrackerUIState.groupBy).toBe('team');
     });
 });
+
+describe('loading manual flags from a record older than auto-scope', () => {
+    beforeEach(() => {
+        world.charId = 'market';
+        store.clear();
+    });
+
+    test('a non-"all" filter with no stored flag loads as manual — it could only have come from the dropdown', async () => {
+        store.set('dungeonTracker_uiState_market', { filterDungeon: 'Pirate Cove', filterTier: '3' });
+
+        await dungeonTrackerUIState.load();
+
+        expect(dungeonTrackerUIState.isDungeonFilterManual).toBe(true);
+        expect(dungeonTrackerUIState.isTierFilterManual).toBe(true);
+    });
+
+    test('a record that does carry the flag uses it as-is, even set to false', async () => {
+        store.set('dungeonTracker_uiState_market', {
+            filterDungeon: 'Pirate Cove',
+            filterTier: '3',
+            isDungeonFilterManual: false,
+            isTierFilterManual: false,
+        });
+
+        await dungeonTrackerUIState.load();
+
+        expect(dungeonTrackerUIState.isDungeonFilterManual).toBe(false);
+        expect(dungeonTrackerUIState.isTierFilterManual).toBe(false);
+    });
+
+    test('an "all" filter with no stored flag loads as auto, not manual', async () => {
+        store.set('dungeonTracker_uiState_market', { filterDungeon: 'all', filterTier: 'all' });
+
+        await dungeonTrackerUIState.load();
+
+        expect(dungeonTrackerUIState.isDungeonFilterManual).toBe(false);
+        expect(dungeonTrackerUIState.isTierFilterManual).toBe(false);
+    });
+});

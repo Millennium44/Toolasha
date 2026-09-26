@@ -700,6 +700,10 @@ class DungeonTrackerUI {
 
         this.state.save();
         this.interactions?.updateFilterIndicator?.();
+        // Mirror the dropdown listeners' manual-change path: the scope actually
+        // moved, so the expanded chart (still showing the previous dungeon/tier)
+        // needs the same redraw a hand-picked filter change gets.
+        this.updateChart();
     }
 
     /**

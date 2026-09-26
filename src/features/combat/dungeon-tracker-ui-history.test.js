@@ -293,4 +293,20 @@ describe('filter dropdowns and an auto-scoped run with no history yet', () => {
         expect(container.querySelector('#mwi-dt-filter-dungeon').value).toBe('all');
         expect(container.querySelector('#mwi-dt-filter-tier').value).toBe('all');
     });
+
+    test('resetting a stale manual dungeon/tier to all also clears the manual flag, so auto-scope resumes', async () => {
+        dungeonTrackerStorage.getAllRuns.mockResolvedValue([run('Aster', 'Chimerical Den')]);
+        const state = freshState('team');
+        state.filterDungeon = 'Pirate Cove';
+        state.filterTier = '2';
+        state.isDungeonFilterManual = true;
+        state.isTierFilterManual = true;
+        const history = new DungeonTrackerUIHistory(state, (ms) => `${ms}ms`);
+        const container = buildFilterContainer();
+
+        await history.update(container);
+
+        expect(state.isDungeonFilterManual).toBe(false);
+        expect(state.isTierFilterManual).toBe(false);
+    });
 });
