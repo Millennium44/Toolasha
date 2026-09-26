@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Tidier chest key labels
+
+- Chest keys show their fragment zones compactly (3·4·5·6) in the top-left corner instead of running into the stack count along the bottom.
+
 ### Dungeon Tracker edge cases
 
 - The pop-out run chart no longer leaves a stray chart behind when closed or reopened while loading, and the card shown before a run starts or between runs redraws Last/Avg/Runs after a stale filter is reset.

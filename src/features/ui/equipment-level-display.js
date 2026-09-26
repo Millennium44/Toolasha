@@ -237,8 +237,13 @@ class EquipmentLevelDisplay {
             if (displayText) {
                 div.style.position = 'relative';
 
-                // Position: bottom left for all items (matches market value style)
-                const position = 'bottom: 2px; left: 2px; text-align: left;';
+                // A chest key's four zones are too wide for the bottom row, where they ran into
+                // the stack count; smaller and in the top-left corner, which keys leave empty
+                // (no enhancement level)
+                const compact = displayText.includes('·');
+                const position = compact
+                    ? 'top: 2px; left: 2px; text-align: left; font-size: 0.75em; letter-spacing: -0.5px;'
+                    : 'bottom: 2px; left: 2px; text-align: left;';
 
                 div.insertAdjacentHTML(
                     'beforeend',
@@ -263,7 +268,7 @@ class EquipmentLevelDisplay {
      * Get display text for keys and fragments
      * Uses hardcoded mapping like MWI Tools
      * @param {string} itemHrid - Key/fragment HRID
-     * @returns {string|null} Display text (e.g., "D1", "Z3", "3.4.5.6") or null
+     * @returns {string|null} Display text (e.g., "D1", "Z3", "3·4·5·6") or null
      */
     getKeyDisplayText(itemHrid) {
         const keyMap = new Map([
@@ -285,10 +290,10 @@ class EquipmentLevelDisplay {
             ['/items/pirate_entry_key', 'D4'],
 
             // Chest keys (zones where they drop)
-            ['/items/chimerical_chest_key', '3.4.5.6'],
-            ['/items/sinister_chest_key', '5.7.8.10'],
-            ['/items/enchanted_chest_key', '7.8.9.11'],
-            ['/items/pirate_chest_key', '6.9.10.11'],
+            ['/items/chimerical_chest_key', '3·4·5·6'],
+            ['/items/sinister_chest_key', '5·7·8·10'],
+            ['/items/enchanted_chest_key', '7·8·9·11'],
+            ['/items/pirate_chest_key', '6·9·10·11'],
         ]);
 
         return keyMap.get(itemHrid) || null;
