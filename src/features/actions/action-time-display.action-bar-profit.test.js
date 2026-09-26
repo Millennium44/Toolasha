@@ -77,6 +77,7 @@ vi.mock('../market/profit-calculator.js', () => ({ default: { calculateProfit: a
 const liquidity = vi.hoisted(() => ({ throttle: null }));
 
 vi.mock('../../utils/liquidity-cap.js', () => ({
+    itemDailyVolume: async (itemHrid) => ({ itemHrid, unitsPerDay: 0, days: 0, known: false }),
     capProfitData: async (profitData) => {
         if (!profitData || !liquidity.throttle || liquidity.throttle >= 1) return profitData;
         return {

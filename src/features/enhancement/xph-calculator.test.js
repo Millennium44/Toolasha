@@ -96,6 +96,7 @@ vi.mock('../../utils/market-data.js', () => ({
 }));
 
 vi.mock('../../utils/liquidity-cap.js', () => ({
+    itemDailyVolume: async (itemHrid) => ({ itemHrid, unitsPerDay: 0, days: 0, known: false }),
     capProfitRate: vi.fn((args) => {
         capCalls.push(args);
         return Promise.resolve(liquidityResult);

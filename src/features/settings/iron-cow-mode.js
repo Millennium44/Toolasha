@@ -75,6 +75,7 @@ export const IRON_COW_SETTINGS = new Set([
     'expectedValue_showDrops',
     'expectedValue_respectPricingMode',
     'labyrinthShopPrices',
+    'dungeonShopPlanner',
     // Inventory value display
     'invWorth',
     'invCategoryTotals',
