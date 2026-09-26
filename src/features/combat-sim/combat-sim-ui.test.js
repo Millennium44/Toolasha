@@ -2156,6 +2156,18 @@ describe('the all-zones table', () => {
                 expect(mocks.allZonesRuns).toBe(0); // never re-simulated
             });
 
+            test('a pricing change mid-run does not redraw the hidden results', async () => {
+                mocks.revenueCalls = [];
+                await ui._displayAllZonesResults([result('Fly', { xp: { defense: 900 }, profit: 12_000 })], 1, {});
+                ui.isRunning = true;
+
+                mocks.settingChangeCallbacks.get('profitCalc_keyPricingMode')?.('profitCalc_keyPricingMode', 'craft');
+                await flush();
+
+                expect(mocks.revenueCalls.length).toBe(0);
+                ui.isRunning = false;
+            });
+
             test('does not swap in a stale single-zone result over the sweep', async () => {
                 // An earlier single run is in hand — the case that used to make
                 // `_redisplayLastResults` redraw `_lastSimResult` instead
