@@ -1048,6 +1048,8 @@ describe('trial abilities panel', () => {
                 loadout: { sharableCharacter: { name: 'Alice' }, equippedAbilities: [] },
             };
             expect(snapshotFromViewLoadout(entry).abilitiesAuthoritative).toBe(false);
+            // Nothing learned, so it must not relabel an earlier capture as a trial loadout
+            expect(snapshotFromViewLoadout(entry).source).toBeUndefined();
         });
 
         test('a captured trial loadout drives the plan check: match and mismatch', async () => {
@@ -1228,6 +1230,34 @@ describe('trial abilities panel', () => {
                 expect(control.textContent).toBe('All fetched');
                 expect(control.disabled).toBe(true);
                 expect(text()).toContain('1 needs opening from the roster');
+            });
+
+            test('a player who answers with no trial loadout is not asked again by Fetch next', async () => {
+                viewLoadoutState.core = {
+                    handleViewProfile: () => {},
+                    handleViewLoadout: vi.fn((characterId) => {
+                        const name = characterId === 1 ? 'Alice' : 'Bob';
+                        const reply = loadoutReply(characterId, name, []);
+                        if (characterId === 1) {
+                            reply.loadout.hasLoadout = false;
+                            // An empty reply has no rows, so it is matched by name
+                        }
+                        setTimeout(() => handleLoadoutShared(reply), 20);
+                    }),
+                };
+                await feature.initialize('Cats');
+                guildTrialAbilities.setRoster([
+                    { characterId: 1, name: 'Alice' },
+                    { characterId: 2, name: 'Bob' },
+                ]);
+                vi.setSystemTime(NOW + 6000);
+                openTrialAbilitiesPanel();
+
+                fetchNextButton().click();
+                await vi.advanceTimersByTimeAsync(3000);
+
+                // Alice has none set; the next press goes to Bob, not Alice again
+                expect(fetchNextButton().textContent).toBe('Fetch next: Bob');
             });
 
             test('is not offered when View Loadout is unavailable', async () => {

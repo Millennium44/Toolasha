@@ -142,7 +142,9 @@ export function snapshotFromViewLoadout(entry) {
         name,
         abilities,
         abilitiesAuthoritative: entry.hasLoadout !== false,
-        source: 'view_loadout',
+        // An empty reply adds nothing, so it must not relabel an earlier Battle Info
+        // capture's abilities as a trial loadout
+        source: entry.hasLoadout === false ? undefined : 'view_loadout',
         at: entry.capturedAt,
         stats: null,
     };
@@ -1304,9 +1306,16 @@ function fetchLoadoutButton(row) {
  */
 let fetchNextInFlight = null;
 
+/**
+ * Players whose trial-loadout reply said they have none, by lowercased name. Their
+ * row stays uncaptured, so without this "Fetch next" would ask for them forever.
+ */
+const answeredWithoutLoadout = new Set();
+
 /** Forget an in-flight "Fetch next" wait — for tests and a fresh panel */
 export function resetFetchNext() {
     fetchNextInFlight = null;
+    answeredWithoutLoadout.clear();
 }
 
 /**
@@ -1321,7 +1330,9 @@ export function resetFetchNext() {
  * @returns {{withId: Array<Object>, withoutId: Array<Object>}}
  */
 function fetchNextCandidates(state) {
-    const outstanding = sortParticipants(state.participants, state.complete).filter((row) => !row.captured);
+    const outstanding = sortParticipants(state.participants, state.complete).filter(
+        (row) => !row.captured && !answeredWithoutLoadout.has(String(row.name || '').toLowerCase())
+    );
     const hasId = (row) => row.characterId !== null && row.characterId !== undefined && row.characterId !== '';
     return { withId: outstanding.filter(hasId), withoutId: outstanding.filter((row) => !hasId(row)) };
 }
@@ -1813,6 +1824,7 @@ function onViewLoadoutCaptured(entry) {
         if (!entry || entry.context !== VIEW_LOADOUT_CONTEXT.GuildTrial) return;
         const snapshot = snapshotFromViewLoadout(entry);
         if (!snapshot) return;
+        if (entry.hasLoadout === false && snapshot.name) answeredWithoutLoadout.add(snapshot.name.toLowerCase());
         guildTrialAbilities.recordCapture(snapshot, {
             at: Number.isFinite(entry.capturedAt) ? entry.capturedAt : undefined,
             now: Date.now(),
