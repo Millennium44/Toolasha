@@ -100,6 +100,10 @@ vi.mock('./market-data.js', () => ({
 }));
 
 vi.mock('./game-lookups.js', () => ({ getShopCoinCost: () => 0 }));
+const customPrices = vi.hoisted(() => ({ buy: {} }));
+vi.mock('../features/settings/custom-price-overrides.js', () => ({
+    getCustomPrice: (itemHrid, level, side) => (side === 'buy' ? (customPrices.buy[itemHrid] ?? null) : null),
+}));
 
 vi.mock('./tea-parser.js', () => ({ parseArtisanBonus: () => player.artisan, getDrinkConcentration: () => 0 }));
 
@@ -441,6 +445,18 @@ describe('describeKeyCost prices the direct recipe only', () => {
         // planner would instead craft the lumber from logs (100 per lumber)
         // and answer 100 + 200 = 300 — this is the bug being fixed.
         expect(cost.craftCost).toBe(1100);
+    });
+
+    test('a custom buy price set for a material is used, as the tooltip does', () => {
+        addDirectKeyFixture();
+        customPrices.buy[LUMBER] = 300;
+        try {
+            const cost = describeKeyCost(DIRECT_KEY, { mode: 'ask', basis: 'craft' });
+            // 100 coin + 2 lumber at the player's own 300, not the 500 ask
+            expect(cost.craftCost).toBe(700);
+        } finally {
+            delete customPrices.buy[LUMBER];
+        }
     });
 
     test('matches the formula the item tooltip own-use line uses for the same recipe', () => {
