@@ -345,7 +345,12 @@ export function getKeyUnitCost(keyHrid) {
 
     const resolved = resolveKeyPricing();
     const { priceSide, basis } = resolved;
-    if (basis !== 'craft') return buyPriceFor(keyHrid, priceSide, followsGlobalMode(resolved, priceSide));
+    if (basis !== 'craft') {
+        const market = buyPriceFor(keyHrid, priceSide, followsGlobalMode(resolved, priceSide));
+        // No quote falls through to the recipe, as `describeKeyCost` does; a
+        // null here reaches callers that read it as a free key
+        if (market !== null) return market;
+    }
 
     // The tick is in the key for the same reason the side is: toggling it must miss
     const tick = isPatientTickOn('buy') ? 'tick' : '';
