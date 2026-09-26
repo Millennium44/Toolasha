@@ -6,6 +6,8 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+<!-- shipped in 3.60.1 -->
+
 ### Market stats follow equipment levels
 
 - The marketplace stats panel now updates when you open an equipment level from "View All Enhancement Levels" (it kept showing the previous level's figures), and gear with ask/bid quotes but no trades in a window shows an ask/bid-based table instead of nothing.
@@ -3992,23 +3994,21 @@ The simulator valued every drop at its gross market price, so profit ignored the
 
 ## [3.60.1](https://github.com/Millennium44/Toolasha/compare/v3.60.0...v3.60.1) (2026-09-26)
 
-
 ### Bug Fixes
 
-* direct key craft cost honors custom material buy prices ([7d5eaeb](https://github.com/Millennium44/Toolasha/commit/7d5eaebcea54f5f2b4ab7e6fe96c4569ef398a34))
-* direct key craft cost prices materials through the canonical resolver ([65098c7](https://github.com/Millennium44/Toolasha/commit/65098c7775888b1be4f5de951c9a10512f804b52))
-* key craft cost prices its own recipe only, no recursive crafting ([8d0880a](https://github.com/Millennium44/Toolasha/commit/8d0880a321af184f91d66a2deb59d8f3f2d1b49c))
-* market stats catch the level badge added when picking from all enhancement levels ([7f4ca72](https://github.com/Millennium44/Toolasha/commit/7f4ca724de85570d46280b5aadfd42fb6bc6363f))
-* market stats do not call unpriced traded volume "no trades" ([4223571](https://github.com/Millennium44/Toolasha/commit/42235710b601fff302323c120ce96c3536a8d9ea))
-* market stats pick up a replaced current-item card ([d5c5d63](https://github.com/Millennium44/Toolasha/commit/d5c5d636aab63575d8098b2882fe89e4cc887851))
-* market stats table renders for equipment with ask/bid but no trades ([5e07a77](https://github.com/Millennium44/Toolasha/commit/5e07a7745a09271d3be3a28de9978b8aaa53fbf1))
-* market stats/chart panel misses item swaps that reuse the same order-book card ([dc7ecd3](https://github.com/Millennium44/Toolasha/commit/dc7ecd38c5cb11ef024bed86e85cfb1ae581e7e8))
-
+- direct key craft cost honors custom material buy prices ([7d5eaeb](https://github.com/Millennium44/Toolasha/commit/7d5eaebcea54f5f2b4ab7e6fe96c4569ef398a34))
+- direct key craft cost prices materials through the canonical resolver ([65098c7](https://github.com/Millennium44/Toolasha/commit/65098c7775888b1be4f5de951c9a10512f804b52))
+- key craft cost prices its own recipe only, no recursive crafting ([8d0880a](https://github.com/Millennium44/Toolasha/commit/8d0880a321af184f91d66a2deb59d8f3f2d1b49c))
+- market stats catch the level badge added when picking from all enhancement levels ([7f4ca72](https://github.com/Millennium44/Toolasha/commit/7f4ca724de85570d46280b5aadfd42fb6bc6363f))
+- market stats do not call unpriced traded volume "no trades" ([4223571](https://github.com/Millennium44/Toolasha/commit/42235710b601fff302323c120ce96c3536a8d9ea))
+- market stats pick up a replaced current-item card ([d5c5d63](https://github.com/Millennium44/Toolasha/commit/d5c5d636aab63575d8098b2882fe89e4cc887851))
+- market stats table renders for equipment with ask/bid but no trades ([5e07a77](https://github.com/Millennium44/Toolasha/commit/5e07a7745a09271d3be3a28de9978b8aaa53fbf1))
+- market stats/chart panel misses item swaps that reuse the same order-book card ([dc7ecd3](https://github.com/Millennium44/Toolasha/commit/dc7ecd38c5cb11ef024bed86e85cfb1ae581e7e8))
 
 ### Documentation
 
-* changelog for direct-recipe key craft cost ([6355bc9](https://github.com/Millennium44/Toolasha/commit/6355bc9edd5d29f0fed66fe7a3b5fb7ede8a6f5a))
-* changelog for market stats on equipment levels ([47619bb](https://github.com/Millennium44/Toolasha/commit/47619bb076814b05ea75d08c1b7e76dccc0e2dec))
+- changelog for direct-recipe key craft cost ([6355bc9](https://github.com/Millennium44/Toolasha/commit/6355bc9edd5d29f0fed66fe7a3b5fb7ede8a6f5a))
+- changelog for market stats on equipment levels ([47619bb](https://github.com/Millennium44/Toolasha/commit/47619bb076814b05ea75d08c1b7e76dccc0e2dec))
 
 ## [3.60.0](https://github.com/Millennium44/Toolasha/compare/v3.59.0...v3.60.0) (2026-09-26)
 
