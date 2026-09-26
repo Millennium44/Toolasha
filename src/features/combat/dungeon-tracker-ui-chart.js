@@ -83,6 +83,9 @@ class DungeonTrackerUIChart {
         if (this.state.filterDungeon !== 'all') {
             filteredRuns = filteredRuns.filter((r) => r.dungeonName === this.state.filterDungeon);
         }
+        if (this.state.filterTier !== 'all') {
+            filteredRuns = filteredRuns.filter((r) => String(r.tier) === this.state.filterTier);
+        }
         if (this.state.filterTeam !== 'all') {
             filteredRuns = filteredRuns.filter((r) => r.teamKey === this.state.filterTeam);
         }
@@ -362,6 +365,9 @@ class DungeonTrackerUIChart {
 
         if (this.state.filterDungeon !== 'all') {
             filteredRuns = filteredRuns.filter((r) => r.dungeonName === this.state.filterDungeon);
+        }
+        if (this.state.filterTier !== 'all') {
+            filteredRuns = filteredRuns.filter((r) => String(r.tier) === this.state.filterTier);
         }
         if (this.state.filterTeam !== 'all') {
             filteredRuns = filteredRuns.filter((r) => r.teamKey === this.state.filterTeam);

@@ -127,8 +127,17 @@ class DungeonTrackerUIState {
             this.filterDungeon = savedState.filterDungeon || 'all';
             this.filterTier = savedState.filterTier || 'all';
             this.filterTeam = savedState.filterTeam || 'all';
-            this.isDungeonFilterManual = savedState.isDungeonFilterManual === true;
-            this.isTierFilterManual = savedState.isTierFilterManual === true;
+            // A record saved before manual flags existed has no such property. Its filter
+            // could only have been set by hand (auto-scope did not exist yet), so a non-'all'
+            // value must be treated as manual; a record that does have the flag uses it as-is.
+            this.isDungeonFilterManual =
+                savedState.isDungeonFilterManual === undefined
+                    ? this.filterDungeon !== 'all'
+                    : savedState.isDungeonFilterManual === true;
+            this.isTierFilterManual =
+                savedState.isTierFilterManual === undefined
+                    ? this.filterTier !== 'all'
+                    : savedState.isTierFilterManual === true;
             this.filterCharacter =
                 savedState.filterCharacter === CHARACTER_FILTER_ALL ? CHARACTER_FILTER_ALL : CHARACTER_FILTER_MINE;
         }
