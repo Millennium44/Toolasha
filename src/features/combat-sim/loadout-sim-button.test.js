@@ -99,6 +99,18 @@ describe('the Open in sim button', () => {
         expect(state.opened[0].options.note).toContain('No cached profile');
     });
 
+    test('opens nothing for a skilling trial loadout', async () => {
+        handleLoadoutShared({
+            type: 'loadout_shared',
+            loadout: { ...loadout(7, 'Ally'), actionTypeHrid: '/action_types/woodcutting' },
+        });
+        const button = document.createElement('button');
+
+        expect(await openLoadoutInSim('Ally', button)).toBe(false);
+        expect(button.textContent).toBe('Not a combat loadout');
+        expect(state.opened).toEqual([]);
+    });
+
     test('opens nothing for a player with no loadout captured', async () => {
         const button = document.createElement('button');
         expect(await openLoadoutInSim('Nobody', button)).toBe(false);
