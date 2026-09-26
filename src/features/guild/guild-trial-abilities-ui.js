@@ -124,6 +124,9 @@ export const COMBAT_TRIAL_KIND = 'combat';
 export function snapshotFromViewLoadout(entry) {
     const loadout = entry?.loadout;
     if (!loadout || typeof loadout !== 'object') return null;
+    // The roster answers with whatever the player built for that trial kind; only a
+    // combat loadout says anything about combat abilities
+    if (loadout.actionTypeHrid && loadout.actionTypeHrid !== '/action_types/combat') return null;
     const name = entry.name || loadout.sharableCharacter?.name || null;
     if (!name && (entry.characterId === null || entry.characterId === undefined)) return null;
 
@@ -1311,11 +1314,14 @@ let fetchNextInFlight = null;
  * row stays uncaptured, so without this "Fetch next" would ask for them forever.
  */
 const answeredWithoutLoadout = new Set();
+/** The trial session those answers belong to; a new session starts the list over */
+let answeredForSession = null;
 
 /** Forget an in-flight "Fetch next" wait — for tests and a fresh panel */
 export function resetFetchNext() {
     fetchNextInFlight = null;
     answeredWithoutLoadout.clear();
+    answeredForSession = null;
 }
 
 /**
@@ -1330,6 +1336,13 @@ export function resetFetchNext() {
  * @returns {{withId: Array<Object>, withoutId: Array<Object>}}
  */
 function fetchNextCandidates(state) {
+    // A different trial starts the list over. A session appearing for the first time
+    // (the first capture opens it) is the same trial, not a new one.
+    const session = state.startedAt ?? null;
+    if (session !== answeredForSession) {
+        if (answeredForSession !== null && session !== null) answeredWithoutLoadout.clear();
+        if (session !== null) answeredForSession = session;
+    }
     const outstanding = sortParticipants(state.participants, state.complete).filter(
         (row) => !row.captured && !answeredWithoutLoadout.has(String(row.name || '').toLowerCase())
     );
@@ -1889,6 +1902,7 @@ export default {
         if (onTrialTick) for (const type of TRIAL_TICK_MESSAGES) webSocketHook.off(type, onTrialTick);
         onTrialTick = null;
         guildTrialAbilitiesPanel.hide({ remember: false });
+        resetFetchNext();
         guildTrialAbilities.cleanup();
     },
 };
