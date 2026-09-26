@@ -2,9 +2,9 @@
  * Tests for dungeon key costing
  *
  * The market book and the recipe book are mocked; the costing is not — the real
- * `describeCraft` and `computeBestCraftingPlan` run underneath, because the
- * thing worth pinning is that the two sources of a key are compared correctly,
- * not that a stub returned what it was told to.
+ * `describeDirectCraft` runs underneath, because the thing worth pinning is
+ * that the two sources of a key are compared correctly, not that a stub
+ * returned what it was told to.
  *
  * Standing fixture (unless a test says otherwise):
  *   chimerical essence   — no recipe, ask 1000 / bid 900
@@ -13,6 +13,14 @@
  *   chimerical entry key — no recipe, ask 20000
  *   pirate chest key     — 5 essence → 1, not on the market
  *   sinister chest key   — no recipe, not on the market
+ *
+ * A second fixture, used only by the "direct recipe" describe block below,
+ * covers the case the standing fixture cannot: a material that is itself
+ * cheaper to craft than to buy.
+ *   test log    — no recipe, ask 50
+ *   test lumber — 2 logs → 1, ask 500 (craft would be 100 — cheaper, and
+ *                 exactly the trap a recursive planner would fall into)
+ *   test direct key — 100 coin + 2 lumber → 1, not on the market
  */
 
 import { describe, test, expect, beforeEach, vi } from 'vitest';
@@ -68,13 +76,10 @@ vi.mock('./market-data.js', () => ({
     // ask, patientBuy at the bid.
     getPricingMode: (context, side) =>
         context === 'profit' && side === 'buy' && settings.pricingMode === 'patientBuy' ? 'bid' : 'ask',
-    // Mirrors the two things the real getItemPrice does that this suite cares
-    // about: an explicit `mode` is an exact book side, and a caller that hands
-    // no `mode` at all (computeBestCraftingPlan's "follow global" branch, taken
-    // whenever `mode` is not the literal 'ask'/'bid'/'average') resolves the side
-    // from the pricing-mode setting and picks up the patient tick. That second
-    // branch is what `describeKeyCost` now routes a key's own craft materials
-    // through whenever the key setting follows the global buy side.
+    // Not on `describeKeyCost`'s own path any more (it prices everything
+    // through `marketAPI.getPrice` directly — see `buyPriceFor`), but the
+    // crafting-plan feature this suite's imports still pull in at module load
+    // resolves to the same `market-data.js`, so it still needs an export here.
     getItemPrice: (hrid, options = {}) => {
         const entry = market.book[hrid];
         if (!entry) return null;
@@ -383,6 +388,87 @@ describe('describeKeyCost', () => {
         game.initClientData.actionDetailMap['/actions/crafting/chimerical_chest_key'] = essenceRecipe(CHEST_KEY, 4);
 
         expect(describeKeyCost(CHEST_KEY).craftCost).toBe(4000);
+    });
+});
+
+describe('describeKeyCost prices the direct recipe only', () => {
+    const LOG = '/items/test_log';
+    const LUMBER = '/items/test_lumber';
+    const DIRECT_KEY = '/items/test_direct_key';
+
+    /**
+     * Wires in a recipe shaped like the maintainer's entry-key report: coin
+     * plus a material (lumber) that is itself cheaper to craft (from logs)
+     * than to buy. A recursive planner would craft the lumber; a key cost must
+     * buy it, so the two disagree unless the fix holds.
+     */
+    function addDirectKeyFixture() {
+        game.itemDetails[LOG] = { name: 'Test Log', isTradable: true };
+        game.itemDetails[LUMBER] = { name: 'Test Lumber', isTradable: true };
+        game.itemDetails[DIRECT_KEY] = { name: 'Test Direct Key', isTradable: true };
+
+        game.initClientData.actionDetailMap['/actions/crafting/test_lumber'] = {
+            type: '/action_types/crafting',
+            category: '/action_categories/crafting/wood',
+            inputItems: [{ itemHrid: LOG, count: 2 }],
+            outputItems: [{ itemHrid: LUMBER, count: 1 }],
+            levelRequirement: { skillHrid: '/skills/crafting', level: 1 },
+        };
+        game.initClientData.actionDetailMap['/actions/crafting/test_direct_key'] = {
+            type: '/action_types/crafting',
+            category: '/action_categories/crafting/key',
+            inputItems: [
+                { itemHrid: '/items/coin', count: 100 },
+                { itemHrid: LUMBER, count: 2 },
+            ],
+            outputItems: [{ itemHrid: DIRECT_KEY, count: 1 }],
+            levelRequirement: { skillHrid: '/skills/crafting', level: 60 },
+        };
+
+        // Lumber is dear to buy (500) but cheap to craft (2 logs @ 50 = 100) —
+        // the exact shape a recursive planner would arbitrage and a key cost
+        // must not.
+        market.book[LOG] = { ask: 50, bid: 40 };
+        market.book[LUMBER] = { ask: 500, bid: 400 };
+    }
+
+    test('a material cheaper to craft than to buy is still bought, not recursively crafted', () => {
+        addDirectKeyFixture();
+
+        const cost = describeKeyCost(DIRECT_KEY, { mode: 'ask', basis: 'craft' });
+
+        // 100 coin + 2 lumber at the market ask (500 each) = 1100. A recursive
+        // planner would instead craft the lumber from logs (100 per lumber)
+        // and answer 100 + 200 = 300 — this is the bug being fixed.
+        expect(cost.craftCost).toBe(1100);
+    });
+
+    test('matches the formula the item tooltip own-use line uses for the same recipe', () => {
+        addDirectKeyFixture();
+        player.artisan = 0.1;
+
+        const cost = describeKeyCost(DIRECT_KEY, { mode: 'ask', basis: 'craft' });
+
+        // tooltip-prices.js's own-use line (ownUseCompare, fed by
+        // profit-calculator's calculateMaterialCosts) prices every regular
+        // input — coin included — at the market, reduced by artisan, and never
+        // recurses into how an input is made. That is exactly this formula.
+        const expected = 100 * (1 - player.artisan) + 500 * 2 * (1 - player.artisan);
+        expect(cost.craftCost).toBeCloseTo(expected);
+    });
+
+    test('a material with no market price nulls the whole craft cost, never falls back to crafting it', () => {
+        addDirectKeyFixture();
+        delete market.book[LUMBER];
+
+        const cost = describeKeyCost(DIRECT_KEY, { mode: 'ask', basis: 'craft' });
+
+        // Lumber is craftable from logs (which do have a price) but a key cost
+        // never substitutes that; an unpriced material rejects the whole
+        // recipe. With no market quote for the key either, it is genuinely
+        // uncosted rather than free.
+        expect(cost.craftCost).toBeNull();
+        expect(cost.unitCost).toBeNull();
     });
 });
 

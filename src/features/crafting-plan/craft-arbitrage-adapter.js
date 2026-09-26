@@ -187,6 +187,84 @@ export function describeCraft(itemHrid, options = {}) {
 }
 
 /**
+ * What one unit of an item's own recipe costs, with every material priced by
+ * the caller and never re-costed through a further craft-vs-buy decision.
+ *
+ * `describeCraft` above answers "what does crafting this item cost me, given
+ * that I would also make whichever inputs are cheaper to make than to buy" —
+ * the right question for a player deciding how to obtain something, walked
+ * through `computeBestCraftingPlan` as many recipe levels deep as that turns
+ * out to want. This function answers a narrower one: "what does this item's
+ * own recipe cost, buying every input at its own price" — no recursion into
+ * how an input might itself be crafted, because the caller (a dungeon key
+ * cost, so far) is pricing a player who buys the materials and crafts the one
+ * step on top, not one who also crafts the materials.
+ *
+ * Pricing policy is entirely the caller's: `getMaterialPrice` is asked for
+ * each input and the upgrade item (coin is always 1, never asked for), and a
+ * null or non-finite answer from it rejects the whole recipe rather than
+ * pricing it with a hole in it — the same "never a partial total with a free
+ * material in it" rule `describeCraft` applies, just enforced here instead of
+ * inside `computeBestCraftingPlan`.
+ *
+ * @param {string} itemHrid - Item to cost
+ * @param {Object} options - Costing options
+ * @param {function(string): (number|null)} options.getMaterialPrice - Priced a
+ *   material HRID, or null when it cannot be priced at all
+ * @param {Map} [options.actionStats] - Shared action-stats cache, for costing
+ *   several items in one pass
+ * @returns {Object|null} Same shape as {@link describeCraft} — null when the
+ *   item has no recipe, the game data is not loaded, or a material (or the
+ *   upgrade item) cannot be priced.
+ */
+export function describeDirectCraft(itemHrid, options = {}) {
+    if (!itemHrid) return null;
+    const { getMaterialPrice, actionStats } = options;
+    if (typeof getMaterialPrice !== 'function') return null;
+
+    const index = productionIndex();
+    const production = index?.get(itemHrid);
+    if (!production) return null;
+
+    const { actionHrid, action, outputCount } = production;
+    const perUnit = outputCount > 0 ? 1 / outputCount : 1;
+    const artisanBonus = getArtisanBonus(action.type);
+
+    const priceOf = (hrid) => (hrid === '/items/coin' ? 1 : getMaterialPrice(hrid));
+
+    let unitCost = 0;
+    const inputs = [];
+    for (const input of action.inputItems || []) {
+        const quantityPerUnit = (input.count || 1) * (1 - artisanBonus) * perUnit;
+        const price = priceOf(input.itemHrid);
+        if (!(Number.isFinite(price) && price >= 0)) return null;
+        unitCost += price * quantityPerUnit;
+        inputs.push({ itemHrid: input.itemHrid, quantityPerUnit });
+    }
+
+    // Upgrade items are not reduced by artisan, matching describeCraft/calculateMaterialCosts.
+    if (action.upgradeItemHrid) {
+        const quantityPerUnit = perUnit;
+        const price = priceOf(action.upgradeItemHrid);
+        if (!(Number.isFinite(price) && price >= 0)) return null;
+        unitCost += price * quantityPerUnit;
+        inputs.push({ itemHrid: action.upgradeItemHrid, quantityPerUnit });
+    }
+
+    return {
+        itemHrid,
+        unitCost,
+        strategy: 'craft',
+        actionHrid,
+        actionsNeeded: perUnit,
+        secondsPerUnit: secondsPerUnitFor(actionHrid, action, outputCount, actionStats),
+        skillHrid: action.levelRequirement?.skillHrid ?? null,
+        requiredLevel: action.levelRequirement?.level ?? 0,
+        inputs,
+    };
+}
+
+/**
  * Cost many items in one pass.
  *
  * Sharing the memo is the whole point: the recipe graph overlaps heavily, so

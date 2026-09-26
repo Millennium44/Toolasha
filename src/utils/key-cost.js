@@ -28,22 +28,39 @@
  * comparison come out one way.
  *
  * `craftSeconds` is the time for the key's own crafting action, per key, at this
- * character's efficiency. Materials are costed at whichever of buying and
- * crafting is cheaper for them (that is what `computeBestCraftingPlan` decides),
- * so if a material is itself crafted, its time is not in this figure.
+ * character's efficiency.
+ *
+ * ## Direct recipe only
+ *
+ * `craftCost` prices the key's own recipe and nothing below it: every input is
+ * bought at the market, never crafted, even when crafting that input would be
+ * cheaper. A player who crafts entry keys buys lumber and essence; they do not
+ * also fell logs and refine lumber to save a further few percent, and a craft
+ * cost that assumed they did was overstating what the key actually costs them
+ * by however much cheaper the deepest raw materials were. `describeDirectCraft`
+ * (in the crafting-plan feature's arbitrage adapter) does the summing; this
+ * module supplies the per-material price. The crafting-plan feature's own
+ * recursive planner (`describeCraft` / `computeBestCraftingPlan`) is unchanged
+ * and still answers its own question correctly — it is simply not what a key
+ * cost uses.
+ *
+ * A material with no market price at all makes the whole `craftCost` null
+ * rather than a total with a free ingredient in it; `describeKeyCost` and
+ * `getKeyUnitCost` then fall back to the market price of the key itself, same
+ * as a key with no recipe.
  *
  * ## Whose cost this is
  *
  * A crafting cost is personal — artisan tea removes materials, efficiency gives
- * free actions, gear changes the action time. Everything here goes through
- * `describeCraft`, which costs the recipe against the logged-in character, so
- * two players reading the same dungeon get different and correct answers.
+ * free actions, gear changes the action time. Everything here is costed
+ * against the logged-in character, so two players reading the same dungeon get
+ * different and correct answers.
  */
 
 import config from '../core/config.js';
 import dataManager from '../core/data-manager.js';
 import marketAPI from '../api/marketplace.js';
-import { describeCraft } from '../features/crafting-plan/craft-arbitrage-adapter.js';
+import { describeDirectCraft } from '../features/crafting-plan/craft-arbitrage-adapter.js';
 import { getPricingMode } from './market-data.js';
 import { ironCowBook } from './ironcow-valuation.js';
 import { isPatientTickOn, patientTickPrice } from './patient-tick.js';
@@ -164,24 +181,6 @@ function followsGlobalMode(resolved, mode) {
 }
 
 /**
- * Passed to `describeCraft` as its `mode` option in place of an explicit
- * `ask`/`bid`, so the recipe's materials price through `computeBestCraftingPlan`'s
- * "no raw mode" branch — the one that hands `getItemPrice` no explicit `mode` and
- * lets it resolve the side from the global pricing setting instead, which is also
- * the only branch that carries the patient +1 tick (`getItemPrice` only ticks when
- * `!mode`). `computeBestCraftingPlan` only special-cases the literal strings
- * `'ask'`, `'bid'` and `'average'`; anything else falls through to that branch, so
- * this can be any other truthy string.
- *
- * Without this, `describeCraft` was always called with a resolved side
- * (`'ask'`/`'bid'`), which `computeBestCraftingPlan` forwards to `getItemPrice` as
- * an explicit `mode` — the exact-book-price path, never ticked. That silently
- * left key-craft materials priced a tick behind the key's own market quote
- * whenever the `craft` setting followed the global buy side.
- */
-const FOLLOWS_GLOBAL_MODE = 'followsGlobalMode';
-
-/**
  * What one key costs, bought and crafted, and which of those the setting takes.
  *
  * Either side may be missing and the result is still usable: a key with no
@@ -205,9 +204,11 @@ const FOLLOWS_GLOBAL_MODE = 'followsGlobalMode';
  * cheaper, because the user has said they make their own keys and wants them
  * valued at what they actually pay. Two things that basis does **not** do:
  *
- * - It never part-prices a recipe. `describeCraft` rejects a recipe outright
- *   when a material has no price, so `craftCost` is null rather than a total
- *   with a free material in it. A missing material is unknown, never zero.
+ * - It never part-prices a recipe. `describeDirectCraft` rejects a recipe
+ *   outright when a material has no price, so `craftCost` is null rather than
+ *   a total with a free material in it. A missing material is unknown, never
+ *   zero, and it is never priced by recursing into how that material might
+ *   itself be crafted either.
  * - It never leaves a costable key uncosted. When the recipe is missing or
  *   unpriceable the market quote is used instead and `cheaper` reports `'buy'`,
  *   so a display and a net worth both get the honest replacement cost rather
@@ -226,8 +227,11 @@ const FOLLOWS_GLOBAL_MODE = 'followsGlobalMode';
  * @param {string} [options.mode] - Market side ('ask'/'bid'); defaults to the resolved setting
  * @param {string} [options.basis] - 'market' or 'craft'; defaults to the resolved setting, and
  *   to 'market' when `mode` was given on its own
- * @param {Map} [options.memo] - Shared unit-cost memo, for costing several keys
- * @param {Map} [options.actionStats] - Shared action-stats cache, same purpose
+ * @param {Map} [options.memo] - Accepted for callers costing several keys at once;
+ *   unused now that a key's own recipe is priced directly with no sub-crafting
+ *   to memoize
+ * @param {Map} [options.actionStats] - Shared action-stats cache, for costing
+ *   several keys' craft times in one pass
  * @returns {{itemHrid: string, itemName: string, pricingMode: string, basis: string,
  *   buyPrice: number|null, craftCost: number|null, craftSeconds: number|null,
  *   craftActionHrid: string|null, cheaper: string|null, unitCost: number|null, savings: number}}
@@ -261,17 +265,21 @@ export function describeKeyCost(keyHrid, options = {}) {
 
     let craft = null;
     try {
-        craft = describeCraft(keyHrid, {
-            mode: followsGlobal ? FOLLOWS_GLOBAL_MODE : mode,
-            memo: options.memo,
+        // The key's own recipe only — each material priced at the market by the
+        // same side/tick rule `buyPriceFor` already applies to the key itself,
+        // never recursed into how a material might itself be crafted. That
+        // recursion is `describeCraft`'s job for the crafting-plan feature; a
+        // key cost is a player who buys materials and crafts one step on top.
+        craft = describeDirectCraft(keyHrid, {
+            getMaterialPrice: (materialHrid) => buyPriceFor(materialHrid, mode, followsGlobal),
             actionStats: options.actionStats,
         });
     } catch (error) {
         console.error(`[KeyCost] Could not cost the recipe for ${keyHrid}:`, error);
     }
 
-    // `describeCraft` already rejects a recipe whose materials cannot be priced,
-    // so anything finite here is a cost somebody could actually pay.
+    // `describeDirectCraft` already rejects a recipe whose materials cannot be
+    // priced, so anything finite here is a cost somebody could actually pay.
     const craftCost = Number.isFinite(craft?.unitCost) && craft.unitCost > 0 ? craft.unitCost : null;
     const craftSeconds = Number.isFinite(craft?.secondsPerUnit) ? craft.secondsPerUnit : null;
 
@@ -308,9 +316,9 @@ export function describeKeyCost(keyHrid, options = {}) {
  * How long a craft-basis unit cost is reused before the recipe is walked again.
  *
  * Only the craft basis is cached. A market lookup is a map read; a craft cost
- * walks the recipe through the crafting planner against this character, which
- * is far too much work for a badge pass over an inventory or a panel that
- * redraws on a timer.
+ * reads action stats (efficiency, artisan bonus) against this character, which
+ * is more than a badge pass over an inventory or a panel that redraws on a
+ * timer should redo every time.
  */
 const CRAFT_COST_TTL_MS = 60_000;
 
@@ -378,8 +386,10 @@ export function invalidateKeyCostCache() {
 /**
  * Cost several keys in one pass.
  *
- * The caches are shared across the keys because dungeon key recipes overlap —
- * costing four keys separately re-derives the same materials four times.
+ * `actionStats` is shared across the keys because reading a recipe's action
+ * time is not free and several dungeon keys can share a producing action;
+ * `memo` is accepted for the same call shape but no longer does anything (see
+ * `describeKeyCost`'s `options.memo`).
  *
  * @param {Array<string>} keyHrids - Key item HRIDs
  * @param {Object} [options] - Same options as `describeKeyCost`, minus the caches
