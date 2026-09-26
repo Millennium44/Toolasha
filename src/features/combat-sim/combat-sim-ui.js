@@ -5598,6 +5598,9 @@ class CombatSimUI {
      * case.
      */
     _redisplayLastResults() {
+        // A run in progress has hidden the old results; redrawing them would show them
+        // beside its progress. The run draws with the current pricing when it finishes.
+        if (this._runStarting || this.isRunning) return;
         if (this._activeResultKind === 'allZones') {
             this._repriceAllZonesResults();
             return;
