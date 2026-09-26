@@ -76,6 +76,10 @@ class DungeonShopPlanner {
         this.status = '';
         this.lastPlan = null;
         this.initialized = false;
+        /** @type {string|null} The token `measure` should be running for once its loop is free */
+        this.pendingToken = null;
+        /** Whether a `measure` loop is currently running, so a second call joins it rather than racing it */
+        this.measureLoopRunning = false;
     }
 
     /** Set up the button observer and the panel shell */
@@ -120,6 +124,7 @@ class DungeonShopPlanner {
         this.measuring.clear();
         this.status = '';
         this.initialized = false;
+        this.pendingToken = null;
     }
 
     /**
@@ -191,10 +196,40 @@ class DungeonShopPlanner {
 
     /**
      * Fetch the traded volume of every priced item this token buys, once each.
+     *
+     * Serialized across calls: switching the token picker while a previous
+     * token's items are still being measured used to start a second loop
+     * alongside the first, both racing on the same `volumes`/`measuring`
+     * state. A call while a loop is already running only records the token it
+     * wants and returns — the running loop picks it up as soon as it is free,
+     * so there is ever only one loop in flight.
+     *
      * @param {string} tokenHrid - A dungeon token
      * @returns {Promise<void>}
      */
     async measure(tokenHrid) {
+        this.pendingToken = tokenHrid;
+        if (this.measureLoopRunning) return;
+
+        this.measureLoopRunning = true;
+        try {
+            while (this.pendingToken) {
+                const target = this.pendingToken;
+                this.pendingToken = null;
+                await this.measureOnce(target);
+            }
+        } finally {
+            this.measureLoopRunning = false;
+        }
+    }
+
+    /**
+     * One pass measuring `tokenHrid`'s items, abandoned early if a newer
+     * `measure` call names a different token while it is running.
+     * @param {string} tokenHrid - A dungeon token
+     * @returns {Promise<void>}
+     */
+    async measureOnce(tokenHrid) {
         this.syncVolumeSource();
         const wanted = dungeonShopOffers(tokenHrid).filter(
             (offer) => offer.askPrice > 0 && !this.volumes.has(offer.itemHrid) && !this.measuring.has(offer.itemHrid)
@@ -205,16 +240,23 @@ class DungeonShopPlanner {
         // One at a time: the pooled-history host has refused bursts before
         const source = this.volumesSource;
         for (const offer of wanted) {
+            // A newer target has arrived; let the loop in `measure` move on to
+            // it instead of two passes competing for the same state
+            if (this.pendingToken) break;
             const volume = await itemDailyVolume(offer.itemHrid, 0);
-            if (!this.initialized) return;
+            if (!this.initialized) break;
             // The source changed while this was measuring: its answers belong to the old one
-            if (this.volumesSource !== source) return;
+            if (this.volumesSource !== source) break;
             // Only a measurement is kept; an unknown answer (history off, host down,
             // cooling down) is asked again next time the planner opens
             if (volume?.known) this.volumes.set(offer.itemHrid, volume);
             this.measuring.delete(offer.itemHrid);
             this.panel?.render();
         }
+        // Whatever this pass did not get to (abandoned, disabled, source
+        // switch) must not stay stuck "measuring" — a later pass has to be
+        // free to ask again.
+        for (const offer of wanted) this.measuring.delete(offer.itemHrid);
     }
 
     /**

@@ -231,6 +231,35 @@ describe('the plan', () => {
         expect(dungeonShopPlanner.measuring.size).toBe(0);
     });
 
+    test('switching the token mid-measure does not race a second overlapping loop', async () => {
+        // Regression: measure() used to start a fresh loop on every call, so a
+        // token switch while the previous token's items were still being
+        // measured let two loops run at once — defeating the "one at a time"
+        // guard against bursting the pooled-history host, since the two loops
+        // each kept their own pace.
+        const calls = [];
+        let resolveFirst;
+        const spy = vi.spyOn(dungeonShopPlanner, 'measureOnce').mockImplementation((tokenHrid) => {
+            calls.push(tokenHrid);
+            if (calls.length === 1) return new Promise((resolve) => (resolveFirst = resolve));
+            return Promise.resolve();
+        });
+
+        const first = dungeonShopPlanner.measure('/items/pirate_token');
+        const second = dungeonShopPlanner.measure('/items/chimerical_token');
+
+        // The switch is only recorded — it must not start a second pass while
+        // the pirate-token pass is still out.
+        expect(calls).toEqual(['/items/pirate_token']);
+
+        resolveFirst();
+        await Promise.all([first, second]);
+
+        // Once the one loop is free, it picks up the latest target itself
+        expect(calls).toEqual(['/items/pirate_token', '/items/chimerical_token']);
+        spy.mockRestore();
+    });
+
     test('an item with no volume answer is asked again on the next open', async () => {
         const fang = state.volumes['/items/kraken_fang'];
         delete state.volumes['/items/kraken_fang'];
