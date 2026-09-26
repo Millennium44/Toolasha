@@ -66,6 +66,12 @@ export async function openLoadoutInSim(name, button = null) {
             if (button) flash(button, entry ? 'No loadout set' : 'No loadout captured');
             return false;
         }
+        // The roster also answers for skilling trials; that gear is not a combat build
+        const actionType = entry.loadout?.actionTypeHrid;
+        if (actionType && actionType !== '/action_types/combat') {
+            if (button) flash(button, 'Not a combat loadout');
+            return false;
+        }
         const built = await buildPlayerDTOFromLoadout(entry);
         if (!built) {
             if (button) flash(button, 'No game data');
