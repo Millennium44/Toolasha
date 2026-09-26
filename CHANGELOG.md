@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Market stats follow equipment levels
+
+- The marketplace stats panel now updates when you open an equipment level from "View All Enhancement Levels" (it kept showing the previous level's figures), and gear with ask/bid quotes but no trades in a window shows an ask/bid-based table instead of nothing.
+
 ### Crafted key cost counts only the key's own recipe
 
 - "What it costs you to craft one" now prices a key's direct inputs (lumber, fragments, coin) at market instead of assuming you also craft those inputs, so it matches the tooltip's "make" figure; Party Loot had a Pirate Entry Key at ~0.5M against a real ~1.0M.
