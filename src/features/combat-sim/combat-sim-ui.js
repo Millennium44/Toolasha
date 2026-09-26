@@ -7527,13 +7527,14 @@ class CombatSimUI {
      * Used by the profile page "Sim Character" button.
      * @param {Object} dto - Player DTO in sim engine format
      * @param {string} playerName - Display name for the player tab
+     * @param {Object} [options] - Passed to the editor; `note` is shown above it
      */
-    openWithExternalDTO(dto, playerName) {
+    openWithExternalDTO(dto, playerName, options = {}) {
         if (!this.panel) {
             this.buildPanel();
         }
 
-        this._editor.openWithExternalDTO(dto, playerName);
+        this._editor.openWithExternalDTO(dto, playerName, options);
 
         this.show();
         this._switchTab('configure');

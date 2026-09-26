@@ -30,6 +30,7 @@ import {
     profileAgeMs,
     sharedProfileWarning,
 } from '../../utils/shared-profile-status.js';
+import { fetchLoadout, getLoadout, isViewLoadoutAvailable, VIEW_LOADOUT_CONTEXT } from '../../utils/view-loadout.js';
 
 const ACCENT = '#4a9eff';
 const ACCENT_BG = 'rgba(74, 158, 255, 0.12)';
@@ -96,6 +97,11 @@ export class SimEditor {
         // moved since can be said out loud rather than sat on. Null means the
         // list makes no claim to be a party (an import, an external DTO).
         this._partyKeyAtLoad = null;
+        // A line about the loaded player the editor was opened with (an external DTO)
+        this._externalNote = '';
+        // Progress or outcome of the last "Fetch <name>'s loadout" click
+        this._loadoutFetchNote = '';
+        this._fetchingLoadouts = false;
     }
 
     getEditedDTOs() {
@@ -368,6 +374,7 @@ export class SimEditor {
             this._missingMembers = missingMembers;
             this._profileStatus = Array.isArray(profileStatus) ? profileStatus : [];
             this._importSkipped = [];
+            this._externalNote = '';
             this._partyKeyAtLoad = this._partySignature().key;
             this._editorInitialized = true;
 
@@ -384,8 +391,10 @@ export class SimEditor {
      * Pre-load editor with an external DTO (e.g. from character card).
      * @param {Object} dto - Player DTO
      * @param {string} playerName - Display name
+     * @param {Object} [options]
+     * @param {string} [options.note] - A line shown above the editor about where the DTO came from
      */
-    openWithExternalDTO(dto, playerName) {
+    openWithExternalDTO(dto, playerName, { note = '' } = {}) {
         dto.hrid = 'player1';
         const dtoMap = { player1: structuredClone(dto) };
         this._originalDTOs = structuredClone(dtoMap);
@@ -399,6 +408,8 @@ export class SimEditor {
         this._profileStatus = [];
         this._importSkipped = [];
         this._partyKeyAtLoad = null;
+        this._externalNote = note || '';
+        this._loadoutFetchNote = '';
         this._editorInitialized = true;
         this.renderEditor();
     }
@@ -516,6 +527,8 @@ export class SimEditor {
         this._missingMembers = [];
         this._profileStatus = [];
         this._importSkipped = [];
+        this._externalNote = '';
+        this._loadoutFetchNote = '';
         this._selectedLoadoutName = '';
         this._partyKeyAtLoad = this._partySignature().key;
         this._editorInitialized = true;
@@ -543,6 +556,7 @@ export class SimEditor {
      */
     async resetToParty() {
         this._selectedLoadoutName = '';
+        this._loadoutFetchNote = '';
         this._editorInitialized = false;
         await this.initEditor({ restoreLoadout: false });
         this._saveLoadoutMemory();
@@ -562,6 +576,97 @@ export class SimEditor {
         this._importSkipped = [];
         this._selectedLoadoutName = '';
         this._partyKeyAtLoad = null;
+        this._externalNote = '';
+        this._loadoutFetchNote = '';
+    }
+
+    /**
+     * The other party members, as the game names them now.
+     * @private
+     * @returns {Array<{characterID: *, characterName: string}>}
+     */
+    _otherPartyMembers() {
+        const self = String(dataManager.getCurrentCharacterId?.() ?? '');
+        const { members = [] } = dataManager.getPartyMembers?.() || {};
+        return members.filter((member) => String(member.characterID) !== self);
+    }
+
+    /**
+     * The party member the next "Fetch loadout" click asks for: the first with no party
+     * loadout captured, else the one whose capture is oldest.
+     * @private
+     * @returns {{member: {characterID: *, characterName: string}, refresh: boolean}|null}
+     */
+    _nextLoadoutTarget() {
+        let oldest = null;
+        for (const member of this._otherPartyMembers()) {
+            const captured = getLoadout(member.characterID, VIEW_LOADOUT_CONTEXT.Party);
+            if (!captured) return { member, refresh: false };
+            if (!oldest || captured.capturedAt < oldest.capturedAt)
+                oldest = { member, capturedAt: captured.capturedAt };
+        }
+        return oldest ? { member: oldest.member, refresh: true } : null;
+    }
+
+    /**
+     * Fetch one party member's loadout through the game's View Loadout, then reload the party.
+     *
+     * One click, one request: the game marks a request with no trusted click behind it
+     * `isAuto` and the server does not answer it, so the party is fetched a member per
+     * click rather than in one scripted run.
+     *
+     * @param {{characterID: *, characterName: string}} [member] - Defaults to {@link _nextLoadoutTarget}
+     * @returns {Promise<Object|null>} The `fetchLoadout` result, or null when nothing was requested
+     */
+    async fetchPartyMemberLoadout(member = this._nextLoadoutTarget()?.member) {
+        if (!member || this._fetchingLoadouts || !isViewLoadoutAvailable()) return null;
+
+        const owner = dataManager.getCurrentCharacterId?.() ?? null;
+        const name = member.characterName || String(member.characterID);
+        this._fetchingLoadouts = true;
+        this._loadoutFetchNote = `Fetching ${name}'s loadout…`;
+        this.renderEditor();
+        let result = null;
+        try {
+            result = await fetchLoadout(member, VIEW_LOADOUT_CONTEXT.Party, '');
+        } catch (error) {
+            console.error('[SimEditor] Fetching a party loadout failed:', error);
+        } finally {
+            this._fetchingLoadouts = false;
+        }
+        if ((dataManager.getCurrentCharacterId?.() ?? null) !== owner) {
+            this._loadoutFetchNote = '';
+            return result;
+        }
+
+        await this.resetToParty();
+        this._loadoutFetchNote = this._describeLoadoutFetch(name, result);
+        this.renderEditor();
+        return result;
+    }
+
+    /**
+     * What a fetch got, in a line.
+     * @private
+     * @param {string} name - Who was asked for
+     * @param {Object|null} result - A `fetchLoadout` result
+     * @returns {string}
+     */
+    _describeLoadoutFetch(name, result) {
+        switch (result?.status) {
+            case 'done':
+                return result.entry.hasLoadout
+                    ? `Fetched ${name}'s party loadout.`
+                    : `${name} has no loadout set; their worn gear is used.`;
+            case 'no_reply':
+                return `No reply for ${name}'s loadout.`;
+            case 'busy':
+                return 'A loadout fetch is already running.';
+            case 'unavailable':
+                return 'This game version has no View Loadout.';
+            default:
+                return `Fetching ${name}'s loadout failed.`;
+        }
     }
 
     /**
@@ -596,6 +701,21 @@ export class SimEditor {
         html += `<button data-reset-players="party" style="${partyStyle}" title="${partyTitle}"${
             inParty ? '' : ' disabled'
         }>Reset to Party</button>`;
+        // Only where the game can View Loadout at all: a build without it gets no button
+        const target =
+            inParty && !this.labMode && !this.skillingMode && isViewLoadoutAvailable()
+                ? this._nextLoadoutTarget()
+                : null;
+        if (target) {
+            const busy = this._fetchingLoadouts;
+            const name = escapeHtml(target.member.characterName || String(target.member.characterID));
+            const fetchTitle =
+                "Ask the game for this party member's loadout (View Loadout) and reload the party with " +
+                'its gear, abilities and consumables. One member per click.';
+            html += `<button data-fetch-loadout style="${base} color:${busy ? '#555' : ACCENT}; cursor:${
+                busy ? 'default' : 'pointer'
+            };" title="${fetchTitle}"${busy ? ' disabled' : ''}>${target.refresh ? 'Refetch' : 'Fetch'} ${name}'s loadout</button>`;
+        }
         return html;
     }
 
@@ -634,6 +754,20 @@ export class SimEditor {
     }
 
     /**
+     * The external-DTO note and the last loadout fetch's outcome.
+     * @private
+     * @returns {string} HTML, or '' when there is nothing to say
+     */
+    _renderLoadoutNotes() {
+        let html = '';
+        for (const text of [this._externalNote, this._loadoutFetchNote]) {
+            if (!text) continue;
+            html += `<div style="color:#c9a227; font-size:11px; margin:-4px 0 8px;">${escapeHtml(text)}</div>`;
+        }
+        return html;
+    }
+
+    /**
      * Party members the sim could not build, and why.
      * @private
      * @returns {string} HTML for the note, or '' when everyone loaded
@@ -665,7 +799,8 @@ export class SimEditor {
         const ages = loaded.map((entry) => {
             const ageMs = profileAgeMs(entry.capturedAt, now);
             const color = isProfileStale(ageMs) ? '#c9a227' : '#777';
-            return `<span style="color:${color};">${escapeHtml(entry.name)} ${formatProfileAge(ageMs)}</span>`;
+            const label = `<span style="color:${color};">${escapeHtml(entry.name)} ${formatProfileAge(ageMs)}</span>`;
+            return label + this._gearSourceLabel(entry, now);
         });
         let html = `<div style="color:#666; font-size:11px; margin:-4px 0 8px;"
             title="Party members are loaded from their cached profiles, captured whenever their profile is opened in game. Older than a day is highlighted.">
@@ -682,6 +817,21 @@ export class SimEditor {
     }
 
     /**
+     * Which gear a loaded member was built with, for the profile note.
+     * @private
+     * @param {Object} entry - A profile status entry
+     * @param {number} now - Reference time
+     * @returns {string} HTML
+     */
+    _gearSourceLabel(entry, now) {
+        if (entry.gearSource === 'loadout') {
+            const age = formatProfileAge(profileAgeMs(entry.loadoutCapturedAt, now));
+            return ` <span style="color:${ACCENT};">(party loadout, ${age})</span>`;
+        }
+        return entry.gearSource === 'profile' ? ' <span style="color:#777;">(worn gear)</span>' : '';
+    }
+
+    /**
      * The profile age a member's tab tooltip carries.
      * @private
      * @param {string} hrid - Loaded player's hrid
@@ -691,7 +841,11 @@ export class SimEditor {
         const entry = (this._profileStatus || []).find((status) => status.hrid === hrid && status.found);
         if (!entry) return '';
         const age = formatProfileAge(profileAgeMs(entry.capturedAt));
-        return entry.gearless ? `Profile ${age}, no gear captured` : `Profile ${age}`;
+        if (entry.gearless) return `Profile ${age}, no gear captured`;
+        if (entry.gearSource === 'loadout') {
+            return `Profile ${age}, gear from party loadout ${formatProfileAge(profileAgeMs(entry.loadoutCapturedAt))}`;
+        }
+        return entry.gearSource === 'profile' ? `Profile ${age}, gear as worn in profile` : `Profile ${age}`;
     }
 
     /**
@@ -720,6 +874,10 @@ export class SimEditor {
      * @param {HTMLElement} editorArea - Container the editor rendered into
      */
     _wireResetControls(editorArea) {
+        editorArea.querySelector('[data-fetch-loadout]')?.addEventListener('click', (event) => {
+            if (event.currentTarget.disabled) return;
+            this.fetchPartyMemberLoadout();
+        });
         editorArea.querySelectorAll('[data-reset-players]').forEach((btn) => {
             btn.addEventListener('click', async () => {
                 if (btn.disabled) return;
@@ -856,6 +1014,7 @@ export class SimEditor {
         html += this._renderResetControls();
         html += '</div>';
         html += this._renderPartyNote();
+        html += this._renderLoadoutNotes();
         html += this._renderMissingMembersNote();
         html += this._renderProfileAgeNote();
         html += this._renderImportSkippedNote();

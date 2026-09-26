@@ -67,6 +67,14 @@ vi.mock('./guild-loadout-capture.js', () => ({
     },
 }));
 
+/** The View Loadout game core, swapped between tests (null = unavailable) */
+const viewLoadoutState = vi.hoisted(() => ({ core: null }));
+
+vi.mock('../../utils/profile-command.js', async (importOriginal) => {
+    const actual = await importOriginal();
+    return { ...actual, getGameCore: () => viewLoadoutState.core };
+});
+
 const { guildTrialAbilities, SESSION_MAX_AGE_MS } = await import('./guild-trial-abilities.js');
 const feature = (await import('./guild-trial-abilities-ui.js')).default;
 const {
@@ -87,11 +95,36 @@ const {
     auraGapText,
     CHIP_LIMIT,
     offPlanExportText,
+    snapshotFromViewLoadout,
+    captureSourceLabel,
+    GUILD_TRIAL_KIND_GUESS,
 } = await import('./guild-trial-abilities-ui.js');
 const { resetPlanUi, resetChipUi } = await import('./guild-trial-abilities-ui.js');
 const guildTrialPlan = (await import('./guild-trial-plan.js')).default;
 const { REQUEST_TIMEOUT_MS } = await import('./guild-member-skills.js');
 const memberSkills = (await import('./guild-member-skills.js')).default;
+const { handleLoadoutShared, _resetViewLoadout } = await import('../../utils/view-loadout.js');
+
+/** A `loadout_shared` reply for a guild-trial capture, in the shape measured on the test server */
+function loadoutReply(characterId, name, abilities = []) {
+    return {
+        type: 'loadout_shared',
+        loadout: {
+            sharableCharacter: { name },
+            hasLoadout: true,
+            wearableItemMap: {},
+            equippedAbilities: abilities.map((ability, index) => ({
+                abilityHrid: ability.hrid,
+                level: ability.level,
+                slotNumber: index,
+                characterID: characterId,
+            })),
+            combatConsumables: [],
+            abilityCombatTriggersMap: {},
+            consumableCombatTriggersMap: {},
+        },
+    };
+}
 
 const NOW = 1_800_000_000_000;
 
@@ -161,6 +194,8 @@ describe('trial abilities panel', () => {
         };
         capture.listeners = [];
         capture.players = {};
+        _resetViewLoadout();
+        viewLoadoutState.core = null;
         resetTrialUnitRequests();
         resetPlanUi();
         resetChipUi();
@@ -973,6 +1008,166 @@ describe('trial abilities panel', () => {
         feature.cleanup();
         expect(capture.listeners).toHaveLength(0);
     });
+
+    describe('trial loadouts (View Loadout)', () => {
+        test('snapshotFromViewLoadout maps equippedAbilities into recordCapture shape, slot-ordered', () => {
+            const entry = {
+                characterId: '5',
+                name: 'Alice',
+                hasLoadout: true,
+                capturedAt: NOW,
+                loadout: {
+                    sharableCharacter: { name: 'Alice' },
+                    equippedAbilities: [
+                        { abilityHrid: '/abilities/sweep', level: 50, slotNumber: 1 },
+                        { abilityHrid: '/abilities/fierce_aura', level: 90, slotNumber: 0 },
+                    ],
+                },
+            };
+            expect(snapshotFromViewLoadout(entry)).toEqual({
+                characterId: '5',
+                name: 'Alice',
+                abilities: [
+                    { hrid: '/abilities/fierce_aura', level: 90 },
+                    { hrid: '/abilities/sweep', level: 50 },
+                ],
+                abilitiesAuthoritative: true,
+                source: 'view_loadout',
+                at: NOW,
+                stats: null,
+            });
+        });
+
+        test('hasLoadout:false is not treated as a proven-empty kit', () => {
+            const entry = {
+                characterId: '5',
+                name: 'Alice',
+                hasLoadout: false,
+                capturedAt: NOW,
+                loadout: { sharableCharacter: { name: 'Alice' }, equippedAbilities: [] },
+            };
+            expect(snapshotFromViewLoadout(entry).abilitiesAuthoritative).toBe(false);
+        });
+
+        test('a captured trial loadout drives the plan check: match and mismatch', async () => {
+            await feature.initialize('Cats');
+            guildTrialAbilities.setRoster([
+                { characterId: 5, name: 'Alice' },
+                { characterId: 6, name: 'Bob' },
+            ]);
+            await guildTrialPlan.setText('Alice: Fierce Aura 100\nBob: Fierce Aura 100');
+
+            // Fed the same way a Fetch click or a passive roster capture would:
+            // a `CapturedLoadout` converted to a `recordCapture` snapshot
+            const matched = snapshotFromViewLoadout({
+                characterId: '5',
+                name: 'Alice',
+                hasLoadout: true,
+                capturedAt: NOW,
+                loadout: loadoutReply(5, 'Alice', [{ hrid: '/abilities/fierce_aura', level: 120 }]).loadout,
+            });
+            const mismatched = snapshotFromViewLoadout({
+                characterId: '6',
+                name: 'Bob',
+                hasLoadout: true,
+                capturedAt: NOW,
+                loadout: loadoutReply(6, 'Bob', [{ hrid: '/abilities/sweep', level: 50 }]).loadout,
+            });
+            guildTrialAbilities.recordCapture(matched, { at: NOW, now: NOW });
+            guildTrialAbilities.recordCapture(mismatched, { at: NOW, now: NOW });
+
+            openTrialAbilitiesPanel();
+            expect(text()).toContain('on plan');
+            expect(text()).toContain('missing: Fierce Aura 100');
+            expect(text()).toContain('trial loadout');
+            expect(text()).not.toContain(FAILED);
+        });
+
+        test('Fetch is offered only when View Loadout is available, sends exactly one request per click', async () => {
+            viewLoadoutState.core = null;
+            await feature.initialize('Cats');
+            guildTrialAbilities.setRoster([{ characterId: 5, name: 'Alice' }]);
+            openTrialAbilitiesPanel();
+            expect(button('Fetch')).toBeUndefined();
+
+            viewLoadoutState.core = {
+                handleViewProfile: () => {},
+                handleViewLoadout: vi.fn((characterId) => {
+                    setTimeout(() => {
+                        handleLoadoutShared(
+                            loadoutReply(characterId, 'Alice', [{ hrid: '/abilities/fierce_aura', level: 80 }])
+                        );
+                    }, 20);
+                }),
+            };
+            // Availability is cached briefly so every redraw does not walk the
+            // fiber tree; advance past it now that a core has appeared
+            vi.setSystemTime(NOW + 6000);
+            guildTrialAbilitiesPanel.render();
+            const fetchButton = button('Fetch');
+            expect(fetchButton).toBeTruthy();
+            expect(fetchButton.disabled).toBe(false);
+
+            fetchButton.click();
+            expect(viewLoadoutState.core.handleViewLoadout).toHaveBeenCalledTimes(1);
+            expect(viewLoadoutState.core.handleViewLoadout).toHaveBeenLastCalledWith(
+                5,
+                'guild_trial',
+                GUILD_TRIAL_KIND_GUESS
+            );
+
+            await vi.advanceTimersByTimeAsync(3000);
+            expect(text()).toContain('1/1 captured');
+            expect(text()).toContain('Fierce Aura');
+            expect(text()).toContain('trial loadout');
+
+            // A second press does not send a second request while the first
+            // (or its close-modal wait) is still settling — one click, one ask
+            expect(viewLoadoutState.core.handleViewLoadout).toHaveBeenCalledTimes(1);
+        });
+
+        test('a player with no known character id gets a disabled Fetch control, hinted', async () => {
+            viewLoadoutState.core = {
+                handleViewProfile: () => {},
+                handleViewLoadout: vi.fn(),
+            };
+            await feature.initialize('Cats');
+            guildTrialAbilities.setRoster(['Alice']); // a bare name: the roster fed no id
+            openTrialAbilitiesPanel();
+
+            const fetchButton = button('Fetch');
+            expect(fetchButton).toBeTruthy();
+            expect(fetchButton.disabled).toBe(true);
+            expect(fetchButton.title).toContain('No character id known');
+
+            fetchButton.click();
+            expect(viewLoadoutState.core.handleViewLoadout).not.toHaveBeenCalled();
+        });
+
+        test('with no trial-loadout capture, the panel behaves exactly as before', async () => {
+            viewLoadoutState.core = null;
+            await feature.initialize('Cats');
+            guildTrialAbilities.setRoster(['Alice']);
+            guildTrialAbilities.recordCapture(snapshot('Alice', 1, [{ hrid: '/abilities/fierce_aura', level: 70 }]));
+
+            openTrialAbilitiesPanel();
+            expect(text()).toContain('1/1 captured');
+            expect(text()).toContain('Battle Info');
+            expect(text()).not.toContain('trial loadout');
+            expect(button('Fetch')).toBeUndefined();
+            expect(text()).not.toContain(FAILED);
+        });
+
+        test('captureSourceLabel names the source and age', () => {
+            expect(captureSourceLabel(null)).toBeNull();
+            expect(captureSourceLabel({ source: 'view_loadout', capturedAt: NOW - 60_000 }, NOW)).toBe(
+                'trial loadout, 1m ago'
+            );
+            expect(captureSourceLabel({ source: 'battle_unit_fetched', capturedAt: NOW - 60_000 }, NOW)).toBe(
+                'Battle Info, 1m ago'
+            );
+        });
+    });
 });
 
 describe('class tags on the players card', () => {
@@ -994,6 +1189,8 @@ describe('class tags on the players card', () => {
         game.abilityDetailMap = { '/abilities/fireball': fireball };
         capture.listeners = [];
         capture.players = {};
+        _resetViewLoadout();
+        viewLoadoutState.core = null;
         resetTrialUnitRequests();
         resetPlanUi();
         resetChipUi();

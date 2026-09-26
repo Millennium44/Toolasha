@@ -117,6 +117,9 @@ const SKIP_DEDUP_TYPES = new Set([
     'loot_opened',
     'guild_updated',
     'leaderboard_updated',
+    // Opening the same player's loadout twice gives the same reply; a dropped repeat would leave a
+    // fetch waiting on a reply that already came, and the capture a step behind the server.
+    'loadout_shared',
 ]);
 
 /** How many characters from each end of a message go into the TTL dedup key */
