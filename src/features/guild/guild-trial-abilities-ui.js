@@ -96,20 +96,16 @@ function collapsibleCard(body, title, key) {
 export const AURA_SECTION_TITLE = 'Equipped aura coverage';
 
 /**
- * Best-effort `kind` for {@link fetchLoadout} on the guild-trial roster.
+ * The `kind` {@link fetchLoadout} sends for a combat guild trial.
  *
- * The game itself derives this from `kindForTrial(trialHrid)`, a
- * `GuildTrialKind` enum — but this panel only ever runs for a *combat* trial
- * (a skilling trial has no abilities to check), and no `guild_trial_kinds`-style
- * hrid or enum serialization for it has turned up anywhere in this codebase or
- * on a live client. This is a guess, following the lowercase `'combat'` /
- * `'skilling'` convention `guild-trials-store.js` already uses for a trial's
- * kind, not a value read off the game. If it is wrong the server likely just
- * ignores the request; passive capture (a click from the roster page) is the
- * fallback either way and needs no correct `kind` at all. Confirm on the test
- * server before trusting the Fetch button alone.
+ * Measured live: the roster's own View Loadout click sends exactly
+ * `{context: 'guild_trial', kind: 'combat'}` for a combat trial, matching the
+ * lowercase `'combat'` / `'skilling'` convention `guild-trials-store.js` already
+ * uses for a trial's kind. This panel only ever runs for a combat trial (a
+ * skilling trial has no abilities to check), so a single constant covers every
+ * call it makes.
  */
-export const GUILD_TRIAL_KIND_GUESS = 'combat';
+export const COMBAT_TRIAL_KIND = 'combat';
 
 /**
  * A trial-loadout capture ({@link module:utils/view-loadout~CapturedLoadout}),
@@ -1283,7 +1279,7 @@ function fetchLoadoutButton(row) {
             const result = await fetchLoadout(
                 { characterId: row.characterId, name: row.name },
                 VIEW_LOADOUT_CONTEXT.GuildTrial,
-                GUILD_TRIAL_KIND_GUESS
+                COMBAT_TRIAL_KIND
             );
             // A 'done' reply is already folded in and rendered by the capture
             // listener below by the time this resolves; anything else leaves
@@ -1302,6 +1298,115 @@ function fetchLoadoutButton(row) {
 }
 
 /**
+ * Which participant a "Fetch next" press is currently waiting on, or null
+ * between presses. Module state so the button can stay disabled and labelled
+ * with the right name across the redraw its own click triggers.
+ */
+let fetchNextInFlight = null;
+
+/** Forget an in-flight "Fetch next" wait — for tests and a fresh panel */
+export function resetFetchNext() {
+    fetchNextInFlight = null;
+}
+
+/**
+ * Outstanding participants a "Fetch next" press could target, in the same
+ * order the players list draws them, split by whether a character id is known.
+ *
+ * A player with a known id but already captured this session (by either
+ * source) is not a target — the per-row Fetch button is still there for a
+ * deliberate re-ask.
+ *
+ * @param {Object} state - From `guildTrialAbilities.state()`
+ * @returns {{withId: Array<Object>, withoutId: Array<Object>}}
+ */
+function fetchNextCandidates(state) {
+    const outstanding = sortParticipants(state.participants, state.complete).filter((row) => !row.captured);
+    const hasId = (row) => row.characterId !== null && row.characterId !== undefined && row.characterId !== '';
+    return { withId: outstanding.filter(hasId), withoutId: outstanding.filter((row) => !hasId(row)) };
+}
+
+/**
+ * The "Fetch next" control: one click asks {@link fetchLoadout} for the next
+ * outstanding participant with a known character id, in players-list order.
+ *
+ * Drawn in a fixed spot at the top of the Players card so repeated presses
+ * land on the same control rather than chasing it down the list as rows
+ * finish capturing. Only offered when this game build has View Loadout at all.
+ *
+ * @param {Object} state - From `guildTrialAbilities.state()`
+ * @returns {HTMLElement|null} The row, or null when View Loadout is unavailable
+ */
+function fetchNextRow(state) {
+    if (!isViewLoadoutAvailable()) return null;
+
+    const { withId, withoutId } = fetchNextCandidates(state);
+    const next = withId[0] || null;
+    const busy = fetchNextInFlight !== null;
+
+    const row = document.createElement('div');
+    Object.assign(row.style, {
+        display: 'flex',
+        alignItems: 'center',
+        flexWrap: 'wrap',
+        gap: '8px',
+        margin: '0 0 6px',
+    });
+
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.textContent = busy
+        ? `Fetching ${fetchNextInFlight.name}…`
+        : next
+          ? `Fetch next: ${next.name}`
+          : 'All fetched';
+    button.disabled = busy || !next;
+    button.title = next
+        ? `Ask the game for ${next.name}'s trial loadout — one request, sent by this click.`
+        : 'Nobody outstanding has a known character id to fetch.';
+    const active = Boolean(next) && !busy;
+    button.style.cssText =
+        'padding: 3px 8px; font-size: 11px; line-height: 15px; border-radius: 8px; ' +
+        `background: rgba(255,255,255,${active ? '0.08' : '0.03'}); border: 1px solid rgba(255,255,255,0.18); ` +
+        `color: ${active ? '#e8ecf5' : 'rgba(232,236,245,0.4)'}; cursor: ${active ? 'pointer' : 'default'};`;
+
+    button.addEventListener('click', async () => {
+        if (busy || !next) return;
+        fetchNextInFlight = { name: next.name };
+        guildTrialAbilitiesPanel.render();
+        try {
+            await fetchLoadout(
+                { characterId: next.characterId, name: next.name },
+                VIEW_LOADOUT_CONTEXT.GuildTrial,
+                COMBAT_TRIAL_KIND
+            );
+        } catch (error) {
+            console.error('[GuildTrialAbilitiesUI] Fetching the next trial loadout failed:', error);
+        } finally {
+            fetchNextInFlight = null;
+            guildTrialAbilitiesPanel.render();
+        }
+    });
+    row.appendChild(button);
+
+    const progress = document.createElement('span');
+    progress.textContent = `${state.capturedCount}/${state.rosterCount} fetched`;
+    Object.assign(progress.style, { fontSize: '11px', color: 'rgba(232,236,245,0.6)' });
+    row.appendChild(progress);
+
+    if (withoutId.length) {
+        const note = document.createElement('span');
+        note.textContent = `${withoutId.length} need${withoutId.length === 1 ? 's' : ''} opening from the roster`;
+        note.title =
+            "These players have no known character id yet — open their loadout once from the roster's own View Loadout to capture it.";
+        Object.assign(note.style, { fontSize: '11px', color: ROW_COLORS.dim });
+        row.appendChild(note);
+    }
+
+    return row;
+}
+
+/**
  * The players card: capture status and kits, in the sort the moment calls for.
  * @param {HTMLElement} body - Panel body
  * @param {Object} state - From `guildTrialAbilities.state()`
@@ -1314,6 +1419,8 @@ function drawPlayers(body, state, abilityDetailMap) {
         'players'
     );
     if (collapsed) return;
+    const fetchNext = fetchNextRow(state);
+    if (fetchNext) card.appendChild(fetchNext);
     if (!state.participants.length) {
         card.appendChild(panelNote('No participants fed in yet.'));
     }
@@ -1502,6 +1609,7 @@ function drawControls(body, state) {
             () => {
                 guildTrialAbilities.recapture();
                 resetTrialUnitRequests();
+                resetFetchNext();
                 guildTrialAbilitiesPanel.render();
             }
         )

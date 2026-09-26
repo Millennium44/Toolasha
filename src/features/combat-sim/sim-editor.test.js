@@ -1155,7 +1155,7 @@ describe('Fetch a party loadout', () => {
         const editor = new SimEditor({ editorEl: el });
         await editor.initEditor();
 
-        expect(el.querySelector(FETCH_BTN).textContent).toBe("Fetch Buddy's loadout");
+        expect(el.querySelector(FETCH_BTN).textContent).toBe("Fetch Buddy's loadout (1/2)");
         el.querySelector(FETCH_BTN).click();
         await vi.waitFor(() => expect(el.textContent).toContain("Fetched Buddy's party loadout."));
 
@@ -1175,7 +1175,7 @@ describe('Fetch a party loadout', () => {
         const editor = new SimEditor({ editorEl: el });
         await editor.initEditor();
 
-        expect(el.querySelector(FETCH_BTN).textContent).toBe("Refetch Buddy's loadout");
+        expect(el.querySelector(FETCH_BTN).textContent).toBe("Refetch Buddy's loadout (2/2)");
     });
 
     test('says so when the member did not answer', async () => {
