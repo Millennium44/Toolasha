@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Dungeon Tracker edge cases
+
+- The pop-out run chart no longer leaves a stray chart behind when closed or reopened while loading, and the card shown before a run starts or between runs redraws Last/Avg/Runs after a stale filter is reset.
+
 <!-- shipped in 3.60.1 -->
 
 ### Market stats follow equipment levels
