@@ -78,8 +78,14 @@ const mocks = vi.hoisted(() => ({
     editedDTOs: null,
     /** What SimEditor#getSelfHrid() hands back */
     editorSelfHrid: null,
+    /** What SimEditor#getActiveEditPlayer() hands back — the tab open in the editor */
+    editorActivePlayer: null,
+    /** What SimEditor#getSoloMode() hands back */
+    editorSoloMode: false,
     /** What runSimulation() resolves with; null falls back to `{}` */
     simResult: null,
+    /** The params object the last runSimulation() call was made with */
+    simRunArgs: null,
     simRuns: 0,
     allZonesRuns: 0,
     /** playerHrid each calculateSimRevenue() call was made with, in order */
@@ -312,8 +318,9 @@ vi.mock('./combat-sim-adapter.js', () => ({
 }));
 
 vi.mock('./combat-sim-runner.js', () => ({
-    runSimulation: async () => {
+    runSimulation: async (params) => {
         mocks.simRuns++;
+        mocks.simRunArgs = params;
         return mocks.simResult || {};
     },
     runLabyrinthSimulation: async () => ({}),
@@ -439,6 +446,12 @@ vi.mock('./sim-editor.js', () => ({
         getSelfHrid() {
             return mocks.editorSelfHrid;
         }
+        getActiveEditPlayer() {
+            return mocks.editorActivePlayer;
+        }
+        getSoloMode() {
+            return mocks.editorSoloMode;
+        }
         getPlayerInfo() {
             return mocks.editedDTOs ? Object.keys(mocks.editedDTOs).map((hrid) => ({ hrid, name: hrid })) : [];
         }
@@ -515,6 +528,7 @@ const {
     duplicateAuraWarnings,
     partyLintWarnings,
     runMatchesSimParty,
+    resolveSimParty,
 } = await import('./combat-sim-ui.js');
 
 /** A result row shaped like the upgrade advisor's output. */
@@ -4604,6 +4618,198 @@ describe('linting a loaded party', () => {
         expect(isAuraAbility(LINT_GAME_DATA.abilityDetailMap['/abilities/vampirism'])).toBe(false);
         expect(isAuraAbility(LINT_GAME_DATA.abilityDetailMap['/abilities/sweep'])).toBe(false);
         expect(isAuraAbility(undefined)).toBe(false);
+    });
+});
+
+/**
+ * A stand-in for SimEditor's own answers, the way `resolveSimParty` reads
+ * them — not the class itself, which is mocked wholesale above for the panel
+ * tests.
+ */
+function fakeEditor({ playerInfo, selfHrid = null, activeEditPlayer = null, soloMode = false, missingMembers = [] }) {
+    return {
+        getPlayerInfo: () => playerInfo,
+        getSelfHrid: () => selfHrid,
+        getActiveEditPlayer: () => activeEditPlayer,
+        getSoloMode: () => soloMode,
+        getMissingMembers: () => missingMembers,
+        getProfileStatus: () => [],
+    };
+}
+
+describe('resolveSimParty: what a run simulates once Solo enters the picture', () => {
+    const editedDTOs = {
+        player1: { hrid: 'player1' },
+        player2: { hrid: 'player2' },
+        player3: { hrid: 'player3' },
+    };
+    const playerInfo = [
+        { hrid: 'player1', name: 'Alice' },
+        { hrid: 'player2', name: 'Bob' },
+        { hrid: 'player3', name: 'Cara' },
+    ];
+
+    test('off: the whole loaded party goes through untouched', () => {
+        const editor = fakeEditor({ playerInfo, selfHrid: 'player1', soloMode: false });
+
+        const result = resolveSimParty(editor, editedDTOs);
+
+        expect(result.playerDTOs.map((p) => p.hrid).sort()).toEqual(['player1', 'player2', 'player3']);
+        expect(result.playerInfo).toBe(playerInfo);
+        expect(result.trueSelfHrid).toBe('player1');
+        expect(result.selfHrid).toBe('player1');
+        expect(result.soloApplied).toBe(false);
+    });
+
+    test('on: narrows to the player whose tab is open in the editor, not necessarily self', () => {
+        const editor = fakeEditor({ playerInfo, selfHrid: 'player1', activeEditPlayer: 'player2', soloMode: true });
+
+        const result = resolveSimParty(editor, editedDTOs);
+
+        expect(result.playerDTOs).toEqual([{ hrid: 'player2' }]);
+        expect(result.playerInfo).toEqual([{ hrid: 'player2', name: 'Bob' }]);
+        expect(result.selfHrid).toBe('player2');
+        expect(result.soloApplied).toBe(true);
+        // The party underneath is what the caller passed in, unfiltered — Solo
+        // narrows what this one run simulates, not the loaded roster itself
+        expect(Object.keys(editedDTOs)).toEqual(['player1', 'player2', 'player3']);
+    });
+
+    test('on and the selected tab is self: the true self carries through for persistence', () => {
+        const editor = fakeEditor({ playerInfo, selfHrid: 'player1', activeEditPlayer: 'player1', soloMode: true });
+
+        const result = resolveSimParty(editor, editedDTOs);
+
+        expect(result.trueSelfHrid).toBe('player1');
+    });
+
+    test('on and the selected tab is a party member, not self: trueSelfHrid drops to null', () => {
+        // Persistence (_persistConsumableRates) must not credit another party
+        // member's solo-run consumption to the live character
+        const editor = fakeEditor({ playerInfo, selfHrid: 'player1', activeEditPlayer: 'player3', soloMode: true });
+
+        const result = resolveSimParty(editor, editedDTOs);
+
+        expect(result.trueSelfHrid).toBeNull();
+    });
+
+    test('on, missing members and profile status are dropped — they describe party members not being simmed', () => {
+        const editor = fakeEditor({
+            playerInfo,
+            selfHrid: 'player1',
+            activeEditPlayer: 'player1',
+            soloMode: true,
+            missingMembers: ['Bob'],
+        });
+
+        const result = resolveSimParty(editor, editedDTOs);
+
+        expect(result.missingMembers).toEqual([]);
+        expect(result.profileStatus).toEqual([]);
+    });
+
+    test('on with only one player loaded is a no-op — nothing to narrow', () => {
+        const soloDTOs = { player1: { hrid: 'player1' } };
+        const editor = fakeEditor({
+            playerInfo: [{ hrid: 'player1', name: 'Alice' }],
+            selfHrid: 'player1',
+            activeEditPlayer: 'player1',
+            soloMode: true,
+        });
+
+        const result = resolveSimParty(editor, soloDTOs);
+
+        expect(result.playerDTOs).toEqual([{ hrid: 'player1' }]);
+        expect(result.soloApplied).toBe(false);
+    });
+
+    test('on with no editor tab open falls back to self, then to the first loaded player', () => {
+        const editor = fakeEditor({ playerInfo, selfHrid: 'player2', activeEditPlayer: null, soloMode: true });
+        expect(resolveSimParty(editor, editedDTOs).selfHrid).toBe('player2');
+
+        const editorNoSelf = fakeEditor({ playerInfo, selfHrid: null, activeEditPlayer: null, soloMode: true });
+        expect(resolveSimParty(editorNoSelf, editedDTOs).selfHrid).toBe('player1');
+    });
+});
+
+describe('the Solo checkbox end to end: Simulate and All Zones', () => {
+    beforeEach(() => {
+        mocks.zones = [{ hrid: '/actions/combat/fly', name: 'Fly', maxSpawnCount: 3, maxDifficulty: 0 }];
+        mocks.editedDTOs = {
+            player1: { hrid: 'player1', equipment: {}, food: [null, null, null] },
+            player2: { hrid: 'player2', equipment: {}, food: [null, null, null] },
+        };
+        mocks.editorSelfHrid = 'player1';
+        mocks.editorActivePlayer = 'player2';
+        mocks.editorSoloMode = true;
+        mocks.simResult = {
+            simulatedTime: 3600 * 1e9,
+            zoneName: '/actions/combat/fly',
+            difficultyTier: 0,
+            consumablesUsed: {},
+            experienceGained: {},
+        };
+        ui.buildPanel();
+        // A prior describe leaves this set — Simulate delegates straight to
+        // _onSimulateAllZones() while it is on, which is not what these tests are about
+        ui._allZonesMode = null;
+    });
+
+    afterEach(() => {
+        ui.destroy();
+        mocks.editedDTOs = null;
+        mocks.editorSelfHrid = null;
+        mocks.editorActivePlayer = null;
+        mocks.editorSoloMode = false;
+        mocks.simResult = null;
+        mocks.simRunArgs = null;
+        mocks.zones = [];
+    });
+
+    test('Simulate hands the engine only the selected player, not the whole party', async () => {
+        selectZone();
+
+        await ui._onSimulate();
+
+        expect(mocks.simRunArgs.playerDTOs).toEqual([{ hrid: 'player2', equipment: {}, food: [null, null, null] }]);
+    });
+
+    test('the history entry records a party of one, so the comparison label reads Solo', async () => {
+        selectZone();
+
+        await ui._onSimulate();
+
+        const entry = ui._simHistory.at(-1);
+        expect(entry.partySize).toBe(1);
+        expect(ui._historyEntryLabel(entry).short).toContain('Solo');
+    });
+
+    test('unchecking Solo goes straight back to the full party — nothing about the roster was touched', async () => {
+        mocks.editorSoloMode = false;
+        selectZone();
+
+        await ui._onSimulate();
+
+        expect(mocks.simRunArgs.playerDTOs.map((p) => p.hrid).sort()).toEqual(['player1', 'player2']);
+        expect(ui._simHistory.at(-1).partySize).toBe(2);
+    });
+
+    test('All Zones also narrows to the selected player', async () => {
+        mocks.allZonesResult = [
+            {
+                simulatedTime: 3600 * 1e9,
+                encounters: 10,
+                deaths: { player2: 0 },
+                experienceGained: { player2: { defense: 100 } },
+            },
+        ];
+        ui._allZonesMode = 'group';
+        ui._updateAllZonesUI();
+
+        await ui._onSimulateAllZones();
+
+        expect(mocks.allZonesArgs.playerDTOs).toEqual([{ hrid: 'player2', equipment: {}, food: [null, null, null] }]);
+        expect(ui._activePlayerTab).toBe('player2');
     });
 });
 

@@ -833,6 +833,64 @@ export function gearFingerprint(playerDTOs) {
  * @param {Array<string>|null} [who.roster] - The simulated party's names, when known
  * @returns {boolean}
  */
+/**
+ * What a run should simulate, given the editor's loaded roster and its Solo
+ * checkbox.
+ *
+ * Off, or with one player loaded, this is just the editor's own answers,
+ * unpacked. On, with more than one player loaded, it narrows the run to the
+ * player whose tab is open in the editor — the roster, fetched loadouts and
+ * edits underneath are `editedDTOs` itself, untouched, so unchecking Solo
+ * goes straight back to the full party next run.
+ *
+ * `numberOfPlayers` on the resulting `SimResult` is `players.length` (see
+ * `combat-simulator.js`), so a solo-filtered run already reports a party of
+ * one everywhere that reads it — the history entry, the comparison table,
+ * the Party DPS/DPS label switch.
+ *
+ * @param {import('./sim-editor.js').SimEditor} editor
+ * @param {Object<string, Object>} editedDTOs - hrid -> DTO, as `editor.getEditedDTOs()` returns it
+ * @returns {{playerDTOs: Array<Object>, playerInfo: Array<{hrid: string, name: string}>,
+ *   trueSelfHrid: string|null, selfHrid: string, missingMembers: Array,
+ *   profileStatus: Array, soloApplied: boolean}}
+ */
+export function resolveSimParty(editor, editedDTOs) {
+    const allDTOs = Object.values(editedDTOs || {});
+    const playerInfo = editor?.getPlayerInfo() || [];
+    const trueSelfHrid = editor?.getSelfHrid() || null;
+    const missingMembers = editor?.getMissingMembers() || [];
+    const profileStatus = editor?.getProfileStatus?.() || [];
+
+    if (editor?.getSoloMode?.() && allDTOs.length > 1) {
+        const soloHrid = editor.getActiveEditPlayer?.() || trueSelfHrid || allDTOs[0].hrid;
+        const soloDTO = editedDTOs[soloHrid];
+        if (soloDTO) {
+            return {
+                playerDTOs: [soloDTO],
+                playerInfo: playerInfo.filter((p) => p.hrid === soloHrid),
+                // Only carried through as the *true* self when the solo player
+                // actually is the live character — see `_persistConsumableRates`,
+                // which must not file another party member's consumption as self's
+                trueSelfHrid: trueSelfHrid === soloHrid ? soloHrid : null,
+                selfHrid: soloHrid,
+                missingMembers: [],
+                profileStatus: [],
+                soloApplied: true,
+            };
+        }
+    }
+
+    return {
+        playerDTOs: allDTOs,
+        playerInfo,
+        trueSelfHrid,
+        selfHrid: trueSelfHrid || allDTOs[0]?.hrid || 'player1',
+        missingMembers,
+        profileStatus,
+        soloApplied: false,
+    };
+}
+
 export function runMatchesSimParty(
     run,
     { characterId = null, characterName = null, partySize = 1, roster = null } = {}
@@ -2307,7 +2365,12 @@ class CombatSimUI {
         editorArea.style.cssText = 'flex:1; overflow-y:auto; padding:10px 14px;';
         editorArea.innerHTML = `<div style="color:#555; font-size:12px; text-align:center; padding:20px 0;">Loading loadout...</div>`;
 
-        this._editor = new SimEditor({ editorEl: editorArea, labMode: false });
+        this._editor = new SimEditor({
+            editorEl: editorArea,
+            labMode: false,
+            soloMode: config.getSettingValue('combatSim_soloMode', false),
+            onSoloModeChange: (value) => config.setSettingValue('combatSim_soloMode', value),
+        });
 
         configureContent.appendChild(controls);
         configureContent.appendChild(allZonesRow);
@@ -5079,12 +5142,10 @@ class CombatSimUI {
         try {
             editedDTOs = this._editor?.getEditedDTOs();
             if (editedDTOs) {
-                playerDTOs = Object.values(editedDTOs);
-                playerInfo = this._editor?.getPlayerInfo() || [];
-                trueSelfHrid = this._editor?.getSelfHrid() || null;
-                selfHrid = trueSelfHrid || playerDTOs[0]?.hrid || 'player1';
-                missingMembers = this._editor?.getMissingMembers() || [];
-                profileStatus = this._editor?.getProfileStatus?.() || [];
+                ({ playerDTOs, playerInfo, trueSelfHrid, selfHrid, missingMembers, profileStatus } = resolveSimParty(
+                    this._editor,
+                    editedDTOs
+                ));
             } else {
                 const result = await buildAllPlayerDTOs();
                 playerDTOs = result.players;
@@ -5327,17 +5388,19 @@ class CombatSimUI {
         try {
             editedDTOs = this._editor?.getEditedDTOs();
             if (editedDTOs) {
-                playerDTOs = Object.values(editedDTOs);
+                // Same Solo narrowing as the single-zone run — see resolveSimParty()
+                const resolved = resolveSimParty(this._editor, editedDTOs);
+                playerDTOs = resolved.playerDTOs;
                 // The roster the bestiary pace matches recorded runs against (`runMatchesSimParty`);
                 // the single-zone path copies it the same way, this one used to leave it empty
                 // A copy: the editor mutates its own array in place when a player is imported later
-                this._playerInfo = [...(this._editor?.getPlayerInfo() || [])];
+                this._playerInfo = [...resolved.playerInfo];
                 // Revenue/drops below are computed for whichever player
                 // `_activePlayerTab` names, and that field doubles as "which
                 // player's tab is open in a previous single-zone result" — left
                 // alone here, a party where self isn't player1 would price this
                 // run for whoever's tab a past result happened to leave selected.
-                this._activePlayerTab = this._editor?.getSelfHrid() || playerDTOs[0]?.hrid || 'player1';
+                this._activePlayerTab = resolved.selfHrid;
             } else {
                 const result = await buildAllPlayerDTOs();
                 playerDTOs = result.players;

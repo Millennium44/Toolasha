@@ -2919,6 +2919,17 @@ export const settingsGroups = {
                 default: true,
                 help: 'Runs the baseline and every candidate on the same random draws, so a small difference reflects the upgrade instead of luck. Turn off to give every sim independent randomness (the old behavior).',
             },
+            combatSim_soloMode: {
+                id: 'combatSim_soloMode',
+                label: 'Combat Simulator: Solo (Configure tab checkbox)',
+                type: 'checkbox',
+                default: false,
+                help:
+                    'Mirrors the Solo checkbox next to the party controls on the Configure tab. When on, a ' +
+                    'simulation runs only the player selected there instead of the whole loaded party — the ' +
+                    'roster, fetched loadouts and edits are kept, so unchecking it goes straight back to the ' +
+                    'full party.',
+            },
             combatSim_taskDamage: {
                 id: 'combatSim_taskDamage',
                 label: 'Combat Simulator: Task damage',
