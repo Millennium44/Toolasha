@@ -116,4 +116,26 @@ describe('the pop-out chart', () => {
         expect(built).toHaveLength(1);
         expect(built[0].cfg.data.labels).toEqual(['Run 1', 'Run 2']);
     });
+
+    test('re-rendering an already-open modal (a scope change) replots at the new filter and destroys the old chart', async () => {
+        // The dungeon tracker panel calls this again while the modal is still
+        // open, on a filter-scope change — not just once at modal creation.
+        dungeonTrackerStorage.getAllRuns.mockResolvedValue([run(1, 10), run(2, 20)]);
+        const state = freshState();
+        const chart = new DungeonTrackerUIChart(state, (ms) => `${ms}ms`);
+        const canvas = document.createElement('canvas');
+        document.body.appendChild(canvas);
+
+        await chart.renderModalChart(canvas);
+        const firstInstance = chart.modalChartInstance;
+        expect(built[0].cfg.data.labels).toEqual(['Run 1', 'Run 2']);
+
+        state.filterTier = '1';
+        await chart.renderModalChart(canvas);
+
+        expect(firstInstance.destroyed).toBe(true);
+        expect(built).toHaveLength(2);
+        expect(built[1].cfg.data.labels).toEqual(['Run 1']);
+        expect(chart.modalChartInstance).toBe(built[1]);
+    });
 });

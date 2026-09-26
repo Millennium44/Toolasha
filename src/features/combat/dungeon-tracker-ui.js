@@ -1172,10 +1172,20 @@ class DungeonTrackerUI {
 
     /**
      * Update chart display
+     *
+     * Covers the inline chart section and, independently, a popped-out modal
+     * chart: `chart.render()` only ever touches `chartInstance`, so a scope
+     * change (`syncFilterScope`) that fires this while the modal is open used
+     * to leave the modal showing the previous dungeon/tier until it was closed
+     * and reopened.
      */
     async updateChart() {
         if (this.state.isChartExpanded) {
             await this.chart.render(this.container);
+        }
+        if (this.chart?.closeModal) {
+            const modalCanvas = document.getElementById('mwi-dt-chart-modal-canvas');
+            if (modalCanvas) await this.chart.renderModalChart(modalCanvas);
         }
     }
 
