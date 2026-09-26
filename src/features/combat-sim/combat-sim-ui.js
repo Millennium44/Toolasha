@@ -3268,6 +3268,12 @@ class CombatSimUI {
         if (!container) return;
         const ownerId = dataManager.getCurrentCharacterId();
         const runToken = this._runStartToken;
+        // Guards a superseded render (e.g. a reprice started while this call's own
+        // `await this._buildBestiaryPlanZones(rows)` below is still pending) from
+        // writing stale data over a newer render's output — see the sort-header
+        // click handler further down, which always redraws from `this._allZonesResults`.
+        const renderGen = (this._allZonesRenderGen || 0) + 1;
+        this._allZonesRenderGen = renderGen;
 
         // See the matching flag in `_displayResults` — `_redisplayLastResults`
         // uses this to decide which cached result set a pricing change reprices.
@@ -3453,7 +3459,7 @@ class CombatSimUI {
         // the plan go to the earlier one), the counts, and how many zones had
         // no result to plan with
         const planZones = await this._buildBestiaryPlanZones(rows);
-        if (!this._isCurrentRun(ownerId, runToken)) return;
+        if (!this._isCurrentRun(ownerId, runToken) || renderGen !== this._allZonesRenderGen) return;
         this._bestiaryPlanZones = planZones;
         this._bestiaryPlanCounts = bestiaryCounts;
         // The column and the plan read the same per-monster rates: a dungeon's
@@ -3829,7 +3835,11 @@ class CombatSimUI {
                     this._allZonesSortCol = col;
                     this._allZonesSortAsc = col === 'zone'; // Ascending for zone name, descending for numbers
                 }
-                this._displayAllZonesResults(zoneResults, hours, gameData);
+                // Read the live results rather than the `zoneResults` this render
+                // closed over: a reprice (`_repriceAllZonesResults`) may have
+                // replaced `this._allZonesResults` with fresher data while this
+                // table was on screen, and sorting must not resurrect the stale copy.
+                this._displayAllZonesResults(this._allZonesResults || zoneResults, hours, gameData);
             });
         });
 
