@@ -72,9 +72,16 @@ export function setShopFilter(itemName) {
  * rather than leave the player nowhere.
  *
  * @param {RegExp} label - Matches the tab's whole text
+ * @param {() => boolean} [isCancelled] - Checked before every step that touches the
+ *   game (the initial nav click, and again before the tab click). A stale caller —
+ *   the character switched, or the feature was disabled — while this was waiting for
+ *   the tab strip to appear must not go on to click a tab for whoever is here now.
+ *   Defaults to never cancelling.
  * @returns {Promise<HTMLElement|null>} The tab once selected, else null
  */
-export async function openShopTab(label) {
+export async function openShopTab(label, isCancelled = () => false) {
+    if (isCancelled()) return null;
+
     const navButtons = document.querySelectorAll('.NavigationBar_nav__3uuUl');
     const shopButton = Array.from(navButtons).find((nav) => nav.querySelector('svg[aria-label="navigationBar.shop"]'));
     if (!shopButton) {
@@ -85,8 +92,10 @@ export async function openShopTab(label) {
 
     for (let i = 0; i < 30; i++) {
         await wait(100);
+        if (isCancelled()) return null;
         const tab = findShopTab(label);
         if (tab) {
+            if (isCancelled()) return null;
             tab.click();
             await wait(150);
             return tab;
@@ -98,10 +107,11 @@ export async function openShopTab(label) {
 
 /**
  * Open the Shop on its Tester tab.
+ * @param {() => boolean} [isCancelled] - See {@link openShopTab}
  * @returns {Promise<HTMLElement|null>} The Tester tab once selected, else null
  */
-export async function openTesterShopPage() {
-    return openShopTab(/^\s*tester\s*$/i);
+export async function openTesterShopPage(isCancelled = () => false) {
+    return openShopTab(/^\s*tester\s*$/i, isCancelled);
 }
 
 export default { findShopTab, findTesterTab, setShopFilter, openShopTab, openTesterShopPage };
