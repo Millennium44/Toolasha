@@ -422,6 +422,21 @@ export function gradientLadders(rows, scoredKeys) {
 }
 
 /**
+ * A magnitude that already carries its own '-' when negative (`toFixed`,
+ * `formatKMB`) gets a leading '+' only when the value is actually positive.
+ *
+ * A single pick's gain on most of these axes is positive by construction (the
+ * planner would not have picked it otherwise), but the "confirm together"
+ * figure is a fresh simulation of the whole basket and can land negative even
+ * when every row that built it looked good alone — a hardcoded '+' then reads
+ * as "+-2.00", the sign doubled up rather than flipped.
+ * @param {number} value - The value being formatted
+ * @param {string} formatted - Its magnitude/sign already rendered (e.g. `value.toFixed(2)`)
+ * @returns {string}
+ */
+const withSign = (value, formatted) => (value < 0 ? formatted : `+${formatted}`);
+
+/**
  * What the Upgrade-tab budget planner can shop for.
  *
  * A labyrinth plan has one axis — attempts saved — because every fight is the
@@ -443,19 +458,19 @@ export const UPGRADE_PLAN_METRICS = [
         key: 'dps',
         label: 'DPS',
         gain: (row, baseline) => (row?.metrics?.dps ?? 0) - (baseline?.dps ?? 0),
-        format: (value) => `+${value.toFixed(2)} DPS`,
+        format: (value) => `${withSign(value, value.toFixed(2))} DPS`,
     },
     {
         key: 'xp',
         label: 'EXP/hr',
         gain: (row, baseline) => (row?.metrics?.xpPerHour ?? 0) - (baseline?.xpPerHour ?? 0),
-        format: (value) => `+${formatKMB(Math.round(value))} EXP/hr`,
+        format: (value) => `${withSign(value, formatKMB(Math.round(value)))} EXP/hr`,
     },
     {
         key: 'encounters',
         label: 'EPH',
         gain: (row, baseline) => (row?.metrics?.encountersPerHour ?? 0) - (baseline?.encountersPerHour ?? 0),
-        format: (value) => `+${value.toFixed(2)}/hr encounters`,
+        format: (value) => `${withSign(value, value.toFixed(2))}/hr encounters`,
     },
     {
         key: 'deaths',
@@ -9791,6 +9806,12 @@ class CombatSimUI {
      * Opt-in and manual, because this is a real simulation of the whole zone
      * over again, not the free arithmetic the summed figure is. The button is
      * the only thing that starts it.
+     *
+     * On the Score axis there is no second figure to show side by side with the
+     * summed one — Score is an ordinal rank within the candidate set the plan
+     * was built from, and a confirmed basket is not a member of that set to
+     * rank. The per-metric changes the confirm run actually measured are shown
+     * instead of inventing a score for it.
      * @param {Object} plan - From `planUpgradeBudget`
      * @param {Object} baseline - Baseline metrics, for reading the combined gain
      *   the same way every other row's gain is read
@@ -9822,15 +9843,29 @@ class CombatSimUI {
             );
         }
         if (state.status === 'done') {
-            const combinedGain = plan.metric.gain(
-                { metrics: state.result.metrics, economics: state.result.economics },
-                baseline
-            );
+            const confirmedRow = { metrics: state.result.metrics, economics: state.result.economics };
+            // Score is an ordinal rank within the candidate set the plan was
+            // built from (see `assignRankScores`) — there is no set to rank a
+            // single combined basket within, so it cannot be recomputed here.
+            // What the confirm run actually measured is shown instead: the
+            // same per-metric changes every other axis already knows how to
+            // read and format.
+            const togetherHtml =
+                plan.metric.key === 'score'
+                    ? `<span style="color:#888;">can't be confirmed as a score; the measured changes are</span>
+                        <span style="color:#4caf50; font-weight:600;">${UPGRADE_PLAN_METRICS.filter(
+                            (m) => m.key !== 'score'
+                        )
+                            .map((m) => `${m.label} ${m.format(m.gain(confirmedRow, baseline))}`)
+                            .join(', ')}</span>`
+                    : `<span style="color:#4caf50; font-weight:600;">${plan.metric.format(
+                          plan.metric.gain(confirmedRow, baseline)
+                      )}</span>`;
             return wrap(
                 `<div style="font-size:11px; color:#aaa;">summed
                     <span style="color:#4caf50; font-weight:600;">${plan.metric.format(plan.gainTotal)}</span>
                     · together
-                    <span style="color:#4caf50; font-weight:600;">${plan.metric.format(combinedGain)}</span>
+                    ${togetherHtml}
                     <span style="color:#666;" title="Every pick worn at once, simulated in one run against the same
                         seed and settings the plan itself was measured with.">— all picks worn at once, one
                         run</span>

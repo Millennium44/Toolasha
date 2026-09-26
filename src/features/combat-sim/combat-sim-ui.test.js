@@ -745,6 +745,26 @@ describe('planUpgradeBudget', () => {
         }
     });
 
+    test('a negative combined gain keeps one sign instead of doubling it up', () => {
+        // The "confirm together" figure can land below the baseline even when
+        // every row that built the basket looked positive alone — a hardcoded
+        // '+' then read as "+-2.00", not a flipped sign
+        const dps = UPGRADE_PLAN_METRICS.find((m) => m.key === 'dps');
+        const xp = UPGRADE_PLAN_METRICS.find((m) => m.key === 'xp');
+        const encounters = UPGRADE_PLAN_METRICS.find((m) => m.key === 'encounters');
+
+        expect(dps.format(-2)).toBe('-2.00 DPS');
+        expect(dps.format(-2)).not.toContain('+-');
+        expect(dps.format(3)).toBe('+3.00 DPS');
+
+        expect(xp.format(-500)).not.toContain('+-');
+        expect(xp.format(500)).toMatch(/^\+/);
+
+        expect(encounters.format(-2)).toBe('-2.00/hr encounters');
+        expect(encounters.format(-2)).not.toContain('+-');
+        expect(encounters.format(2)).toBe('+2.00/hr encounters');
+    });
+
     test('shops by EPH: the row with the bigger encounters/hr gain wins', () => {
         const rows = [
             row('Speed ring', { slot: '/equipment_types/ring', cost: 100 }),
@@ -5057,6 +5077,37 @@ describe('confirming a basket together', () => {
 
         const picksAfter = ui._lastBudgetPlan.picks.map((p) => p.candidate.description).sort();
         expect(picksAfter).toEqual(picksBefore);
+    });
+
+    test('the Score goal shows the measured per-metric changes rather than a recomputed score', async () => {
+        // Score is an ordinal rank within the table the plan was built from —
+        // the confirm run has no such table for the combined basket to rank
+        // inside, so it must not print a made-up "0 score points".
+        const scored = twoPickResults();
+        scored.results[0].score = 10;
+        scored.results[1].score = 5;
+        mocks.confirmResult = {
+            ok: true,
+            metrics: { dps: 105, xpPerHour: 1000, profitPerHour: 1080, deathsPerHour: 0, encountersPerHour: 10 },
+            deltas: {},
+            economics: { profitGainPerHour: 80 },
+            noise: {},
+            totalCost: 300,
+        };
+        ui._upgradePlanMetric = 'score';
+        ui._renderUpgradeResults(scored);
+        const container = ui.panel.querySelector('#mwi-csim-upgrade-results');
+
+        container.querySelector('#mwi-csim-budget-confirm').click();
+        await Promise.resolve();
+        await Promise.resolve();
+        await Promise.resolve();
+
+        expect(container.textContent).not.toContain('0 score points');
+        expect(container.textContent).toContain("can't be confirmed as a score");
+        // The measured changes it shows instead
+        expect(container.textContent).toContain('+5.00 DPS');
+        expect(container.textContent).toContain('/hr profit');
     });
 });
 
