@@ -30,7 +30,7 @@ import {
     profileAgeMs,
     sharedProfileWarning,
 } from '../../utils/shared-profile-status.js';
-import { fetchLoadouts, isViewLoadoutAvailable, VIEW_LOADOUT_CONTEXT } from '../../utils/view-loadout.js';
+import { fetchLoadout, getLoadout, isViewLoadoutAvailable, VIEW_LOADOUT_CONTEXT } from '../../utils/view-loadout.js';
 
 const ACCENT = '#4a9eff';
 const ACCENT_BG = 'rgba(74, 158, 255, 0.12)';
@@ -99,7 +99,7 @@ export class SimEditor {
         this._partyKeyAtLoad = null;
         // A line about the loaded player the editor was opened with (an external DTO)
         this._externalNote = '';
-        // Progress or outcome of the last "Fetch party loadouts" click
+        // Progress or outcome of the last "Fetch <name>'s loadout" click
         this._loadoutFetchNote = '';
         this._fetchingLoadouts = false;
     }
@@ -592,32 +592,45 @@ export class SimEditor {
     }
 
     /**
-     * Fetch the party's loadouts through the game's View Loadout, then reload the party.
-     *
-     * Only ever run from the button's click. The game opens a loadout modal per member,
-     * which `fetchLoadouts` closes as it goes.
-     *
-     * @returns {Promise<Object|null>} The `fetchLoadouts` result, or null when nothing was run
+     * The party member the next "Fetch loadout" click asks for: the first with no party
+     * loadout captured, else the one whose capture is oldest.
+     * @private
+     * @returns {{member: {characterID: *, characterName: string}, refresh: boolean}|null}
      */
-    async fetchPartyLoadouts() {
-        if (this._fetchingLoadouts || !isViewLoadoutAvailable()) return null;
-        const members = this._otherPartyMembers();
-        if (!members.length) return null;
+    _nextLoadoutTarget() {
+        let oldest = null;
+        for (const member of this._otherPartyMembers()) {
+            const captured = getLoadout(member.characterID, VIEW_LOADOUT_CONTEXT.Party);
+            if (!captured) return { member, refresh: false };
+            if (!oldest || captured.capturedAt < oldest.capturedAt)
+                oldest = { member, capturedAt: captured.capturedAt };
+        }
+        return oldest ? { member: oldest.member, refresh: true } : null;
+    }
+
+    /**
+     * Fetch one party member's loadout through the game's View Loadout, then reload the party.
+     *
+     * One click, one request: the game marks a request with no trusted click behind it
+     * `isAuto` and the server does not answer it, so the party is fetched a member per
+     * click rather than in one scripted run.
+     *
+     * @param {{characterID: *, characterName: string}} [member] - Defaults to {@link _nextLoadoutTarget}
+     * @returns {Promise<Object|null>} The `fetchLoadout` result, or null when nothing was requested
+     */
+    async fetchPartyMemberLoadout(member = this._nextLoadoutTarget()?.member) {
+        if (!member || this._fetchingLoadouts || !isViewLoadoutAvailable()) return null;
 
         const owner = dataManager.getCurrentCharacterId?.() ?? null;
+        const name = member.characterName || String(member.characterID);
         this._fetchingLoadouts = true;
-        this._loadoutFetchNote = `Fetching party loadouts (0/${members.length})…`;
+        this._loadoutFetchNote = `Fetching ${name}'s loadout…`;
         this.renderEditor();
         let result = null;
         try {
-            result = await fetchLoadouts(members, VIEW_LOADOUT_CONTEXT.Party, '', {
-                onProgress: ({ index, total }) => {
-                    this._loadoutFetchNote = `Fetching party loadouts (${index + 1}/${total})…`;
-                    this.renderEditor();
-                },
-            });
+            result = await fetchLoadout(member, VIEW_LOADOUT_CONTEXT.Party, '');
         } catch (error) {
-            console.error('[SimEditor] Fetching party loadouts failed:', error);
+            console.error('[SimEditor] Fetching a party loadout failed:', error);
         } finally {
             this._fetchingLoadouts = false;
         }
@@ -627,7 +640,7 @@ export class SimEditor {
         }
 
         await this.resetToParty();
-        this._loadoutFetchNote = this._describeLoadoutFetch(result);
+        this._loadoutFetchNote = this._describeLoadoutFetch(name, result);
         this.renderEditor();
         return result;
     }
@@ -635,19 +648,25 @@ export class SimEditor {
     /**
      * What a fetch got, in a line.
      * @private
-     * @param {Object|null} result - A `fetchLoadouts` result
+     * @param {string} name - Who was asked for
+     * @param {Object|null} result - A `fetchLoadout` result
      * @returns {string}
      */
-    _describeLoadoutFetch(result) {
-        if (!result) return 'Fetching party loadouts failed.';
-        if (result.status === 'busy') return 'A loadout fetch is already running.';
-        if (result.status === 'unavailable') return 'This game version has no View Loadout.';
-        const empty = result.loadouts.filter((entry) => !entry.hasLoadout).map((entry) => entry.name || '?');
-        const missed = result.missed.map((member) => member.name || member.characterId);
-        const parts = [`Fetched ${result.loadouts.length - empty.length} party loadout(s).`];
-        if (empty.length) parts.push(`No loadout set: ${empty.join(', ')} (worn gear used).`);
-        if (missed.length) parts.push(`No reply: ${missed.join(', ')}.`);
-        return parts.join(' ');
+    _describeLoadoutFetch(name, result) {
+        switch (result?.status) {
+            case 'done':
+                return result.entry.hasLoadout
+                    ? `Fetched ${name}'s party loadout.`
+                    : `${name} has no loadout set; their worn gear is used.`;
+            case 'no_reply':
+                return `No reply for ${name}'s loadout.`;
+            case 'busy':
+                return 'A loadout fetch is already running.';
+            case 'unavailable':
+                return 'This game version has no View Loadout.';
+            default:
+                return `Fetching ${name}'s loadout failed.`;
+        }
     }
 
     /**
@@ -683,14 +702,19 @@ export class SimEditor {
             inParty ? '' : ' disabled'
         }>Reset to Party</button>`;
         // Only where the game can View Loadout at all: a build without it gets no button
-        if (inParty && !this.labMode && !this.skillingMode && isViewLoadoutAvailable()) {
+        const target =
+            inParty && !this.labMode && !this.skillingMode && isViewLoadoutAvailable()
+                ? this._nextLoadoutTarget()
+                : null;
+        if (target) {
             const busy = this._fetchingLoadouts;
+            const name = escapeHtml(target.member.characterName || String(target.member.characterID));
             const fetchTitle =
-                "Ask the game for each party member's loadout (View Loadout), then reload the party " +
-                'with their loadout gear, abilities and consumables';
-            html += `<button data-fetch-loadouts style="${base} color:${busy ? '#555' : ACCENT}; cursor:${
+                "Ask the game for this party member's loadout (View Loadout) and reload the party with " +
+                'its gear, abilities and consumables. One member per click.';
+            html += `<button data-fetch-loadout style="${base} color:${busy ? '#555' : ACCENT}; cursor:${
                 busy ? 'default' : 'pointer'
-            };" title="${fetchTitle}"${busy ? ' disabled' : ''}>Fetch party loadouts</button>`;
+            };" title="${fetchTitle}"${busy ? ' disabled' : ''}>${target.refresh ? 'Refetch' : 'Fetch'} ${name}'s loadout</button>`;
         }
         return html;
     }
@@ -850,9 +874,9 @@ export class SimEditor {
      * @param {HTMLElement} editorArea - Container the editor rendered into
      */
     _wireResetControls(editorArea) {
-        editorArea.querySelector('[data-fetch-loadouts]')?.addEventListener('click', (event) => {
+        editorArea.querySelector('[data-fetch-loadout]')?.addEventListener('click', (event) => {
             if (event.currentTarget.disabled) return;
-            this.fetchPartyLoadouts();
+            this.fetchPartyMemberLoadout();
         });
         editorArea.querySelectorAll('[data-reset-players]').forEach((btn) => {
             btn.addEventListener('click', async () => {
