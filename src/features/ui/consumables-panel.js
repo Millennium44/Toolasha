@@ -671,11 +671,12 @@ class ConsumablesPanel {
     /**
      * What one entry key costs to buy and to craft, cached for a minute.
      *
-     * `describeKeyCost` walks the recipe through the crafting planner against
-     * this character's own efficiency and artisan bonus, which is far too much
-     * work for a panel that redraws every five seconds — and the answer moves
-     * only when the market does. A minute is short enough that a key bought
-     * mid-session reprices, long enough that the redraw clock never pays for it.
+     * `describeKeyCost` reads the recipe's action stats against this
+     * character's own efficiency and artisan bonus, which is more than a panel
+     * that redraws every five seconds should redo on every tick — and the
+     * answer moves only when the market does. A minute is short enough that a
+     * key bought mid-session reprices, long enough that the redraw clock never
+     * pays for it.
      *
      * @param {string|null} keyHrid - The dungeon's entry key
      * @returns {Object|null} From `describeKeyCost`, or null when it cannot run

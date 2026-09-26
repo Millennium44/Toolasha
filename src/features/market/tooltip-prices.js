@@ -152,11 +152,12 @@ function ownUseBuyBasis(pricingMode) {
  * line toward "make is cheaper" by the width of the spread.
  *
  * Deliberately not the same model as the dungeon ROI board's `describeKeyCost`:
- * that one prices a replacement key from materials alone, each sourced at the
- * cheaper of buying and crafting, with no tea cost — a board ranking dungeons
- * must not move with whichever teas happen to be equipped. This line is about
- * the bench as it stands right now, teas and all, so the two can quote
- * different make costs for the same key and both be right about their question.
+ * that one prices a replacement key from its own recipe's materials alone,
+ * each bought at the market (never itself recrafted), with no tea cost — a
+ * board ranking dungeons must not move with whichever teas happen to be
+ * equipped. This line is about the bench as it stands right now, teas and
+ * all, so the two can quote different make costs for the same key and both be
+ * right about their question.
  *
  * @param {Object|null} profitData - From `profitCalculator.calculateProfit`
  * @param {Object|null} [actionDetail] - The producing action's detail, for the
