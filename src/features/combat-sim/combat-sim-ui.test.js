@@ -744,6 +744,54 @@ describe('planUpgradeBudget', () => {
             expect(typeof metric.format(gain)).toBe('string');
         }
     });
+
+    test('shops by EPH: the row with the bigger encounters/hr gain wins', () => {
+        const rows = [
+            row('Speed ring', { slot: '/equipment_types/ring', cost: 100 }),
+            row('Slow neck', { slot: '/equipment_types/neck', cost: 100 }),
+        ];
+        rows[0].metrics.encountersPerHour = 15;
+        rows[1].metrics.encountersPerHour = 11;
+
+        const plan = planUpgradeBudget(rows, 100, { baseline: BASELINE, metricKey: 'encounters' });
+
+        expect(plan.picks.map((p) => p.candidate.description)).toEqual(['Speed ring']);
+        expect(plan.gainTotal).toBeCloseTo(5);
+    });
+
+    test('shops for fewer deaths/hr: the row that cuts deaths most wins, a row that adds deaths is skipped', () => {
+        const rows = [
+            row('Safer body', { slot: '/equipment_types/body', cost: 100 }),
+            row('Riskier legs', { slot: '/equipment_types/legs', cost: 100 }),
+        ];
+        rows[0].metrics.deathsPerHour = 0.5;
+        rows[1].metrics.deathsPerHour = 3;
+        const baseline = { ...BASELINE, deathsPerHour: 2 };
+
+        const plan = planUpgradeBudget(rows, 1000, { baseline, metricKey: 'deaths' });
+
+        expect(plan.picks.map((p) => p.candidate.description)).toEqual(['Safer body']);
+        expect(plan.gainTotal).toBeCloseTo(1.5);
+    });
+
+    test('shops by Score: the higher-scoring row wins, and picks are not thrown away as noise', () => {
+        const rows = [
+            row('All-rounder', { slot: '/equipment_types/ring', cost: 100 }),
+            row('One-trick', { slot: '/equipment_types/neck', cost: 100 }),
+        ];
+        rows[0].score = 12;
+        rows[1].score = 3;
+        // A row whose dps/profit/xp deltas never cleared the noise still counts
+        // toward Score — the significance check on this axis is a no-op.
+        rows[0].significant = false;
+        rows[0].significantBy = { dps: false, xp: false, profit: false, deaths: false, encounters: false };
+
+        const plan = planUpgradeBudget(rows, 100, { baseline: BASELINE, metricKey: 'score' });
+
+        expect(plan.picks.map((p) => p.candidate.description)).toEqual(['All-rounder']);
+        expect(plan.gainTotal).toBeCloseTo(12);
+        expect(plan.provisional).toBe(false);
+    });
 });
 
 describe('the panel', () => {
