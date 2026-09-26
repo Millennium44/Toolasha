@@ -526,6 +526,23 @@ describe('history filters auto-scope to the run being shown', () => {
         expect(text('#mwi-dt-header-avg')).toBe('05:00');
     });
 
+    test('a scope change re-renders an open pop-out chart, not just the inline one', async () => {
+        // syncFilterScope() -> updateChart() used to redraw only the inline chart
+        // (chart.render(), gated on isChartExpanded); a popped-out modal chart is
+        // otherwise only rendered once, at creation, so it kept showing whatever
+        // dungeon/tier was scoped when the modal was opened.
+        document.body.innerHTML += '<canvas id="mwi-dt-chart-modal-canvas"></canvas>';
+        ui.chart.closeModal = () => {}; // Set only while the modal is on the page
+        ui.chart.renderModalChart = vi.fn(async () => {});
+        world.runs = [{ dungeonName: 'Pirate Cove', tier: 1, duration: 300_000, timestamp: new Date(1).toISOString() }];
+
+        await ui.update(run(), true);
+
+        expect(state.autoScopeToRun).toHaveBeenCalledWith('Pirate Cove', 1);
+        expect(ui.chart.renderModalChart).toHaveBeenCalledWith(document.getElementById('mwi-dt-chart-modal-canvas'));
+        delete ui.chart.closeModal;
+    });
+
     test('a manually-chosen dungeon filter is left alone by the next run start', async () => {
         state.filterDungeon = 'Chimerical Den';
         state.isDungeonFilterManual = true;

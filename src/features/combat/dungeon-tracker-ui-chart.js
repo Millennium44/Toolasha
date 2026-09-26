@@ -373,6 +373,15 @@ class DungeonTrackerUIChart {
             filteredRuns = filteredRuns.filter((r) => r.teamKey === this.state.filterTeam);
         }
 
+        // This now runs again on a filter-scope change while the modal is
+        // already open, not just once at modal creation, so `modalChartInstance`
+        // may already hold a live Chart.js instance — destroy it either way, the
+        // same as render() does for the inline chart, so a scope change into an
+        // empty result set does not leave the modal showing the old scope's chart.
+        if (this.modalChartInstance) {
+            this.modalChartInstance.destroy();
+            this.modalChartInstance = null;
+        }
         if (filteredRuns.length === 0) return;
 
         // Sort by timestamp
