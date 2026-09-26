@@ -2109,6 +2109,85 @@ describe('the all-zones table', () => {
             expect(container.querySelector('[data-csv-export]').dataset.csvExport).toBe('combatsim-all-zones');
         });
 
+        describe('a pricing change while the sweep is shown', () => {
+            // Regression for `_redisplayLastResults` only ever redrawing
+            // `_lastSimResult`: with a sweep on screen it either left the sweep's
+            // figures stale (no earlier single run) or replaced the sweep table
+            // with an unrelated single-zone result (an earlier run in hand).
+            // Both are covered here. `_activeResultKind`, set by whichever of
+            // `_displayResults`/`_displayAllZonesResults` last actually drew,
+            // is what routes the redraw correctly.
+
+            // `_repriceAllZonesResults` redraws through `_displayAllZonesResults`,
+            // which awaits the Bestiary-plan build before touching the DOM — the
+            // firing of a settings-change callback is itself synchronous, so the
+            // redraw needs a tick to land.
+            const flush = () => new Promise((resolve) => setTimeout(resolve, 0));
+
+            test('re-prices every cached zone row from calculateSimRevenue, without re-running the sim', async () => {
+                mocks.revenueCalls = [];
+                await ui._displayAllZonesResults(
+                    [
+                        result('Fly', { xp: { defense: 900 }, profit: 12_000 }),
+                        result('Jungle', { xp: { defense: 500 }, profit: 8_000 }),
+                    ],
+                    1,
+                    { some: 'gameData' }
+                );
+                const before = ui.panel.querySelector('#mwi-csim-results').textContent;
+                // The synthetic revenue baked into `result()` above, before any
+                // reprice touches it
+                expect(before).toContain('288.0K'); // 12,000/hr × 24
+
+                // Fire the same change event the row's Key select (or the main
+                // Settings panel, or Party Loot's copy of the row) would
+                mocks.settingChangeCallbacks.get('profitCalc_keyPricingMode')?.('profitCalc_keyPricingMode', 'craft');
+                await flush();
+
+                // The mocked calculateSimRevenue always answers netPerHour: 0 —
+                // a stale redraw would still show the old 288.0K figure, so
+                // landing on 0 proves each row's revenue was actually recomputed
+                // from its cached simResult rather than redrawn unchanged
+                const after = ui.panel.querySelector('#mwi-csim-results').textContent;
+                expect(after).toContain('Fly');
+                expect(after).toContain('Jungle');
+                expect(after).not.toContain('288.0K');
+                expect(mocks.revenueCalls.length).toBe(2); // once per cached zone, no more
+                expect(mocks.allZonesRuns).toBe(0); // never re-simulated
+            });
+
+            test('does not swap in a stale single-zone result over the sweep', async () => {
+                // An earlier single run is in hand — the case that used to make
+                // `_redisplayLastResults` redraw `_lastSimResult` instead
+                ui._lastSimResult = { numberOfPlayers: 1, experienceGained: { player1: {} } };
+                ui._lastSimHours = 1;
+                ui._lastGameData = {};
+
+                await ui._displayAllZonesResults([result('Fly', { xp: { defense: 900 }, profit: 100 })], 1, {});
+                expect(ui._activeResultKind).toBe('allZones');
+
+                mocks.settingChangeCallbacks.get('profitCalc_keyPricingMode')?.('profitCalc_keyPricingMode', 'craft');
+                await flush();
+
+                // Still the sweep table — a single-zone redraw shows no zone rows
+                const shown = ui.panel.querySelector('#mwi-csim-results').textContent;
+                expect(shown).toContain('Fly');
+                expect(ui.panel.querySelectorAll('#mwi-csim-results th[data-col]').length).toBeGreaterThan(0);
+            });
+
+            test('re-prices the sweep even with no earlier single-zone run cached', async () => {
+                ui._lastSimResult = null;
+                await ui._displayAllZonesResults([result('Fly', { xp: { defense: 900 }, profit: 12_000 })], 1, {});
+
+                mocks.settingChangeCallbacks.get('profitCalc_keyPricingMode')?.('profitCalc_keyPricingMode', 'craft');
+                await flush();
+
+                const shown = ui.panel.querySelector('#mwi-csim-results').textContent;
+                expect(shown).toContain('Fly');
+                expect(shown).not.toContain('288.0K'); // recomputed to the mock's 0, not left stale
+            });
+        });
+
         describe('the market-volume cap', () => {
             const thinLoot = [{ itemHrid: '/items/rare_charm', name: 'Rare Charm', countPerHour: 20 }];
             const liquidLoot = [{ itemHrid: '/items/meat', name: 'Meat', countPerHour: 200 }];

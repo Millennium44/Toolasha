@@ -2017,6 +2017,10 @@ class CombatSimUI {
         this._lastSimHours = null;
         this._lastGameData = null;
         this._lastPartyWarnings = [];
+        // Which of _lastSimResult / _allZonesResults a pricing change should
+        // redraw — see `_redisplayLastResults`. Set by whichever of
+        // _displayResults / _displayAllZonesResults last actually drew.
+        this._activeResultKind = null;
         // Session history for multi-scenario comparison
         this._simHistory = [];
         this._comparisonIndex = null;
@@ -3258,6 +3262,9 @@ class CombatSimUI {
         const ownerId = dataManager.getCurrentCharacterId();
         const runToken = this._runStartToken;
 
+        // See the matching flag in `_displayResults` — `_redisplayLastResults`
+        // uses this to decide which cached result set a pricing change reprices.
+        this._activeResultKind = 'allZones';
         this._allZonesResults = zoneResults;
         container.style.display = 'block';
 
@@ -5579,10 +5586,57 @@ class CombatSimUI {
      * A no-op before any run has produced a result, so a pricing dropdown
      * touched while the Configure tab is still open does not throw reaching
      * for a result that is not there yet.
+     *
+     * An All Zones / All Dungeons sweep is priced differently: its table is
+     * built from `_allZonesResults` (cached per-zone `{zone, simResult,
+     * revenue}`), not `_lastSimResult`, so redrawing the single-run view here
+     * would either leave the sweep stale (no earlier single run) or silently
+     * swap the sweep table out for an unrelated single-zone result (an
+     * earlier run in hand). `_activeResultKind` — set by whichever of
+     * `_displayResults` / `_displayAllZonesResults` last actually drew —
+     * routes to {@link CombatSimUI#_repriceAllZonesResults} instead in that
+     * case.
      */
     _redisplayLastResults() {
+        if (this._activeResultKind === 'allZones') {
+            this._repriceAllZonesResults();
+            return;
+        }
         if (!this._lastSimResult) return;
         this._displayResults(this._lastSimResult, this._lastSimHours, this._lastGameData);
+    }
+
+    /**
+     * Re-price a cached All Zones / All Dungeons sweep in place — the sweep's
+     * counterpart to `_redisplayLastResults`'s single-run path.
+     *
+     * `_onSimulateAllZones` builds each row's revenue once, from the raw
+     * `simResult` (kills/drops don't depend on pricing) via
+     * `calculateSimRevenue(simResult, gameData, playerHrid, hours)`. Redoing
+     * exactly that call per cached zone, with the same `hours`/`gameData` the
+     * table was last drawn with (`_allZonesRedrawArgs`, set by
+     * `_displayAllZonesResults`) and the same `playerHrid` expression the run
+     * used, re-prices the whole sweep without re-simulating anything.
+     * Redrawing through `_displayAllZonesResults` keeps the user's current
+     * sort column/direction, which live on `this._allZonesSortCol`/`Asc`
+     * rather than being passed in.
+     * @private
+     */
+    _repriceAllZonesResults() {
+        const args = this._allZonesRedrawArgs;
+        if (!this._allZonesResults || !args) return;
+        const playerHrid = this._activePlayerTab || 'player1';
+        const repriced = this._allZonesResults.map((entry) => {
+            if (!entry?.simResult) return entry;
+            let revenue = entry.revenue;
+            try {
+                revenue = calculateSimRevenue(entry.simResult, args.gameData, playerHrid, args.hours);
+            } catch {
+                // Keep the stale revenue rather than drop the row over a pricing quirk
+            }
+            return { ...entry, revenue };
+        });
+        this._displayAllZonesResults(repriced, args.hours, args.gameData);
     }
 
     /**
@@ -5620,6 +5674,12 @@ class CombatSimUI {
 
         const container = this.panel.querySelector('#mwi-csim-results');
         if (!container) return;
+
+        // Which cached result set a pricing change should redraw — see
+        // `_redisplayLastResults`. Set on every draw, not just the first, so
+        // switching back to a single run after an All Zones sweep (or back
+        // again) always reprices the one actually on screen.
+        this._activeResultKind = 'single';
 
         const activeTab = this._activePlayerTab;
         const playerInfo = this._playerInfo;
@@ -7470,6 +7530,7 @@ class CombatSimUI {
         this._comparisonBaseline = null;
         this._comparisonSlots = [];
         this._activeDetailIndex = null;
+        this._activeResultKind = null;
         this._allZonesResults = null;
         this._allZonesMaxTierFood = false;
         this._allZonesFoodSwaps = [];
