@@ -31,7 +31,8 @@ function wait(ms) {
  * @returns {HTMLElement|null}
  */
 export function findShopTab(label) {
-    for (const container of document.querySelectorAll('.MuiTabs-flexContainer[role="tablist"]')) {
+    // Inside the Shop panel only: other panels (Combat) have their own "Dungeon" tab
+    for (const container of document.querySelectorAll('[class*="ShopPanel"] .MuiTabs-flexContainer[role="tablist"]')) {
         if (container.offsetParent === null) continue;
         const tab = Array.from(container.children).find((el) => label.test(el.textContent || ''));
         if (tab) return tab;
