@@ -53,7 +53,6 @@ const mocks = vi.hoisted(() => ({
     pricingMode: 'hybrid',
     /** The `getItemPrice` mock's patient-tick switch, standing in for both per-side tick settings at once */
     patientTick: false,
-    keyPricingMode: 'ask',
     /** What `buildGameDataPayload` and `buildAllPlayerDTOs` hand the panel */
     gameData: { itemDetailMap: {} },
     playerDTOs: [{ hrid: 'player1', equipment: {} }],
@@ -4083,11 +4082,13 @@ describe('the summary at the top of the Results tab', () => {
         ui._ensureHistoryMetrics('player1');
         const first = entry.metrics;
 
-        // Dungeon key costs follow this setting, so metrics stamped before it are stale
-        mocks.keyPricingMode = 'craft';
+        // Dungeon key costs follow this setting, so metrics stamped before it are stale.
+        // Flipped relative to whatever an earlier test left, so it is always a change
+        const before = mocks.keyPricingMode;
+        mocks.keyPricingMode = before === 'craft' ? 'bid' : 'craft';
         ui._ensureHistoryMetrics('player1');
         expect(entry.metrics).not.toBe(first);
-        mocks.keyPricingMode = 'ask';
+        mocks.keyPricingMode = before;
     });
 
     test('XP/hr is the same total the XP section adds up', () => {
