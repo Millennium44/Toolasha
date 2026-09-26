@@ -74,8 +74,11 @@ export class SimEditor {
      * @param {HTMLElement} options.editorEl - Container element the editor renders into
      * @param {boolean} [options.labMode=false] - When true, filters coffees from consumable picker
      * @param {boolean} [options.skillingMode=false] - When true, shows skilling skills/loadouts/token upgrades
+     * @param {boolean} [options.soloMode=false] - Initial state of the Solo checkbox (combat mode only)
+     * @param {Function} [options.onSoloModeChange] - Called with the new boolean whenever the
+     *   Solo checkbox is toggled by hand, so the owner can persist it
      */
-    constructor({ editorEl, labMode = false, skillingMode = false }) {
+    constructor({ editorEl, labMode = false, skillingMode = false, soloMode = false, onSoloModeChange = null }) {
         this._editorEl = editorEl;
         this.labMode = labMode;
         this.skillingMode = skillingMode;
@@ -114,6 +117,11 @@ export class SimEditor {
         // fetch was started for, so a reply that lands after the user has
         // moved on cannot overwrite what they moved on to.
         this._scenarioToken = 0;
+        // Combat mode only (see the checkbox in renderEditor()): when on, a run
+        // simulates only the player whose tab is open here, leaving the loaded
+        // roster, fetched loadouts and edits untouched underneath it.
+        this._soloMode = Boolean(soloMode);
+        this._onSoloModeChange = onSoloModeChange;
     }
 
     getEditedDTOs() {
@@ -243,6 +251,22 @@ export class SimEditor {
     }
     getSelfHrid() {
         return this._selfHrid;
+    }
+    /**
+     * The player whose tab is open in the editor right now — the "Player/editor
+     * view" a Solo run simulates.
+     * @returns {string|null}
+     */
+    getActiveEditPlayer() {
+        return this._activeEditPlayer;
+    }
+    /**
+     * Whether the Solo checkbox is on. Combat mode only; always false for the
+     * lab and skilling editors, which never render the control.
+     * @returns {boolean}
+     */
+    getSoloMode() {
+        return this._soloMode;
     }
     getMissingMembers() {
         return this._missingMembers;
@@ -1054,6 +1078,17 @@ export class SimEditor {
             padding:3px 8px; border-radius:5px; font-size:11px; cursor:pointer;
             font-family:inherit;" title="Import players from Shykai export string">+ Import</button>`;
         html += this._renderResetControls();
+        // Combat mode only, and only once there is a party to sim solo out of —
+        // the lab and skilling editors never load more than one player, so the
+        // control would have nothing to do there.
+        if (!this.labMode && playerInfo.length > 1) {
+            html += `<label style="margin-left:auto; display:flex; align-items:center; gap:4px; color:#aaa;
+                font-size:11px; cursor:pointer; flex-shrink:0;"
+                title="Simulate only the player selected above, leaving the rest of the loaded party untouched">
+                <input type="checkbox" id="mwi-csim-solo-toggle"${this._soloMode ? ' checked' : ''} style="cursor:pointer;">
+                Solo
+            </label>`;
+        }
         html += '</div>';
         html += this._renderPartyNote();
         html += this._renderLoadoutNotes();
@@ -2629,6 +2664,14 @@ export class SimEditor {
         }
 
         this._wireResetControls(editorArea);
+
+        const soloToggle = editorArea.querySelector('#mwi-csim-solo-toggle');
+        if (soloToggle) {
+            soloToggle.addEventListener('change', () => {
+                this._soloMode = soloToggle.checked;
+                this._onSoloModeChange?.(this._soloMode);
+            });
+        }
 
         editorArea.querySelectorAll('[data-edit-tab]').forEach((btn) => {
             btn.addEventListener('click', (e) => {
