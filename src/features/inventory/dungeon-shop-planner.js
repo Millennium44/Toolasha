@@ -82,6 +82,7 @@ class DungeonShopPlanner {
     initialize() {
         if (this.initialized) return;
         this.initialized = true;
+        this.generation = (this.generation || 0) + 1;
 
         this.autofill = createAutofillManager('DungeonShopPlanner');
         this.panel = createPanel({
@@ -137,7 +138,10 @@ class DungeonShopPlanner {
                 tabsRoot.insertAdjacentElement('afterend', button);
                 // Selecting a tab re-renders only the panel below, not the
                 // strip, so visibility follows clicks on the strip itself
-                strip.addEventListener('click', () => setTimeout(() => syncButton(strip, button), 50));
+                const onTabClick = () => setTimeout(() => syncButton(strip, button), 50);
+                strip.addEventListener('click', onTabClick);
+                // A disable leaves the Shop mounted; the listener must not outlive the button
+                this.unregisters.push(() => strip.removeEventListener('click', onTabClick));
             }
             syncButton(strip, button);
         }
@@ -426,6 +430,9 @@ class DungeonShopPlanner {
      */
     async openInShop(planRow) {
         const quantity = planRow.quantity;
+        // A character switch during the shop wait re-initializes the feature; this click
+        // then belongs to the character who left and must not arm the new one's buy box
+        const generation = this.generation;
         this.status = `Opening the Dungeon shop for ${planRow.name}…`;
         this.panel?.render();
 
@@ -435,7 +442,7 @@ class DungeonShopPlanner {
         } catch (error) {
             console.error('[DungeonShopPlanner] Opening the shop failed:', error);
         }
-        if (!this.initialized) return;
+        if (!this.initialized || this.generation !== generation) return;
         if (!tab) {
             this.status = `Shop not found — buy ${planRow.name} and type ${quantity} in the quantity box.`;
             this.panel?.render();

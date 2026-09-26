@@ -272,6 +272,20 @@ describe('a plan row click', () => {
         expect(input.value).toBe('1');
     });
 
+    test('a character switch during the shop wait does not arm the next character', async () => {
+        await openPirate();
+        rowFor('/items/marksman_brooch').click();
+        // The feature is torn down and brought back before the shop wait resolves
+        dungeonShopPlanner.cleanup();
+        dungeonShopPlanner.initialize();
+        await flush();
+
+        expect(state.filtered).toEqual([]);
+        const { modal, input } = shopDialog('marksman_brooch');
+        announceModal(modal);
+        expect(input.value).toBe('1');
+    });
+
     test('when the shop cannot be reached the panel says what to type', async () => {
         state.shopTab = null;
         await openPirate();
@@ -283,6 +297,23 @@ describe('a plan row click', () => {
 });
 
 describe('the Plan spend button', () => {
+    test('cleanup removes the tab strip listener it added', () => {
+        document.body.innerHTML = `
+            <div class="ShopPanel_shopPanel__q">
+                <div class="MuiTabs-root"><div class="MuiTabs-flexContainer" role="tablist">
+                    <button role="tab" aria-selected="true">Dungeon</button>
+                </div></div>
+            </div>`;
+        const strip = document.querySelector('[role="tablist"]');
+        const removed = vi.spyOn(strip, 'removeEventListener');
+        dungeonShopPlanner.scanShopTabs();
+
+        dungeonShopPlanner.cleanup();
+
+        expect(removed).toHaveBeenCalledWith('click', expect.any(Function));
+        dungeonShopPlanner.initialize();
+    });
+
     test("appears beside the Shop's tab strip only while Dungeon is selected", () => {
         document.body.innerHTML = `
             <div class="ShopPanel_shopPanel__q">
