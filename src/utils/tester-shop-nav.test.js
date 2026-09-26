@@ -1,7 +1,7 @@
 /** @vitest-environment happy-dom */
 import { afterEach, describe, expect, test } from 'vitest';
 
-import { setShopFilter } from './tester-shop-nav.js';
+import { findShopTab, setShopFilter } from './tester-shop-nav.js';
 
 /** An "Item Filter" box inside a container with the given class */
 function filterBox(containerClass) {
@@ -34,5 +34,31 @@ describe('setShopFilter', () => {
 
         expect(setShopFilter('Chaotic Chain')).toBe(false);
         expect(inventory.value).toBe('');
+    });
+});
+
+describe('findShopTab', () => {
+    /** A visible tab strip with a "Dungeon" tab inside a container with the given class */
+    function strip(containerClass) {
+        const container = document.createElement('div');
+        container.className = containerClass;
+        const list = document.createElement('div');
+        list.className = 'MuiTabs-flexContainer';
+        list.setAttribute('role', 'tablist');
+        const tab = document.createElement('button');
+        tab.textContent = 'Dungeon';
+        list.appendChild(tab);
+        container.appendChild(list);
+        document.body.appendChild(container);
+        Object.defineProperty(list, 'offsetParent', { get: () => container });
+        return tab;
+    }
+
+    test("ignores another panel's Dungeon tab and finds the Shop's", () => {
+        strip('CombatPanel_tabsComponentContainer__x');
+        expect(findShopTab(/^\s*dungeons?\s*$/i)).toBeNull();
+
+        const shopTab = strip('ShopPanel_shopPanel__1Wl3r');
+        expect(findShopTab(/^\s*dungeons?\s*$/i)).toBe(shopTab);
     });
 });

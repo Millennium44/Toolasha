@@ -168,11 +168,23 @@ class DungeonShopPlanner {
     }
 
     /**
+     * Forget measured volumes when the price-history source changes: mooket I has no
+     * volume at all, so a cap measured from mooket II must not outlive the switch.
+     */
+    syncVolumeSource() {
+        const source = config.getSetting('market_historySource') ?? null;
+        if (source === this.volumesSource) return;
+        this.volumesSource = source;
+        this.volumes.clear();
+    }
+
+    /**
      * Fetch the traded volume of every priced item this token buys, once each.
      * @param {string} tokenHrid - A dungeon token
      * @returns {Promise<void>}
      */
     async measure(tokenHrid) {
+        this.syncVolumeSource();
         const wanted = dungeonShopOffers(tokenHrid).filter(
             (offer) => offer.askPrice > 0 && !this.volumes.has(offer.itemHrid) && !this.measuring.has(offer.itemHrid)
         );
@@ -195,6 +207,7 @@ class DungeonShopPlanner {
      * @returns {Object} `planTokenSpend`'s result plus `tokens` and `measuring`
      */
     plan(tokenHrid) {
+        this.syncVolumeSource();
         const options = this.options();
         const offers = dungeonShopOffers(tokenHrid).map((offer) => ({
             itemHrid: offer.itemHrid,
