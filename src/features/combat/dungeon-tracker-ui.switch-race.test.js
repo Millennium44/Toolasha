@@ -49,6 +49,10 @@ vi.mock('./dungeon-tracker-ui-state.js', () => ({
         filterTeam: 'all',
         filterCharacter: 'all',
         hasActiveFilters: () => false,
+        isDungeonFilterManual: false,
+        isTierFilterManual: false,
+        autoScopeToRun: vi.fn(() => false),
+        save: vi.fn(async () => {}),
     },
 }));
 

@@ -47,6 +47,13 @@ class DungeonTrackerUIState {
         this.filterTier = 'all'; // 'all' or a specific tier number (as a string)
         this.filterTeam = 'all'; // 'all' or specific team key
 
+        // Whether filterDungeon/filterTier were chosen by hand from the dropdown
+        // (true) or are still eligible to be pointed at the run in progress by
+        // `autoScopeToRun` (false). A fresh 'all' default and an auto-scoped value
+        // both read false here; only a dropdown `change` sets it true.
+        this.isDungeonFilterManual = false;
+        this.isTierFilterManual = false;
+
         // Whose runs to show. The run store is deliberately shared across
         // characters — a team run recorded by two of your own characters is one
         // run, and deduping it is the point — so the panel filters rather than
@@ -79,6 +86,8 @@ class DungeonTrackerUIState {
         this.filterDungeon = 'all';
         this.filterTier = 'all';
         this.filterTeam = 'all';
+        this.isDungeonFilterManual = false;
+        this.isTierFilterManual = false;
         this.filterCharacter = CHARACTER_FILTER_MINE;
         this.expandedGroups.clear();
     }
@@ -118,6 +127,8 @@ class DungeonTrackerUIState {
             this.filterDungeon = savedState.filterDungeon || 'all';
             this.filterTier = savedState.filterTier || 'all';
             this.filterTeam = savedState.filterTeam || 'all';
+            this.isDungeonFilterManual = savedState.isDungeonFilterManual === true;
+            this.isTierFilterManual = savedState.isTierFilterManual === true;
             this.filterCharacter =
                 savedState.filterCharacter === CHARACTER_FILTER_ALL ? CHARACTER_FILTER_ALL : CHARACTER_FILTER_MINE;
         }
@@ -148,6 +159,8 @@ class DungeonTrackerUIState {
                 filterDungeon: this.filterDungeon,
                 filterTier: this.filterTier,
                 filterTeam: this.filterTeam,
+                isDungeonFilterManual: this.isDungeonFilterManual,
+                isTierFilterManual: this.isTierFilterManual,
                 filterCharacter: this.filterCharacter,
             },
             'settings',
@@ -156,24 +169,68 @@ class DungeonTrackerUIState {
     }
 
     /**
-     * Whether either run-history filter is currently narrowing the run list.
-     * The filter controls live in a collapsed section, so a session that starts
-     * with a filter still set from last time would otherwise show "No runs match
-     * filters" with nothing on screen explaining why.
-     * @returns {boolean} True if the dungeon or team filter is not 'all'
+     * Whether a run-history filter is currently narrowing the run list in a way
+     * the "Filtered" chip should call out. The filter controls live in a
+     * collapsed section, so a session that starts with a filter still set from
+     * last time would otherwise show "No runs match filters" with nothing on
+     * screen explaining why.
+     *
+     * A dungeon/tier value that `autoScopeToRun` set is not "filtered" for this
+     * purpose — scoping the header to the run in progress is the default now,
+     * not a narrowing the player chose. Only a value picked from the dropdown
+     * (isDungeonFilterManual / isTierFilterManual) lights the chip, same as the
+     * team filter, which auto-scope never touches.
+     * @returns {boolean} True if a manually-chosen filter is narrowing the list
      */
     hasActiveFilters() {
-        return this.filterDungeon !== 'all' || this.filterTier !== 'all' || this.filterTeam !== 'all';
+        return (
+            (this.filterDungeon !== 'all' && this.isDungeonFilterManual) ||
+            (this.filterTier !== 'all' && this.isTierFilterManual) ||
+            this.filterTeam !== 'all'
+        );
     }
 
     /**
-     * Clear both run-history filters back to 'all'. Caller is responsible for
+     * Clear all run-history filters back to 'all', and hand Dungeon/Tier back to
+     * auto-scope: the next run start (or the run already in progress, on the
+     * caller's next redraw) re-points them at it. Caller is responsible for
      * persisting (save()) and refreshing any dependent UI.
      */
     clearFilters() {
         this.filterDungeon = 'all';
         this.filterTier = 'all';
         this.filterTeam = 'all';
+        this.isDungeonFilterManual = false;
+        this.isTierFilterManual = false;
+    }
+
+    /**
+     * Point the Dungeon/Tier history filters at the run in progress, unless the
+     * player chose one of them by hand from the dropdown. Team and Character are
+     * never touched here — the decision is only that "how am I doing" defaults
+     * to this dungeon and tier instead of every dungeon ever run.
+     *
+     * Idempotent: called on every 1 Hz tick of a live run, it only reports a
+     * change (and only writes) the first time it sets a value.
+     * @param {string|null|undefined} dungeonName - The run's dungeon name
+     * @param {number|string|null|undefined} tier - The run's tier
+     * @returns {boolean} True if a filter changed and the caller must re-sync the DOM
+     */
+    autoScopeToRun(dungeonName, tier) {
+        if (!dungeonName || tier === null || tier === undefined) return false;
+        const tierStr = String(tier);
+        let changed = false;
+
+        if (!this.isDungeonFilterManual && this.filterDungeon !== dungeonName) {
+            this.filterDungeon = dungeonName;
+            changed = true;
+        }
+        if (!this.isTierFilterManual && this.filterTier !== tierStr) {
+            this.filterTier = tierStr;
+            changed = true;
+        }
+
+        return changed;
     }
 
     /**

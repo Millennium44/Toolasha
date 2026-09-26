@@ -219,6 +219,9 @@ class DungeonTrackerUIInteractions {
         if (filterDungeonSelect) {
             filterDungeonSelect.addEventListener('change', (e) => {
                 this.state.filterDungeon = e.target.value;
+                // A hand-picked value, not auto-scope's — the next run start must
+                // not overwrite it
+                this.state.isDungeonFilterManual = true;
                 this.state.save();
                 this.updateFilterIndicator();
                 if (this.callbacks.onUpdateHistory) this.callbacks.onUpdateHistory();
@@ -231,6 +234,9 @@ class DungeonTrackerUIInteractions {
         if (filterTierSelect) {
             filterTierSelect.addEventListener('change', (e) => {
                 this.state.filterTier = e.target.value;
+                // A hand-picked value, not auto-scope's — the next run start must
+                // not overwrite it
+                this.state.isTierFilterManual = true;
                 this.state.save();
                 this.updateFilterIndicator();
                 if (this.callbacks.onUpdateHistory) this.callbacks.onUpdateHistory();

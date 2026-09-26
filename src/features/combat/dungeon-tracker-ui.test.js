@@ -49,6 +49,10 @@ vi.mock('./dungeon-tracker-ui-state.js', () => ({
         filterTeam: 'all',
         filterCharacter: 'all',
         hasActiveFilters: () => false,
+        isDungeonFilterManual: false,
+        isTierFilterManual: false,
+        autoScopeToRun: vi.fn(() => false),
+        save: vi.fn(async () => {}),
     },
 }));
 
@@ -435,5 +439,99 @@ describe('the ROI board redraws on a pricing change made elsewhere', () => {
         expect(configListeners.profitCalc_patientTickBuy).toHaveLength(0);
         expect(configListeners.profitCalc_patientTickSell).toHaveLength(0);
         expect(configListeners.profitCalc_ironCowValuation).toHaveLength(0);
+    });
+});
+
+describe('history filters auto-scope to the run being shown', () => {
+    let state;
+
+    /** A stand-in for the real `autoScopeToRun`, so drawHistoryStats sees the effect. */
+    function fakeAutoScope(dungeonName, tier) {
+        if (!dungeonName || tier === null || tier === undefined) return false;
+        const tierStr = String(tier);
+        let changed = false;
+        if (state.filterDungeon !== dungeonName) {
+            state.filterDungeon = dungeonName;
+            changed = true;
+        }
+        if (state.filterTier !== tierStr) {
+            state.filterTier = tierStr;
+            changed = true;
+        }
+        return changed;
+    }
+
+    beforeEach(async () => {
+        state = (await import('./dungeon-tracker-ui-state.js')).default;
+        state.filterDungeon = 'all';
+        state.filterTier = 'all';
+        state.autoScopeToRun.mockReset().mockImplementation(fakeAutoScope);
+    });
+
+    afterEach(() => {
+        state.filterDungeon = 'all';
+        state.filterTier = 'all';
+        state.autoScopeToRun.mockReset().mockReturnValue(false);
+    });
+
+    test('a live run points the header at its own dungeon and tier, not every dungeon ever run', async () => {
+        // A faster run of a different dungeon must not pull this dungeon's
+        // average down once the header is scoped to the run in progress
+        world.runs = [
+            { dungeonName: 'Pirate Cove', tier: 1, duration: 300_000, timestamp: new Date(1).toISOString() },
+            { dungeonName: 'Chimerical Den', tier: 3, duration: 10_000, timestamp: new Date(2).toISOString() },
+        ];
+
+        await ui.update(run(), true);
+
+        expect(state.autoScopeToRun).toHaveBeenCalledWith('Pirate Cove', 1);
+        expect(state.filterDungeon).toBe('Pirate Cove');
+        expect(state.filterTier).toBe('1');
+        expect(text('#mwi-dt-header-runs')).toBe('1');
+        expect(text('#mwi-dt-header-avg')).toBe('05:00');
+    });
+
+    test('a manually-chosen dungeon filter is left alone by the next run start', async () => {
+        state.filterDungeon = 'Chimerical Den';
+        state.isDungeonFilterManual = true;
+        state.autoScopeToRun.mockImplementation((dungeonName, tier) => {
+            if (!dungeonName || tier === null || tier === undefined) return false;
+            let changed = false;
+            // Dungeon is manual — untouched. Tier still auto-scopes.
+            const tierStr = String(tier);
+            if (state.filterTier !== tierStr) {
+                state.filterTier = tierStr;
+                changed = true;
+            }
+            return changed;
+        });
+
+        await ui.update(run(), true);
+
+        expect(state.filterDungeon).toBe('Chimerical Den');
+        state.isDungeonFilterManual = false;
+    });
+
+    test('the page-load provisional card scopes the header before any run tick arrives', () => {
+        world.pending = { dungeonHrid: '/actions/combat/pirate_cove', dungeonName: 'Pirate Cove', tier: 2 };
+
+        ui.dungeonUpdateHandler(null, null);
+
+        expect(state.autoScopeToRun).toHaveBeenCalledWith('Pirate Cove', 2);
+    });
+
+    test('the between-runs card scopes to the run about to start', async () => {
+        world.runs = [];
+        world.pending = {
+            dungeonHrid: '/actions/combat/pirate_cove',
+            dungeonName: 'Pirate Cove',
+            tier: 1,
+            pending: true,
+            betweenRuns: true,
+        };
+
+        ui.dungeonUpdateHandler(null, { dungeonHrid: '/actions/combat/pirate_cove', totalTime: 300_000 });
+
+        await vi.waitFor(() => expect(state.autoScopeToRun).toHaveBeenCalledWith('Pirate Cove', 1));
     });
 });

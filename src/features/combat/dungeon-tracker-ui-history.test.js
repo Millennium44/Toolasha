@@ -13,7 +13,7 @@ import { describe, test, expect, beforeEach, afterEach, vi } from 'vitest';
 
 vi.mock('./dungeon-tracker-storage.js', () => ({
     default: {
-        getAllRuns: async () => [],
+        getAllRuns: vi.fn(async () => []),
         deleteRun: async () => true,
         getTeamKey: (names) => [...names].sort().join(','),
     },
@@ -28,14 +28,18 @@ const {
     buildRunHistoryRows,
     DUNGEON_RUN_CSV_COLUMNS,
 } = await import('./dungeon-tracker-ui-history.js');
+const { default: dungeonTrackerStorage } = await import('./dungeon-tracker-storage.js');
 
 /** A fresh panel state, the shape dungeon-tracker-ui-state.js hands over. */
 function freshState(groupBy = 'team') {
     return {
         groupBy,
         filterDungeon: 'all',
+        filterTier: 'all',
         filterTeam: 'all',
         filterCharacter: 'all',
+        isDungeonFilterManual: false,
+        isTierFilterManual: false,
         expandedGroups: new Set(),
     };
 }
@@ -211,5 +215,68 @@ describe('dungeon group headers', () => {
 
         expect(runList.textContent).toContain('Pirate Cove');
         expect(runList.querySelector('.mwi-dt-player-name')).toBeNull();
+    });
+});
+
+/** A container with the run list plus the three filter dropdowns update() rebuilds. */
+function buildFilterContainer() {
+    const container = document.createElement('div');
+    container.innerHTML = `
+        <div id="mwi-dt-run-list"></div>
+        <select id="mwi-dt-filter-dungeon"><option value="all">All Dungeons</option></select>
+        <select id="mwi-dt-filter-tier"><option value="all">All Tiers</option></select>
+        <select id="mwi-dt-filter-team"><option value="all">All Teams</option></select>
+    `;
+    document.body.appendChild(container);
+    return container;
+}
+
+describe('filter dropdowns and an auto-scoped run with no history yet', () => {
+    afterEach(() => {
+        dungeonTrackerStorage.getAllRuns.mockReset().mockResolvedValue([]);
+    });
+
+    test('an auto-scoped dungeon/tier absent from history keeps its value and gets its own option', async () => {
+        // Only Chimerical Den has ever been run — Pirate Cove T2 is what the
+        // panel just auto-scoped to for a run in progress, its first ever
+        dungeonTrackerStorage.getAllRuns.mockResolvedValue([run('Aster', 'Chimerical Den')]);
+        const state = freshState('team');
+        state.filterDungeon = 'Pirate Cove';
+        state.filterTier = '2';
+        // isDungeonFilterManual / isTierFilterManual stay false — this is what
+        // autoScopeToRun leaves behind, not a dropdown pick
+        const history = new DungeonTrackerUIHistory(state, (ms) => `${ms}ms`);
+        const container = buildFilterContainer();
+
+        await history.update(container);
+
+        expect(state.filterDungeon).toBe('Pirate Cove');
+        expect(state.filterTier).toBe('2');
+        expect(container.querySelector('#mwi-dt-filter-dungeon').value).toBe('Pirate Cove');
+        expect(container.querySelector('#mwi-dt-filter-tier').value).toBe('2');
+        expect(
+            [...container.querySelector('#mwi-dt-filter-dungeon').options].some((o) => o.value === 'Pirate Cove')
+        ).toBe(true);
+        expect([...container.querySelector('#mwi-dt-filter-tier').options].some((o) => o.value === '2')).toBe(true);
+        // No runs match yet — the empty state, not a silent fall-back to 'all'
+        expect(container.querySelector('#mwi-dt-run-list').textContent).toContain('No runs match filters');
+    });
+
+    test('a manually-chosen dungeon/tier absent from history resets to all, as before', async () => {
+        dungeonTrackerStorage.getAllRuns.mockResolvedValue([run('Aster', 'Chimerical Den')]);
+        const state = freshState('team');
+        state.filterDungeon = 'Pirate Cove';
+        state.filterTier = '2';
+        state.isDungeonFilterManual = true;
+        state.isTierFilterManual = true;
+        const history = new DungeonTrackerUIHistory(state, (ms) => `${ms}ms`);
+        const container = buildFilterContainer();
+
+        await history.update(container);
+
+        expect(state.filterDungeon).toBe('all');
+        expect(state.filterTier).toBe('all');
+        expect(container.querySelector('#mwi-dt-filter-dungeon').value).toBe('all');
+        expect(container.querySelector('#mwi-dt-filter-tier').value).toBe('all');
     });
 });
