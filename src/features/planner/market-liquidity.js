@@ -171,7 +171,26 @@ async function measureDailyVolume(itemHrid, enhancementLevel, key, source) {
  *   which is not the same as a measured zero, and must not be read as one.
  */
 export function cachedDailyVolume(itemHrid, enhancementLevel = 0) {
-    return cache.get(`${marketHistoryAPI.currentSource().key}:${itemHrid}:${enhancementLevel}`) || null;
+    return cache.get(volumeKey(marketHistoryAPI.currentSource(), itemHrid, enhancementLevel)) || null;
+}
+
+/**
+ * The cache/pending key for one item under one history source.
+ *
+ * Includes whether pooled history is switched on at all, not only which pool
+ * (mooket I/II) is selected: a lookup started while the setting was on can
+ * still be in flight when the player turns it off, and without this the
+ * answer it settles with would be filed and read back as though it had been
+ * measured with history off — the "nothing is known" case the module doc
+ * describes never actually holding once one real measurement had landed.
+ *
+ * @param {{key: string}} source - `marketHistoryAPI.currentSource()`
+ * @param {string} itemHrid - The item
+ * @param {number} enhancementLevel - Which variant
+ * @returns {string}
+ */
+function volumeKey(source, itemHrid, enhancementLevel) {
+    return `${source.key}:${marketHistoryAPI.enabled}:${itemHrid}:${enhancementLevel}`;
 }
 
 /**
@@ -188,7 +207,7 @@ export async function dailyVolume(itemHrid, enhancementLevel = 0) {
     // has no volume at all, so reusing the other pool's answer on a source
     // switch silently leaves a stale cap in the planner.
     const source = marketHistoryAPI.currentSource();
-    const key = `${source.key}:${itemHrid}:${enhancementLevel}`;
+    const key = volumeKey(source, itemHrid, enhancementLevel);
     const cached = cache.get(key);
     if (cached) return cached;
 
@@ -467,7 +486,7 @@ export async function applyLiquidityLimits(rates) {
     }
 
     bounded.sort((a, b) => (Number(b.goldPerHour) || 0) - (Number(a.goldPerHour) || 0));
-    const sourcePrefix = `${marketHistoryAPI.currentSource().key}:`;
+    const sourcePrefix = `${marketHistoryAPI.currentSource().key}:${marketHistoryAPI.enabled}:`;
     const measured = [...cache.entries()].some(([key, entry]) => key.startsWith(sourcePrefix) && entry.known);
     return { rates: bounded, measured };
 }
