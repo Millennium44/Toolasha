@@ -558,6 +558,21 @@ describe('the plain-text summary', () => {
         expect(out).toContain('2 × Enchanted Chest — 7,400,000');
     });
 
+    test('each drop line is valued at the configured price, the same one the banked figure uses', () => {
+        const out = buildSummaryText(
+            [
+                stats({
+                    // lootList carries the raw ask; the income item carries the configured value
+                    lootList: [{ ...CHEST, itemHrid: '/items/x', itemName: 'Thing', count: 2, totalValue: 1000 }],
+                    incomeItems: [{ itemHrid: '/items/x', totalValue: { value: 850 } }],
+                }),
+            ],
+            'Live Session'
+        );
+        expect(out).toContain('2 × Thing — 850');
+        expect(out).not.toContain('— 1,000');
+    });
+
     test('a player with nothing dropped yet says so rather than showing an empty list', () => {
         const out = buildSummaryText([stats({ lootList: [] })], 'Live Session');
         expect(out).toContain('Nothing dropped yet.');
@@ -623,7 +638,9 @@ describe('the per-character breakdown', () => {
                     itemName: 'Coffee',
                     count: 20,
                     pricePerItem: 100_000,
+                    priceValue: 100_000,
                     totalCost: 2_000_000,
+                    totalCostValue: 2_000_000,
                 },
             ],
             keyBreakdown: [ENTRY_KEY, CHEST_KEY],
@@ -740,7 +757,15 @@ describe('the per-character breakdown', () => {
             consumableCosts: 100_000,
             keyCosts: 0,
             consumableBreakdown: [
-                { itemHrid: '/items/tea', itemName: 'Tea', count: 5, pricePerItem: 20_000, totalCost: 100_000 },
+                {
+                    itemHrid: '/items/tea',
+                    itemName: 'Tea',
+                    count: 5,
+                    pricePerItem: 20_000,
+                    priceValue: 20_000,
+                    totalCost: 100_000,
+                    totalCostValue: 100_000,
+                },
             ],
         };
         partyLootPanel.show();
@@ -790,7 +815,15 @@ describe('the per-character breakdown', () => {
 
     test('an unpriced consumable is shown as unpriced rather than free', () => {
         game.data.players[1].consumableBreakdown = [
-            { itemHrid: '/items/mystery_tea', itemName: 'Mystery Tea', count: 4, pricePerItem: null, totalCost: 0 },
+            {
+                itemHrid: '/items/mystery_tea',
+                itemName: 'Mystery Tea',
+                count: 4,
+                pricePerItem: null,
+                priceValue: null,
+                totalCost: 0,
+                totalCostValue: 0,
+            },
         ];
         partyLootPanel.show();
         nameHeading('Millennium44').click();
@@ -802,7 +835,15 @@ describe('the per-character breakdown', () => {
     test('an estimated fractional consumable count is shown rounded with ≈, the cost left exact', () => {
         // Live: "Spaceberry Cake 3.676" — the count is a rate-based estimate
         game.data.players[1].consumableBreakdown = [
-            { itemHrid: '/items/cake', itemName: 'Spaceberry Cake', count: 3.676, pricePerItem: 166, totalCost: 610 },
+            {
+                itemHrid: '/items/cake',
+                itemName: 'Spaceberry Cake',
+                count: 3.676,
+                pricePerItem: 166,
+                priceValue: 166,
+                totalCost: 610,
+                totalCostValue: 610,
+            },
         ];
         partyLootPanel.show();
         nameHeading('Millennium44').click();

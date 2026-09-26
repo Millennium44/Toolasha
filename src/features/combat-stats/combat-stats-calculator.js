@@ -119,7 +119,6 @@ function valueOfLoot(loot) {
     // Other items: market price, or an Iron Cow character's own valuation
     const ironCow = ironCowBook(loot.itemHrid);
     const prices = ironCow ?? marketAPI.getPrice(loot.itemHrid);
-    if (!prices) return { ask: 0, bid: 0, value: 0 };
 
     // Drops are sold on the market, so the sale tax comes off what they fetch
     // when the reader has asked for net income. Coin is handled above (face
@@ -138,6 +137,9 @@ function valueOfLoot(loot) {
     const configuredPrice = getItemPrice(loot.itemHrid, { context: 'profit', side: 'sell' });
     const value = typeof configuredPrice === 'number' && configuredPrice >= 0 ? configuredPrice * itemCount * mult : 0;
 
+    // Resolved apart from the raw book: an override or the official value map
+    // can price a drop the marketplace snapshot has no entry for
+    if (!prices) return { ask: 0, bid: 0, value };
     return { ask: prices.ask * itemCount * mult, bid: prices.bid * itemCount * mult, value };
 }
 
