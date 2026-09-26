@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Credits
+
+- The GreasyFork description now credits baozhi & SukiSukiDaiSuki's Trade Volume Display, the source of the marketplace's 1d/3d/5d trade-stats table.
+
 ### Tidier chest key labels
 
 - Chest keys show their fragment zones compactly (3·4·5·6) in the top-left corner instead of running into the stack count along the bottom.

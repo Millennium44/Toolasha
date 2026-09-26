@@ -78,7 +78,7 @@ game:
   quota handling, per-character backups that say whose they are.
 - Hundreds of bug fixes and over a hundred smaller tweaks to how existing
   features look and behave, over the upstream base — and a test suite grown from
-  ~2,300 to over 8,500 tests.
+  ~2,300 to nearly 22,000 tests.
 
 ## Credits
 
@@ -103,6 +103,11 @@ it can be seen:
   [market history viewer](https://greasyfork.org/scripts/531109) (MIT) whose API
   usage, volume-split estimate and price panel shape this fork's market history
   is built on.
+- **baozhi & SukiSukiDaiSuki** — authors of
+  [交易量显示 (Trade Volume Display)](https://greasyfork.org/en/scripts/570243)
+  (CC-BY-NC-SA-4.0), from which the marketplace's 1d/3d/5d trade-stats table is
+  ported: its volume-weighted average and median, price-tier snapping and
+  buy/sell volume split.
 - **jigglymoose** — author of
   [JIGS](https://greasyfork.org/en/scripts/550346-jigs-jigglymoose-s-intelligent-gear-simulator),
   for several of the ideas behind the upgrade advisor.
