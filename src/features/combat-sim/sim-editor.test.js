@@ -849,6 +849,26 @@ describe('the loadout selection is remembered', () => {
         expect(label).not.toBe('Bruteforce');
         expect(label).toContain('Bruteforce');
     });
+
+    test('an edit made before selecting a loadout, to a field it does not replace, still shows', async () => {
+        // The loadout replaces attack (standing in for gear); defense is a
+        // what-if edit the loadout leaves alone, so it must not be absorbed
+        // into the baseline the label diffs against
+        bridge.snapshots = [{ name: 'Bruteforce', actionTypeHrid: '/action_types/combat' }];
+        bridge.mutate = (dto) => {
+            dto.attackLevel = 999;
+        };
+        const { el, editor } = await openEditor();
+
+        editor.getEditedDTOs().player1.defenseLevel = 7;
+
+        const select = el.querySelector('#mwi-csim-loadout-select');
+        select.value = 'Bruteforce';
+        select.dispatchEvent(new Event('change'));
+        await Promise.resolve();
+
+        expect(editor.generateSimLabel()).toContain('Defense');
+    });
 });
 
 describe('achievements section', () => {
