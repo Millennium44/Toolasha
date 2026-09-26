@@ -308,5 +308,17 @@ describe('filter dropdowns and an auto-scoped run with no history yet', () => {
 
         expect(state.isDungeonFilterManual).toBe(false);
         expect(state.isTierFilterManual).toBe(false);
+        // The caller is told, once, so it can redraw and save what read the old filter
+        expect(history.consumeFilterReset()).toBe(true);
+        expect(history.consumeFilterReset()).toBe(false);
+    });
+
+    test('an update that resets nothing reports no reset', async () => {
+        dungeonTrackerStorage.getAllRuns.mockResolvedValue([run('Aster', 'Chimerical Den')]);
+        const history = new DungeonTrackerUIHistory(freshState('team'), (ms) => `${ms}ms`);
+
+        await history.update(buildFilterContainer());
+
+        expect(history.consumeFilterReset()).toBe(false);
     });
 });
