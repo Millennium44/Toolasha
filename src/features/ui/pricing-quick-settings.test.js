@@ -37,6 +37,7 @@ beforeEach(() => {
         profitCalc_patientTickSell: false,
         profitCalc_pricingNaming: false,
         profitCalc_keyPricingMode: 'ask',
+        ironCow_enabled: false,
     };
     live.writes = [];
 });
@@ -136,5 +137,77 @@ describe('createPricingQuickSettings', () => {
         for (const select of selectsOf(element)) {
             expect(select.style.maxWidth).toBe('90px');
         }
+    });
+});
+
+describe('under Iron Cow mode', () => {
+    // Iron Cow mode owns pricing outright (`pricingRowsLocked()` for Buy/Sell,
+    // `profitCalc_keyPricingMode` is itself in IRON_COW_SETTINGS for Keys) — a
+    // quick-settings row must not let a click, a keyboard change, or a script
+    // write around that lock, and must look locked so a click is not the
+    // first the maintainer hears of it.
+
+    test('all three selects render disabled, with a title naming Iron Cow mode', () => {
+        live.values.ironCow_enabled = true;
+        const { element } = createPricingQuickSettings();
+
+        for (const select of selectsOf(element)) {
+            expect(select.disabled).toBe(true);
+            expect(select.title).toMatch(/Iron Cow/i);
+        }
+    });
+
+    test('a change event on any of the three selects writes nothing', () => {
+        live.values.ironCow_enabled = true;
+        const onChange = vi.fn();
+        const { element } = createPricingQuickSettings({ onChange });
+        const [buySelect, sellSelect, keySelect] = selectsOf(element);
+
+        // A disabled select does not fire a user click in a real browser, but a
+        // script (or a stray keyboard event) can still dispatch one — the
+        // handlers themselves have to refuse the write, not just the UI
+        buySelect.value = 'patient';
+        buySelect.dispatchEvent(new Event('change'));
+        sellSelect.value = 'patient';
+        sellSelect.dispatchEvent(new Event('change'));
+        keySelect.value = 'craft';
+        keySelect.dispatchEvent(new Event('change'));
+
+        expect(live.writes).toEqual([]);
+        expect(live.values.profitCalc_pricingMode).toBe('hybrid');
+        expect(live.values.profitCalc_keyPricingMode).toBe('ask');
+        expect(onChange).not.toHaveBeenCalled();
+    });
+
+    test('sync() re-locks the selects when the mode turns on after the row was built', () => {
+        const { element, sync } = createPricingQuickSettings();
+        const [buySelect, sellSelect, keySelect] = selectsOf(element);
+        expect(buySelect.disabled).toBe(false);
+
+        live.values.ironCow_enabled = true;
+        sync();
+
+        expect(buySelect.disabled).toBe(true);
+        expect(sellSelect.disabled).toBe(true);
+        expect(keySelect.disabled).toBe(true);
+    });
+
+    test('sync() unlocks the selects again once the mode turns back off', () => {
+        live.values.ironCow_enabled = true;
+        const { element, sync } = createPricingQuickSettings();
+        const [buySelect] = selectsOf(element);
+        expect(buySelect.disabled).toBe(true);
+
+        live.values.ironCow_enabled = false;
+        sync();
+
+        expect(buySelect.disabled).toBe(false);
+        expect(buySelect.title).not.toMatch(/Iron Cow/i);
+    });
+
+    test('IRON_COW_ENABLED_SETTING is in the tooltip-only key list, so a host resyncs on the toggle', async () => {
+        const { PRICING_QUICK_SETTINGS_TOOLTIP_KEYS } = await import('./pricing-quick-settings.js');
+        const { IRON_COW_ENABLED_SETTING } = await import('../settings/iron-cow-mode.js');
+        expect(PRICING_QUICK_SETTINGS_TOOLTIP_KEYS).toContain(IRON_COW_ENABLED_SETTING);
     });
 });
