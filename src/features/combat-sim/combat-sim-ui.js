@@ -5623,7 +5623,9 @@ class CombatSimUI {
         // beside its progress.
         // Not dropped, though: a run's revenue is captured before its final draw awaits,
         // so a change landing in that window is replayed once the run lets go.
-        if (this._runStarting || this.isRunning) {
+        // Only once running: during start-up the old results are still shown (they are
+        // hidden when the run begins), and start-up can bail without ever flushing.
+        if (this.isRunning) {
             this._repricePending = true;
             return;
         }
