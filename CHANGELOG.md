@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Dungeon token spend planner
+
+- A "Plan spend" button on the Shop's Dungeon tab plans how to spend your tokens for the most gold, capping each item at a share of its traded volume (default 25% of 3 days) so a big buy doesn't flood a thin market; clicking a planned row fills the quantity in the game's buy window, and you press Buy.
+
 ### View Loadout in the sim and the trial checker (test server)
 
 - On game builds with the new View Loadout (test server for now), every loadout you open is remembered: the combat sim uses party members' actual party loadouts, the loadout window gets an "Open in sim" button, and the Guild Trials ability checker reads signed-up players' trial loadouts. Fetch buttons request one player per click; nothing changes on the live server until it has View Loadout.
