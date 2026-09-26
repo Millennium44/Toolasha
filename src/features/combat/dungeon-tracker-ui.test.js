@@ -176,6 +176,24 @@ describe('the provisional card', () => {
         ui.dungeonUpdateHandler(null, null);
         expect(ui.container.style.display).toBe('none');
     });
+
+    test('a freshly opened panel mid-run still fills in Last/Avg/Runs from stored history', async () => {
+        // Regression: showPending() auto-scoped the filters to the pending run but
+        // never refreshed the filter-dependent stats/history, so a panel opened
+        // mid-run (page load, or the panel reopened) sat at the placeholder
+        // ('--:--', 0 runs) until the next 1 Hz tick redrew it.
+        world.runs = [{ dungeonName: 'Pirate Cove', tier: 1, duration: 300_000, timestamp: new Date().toISOString() }];
+        world.pending = { dungeonHrid: '/actions/combat/pirate_cove', dungeonName: 'Pirate Cove', tier: 1 };
+
+        ui.dungeonUpdateHandler(null, null);
+
+        // Sync fields land immediately, same as before this fix
+        expect(text('#mwi-dt-dungeon-name')).toBe('Pirate Cove (T1)');
+        // History/stats land once drawHistoryStats' own read resolves
+        await vi.waitFor(() => expect(text('#mwi-dt-header-last')).toBe('05:00'));
+        expect(text('#mwi-dt-header-avg')).toBe('05:00');
+        expect(text('#mwi-dt-header-runs')).toBe('1');
+    });
 });
 
 describe('a run joined part-way through', () => {

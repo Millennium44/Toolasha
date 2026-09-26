@@ -553,14 +553,18 @@ class DungeonTrackerUI {
      * in place of the wave counter says why.
      *
      * @param {{dungeonName: string, tier: number|null}} pending - From `getPendingDungeon`
+     * @returns {Promise<void>}
      */
-    showPending(pending) {
+    async showPending(pending) {
         if (!this.container || !pending) return;
 
         if (pending.betweenRuns) {
-            this.showBetweenRuns(pending);
+            await this.showBetweenRuns(pending);
             return;
         }
+
+        const ticket = captureOwner(this);
+        const character = currentCharacter();
 
         // A dungeon in progress before tracking could see its first wave still
         // gets the header scoped to it, the same as a run being drawn live
@@ -596,6 +600,19 @@ class DungeonTrackerUI {
 
         const paceElement = this.container.querySelector('#mwi-dt-pace');
         if (paceElement) paceElement.style.display = 'none';
+
+        // The card above is blanked for the run itself, but Last/Avg/Runs and the
+        // history list are not: a panel opened mid-run (page load, or the panel
+        // reopened) used to leave them at their pre-render placeholder ('--:--',
+        // 0 runs, empty list) until the next 1 Hz tick redrew them.
+        try {
+            const drawn = await this.drawHistoryStats(ticket, character);
+            if (!drawn) return;
+            await this.updateRunHistory();
+            await this.updateRoiBoard();
+        } catch (error) {
+            console.error('[Toolasha Dungeon Tracker UI] Pending-run history failed to draw:', error);
+        }
     }
 
     /**
