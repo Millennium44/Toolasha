@@ -448,7 +448,7 @@ class DungeonShopPlanner {
 
         let tab = null;
         try {
-            tab = await openShopTab(DUNGEON_TAB_LABEL);
+            tab = await openShopTab(DUNGEON_TAB_LABEL, () => !this.initialized || this.generation !== generation);
         } catch (error) {
             console.error('[DungeonShopPlanner] Opening the shop failed:', error);
         }
