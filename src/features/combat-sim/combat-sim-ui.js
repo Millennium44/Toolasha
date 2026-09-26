@@ -580,6 +580,17 @@ export function upgradeCostCell(result) {
         };
     }
     if (cost === 0) {
+        // Zero because an outlier bid on the level being left was capped at the
+        // purchase, not because the trade is known to cost nothing
+        if (result?.costDetail?.creditCapped) {
+            return {
+                text: 'free',
+                color: '#ff9800',
+                title:
+                    `Resale credit capped at the purchase: the current item's bid of ` +
+                    `${formatKMB(result.costDetail.rawCredit)} looks out of line with the market.`,
+            };
+        }
         return { text: 'free', color: '#4caf50', title: 'Costs nothing up front.' };
     }
     return { text: formatKMB(cost), color: null, title: '' };
@@ -8804,6 +8815,16 @@ class CombatSimUI {
             const gross = detail.gross == null ? 'no price' : formatKMB(detail.gross);
             parts.push(
                 `<span style="color:#888;">Buys ${gross}, resale credit ${formatKMB(detail.credit || 0)}.</span>`
+            );
+        }
+
+        // A bid on the level being left that beats the ask for the level being
+        // bought is an outlier order, not a price; the credit was capped at the
+        // purchase so the row reads as free rather than as a windfall
+        if (detail?.creditCapped) {
+            parts.push(
+                `<span style="color:#ff9800;">Resale credit capped at the purchase: the current item's bid of ` +
+                    `${formatKMB(detail.rawCredit)} looks out of line with the market.</span>`
             );
         }
 

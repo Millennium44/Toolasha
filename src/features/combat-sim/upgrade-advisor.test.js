@@ -4000,6 +4000,42 @@ describe('explainUpgradeCost', () => {
         const detail = explainUpgradeCost(candidate, costGameData());
         expect(detail).toMatchObject({ gross: 5_000_000, credit: 2_000_000, net: 3_000_000, source: 'market' });
         expect(detail.net).toBe(calculateUpgradeCost(candidate, costGameData()));
+        expect(detail.creditCapped).toBe(false);
+    });
+
+    test('an outlier bid on the current level is capped at the purchase, never paying the row', () => {
+        // Philosopher's Necklace +10 → +12 on the test server, 2026-09-26: the
+        // +12 asked 108M while a +10 bid sat at 312B. Crediting that bid ranked
+        // the row as handing back 311.9B and put it first in every ladder
+        getItemPrices.mockImplementation((_hrid, level) =>
+            level === 12 ? { ask: 108_000_000, bid: 100_000_000 } : { ask: 400_000_000_000, bid: 312_000_000_000 }
+        );
+        const candidate = {
+            type: 'enhancement',
+            slot: '/item_locations/neck',
+            currentHrid: '/items/philosophers_necklace',
+            currentLevel: 10,
+            upgradeHrid: '/items/philosophers_necklace',
+            upgradeLevel: 12,
+        };
+
+        const cost = calculateUpgradeCost(candidate, costGameData());
+        const detail = explainUpgradeCost(candidate, costGameData());
+        expect(cost).toBe(0);
+        expect(detail).toMatchObject({
+            gross: 108_000_000,
+            credit: 108_000_000,
+            net: 0,
+            source: 'market',
+            creditApplied: true,
+            creditCapped: true,
+            rawCredit: 312_000_000_000,
+        });
+        expect(detail.buys).toEqual([expect.objectContaining({ enhancementLevel: 12, price: 108_000_000 })]);
+        // The line says what was credited, and keeps the bid it was capped from
+        expect(detail.credits).toEqual([
+            expect.objectContaining({ enhancementLevel: 10, price: 108_000_000, rawPrice: 312_000_000_000 }),
+        ]);
     });
 
     test('itemises every purchase in a multi-slot swap', () => {
@@ -5298,7 +5334,10 @@ describe('an upgrade that pays for itself', () => {
         expect(cost).toBe(-40_000_000);
     });
 
-    test('an enhancement whose target level sells for more than the current one, too', () => {
+    // Not an enhancement, though: the same item at a lower level outbidding the
+    // higher level's ask is an outlier order, and its credit is capped at the
+    // purchase — see 'an outlier bid on the current level is capped…'
+    test('an enhancement whose current level outbids the target ask is capped at free, not refunded', () => {
         getItemPrices.mockImplementation((hrid, level) =>
             level === 10 ? { ask: 1_000_000, bid: 900_000 } : { ask: 5_000_000, bid: 4_000_000 }
         );
@@ -5314,7 +5353,7 @@ describe('an upgrade that pays for itself', () => {
             buildGameData()
         );
 
-        expect(cost).toBe(1_000_000 - 4_000_000);
+        expect(cost).toBe(0);
     });
 
     test('the budget planner spends it rather than discarding it as malformed', () => {

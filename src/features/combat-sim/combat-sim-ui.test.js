@@ -3743,6 +3743,17 @@ describe('what the Cost cell is allowed to say', () => {
         expect(upgradeCostCell({ cost: 0 }).text).toBe('free');
     });
 
+    test('a zero that comes from a capped outlier bid says so', () => {
+        const cell = upgradeCostCell({
+            cost: 0,
+            costDetail: { gross: 108_000_000, credit: 108_000_000, creditCapped: true, rawCredit: 312_000_000_000 },
+        });
+
+        expect(cell.text).toBe('free');
+        expect(cell.title).toContain('capped');
+        expect(cell.title).toContain('312.0B');
+    });
+
     test('the basis tag names which kind of number it is', () => {
         expect(costSourceTagHtml('sim')).toContain('sim');
         expect(costSourceTagHtml('market')).toContain('mkt');
