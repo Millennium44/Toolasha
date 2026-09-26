@@ -923,13 +923,42 @@ describe('the selector canary', () => {
         test('a cross-component gate: chat input drawn, messages unfindable', () => {
             // The chat panel (Chat_) survived while the message class
             // (ChatMessage_) renamed — exactly the wholesale-rename slice the
-            // dungeon tracker and profile links would go dark on.
+            // dungeon tracker and profile links would go dark on. The history
+            // holds a real (renamed) message, not just Toolasha's own buffer,
+            // so the gate is armed.
             allAnchorsPresent();
-            document.body.innerHTML += '<div class="Chat_chatInputContainer__2z5cJ"></div>';
+            document.body.innerHTML +=
+                '<div class="Chat_chatInputContainer__2z5cJ"></div>' +
+                '<div class="ChatHistory_chatHistory__3xWq2"><div class="Renamed_message__1Ug3T">hi</div></div>';
 
             const failures = canary();
             expect(failures).toHaveLength(1);
             expect(failures[0].key).toBe('canaryChatMessage');
+        });
+
+        test('a fresh channel with no messages yet is not a failure', () => {
+            // A new character's Party channel: the input exists, the history
+            // exists, but the only child is Toolasha's own injected buffer —
+            // there is nothing to render yet, which is not evidence anything
+            // broke.
+            allAnchorsPresent();
+            document.body.innerHTML +=
+                '<div class="Chat_chatInputContainer__2z5cJ"></div>' +
+                '<div class="ChatHistory_chatHistory__3xWq2"><div class="mwi-history-buffer"></div></div>';
+
+            expect(canary()).toEqual([]);
+        });
+
+        test('a real message alongside the buffer keeps the canary healthy', () => {
+            allAnchorsPresent();
+            document.body.innerHTML +=
+                '<div class="Chat_chatInputContainer__2z5cJ"></div>' +
+                '<div class="ChatHistory_chatHistory__3xWq2">' +
+                '<div class="mwi-history-buffer"></div>' +
+                '<div class="ChatMessage_chatMessage__1Ug3T">hi</div>' +
+                '</div>';
+
+            expect(canary()).toEqual([]);
         });
 
         test('the inventory pair watches each other, so either class renaming alone is caught', () => {
