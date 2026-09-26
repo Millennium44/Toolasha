@@ -24,29 +24,41 @@ export const DUNGEON_TOKEN_HRIDS = [
  * Every Dungeon-shop item bought with one token.
  *
  * @param {string} tokenHrid - A dungeon token
- * @returns {Array<{itemHrid: string, name: string, cost: number, askPrice: number|null, goldPerToken: number}>}
- *   In shop order. `askPrice` is null for an item with no ask (untradeable or an
- *   empty book), and its `goldPerToken` is 0.
+ * @returns {Array<{itemHrid: string, name: string, cost: number, outputCount: number, askPrice: number|null,
+ *   goldPerToken: number}>} In shop order. `cost` is tokens per purchase, `outputCount` units per purchase,
+ *   `askPrice` per unit — null for an item with no ask (untradeable or an empty book), with `goldPerToken` 0.
  */
 export function dungeonShopOffers(tokenHrid) {
     const gameData = dataManager.getInitClientData();
     if (!gameData?.shopItemDetailMap || !gameData?.itemDetailMap) return [];
 
-    return Object.values(gameData.shopItemDetailMap)
-        .filter((shopItem) => shopItem?.costs?.[0]?.itemHrid === tokenHrid && shopItem.costs[0].count > 0)
-        .sort((a, b) => (a.sortIndex ?? 0) - (b.sortIndex ?? 0))
-        .map((shopItem) => {
-            const cost = shopItem.costs[0].count;
-            const ask = getItemPrices(shopItem.itemHrid, 0)?.ask;
-            const askPrice = ask > 0 ? ask : null;
-            return {
-                itemHrid: shopItem.itemHrid,
-                name: gameData.itemDetailMap[shopItem.itemHrid]?.name || 'Unknown Item',
-                cost,
-                askPrice,
-                goldPerToken: askPrice ? askPrice / cost : 0,
-            };
-        });
+    return (
+        Object.values(gameData.shopItemDetailMap)
+            // The token may sit anywhere in `costs`; a line that also asks for another
+            // currency is left out, as `calculateDungeonTokenValue` does, since tokens
+            // alone cannot price it
+            .filter((shopItem) => {
+                const costs = shopItem?.costs || [];
+                const token = costs.find((cost) => cost?.itemHrid === tokenHrid);
+                return token?.count > 0 && costs.length === 1;
+            })
+            .sort((a, b) => (a.sortIndex ?? 0) - (b.sortIndex ?? 0))
+            .map((shopItem) => {
+                const cost = shopItem.costs[0].count;
+                // One purchase can hand over several units; values and volume are per unit
+                const outputCount = shopItem.outputCount > 0 ? shopItem.outputCount : 1;
+                const ask = getItemPrices(shopItem.itemHrid, 0)?.ask;
+                const askPrice = ask > 0 ? ask : null;
+                return {
+                    itemHrid: shopItem.itemHrid,
+                    name: gameData.itemDetailMap[shopItem.itemHrid]?.name || 'Unknown Item',
+                    cost,
+                    outputCount,
+                    askPrice,
+                    goldPerToken: askPrice ? (askPrice * outputCount) / cost : 0,
+                };
+            })
+    );
 }
 
 /**

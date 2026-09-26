@@ -42,9 +42,9 @@ export function volumeCap(volume, { days, sharePercent, includeUnmeasured = fals
  * Allocate tokens across the shop's items.
  *
  * @param {Object} input
- * @param {Array<{itemHrid: string, name: string, cost: number, netValue: number|null}>} input.offers -
- *   What the shop sells for this token; `netValue` is one unit's sale value after
- *   market tax, null when the item has no price
+ * @param {Array<{itemHrid: string, name: string, cost: number, outputCount?: number, netValue: number|null}>}
+ *   input.offers - What the shop sells for this token, per purchase: `cost` tokens buys `outputCount` units
+ *   (default 1), worth `netValue` after market tax in all, null when the item has no price
  * @param {number} input.tokens - Tokens held
  * @param {Object<string, {cap: number, measured: boolean}>} input.caps - Per-item cap, by hrid;
  *   an item with no entry is treated as unmeasured with a cap of 0
@@ -92,12 +92,15 @@ export function planTokenSpend({ offers, tokens, caps }) {
             return row;
         }
 
+        // `cap` counts units sold; a purchase that yields several units uses up that many
+        const perPurchase = offer.outputCount > 0 ? offer.outputCount : 1;
+        const purchaseCap = Math.floor(capInfo.cap / perPurchase);
         const affordable = Math.floor(remaining / offer.cost);
-        const quantity = Math.max(0, Math.min(affordable, capInfo.cap));
+        const quantity = Math.max(0, Math.min(affordable, purchaseCap));
         row.quantity = quantity;
         row.tokens = quantity * offer.cost;
         row.gold = quantity * offer.netValue;
-        row.reason = quantity >= capInfo.cap ? 'volume' : quantity >= affordable ? 'tokens' : null;
+        row.reason = quantity >= purchaseCap ? 'volume' : quantity >= affordable ? 'tokens' : null;
         remaining -= row.tokens;
         gold += row.gold;
         return row;

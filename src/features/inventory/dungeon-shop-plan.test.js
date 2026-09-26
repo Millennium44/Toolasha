@@ -44,6 +44,19 @@ describe('volumeCap', () => {
 });
 
 describe('planTokenSpend', () => {
+    test('a purchase that yields several units counts them all against the volume cap', () => {
+        // 10 units a purchase, 25 units sellable: two purchases, not twenty-five
+        const offers = [{ itemHrid: '/items/x', name: 'X', cost: 1, outputCount: 10, netValue: 100 }];
+        const plan = planTokenSpend({
+            offers,
+            tokens: 1000,
+            caps: { '/items/x': { cap: 25, measured: true } },
+        });
+
+        expect(plan.rows[0].quantity).toBe(2);
+        expect(plan.rows[0].reason).toBe('volume');
+    });
+
     const allCaps = (cap) => Object.fromEntries(OFFERS.map((o) => [o.itemHrid, { cap, measured: true }]));
 
     test('spends greedily by gold per token, in whole items', () => {
