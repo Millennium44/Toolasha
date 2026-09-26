@@ -27,8 +27,12 @@ vi.mock('../../core/config.js', () => ({
     },
 }));
 
-const { createPricingQuickSettings, KEY_PRICING_SETTING, PRICING_QUICK_SETTINGS_KEYS } =
-    await import('./pricing-quick-settings.js');
+const {
+    createPricingQuickSettings,
+    KEY_PRICING_SETTING,
+    PRICING_QUICK_SETTINGS_KEYS,
+    PRICING_QUICK_SETTINGS_TOOLTIP_KEYS,
+} = await import('./pricing-quick-settings.js');
 
 beforeEach(() => {
     live.values = {
@@ -120,16 +124,17 @@ describe('createPricingQuickSettings', () => {
         expect(keySelect.value).toBe('bid');
     });
 
-    test('lists every setting the row shows, for a host to subscribe to', () => {
+    test('lists every setting that prices, for a host to re-price on', () => {
         expect([...PRICING_QUICK_SETTINGS_KEYS].sort()).toEqual(
             [
                 'profitCalc_patientTickBuy',
                 'profitCalc_patientTickSell',
                 'profitCalc_pricingMode',
-                'profitCalc_pricingNaming',
                 'profitCalc_keyPricingMode',
             ].sort()
         );
+        // Naming only relabels the options: resync, never re-price
+        expect(PRICING_QUICK_SETTINGS_TOOLTIP_KEYS).toContain('profitCalc_pricingNaming');
     });
 
     test('carries the given style on all three selects', () => {

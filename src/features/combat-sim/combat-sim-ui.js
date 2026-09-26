@@ -4698,6 +4698,7 @@ class CombatSimUI {
             clearInterval(elapsedTimer);
             if (this._isCurrentRun(ownerId, startToken)) {
                 this.isRunning = false;
+                this._flushPendingReprice();
                 runBtn.disabled = false;
                 runBtn.style.opacity = '1';
                 runBtn.style.cursor = 'pointer';
@@ -5198,6 +5199,7 @@ class CombatSimUI {
             clearInterval(elapsedTimer);
             if (this._isCurrentRun(ownerId, startToken)) {
                 this.isRunning = false;
+                this._flushPendingReprice();
                 this._resetRunButton(runBtn);
                 progressContainer.style.display = 'none';
             }
@@ -5456,6 +5458,7 @@ class CombatSimUI {
             clearInterval(elapsedTimer);
             if (this._isCurrentRun(ownerId, startToken)) {
                 this.isRunning = false;
+                this._flushPendingReprice();
                 this._resetRunButton(runBtn);
                 progressContainer.style.display = 'none';
             }
@@ -5577,6 +5580,17 @@ class CombatSimUI {
     }
 
     /**
+     * Replay a pricing change that arrived while a run held the results, now the
+     * run has drawn. Deferred a tick so it lands after the run's own final draw.
+     * @private
+     */
+    _flushPendingReprice() {
+        if (!this._repricePending) return;
+        this._repricePending = false;
+        this._scheduleReprice();
+    }
+
+    /**
      * Re-price whatever is already on screen, without re-running the simulation.
      *
      * `_displayResults` recomputes revenue/expenses/profit from `simResult`
@@ -5601,8 +5615,13 @@ class CombatSimUI {
      */
     _redisplayLastResults() {
         // A run in progress has hidden the old results; redrawing them would show them
-        // beside its progress. The run draws with the current pricing when it finishes.
-        if (this._runStarting || this.isRunning) return;
+        // beside its progress.
+        // Not dropped, though: a run's revenue is captured before its final draw awaits,
+        // so a change landing in that window is replayed once the run lets go.
+        if (this._runStarting || this.isRunning) {
+            this._repricePending = true;
+            return;
+        }
         if (this._activeResultKind === 'allZones') {
             this._repriceAllZonesResults();
             return;

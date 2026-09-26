@@ -33,6 +33,9 @@ import {
     syncPricingSideSelect,
 } from '../../utils/pricing-side-select.js';
 
+/** Relabels the Buy/Sell options (Ask/Bid vs Instant/Patient) and prices nothing */
+const PRICING_NAMING_SETTING_KEY = 'profitCalc_pricingNaming';
+
 /** The stored setting the Key dropdown is a view over */
 export const KEY_PRICING_SETTING = 'profitCalc_keyPricingMode';
 
@@ -42,7 +45,11 @@ export const KEY_PRICING_SETTING = 'profitCalc_keyPricingMode';
  * channel) to stay in sync with changes made elsewhere — the main settings
  * panel, or another copy of this same control on another panel.
  */
-export const PRICING_QUICK_SETTINGS_KEYS = Object.freeze([...PRICING_SIDE_SETTING_KEYS, KEY_PRICING_SETTING]);
+export const PRICING_QUICK_SETTINGS_KEYS = Object.freeze([
+    // The naming setting only relabels the options; it is in the sync-only list below
+    ...PRICING_SIDE_SETTING_KEYS.filter((key) => key !== PRICING_NAMING_SETTING_KEY),
+    KEY_PRICING_SETTING,
+]);
 
 /**
  * Settings that move only a dropdown's tooltip/enabled look, not what it shows
@@ -53,6 +60,7 @@ export const PRICING_QUICK_SETTINGS_KEYS = Object.freeze([...PRICING_SIDE_SETTIN
  */
 export const PRICING_QUICK_SETTINGS_TOOLTIP_KEYS = Object.freeze([
     ...PRICING_SIDE_TOOLTIP_SETTING_KEYS,
+    PRICING_NAMING_SETTING_KEY,
     IRON_COW_ENABLED_SETTING,
 ]);
 
