@@ -6905,6 +6905,8 @@ class CombatSimUI {
             config.getSettingValue('profitCalc_pricingMode', 'hybrid'),
             config.getSettingValue('profitCalc_patientTickBuy', false) === true,
             config.getSettingValue('profitCalc_patientTickSell', false) === true,
+            // Dungeon key costs follow their own setting, not the pricing mode
+            config.getSettingValue('profitCalc_keyPricingMode', 'ask'),
         ].join('|');
         for (const entry of this._simHistory) {
             if (!entry.metrics || entry.metricsTab !== activeTab || entry.metricsPricing !== pricing) {
