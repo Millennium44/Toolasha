@@ -172,11 +172,16 @@ class DungeonShopPlanner {
     }
 
     /**
-     * Forget measured volumes when the price-history source changes: mooket I has no
-     * volume at all, so a cap measured from mooket II must not outlive the switch.
+     * Forget measured volumes when the price-history source changes or pooled history
+     * is turned on or off: mooket I has no volume at all, and nothing is measured while
+     * pooled history is off, so a cap from before the switch must not outlive it.
      */
     syncVolumeSource() {
-        const source = config.getSetting('market_historySource') ?? null;
+        // Whether pooled history is on counts too: measured while it was off, every
+        // item came back unknown
+        const source = `${config.getSetting('market_historySource') ?? ''}|${Boolean(
+            config.getSetting('market_pooledHistory')
+        )}`;
         if (source === this.volumesSource) return;
         this.volumesSource = source;
         this.volumes.clear();

@@ -146,7 +146,11 @@ async function measureDailyVolume(itemHrid, enhancementLevel, key, source) {
         console.error(`[MarketLiquidity] Reading the history for ${itemHrid} failed:`, error);
     }
 
-    cache.set(key, answer);
+    // Only a measurement is kept. An empty answer from a source that does carry volume
+    // usually means pooled history was off or the host was unreachable; caching it
+    // would outlive turning history on. The history API's own cool-down keeps a retry
+    // cheap.
+    if (answer.known) cache.set(key, answer);
     return answer;
 }
 
