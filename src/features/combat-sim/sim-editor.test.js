@@ -115,12 +115,13 @@ vi.mock('../../utils/bundle-bridge.js', () => ({
 }));
 
 // The game's View Loadout: whether this build has it, and what a fetch answers
-const viewLoadout = vi.hoisted(() => ({ available: false, fetches: [], result: null }));
+const viewLoadout = vi.hoisted(() => ({ available: false, fetches: [], result: null, captured: {} }));
 vi.mock('../../utils/view-loadout.js', () => ({
     VIEW_LOADOUT_CONTEXT: { Party: 'party', GuildTrial: 'guild_trial' },
     isViewLoadoutAvailable: () => viewLoadout.available,
-    fetchLoadouts: async (members, context, kind) => {
-        viewLoadout.fetches.push({ members, context, kind });
+    getLoadout: (id, context) => (context === 'party' ? (viewLoadout.captured[id] ?? null) : null),
+    fetchLoadout: async (member, context, kind) => {
+        viewLoadout.fetches.push({ member, context, kind });
         return viewLoadout.result;
     },
 }));
@@ -158,6 +159,7 @@ beforeEach(() => {
     viewLoadout.available = false;
     viewLoadout.fetches = [];
     viewLoadout.result = null;
+    viewLoadout.captured = {};
     bridge.snapshots = [];
     bridge.applied = [];
     settings.values.clear();
@@ -1113,13 +1115,14 @@ describe('guild shrines', () => {
     });
 });
 
-describe('Fetch party loadouts', () => {
-    const FETCH_BTN = '[data-fetch-loadouts]';
+describe('Fetch a party loadout', () => {
+    const FETCH_BTN = '[data-fetch-loadout]';
 
     beforeEach(() => {
         game.battleParty = [
             { characterID: 'me', characterName: 'Milkman' },
             { characterID: 'a', characterName: 'Ally' },
+            { characterID: 'b', characterName: 'Buddy' },
         ];
     });
 
@@ -1129,17 +1132,14 @@ describe('Fetch party loadouts', () => {
         await editor.initEditor();
 
         expect(el.querySelector(FETCH_BTN)).toBeNull();
-        expect(await editor.fetchPartyLoadouts()).toBeNull();
+        expect(await editor.fetchPartyMemberLoadout()).toBeNull();
         expect(viewLoadout.fetches).toEqual([]);
     });
 
-    test('asks for the other members as party loadouts, then reloads the party and says what it got', async () => {
+    test('names the next member without a capture, and one click asks for that one member only', async () => {
         viewLoadout.available = true;
-        viewLoadout.result = {
-            status: 'done',
-            loadouts: [{ characterId: 'a', name: 'Ally', hasLoadout: true }],
-            missed: [],
-        };
+        viewLoadout.captured = { a: { capturedAt: 1 } };
+        viewLoadout.result = { status: 'done', entry: { characterId: 'b', name: 'Buddy', hasLoadout: true } };
         game.allPlayers.profileStatus = [
             {
                 hrid: 'player2',
@@ -1155,16 +1155,38 @@ describe('Fetch party loadouts', () => {
         const editor = new SimEditor({ editorEl: el });
         await editor.initEditor();
 
+        expect(el.querySelector(FETCH_BTN).textContent).toBe("Fetch Buddy's loadout");
         el.querySelector(FETCH_BTN).click();
-        await vi.waitFor(() => expect(el.textContent).toContain('Fetched 1 party loadout(s).'));
+        await vi.waitFor(() => expect(el.textContent).toContain("Fetched Buddy's party loadout."));
 
         expect(viewLoadout.fetches).toEqual([
-            { members: [{ characterID: 'a', characterName: 'Ally' }], context: 'party', kind: '' },
+            { member: { characterID: 'b', characterName: 'Buddy' }, context: 'party', kind: '' },
         ]);
         expect(el.textContent).toContain('(party loadout,');
         expect(el.querySelector('[data-edit-tab="player2"]').getAttribute('title')).toContain(
             'gear from party loadout'
         );
+    });
+
+    test('offers a refetch of the oldest capture once everyone has one', async () => {
+        viewLoadout.available = true;
+        viewLoadout.captured = { a: { capturedAt: 50 }, b: { capturedAt: 10 } };
+        const el = document.createElement('div');
+        const editor = new SimEditor({ editorEl: el });
+        await editor.initEditor();
+
+        expect(el.querySelector(FETCH_BTN).textContent).toBe("Refetch Buddy's loadout");
+    });
+
+    test('says so when the member did not answer', async () => {
+        viewLoadout.available = true;
+        viewLoadout.result = { status: 'no_reply', entry: null };
+        const el = document.createElement('div');
+        const editor = new SimEditor({ editorEl: el });
+        await editor.initEditor();
+
+        await editor.fetchPartyMemberLoadout();
+        expect(el.textContent).toContain("No reply for Ally's loadout.");
     });
 
     test('is not offered solo', async () => {
