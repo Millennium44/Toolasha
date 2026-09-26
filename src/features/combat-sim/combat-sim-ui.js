@@ -2010,6 +2010,8 @@ class CombatSimUI {
         // _subscribePricingQuickSettings()
         this._pricingQuickSettings = null;
         this._unsubscribePricingQuickSettings = [];
+        // Whether a coalesced reprice is already queued — see _scheduleReprice()
+        this._repriceScheduled = false;
         this.elapsedTimer = null;
         this._activePlayerTab = 'player1';
         this._playerInfo = [];
@@ -2316,7 +2318,7 @@ class CombatSimUI {
             selectCssText:
                 'background:#1a1a2e; color:#e0e0e0; border:1px solid #444; border-radius:4px; padding:2px 4px; ' +
                 'font-size:11px; max-width:96px;',
-            onChange: () => this._redisplayLastResults(),
+            onChange: () => this._scheduleReprice(),
         });
         resultsPricingRow.appendChild(this._pricingQuickSettings.element);
         resultsContent.appendChild(resultsPricingRow);
@@ -5610,6 +5612,28 @@ class CombatSimUI {
     }
 
     /**
+     * Ask for a reprice, but only once per tick.
+     *
+     * One Buy/Sell choice in the quick-settings row can write two settings —
+     * the combined pricing mode and that side's patient tick (see
+     * `applyPricingSideChoice`) — each with its own `onSettingChange`
+     * listener in `_subscribePricingQuickSettings`, and the row's own
+     * `onChange` fires again on top of that. Rerunning `_redisplayLastResults`
+     * per write repriced an All Zones sweep — one `calculateSimRevenue` per
+     * cached zone — up to three times for a single click. Queuing a
+     * microtask instead collapses however many of those fired together into
+     * the one reprice the result actually needs.
+     */
+    _scheduleReprice() {
+        if (this._repriceScheduled) return;
+        this._repriceScheduled = true;
+        queueMicrotask(() => {
+            this._repriceScheduled = false;
+            this._redisplayLastResults();
+        });
+    }
+
+    /**
      * Re-price a cached All Zones / All Dungeons sweep in place — the sweep's
      * counterpart to `_redisplayLastResults`'s single-run path.
      *
@@ -5655,7 +5679,7 @@ class CombatSimUI {
         const resync = () => this._pricingQuickSettings?.sync();
         const resyncAndReprice = () => {
             resync();
-            this._redisplayLastResults();
+            this._scheduleReprice();
         };
         this._unsubscribePricingQuickSettings = [
             ...PRICING_QUICK_SETTINGS_KEYS.map((key) => config.onSettingChange(key, resyncAndReprice)),

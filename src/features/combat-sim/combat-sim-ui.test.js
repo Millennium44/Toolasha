@@ -3910,7 +3910,12 @@ describe('the summary at the top of the Results tab', () => {
         expect(selects[2].dataset.mwiKeyPricing).toBe('true');
     });
 
-    test('choosing a Key pricing option re-prices the displayed run without a re-run', () => {
+    // The reprice is coalesced into a microtask (see `_scheduleReprice`), so
+    // any test that fires a pricing change lets one tick pass before reading
+    // the redrawn results.
+    const tick = () => Promise.resolve();
+
+    test('choosing a Key pricing option re-prices the displayed run without a re-run', async () => {
         mocks.drops = new Map([['/items/coin', 1200]]);
         showFight();
         const simResultBefore = ui._lastSimResult;
@@ -3918,6 +3923,7 @@ describe('the summary at the top of the Results tab', () => {
         const keySelect = ui.panel.querySelector('#mwi-csim-results-pricing select[data-mwi-key-pricing]');
         keySelect.value = 'craft';
         keySelect.dispatchEvent(new Event('change'));
+        await tick();
 
         // The write reached config, and the results redrew from the very same
         // cached simResult object — nothing here re-ran the simulation
@@ -3926,7 +3932,7 @@ describe('the summary at the top of the Results tab', () => {
         expect(ui.panel.querySelector('#mwi-csim-results').textContent).not.toContain('could not be drawn');
     });
 
-    test('a Buy/Sell pricing change made elsewhere resyncs the row and re-prices the run', () => {
+    test('a Buy/Sell pricing change made elsewhere resyncs the row and re-prices the run', async () => {
         mocks.drops = new Map([['/items/cheese', 100]]);
         mocks.prices['/items/cheese'] = { bid: 8, ask: 10 };
         showFight();
@@ -3935,10 +3941,32 @@ describe('the summary at the top of the Results tab', () => {
         mocks.pricingMode = 'optimistic';
         mocks.settingChangeCallbacks.get('profitCalc_pricingMode')?.('profitCalc_pricingMode', 'optimistic');
 
+        // The dropdown resync is not deferred — only the reprice is — so this
+        // reflects the new setting immediately
         const buySelect = ui.panel.querySelector('#mwi-csim-results-pricing select[data-mwi-pricing-side="buy"]');
         expect(buySelect.value).toBe('patient');
+
+        await tick();
         // Revenue moved to the ask-side price optimistic pricing implies
         expect(ui.panel.querySelector('#mwi-csim-results').textContent).toContain('Revenue 22.8K/day');
+    });
+
+    test('one Buy/Sell choice redraws the results exactly once', async () => {
+        mocks.drops = new Map([['/items/cheese', 100]]);
+        mocks.prices['/items/cheese'] = { bid: 8, ask: 10 };
+        showFight();
+
+        const displaySpy = vi.spyOn(ui, '_displayResults');
+        // "Patient +1" writes both the combined pricing mode and that side's
+        // patient tick — two settings, each with its own listener — plus the
+        // row's own onChange. Before coalescing this was up to three redraws.
+        const buySelect = ui.panel.querySelector('#mwi-csim-results-pricing select[data-mwi-pricing-side="buy"]');
+        buySelect.value = 'patientTick';
+        buySelect.dispatchEvent(new Event('change'));
+        await tick();
+
+        expect(displaySpy).toHaveBeenCalledTimes(1);
+        displaySpy.mockRestore();
     });
 
     test('a history run priced before a pricing change is re-priced rather than compared stale', () => {

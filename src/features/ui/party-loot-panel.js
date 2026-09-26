@@ -779,6 +779,29 @@ function drawTopBar(body, party) {
     body.appendChild(bar);
 }
 
+/** Whether a coalesced re-render is already queued — see `scheduleRerender`. */
+let rerenderScheduled = false;
+
+/**
+ * Ask for a re-render, but only once per tick.
+ *
+ * A single Buy/Sell choice in the quick-settings row can write two settings
+ * — the combined pricing mode and that side's patient tick (see
+ * `applyPricingSideChoice`) — each of which fires its own `onSettingChange`
+ * listener below. Rendering once per write redrew the whole panel (every
+ * character's card, breakdown and all) twice for one click; queuing a single
+ * microtask instead collapses however many settings changed together into
+ * the one redraw the result actually needs.
+ */
+function scheduleRerender() {
+    if (rerenderScheduled) return;
+    rerenderScheduled = true;
+    queueMicrotask(() => {
+        rerenderScheduled = false;
+        partyLootPanel.render();
+    });
+}
+
 /**
  * Re-render whenever a pricing setting changes, wherever it was changed —
  * this panel's own quick-settings row, the main settings panel, or the
@@ -793,9 +816,9 @@ function drawTopBar(body, party) {
  * subscribes to `character_switched` the same way, at module scope).
  */
 for (const key of [...PRICING_QUICK_SETTINGS_KEYS, ...PRICING_QUICK_SETTINGS_TOOLTIP_KEYS]) {
-    config.onSettingChange(key, () => partyLootPanel.render());
+    config.onSettingChange(key, scheduleRerender);
 }
-config.onSettingsLoaded(() => partyLootPanel.render());
+config.onSettingsLoaded(scheduleRerender);
 
 /**
  * What everyone picked up.
