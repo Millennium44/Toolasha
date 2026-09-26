@@ -61,8 +61,7 @@ import config from '../core/config.js';
 import dataManager from '../core/data-manager.js';
 import marketAPI from '../api/marketplace.js';
 import { describeDirectCraft } from '../features/crafting-plan/craft-arbitrage-adapter.js';
-import { getCustomPrice } from '../features/settings/custom-price-overrides.js';
-import { getPricingMode } from './market-data.js';
+import { getItemPrice, getPricingMode } from './market-data.js';
 import { ironCowBook } from './ironcow-valuation.js';
 import { isPatientTickOn, patientTickPrice } from './patient-tick.js';
 import { coinFormatter, timeReadable } from './formatters.js';
@@ -272,10 +271,15 @@ export function describeKeyCost(keyHrid, options = {}) {
         // recursion is `describeCraft`'s job for the crafting-plan feature; a
         // key cost is a player who buys materials and crafts one step on top.
         craft = describeDirectCraft(keyHrid, {
-            // A custom buy price the player set for a material wins, as it does in the
-            // tooltip's own-use figure and every other profit price
+            // Through the canonical buy-side resolver the tooltip's own-use figure uses:
+            // custom overrides, the value-map fill and the price-band clamp all apply.
+            // Following the global mode leaves `mode` unset so the patient tick applies.
             getMaterialPrice: (materialHrid) =>
-                getCustomPrice(materialHrid, 0, 'buy') ?? buyPriceFor(materialHrid, mode, followsGlobal),
+                getItemPrice(materialHrid, {
+                    mode: followsGlobal ? undefined : mode,
+                    context: 'profit',
+                    side: 'buy',
+                }),
             actionStats: options.actionStats,
         });
     } catch (error) {

@@ -35,6 +35,7 @@ const settings = vi.hoisted(() => ({
 
 const game = vi.hoisted(() => ({ initClientData: null, itemDetails: {} }));
 
+const customPrices = vi.hoisted(() => ({ buy: {} }));
 const market = vi.hoisted(() => ({
     /** itemHrid → {ask, bid}, or absent for "nobody is selling" */
     book: {},
@@ -76,11 +77,12 @@ vi.mock('./market-data.js', () => ({
     // ask, patientBuy at the bid.
     getPricingMode: (context, side) =>
         context === 'profit' && side === 'buy' && settings.pricingMode === 'patientBuy' ? 'bid' : 'ask',
-    // Not on `describeKeyCost`'s own path any more (it prices everything
-    // through `marketAPI.getPrice` directly — see `buyPriceFor`), but the
-    // crafting-plan feature this suite's imports still pull in at module load
-    // resolves to the same `market-data.js`, so it still needs an export here.
+    // Prices a key's recipe materials (a key's own market price goes through
+    // `marketAPI.getPrice` directly — see `buyPriceFor`)
     getItemPrice: (hrid, options = {}) => {
+        // The real resolver's first step: a player's custom price for this side
+        const custom = options.side === 'buy' ? customPrices.buy[hrid] : undefined;
+        if (custom != null) return custom;
         const entry = market.book[hrid];
         if (!entry) return null;
 
@@ -100,10 +102,6 @@ vi.mock('./market-data.js', () => ({
 }));
 
 vi.mock('./game-lookups.js', () => ({ getShopCoinCost: () => 0 }));
-const customPrices = vi.hoisted(() => ({ buy: {} }));
-vi.mock('../features/settings/custom-price-overrides.js', () => ({
-    getCustomPrice: (itemHrid, level, side) => (side === 'buy' ? (customPrices.buy[itemHrid] ?? null) : null),
-}));
 
 vi.mock('./tea-parser.js', () => ({ parseArtisanBonus: () => player.artisan, getDrinkConcentration: () => 0 }));
 
