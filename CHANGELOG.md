@@ -6,6 +6,8 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+<!-- shipped in 3.61.0 -->
+
 ### Tidier chest key labels
 
 - Chest keys show their fragment zones compactly (3·4·5·6) in the top-left corner instead of running into the stack count along the bottom.
@@ -4002,21 +4004,18 @@ The simulator valued every drop at its gross market price, so profit ignored the
 
 ## [3.61.0](https://github.com/Millennium44/Toolasha/compare/v3.60.1...v3.61.0) (2026-09-26)
 
-
 ### Features
 
-* compact chest key zone labels in the top-left corner ([ee1b0f9](https://github.com/Millennium44/Toolasha/commit/ee1b0f9ba495c70369186bdfe1ec7ba853aee703))
-
+- compact chest key zone labels in the top-left corner ([ee1b0f9](https://github.com/Millennium44/Toolasha/commit/ee1b0f9ba495c70369186bdfe1ec7ba853aee703))
 
 ### Bug Fixes
 
-* dungeon tracker pop-out chart guards a stale render after close/reopen ([42127d0](https://github.com/Millennium44/Toolasha/commit/42127d0d6852041a1c196af26ac46301df823b87))
-* dungeon tracker redraws pending/between-runs stats after a filter reset ([d2ce0be](https://github.com/Millennium44/Toolasha/commit/d2ce0becffb8908f92ab228c212407612d274f44))
-
+- dungeon tracker pop-out chart guards a stale render after close/reopen ([42127d0](https://github.com/Millennium44/Toolasha/commit/42127d0d6852041a1c196af26ac46301df823b87))
+- dungeon tracker redraws pending/between-runs stats after a filter reset ([d2ce0be](https://github.com/Millennium44/Toolasha/commit/d2ce0becffb8908f92ab228c212407612d274f44))
 
 ### Documentation
 
-* changelog for dungeon tracker edge cases ([5e9adee](https://github.com/Millennium44/Toolasha/commit/5e9adee84ed590c5736696ac05cb0d43281ffaca))
+- changelog for dungeon tracker edge cases ([5e9adee](https://github.com/Millennium44/Toolasha/commit/5e9adee84ed590c5736696ac05cb0d43281ffaca))
 
 ## [3.60.1](https://github.com/Millennium44/Toolasha/compare/v3.60.0...v3.60.1) (2026-09-26)
 
