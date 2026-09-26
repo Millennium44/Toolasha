@@ -2166,6 +2166,21 @@ describe('the all-zones table', () => {
 
                 expect(mocks.revenueCalls.length).toBe(0);
                 ui.isRunning = false;
+
+                // …but replayed once the run lets go, so its final draw is not left on old prices
+                ui._flushPendingReprice();
+                await flush();
+                expect(mocks.revenueCalls.length).toBe(1);
+            });
+
+            test('a naming-only change resyncs the row without re-pricing the sweep', async () => {
+                mocks.revenueCalls = [];
+                await ui._displayAllZonesResults([result('Fly', { xp: { defense: 900 }, profit: 12_000 })], 1, {});
+
+                mocks.settingChangeCallbacks.get('profitCalc_pricingNaming')?.('profitCalc_pricingNaming', true);
+                await flush();
+
+                expect(mocks.revenueCalls.length).toBe(0);
             });
 
             test('does not swap in a stale single-zone result over the sweep', async () => {
