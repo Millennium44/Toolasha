@@ -97,9 +97,9 @@ const {
     offPlanExportText,
     snapshotFromViewLoadout,
     captureSourceLabel,
-    GUILD_TRIAL_KIND_GUESS,
+    COMBAT_TRIAL_KIND,
 } = await import('./guild-trial-abilities-ui.js');
-const { resetPlanUi, resetChipUi } = await import('./guild-trial-abilities-ui.js');
+const { resetPlanUi, resetChipUi, resetFetchNext } = await import('./guild-trial-abilities-ui.js');
 const guildTrialPlan = (await import('./guild-trial-plan.js')).default;
 const { REQUEST_TIMEOUT_MS } = await import('./guild-member-skills.js');
 const memberSkills = (await import('./guild-member-skills.js')).default;
@@ -199,6 +199,7 @@ describe('trial abilities panel', () => {
         resetTrialUnitRequests();
         resetPlanUi();
         resetChipUi();
+        resetFetchNext();
         // `controls` is module state: a test that wires its own openNext /
         // retryCurrent / captureFor replaces the built-in action for every
         // test that follows, so a chip press lands in the previous test's spy
@@ -1113,7 +1114,7 @@ describe('trial abilities panel', () => {
             expect(viewLoadoutState.core.handleViewLoadout).toHaveBeenLastCalledWith(
                 5,
                 'guild_trial',
-                GUILD_TRIAL_KIND_GUESS
+                COMBAT_TRIAL_KIND
             );
 
             await vi.advanceTimersByTimeAsync(3000);
@@ -1156,6 +1157,86 @@ describe('trial abilities panel', () => {
             expect(text()).not.toContain('trial loadout');
             expect(button('Fetch')).toBeUndefined();
             expect(text()).not.toContain(FAILED);
+        });
+
+        describe('Fetch next', () => {
+            const fetchNextButton = () =>
+                [...guildTrialAbilitiesPanel.panel.querySelectorAll('button')].find((el) =>
+                    el.textContent.startsWith('Fetch next:')
+                ) ||
+                [...guildTrialAbilitiesPanel.panel.querySelectorAll('button')].find(
+                    (el) => el.textContent === 'All fetched' || el.textContent.startsWith('Fetching ')
+                );
+
+            test('one click fetches the first missing player, the next click targets the next, and the row settles on "All fetched"', async () => {
+                viewLoadoutState.core = {
+                    handleViewProfile: () => {},
+                    handleViewLoadout: vi.fn((characterId) => {
+                        const name = characterId === 1 ? 'Alice' : 'Bob';
+                        setTimeout(() => {
+                            handleLoadoutShared(
+                                loadoutReply(characterId, name, [{ hrid: '/abilities/fierce_aura', level: 80 }])
+                            );
+                        }, 20);
+                    }),
+                };
+                await feature.initialize('Cats');
+                guildTrialAbilities.setRoster([
+                    { characterId: 1, name: 'Alice' },
+                    { characterId: 2, name: 'Bob' },
+                    { characterId: null, name: 'Cara' },
+                ]);
+                vi.setSystemTime(NOW + 6000);
+                openTrialAbilitiesPanel();
+
+                expect(text()).toContain('0/3 fetched');
+                expect(text()).toContain('1 needs opening from the roster');
+                let control = fetchNextButton();
+                expect(control.textContent).toBe('Fetch next: Alice');
+                expect(control.disabled).toBe(false);
+
+                control.click();
+                // Disabled and named for who is in flight the instant the click lands
+                control = fetchNextButton();
+                expect(control.textContent).toBe('Fetching Alice…');
+                expect(control.disabled).toBe(true);
+                expect(viewLoadoutState.core.handleViewLoadout).toHaveBeenCalledTimes(1);
+                expect(viewLoadoutState.core.handleViewLoadout).toHaveBeenLastCalledWith(
+                    1,
+                    'guild_trial',
+                    COMBAT_TRIAL_KIND
+                );
+
+                await vi.advanceTimersByTimeAsync(3000);
+                expect(text()).toContain('1/3 fetched');
+                control = fetchNextButton();
+                expect(control.textContent).toBe('Fetch next: Bob');
+                expect(control.disabled).toBe(false);
+
+                control.click();
+                await vi.advanceTimersByTimeAsync(3000);
+                expect(viewLoadoutState.core.handleViewLoadout).toHaveBeenCalledTimes(2);
+                expect(viewLoadoutState.core.handleViewLoadout).toHaveBeenLastCalledWith(
+                    2,
+                    'guild_trial',
+                    COMBAT_TRIAL_KIND
+                );
+                expect(text()).toContain('2/3 fetched');
+
+                // Cara has no id — never a target, and still counted separately
+                control = fetchNextButton();
+                expect(control.textContent).toBe('All fetched');
+                expect(control.disabled).toBe(true);
+                expect(text()).toContain('1 needs opening from the roster');
+            });
+
+            test('is not offered when View Loadout is unavailable', async () => {
+                viewLoadoutState.core = null;
+                await feature.initialize('Cats');
+                guildTrialAbilities.setRoster([{ characterId: 1, name: 'Alice' }]);
+                openTrialAbilitiesPanel();
+                expect(fetchNextButton()).toBeUndefined();
+            });
         });
 
         test('captureSourceLabel names the source and age', () => {

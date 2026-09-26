@@ -711,12 +711,16 @@ export class SimEditor {
         if (target) {
             const busy = this._fetchingLoadouts;
             const name = escapeHtml(target.member.characterName || String(target.member.characterID));
+            const others = this._otherPartyMembers();
+            const captured = others.filter((member) =>
+                getLoadout(member.characterID, VIEW_LOADOUT_CONTEXT.Party)
+            ).length;
             const fetchTitle =
                 "Ask the game for this party member's loadout (View Loadout) and reload the party with " +
                 'its gear, abilities and consumables. One member per click.';
             html += `<button data-fetch-loadout style="${base} color:${busy ? '#555' : ACCENT}; cursor:${
                 busy ? 'default' : 'pointer'
-            };" title="${fetchTitle}"${busy ? ' disabled' : ''}>${target.refresh ? 'Refetch' : 'Fetch'} ${name}'s loadout</button>`;
+            };" title="${fetchTitle}"${busy ? ' disabled' : ''}>${target.refresh ? 'Refetch' : 'Fetch'} ${name}'s loadout (${captured}/${others.length})</button>`;
         }
         return html;
     }
