@@ -5417,8 +5417,13 @@ class CombatSimUI {
             // filed under the arriving character quotes the departing
             // character's zone profits to every reader, indefinitely.
             if (this._stillSameCharacter(ownerId)) {
+                // A pricing change during the run is replayed on screen after it ends,
+                // but the snapshot is written here, so it is priced now as well
+                const snapshotRows = this._repricePending
+                    ? this._repriceZoneEntries(zoneResults, gameData, playerHrid, hours)
+                    : zoneResults;
                 await saveAllZonesSnapshot(
-                    buildAllZonesSnapshot(zoneResults, {
+                    buildAllZonesSnapshot(snapshotRows, {
                         hours,
                         playerHrid,
                         fingerprint: gearFingerprint(playerDTOs),
@@ -5672,17 +5677,30 @@ class CombatSimUI {
         const args = this._allZonesRedrawArgs;
         if (!this._allZonesResults || !args) return;
         const playerHrid = this._activePlayerTab || 'player1';
-        const repriced = this._allZonesResults.map((entry) => {
+        const repriced = this._repriceZoneEntries(this._allZonesResults, args.gameData, playerHrid, args.hours);
+        this._displayAllZonesResults(repriced, args.hours, args.gameData);
+    }
+
+    /**
+     * Each sweep row's revenue recomputed at the current pricing, from its cached simResult.
+     * @param {Array<Object>} entries - Sweep rows
+     * @param {Object} gameData - The sweep's game data
+     * @param {string} playerHrid - Whose revenue
+     * @param {number} hours - Simulated hours
+     * @returns {Array<Object>} New rows; the input is left alone
+     * @private
+     */
+    _repriceZoneEntries(entries, gameData, playerHrid, hours) {
+        return entries.map((entry) => {
             if (!entry?.simResult) return entry;
             let revenue = entry.revenue;
             try {
-                revenue = calculateSimRevenue(entry.simResult, args.gameData, playerHrid, args.hours);
+                revenue = calculateSimRevenue(entry.simResult, gameData, playerHrid, hours);
             } catch {
                 // Keep the stale revenue rather than drop the row over a pricing quirk
             }
             return { ...entry, revenue };
         });
-        this._displayAllZonesResults(repriced, args.hours, args.gameData);
     }
 
     /**

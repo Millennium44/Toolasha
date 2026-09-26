@@ -1366,6 +1366,37 @@ describe('results outliving the character they were run for', () => {
         expect(mocks.store.get('combatExport:allZonesSnapshot_char1')).toBeUndefined();
     });
 
+    test('a pricing change during the sweep re-prices the saved snapshot, not just the screen', async () => {
+        mocks.zones = [{ hrid: '/actions/combat/fly', name: 'Fly', maxSpawnCount: 3, maxDifficulty: 0 }];
+        mocks.allZonesResult = [
+            {
+                simulatedTime: 3600 * 1e9,
+                encounters: 10,
+                deaths: { player1: 0 },
+                experienceGained: { player1: { defense: 100 } },
+            },
+        ];
+        ui.buildPanel();
+        ui._allZonesMode = 'group';
+        ui._updateAllZonesUI();
+        // The change lands in the finalization window, after the rows were priced
+        vi.spyOn(ui, '_displayAllZonesResults').mockImplementation(async () => {
+            ui._redisplayLastResults();
+        });
+        const savedWhenRepriced = [];
+        const reprice = ui._repriceZoneEntries.bind(ui);
+        vi.spyOn(ui, '_repriceZoneEntries').mockImplementation((...args) => {
+            savedWhenRepriced.push(mocks.store.has('combatExport:allZonesSnapshot_char1'));
+            return reprice(...args);
+        });
+
+        await ui._onSimulateAllZones();
+
+        // The first reprice is of the snapshot rows, before the snapshot is written
+        expect(savedWhenRepriced[0]).toBe(false);
+        expect(mocks.store.has('combatExport:allZonesSnapshot_char1')).toBe(true);
+    });
+
     test('an upgrade analysis finishing after a switch does not replace the arriving character’s remembered run', async () => {
         const { default: config } = await import('../../core/config.js');
         vi.spyOn(config, 'getSetting').mockImplementation((key, fallback = false) =>
