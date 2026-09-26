@@ -200,7 +200,8 @@ class DungeonShopPlanner {
             itemHrid: offer.itemHrid,
             name: offer.name,
             cost: offer.cost,
-            netValue: offer.askPrice > 0 ? calculatePriceAfterTax(offer.askPrice) : null,
+            outputCount: offer.outputCount,
+            netValue: offer.askPrice > 0 ? calculatePriceAfterTax(offer.askPrice) * (offer.outputCount || 1) : null,
         }));
         const caps = {};
         for (const offer of offers) {
