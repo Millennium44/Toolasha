@@ -1039,6 +1039,21 @@ describe('trial abilities panel', () => {
             });
         });
 
+        test('a skilling loadout says nothing about combat abilities', () => {
+            const entry = {
+                characterId: '5',
+                name: 'Alice',
+                hasLoadout: true,
+                capturedAt: NOW,
+                loadout: {
+                    sharableCharacter: { name: 'Alice' },
+                    actionTypeHrid: '/action_types/woodcutting',
+                    equippedAbilities: [],
+                },
+            };
+            expect(snapshotFromViewLoadout(entry)).toBeNull();
+        });
+
         test('hasLoadout:false is not treated as a proven-empty kit', () => {
             const entry = {
                 characterId: '5',

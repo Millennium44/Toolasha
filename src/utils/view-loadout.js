@@ -205,7 +205,8 @@ function noteUserClick(event) {
     let node = event.target instanceof Element ? event.target : null;
     for (let depth = 0; node && depth < 4; depth++, node = node.parentElement) {
         if ((node.textContent || '').trim() === 'View Loadout') {
-            lastUserClick = { at: Date.now(), context: contextOfClick(node) };
+            // Owned by whoever clicked: an old socket can still answer after a switch
+            lastUserClick = { at: Date.now(), context: contextOfClick(node), owner: currentOwner() };
             return;
         }
     }
@@ -265,7 +266,7 @@ export function handleLoadoutShared(data) {
         hasLoadout: loadout.hasLoadout !== false,
         requested: Boolean(request),
         capturedAt: now,
-        ownerCharacterId: request ? request.owner : currentOwner(),
+        ownerCharacterId: request ? request.owner : click ? click.owner : currentOwner(),
         loadout,
     };
 

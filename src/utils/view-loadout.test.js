@@ -172,6 +172,23 @@ describe('passive capture', () => {
         expect(getLoadouts()).toEqual([]);
     });
 
+    test('a reply to your own click belongs to the character that clicked, even after a switch', () => {
+        const button = document.createElement('div');
+        button.textContent = 'View Loadout';
+        document.body.appendChild(button);
+        const click = new MouseEvent('click', { bubbles: true });
+        Object.defineProperty(click, 'isTrusted', { value: true });
+        button.dispatchEvent(click);
+
+        // Switched before the old socket's reply lands
+        game.charId = 200;
+        deliver(reply(7, 'Ally'));
+
+        // Not credited to the character now logged in
+        expect(getLoadouts()).toEqual([]);
+        expect(getLoadout(7)).toBeNull();
+    });
+
     test('capture listeners hear each one', () => {
         const heard = [];
         onLoadoutCaptured((entry) => heard.push(entry.name));
