@@ -3937,8 +3937,16 @@ function showFight(simResult = oneHourFight(), hours = 1) {
     return ui.panel.querySelector('#mwi-csim-results');
 }
 
-/** Push a finished run into the comparison history without running a sim. */
-function pushHistory(label, simResult = oneHourFight(), hours = 1) {
+/**
+ * Push a finished run into the comparison history without running a sim.
+ * @param {string} label - The old diff-based label (still the sole label on entries saved
+ *   before the area/party/loadout fields existed)
+ * @param {Object} [simResult] - SimResult-shaped object
+ * @param {number} [hours] - Simulated hours
+ * @param {Object} [fields] - Overrides/additions, e.g. `{zoneName, difficultyTier, partySize,
+ *   loadoutName, wasEdited}` for entries that should render the new composite label
+ */
+function pushHistory(label, simResult = oneHourFight(), hours = 1, fields = {}) {
     ui._simHistory.push({
         label,
         simResult,
@@ -3946,6 +3954,7 @@ function pushHistory(label, simResult = oneHourFight(), hours = 1) {
         gameData: { itemDetailMap: {} },
         metrics: null,
         timestamp: Date.now(),
+        ...fields,
     });
     ui._activeDetailIndex = ui._simHistory.length - 1;
 }
@@ -4657,6 +4666,100 @@ describe('clearing the comparison history', () => {
         ui._clearAllHistory();
 
         expect(text()).toContain('Simulation complete.');
+    });
+});
+
+describe('comparison labels tell entries apart by area, party and loadout', () => {
+    beforeEach(() => {
+        mocks.drops = new Map();
+        mocks.prices = {};
+        ui.buildPanel();
+    });
+
+    afterEach(() => {
+        ui.destroy();
+        mocks.drops = new Map();
+        mocks.prices = {};
+    });
+
+    // Regression: every entry used to carry the same `generateSimLabel()` text —
+    // "Current Gear" for any unedited run — so two runs against different zones
+    // or party sizes were indistinguishable in the Baseline dropdown and the
+    // comparison table's Scenario column.
+    test('two runs that only differ by zone, party size and loadout get distinct labels', () => {
+        pushHistory('Current Gear', oneHourFight(), 1, {
+            zoneName: 'Fly',
+            difficultyTier: 0,
+            partySize: 1,
+            loadoutName: null,
+            wasEdited: false,
+        });
+        pushHistory('Current Gear', oneHourFight(), 1, {
+            zoneName: 'Chimerical Den',
+            difficultyTier: 0,
+            partySize: 5,
+            loadoutName: 'Fighting',
+            wasEdited: false,
+        });
+        ui._comparisonBaseline = 0;
+        ui._comparisonSlots = [1];
+        const results = showFight();
+
+        const select = results.querySelector('#mwi-csim-baseline-select');
+        const optionText = Array.from(select.options).map((o) => o.textContent);
+        expect(optionText).toEqual(['Current gear · Solo · Fly', 'Fighting · Party (5) · Chimerical Den']);
+        // No two entries collapse onto the same table row label either
+        expect(new Set(optionText).size).toBe(2);
+        expect(results.textContent).toContain('Current gear · Solo · Fly');
+        expect(results.textContent).toContain('Fighting · Party (5) · Chimerical Den');
+    });
+
+    test('a difficulty tier above 0 is appended to the area', () => {
+        pushHistory('Current Gear', oneHourFight(), 1, { zoneName: 'Chimerical Den', difficultyTier: 3, partySize: 1 });
+        pushHistory('Current Gear', oneHourFight(), 1, { zoneName: 'Chimerical Den', difficultyTier: 0, partySize: 1 });
+        ui._comparisonBaseline = 0;
+        const results = showFight();
+
+        const select = results.querySelector('#mwi-csim-baseline-select');
+        const optionText = Array.from(select.options).map((o) => o.textContent);
+        expect(optionText).toContain('Current gear · Solo · Chimerical Den T3');
+        expect(optionText).toContain('Current gear · Solo · Chimerical Den');
+    });
+
+    test('an edited loadout is marked, and the itemized diff moves to the tooltip', () => {
+        pushHistory('Fighting: Iron Sword → Steel Sword', oneHourFight(), 1, {
+            zoneName: 'Fly',
+            difficultyTier: 0,
+            partySize: 1,
+            loadoutName: 'Fighting',
+            wasEdited: true,
+        });
+        pushHistory('Fighting', oneHourFight(), 1, {
+            zoneName: 'Fly',
+            difficultyTier: 0,
+            partySize: 1,
+            loadoutName: 'Fighting',
+            wasEdited: false,
+        });
+        ui._comparisonBaseline = 0;
+        const results = showFight();
+
+        const select = results.querySelector('#mwi-csim-baseline-select');
+        expect(select.options[0].textContent).toBe('Fighting (edited) · Solo · Fly');
+        expect(select.options[0].title).toContain('Iron Sword → Steel Sword');
+    });
+
+    // An entry saved before the area/party/loadout fields existed has nothing
+    // to compose a new label from and must still render under its old label.
+    test('an old entry saved without the new fields still renders its old label', () => {
+        pushHistory('Current Gear');
+        pushHistory('New Chest');
+        ui._comparisonBaseline = 0;
+        const results = showFight();
+
+        const select = results.querySelector('#mwi-csim-baseline-select');
+        const optionText = Array.from(select.options).map((o) => o.textContent);
+        expect(optionText).toEqual(['Current Gear', 'New Chest']);
     });
 });
 

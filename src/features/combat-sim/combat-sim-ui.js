@@ -5163,10 +5163,24 @@ class CombatSimUI {
 
             // Generate label before displaying (display may re-render)
             const historyLabel = this._editor?.generateSimLabel() || 'Current Gear';
+            const loadoutName = this._editor?.getSelectedLoadoutName?.() || null;
+            // `historyLabel` is the loadout/"Current Gear" name with any diffed
+            // changes appended — if it says more than that name alone, the
+            // editor's DTO was edited away from it.
+            const wasEdited = historyLabel !== (loadoutName || 'Current Gear');
 
-            // Add history entry (metrics filled after _displayResults computes them)
+            // Add history entry (metrics filled after _displayResults computes them).
+            // `zoneName`/`difficultyTier`/`partySize`/`loadoutName`/`wasEdited` are
+            // additive: an entry saved before this field existed simply lacks them,
+            // and `_historyEntryLabel` falls back to the plain `label` for it.
             const historyEntry = {
                 label: historyLabel,
+                zoneHrid,
+                zoneName: selectedZone?.name || null,
+                difficultyTier,
+                partySize: playerDTOs.length,
+                loadoutName,
+                wasEdited,
                 simResult,
                 hours,
                 gameData,
@@ -6576,7 +6590,9 @@ class CombatSimUI {
                 const m = entry.metrics || {};
                 const isBase = idx === (this._comparisonBaseline ?? 0);
                 return {
-                    scenario: entry.label,
+                    // Full detail here, not the dropdown's truncated short form —
+                    // a CSV cell has no width limit to respect.
+                    scenario: this._historyEntryLabel(entry).title.replace(/\n/g, ' — '),
                     role: isBase ? 'baseline' : this._comparisonSlots.includes(idx) ? 'compared' : '',
                     hours: entry.hours ?? null,
                     encountersPerHr: m.encountersPerHr ?? null,
@@ -7128,6 +7144,45 @@ class CombatSimUI {
         this._displayResults(activeEntry.simResult, activeEntry.hours, activeEntry.gameData);
     }
 
+    /**
+     * Build the Comparison section's label for one `_simHistory` entry.
+     *
+     * Every entry used to carry the same diff-based `label` — `generateSimLabel()`
+     * says "Current Gear" for any unedited run, so two runs against different
+     * zones or party sizes were indistinguishable in the Baseline dropdown and
+     * the comparison table. This composes a short `Gear · Party · Area` label
+     * from the fields recorded at push time (see `_onSimulate`), with a fuller
+     * string for the tooltip.
+     *
+     * An entry saved before those fields existed (`zoneName` and `zoneHrid`
+     * both absent) has nothing to compose from, so it falls back to its
+     * original `label` unchanged rather than rendering a broken "· ·" label.
+     *
+     * @param {Object} entry - An `_simHistory` entry
+     * @returns {{short: string, title: string}} Compact dropdown/table text and a fuller tooltip
+     * @private
+     */
+    _historyEntryLabel(entry) {
+        if (!entry.zoneName && !entry.zoneHrid) {
+            return { short: entry.label, title: entry.label };
+        }
+        const areaPart = entry.zoneName
+            ? entry.zoneName + (entry.difficultyTier ? ` T${entry.difficultyTier}` : '')
+            : null;
+        const partyPart = entry.partySize > 1 ? `Party (${entry.partySize})` : 'Solo';
+        const gearPart = entry.loadoutName
+            ? entry.loadoutName + (entry.wasEdited ? ' (edited)' : '')
+            : entry.wasEdited
+              ? 'Current gear (edited)'
+              : 'Current gear';
+        const short = [gearPart, partyPart, areaPart].filter(Boolean).join(' · ');
+        // The tooltip adds the itemized diff (original `label`) when the run
+        // was edited and that diff says more than "(edited)" already does.
+        const title =
+            entry.wasEdited && entry.label && entry.label !== entry.loadoutName ? `${short}\n${entry.label}` : short;
+        return { short, title };
+    }
+
     _renderHistoryPanel() {
         const history = this._simHistory;
         if (history.length < 2) return '';
@@ -7161,7 +7216,9 @@ class CombatSimUI {
             '<select class="toolasha-select" id="mwi-csim-baseline-select" style="flex:1 1 0; min-width:0; background:#1a1a2e; color:#e0e0e0; border:1px solid #444; border-radius:4px; padding:1px 4px; font-size:11px; font-family:inherit;">';
         for (let i = 0; i < history.length; i++) {
             const sel = i === baseIdx ? ' selected' : '';
-            html += '<option value="' + i + '"' + sel + '>' + history[i].label + '</option>';
+            const { short, title } = this._historyEntryLabel(history[i]);
+            html +=
+                '<option value="' + i + '"' + sel + ' title="' + escapeAttribute(title) + '">' + short + '</option>';
         }
         html += '</select>';
         html +=
@@ -7192,12 +7249,13 @@ class CombatSimUI {
 
         // Baseline row
         const baseProfitColor = baseM?.profitPerHr >= 0 ? '#7ec87e' : '#ff6b6b';
+        const baseLabel = this._historyEntryLabel(baseEntry);
         html += '<tr style="background:rgba(232,168,124,0.08); cursor:pointer;" data-history-idx="' + baseIdx + '">';
         html +=
             '<td style="padding:2px 4px; color:#e8a87c; max-width:160px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;" title="' +
-            baseEntry.label +
+            escapeAttribute(baseLabel.title) +
             '">★ ' +
-            baseEntry.label +
+            baseLabel.short +
             '</td>';
         html +=
             '<td style="text-align:right; padding:2px 4px; color:#e0e0e0;">' +
@@ -7240,12 +7298,13 @@ class CombatSimUI {
             const profitDelta = baseM && m ? this._formatDelta(m.profitPerHr, baseM.profitPerHr, true, true) : '';
             const xpDelta = baseM && m ? this._formatDelta(m.totalXpPerHr, baseM.totalXpPerHr, true) : '';
 
+            const rowLabel = this._historyEntryLabel(entry);
             html += '<tr style="cursor:pointer;" data-history-idx="' + idx + '">';
             html +=
                 '<td style="padding:2px 4px; color:#ccc; max-width:160px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;" title="' +
-                entry.label +
+                escapeAttribute(rowLabel.title) +
                 '">' +
-                entry.label +
+                rowLabel.short +
                 '</td>';
             html +=
                 '<td style="text-align:right; padding:2px 4px; color:#e0e0e0;">' +
@@ -7308,7 +7367,8 @@ class CombatSimUI {
                 '<select class="toolasha-select" id="mwi-csim-add-comparison" style="width:100%; background:#1a1a2e; color:#aaa; border:1px solid #444; border-radius:4px; padding:2px 4px; font-size:11px; font-family:inherit;">';
             html += '<option value="">+ Add sim to comparison...</option>';
             for (const i of available) {
-                html += '<option value="' + i + '">' + history[i].label + '</option>';
+                const { short, title } = this._historyEntryLabel(history[i]);
+                html += '<option value="' + i + '" title="' + escapeAttribute(title) + '">' + short + '</option>';
             }
             html += '</select></div>';
         }
