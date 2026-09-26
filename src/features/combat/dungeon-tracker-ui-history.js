@@ -328,17 +328,20 @@ class DungeonTrackerUIHistory {
         // Update team filter
         const teamFilter = container.querySelector('#mwi-dt-filter-team');
         if (teamFilter) {
-            const currentValue = teamFilter.value;
+            // From state, like the dungeon and tier above: the select is rebuilt to
+            // "All Teams" on every render, so its own value lost a saved team on reload
+            const desired = this.state.filterTeam;
             teamFilter.innerHTML =
                 '<option value="all">All Teams</option>' +
                 teams
                     .map((team) => `<option value="${this.escapeHtml(team)}">${this.escapeHtml(team)}</option>`)
                     .join('');
             // Restore selection if still valid
-            if (teams.includes(currentValue)) {
-                teamFilter.value = currentValue;
+            if (desired === 'all' || teams.includes(desired)) {
+                teamFilter.value = desired;
             } else {
                 this.state.filterTeam = 'all';
+                teamFilter.value = 'all';
             }
         }
     }

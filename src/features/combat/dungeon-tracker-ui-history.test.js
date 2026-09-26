@@ -262,6 +262,20 @@ describe('filter dropdowns and an auto-scoped run with no history yet', () => {
         expect(container.querySelector('#mwi-dt-run-list').textContent).toContain('No runs match filters');
     });
 
+    test('a saved team filter survives the first render after a reload', async () => {
+        dungeonTrackerStorage.getAllRuns.mockResolvedValue([run('Aster'), run('Aster,Briar')]);
+        const state = freshState('team');
+        state.filterTeam = 'Aster';
+        const history = new DungeonTrackerUIHistory(state, (ms) => `${ms}ms`);
+        // A freshly built panel: the select still reads "all"
+        const container = buildFilterContainer();
+
+        await history.update(container);
+
+        expect(state.filterTeam).toBe('Aster');
+        expect(container.querySelector('#mwi-dt-filter-team').value).toBe('Aster');
+    });
+
     test('a manually-chosen dungeon/tier absent from history resets to all, as before', async () => {
         dungeonTrackerStorage.getAllRuns.mockResolvedValue([run('Aster', 'Chimerical Den')]);
         const state = freshState('team');
