@@ -1336,18 +1336,36 @@ export function resetFetchNext() {
  * @returns {{withId: Array<Object>, withoutId: Array<Object>}}
  */
 function fetchNextCandidates(state) {
-    // A different trial starts the list over. A session appearing for the first time
-    // (the first capture opens it) is the same trial, not a new one.
-    const session = state.startedAt ?? null;
-    if (session !== answeredForSession) {
-        if (answeredForSession !== null && session !== null) answeredWithoutLoadout.clear();
-        if (session !== null) answeredForSession = session;
-    }
+    settleAnsweredSession(state);
     const outstanding = sortParticipants(state.participants, state.complete).filter(
         (row) => !row.captured && !answeredWithoutLoadout.has(String(row.name || '').toLowerCase())
     );
     const hasId = (row) => row.characterId !== null && row.characterId !== undefined && row.characterId !== '';
     return { withId: outstanding.filter(hasId), withoutId: outstanding.filter((row) => !hasId(row)) };
+}
+
+/**
+ * Roll `answeredWithoutLoadout` over to a new trial session, if one just started.
+ *
+ * Pulled out of {@link fetchNextCandidates} so a caller that is about to add a
+ * name to the set can settle the session first — a `recordCapture` can itself
+ * open a new session (the first capture of a trial does), and adding before
+ * that settles risks the add being wiped out by this same rollover the moment
+ * the panel next draws, in the same synchronous handler.
+ *
+ * A session appearing for the first time (the first capture opens it) is the
+ * same trial, not a new one, so nothing is cleared then.
+ *
+ * @param {Object} state - From `guildTrialAbilities.state()`
+ * @returns {number|null} The (possibly just-adopted) current session id
+ */
+function settleAnsweredSession(state) {
+    const session = state?.startedAt ?? null;
+    if (session !== answeredForSession) {
+        if (answeredForSession !== null && session !== null) answeredWithoutLoadout.clear();
+        if (session !== null) answeredForSession = session;
+    }
+    return session;
 }
 
 /**
@@ -1741,6 +1759,12 @@ export function adoptViewLoadoutCaptures() {
             const snapshot = snapshotFromViewLoadout(entry);
             if (!snapshot) continue;
             guildTrialAbilities.recordCapture(snapshot, { at: entry.capturedAt, now: Date.now() });
+            // Settle the session (recordCapture may have just opened one) before
+            // adding to the skip set, so the draw this runs inside does not roll
+            // the set over out from under the entry just added to it — see
+            // settleAnsweredSession's own doc.
+            settleAnsweredSession(guildTrialAbilities.state());
+            if (entry.hasLoadout === false && snapshot.name) answeredWithoutLoadout.add(snapshot.name.toLowerCase());
             if (row.name) delete trialUnitRequests[String(row.name).toLowerCase()];
             adopted++;
         }
@@ -1837,11 +1861,15 @@ function onViewLoadoutCaptured(entry) {
         if (!entry || entry.context !== VIEW_LOADOUT_CONTEXT.GuildTrial) return;
         const snapshot = snapshotFromViewLoadout(entry);
         if (!snapshot) return;
-        if (entry.hasLoadout === false && snapshot.name) answeredWithoutLoadout.add(snapshot.name.toLowerCase());
         guildTrialAbilities.recordCapture(snapshot, {
             at: Number.isFinite(entry.capturedAt) ? entry.capturedAt : undefined,
             now: Date.now(),
         });
+        // Settle the session (recordCapture may have just opened one) before
+        // adding to the skip set — the render call right below is exactly the
+        // kind of same-tick rollover check that used to wipe this add out.
+        settleAnsweredSession(guildTrialAbilities.state());
+        if (entry.hasLoadout === false && snapshot.name) answeredWithoutLoadout.add(snapshot.name.toLowerCase());
         const key = String(entry.name || snapshot.name || '').toLowerCase();
         if (key) delete trialUnitRequests[key];
         guildTrialAbilitiesPanel.render();
