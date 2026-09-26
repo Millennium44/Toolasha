@@ -95,13 +95,18 @@ function reply(id, name, { hasLoadout = true } = {}) {
 /** Put a game loadout modal on the page; its close button removes it */
 function openModal(name) {
     const container = document.createElement('div');
-    container.className = 'Modal_modalContainer__abc';
-    container.innerHTML = `<div class="Modal_modalContent__def">
-        <div class="LoadoutModal_header__x"><div class="LoadoutModal_title__y">${name}'s Loadout</div></div>
-        <div>Equipment</div>
-        <button class="Modal_closeButton__ghi">×</button>
+    container.className = 'SharableProfile_modalContainer__6Q2JL';
+    // The shape measured on the test server (2026-09-26)
+    container.innerHTML = `<div class="SharableProfile_modal__2OmCQ">
+        <div class="SharableProfile_modalContent__284HM">
+            <div class="SharableProfile_header__3QyU6">${name}'s Loadout</div>
+            <div>Equipment</div>
+        </div>
+        <div class="SharableProfile_closeButton__3QHya">×</div>
     </div>`;
-    container.querySelector('button').addEventListener('click', () => container.remove());
+    container
+        .querySelector('[class*="SharableProfile_closeButton"]')
+        .addEventListener('click', () => container.remove());
     document.body.appendChild(container);
     return container;
 }
@@ -280,6 +285,11 @@ describe('findLoadoutModals', () => {
         other.className = 'Modal_modalContainer__abc';
         other.innerHTML = '<div>Ally</div><div>Choose a loadout to equip</div>';
         document.body.appendChild(other);
+        // The profile modal shares the loadout modal's container class
+        const profile = document.createElement('div');
+        profile.className = 'SharableProfile_modalContainer__6Q2JL';
+        profile.innerHTML = '<div class="SharableProfile_header__3QyU6">Ally</div><div>Total Level: 2412</div>';
+        document.body.appendChild(profile);
 
         const modals = findLoadoutModals();
         expect(modals).toHaveLength(1);

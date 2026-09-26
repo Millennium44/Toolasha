@@ -23,10 +23,13 @@ const { handleLoadoutShared, _resetViewLoadout } = await import('../../utils/vie
 /** The game's loadout modal */
 function openModal(name) {
     const container = document.createElement('div');
-    container.className = 'Modal_modalContainer__abc';
-    container.innerHTML = `<div class="Modal_modalContent__def">
-        <div class="LoadoutModal_title__y">${name}'s Loadout</div>
-        <button class="Modal_closeButton__ghi">×</button>
+    container.className = 'SharableProfile_modalContainer__6Q2JL';
+    // The shape measured on the test server (2026-09-26)
+    container.innerHTML = `<div class="SharableProfile_modal__2OmCQ">
+        <div class="SharableProfile_modalContent__284HM">
+            <div class="SharableProfile_header__3QyU6">${name}'s Loadout</div>
+        </div>
+        <div class="SharableProfile_closeButton__3QHya">×</div>
     </div>`;
     document.body.appendChild(container);
     return container;
