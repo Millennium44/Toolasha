@@ -26,6 +26,13 @@ import { createPanel, panelCard, panelLine, panelNote } from '../../utils/simple
 import { classTagIcon } from '../../utils/class-weapon.js';
 import { openPlayerProfile, VALID_PLAYER_NAME_RE } from '../../utils/profile-command.js';
 import storage from '../../core/storage.js';
+import {
+    fetchLoadout,
+    getLoadout,
+    isViewLoadoutAvailable,
+    onLoadoutCaptured,
+    VIEW_LOADOUT_CONTEXT,
+} from '../../utils/view-loadout.js';
 
 const ACCENT = '#a8d6a0';
 
@@ -87,6 +94,77 @@ function collapsibleCard(body, title, key) {
 
 /** Exact section title — the label the export's readers key their eyes on too */
 export const AURA_SECTION_TITLE = 'Equipped aura coverage';
+
+/**
+ * Best-effort `kind` for {@link fetchLoadout} on the guild-trial roster.
+ *
+ * The game itself derives this from `kindForTrial(trialHrid)`, a
+ * `GuildTrialKind` enum — but this panel only ever runs for a *combat* trial
+ * (a skilling trial has no abilities to check), and no `guild_trial_kinds`-style
+ * hrid or enum serialization for it has turned up anywhere in this codebase or
+ * on a live client. This is a guess, following the lowercase `'combat'` /
+ * `'skilling'` convention `guild-trials-store.js` already uses for a trial's
+ * kind, not a value read off the game. If it is wrong the server likely just
+ * ignores the request; passive capture (a click from the roster page) is the
+ * fallback either way and needs no correct `kind` at all. Confirm on the test
+ * server before trusting the Fetch button alone.
+ */
+export const GUILD_TRIAL_KIND_GUESS = 'combat';
+
+/**
+ * A trial-loadout capture ({@link module:utils/view-loadout~CapturedLoadout}),
+ * as the snapshot shape {@link module:./guild-trial-abilities~recordCapture} expects.
+ *
+ * `equippedAbilities` carries `{abilityHrid, level, slotNumber}`; sorted back
+ * into slot order so the ability row draws the kit the way it was built, the
+ * same order a Battle Info capture preserves. `hasLoadout === false` is the
+ * game's own "nothing to use" flag — treated the same as a stat-only Battle
+ * Info sighting (not authoritative), never as a proven-empty kit, because the
+ * two claims are different and only one of them is true here.
+ *
+ * @param {Object} entry - A `CapturedLoadout` from `view-loadout.js`
+ * @returns {Object|null} A `recordCapture` snapshot, or null with nothing usable
+ */
+export function snapshotFromViewLoadout(entry) {
+    const loadout = entry?.loadout;
+    if (!loadout || typeof loadout !== 'object') return null;
+    const name = entry.name || loadout.sharableCharacter?.name || null;
+    if (!name && (entry.characterId === null || entry.characterId === undefined)) return null;
+
+    const abilities = Array.isArray(loadout.equippedAbilities)
+        ? [...loadout.equippedAbilities]
+              .filter((ability) => ability?.abilityHrid)
+              .sort((a, b) => (Number(a?.slotNumber) || 0) - (Number(b?.slotNumber) || 0))
+              .map((ability) => ({
+                  hrid: ability.abilityHrid,
+                  level: Number.isFinite(Number(ability.level)) ? Number(ability.level) : null,
+              }))
+        : [];
+
+    return {
+        characterId: entry.characterId ?? null,
+        name,
+        abilities,
+        abilitiesAuthoritative: entry.hasLoadout !== false,
+        source: 'view_loadout',
+        at: entry.capturedAt,
+        stats: null,
+    };
+}
+
+/**
+ * What to say about where a captured kit came from, for the player row.
+ * @param {Object|null} capture - A `state().participants[].capture` entry
+ * @param {number} [now] - Clock
+ * @returns {string|null} e.g. `trial loadout, 3m ago`, or null with nothing captured
+ */
+export function captureSourceLabel(capture, now = Date.now()) {
+    if (!capture) return null;
+    const at = Number(capture.capturedAt);
+    const age = Number.isFinite(at) ? `${formatEta(Math.max(0, now - at))} ago` : null;
+    const label = capture.source === 'view_loadout' ? 'trial loadout' : 'Battle Info';
+    return age ? `${label}, ${age}` : label;
+}
 
 /**
  * A tier as the panel writes one.
@@ -1167,6 +1245,63 @@ function playerLine(row, value, color, title = '') {
 }
 
 /**
+ * A per-player "Fetch" control: one click, one {@link fetchLoadout} for that
+ * player's trial loadout — nothing here loops or retries on its own.
+ *
+ * Only drawn when this game build has View Loadout at all
+ * ({@link isViewLoadoutAvailable}). Disabled, with a hint, when the row has no
+ * known character id: `fetchLoadout` needs one to ask the game for a specific
+ * player, and the roster only learns ids from `new_guild_battle` — opening
+ * that player's loadout once from the roster page passively captures it and
+ * fills the id in for next time.
+ *
+ * @param {{characterId: string|number|null, name: string}} row - A participant row
+ * @returns {HTMLElement|null} The button, or null when View Loadout is unavailable
+ */
+function fetchLoadoutButton(row) {
+    if (!isViewLoadoutAvailable()) return null;
+
+    const hasId = row.characterId !== null && row.characterId !== undefined && row.characterId !== '';
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.textContent = 'Fetch';
+    button.disabled = !hasId;
+    button.title = hasId
+        ? "Ask the game for this player's trial loadout — one request, sent by this click."
+        : 'No character id known for this player yet — open their loadout once from the roster to capture it.';
+    button.style.cssText =
+        'margin-left: 6px; padding: 0 6px; font-size: 10px; line-height: 15px; border-radius: 8px; ' +
+        `background: rgba(255,255,255,${hasId ? '0.08' : '0.03'}); border: 1px solid rgba(255,255,255,0.18); ` +
+        `color: ${hasId ? '#e8ecf5' : 'rgba(232,236,245,0.4)'}; cursor: ${hasId ? 'pointer' : 'default'};`;
+
+    button.addEventListener('click', async (event) => {
+        event.stopPropagation();
+        if (!hasId || button.disabled) return;
+        button.disabled = true;
+        button.textContent = '…';
+        try {
+            const result = await fetchLoadout(
+                { characterId: row.characterId, name: row.name },
+                VIEW_LOADOUT_CONTEXT.GuildTrial,
+                GUILD_TRIAL_KIND_GUESS
+            );
+            // A 'done' reply is already folded in and rendered by the capture
+            // listener below by the time this resolves; anything else leaves
+            // the row as it was, so the button is simply put back
+            if (result.status !== 'done') {
+                button.disabled = !hasId;
+                button.textContent = 'Fetch';
+            }
+        } catch (error) {
+            console.error('[GuildTrialAbilitiesUI] Fetching a trial loadout failed:', error);
+            button.disabled = !hasId;
+            button.textContent = 'Fetch';
+        }
+    });
+    return button;
+}
+
+/**
  * The players card: capture status and kits, in the sort the moment calls for.
  * @param {HTMLElement} body - Panel body
  * @param {Object} state - From `guildTrialAbilities.state()`
@@ -1185,24 +1320,36 @@ function drawPlayers(body, state, abilityDetailMap) {
 
     for (const row of sortParticipants(state.participants, state.complete)) {
         if (!row.capture) {
-            card.appendChild(playerLine(row, 'needs Battle Info', ROW_COLORS.bad));
+            const line = playerLine(row, 'needs Battle Info', ROW_COLORS.bad);
+            const fetchButton = fetchLoadoutButton(row);
+            if (fetchButton) line.appendChild(fetchButton);
+            card.appendChild(line);
             continue;
         }
         if (!row.captured) {
             // Seen, but only as a stat sheet: unavailable is not the same claim
             // as "no abilities equipped", so the player stays outstanding
-            card.appendChild(
-                playerLine(
-                    row,
-                    'abilities unavailable — needs Battle Info',
-                    ROW_COLORS.bad,
-                    'A stat-only sighting; the popup payload carried no ability list.'
-                )
+            const line = playerLine(
+                row,
+                'abilities unavailable — needs Battle Info',
+                ROW_COLORS.bad,
+                'A stat-only sighting; the popup payload carried no ability list.'
             );
+            const fetchButton = fetchLoadoutButton(row);
+            if (fetchButton) line.appendChild(fetchButton);
+            card.appendChild(line);
             continue;
         }
         const tier = tierText(row.capture.capturedTier);
-        card.appendChild(playerLine(row, `captured${tier ? ` (${tier})` : ''}`, ROW_COLORS.good));
+        const source = captureSourceLabel(row.capture);
+        const captureLine = playerLine(
+            row,
+            `captured${tier ? ` (${tier})` : ''}${source ? ` — ${source}` : ''}`,
+            ROW_COLORS.good
+        );
+        const fetchButton = fetchLoadoutButton(row);
+        if (fetchButton) captureLine.appendChild(fetchButton);
+        card.appendChild(captureLine);
         card.appendChild(abilityRow(row.capture, abilityDetailMap));
 
         // The cast-stream guess against the sheet, for a player with both —
@@ -1369,6 +1516,7 @@ export const guildTrialAbilitiesPanel = createPanel({
     draw: (body) => {
         const abilityDetailMap = dataManager.getInitClientData?.()?.abilityDetailMap || {};
         adoptStoredCaptures();
+        adoptViewLoadoutCaptures();
         const state = guildTrialAbilities.state(abilityDetailMap);
         // Controls first, above even the summary, on purpose: everything below
         // grows — the plan, the coverage lists, a row per capture — and buttons
@@ -1434,8 +1582,47 @@ export function adoptStoredCaptures() {
     }
 }
 
+/**
+ * Fold in any trial loadout the {@link module:utils/view-loadout} store already
+ * holds for an outstanding player, taken since this session began.
+ *
+ * The mirror of {@link adoptStoredCaptures} for the other capture source: a
+ * loadout fetched (or passively seen) before this panel's session existed —
+ * before a trial roster was fed in, or before the listener below was wired up
+ * on a reload — must still count once the panel does look for it, the same way
+ * a Battle Info sheet does.
+ *
+ * @returns {number} How many were adopted
+ */
+export function adoptViewLoadoutCaptures() {
+    try {
+        const state = guildTrialAbilities.state();
+        if (!state?.outstanding?.length) return 0;
+        const horizon = state.startedAt || Date.now() - SESSION_MAX_AGE_MS;
+        let adopted = 0;
+        for (const row of state.outstanding) {
+            const wanted = row.characterId ?? row.name;
+            if (wanted === null || wanted === undefined || wanted === '') continue;
+            const entry = getLoadout(wanted, VIEW_LOADOUT_CONTEXT.GuildTrial);
+            if (!entry || !Number.isFinite(entry.capturedAt) || entry.capturedAt < horizon) continue;
+            const snapshot = snapshotFromViewLoadout(entry);
+            if (!snapshot) continue;
+            guildTrialAbilities.recordCapture(snapshot, { at: entry.capturedAt, now: Date.now() });
+            if (row.name) delete trialUnitRequests[String(row.name).toLowerCase()];
+            adopted++;
+        }
+        return adopted;
+    } catch (error) {
+        console.error('[GuildTrialAbilitiesUI] Adopting stored trial loadouts failed:', error);
+        return 0;
+    }
+}
+
 /** Unsubscribe from the loadout capture's events; set in `initialize` */
 let offCaptured = null;
+
+/** Unsubscribe from `view-loadout.js`'s captures; set in `initialize` */
+let offViewLoadoutCaptured = null;
 
 /** The trial-tick handler, kept so cleanup can unsubscribe exactly it */
 let onTrialTick = null;
@@ -1499,6 +1686,36 @@ function onCapturedEvent(event) {
     }
 }
 
+/**
+ * A `loadout_shared` landed somewhere in the client — fold it in when it is a
+ * guild-trial loadout and redraw.
+ *
+ * Filtered on the capture's own `context` rather than on whether a fetch is in
+ * flight: a player's trial loadout may equally arrive from the user's own
+ * click on the roster page, which this must adopt exactly as the Fetch button's
+ * own request does. A party or unknown-context capture says nothing about a
+ * trial kit and is left alone — the sim's use of the same store is what that
+ * capture is for.
+ *
+ * @param {Object} entry - A `CapturedLoadout` from `view-loadout.js`
+ */
+function onViewLoadoutCaptured(entry) {
+    try {
+        if (!entry || entry.context !== VIEW_LOADOUT_CONTEXT.GuildTrial) return;
+        const snapshot = snapshotFromViewLoadout(entry);
+        if (!snapshot) return;
+        guildTrialAbilities.recordCapture(snapshot, {
+            at: Number.isFinite(entry.capturedAt) ? entry.capturedAt : undefined,
+            now: Date.now(),
+        });
+        const key = String(entry.name || snapshot.name || '').toLowerCase();
+        if (key) delete trialUnitRequests[key];
+        guildTrialAbilitiesPanel.render();
+    } catch (error) {
+        console.error('[GuildTrialAbilitiesUI] Handling a trial loadout capture failed:', error);
+    }
+}
+
 export default {
     name: 'Guild Trial Abilities',
     /**
@@ -1513,6 +1730,8 @@ export default {
         // meantime rather than replacing it, so the order is safe both ways.
         offCaptured?.();
         offCaptured = guildLoadoutCapture.onCaptured?.((event) => onCapturedEvent(event)) ?? null;
+        offViewLoadoutCaptured?.();
+        offViewLoadoutCaptured = onLoadoutCaptured((entry) => onViewLoadoutCaptured(entry));
 
         // Which cards the player keeps folded, restored before the first draw
         try {
@@ -1544,6 +1763,8 @@ export default {
     cleanup: () => {
         offCaptured?.();
         offCaptured = null;
+        offViewLoadoutCaptured?.();
+        offViewLoadoutCaptured = null;
         if (onTrialTick) for (const type of TRIAL_TICK_MESSAGES) webSocketHook.off(type, onTrialTick);
         onTrialTick = null;
         guildTrialAbilitiesPanel.hide({ remember: false });
