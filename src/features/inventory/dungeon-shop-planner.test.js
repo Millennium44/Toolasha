@@ -231,6 +231,18 @@ describe('the plan', () => {
         expect(dungeonShopPlanner.measuring.size).toBe(0);
     });
 
+    test('an item with no volume answer is asked again on the next open', async () => {
+        const fang = state.volumes['/items/kraken_fang'];
+        delete state.volumes['/items/kraken_fang'];
+        await dungeonShopPlanner.measure('/items/pirate_token');
+        expect(dungeonShopPlanner.volumes.has('/items/kraken_fang')).toBe(false);
+
+        // The history host answers this time
+        state.volumes['/items/kraken_fang'] = fang;
+        await dungeonShopPlanner.measure('/items/pirate_token');
+        expect(dungeonShopPlanner.volumes.get('/items/kraken_fang')?.known).toBe(true);
+    });
+
     test('an unmeasured item is capped at 0 until it is included, then flagged', async () => {
         delete state.volumes['/items/kraken_fang'];
         await openPirate();

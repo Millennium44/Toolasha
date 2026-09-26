@@ -209,7 +209,9 @@ class DungeonShopPlanner {
             if (!this.initialized) return;
             // The source changed while this was measuring: its answers belong to the old one
             if (this.volumesSource !== source) return;
-            this.volumes.set(offer.itemHrid, volume);
+            // Only a measurement is kept; an unknown answer (history off, host down,
+            // cooling down) is asked again next time the planner opens
+            if (volume?.known) this.volumes.set(offer.itemHrid, volume);
             this.measuring.delete(offer.itemHrid);
             this.panel?.render();
         }
@@ -234,6 +236,9 @@ class DungeonShopPlanner {
         for (const offer of offers) {
             if (this.volumes.has(offer.itemHrid)) {
                 caps[offer.itemHrid] = volumeCap(this.volumes.get(offer.itemHrid), options);
+            } else if (!this.measuring.has(offer.itemHrid)) {
+                // Asked and not answered: unknown this time, and asked again on the next open
+                caps[offer.itemHrid] = volumeCap({ itemHrid: offer.itemHrid, unitsPerDay: 0, known: false }, options);
             }
         }
         const tokens = ownedTokenCount(tokenHrid);
