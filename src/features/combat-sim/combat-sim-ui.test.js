@@ -5109,6 +5109,34 @@ describe('confirming a basket together', () => {
         expect(container.textContent).toContain('+5.00 DPS');
         expect(container.textContent).toContain('/hr profit');
     });
+
+    test('a regressive measured change under the Score goal is colored as a loss', async () => {
+        // The confirm run exists to expose regressions the individual picks hid,
+        // so a DPS drop must not be painted green with the rest
+        const scored = twoPickResults();
+        scored.results[0].score = 10;
+        scored.results[1].score = 5;
+        mocks.confirmResult = {
+            ok: true,
+            metrics: { dps: 95, xpPerHour: 1000, profitPerHour: 1080, deathsPerHour: 0, encountersPerHour: 10 },
+            deltas: {},
+            economics: { profitGainPerHour: 80 },
+            noise: {},
+            totalCost: 300,
+        };
+        ui._upgradePlanMetric = 'score';
+        ui._renderUpgradeResults(scored);
+        const container = ui.panel.querySelector('#mwi-csim-upgrade-results');
+
+        container.querySelector('#mwi-csim-budget-confirm').click();
+        await Promise.resolve();
+        await Promise.resolve();
+        await Promise.resolve();
+
+        const dpsSpan = [...container.querySelectorAll('span')].find((s) => s.textContent.includes('-5.00 DPS'));
+        expect(dpsSpan).toBeTruthy();
+        expect(dpsSpan.getAttribute('style')).toContain('#e57373');
+    });
 });
 
 describe('how deep the Score pays out', () => {

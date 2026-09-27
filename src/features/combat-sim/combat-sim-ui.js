@@ -9850,17 +9850,26 @@ class CombatSimUI {
             // What the confirm run actually measured is shown instead: the
             // same per-metric changes every other axis already knows how to
             // read and format.
+            // Every gain is oriented so positive is better (deaths included), and
+            // the confirm run exists to expose regressions, so each value is
+            // colored by its own sign rather than assumed to be a win.
+            const gainSpan = (gain, text) => {
+                const color = gain > 0 ? '#4caf50' : gain < 0 ? '#e57373' : '#888';
+                return `<span style="color:${color}; font-weight:600;">${text}</span>`;
+            };
             const togetherHtml =
                 plan.metric.key === 'score'
                     ? `<span style="color:#888;">can't be confirmed as a score; the measured changes are</span>
-                        <span style="color:#4caf50; font-weight:600;">${UPGRADE_PLAN_METRICS.filter(
-                            (m) => m.key !== 'score'
-                        )
-                            .map((m) => `${m.label} ${m.format(m.gain(confirmedRow, baseline))}`)
-                            .join(', ')}</span>`
-                    : `<span style="color:#4caf50; font-weight:600;">${plan.metric.format(
-                          plan.metric.gain(confirmedRow, baseline)
-                      )}</span>`;
+                        ${UPGRADE_PLAN_METRICS.filter((m) => m.key !== 'score')
+                            .map((m) => {
+                                const gain = m.gain(confirmedRow, baseline);
+                                return gainSpan(gain, `${m.label} ${m.format(gain)}`);
+                            })
+                            .join(', ')}`
+                    : (() => {
+                          const gain = plan.metric.gain(confirmedRow, baseline);
+                          return gainSpan(gain, plan.metric.format(gain));
+                      })();
             return wrap(
                 `<div style="font-size:11px; color:#aaa;">summed
                     <span style="color:#4caf50; font-weight:600;">${plan.metric.format(plan.gainTotal)}</span>
