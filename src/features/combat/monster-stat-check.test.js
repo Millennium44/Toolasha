@@ -87,8 +87,22 @@ describe('compareStat', () => {
     test('null when a side is missing, zero when both read zero', () => {
         expect(compareStat('x', {}, { x: 5 }).deltaPct).toBeNull();
         expect(compareStat('x', { x: 5 }, {}).deltaPct).toBeNull();
-        expect(compareStat('x', { x: 5 }, { x: 0 }).deltaPct).toBeNull(); // can't divide by a zero baseline
         expect(compareStat('x', { x: 0 }, { x: 0 }).deltaPct).toBe(0);
+    });
+
+    test('a value the game has against a zero sim baseline is a gap, not unknown', () => {
+        // The engine starts crit rate and crit damage at 0, so a crit source the
+        // sim is missing reads as game > 0 against sim 0 — the case the crit
+        // rows exist to flag
+        expect(compareStat('x', { x: 5 }, { x: 0 }).deltaPct).toBe(Infinity);
+        expect(compareStat('x', { x: -5 }, { x: 0 }).deltaPct).toBe(-Infinity);
+        expect(classify(Infinity, false)).toBe('mismatch');
+        const crit = compareStat(
+            'criticalRate',
+            { combatStats: { criticalRate: 0.05 } },
+            { combatStats: { criticalRate: 0 } }
+        );
+        expect(classify(crit.deltaPct, false)).toBe('mismatch');
     });
 
     test('falls back to combatStats when the flat key is missing — the sim shape for timing/crit rows', () => {
