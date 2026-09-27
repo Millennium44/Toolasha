@@ -1338,8 +1338,10 @@ describe('the strip does not move its controls', () => {
     test('the status line is a fixed slot rather than one that follows its text', () => {
         const status = bulkSell.chip.querySelector(`.${CHIP}-status`);
         expect(status.style.width).toBe('340px');
-        // Shrinks only when the strip hits its screen-width cap on a phone
-        expect(status.style.flex).toBe('0 1 340px');
+        // Grows to exactly 340px, and gives width up only when the strip hits its
+        // screen-width cap on a phone
+        expect(status.style.flex).toBe('1 1 0px');
+        expect(status.style.maxWidth).toBe('340px');
 
         enter('idle');
         const short = status.style.width;
