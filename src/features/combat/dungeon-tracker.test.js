@@ -2341,6 +2341,55 @@ describe('rebuilding history from the chat log', () => {
         expect((await tracker.backfillFromChatHistory()).runsAdded).toBe(0);
     });
 
+    test('a run after a canceled Pirate Cove is filed under the Sinister Circus the party started next', async () => {
+        // The live chat around the reported 1608:19 run, as the DOM renders it,
+        // Toolasha's own "[Run #N: …]" and "[canceled]" labels included. The
+        // tail of the Cove session, its next start canceled, and a day later a
+        // new party's Sinister Circus.
+        vi.setSystemTime(new Date(2026, 8, 27, 14, 0, 0));
+        const five = '[MrChilimby - 49] [Sarin - 49] [Millennium44 - 50] [feagle - 36] [ZazzBlammymataz - 50]';
+        const fiveLater = '[MrChilimby - 48] [Sarin - 48] [Millennium44 - 49] [feagle - 35] [ZazzBlammymataz - 49]';
+        chatLog([
+            { text: '[9/26 9:20:00 AM] Battle started: Pirate Cove' },
+            { text: '[9/26 9:58:13 AM] Key counts: [Millennium44 - 60] [Alice - 58] [Run #39: 31m 14s]' },
+            { text: '[9/26 10:29:27 AM] Key counts: [Millennium44 - 59] [Alice - 57] [canceled]' },
+            { text: '[9/26 10:29:28 AM] Millennium44 is not ready.' },
+            { text: '[9/26 10:29:40 AM] Battle ended: Pirate Cove' },
+            { text: '[9/27 12:58:10 PM] Battle started: Sinister Circus' },
+            { text: `[9/27 12:58:18 PM] Key counts: ${five} [Run #1: 19m 28s] [Avg last 1: 19m 28s]` },
+            { text: `[9/27 1:17:46 PM] Key counts: ${fiveLater}` },
+        ]);
+
+        const result = await tracker.backfillFromChatHistory();
+
+        expect(result.runsAdded).toBe(2);
+        const byDungeon = Object.fromEntries(
+            game.savedRuns.map(({ teamKey, run }) => [run.dungeonName, { teamKey, run }])
+        );
+        expect(byDungeon['Pirate Cove'].run).toEqual({
+            timestamp: new Date(2026, 8, 26, 9, 58, 13).toISOString(),
+            duration: 31 * 60_000 + 14_000,
+            dungeonName: 'Pirate Cove',
+        });
+        expect(byDungeon['Sinister Circus'].teamKey).toBe('Millennium44,MrChilimby,Sarin,ZazzBlammymataz,feagle');
+        expect(byDungeon['Sinister Circus'].run).toEqual({
+            timestamp: new Date(2026, 8, 27, 12, 58, 18).toISOString(),
+            duration: 19 * 60_000 + 28_000,
+            dungeonName: 'Sinister Circus',
+        });
+    });
+
+    test('two key counts a day apart are not a run, even with nothing between them', async () => {
+        vi.setSystemTime(new Date(2026, 8, 27, 14, 0, 0));
+        chatLog([
+            { text: '[9/26 10:29:27 AM] Key counts: [Millennium44 - 59] [Alice - 57]' },
+            { text: '[9/27 12:58:18 PM] Key counts: [Millennium44 - 50] [Alice - 56]' },
+        ]);
+
+        expect((await tracker.backfillFromChatHistory()).runsAdded).toBe(0);
+        expect(game.savedRuns).toEqual([]);
+    });
+
     test('player chatter is skipped, however much it looks like a key count', async () => {
         chatLog([
             { text: '[08/04 10:00:00 AM] Battle started: Chimerical Den' },
@@ -4452,23 +4501,23 @@ describe('a start left over from another day', () => {
         expect(game.savedRuns[0].run.duration).toBe(31 * 60_000 + 14_000);
 
         // The next day: a new party, a new dungeon, its first battle
-        const runStart = Date.parse('2026-09-27T12:38:50.000Z');
+        const runStart = Date.parse('2026-09-27T12:58:18.000Z');
         vi.setSystemTime(runStart - 10_000);
         game.actions = [partyAction(LAIR, { id: 9002 })];
         tracker.onActionsUpdated({ endCharacterActions: [partyAction(LAIR, { id: 9002 })] });
         tracker.onChatMessage(
-            partyMessage('systemChatMessage.partyBattleStarted', '2026-09-27T12:38:40.000Z', {
+            partyMessage('systemChatMessage.partyBattleStarted', '2026-09-27T12:58:10.000Z', {
                 name: 'Sinister Circus',
             })
         );
         vi.setSystemTime(runStart);
         tracker.onChatMessage(
-            partyMessage('systemChatMessage.partyKeyCount', '2026-09-27T12:38:50.000Z', {
-                keyCountString: '[MrChilimby - 50] [Sarin - 50] [Marketcow - 51] [feagle - 37] [ZazzBlammymataz - 51]',
+            partyMessage('systemChatMessage.partyKeyCount', '2026-09-27T12:58:18.000Z', {
+                keyCountString: '[MrChilimby - 49] [Sarin - 49] [Marketcow - 50] [feagle - 36] [ZazzBlammymataz - 50]',
             })
         );
         vi.setSystemTime(runStart + 2_000);
-        await tracker.onNewBattle({ wave: 1, battleId: 1, combatStartTime: '2026-09-27T12:38:52.000Z', players: FIVE });
+        await tracker.onNewBattle({ wave: 1, battleId: 1, combatStartTime: '2026-09-27T12:58:20.000Z', players: FIVE });
         await flush();
         vi.advanceTimersByTime(200); // the post-start chat scan
         await flush();
@@ -4481,7 +4530,7 @@ describe('a start left over from another day', () => {
         await tracker.onNewBattle({
             wave: 55,
             battleId: 1,
-            combatStartTime: '2026-09-27T12:38:52.000Z',
+            combatStartTime: '2026-09-27T12:58:20.000Z',
             players: FIVE,
         });
         await flush();
@@ -4490,17 +4539,17 @@ describe('a start left over from another day', () => {
         expect(shown.totalElapsed).toBe(18 * 60_000);
 
         // And it banks as the 19:28 the chat itself reports
-        vi.setSystemTime(Date.parse('2026-09-27T12:58:18.500Z'));
+        vi.setSystemTime(Date.parse('2026-09-27T13:17:46.500Z'));
         tracker.onChatMessage(
-            partyMessage('systemChatMessage.partyKeyCount', '2026-09-27T12:58:18.000Z', {
-                keyCountString: '[MrChilimby - 49] [Sarin - 49] [Marketcow - 50] [feagle - 36] [ZazzBlammymataz - 50]',
+            partyMessage('systemChatMessage.partyKeyCount', '2026-09-27T13:17:46.000Z', {
+                keyCountString: '[MrChilimby - 48] [Sarin - 48] [Marketcow - 49] [feagle - 35] [ZazzBlammymataz - 49]',
             })
         );
         await flush();
         expect(game.savedRuns).toHaveLength(2);
         expect(game.savedRuns[1].run.dungeonName).toBe('Sinister Circus');
         expect(game.savedRuns[1].run.duration).toBe(19 * 60_000 + 28_000);
-        expect(game.savedRuns[1].run.timestamp).toBe('2026-09-27T12:38:50.000Z');
+        expect(game.savedRuns[1].run.timestamp).toBe('2026-09-27T12:58:18.000Z');
     });
 
     test('a carried anchor that waited far longer than a run boundary is not used', async () => {
