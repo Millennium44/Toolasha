@@ -44,3 +44,27 @@ export function expectedProcessedItems(drop, conversionRatio, gatheringQuantity,
     }
     return baseConversions * (1 - extraRepeatChance) + extraConversions * extraRepeatChance;
 }
+
+/** The skills whose recipes Processing performs: milk → cheese, logs → lumber, raw fibre → fabric */
+const PROCESSING_ACTION_TYPES = ['/action_types/cheesesmithing', '/action_types/crafting', '/action_types/tailoring'];
+
+/**
+ * What Processing turns each gathered resource into, read off the game's own
+ * recipes the same way `gathering-profit.js` reads them: the first input of a
+ * cheesesmithing, crafting or tailoring recipe is the raw resource, its first
+ * output the processed material, and the input count how many raw items one
+ * processed item takes.
+ * @param {Object<string, Object>} actionDetailMap - `initClientData.actionDetailMap`
+ * @returns {Map<string, {outputItemHrid: string, conversionRatio: number}>} Keyed by raw item hrid
+ */
+export function processingConversions(actionDetailMap) {
+    const conversions = new Map();
+    for (const action of Object.values(actionDetailMap || {})) {
+        if (!PROCESSING_ACTION_TYPES.includes(action?.type)) continue;
+        const input = action.inputItems?.[0];
+        const output = action.outputItems?.[0];
+        if (!input?.itemHrid || !output?.itemHrid || !(input.count > 0)) continue;
+        conversions.set(input.itemHrid, { outputItemHrid: output.itemHrid, conversionRatio: input.count });
+    }
+    return conversions;
+}

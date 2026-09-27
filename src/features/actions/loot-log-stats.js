@@ -14,6 +14,7 @@ import { formatKMB, numberFormatter, formatDateTime } from '../../utils/formatte
 import { createTimerRegistry } from '../../utils/timer-registry.js';
 import { MARKET_TAX, GATHERING_TYPES } from '../../utils/profit-constants.js';
 import { getActionEfficiencyContext } from '../../utils/efficiency.js';
+import { processingConversions } from '../../utils/gathering-processing.js';
 import { isIronCowCharacter } from '../../utils/ironcow-valuation.js';
 import { signedPercent } from '../../utils/overlay-format.js';
 import {
@@ -1143,28 +1144,25 @@ class LootLogStats {
 
     /**
      * What Processing Tea can turn this action's drops into: processed item hrid
-     * → the raw item and how many of it one takes. Found the way gathering-profit.js
-     * finds them, from the cheesesmithing/crafting/tailoring recipes whose one input
-     * is a raw drop.
+     * → the raw item and how many of it one takes. Read off `processingConversions`
+     * (the same cheesesmithing/crafting/tailoring recipe scan gathering-profit.js
+     * uses), reshaped from raw → processed to processed → raw for the drop model's
+     * lookup by observed item.
      * @param {Object} actionDetail - The action's `actionDetailMap` entry
      * @returns {Object<string, {rawHrid: string, ratio: number}>}
      */
     processingConversionsFor(actionDetail) {
-        const conversions = {};
+        const result = {};
         const raws = new Set((actionDetail?.dropTable || []).map((drop) => drop.itemHrid));
-        const actionDetailMap = dataManager.getInitClientData?.()?.actionDetailMap;
-        if (!raws.size || !actionDetailMap) return conversions;
+        if (!raws.size) return result;
 
-        const processingTypes = ['/action_types/cheesesmithing', '/action_types/crafting', '/action_types/tailoring'];
-        for (const action of Object.values(actionDetailMap)) {
-            if (!processingTypes.includes(action?.type)) continue;
-            const input = action.inputItems?.[0];
-            const output = action.outputItems?.[0];
-            if (input && output && raws.has(input.itemHrid) && input.count > 0) {
-                conversions[output.itemHrid] = { rawHrid: input.itemHrid, ratio: input.count };
+        const conversions = processingConversions(dataManager.getInitClientData?.()?.actionDetailMap);
+        for (const [rawHrid, conversion] of conversions) {
+            if (raws.has(rawHrid) && conversion.conversionRatio > 0) {
+                result[conversion.outputItemHrid] = { rawHrid, ratio: conversion.conversionRatio };
             }
         }
-        return conversions;
+        return result;
     }
 
     /**
@@ -1181,16 +1179,17 @@ class LootLogStats {
         if (!logData?.drops) return null;
 
         const actionDetail = dataManager.getActionDetails(logData.actionHrid);
+        const gatheringQuantity = this.gatheringQuantityFor(actionDetail);
         const session = buildGatheringSession({
             actionDetail,
             actionCount: logData.actionCount,
             priceOf: (itemHrid) => this.getModelPrice(itemHrid),
-            gatheringQuantity: this.gatheringQuantityFor(actionDetail),
+            gatheringQuantity,
             processedFrom: this.processingConversionsFor(actionDetail),
         });
         if (!session) return null;
 
-        return { session, income: gatheringLootValue(session, logData.drops) };
+        return { session, income: gatheringLootValue(session, logData.drops), gatheringQuantity };
     }
 
     /**
@@ -1270,7 +1269,10 @@ class LootLogStats {
      * @returns {number}
      */
     luckPercentileFor(reading, logData) {
-        const key = `${logData.actionHrid}|${logData.actionCount}|${Math.round(reading.income)}`;
+        // Gathering quantity is read live, not stored on the entry, so the same
+        // action/count/income can carry a different distribution than the last
+        // time this was cached (gear or drinks changed while the panel stayed open)
+        const key = `${logData.actionHrid}|${logData.actionCount}|${Math.round(reading.income)}|${reading.gatheringQuantity || 0}`;
         let percentile = this.luckCache.get(key);
         if (percentile === undefined) {
             percentile = gatheringSessionLuck(reading.session, reading.income).percentile;
