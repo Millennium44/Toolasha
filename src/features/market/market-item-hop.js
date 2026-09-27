@@ -282,6 +282,10 @@ class MarketItemHop {
         if (this.prevBtn && !document.body.contains(this.prevBtn)) this.prevBtn = null;
         if (this.nextBtn && !document.body.contains(this.nextBtn)) this.nextBtn = null;
 
+        // Our nowrap items made the row overrun a phone-width marketplace and squeezed the
+        // game's own buttons (fixed height, overflow: hidden) until their labels were cut off.
+        // Wrapping moves the overflow to a second line; a desktop row never needs one.
+        if (container.style.flexWrap !== 'wrap') container.style.flexWrap = 'wrap';
         if (!this.prevBtn) {
             this.prevBtn = this._makeButton(PREV_BTN_ID, '◀', 'Previous market item (hotkey: [ )', -1);
             container.appendChild(this.prevBtn);

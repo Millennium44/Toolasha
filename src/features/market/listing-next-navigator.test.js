@@ -137,6 +137,13 @@ describe('while the open item is the session’s current listing', () => {
         expect(nextButton().style.flexShrink).toBe('0');
         expect(nextButton().style.whiteSpace).toBe('nowrap');
     });
+
+    // On a phone-width marketplace our nowrap items overran the row and squeezed the game's own
+    // buttons until their labels were cut off (measured in Firefox, Chromium and WebKit); the row
+    // wraps instead. happy-dom does no layout, so this pins the declaration.
+    test('lets the row wrap rather than squeeze the game buttons', () => {
+        expect(nextButton().parentElement.style.flexWrap).toBe('wrap');
+    });
 });
 
 describe('on the last listing', () => {

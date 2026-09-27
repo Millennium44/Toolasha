@@ -132,6 +132,10 @@ class ListingNextNavigator {
             btn.style.flexShrink = '0';
             btn.style.whiteSpace = 'nowrap';
             btn.addEventListener('click', () => this._handleClick());
+            // Our nowrap items made the row overrun a phone-width marketplace and squeezed the
+            // game's own buttons (fixed height, overflow: hidden) until their labels were cut off.
+            // Wrapping moves the overflow to a second line; a desktop row never needs one.
+            container.style.flexWrap = 'wrap';
             container.appendChild(btn);
             this.nextBtn = btn;
         }
