@@ -119,17 +119,22 @@ function bootstrapFromCurrentEnhancingAction() {
     // than leave it open until some later run finalizes it with that later moment as its end —
     // which stretched its duration and its gold-sources day span over the idle gap. Only
     // against a loaded character: an empty queue before the snapshot lands means nothing.
+    //
+    // The same item is not the same run: a new queue action for it (a different id than the
+    // session's last attempt) is a run started after the stored one ended.
     let currentSession = enhancementTracker.getCurrentSession();
-    if (
-        currentSession &&
-        currentSession.state === SessionState.TRACKING &&
-        dataManager.characterData &&
-        parseItemHash(activeEnhancingAction?.primaryItemHash).itemHrid !== currentSession.itemHrid
-    ) {
+    let closedEndedRun = false;
+    const lastActionId = currentSession?.lastAttempt?.actionId;
+    const sameRun =
+        !!activeEnhancingAction &&
+        parseItemHash(activeEnhancingAction.primaryItemHash).itemHrid === currentSession?.itemHrid &&
+        (lastActionId == null || activeEnhancingAction.id == null || lastActionId === activeEnhancingAction.id);
+    if (currentSession && currentSession.state === SessionState.TRACKING && dataManager.characterData && !sameRun) {
         // The last attempt seen: lastUpdateTime moves only on a scored one, lastAttempt on any
         const lastSeen = Math.max(currentSession.lastUpdateTime || 0, currentSession.lastAttempt?.timestamp || 0);
         void enhancementTracker.finalizeCurrentSession(lastSeen || currentSession.startTime);
         currentSession = null;
+        closedEndedRun = true;
     }
 
     if (!activeEnhancingAction) return;
@@ -149,8 +154,10 @@ function bootstrapFromCurrentEnhancingAction() {
     // a brand-new one — the same failure mode enhancement-tracker.js's disable() already guards
     // against for a character switch that lands with pendingSessionStart still set. Leave that
     // case alone here too; the next action_completed still finds and extends it on its own.
+    // Not the run just closed as ended, though: it is the same item near the same level, and
+    // extending it would fold the new run into the old one after all.
     const { itemHrid, level } = parseItemHash(activeEnhancingAction.primaryItemHash);
-    if (itemHrid && enhancementTracker.findExtendableSession(itemHrid, level)) return;
+    if (!closedEndedRun && itemHrid && enhancementTracker.findExtendableSession(itemHrid, level)) return;
 
     enhancementTracker.setPendingStart();
     trackedEnhanceActionId = activeEnhancingAction.id;
