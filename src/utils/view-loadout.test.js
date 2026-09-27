@@ -276,6 +276,26 @@ describe('fetchLoadout', () => {
         });
     });
 
+    test('a click made on another character before a switch does not claim this character’s request reply', async () => {
+        // Send order holds only within one socket: a click on the departing
+        // character is no evidence about the arriving one's request
+        game.core = { handleViewProfile: () => {}, handleViewLoadout: vi.fn() };
+
+        clickPartyViewLoadout();
+        game.charId = 200;
+        await vi.advanceTimersByTimeAsync(20);
+        const run = fetchLoadout({ characterID: 7, characterName: 'Ally' }, VIEW_LOADOUT_CONTEXT.GuildTrial, 'trial', {
+            closeGameModal: false,
+        });
+        await vi.advanceTimersByTimeAsync(50);
+
+        deliver(reply(7, 'Ally'));
+        await vi.advanceTimersByTimeAsync(10);
+        const result = await run;
+        expect(result.status).toBe('done');
+        expect(result.entry).toMatchObject({ context: 'guild_trial', requested: true });
+    });
+
     test('a click for another player made after the request does not steal the request’s reply', async () => {
         // A fetch for Ally is out; the user then clicks View Loadout for Buddy
         // in the party. Ally's reply was asked first and must resolve the fetch.

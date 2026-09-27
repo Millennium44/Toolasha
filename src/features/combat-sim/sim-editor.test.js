@@ -708,6 +708,29 @@ describe('the editor is built for one character', () => {
         expect(editor._editorInitialized).toBe(true);
     });
 
+    test('a scenario adopted while a party rebuild is out is not overwritten by it', async () => {
+        const el = document.createElement('div');
+        const editor = new SimEditor({ editorEl: el });
+        await editor.initEditor({ restoreLoadout: false });
+
+        let release;
+        game.buildHold = new Promise((resolve) => {
+            release = resolve;
+        });
+        const rebuilding = editor.resetToParty();
+        // The user imports players while the party build is still out
+        editor.importPlayers([emptyDTO('stranger1')], ['Stranger A']);
+        // Keys, not names: the mocked build hands back the very playerInfo array
+        // the editor holds, so the import's push would show up in either case
+        const importedKeys = Object.keys(editor._editedDTOs).sort();
+        game.buildHold = null;
+        release();
+        await rebuilding;
+
+        expect(importedKeys).toHaveLength(3);
+        expect(Object.keys(editor._editedDTOs).sort()).toEqual(importedKeys);
+    });
+
     test('a build with no character logged in either side is still adopted', async () => {
         // The guard compares the id, it does not require one: a pre-login
         // build must not be refused for having none
@@ -828,10 +851,13 @@ describe('the loadout selection is remembered', () => {
 
     test('a loadout that legitimately differs from current gear is not marked edited', async () => {
         // The mocked apply mutates the DTO the way the real one would — the
-        // loadout's attack level differs from `game.selfDTO`'s 90
+        // loadout's main hand differs from current gear's (none)
         bridge.snapshots = [{ name: 'Bruteforce', actionTypeHrid: '/action_types/combat' }];
         bridge.mutate = (dto) => {
-            dto.attackLevel = 999;
+            dto.equipment = {
+                ...dto.equipment,
+                '/equipment_types/main_hand': { hrid: '/items/steel_sword', enhancementLevel: 5 },
+            };
         };
         const { el, editor } = await openEditor();
 
@@ -848,7 +874,10 @@ describe('the loadout selection is remembered', () => {
     test('a hand edit made after selecting a loadout still shows in the label', async () => {
         bridge.snapshots = [{ name: 'Bruteforce', actionTypeHrid: '/action_types/combat' }];
         bridge.mutate = (dto) => {
-            dto.attackLevel = 999;
+            dto.equipment = {
+                ...dto.equipment,
+                '/equipment_types/main_hand': { hrid: '/items/steel_sword', enhancementLevel: 5 },
+            };
         };
         const { el, editor } = await openEditor();
 
@@ -867,12 +896,15 @@ describe('the loadout selection is remembered', () => {
     });
 
     test('an edit made before selecting a loadout, to a field it does not replace, still shows', async () => {
-        // The loadout replaces attack (standing in for gear); defense is a
-        // what-if edit the loadout leaves alone, so it must not be absorbed
-        // into the baseline the label diffs against
+        // The loadout replaces the main hand; defense is a what-if edit the
+        // loadout leaves alone, so it must not be absorbed into the baseline
+        // the label diffs against
         bridge.snapshots = [{ name: 'Bruteforce', actionTypeHrid: '/action_types/combat' }];
         bridge.mutate = (dto) => {
-            dto.attackLevel = 999;
+            dto.equipment = {
+                ...dto.equipment,
+                '/equipment_types/main_hand': { hrid: '/items/steel_sword', enhancementLevel: 5 },
+            };
         };
         const { el, editor } = await openEditor();
 
