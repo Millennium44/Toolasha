@@ -58,6 +58,23 @@ const GLOBAL_PRICING_MODE = 'global';
 /** The key the calculator's settings live under, per character */
 const SETTINGS_KEY = 'philoCalculatorSettings';
 
+/** Column-header note shown while "I own the inputs" is on, and which columns it touches */
+const OWN_INPUTS_NOTE = 'Owned loot: costed at the sell-after-tax price given up, not the buy price.';
+const OWN_INPUTS_COLUMNS = new Set([
+    'cost',
+    'transmuteCost',
+    'ev',
+    'profitPerPhiloInstant',
+    'profitMargin',
+    'profitPerHour',
+    'revenuePerHour',
+    'costPerHour',
+]);
+
+/** Column-header note shown while "Keep the Philo" is on, and which columns it touches */
+const KEEP_PHILO_NOTE = 'Keeping the Philo: valued at full price, no market tax deducted.';
+const KEEP_PHILO_COLUMNS = new Set(['ev', 'profitPerPhiloInstant', 'profitMargin', 'profitPerHour', 'revenuePerHour']);
+
 /**
  * The result table's columns, in display order. Shared between the drawn
  * table and the Copy-as-text button so what gets copied always matches what
@@ -191,6 +208,12 @@ class PhiloCalculator {
         this.hideNegativeProfitItems = true;
         this.filterText = '';
         this.pricingMode = DEFAULT_PRICING_MODE;
+        // "I own the inputs": items being transmuted are loot already held, so
+        // their cost is the sell-after-tax price given up, not the buy price.
+        this.ownInputs = false;
+        // "Keep the Philo": the stone is used, not sold, so it is valued at the
+        // full price with no market tax taken off.
+        this.keepPhilo = false;
         // Per-item manual cost basis, hrid → coins (the buy-side twin of the
         // philo price input)
         this.itemCostOverrides = {};
@@ -451,6 +474,8 @@ class PhiloCalculator {
             filterText: this.filterText,
             pricingMode: this.pricingMode,
             itemCostOverrides: this.itemCostOverrides,
+            ownInputs: this.ownInputs,
+            keepPhilo: this.keepPhilo,
         };
     }
 
@@ -488,6 +513,8 @@ class PhiloCalculator {
                     saved.itemCostOverrides && typeof saved.itemCostOverrides === 'object'
                         ? { ...saved.itemCostOverrides }
                         : {};
+                this.ownInputs = saved.ownInputs || false;
+                this.keepPhilo = saved.keepPhilo || false;
             }
         } catch (error) {
             console.error('[PhiloCalculator] Failed to load settings:', error);
@@ -752,6 +779,28 @@ class PhiloCalculator {
     }
 
     /**
+     * What one already-owned unit of an item is worth: the sell-after-tax price
+     * given up by feeding it to the transmuter instead of listing it. This is
+     * the opportunity cost of loot you hold, so it bypasses the buy-side
+     * quote/craft-cost comparison entirely — ownership makes how the item is
+     * normally acquired irrelevant.
+     * @param {string} itemHrid - Item HRID
+     * @returns {number|null} Coins, after market tax, or null when unpriced on the sell side
+     */
+    resolveOwnedInputValue(itemHrid) {
+        const sellType = this.getPriceType('sell');
+        const otherSellType = sellType === 'ask' ? 'bid' : 'ask';
+        const book = ironCowBook(itemHrid) ?? marketAPI.getPrice(itemHrid, 0);
+        const preferred = book?.[sellType];
+        const other = book?.[otherSellType];
+        const [rawValue, basis] =
+            preferred > 0 ? [preferred, sellType] : other > 0 ? [other, otherSellType] : [0, null];
+        if (!basis) return null;
+        const quoted = this.patientQuote(rawValue, 'sell', basis, book, itemHrid);
+        return calculatePriceAfterTax(quoted);
+    }
+
+    /**
      * Resolve what one input item costs to acquire, and what a returned copy of
      * it is worth back.
      *
@@ -760,6 +809,13 @@ class PhiloCalculator {
      * cheaper path; capes are often listed only at low enhancement levels, so
      * those are scanned as a last resort — and a row priced that way is flagged,
      * because a +3 listing is not a cost basis a +0 transmute can be run at.
+     *
+     * When "own the inputs" is on, none of that applies: the item is already in
+     * hand, so it is costed at what selling it would fetch (after tax) rather
+     * than what buying or crafting one would cost, and a self-return is valued
+     * the same way — it is just as sellable as the input itself. That falls
+     * back to the normal costing only when the item has no sell-side quote at
+     * all, so an owned row is never dropped for want of a bid.
      * @param {string} itemHrid - Item HRID
      * @returns {{itemCost: number, selfReturnUnitValue: number, source: string, fallbackLevel: number}|null}
      */
@@ -767,6 +823,13 @@ class PhiloCalculator {
         const override = this.itemCostOverrides[itemHrid];
         if (typeof override === 'number' && override > 0) {
             return { itemCost: override, selfReturnUnitValue: override, source: 'override', fallbackLevel: 0 };
+        }
+
+        if (this.ownInputs) {
+            const ownedValue = this.resolveOwnedInputValue(itemHrid);
+            if (ownedValue !== null) {
+                return { itemCost: ownedValue, selfReturnUnitValue: ownedValue, source: 'owned', fallbackLevel: 0 };
+            }
         }
 
         const buyType = this.getPriceType('buy');
@@ -887,7 +950,9 @@ class PhiloCalculator {
                 if (drop.itemHrid === itemHrid) {
                     dropValue = selfReturnUnitValue;
                 } else if (drop.itemHrid === PHILO_HRID) {
-                    dropValue = calculatePriceAfterTax(this.getPhiloPrice(sellType));
+                    // Kept, not sold: the full price, no market tax taken off.
+                    const philoPrice = this.getPhiloPrice(sellType);
+                    dropValue = this.keepPhilo ? philoPrice : calculatePriceAfterTax(philoPrice);
                 } else {
                     const book = ironCowBook(drop.itemHrid) ?? marketAPI.getPrice(drop.itemHrid, 0);
                     const quote = book?.[sellType];
@@ -1304,6 +1369,46 @@ class PhiloCalculator {
         drinkLabel.appendChild(drinkSelect);
         container.appendChild(drinkLabel);
 
+        // "I own the inputs" checkbox
+        const ownInputsLabel = document.createElement('label');
+        ownInputsLabel.style.cssText =
+            'display: flex; align-items: center; gap: 6px; font-size: 13px; cursor: pointer;';
+        const ownInputsCheckbox = document.createElement('input');
+        ownInputsCheckbox.type = 'checkbox';
+        ownInputsCheckbox.checked = this.ownInputs;
+        ownInputsCheckbox.style.cursor = 'pointer';
+        ownInputsCheckbox.addEventListener('change', () => {
+            this.ownInputs = ownInputsCheckbox.checked;
+            this.recalculate();
+            this.saveSettings();
+        });
+        ownInputsLabel.title =
+            'The transmuted items are loot you already hold, not something you would buy. Cost is what you give ' +
+            'up by not selling it instead: the sell-after-tax price.';
+        ownInputsLabel.appendChild(ownInputsCheckbox);
+        ownInputsLabel.appendChild(document.createTextNode('I own the inputs'));
+        container.appendChild(ownInputsLabel);
+
+        // "Keep the Philo" checkbox
+        const keepPhiloLabel = document.createElement('label');
+        keepPhiloLabel.style.cssText =
+            'display: flex; align-items: center; gap: 6px; font-size: 13px; cursor: pointer;';
+        const keepPhiloCheckbox = document.createElement('input');
+        keepPhiloCheckbox.type = 'checkbox';
+        keepPhiloCheckbox.checked = this.keepPhilo;
+        keepPhiloCheckbox.style.cursor = 'pointer';
+        keepPhiloCheckbox.addEventListener('change', () => {
+            this.keepPhilo = keepPhiloCheckbox.checked;
+            this.recalculate();
+            this.saveSettings();
+        });
+        keepPhiloLabel.title =
+            "You will use the Philosopher's Stone yourself rather than sell it. Valued at the full price — what " +
+            'you would otherwise pay — with no market tax deducted.';
+        keepPhiloLabel.appendChild(keepPhiloCheckbox);
+        keepPhiloLabel.appendChild(document.createTextNode('Keep the Philo'));
+        container.appendChild(keepPhiloLabel);
+
         // Hide negative profit checkbox
         const hideNegCheckLabel = document.createElement('label');
         hideNegCheckLabel.style.cssText =
@@ -1525,6 +1630,12 @@ class PhiloCalculator {
                     'credited at the base item price, so this row is a lower bound at best. Click to override.',
             },
             override: { glyph: ' ✎', title: 'Manual cost override. Click to change, clear the field to remove.' },
+            owned: {
+                glyph: ' 📦',
+                title:
+                    'Owned loot: valued at the sell-after-tax price given up, not the buy price. ' +
+                    'Click to override this cost basis.',
+            },
         };
 
         const marker = markers[row.costSource];
@@ -1585,6 +1696,19 @@ class PhiloCalculator {
         td.appendChild(input);
         input.focus();
         input.select();
+    }
+
+    /**
+     * A column header's tooltip: its own static title, plus a note when the
+     * currently-active own-use toggles change what that column means.
+     * @param {{key: string, title?: string}} col - Column definition
+     * @returns {string} Tooltip text, or '' when there is nothing to show
+     */
+    getColumnHeaderTitle(col) {
+        const notes = [];
+        if (this.ownInputs && OWN_INPUTS_COLUMNS.has(col.key)) notes.push(OWN_INPUTS_NOTE);
+        if (this.keepPhilo && KEEP_PHILO_COLUMNS.has(col.key)) notes.push(KEEP_PHILO_NOTE);
+        return [col.title, ...notes].filter(Boolean).join('\n');
     }
 
     /**
@@ -1676,8 +1800,9 @@ class PhiloCalculator {
 
             const arrow = this.sortColumn === col.key ? (this.sortDirection === 'asc' ? ' \u25B2' : ' \u25BC') : '';
             th.textContent = col.label + arrow;
-            if (col.title) {
-                th.title = col.title;
+            const headerTitle = this.getColumnHeaderTitle(col);
+            if (headerTitle) {
+                th.title = headerTitle;
             }
 
             th.addEventListener('click', () => this.toggleSort(col.key));
