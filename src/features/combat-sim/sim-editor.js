@@ -2763,10 +2763,12 @@ export class SimEditor {
 
     /**
      * Generate a descriptive label by diffing edited DTOs against original.
+     * @param {string} [playerHrid] - The player the run simulated (a Solo run of
+     *   another member); defaults to self
      * @returns {string}
      */
-    generateSimLabel() {
-        const selfHrid = this._selfHrid || this._activeEditPlayer;
+    generateSimLabel(playerHrid) {
+        const selfHrid = playerHrid || this._selfHrid || this._activeEditPlayer;
         // While a loadout is selected, diff against the DTO the loadout itself
         // produced — not against actual current gear, which the loadout is
         // usually meant to differ from. Only edits made after applying it

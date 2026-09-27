@@ -468,7 +468,8 @@ vi.mock('./sim-editor.js', () => ({
             mocks.editorCalls.push('refresh');
             return false;
         }
-        generateSimLabel() {
+        generateSimLabel(playerHrid) {
+            mocks.labelPlayer = playerHrid;
             return 'Current Gear';
         }
         reset() {}
@@ -4773,6 +4774,14 @@ describe('the Solo checkbox end to end: Simulate and All Zones', () => {
         await ui._onSimulate();
 
         expect(mocks.simRunArgs.playerDTOs).toEqual([{ hrid: 'player2', equipment: {}, food: [null, null, null] }]);
+    });
+
+    test('a Solo run is labelled from the simulated player’s edits, not self’s', async () => {
+        selectZone();
+
+        await ui._onSimulate();
+
+        expect(mocks.labelPlayer).toBe('player2');
     });
 
     test('the history entry records a party of one, so the comparison label reads Solo', async () => {
