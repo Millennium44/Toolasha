@@ -662,7 +662,11 @@ export class SimEditor {
         }
         if (this._scenarioToken !== scenario) {
             // The party scenario this fetch was asked for is gone; the reply
-            // says nothing about whatever is loaded now
+            // says nothing about whatever is loaded now. The new scenario was
+            // drawn mid-fetch, so redraw it with the Fetch button re-enabled
+            // and the stale "Fetching…" note cleared.
+            this._loadoutFetchNote = '';
+            this.renderEditor();
             return result;
         }
 
