@@ -6,6 +6,8 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+<!-- shipped in 3.61.1 -->
+
 ### House room dialog keeps its Build button on phones
 
 - On a phone-sized screen (Firefox and Safari especially), the house room dialog squeezed the game's Build button to nothing once the cost list was tall, and its cost rows ran past both edges so the counts were cut off and the panel scrolled sideways. The Build button now keeps its size and the rows wrap to fit the dialog.
@@ -4053,6 +4055,47 @@ The marketplace layout change gave the price row its own "Max" button and put it
 ### Combat sim nets the market sale tax off drop revenue
 
 The simulator valued every drop at its gross market price, so profit ignored the sale tax entirely — which is why the rise to 5% never moved it. Every drop-revenue path now nets the tax off each non-coin drop, cowbell bags at their own 18%: the Results summary, the Drops table's Gold columns, and the comparison and upgrade rows. Coin drops stay whole.
+
+## [3.61.1](https://github.com/Millennium44/Toolasha/compare/v3.61.0...v3.61.1) (2026-09-27)
+
+### Bug Fixes
+
+- a Labyrinth Action Speed scroll speeds up the detected and manual enhancing benches ([91c590b](https://github.com/Millennium44/Toolasha/commit/91c590b2d4a43d619a9905b3bad60ffbf109e76e))
+- calibration charges each run the drinks its forecast charged ([0b7f881](https://github.com/Millennium44/Toolasha/commit/0b7f8817d00ccda42325f7dac6d78120bfaf220f))
+- enhancement calibration skips runs predicted on hand-edited simulator stats ([1cdc5d1](https://github.com/Millennium44/Toolasha/commit/1cdc5d1c74a7f587767b6c22dacb8449f0c749b8))
+- enhancement session tile keeps showing a run after it completes ([a971b53](https://github.com/Millennium44/Toolasha/commit/a971b53b96b87280786d7e0f1682c1d74a560c1a))
+- enhancing panel's mirror column counts the second base item a mirror consumes ([6e4d5ba](https://github.com/Millennium44/Toolasha/commit/6e4d5ba91dea76369814bc3da39db7cfa4f86cae))
+- enhancing panel's mirror column says no quote when the base item or mirror is unpriced ([b72ac5e](https://github.com/Millennium44/Toolasha/commit/b72ac5e11b01e9a3b5cf4b51b5478c3691ed6dd3))
+- enhancing session whose run ended offline closes at its last attempt ([122f854](https://github.com/Millennium44/Toolasha/commit/122f85489ffb14ebe98e56998afb36f91ea52925))
+- enhancing tracker charges an unknown-start mirror attempt only when the mirror certainly applied ([65cb9f2](https://github.com/Millennium44/Toolasha/commit/65cb9f216a249b439f1570854492df8c6fcb0538))
+- enhancing tracker does not take a legacy session without an action id as the running run ([1a93497](https://github.com/Millennium44/Toolasha/commit/1a934974d17aa298f91859c646067810990890fa))
+- enhancing tracker keeps an unscored attempt's end level and time on the session ([9ba9c1a](https://github.com/Millennium44/Toolasha/commit/9ba9c1ae1da0af252886a9b0d473ef07a8f35acd))
+- enhancing tracker reads a mirror from the configured protection field and closes offline runs at the last attempt seen ([532054e](https://github.com/Millennium44/Toolasha/commit/532054efb1448264c2d5c01202732e1d24cc503d))
+- enhancing tracker scores each attempt from the level it actually started at ([56cc415](https://github.com/Millennium44/Toolasha/commit/56cc415a3826e8283044cc572c97591f8ab2f55c))
+- enhancing tracker treats a new queue action on the same item as a new run after a reconnect ([027926b](https://github.com/Millennium44/Toolasha/commit/027926b2147f3a2e7f6dc4df6b6f61503e9b5035))
+- enhancing XP and speed count the MooPass, guild and scroll buffs the game applies ([595161d](https://github.com/Millennium44/Toolasha/commit/595161db240c8499ae06b6e71c90670996b8c815))
+- gathering "this run" row stops pairing a whole run's count with a partly watched value ([528c71c](https://github.com/Millennium44/Toolasha/commit/528c71c17bde9463929323e0bb77b60e871b1de7))
+- gathering per-action breakdown adds up at any efficiency ([f7640d4](https://github.com/Millennium44/Toolasha/commit/f7640d41939915ef09fc2374a8d2592e4f23c7fd))
+- gold sources no longer double-counts a synced day's gathering, drinks and keys ([7313c2e](https://github.com/Millennium44/Toolasha/commit/7313c2eb6aacd0b59072f368b3a4c909fc4da99f))
+- house room dialog keeps its Build button and fits its cost rows on phones ([cf88581](https://github.com/Millennium44/Toolasha/commit/cf885810a63281137ad937e58ae65012b4409b4f))
+- hypothetical enhancing XP uses the quoted bench's wisdom, not the live character's ([d9628f6](https://github.com/Millennium44/Toolasha/commit/d9628f61e14cc5e6d1d02c450f634a018fb55998))
+- live gathering record credits a stack's net change per completion ([f241549](https://github.com/Millennium44/Toolasha/commit/f24154980f93ee3e35d6eaadd415d5872c98de7a))
+- loot log drop luck and expected value count gathering quantity ([b4e7332](https://github.com/Millennium44/Toolasha/commit/b4e7332e3f90999c7623782a99f4c5741b5236ce))
+- loot log expected value prices Processing output as itself ([ada929a](https://github.com/Millennium44/Toolasha/commit/ada929a3323eff48a5155004f5fe04262db7d5af))
+- loot log gathering-context cache refreshes on every render pass ([4f8f616](https://github.com/Millennium44/Toolasha/commit/4f8f616a7e504c168ac1e5541f782e4717029bd5))
+- loot log history files a queued merge under the character it arrived for ([b9feee9](https://github.com/Millennium44/Toolasha/commit/b9feee903cf308f3d7a4e6fce93fa290c0a04059))
+- loot log Processing conversions and luck cache reuse a shared lookup ([83aa61d](https://github.com/Millennium44/Toolasha/commit/83aa61db7ea567a10158371fac656f8473441511))
+- manual enhancing bench's Achievement toggle governs wisdom and speed too ([c052a10](https://github.com/Millennium44/Toolasha/commit/c052a107dac015c2d3c0ffba936c250e6abb319a))
+- never price a +2 as mirrored, the game only mirrors items at +2 or above ([0c6c688](https://github.com/Millennium44/Toolasha/commit/0c6c688a9a81f53d0f2dfdc95e95f0cdfcdbe792))
+- per-action breakdown reads an efficiency multiplier of 0 as itself ([f32da93](https://github.com/Millennium44/Toolasha/commit/f32da934eadf0b090697618307b21b6f2dc40fa1))
+- planner checks the processed items a Processing gathering run sells ([b1d90c8](https://github.com/Millennium44/Toolasha/commit/b1d90c8e39fabcbe09c37b5792c03a215ca38775))
+- tea optimizer counts gathering quantity from gear and seals ([bddf705](https://github.com/Millennium44/Toolasha/commit/bddf705e0d0ddfb7334bac67c3e41dbade6b4d2d))
+
+### Documentation
+
+- changelog for the enhancing calculator audit ([4eb6d10](https://github.com/Millennium44/Toolasha/commit/4eb6d10b65653347423a535d6bb37b340ad72eee))
+- changelog for the enhancing tracker audit ([5f29d71](https://github.com/Millennium44/Toolasha/commit/5f29d71d2bc6a05c90e9b55a0d36274c6df80fb3))
+- changelog for the gathering audit ([9b7aaa9](https://github.com/Millennium44/Toolasha/commit/9b7aaa9dcd0c1d5955c3caab3e8ae59031277587))
 
 ## [3.61.0](https://github.com/Millennium44/Toolasha/compare/v3.60.1...v3.61.0) (2026-09-27)
 
