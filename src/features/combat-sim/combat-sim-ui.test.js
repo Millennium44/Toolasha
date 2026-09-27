@@ -7780,6 +7780,55 @@ describe('Solo zones + party dungeons: one ranked table', () => {
                 expect(soloRun.playerDTOs[0].appliedLoadout).toBeUndefined();
                 expect(partyRun.playerDTOs.find((p) => p.hrid === 'player2').appliedLoadout).toBe('Dungeon Build');
             });
+
+            test('a picked loadout that later disappears resets to null, not just a blank-looking select', () => {
+                mocks.loadoutStore = { getAllSnapshots: () => [{ name: 'Solo Build', actionTypeHrid: null }] };
+                ui._updateSoloPartyLoadoutPickers();
+                pick(soloSelect(), 'Solo Build');
+                expect(ui._soloZonesLoadoutName).toBe('Solo Build');
+
+                // The loadout is deleted (or renamed) — the store no longer answers to it
+                mocks.loadoutStore = { getAllSnapshots: () => [] };
+                ui._updateSoloPartyLoadoutPickers();
+
+                expect(soloSelect().value).toBe('');
+                // Not '' but null: a '' left over would still read as "the
+                // user picked Current Gear on purpose", where null correctly
+                // says "unset — reseed from the single Loadout dropdown next
+                // time", so a same-named loadout recreated later is not
+                // silently re-selected on its own.
+                expect(ui._soloZonesLoadoutName).toBeNull();
+
+                // Confirms it actually reseeds rather than staying stuck: with
+                // the field null again, the next populate re-defaults it.
+                mocks.editorLoadoutName = 'Everyday';
+                mocks.loadoutStore = { getAllSnapshots: () => [{ name: 'Everyday', actionTypeHrid: null }] };
+                ui._updateSoloPartyLoadoutPickers();
+                expect(ui._soloZonesLoadoutName).toBe('Everyday');
+            });
+
+            /**
+             * A character switch tears the panel down through `destroy()` and
+             * rebuilds it for the arriving character (see combat-sim.js's
+             * disable()/initialize()) — the same path `SimEditor.reset()`
+             * uses to clear the single Loadout dropdown's own selection
+             * (`_selectedLoadoutName`), since a named loadout only resolves
+             * against the current character's own store.
+             */
+            test('destroy() (a character switch) clears both per-sweep loadout selections', () => {
+                mocks.loadoutStore = { getAllSnapshots: () => [{ name: 'Solo Build', actionTypeHrid: null }] };
+                ui._updateSoloPartyLoadoutPickers();
+                pick(soloSelect(), 'Solo Build');
+                pick(dungeonSelect(), 'Solo Build');
+                expect(ui._soloZonesLoadoutName).toBe('Solo Build');
+                expect(ui._dungeonsLoadoutName).toBe('Solo Build');
+
+                ui.destroy();
+
+                expect(ui._soloZonesLoadoutName).toBeNull();
+                expect(ui._dungeonsLoadoutName).toBeNull();
+                ui.buildPanel(); // afterEach calls destroy() again; leave a panel for it to tear down
+            });
         });
     });
 

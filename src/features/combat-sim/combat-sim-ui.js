@@ -3218,6 +3218,20 @@ class CombatSimUI {
         }
 
         const options = this._soloPartyLoadoutOptions();
+        const validNames = new Set(options.map((s) => s.name));
+        // A previously picked loadout that no longer exists (deleted, or a
+        // character switch that left it naming a stranger's snapshot) resets
+        // to null, not merely to a blank-looking select — leaving the field
+        // itself at the stale name would silently re-select it the moment a
+        // loadout of that same name exists again, long after the picker last
+        // showed anything but "— Current Gear —".
+        if (this._soloZonesLoadoutName && !validNames.has(this._soloZonesLoadoutName)) {
+            this._soloZonesLoadoutName = null;
+        }
+        if (this._dungeonsLoadoutName && !validNames.has(this._dungeonsLoadoutName)) {
+            this._dungeonsLoadoutName = null;
+        }
+
         const optionsHtml =
             '<option value="">— Current Gear —</option>' +
             options.map((s) => `<option value="${s.name}">${s.name}</option>`).join('');
@@ -3226,7 +3240,7 @@ class CombatSimUI {
             [dungeonSelect, this._dungeonsLoadoutName],
         ]) {
             select.innerHTML = optionsHtml;
-            select.value = options.some((s) => s.name === value) ? value : '';
+            select.value = value || '';
         }
     }
 
@@ -8251,6 +8265,16 @@ class CombatSimUI {
         this._lastSimHours = null;
         this._lastGameData = null;
         this._lastPartyWarnings = [];
+        // Named loadouts are per-character (the store a name resolves
+        // against is the arriving character's own), the same reason
+        // `_editor.reset()` above clears the single Loadout dropdown's own
+        // `_selectedLoadoutName` — a name left set here would either resolve
+        // to a stranger's snapshot of the same name, or (once
+        // `_updateSoloPartyLoadoutPickers` sees it is not one of the
+        // arriving character's own) silently fall back to Current Gear with
+        // no visible change, either way not this character's own choice.
+        this._soloZonesLoadoutName = null;
+        this._dungeonsLoadoutName = null;
         // `_restoreUpgradeResults` refuses to draw over a result set that is
         // already in hand, and a character switch tears the panel down and
         // rebuilds it. Left set, the departing character's results kept the
