@@ -646,7 +646,11 @@ function isSingleTarget(action, abilityDetailMap) {
     if (action === 'auto') return true;
     const effects = abilityDetailMap?.[action]?.abilityEffects;
     if (!Array.isArray(effects)) return false;
-    return !effects.some((effect) => String(effect?.targetType || '') === 'allEnemies');
+    // A piercing effect (Penetrating Strike/Shot) targets one enemy but carries
+    // on to the next on a successful pierce, so it can ring several monsters
+    return !effects.some(
+        (effect) => String(effect?.targetType || '') === 'allEnemies' || Number(effect?.pierceChance) > 0
+    );
 }
 
 /**
@@ -665,7 +669,7 @@ function isSingleTarget(action, abilityDetailMap) {
  *   Crippling Slash and Penetrating Shot/Strike tick in the party, five-player
  *   and dungeon recordings); and once in the whole tick for a swing known to be
  *   single-target (an auto-attack, or an ability the game data gives no
- *   `allEnemies` target), so a bleed ticking on a second monster stays a tick.
+ *   `allEnemies` target and no pierce chance), so a bleed ticking on a second monster stays a tick.
  * - A **counter-attack** is an unpaid rise on a tick where the monster's own
  *   attack counter rose: it attacked and was answered by a parry or a reflect.
  *   The game counts those as attacks — they miss and crit like swings, and the
