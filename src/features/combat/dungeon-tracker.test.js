@@ -4714,6 +4714,82 @@ describe('a run that is over but was never seen to end', () => {
         expect(tracker.currentRun.wavesCompleted).toBe(0);
     });
 
+    test('a run joined part-way still counts as finished on its last wave, and is held, not dropped', async () => {
+        // wavesCompleted is the number of the last wave completed (onActionCompleted
+        // stores the wave itself, the last one's `wave: 0` read as currentWave), not
+        // a count from the join — so a run joined at wave 55 reaches maxWaves too.
+        vi.useFakeTimers();
+        const t0 = Date.parse('2026-08-04T10:05:00.000Z');
+        vi.setSystemTime(t0);
+        game.actions = [{ ...SC_PARTY }];
+        await tracker.onNewBattle({
+            wave: 55,
+            battleId: 1,
+            combatStartTime: '2026-08-04T09:00:00.000Z',
+            players: FIVE,
+        });
+        await flush();
+        expect(tracker.currentRun.joinedMidRun).toBe(true);
+        for (let n = 55; n <= 60; n++) {
+            if (n > 55) {
+                await tracker.onNewBattle({
+                    wave: n,
+                    battleId: 1,
+                    combatStartTime: '2026-08-04T09:00:00.000Z',
+                    players: FIVE,
+                });
+                await flush();
+            }
+            vi.setSystemTime(t0 + (n - 54) * 30_000);
+            tracker.onActionCompleted({
+                endCharacterAction: { actionHrid: LAIR, wave: n === 60 ? 0 : n, isDone: false },
+            });
+            await flush();
+        }
+        expect(tracker.isFinalWaveCleared()).toBe(true);
+
+        // The next run's wave 1 beats the completion key count
+        await tracker.onNewBattle({ wave: 1, battleId: 1, combatStartTime: '2026-08-04T09:00:00.000Z', players: FIVE });
+        await flush();
+
+        expect(tracker.isTracking).toBe(true);
+        expect(tracker.currentRun.awaitingKeyCount).toBe(true);
+        expect(tracker.currentRun.joinedMidRun).toBe(true);
+        expect(tracker.currentRun.currentWave).toBe(60);
+    });
+
+    test('a reload while a finished run is held does not read it back as the next run', async () => {
+        vi.useFakeTimers();
+        const t0 = Date.parse('2026-08-04T10:05:00.000Z');
+        vi.setSystemTime(t0);
+        beTracking({
+            dungeonHrid: LAIR,
+            startTime: t0 - 20 * 60_000,
+            currentWave: 60,
+            maxWaves: 60,
+            wavesCompleted: 60,
+            battleId: 1,
+            anchoredAt: new Date(t0 - 20 * 60_000).toISOString(),
+        });
+        game.actions = [{ ...SC_PARTY }];
+        await tracker.onNewBattle({ wave: 1, battleId: 1, combatStartTime: '2026-08-04T09:00:00.000Z', players: FIVE });
+        await flush();
+
+        // The held run keeps its own last wave, on screen and on disk
+        expect(tracker.currentRun.currentWave).toBe(60);
+        expect(stored()).toMatchObject({ awaitingKeyCount: true, currentWave: 60 });
+
+        // Reload: the page comes back on the new run's wave 1 resent
+        resetTracker();
+        vi.setSystemTime(t0 + 5_000);
+        await tracker.onNewBattle({ wave: 1, battleId: 1, combatStartTime: '2026-08-04T09:00:00.000Z', players: FIVE });
+        await flush();
+
+        expect(tracker.restoredMidRun).toBe(false);
+        expect(tracker.currentRun.wavesCompleted).toBe(0);
+        expect(tracker.currentRun.startTime).toBe(t0 + 5_000);
+    });
+
     test('a finished party run held for a key count that never comes ends at the next wave', async () => {
         vi.useFakeTimers();
         const t0 = Date.parse('2026-08-04T10:05:00.000Z');
