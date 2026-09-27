@@ -395,6 +395,29 @@ describe('an area swing', () => {
         }
     });
 
+    test('a piercing single-enemy strike that carries on to a second monster is a hit on both', () => {
+        // Penetrating Strike targets one enemy but pierces on to the next
+        const PIERCE = '/abilities/penetrating_strike';
+        const withPierce = {
+            ...abilityDetailMap,
+            [PIERCE]: {
+                abilityEffects: [
+                    { effectType: '/ability_effect_types/damage', targetType: 'enemy', pierceChance: 0.3 },
+                ],
+            },
+        };
+        const state = three();
+        noteActions(state, { 0: { abilityHrid: PIERCE } });
+        const events = attributeTick(
+            { pMap: { 0: player(11) }, mMap: { 0: monster(9_700, 6), 1: monster(9_800, 4) } },
+            state,
+            { abilityDetailMap: withPierce }
+        );
+        const tally = foldEvents({}, events, { filterNonDamaging: false });
+
+        expect(tally['0']).toMatchObject({ hits: 2, dotTicks: 0, damage: 500 });
+    });
+
     test('in a party, each caster’s area swing pays its own hits', () => {
         const state = started({ 0: player(10), 1: player(20) }, { 0: monster(10_000, 5), 1: monster(10_000, 3) });
         noteActions(state, { 0: { abilityHrid: SURGE }, 1: { abilityHrid: SURGE } });
