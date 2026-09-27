@@ -419,6 +419,27 @@ function isOwnTab(el) {
 }
 
 /**
+ * Let a tab strip we add tabs to wrap onto a second row.
+ *
+ * The marketplace's own tab strip is a MUI `Tabs` the game renders without its
+ * `isWrappable` option (every other crowded strip in the game has it), so its
+ * scroller carries MUI's inline `overflow: hidden` and nothing in it scrolls.
+ * With our persistent tabs added (Market History, Ledger, Stale, Bulk Sell) the
+ * row is ~500px of tabs; a phone's marketplace window is ~345–375px, so the
+ * tabs past the right edge were clipped away with no way to reach them.
+ * Wrapping is the game's own answer (`TabsComponent_wrap` sets exactly this
+ * on the flex container); a desktop-width strip never needs a second row, so
+ * nothing changes there. The pinned material tabs already set it the same way.
+ *
+ * @param {HTMLElement} container - The strip (`.MuiTabs-flexContainer`)
+ */
+function allowTabStripToWrap(container) {
+    if (container.style && container.style.flexWrap !== 'wrap') {
+        container.style.flexWrap = 'wrap';
+    }
+}
+
+/**
  * Insert `tab` into `container` at its preferred position instead of
  * appending, so the marketplace tab strip reads in a fixed left-to-right
  * order — `Market History`, `Ledger`, `Stale`, `Bulk Sell`, then anything
@@ -451,6 +472,7 @@ function isOwnTab(el) {
 export function insertTabInOrder(container, tab, key) {
     if (!container || !tab) return;
     if (key) tab.setAttribute(TAB_ORDER_ATTR, key);
+    allowTabStripToWrap(container);
 
     const myRank = tabRank(key);
     let nextSibling = null;
