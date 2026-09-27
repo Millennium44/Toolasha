@@ -125,6 +125,8 @@ class DungeonShopPlanner {
         this.volumes.clear();
         this.measuring.clear();
         this.measureAttempted.clear();
+        // A fresh initialize must see its first source sync as a change again
+        this.volumesSource = undefined;
         this.status = '';
         this.initialized = false;
         this.pendingToken = null;
@@ -163,6 +165,7 @@ class DungeonShopPlanner {
         this.tokenHrid = tokenHrid || this.tokenHrid || mostHeldToken();
         // Marked before the draw, so the draw does not queue a second pass
         // that would interrupt this one and ask for its first item again
+        this.syncVolumeSource();
         this.measureAttempted.add(this.tokenHrid);
         this.panel?.show();
         this.measure(this.tokenHrid);
@@ -312,6 +315,9 @@ class DungeonShopPlanner {
         // every row read "no volume data". Measure a token the first time it is
         // drawn; after that, retries stay on the explicit open/picker paths so
         // the 5 s refresh cannot hammer the history host.
+        // Synced first: its first run (or a source change) clears the attempts,
+        // and doing that after recording one would queue the measure twice
+        this.syncVolumeSource();
         if (tokenHrid && !this.measureAttempted.has(tokenHrid)) {
             this.measureAttempted.add(tokenHrid);
             // Deferred past this draw: `measure` renders synchronously before
@@ -392,6 +398,7 @@ class DungeonShopPlanner {
             this.tokenHrid = select.value;
             this.status = '';
             // As in open(): this path measures explicitly, the draw must not too
+            this.syncVolumeSource();
             this.measureAttempted.add(select.value);
             this.panel?.render();
             this.measure(select.value);

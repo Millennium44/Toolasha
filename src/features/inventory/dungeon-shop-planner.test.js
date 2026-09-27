@@ -284,6 +284,20 @@ describe('the plan', () => {
         expect(body().textContent.match(/Pirate Tokens held/g)?.length).toBe(1);
     });
 
+    test('a reopened panel on a fresh instance asks each item once', async () => {
+        // The first draw initializes the history source, which clears the
+        // attempts; recording one before that sync queued the measure twice
+        state.volumes = {};
+        dungeonShopPlanner.volumesSource = undefined;
+        dungeonShopPlanner.tokenHrid = '/items/pirate_token';
+        dungeonShopPlanner.panel.show();
+        for (let i = 0; i < 8; i++) await flush();
+        const asked = state.asked;
+
+        expect(asked.length).toBeGreaterThan(0);
+        expect(asked.length).toBe(new Set(asked).size);
+    });
+
     test('a normal open measures each item once, not once from open() and again from the draw', async () => {
         // No volume answers: an unknown result is not cached, so a pass that
         // gets interrupted and restarted asks the same item again
