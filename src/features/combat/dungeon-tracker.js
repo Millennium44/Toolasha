@@ -486,9 +486,8 @@ class DungeonTracker {
         }
 
         // A run that had cleared its last wave and was only waiting for its
-        // completion key count cannot carry on into a later wave: that wave is
-        // the next run's.
-        if (saved.awaitingKeyCount === true && Number.isFinite(resumeWave) && resumeWave > 1) {
+        // completion key count is over: every battle after it is the next run's.
+        if (saved.awaitingKeyCount === true) {
             return false;
         }
 
@@ -1735,8 +1734,15 @@ class DungeonTracker {
                 // arrive just after this battle and must still find it. Marked, so
                 // that if the message never comes the next wave ends it rather
                 // than carrying it on into the next run.
-                if (pastItsFirstWave) {
+                //
+                // The held run is finished and keeps its own last wave: the new
+                // battle is not written onto it, or a reload inside this window
+                // would read the finished run back as wave 1 of the next one.
+                if (pastItsFirstWave || this.currentRun?.awaitingKeyCount === true) {
                     this.currentRun.awaitingKeyCount = true;
+                    this.notifyUpdate();
+                    this.saveInProgressRun();
+                    return;
                 }
                 this.currentBattleId = data.battleId;
                 this.startWave(data);
