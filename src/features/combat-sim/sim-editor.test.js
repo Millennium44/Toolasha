@@ -1300,6 +1300,10 @@ describe('Fetch a party loadout', () => {
         // The imported roster is still what is loaded — resetToParty must not
         // have overwritten it with the party the fetch was originally for
         expect(editor._editedPlayerInfo.map((p) => p.name)).toEqual(importedNames);
+        // The discarded reply still redraws: the import drew mid-fetch, so its
+        // "Fetching…" note and disabled Fetch state must not linger
+        expect(el.textContent).not.toContain('Fetching');
+        expect(editor._loadoutFetchNote).toBe('');
     });
 
     test('is not offered solo', async () => {
