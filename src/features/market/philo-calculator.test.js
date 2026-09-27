@@ -529,6 +529,103 @@ describe('cost basis', () => {
     });
 });
 
+describe('own-use toggles', () => {
+    test('both off: the table is exactly what it was before the toggles existed', () => {
+        expect(calc.ownInputs).toBe(false);
+        expect(calc.keepPhilo).toBe(false);
+
+        const row = calc.calculateRow(WIDGET_HRID, widget());
+        expect(row.costSource).toBe('market');
+        expect(row.cost).toBe(1000);
+
+        const stones = 0.5 * 0.01 * 1 * (4_000_000 * (1 - MARKET_TAX));
+        const shards = 0.5 * 0.25 * 2 * (100 * (1 - MARKET_TAX));
+        const selfReturn = 0.5 * 0.5 * 1 * 1000;
+        expect(row.ev).toBeCloseTo(stones + shards + selfReturn, 6);
+    });
+
+    describe('I own the inputs', () => {
+        test('costs the item at the sell-after-tax price instead of the buy price', () => {
+            calc.ownInputs = true;
+            const row = calc.calculateRow(WIDGET_HRID, widget());
+
+            // Conservative mode sells at bid (800); owning it means giving up
+            // that sale, taxed the same as any other sale, not the 1000 ask.
+            const ownedCost = 800 * (1 - MARKET_TAX);
+            expect(row.costSource).toBe('owned');
+            expect(row.cost).toBeCloseTo(ownedCost, 6);
+            expect(row.transmuteCost).toBeCloseTo(ownedCost + 50, 6);
+
+            // A self-return is exactly as sellable as the input itself, so it
+            // is credited at the same owned basis rather than the old 1000.
+            const stones = 0.5 * 0.01 * 1 * (4_000_000 * (1 - MARKET_TAX));
+            const shards = 0.5 * 0.25 * 2 * (100 * (1 - MARKET_TAX));
+            const selfReturn = 0.5 * 0.5 * 1 * ownedCost;
+            expect(row.ev).toBeCloseTo(stones + shards + selfReturn, 6);
+        });
+
+        test('a manual cost override still wins over the owned valuation', () => {
+            calc.ownInputs = true;
+            calc.itemCostOverrides[WIDGET_HRID] = 200;
+
+            const row = calc.calculateRow(WIDGET_HRID, widget());
+            expect(row.costSource).toBe('override');
+            expect(row.cost).toBe(200);
+        });
+
+        test('falls back to the normal cost basis when nothing prices the sell side', () => {
+            calc.ownInputs = true;
+            mocks.refineActions['/actions/refine_test'] = {
+                outputItems: [{ itemHrid: REFINED_HRID }],
+                inputItems: [{ itemHrid: OTHER_HRID, count: 10 }],
+            };
+            // No listing at any level for the refined item — the owned lookup
+            // has nothing to value it at, so the usual craft-cost comparison runs.
+            delete mocks.prices[`${REFINED_HRID}+0`];
+
+            const cost = calc.resolveItemCost(REFINED_HRID);
+            expect(cost.source).toBe('craft');
+            expect(cost.itemCost).toBeCloseTo(10 * 200, 6);
+        });
+    });
+
+    describe('Keep the Philo', () => {
+        test('the stone enters EV at full price, with no market tax deducted', () => {
+            calc.keepPhilo = true;
+            const row = calc.calculateRow(WIDGET_HRID, widget());
+
+            // Conservative mode's sell side is bid (4,000,000); kept, not sold,
+            // so the tax that would otherwise apply is skipped.
+            const stones = 0.5 * 0.01 * 1 * 4_000_000;
+            const shards = 0.5 * 0.25 * 2 * (100 * (1 - MARKET_TAX));
+            const selfReturn = 0.5 * 0.5 * 1 * 1000;
+            expect(row.ev).toBeCloseTo(stones + shards + selfReturn, 6);
+        });
+
+        test('does not change the input cost basis', () => {
+            calc.keepPhilo = true;
+            const row = calc.calculateRow(WIDGET_HRID, widget());
+            expect(row.costSource).toBe('market');
+            expect(row.cost).toBe(1000);
+        });
+    });
+
+    test('both on: owned inputs and a kept philo combine', () => {
+        calc.ownInputs = true;
+        calc.keepPhilo = true;
+        const row = calc.calculateRow(WIDGET_HRID, widget());
+
+        const ownedCost = 800 * (1 - MARKET_TAX);
+        const stones = 0.5 * 0.01 * 1 * 4_000_000;
+        const shards = 0.5 * 0.25 * 2 * (100 * (1 - MARKET_TAX));
+        const selfReturn = 0.5 * 0.5 * 1 * ownedCost;
+
+        expect(row.costSource).toBe('owned');
+        expect(row.cost).toBeCloseTo(ownedCost, 6);
+        expect(row.ev).toBeCloseTo(stones + shards + selfReturn, 6);
+    });
+});
+
 describe('pricing mode', () => {
     test('defaults to conservative even when the global setting is not', () => {
         mocks.globalPricingMode = 'optimistic';
@@ -701,6 +798,19 @@ describe('the stored settings', () => {
         await fresh.loadSettings();
         expect(fresh.itemCostOverrides).toEqual({ [WIDGET_HRID]: 900 });
         expect(fresh.filterText).toBe('widget');
+    });
+
+    test('the own-use toggles persist', async () => {
+        calc.ownInputs = true;
+        calc.keepPhilo = true;
+        await calc.saveSettings();
+        expect(stored().ownInputs).toBe(true);
+        expect(stored().keepPhilo).toBe(true);
+
+        const fresh = new PhiloCalculator();
+        await fresh.loadSettings();
+        expect(fresh.ownInputs).toBe(true);
+        expect(fresh.keepPhilo).toBe(true);
     });
 
     test('a load that cannot be made keeps the values in hand rather than blanking them', async () => {
