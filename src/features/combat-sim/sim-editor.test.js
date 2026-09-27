@@ -1417,3 +1417,35 @@ describe('Fetch a party loadout', () => {
         expect(el.querySelector(FETCH_BTN)).toBeNull();
     });
 });
+
+describe('onRender: the owner follows the roster', () => {
+    test('fires after every render, including the one an import makes, and sees the new roster', () => {
+        const el = document.createElement('div');
+        const seen = [];
+        const editor = new SimEditor({
+            editorEl: el,
+            onRender: () => seen.push((editor.getPlayerInfo() || []).length),
+        });
+
+        editor.importPlayers([emptyDTO('x'), emptyDTO('y')], ['Stranger A', 'Stranger B']);
+        expect(seen.at(-1)).toBe(2);
+
+        editor.renderEditor();
+        expect(seen.length).toBeGreaterThanOrEqual(2);
+    });
+
+    test('a listener that throws does not break the editor', () => {
+        const el = document.createElement('div');
+        const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+        const editor = new SimEditor({
+            editorEl: el,
+            onRender: () => {
+                throw new Error('boom');
+            },
+        });
+
+        expect(() => editor.importPlayers([emptyDTO('x')], ['Stranger A'])).not.toThrow();
+        expect(el.innerHTML).not.toBe('');
+        error.mockRestore();
+    });
+});
