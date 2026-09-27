@@ -27,7 +27,7 @@ const steep = Array.from({ length: 20 }, (_, i) => 1000 * 2 ** i);
 
 describe('mirrorCostColumn', () => {
     test('+1 and +2 have no mirror route; +3 is the first', () => {
-        const { levels } = mirrorCostColumn(steep, 0, 1);
+        const { levels } = mirrorCostColumn(steep, 1, 1);
         expect(levels[0]).toBeUndefined();
         expect(levels[1]).toBeUndefined();
         expect(levels[2]).toBeDefined();
@@ -43,12 +43,12 @@ describe('mirrorCostColumn', () => {
     });
 
     test('a mirrored level feeds the levels above it', () => {
-        const { levels, mirrorStartLevel } = mirrorCostColumn(steep, 0, 100);
-        // +3: 2,000 + 1,000 + 100 beats 4,000
-        expect(levels[2].mirrorCost).toBe(3100);
+        const { levels, mirrorStartLevel } = mirrorCostColumn(steep, 10, 100);
+        // +3: 2,000 + 1,000 + a second 10 base + 100 beats 4,000
+        expect(levels[2].mirrorCost).toBe(3110);
         expect(levels[2].isMirrorCheaper).toBe(true);
-        // +4 combines the mirrored +3 (3,100), not the hard-way one (4,000), with the +2
-        expect(levels[3].mirrorCost).toBe(3100 + 2000 + 100);
+        // +4 combines the mirrored +3 (3,110), not the hard-way one (4,000), with the +2
+        expect(levels[3].mirrorCost).toBe(3110 + 2000 + 10 + 100);
         expect(mirrorStartLevel).toBe(3);
     });
 
@@ -57,5 +57,19 @@ describe('mirrorCostColumn', () => {
         const column = mirrorCostColumn(flat, 1000, 1000);
         expect(column.mirrorStartLevel).toBeNull();
         expect(column.totalSavings).toBe(0);
+    });
+
+    test('an unpriced base item leaves the column unquoted rather than dropping the second copy', () => {
+        const column = mirrorCostColumn(steep, 0, 100);
+        expect(column.levels[2]).toEqual({ mirrorCost: null, isMirrorCheaper: false });
+        expect(column.levels[19].mirrorCost).toBeNull();
+        expect(column.mirrorStartLevel).toBeNull();
+        expect(column.totalSavings).toBe(0);
+    });
+
+    test('an unpriced mirror is not a free one', () => {
+        const column = mirrorCostColumn(steep, 1000, 0);
+        expect(column.levels[2].mirrorCost).toBeNull();
+        expect(column.mirrorStartLevel).toBeNull();
     });
 });

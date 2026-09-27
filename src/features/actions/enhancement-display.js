@@ -190,12 +190,20 @@ export async function displayEnhancementStats(panel, itemHrid) {
  * @param {number[]} costs - Total Cost column: index L-1 is the cost to climb a held +0 to +L
  * @param {number} basePrice - What one base item costs
  * @param {number} mirrorPrice - What one Philosopher's Mirror costs
- * @returns {{levels: Array<{mirrorCost: number, isMirrorCheaper: boolean}|undefined>,
+ * @returns {{levels: Array<{mirrorCost: number|null, isMirrorCheaper: boolean}|undefined>,
  *   mirrorStartLevel: number|null, totalSavings: number}} `levels` is indexed like `costs`;
- *   `mirrorCost` is on the Total Cost column's footing (the held base item not counted)
+ *   `mirrorCost` is on the Total Cost column's footing (the held base item not counted), and
+ *   null when the base item or the mirror has no price — a route missing one of its inputs
+ *   would be quoted too cheap, which is worse than no quote
  */
 export function mirrorCostColumn(costs, basePrice, mirrorPrice) {
     const levels = new Array(costs.length);
+    if (!(basePrice > 0) || !(mirrorPrice > 0)) {
+        for (let level = 3; level <= costs.length; level++) {
+            levels[level - 1] = { mirrorCost: null, isMirrorCheaper: false };
+        }
+        return { levels, mirrorStartLevel: null, totalSavings: 0 };
+    }
     // best[L]: the cheapest way to hold a +L, its base item included
     const best = [basePrice];
     for (let level = 1; level <= costs.length; level++) {
@@ -498,7 +506,12 @@ function generateCostsByLevelTable(
 
         // Add Mirror Cost column if Philosopher's Mirror is equipped
         if (isPhilosopherMirror) {
-            if (data.mirrorCost !== undefined) {
+            if (data.mirrorCost === null) {
+                // The base item or the mirror has no price to build the route from
+                lines.push(
+                    `<td style="padding: 6px 4px; text-align: right; color: #666;" title="No market price for the base item or the mirror">no quote</td>`
+                );
+            } else if (data.mirrorCost !== undefined) {
                 const mirrorCostFormatted = Math.round(data.mirrorCost).toLocaleString();
                 const isCheaper = data.isMirrorCheaper;
                 const color = isCheaper ? '#FFD700' : '#888';
