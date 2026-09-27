@@ -80,7 +80,9 @@ vi.mock('../../core/dom-observer.js', () => ({
 vi.mock('../../api/marketplace.js', () => ({
     default: { on: () => {}, off: () => {}, isLoaded: () => true },
 }));
-vi.mock('../../utils/formatters.js', () => ({ formatKMB: (v) => String(v) }));
+vi.mock('../../utils/formatters.js', () => ({
+    formatKMB: (v, decimals) => (decimals ? `${v}.${decimals}dp` : String(v)),
+}));
 vi.mock('../../core/data-manager.js', () => ({ default: { on: () => {}, off: () => {} } }));
 vi.mock('./inventory-badge-manager.js', () => ({
     default: {
@@ -778,5 +780,22 @@ describe('InventorySort.applyCurrentSort — single-category native tab (no cate
         const items = itemsByHrid(inv);
         expect(items.get('f2').style.order).toBe('0');
         expect(items.get('f1').style.order).toBe('1');
+    });
+});
+
+describe('InventorySort.renderPriceBadge — first draw matches the update path', () => {
+    test('a new badge prints whole units, never the two-decimal form a later update would replace', () => {
+        const tile = document.createElement('div');
+        const inner = document.createElement('div');
+        inner.className = 'Item_item__abc';
+        tile.appendChild(inner);
+        document.body.appendChild(tile);
+
+        inventorySort.renderPriceBadge(tile, 43_000_000);
+
+        const badge = tile.querySelector('.mwi-stack-price');
+        expect(badge).not.toBeNull();
+        expect(badge.textContent).toBe('43000000');
+        tile.remove();
     });
 });

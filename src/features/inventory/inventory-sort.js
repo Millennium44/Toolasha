@@ -729,7 +729,9 @@ class InventorySort {
             pointer-events: none;
             text-shadow: -1px -1px 0 #000, 1px -1px 0 #000, -1px 1px 0 #000, 1px 1px 0 #000, 0 0 3px #000;
         `;
-        badge.textContent = formatKMB(stackValue, 2);
+        // Whole units, as the update path writes: the chest-key zone label in the opposite corner
+        // is sized for a four-character badge, and "43.00M" would run into it until a redraw.
+        badge.textContent = formatKMB(stackValue, 0);
 
         // Insert into item
         const itemInner = itemElem.querySelector('[class*="Item_item"]');
