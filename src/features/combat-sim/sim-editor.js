@@ -50,6 +50,14 @@ const ACCENT_BTN_BORDER = 'rgba(74, 158, 255, 0.4)';
 const MAX_COMMUNITY_BUFF_LEVEL = 20;
 
 /**
+ * The most players the sim (and the game's own party) ever holds. Enforced on
+ * "Add as new member" — importing past it is refused rather than silently
+ * dropping whoever would not fit, with the message pointing at replacing a
+ * slot instead.
+ */
+const MAX_PARTY_SIZE = 5;
+
+/**
  * Escape a string for interpolation into this file's `innerHTML` templates.
  * Import text is pasted by the user, so an item hrid that reaches the DOM as a
  * fallback label is not trusted markup.
@@ -562,6 +570,57 @@ export class SimEditor {
         this._scenarioToken++;
 
         this.renderEditor();
+    }
+
+    /**
+     * How many players are currently loaded, for the party-size cap on adding more.
+     * @returns {number}
+     */
+    playerCount() {
+        return (this._editedPlayerInfo || []).length;
+    }
+
+    /**
+     * Replace one loaded player's build with an imported one, in place: the
+     * slot (hrid) stays the same, so its position in the tab row does not move,
+     * and every other loaded player's DTO is left completely untouched.
+     *
+     * This is the "Replace <name>" import option, as opposed to "Add as new
+     * member" (`importPlayers`), which appends a new slot instead.
+     *
+     * @param {string} hrid - The slot to replace; must already be loaded
+     * @param {Object} dto - Imported player DTO
+     * @param {string} name - Imported player's display name
+     * @param {Array<Object>} [skipped] - Equipment `parseShykaiImport` could not place
+     * @returns {boolean} False when `hrid` is not a currently loaded slot
+     */
+    replacePlayer(hrid, dto, name, skipped = []) {
+        if (!this._editedDTOs || !this._editedDTOs[hrid]) return false;
+
+        dto.hrid = hrid;
+        this._editedDTOs[hrid] = dto;
+        this._originalDTOs[hrid] = structuredClone(dto);
+
+        const infoIdx = this._editedPlayerInfo.findIndex((p) => p.hrid === hrid);
+        if (infoIdx >= 0) {
+            this._editedPlayerInfo[infoIdx] = { hrid, name: name || this._editedPlayerInfo[infoIdx].name };
+        }
+
+        // The replaced slot is no longer the party member (or profile) it was
+        // loaded from, so any note about that loaded state no longer applies to it.
+        this._profileStatus = (this._profileStatus || []).filter((entry) => entry.hrid !== hrid);
+        this._importSkipped = [...(this._importSkipped || []), ...(Array.isArray(skipped) ? skipped : [])];
+        // Replacing yourself means the slot is no longer "you" — the live
+        // house-room/guild-shrine sync in getEditedDTOs targets `_selfHrid`
+        // and must stop touching a slot that now holds an imported build.
+        if (this._selfHrid === hrid) this._selfHrid = null;
+        this._forgetAppliedLoadouts(hrid);
+        this._activeEditPlayer = hrid;
+        this._editorInitialized = true;
+        this._scenarioToken++;
+
+        this.renderEditor();
+        return true;
     }
 
     /**
@@ -1295,17 +1354,32 @@ export class SimEditor {
         html += this._renderImportSkippedNote();
         html += this._renderExportNote();
 
-        // Import paste area (hidden by default)
+        // Import paste area (hidden by default). When a player is already
+        // selected, importing offers a choice: replace that one slot in place,
+        // or add the pasted build as a new member (capped at MAX_PARTY_SIZE).
+        const activeName = playerInfo.find((p) => p.hrid === activePlayer)?.name || '';
+        const atCap = playerInfo.length >= MAX_PARTY_SIZE;
         html += `<div id="mwi-csim-import-area" style="display:none; margin-bottom:10px;">
             <textarea id="mwi-csim-import-text" placeholder="Paste Shykai export JSON here..." style="
                 width:100%; height:60px; background:#1a1a2e; color:#e0e0e0; border:1px solid #444;
                 border-radius:4px; padding:6px; font-size:11px; font-family:monospace; resize:vertical;
                 box-sizing:border-box;"></textarea>
-            <div style="display:flex; gap:6px; margin-top:4px;">
-                <button id="mwi-csim-import-go" style="
+            <div style="display:flex; gap:6px; margin-top:4px; flex-wrap:wrap; align-items:center;">
+                ${
+                    activeName
+                        ? `<button id="mwi-csim-import-replace" style="
                     background:${ACCENT_BTN_BG}; border:1px solid ${ACCENT_BTN_BORDER}; color:${ACCENT};
                     padding:3px 12px; border-radius:4px; font-size:11px; cursor:pointer; font-family:inherit;
-                    font-weight:600;">Import</button>
+                    font-weight:600;" title="Replace ${escapeHtml(activeName)}'s build with the pasted one, keeping their slot">Replace ${escapeHtml(activeName)}</button>`
+                        : ''
+                }
+                <button id="mwi-csim-import-go" style="
+                    background:${atCap ? 'rgba(255,255,255,0.02)' : ACCENT_BTN_BG};
+                    border:1px solid ${atCap ? '#333' : ACCENT_BTN_BORDER}; color:${atCap ? '#555' : ACCENT};
+                    padding:3px 12px; border-radius:4px; font-size:11px; cursor:${atCap ? 'default' : 'pointer'};
+                    font-family:inherit; font-weight:600;"${atCap ? ' disabled' : ''}
+                    title="${atCap ? `A party has ${MAX_PARTY_SIZE} players already — replace one instead` : 'Add the pasted build as a new member'}"
+                    >${activeName ? 'Add as new member' : 'Import'}</button>
                 <button id="mwi-csim-import-cancel" style="
                     background:rgba(255,255,255,0.04); border:1px solid #333; color:#888;
                     padding:3px 12px; border-radius:4px; font-size:11px; cursor:pointer; font-family:inherit;">Cancel</button>
@@ -2917,6 +2991,7 @@ export class SimEditor {
         const importGo = editorArea.querySelector('#mwi-csim-import-go');
         if (importGo) {
             importGo.addEventListener('click', () => {
+                if (importGo.disabled) return;
                 const text = editorArea.querySelector('#mwi-csim-import-text')?.value?.trim();
                 const errorEl = editorArea.querySelector('#mwi-csim-import-error');
                 if (!text) {
@@ -2928,7 +3003,36 @@ export class SimEditor {
                     if (errorEl) errorEl.textContent = 'Invalid format. Paste a Shykai export JSON.';
                     return;
                 }
+                if (this.playerCount() + result.players.length > MAX_PARTY_SIZE) {
+                    if (errorEl) {
+                        errorEl.textContent = `That would bring the party past ${MAX_PARTY_SIZE} players — replace a member instead.`;
+                    }
+                    return;
+                }
                 this.importPlayers(result.players, result.names, result.skipped);
+                const area = editorArea.querySelector('#mwi-csim-import-area');
+                if (area) area.style.display = 'none';
+            });
+        }
+
+        const importReplace = editorArea.querySelector('#mwi-csim-import-replace');
+        if (importReplace) {
+            importReplace.addEventListener('click', () => {
+                const text = editorArea.querySelector('#mwi-csim-import-text')?.value?.trim();
+                const errorEl = editorArea.querySelector('#mwi-csim-import-error');
+                if (!text) {
+                    if (errorEl) errorEl.textContent = 'Paste export data first.';
+                    return;
+                }
+                const result = parseShykaiImport(text);
+                if (!result || !result.players.length) {
+                    if (errorEl) errorEl.textContent = 'Invalid format. Paste a Shykai export JSON.';
+                    return;
+                }
+                // A multi-slot paste replaces the selected slot with its first
+                // player only — a replace is asked for one slot at a time, and
+                // the rest of a pasted party is available as "Add as new member".
+                this.replacePlayer(this._activeEditPlayer, result.players[0], result.names[0], result.skipped);
                 const area = editorArea.querySelector('#mwi-csim-import-area');
                 if (area) area.style.display = 'none';
             });
