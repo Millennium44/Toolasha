@@ -1089,3 +1089,20 @@ describe('detectAlchemyType', () => {
         expect(bestItems.detectAlchemyType()).toBe('coinify');
     });
 });
+
+describe('the Best Items window on a phone-width screen', () => {
+    // It was `min-width: 500px` under `max-width: 95vw`; a min-width beats a
+    // max-width, so on a ~390px phone the window was 540px wide with its padding
+    // and the overlay's `align-items: center` hung it 75px off the left edge.
+    // happy-dom does no layout, so this pins the declarations; the fit was
+    // measured in Firefox, Chromium and WebKit at 360 and 390px wide, and 1280px
+    // unchanged.
+    test('has no fixed min-width wider than a phone; both bounds leave room for padding', () => {
+        bestItems.createModal();
+        const content = bestItems.modal.querySelector('.mwi-alchemy-best-items-content');
+        expect(content.style.minWidth).toBe('min(500px, calc(100% - 56px))');
+        expect(content.style.maxWidth).toBe('min(95vw, calc(100% - 56px))');
+        bestItems.modal.remove();
+        bestItems.modal = null;
+    });
+});
