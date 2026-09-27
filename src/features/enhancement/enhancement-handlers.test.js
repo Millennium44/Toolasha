@@ -10,6 +10,7 @@ const state = vi.hoisted(() => ({
     handlers: {},
     current: null,
     calls: [],
+    costs: [],
     actions: [],
 }));
 
@@ -26,8 +27,8 @@ const trackerMock = vi.hoisted(() => {
         }),
         recordSuccess: vi.fn(async (...a) => state.calls.push(['success', ...a])),
         recordFailure: vi.fn(async (...a) => state.calls.push(['failure', ...a])),
-        trackCoinCost: async () => {},
-        trackMaterialCost: async () => {},
+        trackCoinCost: async (...a) => state.costs.push(['coin', ...a]),
+        trackMaterialCost: async (...a) => state.costs.push(['mat', ...a]),
         trackProtectionCost: vi.fn(async (...a) => state.calls.push(['prot', ...a])),
         extendSessionTarget: vi.fn(async (sessionId, newTarget) => {
             state.calls.push(['extend', sessionId, newTarget]);
@@ -66,8 +67,16 @@ vi.mock('../../core/data-manager.js', () => ({
     default: {
         getInitClientData: () => ({
             itemDetailMap: {
-                '/items/enchanted_cloak_refined': { name: 'Enchanted Cloak ★', enhancementCosts: [] },
+                '/items/enchanted_cloak_refined': {
+                    name: 'Enchanted Cloak ★',
+                    sellPrice: 5000,
+                    enhancementCosts: [
+                        { itemHrid: '/items/holy_cheese', count: 2 },
+                        { itemHrid: '/items/coin', count: 900 },
+                    ],
+                },
                 '/items/mirror_of_protection': { name: 'Mirror of Protection', sellPrice: 1250 },
+                '/items/philosophers_mirror': { name: "Philosopher's Mirror", sellPrice: 90000 },
             },
         }),
         getCurrentActions: () => state.actions,
@@ -117,6 +126,7 @@ beforeEach(() => {
     state.handlers = {};
     state.current = null;
     state.calls = [];
+    state.costs = [];
     state.actions = [];
     trackerMock.pendingSessionStart = false;
     setupEnhancementHandlers();
@@ -243,28 +253,29 @@ describe('two attempts landing before the first has finished writing', () => {
         await state.handlers.action_completed(attempt(5, 78));
         expect(state.calls).toEqual([['start', '/items/enchanted_cloak_refined', 5, 15, 2]]);
 
-        // A protected failure (5 → 5) and the success after it (5 → 6),
-        // dispatched back to back the way the socket does. The failure buys a
-        // protection, which is one more write to suspend on than the success has.
-        const failure = state.handlers.action_completed(attempt(5, 79));
-        const success = state.handlers.action_completed(attempt(6, 80));
+        // A protected failure (5 → 4: protection drops exactly one level) and
+        // the success after it (4 → 5), dispatched back to back the way the
+        // socket does. The failure buys a protection, which is one more write to
+        // suspend on than the success has.
+        const failure = state.handlers.action_completed(attempt(4, 79));
+        const success = state.handlers.action_completed(attempt(5, 80));
         await Promise.all([failure, success]);
 
-        // The next attempt has to see level 6, not the level the slower handler
+        // The next attempt has to see level 5, not the level the slower handler
         // finished writing afterwards
-        await state.handlers.action_completed(attempt(7, 81));
+        await state.handlers.action_completed(attempt(6, 81));
 
         // Order is not asserted: the failure buys a protection first, so it
         // finishes writing after the success it preceded. What each attempt was
         // scored against is the thing that has to survive the interleaving.
         const results = state.calls.filter(([kind]) => kind === 'success' || kind === 'failure');
         expect(results).toHaveLength(3);
-        expect(results).toContainEqual(['failure', 5, 5]);
+        expect(results).toContainEqual(['failure', 5, 4]);
+        expect(results).toContainEqual(['success', 4, 5, false]);
         expect(results).toContainEqual(['success', 5, 6, false]);
-        expect(results).toContainEqual(['success', 6, 7, false]);
-        // The failure mode this guards: 6 → 7 scored from a stale level 5,
+        // The failure mode this guards: 5 → 6 scored from a stale level 4,
         // reported as a Blessed double jump that never happened
-        expect(results).not.toContainEqual(['success', 5, 7, true]);
+        expect(results).not.toContainEqual(['success', 4, 6, true]);
     });
 });
 
@@ -275,7 +286,8 @@ describe('a protected failure with no market quote for the protection', () => {
     // protection 0 coins.
     test('is charged the protection item vendor price', async () => {
         await state.handlers.action_completed(attempt(5, 78));
-        await state.handlers.action_completed(attempt(5, 79));
+        // Protected failure: 5 → 4
+        await state.handlers.action_completed(attempt(4, 79));
 
         expect(state.calls).toContainEqual(['prot', '/items/mirror_of_protection', 1250]);
     });
@@ -402,5 +414,166 @@ describe('TLA-043: bootstrap from an already-cached current action', () => {
 
         expect(state.calls).not.toContainEqual(['pendingStart']);
         configModule.default.getSetting = () => true;
+    });
+});
+
+describe('the first attempt of a run is scored from the level the queue row started at', () => {
+    // An action_completed names only the level the attempt ended at. +6 is a success from
+    // +5, a protected failure from +7, or a Blessed jump from +4; +0 is a failure from
+    // anywhere. The queue row the game sends when the run starts carries the start level.
+    const queued = (level, extra = {}) => ({
+        id: 'a1',
+        actionHrid: '/actions/enhancing/enhance',
+        isDone: false,
+        ordinal: 1,
+        currentCount: 0,
+        primaryItemHash: `30404::/item_locations/inventory::/items/enchanted_cloak_refined::${level}`,
+        secondaryItemHash: '30404::/item_locations/inventory::/items/mirror_of_protection::0',
+        enhancingMaxLevel: 15,
+        enhancingProtectionMinLevel: 3,
+        ...extra,
+    });
+    const completed = (level, currentCount, extra = {}) => ({
+        endCharacterAction: { ...queued(level, extra), currentCount },
+    });
+    const queueRun = async (row) => {
+        state.actions = [row];
+        await state.handlers.actions_updated({ endCharacterActions: [row] });
+    };
+
+    test('a success from +5 with protection from +3 is a success, and buys no protection', async () => {
+        await queueRun(queued(5));
+        await state.handlers.action_completed(completed(6, 1));
+
+        // Before: the start was inferred as +6, and 6 -> 6 read as a protected failure
+        // that charged a protection the game never took
+        expect(state.calls).toContainEqual(['start', '/items/enchanted_cloak_refined', 5, 15, 3]);
+        expect(state.calls).toContainEqual(['success', 5, 6, false]);
+        expect(state.calls.map(([kind]) => kind)).not.toContain('failure');
+        expect(state.calls.map(([kind]) => kind)).not.toContain('prot');
+    });
+
+    test('an unprotected failure from +2 is a failure at +2, not at +0', async () => {
+        await queueRun(queued(2));
+        await state.handlers.action_completed(completed(0, 1));
+
+        expect(state.calls).toContainEqual(['start', '/items/enchanted_cloak_refined', 2, 15, 3]);
+        expect(state.calls).toContainEqual(['failure', 2, 0]);
+    });
+
+    test('a protected failure from +5 drops one level and buys one protection', async () => {
+        await queueRun(queued(5));
+        await state.handlers.action_completed(completed(4, 1));
+
+        expect(state.calls).toContainEqual(['failure', 5, 4]);
+        expect(state.calls).toContainEqual(['prot', '/items/mirror_of_protection', 1250]);
+    });
+
+    test('an enhance queued behind another action starts when that one finishes', async () => {
+        // The delta that brings it to the front carries only the finished row ahead of it
+        const milk = { id: 'm1', actionHrid: '/actions/milking/cow', isDone: false, ordinal: 0, currentCount: 3 };
+        state.actions = [milk, queued(5, { ordinal: 1 })];
+        await state.handlers.actions_updated({ endCharacterActions: [milk] });
+        expect(state.calls).toEqual([]);
+
+        state.actions = [queued(5, { ordinal: 1 })];
+        await state.handlers.actions_updated({ endCharacterActions: [{ ...milk, isDone: true }] });
+        await state.handlers.action_completed(completed(6, 1));
+
+        expect(state.calls).toContainEqual(['start', '/items/enchanted_cloak_refined', 5, 15, 3]);
+        expect(state.calls).toContainEqual(['success', 5, 6, false]);
+    });
+
+    test('a queue row from another action is not taken as the start of this attempt', async () => {
+        await queueRun(queued(5));
+        await state.handlers.action_completed(completed(6, 1, { id: 'a2' }));
+
+        // Unknown start: a session, costed, not scored
+        expect(state.calls.map(([kind]) => kind)).toEqual(['pendingStart', 'start']);
+    });
+});
+
+describe('a page reload in the middle of a session', () => {
+    // The game keeps enhancing while no page is connected. An attempt that completes in that
+    // gap is never delivered; the login snapshot already includes it.
+    const row = (level, currentCount) => ({
+        id: 'a1',
+        actionHrid: '/actions/enhancing/enhance',
+        isDone: false,
+        ordinal: 1,
+        currentCount,
+        primaryItemHash: `30404::/item_locations/inventory::/items/enchanted_cloak_refined::${level}`,
+        secondaryItemHash: '30404::/item_locations/inventory::/items/mirror_of_protection::0',
+        enhancingMaxLevel: 15,
+        enhancingProtectionMinLevel: 3,
+    });
+    const storedSession = (level, currentCount) => ({
+        id: 's1',
+        itemHrid: '/items/enchanted_cloak_refined',
+        targetLevel: 15,
+        protectFrom: 3,
+        totalXP: 0,
+        lastAttempt: { attemptNumber: 10, level, timestamp: 0, actionId: 'a1', currentCount },
+    });
+
+    test('the one attempt that completed during the reload is scored, and the next live one from where it left the item', async () => {
+        // Before the reload: +5 at count 10. During it: 5 -> 6 at count 11.
+        state.current = storedSession(5, 10);
+        state.actions = [row(6, 11)];
+        setupEnhancementHandlers();
+        await vi.waitFor(() => expect(state.calls).toContainEqual(['success', 5, 6, false]));
+
+        // Live again: 6 -> 7. Before the fix this read 5 -> 7, a Blessed jump that never happened
+        await state.handlers.action_completed({ endCharacterAction: row(7, 12) });
+        const results = state.calls.filter(([kind]) => kind === 'success' || kind === 'failure');
+        expect(results).toEqual([
+            ['success', 5, 6, false],
+            ['success', 6, 7, false],
+        ]);
+    });
+
+    test('a longer gap is not guessed at, and the next live attempt is scored from the snapshot', async () => {
+        // Count 10 at +5; two attempts during the reload leave the item at +0 (count 12)
+        state.current = storedSession(5, 10);
+        state.actions = [row(0, 12)];
+        setupEnhancementHandlers();
+
+        await state.handlers.action_completed({ endCharacterAction: row(1, 13) });
+        const results = state.calls.filter(([kind]) => kind === 'success' || kind === 'failure');
+        // Before the fix: a failure at +5 (5 -> 1)
+        expect(results).toEqual([['success', 0, 1, false]]);
+    });
+
+    test('a count that skipped ahead with no snapshot seen is not scored from the stale level', async () => {
+        state.current = storedSession(5, 10);
+        await state.handlers.action_completed({ endCharacterAction: row(1, 13) });
+
+        expect(state.calls.filter(([kind]) => kind === 'success' || kind === 'failure')).toEqual([]);
+    });
+});
+
+describe('a Philosopher’s Mirror attempt', () => {
+    // Game client: a mirror attempt always succeeds, the mirror is consumed every attempt, and
+    // the enhancement cost becomes one copy of the base item one level below the item.
+    test('is charged the mirror and the copy, not the normal materials and coins', async () => {
+        const mirrorRow = (level, currentCount) => ({
+            id: 'a1',
+            actionHrid: '/actions/enhancing/enhance',
+            isDone: false,
+            ordinal: 1,
+            currentCount,
+            primaryItemHash: `30404::/item_locations/inventory::/items/enchanted_cloak_refined::${level}`,
+            secondaryItemHash: '30404::/item_locations/inventory::/items/philosophers_mirror::0',
+            enhancingMaxLevel: 10,
+            enhancingProtectionMinLevel: 0,
+        });
+        state.actions = [mirrorRow(8, 0)];
+        await state.handlers.actions_updated({ endCharacterActions: [mirrorRow(8, 0)] });
+        await state.handlers.action_completed({ endCharacterAction: mirrorRow(9, 1) });
+
+        expect(state.calls).toContainEqual(['success', 8, 9, false]);
+        expect(state.calls).toContainEqual(['prot', '/items/philosophers_mirror', 90000]);
+        // The +7 copy, priced at the item's vendor price with the market empty in this file
+        expect(state.costs).toEqual([['mat', '/items/enchanted_cloak_refined', 1, 5000]]);
     });
 });
