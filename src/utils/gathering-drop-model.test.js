@@ -1,6 +1,7 @@
 import { describe, test, expect } from 'vitest';
 import {
     buildGatheringSession,
+    gatheringCountOutcomes,
     gatheringLootValue,
     gatheringSessionMean,
     gatheringSessionLuck,
@@ -61,7 +62,9 @@ describe('buildGatheringSession', () => {
         });
 
         expect(session.actionCount).toBe(25);
-        expect(session.drops).toEqual([{ itemHrid: '/items/log', minCount: 1, maxCount: 2, dropRate: 1, price: 40 }]);
+        expect(session.drops).toEqual([
+            { itemHrid: '/items/log', minCount: 1, maxCount: 2, dropRate: 1, price: 40, quantity: 0 },
+        ]);
     });
 
     test('a rate above one is clamped, not trusted', () => {
@@ -229,6 +232,65 @@ describe('gatheringSessionLuck against a distribution that can be written down',
         const atMean = gatheringSessionLuck(session, 100000).percentile;
         expect(atMean).toBeGreaterThan(0.4);
         expect(atMean).toBeLessThan(0.6);
+    });
+});
+
+describe('gathering quantity and Processing', () => {
+    test('a whole count is scaled and rounded stochastically, the way the game rolls it', () => {
+        // 1-3 at +50%: 1 -> 1.5 (1 or 2 evenly), 2 -> 3, 3 -> 4.5 (4 or 5 evenly), each count 1/3
+        const outcomes = gatheringCountOutcomes({ minCount: 1, maxCount: 3, dropRate: 0.9, quantity: 0.5 });
+        const third = 0.9 / 3;
+        expect(outcomes.get(0)).toBeCloseTo(0.1, 12);
+        expect(outcomes.get(1)).toBeCloseTo(third / 2, 12);
+        expect(outcomes.get(2)).toBeCloseTo(third / 2, 12);
+        expect(outcomes.get(3)).toBeCloseTo(third, 12);
+        expect(outcomes.get(4)).toBeCloseTo(third / 2, 12);
+        expect(outcomes.get(5)).toBeCloseTo(third / 2, 12);
+        const mean = [...outcomes].reduce((sum, [count, p]) => sum + count * p, 0);
+        expect(mean).toBeCloseTo(0.9 * 2 * 1.5, 12);
+    });
+
+    test('the session carries the quantity, and its mean includes it', () => {
+        const actionDetail = { dropTable: [{ itemHrid: '/items/milk', dropRate: 1, minCount: 1, maxCount: 3 }] };
+        const session = buildGatheringSession({
+            actionDetail,
+            actionCount: 10,
+            priceOf: pricedAt({ '/items/milk': 10 }),
+            gatheringQuantity: 0.2,
+        });
+        expect(gatheringSessionMean(session)).toBeCloseTo(10 * 2 * 1.2 * 10, 6);
+    });
+
+    test('a buffed run at its own average reads typical, not lucky', () => {
+        const actionDetail = { dropTable: [{ itemHrid: '/items/milk', dropRate: 1, minCount: 1, maxCount: 3 }] };
+        const priceOf = pricedAt({ '/items/milk': 10 });
+        const buffed = buildGatheringSession({ actionDetail, actionCount: 2000, priceOf, gatheringQuantity: 0.35 });
+        const income = 2000 * 2 * 1.35 * 10;
+
+        const { percentile } = gatheringSessionLuck(buffed, income);
+        expect(percentile).toBeGreaterThan(0.35);
+        expect(percentile).toBeLessThan(0.65);
+
+        // The same takings against the bare table: the old verdict, a near-certain fluke
+        const bare = buildGatheringSession({ actionDetail, actionCount: 2000, priceOf });
+        expect(gatheringSessionLuck(bare, income).percentile).toBeGreaterThan(0.99);
+    });
+
+    test('processed items count as the raw items they were made from, for modelled raws only', () => {
+        const actionDetail = { dropTable: [{ itemHrid: '/items/milk', dropRate: 1, minCount: 1, maxCount: 1 }] };
+        const session = buildGatheringSession({
+            actionDetail,
+            actionCount: 10,
+            priceOf: pricedAt({ '/items/milk': 10 }),
+            processedFrom: {
+                '/items/cheese': { rawHrid: '/items/milk', ratio: 2 },
+                '/items/lumber': { rawHrid: '/items/log', ratio: 2 },
+            },
+        });
+        expect(Object.keys(session.processedFrom)).toEqual(['/items/cheese']);
+        expect(gatheringLootValue(session, { '/items/milk': 4, '/items/cheese': 3, '/items/lumber': 5 })).toBe(
+            (4 + 3 * 2) * 10
+        );
     });
 });
 

@@ -12,7 +12,8 @@ import { getItemPrices } from '../../utils/market-data.js';
 import { toCsv, csvFilename, downloadCsv } from '../../utils/csv-export.js';
 import { formatKMB, numberFormatter, formatDateTime } from '../../utils/formatters.js';
 import { createTimerRegistry } from '../../utils/timer-registry.js';
-import { MARKET_TAX } from '../../utils/profit-constants.js';
+import { MARKET_TAX, GATHERING_TYPES } from '../../utils/profit-constants.js';
+import { getActionEfficiencyContext } from '../../utils/efficiency.js';
 import { isIronCowCharacter } from '../../utils/ironcow-valuation.js';
 import { signedPercent } from '../../utils/overlay-format.js';
 import {
@@ -854,6 +855,9 @@ class LootLogStats {
         const dropTable = actionDetails?.dropTable;
         if (!dropTable || dropTable.length === 0) return null;
 
+        // The game multiplies every gathered count by 1 + gathering quantity
+        const quantityMultiplier = 1 + this.gatheringQuantityFor(actionDetails);
+
         let askExpected = 0;
         let bidExpected = 0;
         let hasAnyPrice = false;
@@ -863,7 +867,7 @@ class LootLogStats {
             const avgCount = ((drop.minCount || 0) + (drop.maxCount || 0)) / 2;
             if (dropRate <= 0 || avgCount <= 0) continue;
 
-            const expectedCount = dropRate * avgCount * actionCount;
+            const expectedCount = dropRate * avgCount * quantityMultiplier * actionCount;
 
             if (drop.itemHrid === '/items/coin') {
                 askExpected += expectedCount;
@@ -1118,6 +1122,52 @@ class LootLogStats {
     }
 
     /**
+     * The gathering quantity the current character gathers this action at, as a
+     * decimal — the same total the action panel's profit uses. A loot log entry
+     * does not record what the run was played under, so this is today's figure;
+     * without it every buffed run (the community buff alone is +20%) reads high.
+     * @param {Object} actionDetail - The action's `actionDetailMap` entry
+     * @returns {number} 0 for a non-gathering action or when it cannot be read
+     */
+    gatheringQuantityFor(actionDetail) {
+        if (!GATHERING_TYPES.includes(actionDetail?.type)) return 0;
+        try {
+            const gameData = dataManager.getInitClientData?.();
+            if (!gameData) return 0;
+            return getActionEfficiencyContext(actionDetail, { gameData }).totalGathering || 0;
+        } catch (error) {
+            console.error('[LootLogStats] Reading gathering quantity failed:', error);
+            return 0;
+        }
+    }
+
+    /**
+     * What Processing Tea can turn this action's drops into: processed item hrid
+     * → the raw item and how many of it one takes. Found the way gathering-profit.js
+     * finds them, from the cheesesmithing/crafting/tailoring recipes whose one input
+     * is a raw drop.
+     * @param {Object} actionDetail - The action's `actionDetailMap` entry
+     * @returns {Object<string, {rawHrid: string, ratio: number}>}
+     */
+    processingConversionsFor(actionDetail) {
+        const conversions = {};
+        const raws = new Set((actionDetail?.dropTable || []).map((drop) => drop.itemHrid));
+        const actionDetailMap = dataManager.getInitClientData?.()?.actionDetailMap;
+        if (!raws.size || !actionDetailMap) return conversions;
+
+        const processingTypes = ['/action_types/cheesesmithing', '/action_types/crafting', '/action_types/tailoring'];
+        for (const action of Object.values(actionDetailMap)) {
+            if (!processingTypes.includes(action?.type)) continue;
+            const input = action.inputItems?.[0];
+            const output = action.outputItems?.[0];
+            if (input && output && raws.has(input.itemHrid) && input.count > 0) {
+                conversions[output.itemHrid] = { rawHrid: input.itemHrid, ratio: input.count };
+            }
+        }
+        return conversions;
+    }
+
+    /**
      * Bind a log entry to the gathering drop model.
      *
      * Null carries the model's own floors through — no completed actions, no
@@ -1130,10 +1180,13 @@ class LootLogStats {
     buildLuckReading(logData) {
         if (!logData?.drops) return null;
 
+        const actionDetail = dataManager.getActionDetails(logData.actionHrid);
         const session = buildGatheringSession({
-            actionDetail: dataManager.getActionDetails(logData.actionHrid),
+            actionDetail,
             actionCount: logData.actionCount,
             priceOf: (itemHrid) => this.getModelPrice(itemHrid),
+            gatheringQuantity: this.gatheringQuantityFor(actionDetail),
+            processedFrom: this.processingConversionsFor(actionDetail),
         });
         if (!session) return null;
 
@@ -1291,7 +1344,8 @@ class LootLogStats {
                     'those actions could have had. 50 is typical; 5 means nineteen runs in twenty do better.',
                 'Drops with no market price are left out of both sides.',
                 "Essence and rare-find drops are not in the action's own drop table, so they are left out of " +
-                    'both sides too. Gathering-quantity buffs are not modelled; a buffed run reads high.',
+                    'both sides too. Counts use your current gathering quantity; processed items count as the ' +
+                    'raw items they were made from.',
             ].join('\n');
         } catch (error) {
             console.error('[LootLogStats] Drop luck calculation failed:', error);
