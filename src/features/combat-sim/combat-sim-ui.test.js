@@ -7458,6 +7458,25 @@ describe('Solo zones + party dungeons: one ranked table', () => {
             expect(ui._allZonesMode).toBeNull();
         });
 
+        test.each([
+            ['a run is going', 'isRunning'],
+            ['a run is loading its players', '_runStarting'],
+        ])('a party lost while %s still leaves the mode, rather than hiding it on', (_label, flag) => {
+            soloPartyBox().click();
+            ui[flag] = true;
+            try {
+                mocks.editedDTOs = { player1: party3().player1 };
+                ui._updateSoloPartyOffer();
+
+                expect(soloPartyLabel().style.display).toBe('none');
+                expect(ui._allZonesMode).toBeNull();
+            } finally {
+                ui[flag] = false;
+            }
+            // Nothing is left for the run's end to trip over: the next Simulate is a single-zone run
+            expect(ui.panel.querySelector('#mwi-csim-allzones-group').checked).toBe(false);
+        });
+
         test('with no editor party at all it is not offered', () => {
             mocks.editedDTOs = null;
             ui._updateSoloPartyOffer();
@@ -7525,6 +7544,55 @@ describe('Solo zones + party dungeons: one ranked table', () => {
             // player2's 200 XP/hr and 20 gold/hr, not player1's 9,000 or the party's 9,250
             expect(denT0[xpCol]).toBe('200');
             expect(denT0[profitCol]).toMatch(/^20/);
+        });
+
+        test('with only the zones checked, the table is an ordinary one: no Set column, no tags', async () => {
+            ui.panel.querySelector(`.mwi-csim-zone-cb[data-hrid="${den.hrid}"]`).checked = false;
+
+            await ui._onSimulateAllZones();
+
+            expect(mocks.allZonesArgsLog).toHaveLength(1);
+            expect(mocks.allZonesArgsLog[0].playerDTOs.map((p) => p.hrid)).toEqual(['player2']);
+            expect(headers()).not.toContain('set');
+            expect(ui._allZonesResults.every((entry) => !('set' in entry))).toBe(true);
+            expect(text()).not.toContain('(Solo)');
+        });
+
+        test('with only the dungeons checked, likewise', async () => {
+            ui.panel.querySelectorAll('.mwi-csim-zone-cb').forEach((box) => {
+                box.checked = box.dataset.hrid === den.hrid;
+            });
+
+            await ui._onSimulateAllZones();
+
+            expect(mocks.allZonesArgsLog).toHaveLength(1);
+            expect(mocks.allZonesArgsLog[0].playerDTOs).toHaveLength(3);
+            expect(headers()).not.toContain('set');
+        });
+
+        test('a redraw or re-price reads the player the sweep measured, not a tab clicked since', async () => {
+            await ui._onSimulateAllZones();
+            expect(ui._allZonesRedrawArgs.playerHrid).toBe('player2');
+            const xpCol = () => headers().indexOf('totalXP');
+            const flyXp = () => tableRows().find((cells) => cells[0].startsWith('Fly'))[xpCol()];
+            expect(flyXp()).toBe('300');
+
+            // A single-zone result's player tab moves the shared field
+            ui._activePlayerTab = 'player1';
+            mocks.revenueCalls = [];
+
+            ui._repriceAllZonesResults();
+            await Promise.resolve();
+            expect(new Set(mocks.revenueCalls)).toEqual(new Set(['player2']));
+            await vi.waitFor(() => expect(flyXp()).toBe('300'));
+
+            // A header click redraws from the same player
+            ui.panel
+                .querySelector('#mwi-csim-results th[data-col="totalXP"]')
+                .dispatchEvent(new window.Event('click', { bubbles: true }));
+            await vi.waitFor(() => expect(headers()).toContain('totalXP'));
+            expect(flyXp()).toBe('300');
+            expect(ui._allZonesRedrawArgs.playerHrid).toBe('player2');
         });
 
         test('the headline names each winner with its set', async () => {
@@ -7632,6 +7700,19 @@ describe('Solo zones + party dungeons: one ranked table', () => {
             expect(ui._allZonesSnapshotMeta).not.toBeNull();
         });
 
+        test('Sim All Zones: a re-price after another tab is clicked still reads the sweep’s own player', async () => {
+            ui.panel.querySelector('#mwi-csim-allzones-group').click();
+            mocks.editedDTOs = null;
+            await ui._onSimulateAllZones();
+            expect(ui._allZonesRedrawArgs.playerHrid).toBe('player1');
+
+            ui._activePlayerTab = 'player2';
+            mocks.revenueCalls = [];
+            ui._repriceAllZonesResults();
+
+            expect(mocks.revenueCalls).toEqual(['player1']);
+        });
+
         test('Sim All Dungeons still runs the party it is given, once', async () => {
             ui.panel.querySelector('#mwi-csim-allzones-dungeons').click();
 
@@ -7654,6 +7735,11 @@ describe('the Solo zones + party dungeons helpers', () => {
         });
         expect(soloVsPartySets([{ hrid: 'player1' }], 'player1')).toBeNull();
         expect(soloVsPartySets(party, 'player9')).toBeNull();
+    });
+
+    test('mergeSoloPartySweeps leaves the rows untagged when only one set has any', () => {
+        expect(mergeSoloPartySweeps([{ zone: 'a' }], [])).toEqual([{ zone: 'a' }]);
+        expect(mergeSoloPartySweeps([null], [{ zone: 'b' }])).toEqual([{ zone: 'b' }]);
     });
 
     test('mergeSoloPartySweeps tags each entry and leaves the inputs alone', () => {

@@ -925,13 +925,20 @@ export function soloVsPartySets(partyDTOs, playerHrid) {
  * One results list out of a solo sweep and a party sweep, each entry tagged
  * with the set it came from. The table ranks the merged list as one.
  *
+ * Tagged only when both sets produced rows: with only one (no dungeons
+ * checked, no zones checked, or one sweep that returned nothing) a Set column
+ * would say the same word on every row, so the rows come back untagged and the
+ * table draws as an ordinary sweep.
+ *
  * @param {Array<Object>} soloEntries - `{zone, simResult, revenue}` from the solo sweep
  * @param {Array<Object>} partyEntries - The same, from the party sweep
- * @returns {Array<Object>} Tagged copies, solo first; the inputs are left alone
+ * @returns {Array<Object>} Copies, solo first; the inputs are left alone
  */
 export function mergeSoloPartySweeps(soloEntries, partyEntries) {
-    const tag = (entries, set) => (Array.isArray(entries) ? entries.filter(Boolean).map((e) => ({ ...e, set })) : []);
-    return [...tag(soloEntries, 'solo'), ...tag(partyEntries, 'party')];
+    const solo = Array.isArray(soloEntries) ? soloEntries.filter(Boolean) : [];
+    const party = Array.isArray(partyEntries) ? partyEntries.filter(Boolean) : [];
+    if (!solo.length || !party.length) return [...solo, ...party].map((entry) => ({ ...entry }));
+    return [...solo.map((entry) => ({ ...entry, set: 'solo' })), ...party.map((entry) => ({ ...entry, set: 'party' }))];
 }
 
 /**
@@ -3108,6 +3115,12 @@ class CombatSimUI {
      * Show the Solo zones + party dungeons checkbox only while a party is
      * loaded. Losing the party while the mode is on leaves the mode, the same
      * as unchecking it: with one player, Sim All Zones already covers it.
+     *
+     * Also while a run is going. A hidden box with its mode still on would
+     * outlive the run, invisibly; and leaving the mode mid-run is no different
+     * from unchecking it by hand, which the panel already allows: a sweep reads
+     * the mode once as it starts (`soloVsParty` in `_onSimulateAllZones`), and
+     * only drawing code reads it after that.
      * @private
      */
     _updateSoloPartyOffer() {
@@ -3117,7 +3130,7 @@ class CombatSimUI {
         const offered = this._hasPartyLoaded();
         label.style.display = offered ? 'flex' : 'none';
         box.checked = offered && this._allZonesMode === SOLO_VS_PARTY_MODE;
-        if (!offered && this._allZonesMode === SOLO_VS_PARTY_MODE && !this._isBusy()) {
+        if (!offered && this._allZonesMode === SOLO_VS_PARTY_MODE) {
             this._allZonesMode = null;
             this._updateAllZonesUI();
         }
@@ -3502,6 +3515,7 @@ class CombatSimUI {
      * @param {Array<Object>} zoneResults - Array of {zone, simResult, revenue}
      * @param {number} hours - Simulation hours
      * @param {Object} gameData - Game data maps
+     * @param {string} [playerHrid] - The player the sweep was measured for; every redraw passes it back
      * @private
      */
     /**
@@ -3518,7 +3532,7 @@ class CombatSimUI {
                 try {
                     const args = this._allZonesRedrawArgs;
                     if (this._allZonesResults && args) {
-                        this._displayAllZonesResults(this._allZonesResults, args.hours, args.gameData);
+                        this._displayAllZonesResults(this._allZonesResults, args.hours, args.gameData, args.playerHrid);
                     }
                 } catch (error) {
                     console.error('[CombatSimUI] Redrawing All Zones on the Bestiary failed:', error);
@@ -3542,7 +3556,7 @@ class CombatSimUI {
         }
     }
 
-    async _displayAllZonesResults(zoneResults, hours, gameData) {
+    async _displayAllZonesResults(zoneResults, hours, gameData, playerHrid = this._activePlayerTab || 'player1') {
         const container = this.panel?.querySelector('#mwi-csim-results');
         if (!container) return;
         const ownerId = dataManager.getCurrentCharacterId();
@@ -3560,8 +3574,11 @@ class CombatSimUI {
         this._allZonesResults = zoneResults;
         container.style.display = 'block';
 
-        // Build row data
-        const playerHrid = this._activePlayerTab || 'player1';
+        // Build row data. `playerHrid` is the player the sweep was measured
+        // for, passed back in on every redraw (`_allZonesRedrawArgs`): the
+        // shared `_activePlayerTab` moves whenever a single-zone result's player
+        // tab is clicked, and a redraw read for someone the sweep never
+        // simulated shows their empty figures on every row.
         // The Bestiary, when the Achievements tab has loaded it: what each zone's
         // kill rates are worth in points over the next day, from the counts held
         // Off by the setting: no column, no planner, and the Bestiary is not
@@ -3571,7 +3588,7 @@ class CombatSimUI {
         const bestiaryCounts = bestiaryRows ? countsByMonster(bestiaryRows) : null;
         // Not loaded yet: ask the game for it the way the Bestiary tab does,
         // and redraw when it lands so the column fills in by itself
-        this._allZonesRedrawArgs = { hours, gameData };
+        this._allZonesRedrawArgs = { hours, gameData, playerHrid };
         if (bestiaryOn && !bestiaryRows) this._requestBestiary();
         // Phases, so a slow run on a real account says WHICH part was slow rather
         // than leaving it to be guessed at: building rows, warming the volume
@@ -4147,7 +4164,7 @@ class CombatSimUI {
                 // closed over: a reprice (`_repriceAllZonesResults`) may have
                 // replaced `this._allZonesResults` with fresher data while this
                 // table was on screen, and sorting must not resurrect the stale copy.
-                this._displayAllZonesResults(this._allZonesResults || zoneResults, hours, gameData);
+                this._displayAllZonesResults(this._allZonesResults || zoneResults, hours, gameData, playerHrid);
             });
         });
 
@@ -5820,7 +5837,7 @@ class CombatSimUI {
 
             this._allZonesSortCol = 'score';
             this._allZonesSortAsc = false;
-            await this._displayAllZonesResults(zoneResults, hours, gameData);
+            await this._displayAllZonesResults(zoneResults, hours, gameData, playerHrid);
             if (!this._isCurrentRun(ownerId, startToken)) return;
 
             // Outlives the panel: the ranked action list reads this to put combat
@@ -6093,8 +6110,8 @@ class CombatSimUI {
      * `calculateSimRevenue(simResult, gameData, playerHrid, hours)`. Redoing
      * exactly that call per cached zone, with the same `hours`/`gameData` the
      * table was last drawn with (`_allZonesRedrawArgs`, set by
-     * `_displayAllZonesResults`) and the same `playerHrid` expression the run
-     * used, re-prices the whole sweep without re-simulating anything.
+     * `_displayAllZonesResults`) and the `playerHrid` the sweep was measured
+     * for (also in `_allZonesRedrawArgs`), re-prices the whole sweep without re-simulating anything.
      * Redrawing through `_displayAllZonesResults` keeps the user's current
      * sort column/direction, which live on `this._allZonesSortCol`/`Asc`
      * rather than being passed in.
@@ -6103,9 +6120,11 @@ class CombatSimUI {
     _repriceAllZonesResults() {
         const args = this._allZonesRedrawArgs;
         if (!this._allZonesResults || !args) return;
-        const playerHrid = this._activePlayerTab || 'player1';
+        // The player the displayed sweep was measured for, not whoever's tab
+        // is open now: the snapshot re-saved below was built for that player too
+        const playerHrid = args.playerHrid || this._activePlayerTab || 'player1';
         const repriced = this._repriceZoneEntries(this._allZonesResults, args.gameData, playerHrid, args.hours);
-        this._displayAllZonesResults(repriced, args.hours, args.gameData);
+        this._displayAllZonesResults(repriced, args.hours, args.gameData, playerHrid);
         this._resaveAllZonesSnapshot(repriced);
     }
 
