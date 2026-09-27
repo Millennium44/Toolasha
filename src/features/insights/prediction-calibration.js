@@ -324,7 +324,7 @@ class PredictionCalibration {
         const durationSec = (new Date(entry.endTime) - new Date(entry.startTime)) / 1000;
         if (!Number.isFinite(durationSec) || durationSec < MIN_DURATION_SEC) return false;
 
-        const actual = this._actual(entry, durationSec, forecast.artisanBonus);
+        const actual = this._actual(entry, durationSec, forecast.artisanBonus, forecast.drinkCostPerHour);
         if (actual === null) return false;
 
         this.records.push({
@@ -357,9 +357,15 @@ class PredictionCalibration {
      * records only what a run produced, so the actual side charges its inputs at
      * the same reduction rather than at the recipe's printed counts.
      *
+     * The drink bill rides along for the same reason: the forecast's profit is
+     * net of the teas the run drinks, and a loot log entry records only what
+     * came out, so the actual side has to be charged the same drinks per hour
+     * or every pair reads the tea bill as the forecast running low.
+     *
      * @param {string} actionHrid - Action HRID
-     * @returns {Promise<{predicted: number, artisanBonus: number}|null>} Profit per hour and the
-     *   artisan reduction behind it, or null when not forecastable
+     * @returns {Promise<{predicted: number, artisanBonus: number, drinkCostPerHour: number}|null>}
+     *   Profit per hour, the artisan reduction and drink cost per hour behind it, or null when
+     *   not forecastable
      */
     async _predict(actionHrid) {
         try {
@@ -376,7 +382,9 @@ class PredictionCalibration {
             // combat-calibration.js and enhancement-calibration.js — pair them.
             if (!data || data.hasMissingPrices) return null;
             if (!Number.isFinite(data.profitPerHour)) return null;
-            return { predicted: data.profitPerHour, artisanBonus: Number(data.artisanBonus) || 0 };
+            // gathering-profit.js names it drinkCostPerHour, profit-calculator.js totalTeaCostPerHour
+            const drinkCostPerHour = Number(data.drinkCostPerHour ?? data.totalTeaCostPerHour) || 0;
+            return { predicted: data.profitPerHour, artisanBonus: Number(data.artisanBonus) || 0, drinkCostPerHour };
         } catch (error) {
             console.error('[PredictionCalibration] Prediction failed:', error);
             return null;
@@ -388,16 +396,18 @@ class PredictionCalibration {
      * @param {Object} entry - Loot log entry
      * @param {number} durationSec - How long the run took
      * @param {number} [artisanBonus=0] - The artisan reduction the forecast assumed
+     * @param {number} [drinkCostPerHour=0] - The drink bill the forecast charged
      * @returns {{perHour: number, perHourBid: number}|null}
      */
-    _actual(entry, durationSec, artisanBonus = 0) {
+    _actual(entry, durationSec, artisanBonus = 0, drinkCostPerHour = 0) {
         try {
             if (!this.lootLogMath) this.lootLogMath = new LootLogStats();
             const profit = this.lootLogMath.calculateProfit(entry, { artisanBonus });
             if (!profit || !Number.isFinite(profit.askProfit)) return null;
             const hours = durationSec / 3600;
             if (hours <= 0) return null;
-            return { perHour: profit.askProfit / hours, perHourBid: profit.bidProfit / hours };
+            const drinks = Number(drinkCostPerHour) || 0;
+            return { perHour: profit.askProfit / hours - drinks, perHourBid: profit.bidProfit / hours - drinks };
         } catch (error) {
             console.error('[PredictionCalibration] Actual profit failed:', error);
             return null;
@@ -530,8 +540,8 @@ class PredictionCalibration {
             durationSec,
             actionCount,
             predicted: forecast.predicted,
-            actual: profit.askProfit / hours,
-            actualBid: profit.bidProfit / hours,
+            actual: profit.askProfit / hours - (Number(forecast.drinkCostPerHour) || 0),
+            actualBid: profit.bidProfit / hours - (Number(forecast.drinkCostPerHour) || 0),
             v: scriptVersion(),
         });
         this.recorded.add(id);
