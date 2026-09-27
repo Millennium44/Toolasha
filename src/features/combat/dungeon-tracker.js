@@ -110,6 +110,35 @@ const LOST_TIME_BEAT_MS = 1000;
 const LOST_TIME_SLEEP_MS = 120_000;
 
 /**
+ * How long a run may have been going before its start is taken to be another
+ * run's, and the state dropped rather than carried on.
+ *
+ * The longest dungeon is 65 waves at about half a minute each, and a pause
+ * behind another action is shifted out of the start (`resumeRun`), so a live
+ * run's start is never hours old. One that is belongs to a run that ended
+ * without the tracker seeing it end: a party action restarted over it, a
+ * missed completion, a page left open overnight. Nothing else bounded that
+ * age — a saved record's freshness is its last *write*, which every wave of
+ * the wrongly-continued run refreshes — so a Sinister Circus run started
+ * minutes earlier read "Elapsed: 1604:39". Three hours is several times any
+ * real run, slow party or sleeping computer included.
+ */
+const MAX_PLAUSIBLE_RUN_MS = 3 * 60 * 60 * 1000;
+
+/**
+ * How old a completion's key count may be and still open the next run.
+ *
+ * The anchor is carried from one run's completion "Key counts" to the next
+ * run's wave 1, which in a repeating party action follows within seconds. An
+ * anchor that waits longer was armed by a start that never happened: the
+ * reported one was a Pirate Cove ready check canceled at 10:29 ("not ready",
+ * then "Battle ended"), and it opened a Sinister Circus run with a different
+ * party the next afternoon, banking a 1608-minute run. Without it the run's
+ * anchor still comes from the chat scan, which bounds its own age.
+ */
+const NEXT_RUN_ANCHOR_MAX_MS = 5 * 60 * 1000;
+
+/**
  * Whether an action is a combat action.
  * @param {Object|null} action - Queue entry
  * @returns {boolean} True for `/actions/combat/` hrids
@@ -308,6 +337,25 @@ class DungeonTracker {
     }
 
     /**
+     * Whether the run in progress started longer ago than any real run takes.
+     *
+     * Judged on the oldest start the panel could measure from — the run's own
+     * start, its recovered chat start, or its chat anchor — so no clock the
+     * elapsed figure reads can be a day old. A paused run is judged by the
+     * caller after it resumes, when the pause has been shifted out.
+     *
+     * @param {number} [now] - The time to judge at
+     * @returns {boolean} True when the run cannot be the one being fought
+     */
+    isRunImplausiblyOld(now = Date.now()) {
+        const run = this.currentRun;
+        if (!run) return false;
+        const starts = [run.startTime, run.recoveredStartTime, this.firstKeyCountTimestamp].filter(Number.isFinite);
+        if (starts.length === 0) return false;
+        return now - Math.min(...starts) > MAX_PLAUSIBLE_RUN_MS;
+    }
+
+    /**
      * Whether a chat timestamp is recent enough to be this run's.
      *
      * The party chat log outlives the party: the reported case still held a
@@ -368,6 +416,8 @@ class DungeonTracker {
             // Set while another action has displaced the dungeon; see `pauseRun`
             pausedAt: this.currentRun.pausedAt ?? null,
             pausedMs: this.currentRun.pausedMs ?? 0,
+            // Finished its last wave; the next run's wave 1 has begun; see onNewBattle
+            awaitingKeyCount: this.currentRun.awaitingKeyCount === true,
         };
 
         // There is a record now, so "nothing saved" is no longer the answer for
@@ -415,8 +465,31 @@ class DungeonTracker {
             return false;
         }
 
+        // A run older than any real one is not this run, however well the rest
+        // matches. A paused record's start is judged at its pause: the time it
+        // spent paused is shifted out of the start when it resumes.
+        const activeUntil = Number.isFinite(saved.pausedAt) ? saved.pausedAt : Date.now();
+        if (Number.isFinite(saved.startTime) && activeUntil - saved.startTime > MAX_PLAUSIBLE_RUN_MS) {
+            return false;
+        }
+
         if (Number.isFinite(saved.pausedAt)) {
             return Number.isFinite(resumeWave) && resumeWave >= saved.currentWave;
+        }
+
+        // Waves only go up within a run. A battle below the saved wave is the
+        // dungeon started over — a party action restarted, Start Now — and its
+        // battle id proves nothing: a party action numbers its first run's
+        // battle 1 every time it starts, so the old run's id matches the new one.
+        if (Number.isFinite(resumeWave) && Number.isFinite(saved.currentWave) && resumeWave < saved.currentWave) {
+            return false;
+        }
+
+        // A run that had cleared its last wave and was only waiting for its
+        // completion key count cannot carry on into a later wave: that wave is
+        // the next run's.
+        if (saved.awaitingKeyCount === true && Number.isFinite(resumeWave) && resumeWave > 1) {
+            return false;
         }
 
         // Verify battleId matches (same run)
@@ -543,6 +616,7 @@ class DungeonTracker {
             partyNames: Array.isArray(saved.partyNames) ? [...saved.partyNames] : null,
             pausedAt: pausedRecord ? saved.pausedAt : null,
             pausedMs: Number.isFinite(saved.pausedMs) ? saved.pausedMs : 0,
+            awaitingKeyCount: saved.awaitingKeyCount === true,
         };
 
         // Only a battle of this dungeon at or past the saved wave gets here, so the
@@ -1279,6 +1353,11 @@ class DungeonTracker {
      * @param {number} _timestamp - Message timestamp in milliseconds
      */
     onBattleEnded(_timestamp) {
+        // The key count that armed the next run's start belonged to a start
+        // that has just been called off. Left armed, it waited — across a day,
+        // a party change and a dungeon change — for whatever run came next.
+        this.pendingNextRunFirstKeyCount = null;
+
         if (!this.isTracking || !this.currentRun) {
             return;
         }
@@ -1296,6 +1375,16 @@ class DungeonTracker {
     onBattleStarted(timestamp, message) {
         // Store battle started timestamp
         this.battleStartedTimestamp = timestamp;
+
+        // A party combat action is beginning, so a next-run anchor stamped before
+        // it belongs to the action before this one. If the game ever posts this
+        // between runs of one action, the chat scan re-derives the anchor from
+        // the same key count; nothing is lost but a stale start.
+        if (Number.isFinite(timestamp) && this.pendingNextRunFirstKeyCount !== null) {
+            if (this.pendingNextRunFirstKeyCount < timestamp) {
+                this.pendingNextRunFirstKeyCount = null;
+            }
+        }
 
         // If tracking and dungeonHrid is set, check if this is a different dungeon
         if (this.isTracking && this.currentRun && this.currentRun.dungeonHrid) {
@@ -1548,6 +1637,31 @@ class DungeonTracker {
             return;
         }
 
+        // A run that is over but was never seen to end. Each is dropped here and
+        // the battle falls through to the not-tracking path below, which starts
+        // it as the new run it is — so it can never inherit the old run's start.
+        //  - Older than any real run: whatever this is, it is not that run.
+        //  - A later wave below the run's own: the dungeon started over.
+        //  - A later wave after the run had cleared its last wave and was held
+        //    open for its completion key count: that count never came, and
+        //    this wave is the next run's.
+        // Wave 1 below the run's wave is settled in the wave-1 branch, which
+        // knows the solo and party boundaries.
+        if (this.isTracking && this.currentRun && !this.isPaused()) {
+            const run = this.currentRun;
+            const laterWave = Number.isFinite(data.wave) && data.wave > 1;
+            if (this.isRunImplausiblyOld()) {
+                await this.resetTracking();
+                if (currentOwner() !== owner) return;
+            } else if (laterWave && run.awaitingKeyCount === true) {
+                await this.completeDungeon();
+                if (currentOwner() !== owner) return;
+            } else if (laterWave && Number.isFinite(run.currentWave) && data.wave < run.currentWave) {
+                await this.resetTracking();
+                if (currentOwner() !== owner) return;
+            }
+        }
+
         // Wave 1 = first wave = dungeon start. The game's waves are 1-based —
         // verified against every recorded wave across all four dungeons, whose
         // minimum is 1 and whose maximum is each dungeon's own maxWaves — so the
@@ -1572,6 +1686,14 @@ class DungeonTracker {
             // start.
             const sameBattle = data.battleId !== undefined && data.battleId === this.currentBattleId;
 
+            // A resend is of the wave the run is on. A run already past its
+            // first wave cannot be sent its wave 1 again, whatever the battle id
+            // says: a party action numbers its first run's battle 1 each time it
+            // starts, so a restarted party run's wave 1 matches the id of the run
+            // it replaced — which is how a run minutes old inherited a start from
+            // the day before.
+            const pastItsFirstWave = this.isTracking && this.currentRun?.currentWave > 1;
+
             // A solo run still tracking, followed by wave 1 of a new battle, is
             // the boundary between one run of a repeating dungeon action and the
             // next — the game numbers each run's battle afresh (1, 2, 3 in a
@@ -1581,10 +1703,8 @@ class DungeonTracker {
             // validate it.
             const nextRunOfSoloDungeon =
                 this.isTracking &&
-                !sameBattle &&
-                data.battleId !== undefined &&
-                this.currentBattleId !== null &&
-                this.isSoloRun();
+                this.isSoloRun() &&
+                (pastItsFirstWave || (!sameBattle && data.battleId !== undefined && this.currentBattleId !== null));
             if (nextRunOfSoloDungeon) {
                 // Only a run that actually cleared its last wave is saved here —
                 // this is the backstop for a final completion that never reached
@@ -1603,7 +1723,21 @@ class DungeonTracker {
                 return;
             }
 
-            if (this.isTracking && (sameBattle || !this.pendingDungeonInfo)) {
+            // A party run that had not cleared its last wave is over: the
+            // dungeon started over under it (a restart, a wipe the queue kept).
+            // Discarded, unsaved, like any other early exit.
+            if (pastItsFirstWave && !this.isFinalWaveCleared()) {
+                await this.resetTracking();
+                if (currentOwner() !== owner) return;
+            } else if (this.isTracking && (sameBattle || !this.pendingDungeonInfo)) {
+                // A party run that has cleared its last wave is held open through
+                // the next run's wave 1: its completion "Key counts" message can
+                // arrive just after this battle and must still find it. Marked, so
+                // that if the message never comes the next wave ends it rather
+                // than carrying it on into the next run.
+                if (pastItsFirstWave) {
+                    this.currentRun.awaitingKeyCount = true;
+                }
                 this.currentBattleId = data.battleId;
                 this.startWave(data);
                 return;
@@ -1757,10 +1891,11 @@ class DungeonTracker {
         // Reset party message tracking
         // If a completion just happened, carry its timestamp forward as this run's start.
         // scanExistingChatMessages will see firstKeyCountTimestamp already set and skip the scan.
-        if (this.pendingNextRunFirstKeyCount !== null) {
-            this.firstKeyCountTimestamp = this.pendingNextRunFirstKeyCount;
-            this.lastKeyCountTimestamp = this.pendingNextRunFirstKeyCount;
-            this.pendingNextRunFirstKeyCount = null;
+        const carried = this.pendingNextRunFirstKeyCount;
+        this.pendingNextRunFirstKeyCount = null;
+        if (carried !== null && Date.now() - carried <= NEXT_RUN_ANCHOR_MAX_MS) {
+            this.firstKeyCountTimestamp = carried;
+            this.lastKeyCountTimestamp = carried;
         } else {
             this.firstKeyCountTimestamp = null;
             this.lastKeyCountTimestamp = null;
@@ -1868,6 +2003,16 @@ class DungeonTracker {
 
         // Ignore non-dungeon combat (zones don't have maxCount or wave field)
         if (action.wave === undefined) {
+            return;
+        }
+
+        // A run held open through the next run's wave 1 for its completion key
+        // count has no more waves of its own; this one is the next run's.
+        // Counting it would overwrite the finished run's wave count with 1.
+        if (this.currentRun.awaitingKeyCount === true) {
+            if (action.isDone) {
+                this.completeDungeon();
+            }
             return;
         }
 
@@ -2080,8 +2225,14 @@ class DungeonTracker {
         // Get server-validated duration from party messages
         // Require a strictly later completion timestamp: first === last means only the
         // run-start key count was seen (no completion message), not a real 0ms run
+        // And no longer than any run can take: a pair that far apart is two
+        // different runs' key counts, not one run's start and end.
         const partyMessageDuration =
-            !unrecoveredPartial && firstTimestamp && lastTimestamp && lastTimestamp > firstTimestamp
+            !unrecoveredPartial &&
+            firstTimestamp &&
+            lastTimestamp &&
+            lastTimestamp > firstTimestamp &&
+            lastTimestamp - firstTimestamp <= MAX_PLAUSIBLE_RUN_MS
                 ? lastTimestamp - firstTimestamp
                 : null;
         const validated = partyMessageDuration !== null;
