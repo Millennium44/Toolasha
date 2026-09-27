@@ -117,10 +117,47 @@ let lastAutosaveAt = 0;
  * capture's own duration.
  */
 let restoredDurationMs = null;
+/**
+ * How many OTHER autosaved captures this character has, beside the one (if
+ * any) recovered into this tab — two tabs open on the same character each
+ * autosave under their own key (see `autosaveKey`), so a reload can find
+ * more than one. Recovery restores only the freshest and never deletes the
+ * rest; this is what lets the UI say "+N more" instead of pretending they
+ * do not exist.
+ */
+let otherRecoverableCount = 0;
+/**
+ * Whose autosave recovery has been attempted this session, and how far it
+ * got. Undefined `recoveryOwnerId` means "never attempted" — the state a
+ * fresh page load starts in, before any character is known. Recovery is
+ * triggered from `startCapture` itself (see `triggerRecovery`), not only from
+ * the room-log feature's `initialize()`, so a capture started through a
+ * different feature (the monster stat checker) while room logs is disabled —
+ * or simply not initialized yet — still finds and is blocked by whatever this
+ * character autosaved last session.
+ */
+let recoveryOwnerId;
+/** True once `recoveryPromise` for `recoveryOwnerId` has settled, found or not. */
+let recoverySettled = false;
+/** The in-flight (or last completed) recovery attempt for `recoveryOwnerId`. */
+let recoveryPromise = null;
 
-/** The autosave key for one character, mirroring `character-key.js`'s `${base}_${id}` idiom. */
-function autosaveKey(ownerId) {
-    return `${AUTOSAVE_KEY}_${ownerId || 'default'}`;
+/** The autosave key for one character's one capture — never shared between two tabs' captures. */
+function autosaveKey(ownerId, forCaptureId) {
+    return `${AUTOSAVE_KEY}_${ownerId || 'default'}_${forCaptureId || 'unknown'}`;
+}
+
+/**
+ * Every autosave key this character has on disk, across however many tabs
+ * have captured under it. Listing rather than a single `get` is what makes
+ * two tabs' autosaves coexist instead of one clobbering the other's key.
+ * @param {string} ownerId
+ * @returns {Promise<Array<string>>}
+ */
+async function autosaveKeysFor(ownerId) {
+    const prefix = `${AUTOSAVE_KEY}_${ownerId || 'default'}_`;
+    const all = await storage.getAllKeys(AUTOSAVE_STORE);
+    return (Array.isArray(all) ? all : []).filter((key) => typeof key === 'string' && key.startsWith(prefix));
 }
 
 /**
@@ -147,9 +184,9 @@ function writeAutosave(immediate = false) {
     if (storage.isQuotaExceeded?.()) return;
     lastAutosaveAt = Date.now();
     try {
-        Promise.resolve(storage.set(autosaveKey(autosaveOwnerId), captureFile(), AUTOSAVE_STORE, immediate)).catch(
-            (error) => console.error('[LabyrinthTickCapture] Autosaving the capture failed:', error)
-        );
+        Promise.resolve(
+            storage.set(autosaveKey(autosaveOwnerId, captureId), captureFile(), AUTOSAVE_STORE, immediate)
+        ).catch((error) => console.error('[LabyrinthTickCapture] Autosaving the capture failed:', error));
     } catch (error) {
         console.error('[LabyrinthTickCapture] Autosaving the capture failed:', error);
     }
@@ -161,10 +198,17 @@ function maybeAutosave() {
     writeAutosave();
 }
 
-/** Drop one character's autosaved copy. Fire-and-forget, like {@link writeAutosave}. */
-function clearAutosave(ownerId) {
+/**
+ * Drop one capture's autosaved copy — never another tab's. Fire-and-forget,
+ * like {@link writeAutosave}.
+ * @param {string} ownerId
+ * @param {string} forCaptureId - The specific capture to drop; omitting this
+ *   would fall back to a shared per-character key and could delete a sibling
+ *   tab's still-live capture.
+ */
+function clearAutosave(ownerId, forCaptureId) {
     if (!ownerId) return;
-    Promise.resolve(storage.delete(autosaveKey(ownerId), AUTOSAVE_STORE)).catch((error) =>
+    Promise.resolve(storage.delete(autosaveKey(ownerId, forCaptureId), AUTOSAVE_STORE)).catch((error) =>
         console.error('[LabyrinthTickCapture] Clearing the autosaved capture failed:', error)
     );
 }
@@ -333,10 +377,21 @@ function push(type, payload, build = null) {
  *   gotten the user's explicit go-ahead (e.g. its own Discard button) — never
  *   the default for a path that would otherwise reset silently, and a Save
  *   click is not that go-ahead (see {@link heldTickCount}).
- * @returns {{started: boolean, heldTicks?: number}} `started: false` means
- *   nothing changed — the caller must not assume a capture is now running.
+ * @returns {{started: boolean, heldTicks?: number, recovering?: boolean}}
+ *   `started: false` means nothing changed — the caller must not assume a
+ *   capture is now running. `recovering: true` means this character's
+ *   autosave check has not settled yet (see {@link triggerRecovery}); the
+ *   caller may retry, or simply wait for the recovered capture (if any) to
+ *   show up as a held one on the next repaint.
  */
 export function startCapture(ctx = null, { stopOnLeave = true, force = false } = {}) {
+    // Runs — and is checked — before anything else, regardless of which
+    // feature is enabled: a monster-stat-check harness press with the
+    // room-log feature off (which would otherwise never call `loadAutosave`)
+    // must still find and be blocked by whatever this character autosaved
+    // last session, not silently overwrite it. See `triggerRecovery`.
+    triggerRecovery();
+    if (!recoverySettled) return { started: false, recovering: true };
     if (!force) {
         const held = heldTickCount();
         if (held > 0) return { started: false, heldTicks: held };
@@ -347,7 +402,7 @@ export function startCapture(ctx = null, { stopOnLeave = true, force = false } =
     // about to replace: `storage.delete` cancels a same-key write still in
     // its debounce window, but only if it runs after that write was queued.
     stopCapture();
-    if (autosaveOwnerId) clearAutosave(autosaveOwnerId);
+    if (autosaveOwnerId) clearAutosave(autosaveOwnerId, captureId);
     capturing = true;
     startedAt = Date.now();
     ticks = [];
@@ -363,6 +418,7 @@ export function startCapture(ctx = null, { stopOnLeave = true, force = false } =
     autosaveOwnerId = dataManager.getCurrentCharacterId() || 'default';
     lastAutosaveAt = 0;
     restoredDurationMs = null;
+    otherRecoverableCount = 0;
 
     // Both sides' health/mana/counters, and the message that names the units and
     // their abilities. `battle_updated` is trimmed to what a fight reads; the
@@ -399,7 +455,8 @@ export function startCapture(ctx = null, { stopOnLeave = true, force = false } =
  * The one stop path, so the file can say how the capture ended. Only a running
  * capture takes the reason — a redundant stop must not relabel a finished one.
  * @param {string} reason - 'manual' | 'auto_max_duration' | 'left_monster'
- *   (never 'page_reload' — that reason is only ever set by {@link loadAutosave})
+ *   (never 'page_reload' — that reason is only ever set by recovery, see
+ *   `performRecovery`)
  */
 function endCapture(reason) {
     if (autoStopTimer) {
@@ -451,12 +508,16 @@ export function forgetForCharacterSwitch() {
     autosaveOwnerId = null;
     lastAutosaveAt = 0;
     restoredDurationMs = null;
+    otherRecoverableCount = 0;
 }
 
-/** Stop, throw away the captured ticks, and clear their autosave. The ref to the last saved file survives. */
+/**
+ * Stop, throw away the captured ticks, and clear THIS capture's own autosave
+ * key — never a sibling tab's. The ref to the last saved file survives.
+ */
 export function clearCapture() {
     stopCapture();
-    if (autosaveOwnerId) clearAutosave(autosaveOwnerId);
+    if (autosaveOwnerId) clearAutosave(autosaveOwnerId, captureId);
     ticks = [];
     startedAt = 0;
     context = null;
@@ -471,12 +532,14 @@ export function clearCapture() {
     autosaveOwnerId = null;
     lastAutosaveAt = 0;
     restoredDurationMs = null;
+    otherRecoverableCount = 0;
 }
 
 /**
  * How much has been captured, for the button to read.
  * @returns {{capturing: boolean, ticks: number, seconds: number, duplicatesDiscarded: number,
- *   savedAt: number|null, captureId: string|null, ticksDropped: number, stoppedReason: string|null}}
+ *   savedAt: number|null, captureId: string|null, ticksDropped: number, stoppedReason: string|null,
+ *   otherRecoverableCount: number}}
  */
 export function captureStatus() {
     return {
@@ -494,6 +557,10 @@ export function captureStatus() {
         captureId,
         ticksDropped,
         stoppedReason,
+        // Other tabs' autosaved captures for this character, found but not
+        // restored (see `performRecovery`) — never deleted, just not shown
+        // as the one this tab holds.
+        otherRecoverableCount,
     };
 }
 
@@ -626,43 +693,65 @@ export function lastFightRoomLevel(file) {
 }
 
 /**
- * Restore an autosaved capture from a previous session, if this character has
- * one held. Call once, from the room-log feature's `initialize()`, after the
- * current character is known (the same timing as `labFightRecorder.load()`).
+ * Read this character's autosaved captures and restore the freshest into
+ * this tab, if nothing is already held here. The actual read behind
+ * {@link triggerRecovery}/{@link loadAutosave} — never called directly by
+ * anything outside this module.
  *
- * A crash, a closed tab, or a Save dialog the user cancelled leaves ticks that
- * were never written to a file, but the autosave still has them; this hands
- * them back as a stopped, held capture — exactly the "Save capture" state a
- * capture that stopped itself is already in — rather than losing them with
- * the page. Never overwrites a capture already running or held in this
- * session: this is page-load recovery, not a merge.
+ * A crash, a closed tab, or a Save dialog the user cancelled leaves ticks
+ * that were never written to a file, but the autosave still has them; this
+ * hands them back as a stopped, held capture — exactly the "Save capture"
+ * state a capture that stopped itself is already in — rather than losing
+ * them with the page. Never overwrites a capture already running or held in
+ * this tab: this is page-load recovery, not a merge.
  *
- * Guards the character identity across the read, not only whether anything is
- * armed: `dataManager.getCurrentCharacterId()` is captured before the await
- * and checked again after it, so a switch landing while the read is in flight
- * cannot hand character B a read that was made for character A. The caller
- * (`labyrinth-room-logs.js`'s `initialize()`) additionally gates its own use
- * of the result with an ownership ticket, for the same reason `record.load()`
- * and `labFightRecorder.load()` do — this recheck protects this module's own
- * state; the ticket protects what the caller does with a `true` result.
+ * Two tabs on the same character can each have autosaved a different
+ * capture (see `autosaveKey`); this restores only the most recently written
+ * one and leaves the rest on disk untouched — deleting a still-live sibling
+ * tab's capture would be the exact loss this module exists to prevent.
+ * `otherRecoverableCount` records how many were left behind, for the UI.
+ *
+ * Guards the character identity across every await, not only whether
+ * anything is armed: `dataManager.getCurrentCharacterId()` is captured
+ * before the first read and checked again after each one, so a switch
+ * landing while a read is in flight cannot hand character B a read that was
+ * made for character A.
+ * @param {string} ownerId - The character this recovery attempt is for
  * @returns {Promise<boolean>} Whether a capture was recovered
  */
-export async function loadAutosave() {
+async function performRecovery(ownerId) {
     if (capturing || ticks.length) return false;
-    const ownerId = dataManager.getCurrentCharacterId() || 'default';
-    let stored;
+    let keys;
     try {
-        stored = await storage.get(autosaveKey(ownerId), AUTOSAVE_STORE, null);
+        keys = await autosaveKeysFor(ownerId);
     } catch (error) {
-        console.error('[LabyrinthTickCapture] Reading the autosaved capture failed:', error);
+        console.error('[LabyrinthTickCapture] Listing autosaved captures failed:', error);
         return false;
     }
-    // Nothing armed while the read was in flight, AND still the same
-    // character — a switch mid-read must not hand the departing character's
-    // ticks to whoever has arrived, even if nothing else claimed them first.
     if (capturing || ticks.length) return false;
     if ((dataManager.getCurrentCharacterId() || 'default') !== ownerId) return false;
-    if (!stored || !Array.isArray(stored.ticks) || !stored.ticks.length) return false;
+    if (!keys.length) return false;
+
+    const records = [];
+    for (const key of keys) {
+        let value;
+        try {
+            value = await storage.get(key, AUTOSAVE_STORE, null);
+        } catch (error) {
+            console.error(`[LabyrinthTickCapture] Reading autosaved capture ${key} failed:`, error);
+            continue;
+        }
+        if (value && Array.isArray(value.ticks) && value.ticks.length) records.push(value);
+    }
+    if (capturing || ticks.length) return false;
+    if ((dataManager.getCurrentCharacterId() || 'default') !== ownerId) return false;
+    if (!records.length) return false;
+
+    // Freshest first — `exportedAt` is stamped on every autosave write
+    // (including the throttled in-progress ones), so it is the one figure
+    // every record actually carries and updates while its tab stays open.
+    records.sort((a, b) => (Number(b.exportedAt) || 0) - (Number(a.exportedAt) || 0));
+    const [stored, ...rest] = records;
 
     ticks = stored.ticks;
     context = stored.context || null;
@@ -684,6 +773,7 @@ export async function loadAutosave() {
     capturing = false;
     autosaveOwnerId = ownerId;
     lastAutosaveAt = Date.now();
+    otherRecoverableCount = rest.length;
     // The recorded span, in ms: the last tick's own `at`, which is already
     // elapsed-since-the-original-start. `Date.now() - startedAt` would
     // instead measure wall time since that original session, which can be
@@ -691,6 +781,78 @@ export async function loadAutosave() {
     const last = ticks[ticks.length - 1];
     restoredDurationMs = Number.isFinite(Number(last?.at)) ? Number(last.at) : 0;
     return true;
+}
+
+/**
+ * Kick off (once per character, per session) this character's autosave
+ * recovery — from `startCapture` itself, so it runs whichever feature asks
+ * first, or even if none of them proactively call `loadAutosave`. Idempotent:
+ * a second call for the same character, while the first is still in flight
+ * or after it has settled, is a no-op and returns the same tracked state.
+ *
+ * A character change since the last check forgets whatever is held first —
+ * it belongs to whoever was current before (recovered, or captured while
+ * this module had no other way to learn of the switch) and must not leak
+ * into this character's session.
+ */
+function triggerRecovery() {
+    const ownerId = dataManager.getCurrentCharacterId() || 'default';
+    if (recoveryOwnerId === ownerId) return;
+    if (recoveryOwnerId !== undefined) forgetForCharacterSwitch();
+    recoveryOwnerId = ownerId;
+    recoverySettled = false;
+    recoveryPromise = performRecovery(ownerId)
+        .catch((error) => {
+            console.error('[LabyrinthTickCapture] Autosave recovery failed:', error);
+            return false;
+        })
+        .finally(() => {
+            recoverySettled = true;
+        });
+}
+
+/**
+ * Trigger this character's autosave recovery and report whether it found
+ * one. Called once from the room-log feature's `initialize()` (the same
+ * timing as `labFightRecorder.load()`) so a panel already open repaints with
+ * the "Recovered" state as soon as it lands — but recovery itself no longer
+ * depends on this call: `startCapture` triggers and awaits the same gate
+ * (see `triggerRecovery`), so a capture started through a different feature,
+ * with room logs disabled or not yet initialized, still finds and is
+ * blocked by whatever this character autosaved last session.
+ *
+ * Safe to call more than once (a re-`initialize()` after a character switch
+ * that came back to the same character, say): every caller for one character
+ * shares the one recovery attempt and its one answer.
+ * @returns {Promise<boolean>} Whether a capture was recovered
+ */
+export function loadAutosave() {
+    triggerRecovery();
+    return recoveryPromise;
+}
+
+/**
+ * Test-only: mark this character's autosave recovery as already checked and
+ * settled with nothing found — the state every real session is in once its
+ * one-time check lands, seconds after login at the latest. Lets a test that
+ * is not about recovery itself avoid racing (or having to await) that gate
+ * on every `startCapture` call.
+ */
+export function _markRecoveryCheckedForTests() {
+    recoveryOwnerId = dataManager.getCurrentCharacterId() || 'default';
+    recoverySettled = true;
+    recoveryPromise = Promise.resolve(false);
+}
+
+/**
+ * Test-only: forget that recovery was ever checked, so the next
+ * `startCapture`/`loadAutosave` call re-triggers it from scratch — for a test
+ * of the trigger-and-gate behavior itself.
+ */
+export function _resetRecoveryForTests() {
+    recoveryOwnerId = undefined;
+    recoverySettled = false;
+    recoveryPromise = null;
 }
 
 export default {

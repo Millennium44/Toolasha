@@ -53,16 +53,43 @@ const storageMock = vi.hoisted(() => {
             storeFor(store).delete(key);
             return true;
         },
+        getAllKeys: async (store = 'settings') => Array.from(storeFor(store).keys()),
     };
 });
 vi.mock('../../core/storage.js', () => ({ default: storageMock }));
 
-import capture from './labyrinth-tick-capture.js';
+import capture, { _markRecoveryCheckedForTests, _resetRecoveryForTests } from './labyrinth-tick-capture.js';
 import dataManager from '../../core/data-manager.js';
 import storage from '../../core/storage.js';
 
 function emit(type, payload) {
     for (const fn of bus.get(type) || []) fn(payload);
+}
+
+/**
+ * The one autosaved record for a character — the key now carries the
+ * capture's own id (`labyrinthTickCaptureAutosave_<char>_<captureId>`), so a
+ * test that expects exactly one capture's worth on disk looks it up by
+ * prefix rather than a fixed key. Throws if more than one exists, which
+ * means the test meant to use `autosaveKeysFor` instead.
+ * @param {string} char
+ * @returns {Promise<Object|null>}
+ */
+async function autosaveRecordFor(char) {
+    const keys = (await storage.getAllKeys('labyrinth')).filter((key) =>
+        key.startsWith(`labyrinthTickCaptureAutosave_${char}_`)
+    );
+    if (keys.length > 1) {
+        throw new Error(`expected at most one autosave key for ${char}, found ${keys.length}: ${keys.join(', ')}`);
+    }
+    return keys.length ? storage.get(keys[0], 'labyrinth', null) : null;
+}
+
+/** Every autosave key on disk for a character, whichever capture wrote it. */
+async function autosaveKeysFor(char) {
+    return (await storage.getAllKeys('labyrinth')).filter((key) =>
+        key.startsWith(`labyrinthTickCaptureAutosave_${char}_`)
+    );
 }
 
 const battle = { pMap: { 0: { cHP: 100 } }, mMap: { 0: { cHP: 200 } }, battleId: 'b1', chat: 'ignored' };
@@ -82,6 +109,12 @@ beforeEach(() => {
     capture.stopCapture();
     capture.clearCapture();
     storageMock.reset();
+    // Every test below except the dedicated "recovery" describe blocks is
+    // about something else — settle the once-per-character recovery gate up
+    // front so `startCapture` behaves as it does for the rest of a real
+    // session (its one-time check already landed), not as it does in the
+    // first instant after login.
+    _markRecoveryCheckedForTests();
 });
 
 afterEach(() => {
@@ -600,13 +633,18 @@ describe('heldTickCount and the start/reset guard', () => {
 describe('the autosave', () => {
     beforeEach(() => {
         vi.spyOn(dataManager, 'getCurrentCharacterId').mockReturnValue('char1');
+        // Settle the gate for THIS character — the global beforeEach settled
+        // it for whichever character was current before this spy took over,
+        // which is not char1, and without this every startCapture below would
+        // see a fresh mismatch and refuse as "recovering".
+        _markRecoveryCheckedForTests();
     });
 
     test('is written on stop, so a capture that ends by itself survives a reload', async () => {
         capture.startCapture({ monsterHrid: '/monsters/cyclops' });
         emit('battle_updated', battle);
         capture.stopCapture();
-        const stored = await storage.get('labyrinthTickCaptureAutosave_char1', 'labyrinth', null);
+        const stored = await autosaveRecordFor('char1');
         expect(stored?.ticks).toHaveLength(1);
     });
 
@@ -632,7 +670,7 @@ describe('the autosave', () => {
         emit('battle_updated', battle);
         capture.stopCapture();
         capture.clearCapture();
-        const stored = await storage.get('labyrinthTickCaptureAutosave_char1', 'labyrinth', null);
+        const stored = await autosaveRecordFor('char1');
         expect(stored).toBeNull();
     });
 
@@ -643,7 +681,7 @@ describe('the autosave', () => {
         capture.startCapture({ monsterHrid: '/monsters/dryad' }, { force: true });
         // Nothing pushed yet for the new capture — no ticks to write — so the
         // key holding the discarded fight must simply be gone, not stale
-        const stored = await storage.get('labyrinthTickCaptureAutosave_char1', 'labyrinth', null);
+        const stored = await autosaveRecordFor('char1');
         expect(stored).toBeNull();
     });
 
@@ -658,6 +696,7 @@ describe('the autosave', () => {
 describe('recovering an autosaved capture on load', () => {
     beforeEach(() => {
         vi.spyOn(dataManager, 'getCurrentCharacterId').mockReturnValue('char1');
+        _markRecoveryCheckedForTests();
     });
 
     test('restores a held capture as stopped, unsaved, and shaped like a live one', async () => {
@@ -668,8 +707,11 @@ describe('recovering an autosaved capture on load', () => {
         capture.stopCapture();
 
         // A fresh module load forgets everything in memory but leaves the
-        // autosave behind — that is what a page reload does.
+        // autosave behind — that is what a page reload does. It also forgets
+        // that recovery was already checked this "session": a real reload is
+        // a fresh page, with its own one-time check still ahead of it.
         capture.forgetForCharacterSwitch();
+        _resetRecoveryForTests();
         expect(capture.captureFile().ticks).toHaveLength(0);
 
         const recovered = await capture.loadAutosave();
@@ -686,18 +728,23 @@ describe('recovering an autosaved capture on load', () => {
     });
 
     test('does nothing when nothing is autosaved', async () => {
+        // A genuine check, not the describe's own pre-settled (also empty) one
+        _resetRecoveryForTests();
         expect(await capture.loadAutosave()).toBe(false);
         expect(capture.captureFile().ticks).toHaveLength(0);
     });
 
     test('a character switch mid-read is not restored — the read is for whoever asked, not whoever is current when it lands', async () => {
         const spy = vi.spyOn(dataManager, 'getCurrentCharacterId').mockReturnValue('charA');
-        storageMock.storeFor('labyrinth').set('labyrinthTickCaptureAutosave_charA', {
+        storageMock.storeFor('labyrinth').set('labyrinthTickCaptureAutosave_charA_x', {
             ticks: [{ at: 0, type: 'battle_updated', payload: {} }],
+            exportedAt: 1,
         });
 
         // Delay the read so the switch can land while it is in flight — the
         // existing mock resolves instantly and cannot exercise this at all.
+        // getAllKeys (the listing) stays instant; only the per-key read that
+        // follows it is gated, which is where the switch lands.
         let release;
         const gate = new Promise((resolve) => {
             release = resolve;
@@ -708,6 +755,8 @@ describe('recovering an autosaved capture on load', () => {
             return map.has(key) ? structuredClone(map.get(key)) : fallback;
         });
 
+        // A genuine character change (char1 → charA) already forces a fresh
+        // check on its own; no manual reset needed.
         const pending = capture.loadAutosave(); // reads under charA
         spy.mockReturnValue('charB'); // the switch lands while the read is in flight
         release();
@@ -726,6 +775,7 @@ describe('recovering an autosaved capture on load', () => {
             emit('battle_updated', { ...battle, pMap: { 0: { cHP: 90 } } });
             capture.stopCapture();
             capture.forgetForCharacterSwitch();
+            _resetRecoveryForTests();
 
             // A reload days later — the original startedAt is now far in the past
             vi.advanceTimersByTime(3 * 24 * 60 * 60 * 1000);
@@ -746,13 +796,17 @@ describe('recovering an autosaved capture on load', () => {
         vi.useFakeTimers();
         try {
             await storage.set(
-                'labyrinthTickCaptureAutosave_char1',
-                { ticks: [{ at: 0, type: 'battle_updated', payload: {} }] },
+                'labyrinthTickCaptureAutosave_char1_other',
+                { ticks: [{ at: 0, type: 'battle_updated', payload: {} }], exportedAt: 1 },
                 'labyrinth'
             );
             capture.startCapture({ monsterHrid: '/monsters/dryad' });
             emit('battle_updated', battle);
             const before = capture.captureFile();
+            // A genuine check: ticks are already held in THIS tab, which the
+            // guard inside performRecovery must itself refuse on — not the
+            // describe's pre-settled (unrelated) answer.
+            _resetRecoveryForTests();
             expect(await capture.loadAutosave()).toBe(false);
             expect(capture.captureFile()).toEqual(before);
         } finally {
@@ -764,11 +818,16 @@ describe('recovering an autosaved capture on load', () => {
 describe('per-character scoping', () => {
     test('character B never sees character A held capture', async () => {
         const spy = vi.spyOn(dataManager, 'getCurrentCharacterId').mockReturnValue('charA');
+        // Settles the gate for charA so this first startCapture is not itself
+        // refused as "recovering" — the character genuinely just changed.
+        _markRecoveryCheckedForTests();
         capture.startCapture({ monsterHrid: '/monsters/cyclops' });
         emit('battle_updated', battle);
         capture.stopCapture();
         capture.forgetForCharacterSwitch();
 
+        // Each switch below is a genuine character change, which is what
+        // triggers a fresh recovery check on its own — no manual reset needed.
         spy.mockReturnValue('charB');
         expect(await capture.loadAutosave()).toBe(false);
         expect(capture.captureFile().ticks).toHaveLength(0);
@@ -780,6 +839,7 @@ describe('per-character scoping', () => {
 
     test('a mid-capture character switch autosaves under whoever fought it, not whoever is current at write time', async () => {
         const spy = vi.spyOn(dataManager, 'getCurrentCharacterId').mockReturnValue('charA');
+        _markRecoveryCheckedForTests();
         capture.startCapture({ monsterHrid: '/monsters/cyclops' });
         emit('battle_updated', battle);
         // The character switches while the ticks are still held; re-reading
@@ -788,8 +848,8 @@ describe('per-character scoping', () => {
         spy.mockReturnValue('charB');
         capture.stopCapture();
 
-        const underA = await storage.get('labyrinthTickCaptureAutosave_charA', 'labyrinth', null);
-        const underB = await storage.get('labyrinthTickCaptureAutosave_charB', 'labyrinth', null);
+        const underA = await autosaveRecordFor('charA');
+        const underB = await autosaveRecordFor('charB');
         expect(underA?.ticks).toHaveLength(1);
         expect(underB).toBeNull();
     });
@@ -798,6 +858,7 @@ describe('per-character scoping', () => {
 describe('downloadCapture refreshes the autosave, but never clears it', () => {
     test('a saved capture stays autosaved until Discard', async () => {
         vi.spyOn(dataManager, 'getCurrentCharacterId').mockReturnValue('char1');
+        _markRecoveryCheckedForTests();
         vi.stubGlobal('Blob', class {});
         vi.stubGlobal('URL', { createObjectURL: () => 'blob:x', revokeObjectURL: () => {} });
         vi.stubGlobal('document', { createElement: () => ({ click: () => {} }) });
@@ -807,7 +868,7 @@ describe('downloadCapture refreshes the autosave, but never clears it', () => {
         capture.stopCapture();
         capture.downloadCapture();
 
-        const stored = await storage.get('labyrinthTickCaptureAutosave_char1', 'labyrinth', null);
+        const stored = await autosaveRecordFor('char1');
         // Firefox's Save dialog can be cancelled, so the click alone must not
         // be what clears the safety net
         expect(stored?.ticks).toHaveLength(1);
@@ -892,5 +953,132 @@ describe('per-fight room level', () => {
         expect(file.ticks[0].roomLevel).toBeNull();
         // Falls back to the capture-wide context rather than reporting nothing
         expect(capture.lastFightRoomLevel(file)).toBe(10);
+    });
+});
+
+describe('recovery runs from startCapture itself, independent of any other caller', () => {
+    beforeEach(() => {
+        vi.spyOn(dataManager, 'getCurrentCharacterId').mockReturnValue('char1');
+        // Simulates a fresh page load: nothing has checked this character's
+        // autosave yet, the way room logs' initialize() normally would —
+        // except here nothing does, standing in for that feature being
+        // disabled (or simply not initialized before this call arrives).
+        _resetRecoveryForTests();
+    });
+
+    test('a capture attempt (e.g. the stat checker, with room logs disabled) finds and is blocked by a capture recovered from an earlier session, even though nothing ever called loadAutosave', async () => {
+        await storage.set(
+            'labyrinthTickCaptureAutosave_char1_earlier',
+            { ticks: [{ at: 0, type: 'battle_updated', payload: {} }], exportedAt: 1 },
+            'labyrinth'
+        );
+
+        // The very first attempt triggers recovery but cannot have it settled
+        // yet — refused, not a silent overwrite of what is about to be found.
+        const first = capture.startCapture({ monsterHrid: '/monsters/cyclops' });
+        expect(first).toEqual({ started: false, recovering: true });
+
+        // Let the (mocked, fast) recovery read settle — awaiting the same
+        // shared promise `startCapture` triggered, rather than guessing how
+        // many microtask ticks its chain of awaits needs.
+        await capture.loadAutosave();
+
+        // The recovered capture is now held, and blocks a fresh one exactly
+        // like any other held capture — it never got silently replaced.
+        expect(capture.heldTickCount()).toBe(1);
+        const second = capture.startCapture({ monsterHrid: '/monsters/cyclops' });
+        expect(second).toEqual({ started: false, heldTicks: 1 });
+    });
+
+    test('a start during a pending read is refused, and does not trigger a second read', async () => {
+        let release;
+        const gate = new Promise((resolve) => {
+            release = resolve;
+        });
+        const keysSpy = vi.spyOn(storage, 'getAllKeys').mockImplementation(async (store) => {
+            await gate;
+            return Array.from(storageMock.storeFor(store).keys());
+        });
+
+        const first = capture.startCapture({ monsterHrid: '/monsters/cyclops' });
+        expect(first).toEqual({ started: false, recovering: true });
+        // A second attempt while the same read is still in flight must not
+        // start a second one, and must not itself start a capture either
+        const second = capture.startCapture({ monsterHrid: '/monsters/dryad' });
+        expect(second).toEqual({ started: false, recovering: true });
+        expect(keysSpy).toHaveBeenCalledTimes(1);
+
+        release();
+        await capture.loadAutosave();
+
+        expect(capture.heldTickCount()).toBe(0); // nothing was ever autosaved
+        const third = capture.startCapture({ monsterHrid: '/monsters/dryad' });
+        expect(third).toEqual({ started: true });
+
+        keysSpy.mockRestore();
+    });
+});
+
+describe('two tabs on the same character do not clobber each other’s autosave', () => {
+    /**
+     * Two genuinely separate module instances (this module is a singleton;
+     * `vi.resetModules()` plus a fresh dynamic import is what stands in for a
+     * second tab's own JS heap), sharing the same mocked `storage` and
+     * `websocket` — both `vi.mock`-registered at the top of this file, which
+     * `resetModules()` does not undo — so this is a real test of the storage
+     * key isolation the fix adds, not a simulation of one.
+     *
+     * `data-manager.js` is not mocked elsewhere in this file (other tests
+     * `vi.spyOn` the one real instance), so it is mocked here for just this
+     * test via `vi.doMock`, reading a locally-scoped mutable object both
+     * fresh instances resolve against — the same character for both, as two
+     * tabs logged into one account would be.
+     */
+    test('each writes and deletes only its own capture key', async () => {
+        const world = { characterId: 'char1' };
+        vi.doMock('../../core/data-manager.js', () => ({
+            default: {
+                getCurrentCharacterId: () => world.characterId,
+                getEquipment: () => new Map(),
+                getEquippedAbilities: () => [],
+            },
+        }));
+
+        try {
+            vi.resetModules();
+            const tabAModule = await import('./labyrinth-tick-capture.js');
+            tabAModule._markRecoveryCheckedForTests();
+            const tabA = tabAModule.default;
+
+            vi.resetModules();
+            const tabBModule = await import('./labyrinth-tick-capture.js');
+            tabBModule._markRecoveryCheckedForTests();
+            const tabB = tabBModule.default;
+
+            tabA.startCapture({ monsterHrid: '/monsters/cyclops' });
+            emit('battle_updated', battle);
+            tabA.stopCapture(); // held, unsaved
+
+            tabB.startCapture({ monsterHrid: '/monsters/dryad' });
+            emit('battle_updated', { ...battle, pMap: { 0: { cHP: 90 } } });
+            tabB.stopCapture(); // held, unsaved — a distinct capture, same character
+
+            // Neither tab's autosave overwrote the other's key
+            const bothKeys = await autosaveKeysFor('char1');
+            expect(bothKeys).toHaveLength(2);
+            expect(tabA.heldTickCount()).toBe(1);
+            expect(tabB.heldTickCount()).toBe(1);
+
+            // Discarding tab A's capture must not touch tab B's key or ticks
+            tabA.clearCapture();
+            const afterDiscard = await autosaveKeysFor('char1');
+            expect(afterDiscard).toHaveLength(1);
+            expect(tabB.heldTickCount()).toBe(1);
+            const stillThere = await storage.get(afterDiscard[0], 'labyrinth', null);
+            expect(stillThere?.ticks).toHaveLength(1);
+        } finally {
+            vi.doUnmock('../../core/data-manager.js');
+            vi.resetModules();
+        }
     });
 });

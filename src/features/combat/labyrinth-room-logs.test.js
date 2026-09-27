@@ -1358,6 +1358,12 @@ describe('the capture button knows its three states', () => {
         labyrinthRoomLogs.paintCapture();
         expect(labyrinthRoomLogs.captureButton.title).toContain('7 repeated ticks discarded');
     });
+
+    test('another tab’s recovered-but-unrestored captures are named, not silently dropped', () => {
+        tick.status = { ...tick.status, capturing: false, ticks: 300, otherRecoverableCount: 2 };
+        labyrinthRoomLogs.paintCapture();
+        expect(labyrinthRoomLogs.captureButton.title).toContain('+2 more recovered captures from another tab');
+    });
 });
 
 describe('the pool tab browses what the recorder holds', () => {
