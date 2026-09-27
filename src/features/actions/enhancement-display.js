@@ -178,6 +178,48 @@ export async function displayEnhancementStats(panel, itemHrid) {
 }
 
 /**
+ * The panel's Philosopher's Mirror column.
+ *
+ * A mirror turns a +(L-1) and a +(L-2) into a +L, and the game only runs one on an item at +2 or
+ * above, so the first level it can make is +3. Both items it combines had to be bought as base
+ * items first, while the Total Cost column is what it takes to climb from a base item the player
+ * already holds. Comparing the mirror route's two enhancement bills against that one left the
+ * second base item out, so the mirror always looked one base item cheaper than it is. And each
+ * route's inputs are the cheapest way to hold them, mirrored or not, so the saving compounds.
+ *
+ * @param {number[]} costs - Total Cost column: index L-1 is the cost to climb a held +0 to +L
+ * @param {number} basePrice - What one base item costs
+ * @param {number} mirrorPrice - What one Philosopher's Mirror costs
+ * @returns {{levels: Array<{mirrorCost: number, isMirrorCheaper: boolean}|undefined>,
+ *   mirrorStartLevel: number|null, totalSavings: number}} `levels` is indexed like `costs`;
+ *   `mirrorCost` is on the Total Cost column's footing (the held base item not counted)
+ */
+export function mirrorCostColumn(costs, basePrice, mirrorPrice) {
+    const levels = new Array(costs.length);
+    // best[L]: the cheapest way to hold a +L, its base item included
+    const best = [basePrice];
+    for (let level = 1; level <= costs.length; level++) {
+        best[level] = basePrice + costs[level - 1];
+    }
+
+    let mirrorStartLevel = null;
+    for (let level = 3; level <= costs.length; level++) {
+        const mirrorCost = best[level - 1] + best[level - 2] + mirrorPrice - basePrice;
+        const isMirrorCheaper = mirrorCost < costs[level - 1];
+        levels[level - 1] = { mirrorCost, isMirrorCheaper };
+        if (isMirrorCheaper) {
+            best[level] = mirrorCost + basePrice;
+            if (mirrorStartLevel === null) mirrorStartLevel = level;
+        }
+    }
+
+    const last = costs.length - 1;
+    const totalSavings =
+        mirrorStartLevel !== null && levels[last] ? costs[last] - Math.min(costs[last], levels[last].mirrorCost) : 0;
+    return { levels, mirrorStartLevel, totalSavings };
+}
+
+/**
  * Generate costs by level table HTML for all 20 enhancement levels
  * @param {HTMLElement} panel - Enhancement action panel element
  * @param {Object} params - Enhancement parameters
@@ -327,30 +369,27 @@ function generateCostsByLevelTable(
     let totalSavings = 0;
 
     if (isPhilosopherMirror) {
-        const mirrorPrice =
-            (ironCowBook('/items/philosophers_mirror') ?? marketAPI.getPrice('/items/philosophers_mirror', 0))?.ask ||
-            0;
+        // The book answers "no quote" with -1, which is not a price
+        const askOf = (hrid) => {
+            const ask = (ironCowBook(hrid) ?? marketAPI.getPrice(hrid, 0))?.ask;
+            return ask > 0 ? ask : 0;
+        };
+        const mirrorPrice = askOf('/items/philosophers_mirror');
+        const basePrice = itemDetails.hrid ? askOf(itemDetails.hrid) : 0;
 
-        // Calculate mirror cost for each level (starts at +3)
-        for (let level = 3; level <= 20; level++) {
-            const traditionalCost = costData[level - 1].cost;
-            const mirrorCost = costData[level - 3].cost + costData[level - 2].cost + mirrorPrice;
-
-            costData[level - 1].mirrorCost = mirrorCost;
-            costData[level - 1].isMirrorCheaper = mirrorCost < traditionalCost;
-
-            // Find first level where mirror becomes cheaper
-            if (mirrorStartLevel === null && mirrorCost < traditionalCost) {
-                mirrorStartLevel = level;
+        const column = mirrorCostColumn(
+            costData.map((data) => data.cost),
+            basePrice,
+            mirrorPrice
+        );
+        column.levels.forEach((entry, index) => {
+            if (entry) {
+                costData[index].mirrorCost = entry.mirrorCost;
+                costData[index].isMirrorCheaper = entry.isMirrorCheaper;
             }
-        }
-
-        // Calculate total savings if mirror is used optimally
-        if (mirrorStartLevel !== null) {
-            const traditionalFinalCost = costData[19].cost; // +20 traditional cost
-            const mirrorFinalCost = costData[19].mirrorCost; // +20 mirror cost
-            totalSavings = traditionalFinalCost - mirrorFinalCost;
-        }
+        });
+        mirrorStartLevel = column.mirrorStartLevel;
+        totalSavings = column.totalSavings;
     }
 
     // Add Philosopher's Mirror summary banner (if applicable)
