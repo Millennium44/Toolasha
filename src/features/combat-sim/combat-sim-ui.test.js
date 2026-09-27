@@ -452,6 +452,9 @@ vi.mock('./sim-editor.js', () => ({
         getSoloMode() {
             return mocks.editorSoloMode;
         }
+        setSoloMode(value) {
+            mocks.editorSoloMode = value;
+        }
         getPlayerInfo() {
             return mocks.editedDTOs ? Object.keys(mocks.editedDTOs).map((hrid) => ({ hrid, name: hrid })) : [];
         }
@@ -4835,6 +4838,14 @@ describe('the Solo checkbox end to end: Simulate and All Zones', () => {
         await ui._onSimulateAllZones();
 
         expect(ui._allZonesSnapshotMeta).toBeNull();
+    });
+
+    test('a Solo change on the Settings page reaches the open panel’s editor', () => {
+        mocks.editorSoloMode = false;
+        // The real config calls a key's listeners with the new value alone
+        mocks.settingChangeCallbacks.get('combatSim_soloMode')(true);
+
+        expect(mocks.editorSoloMode).toBe(true);
     });
 
     test('Seek also runs only the selected player while Solo is on', async () => {
