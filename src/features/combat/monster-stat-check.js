@@ -444,7 +444,7 @@ function readStat(details, key) {
  * @param {string} key - A `combatDetails` field name
  * @param {Object} gameDetails - The game unit's `combatDetails`
  * @param {Object} simDetails - The sim monster's `combatDetails`
- * @returns {{key: string, game: number|null, sim: number|null, deltaPct: number|null}}
+ * @returns {{key: string, game: number|null, sim: number|null, deltaPct: number|null, zeroBaseline: boolean}}
  *   `deltaPct` is the game relative to the sim's baseline — positive means the
  *   game reads *above* the baseline (a buff is up), negative *below* it (a
  *   debuff is on), so the sign lines up with the direction of the live effect.
@@ -463,7 +463,10 @@ export function compareStat(key, gameDetails, simDetails) {
         // is missing reads exactly like this, and that is what these rows are for
         else deltaPct = game > 0 ? Infinity : -Infinity;
     }
-    return { key, game, sim, deltaPct };
+    // Stated outright as well: JSON has no Infinity, so an exported diagnostic
+    // would otherwise record this gap's delta as a plain null (unavailable)
+    const zeroBaseline = deltaPct !== null && !Number.isFinite(deltaPct);
+    return { key, game, sim, deltaPct, zeroBaseline };
 }
 
 /**
@@ -576,6 +579,7 @@ export function flaggedRows(comparison) {
                     game: row.game,
                     sim: row.sim,
                     deltaPct: row.deltaPct,
+                    zeroBaseline: row.zeroBaseline === true,
                     unit: row.unit,
                     verdict: row.verdict,
                 });
