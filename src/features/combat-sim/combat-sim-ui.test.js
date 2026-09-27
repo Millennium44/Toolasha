@@ -529,6 +529,7 @@ const {
     partyLintWarnings,
     runMatchesSimParty,
     resolveSimParty,
+    historyEntryPlayer,
 } = await import('./combat-sim-ui.js');
 
 /** A result row shaped like the upgrade advisor's output. */
@@ -4810,6 +4811,39 @@ describe('the Solo checkbox end to end: Simulate and All Zones', () => {
 
         expect(mocks.allZonesArgs.playerDTOs).toEqual([{ hrid: 'player2', equipment: {}, food: [null, null, null] }]);
         expect(ui._activePlayerTab).toBe('player2');
+    });
+
+    test('an All Zones sweep of another party member is not saved as your own forecast', async () => {
+        // The snapshot is read as the current character's solo earnings
+        // (bestSoloZone, zoneFromSnapshot); a teammate's rates must not replace them
+        mocks.allZonesResult = [
+            { simulatedTime: 3600 * 1e9, encounters: 10, deaths: { player2: 0 }, experienceGained: {} },
+        ];
+        ui._allZonesMode = 'group';
+        ui._updateAllZonesUI();
+        ui._allZonesSnapshotMeta = { ownerId: null, meta: { stale: true } };
+
+        await ui._onSimulateAllZones();
+
+        expect(ui._allZonesSnapshotMeta).toBeNull();
+    });
+
+    test('a Solo entry is re-read for its own player after a later party run resets the tab', async () => {
+        selectZone();
+        await ui._onSimulate();
+        const soloEntry = ui._simHistory.at(-1);
+        expect(soloEntry.playerHrid).toBe('player2');
+
+        // A later party run puts the panel-wide tab back on self
+        mocks.editorSoloMode = false;
+        await ui._onSimulate();
+        expect(ui._activePlayerTab).toBe('player1');
+
+        ui._ensureHistoryMetrics(ui._activePlayerTab);
+        expect(soloEntry.metricsTab).toBe('player2');
+        expect(historyEntryPlayer(soloEntry)).toEqual({ hrid: 'player2', playerInfo: expect.any(Array) });
+        // A party entry still follows the open tab
+        expect(historyEntryPlayer(ui._simHistory.at(-1))).toBeNull();
     });
 });
 
