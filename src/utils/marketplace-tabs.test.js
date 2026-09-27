@@ -91,6 +91,22 @@ describe('insertTabInOrder', () => {
         document.body.appendChild(container);
     });
 
+    test('lets the strip wrap onto a second row, so a tab past a phone-width edge stays reachable', () => {
+        // The game renders the marketplace strip without its isWrappable option,
+        // and MUI puts an inline `overflow: hidden` on the scroller, so a strip
+        // wider than the window neither wraps nor scrolls. With our four
+        // persistent tabs a ~390px phone window clipped the last of them away
+        // (measured in Firefox, Chromium and WebKit against the game's CSS);
+        // happy-dom does no layout, so this pins the declaration.
+        container.appendChild(buildGameTab('Market Listings'));
+        container.appendChild(buildGameTab('My Listings'));
+        expect(container.style.flexWrap).toBe('');
+
+        insertTabInOrder(container, document.createElement('button'), 'ledger');
+
+        expect(container.style.flexWrap).toBe('wrap');
+    });
+
     test('a tab another script added is ordered after ours, not left mid-strip', () => {
         container.appendChild(buildGameTab('Market Listings'));
         container.appendChild(buildGameTab('My Listings'));
