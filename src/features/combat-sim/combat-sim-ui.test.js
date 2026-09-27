@@ -7339,7 +7339,20 @@ describe('the cost basis detail', () => {
 describe('Solo zones + party dungeons: one ranked table', () => {
     const HOUR_NS = 3600 * 1e9;
     const fly = { hrid: '/actions/combat/fly', name: 'Fly', maxSpawnCount: 3, maxDifficulty: 0, isDungeon: false };
-    const bog = { hrid: '/actions/combat/bog', name: 'Bog', maxSpawnCount: 1, maxDifficulty: 0, isDungeon: false };
+    // A second real multi-enemy zone, ranked alongside Fly in the tests below.
+    const bog = { hrid: '/actions/combat/bog', name: 'Bog', maxSpawnCount: 2, maxDifficulty: 0, isDungeon: false };
+    // A legacy single-monster spawn (maxSpawnCount 1, non-dungeon) — the old
+    // per-monster hunting grounds a live client still carries in
+    // actionDetailMap. "Solo — zones" must exclude it; see the dedicated
+    // regression test below. Not simulated by any of the "run" tests below,
+    // so its presence in `mocks.zones` never changes what they expect to run.
+    const jerry = {
+        hrid: '/actions/combat/jerry',
+        name: 'Jerry',
+        maxSpawnCount: 1,
+        maxDifficulty: 0,
+        isDungeon: false,
+    };
     const den = { hrid: '/actions/combat/den', name: 'Den', maxSpawnCount: 1, maxDifficulty: 0, isDungeon: true };
     const party3 = () => ({
         player1: { hrid: 'player1', equipment: {}, food: [null, null, null] },
@@ -7446,6 +7459,28 @@ describe('Solo zones + party dungeons: one ranked table', () => {
             ui.panel.querySelector('#mwi-csim-allzones-dungeons').click();
             expect(ui._allZonesMode).toBe('dungeons');
             expect(soloPartyBox().checked).toBe(false);
+        });
+
+        /**
+         * "Solo — zones" used to list every /action_types/combat action that
+         * was not a dungeon, including legacy single-monster spawns
+         * (maxSpawnCount 1) like the old per-monster hunting grounds — Fly,
+         * Jerry, Skunk, Porcupine, Slimy, Smelly Planet in a live client. Those
+         * are what "Sim All Solo" is for on purpose ('solo' mode's own
+         * maxSpawnCount === 1 filter); "Solo zones + party dungeons" must use
+         * the same "real multi-enemy zone" test 'group' mode already uses
+         * (maxSpawnCount > 1) for its non-dungeon half.
+         */
+        test('excludes legacy single-monster zones from "Solo — zones"', () => {
+            mocks.zones = [fly, bog, jerry, den];
+
+            soloPartyBox().click();
+
+            expect([...ui.panel.querySelectorAll('.mwi-csim-zone-cb')].map((box) => box.dataset.hrid)).toEqual([
+                fly.hrid,
+                bog.hrid,
+                den.hrid,
+            ]);
         });
 
         test('with one player loaded it is not offered, and a party lost mid-session leaves the mode', () => {
@@ -7703,6 +7738,10 @@ describe('Solo zones + party dungeons: one ranked table', () => {
 
     describe('the existing modes are unchanged', () => {
         test('Sim All Zones still runs one sweep, draws no Set column and saves its snapshot', async () => {
+            // Bog is only in the outer zones list for the Solo-zones-vs-party
+            // ranking tests above; kept out here so this "one zone" assertion
+            // does not have to track that unrelated fixture.
+            mocks.zones = [fly, den];
             ui.panel.querySelector('#mwi-csim-allzones-group').click();
             // The worn-gear path: the editor stand-in has no loadout name to record
             mocks.editedDTOs = null;
@@ -7717,6 +7756,7 @@ describe('Solo zones + party dungeons: one ranked table', () => {
         });
 
         test('Sim All Zones: a re-price after another tab is clicked still reads the sweep’s own player', async () => {
+            mocks.zones = [fly, den];
             ui.panel.querySelector('#mwi-csim-allzones-group').click();
             mocks.editedDTOs = null;
             await ui._onSimulateAllZones();

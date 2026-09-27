@@ -3291,8 +3291,13 @@ class CombatSimUI {
 
         const soloVsParty = this._allZonesMode === SOLO_VS_PARTY_MODE;
         const zones = getCombatZones().filter((z) => {
-            // Every ordinary zone (run solo) and every dungeon (run as the party)
-            if (soloVsParty) return true;
+            // Every real multi-enemy combat zone (run solo) and every dungeon
+            // (run as the party) — the same "real zone" test 'group' mode uses
+            // for its own non-dungeon half, not every /action_types/combat
+            // action. Left unfiltered, this also admitted legacy single-monster
+            // spawns (maxSpawnCount 1, non-dungeon) under "Solo — zones", which
+            // are what 'solo' mode (Sim All Solo) is for on purpose.
+            if (soloVsParty) return z.isDungeon || z.maxSpawnCount > 1;
             if (this._allZonesMode === 'dungeons') return z.isDungeon;
             if (z.isDungeon) return false;
             if (this._allZonesMode === 'group') return z.maxSpawnCount > 1;
