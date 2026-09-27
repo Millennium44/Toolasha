@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Dungeon run history can be exported and imported
+
+- The dungeon tracker's run history has Export and Import buttons. Export saves every run this character recorded as a file, and Import merges such a file back in: it skips runs you already have or deliberately deleted, rejects impossible ones, and reports what it added.
+
 ### Combat Simulator: Export, replace one party member, and a loadout per sweep
 
 - The Configure tab has an Export button next to Import. It copies the selected player's build, or with several players loaded the whole party via Export Party, in the same format Import reads.
