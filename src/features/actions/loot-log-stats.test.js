@@ -39,6 +39,7 @@ vi.mock('../../core/data-manager.js', () => ({
     default: {
         getActionDetails: vi.fn(),
         getItemDetails: vi.fn(),
+        getInitClientData: vi.fn(),
     },
 }));
 
@@ -105,6 +106,21 @@ describe('LootLogStats.calculateExpectedRunValue', () => {
         // avgCount = 3, expectedCount = 0.5 * 3 * 20 = 30
         expect(result.askExpected).toBeCloseTo(30 * 100, 6);
         expect(result.bidExpected).toBeCloseTo(30 * 80, 6);
+    });
+
+    test('scales the expected count by the gathering quantity the character gathers at', () => {
+        dataManager.getActionDetails.mockReturnValue({
+            type: '/action_types/woodcutting',
+            dropTable: [{ itemHrid: '/items/log', dropRate: 0.5, minCount: 2, maxCount: 4 }],
+        });
+        getItemPrices.mockReturnValue({ ask: 100, bid: 80 });
+        stats.gatheringQuantityFor = () => 0.25;
+
+        const result = stats.calculateExpectedRunValue('/actions/woodcutting/tree', 20);
+
+        // 0.5 * 3 * 1.25 * 20 = 37.5 logs
+        expect(result.askExpected).toBeCloseTo(37.5 * 100, 6);
+        expect(result.bidExpected).toBeCloseTo(37.5 * 80, 6);
     });
 
     test('values coin drops at face value without a market lookup', () => {
@@ -266,9 +282,60 @@ describe('LootLogStats.buildLuckReading', () => {
 
         expect(reading.session.actionCount).toBe(10);
         expect(reading.session.drops).toEqual([
-            { itemHrid: '/items/log', minCount: 1, maxCount: 1, dropRate: 1, price: 40 },
+            { itemHrid: '/items/log', minCount: 1, maxCount: 1, dropRate: 1, price: 40, quantity: 0 },
         ]);
         expect(reading.income).toBe(9 * 40);
+    });
+
+    test('models the run at the gathering quantity the character gathers at', () => {
+        dataManager.getActionDetails.mockReturnValue({
+            type: '/action_types/woodcutting',
+            dropTable: [{ itemHrid: '/items/log', dropRate: 1, minCount: 1, maxCount: 1 }],
+        });
+        dataManager.getItemDetails.mockReturnValue({});
+        getItemPrices.mockReturnValue({ ask: 40, bid: 30 });
+        stats.gatheringQuantityFor = () => 0.3;
+
+        // 1000 actions at +30% is 1300 logs on average: that run is typical, not a miracle
+        const logData = { actionHrid: '/actions/woodcutting/tree', actionCount: 1000, drops: { '/items/log': 1300 } };
+        const reading = stats.buildLuckReading(logData);
+
+        expect(reading.session.drops[0].quantity).toBe(0.3);
+        const percentile = stats.luckPercentileFor(reading, logData);
+        expect(percentile).toBeGreaterThan(0.3);
+        expect(percentile).toBeLessThan(0.7);
+    });
+
+    test('counts Processing output as the raw drops it was made from', () => {
+        const milking = {
+            type: '/action_types/milking',
+            dropTable: [{ itemHrid: '/items/milk', dropRate: 1, minCount: 1, maxCount: 1 }],
+        };
+        dataManager.getActionDetails.mockReturnValue(milking);
+        dataManager.getInitClientData.mockReturnValue({
+            actionDetailMap: {
+                '/actions/milking/cow': milking,
+                '/actions/cheesesmithing/cheese': {
+                    type: '/action_types/cheesesmithing',
+                    inputItems: [{ itemHrid: '/items/milk', count: 2 }],
+                    outputItems: [{ itemHrid: '/items/cheese', count: 1 }],
+                },
+            },
+        });
+        dataManager.getItemDetails.mockReturnValue({});
+        getItemPrices.mockImplementation((hrid) =>
+            hrid === '/items/milk' ? { ask: 10, bid: 8 } : { ask: 50, bid: 40 }
+        );
+        stats.gatheringQuantityFor = () => 0;
+
+        const reading = stats.buildLuckReading({
+            actionHrid: '/actions/milking/cow',
+            actionCount: 100,
+            drops: { '/items/milk': 60, '/items/cheese': 20 },
+        });
+
+        // 60 milk + 20 cheese made of 2 milk each = the 100 milk the run rolled
+        expect(reading.income).toBe(100 * 10);
     });
 });
 

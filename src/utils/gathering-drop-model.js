@@ -30,6 +30,21 @@
  * market price is dropped from the model and from the income, so the comparison
  * stays like for like.
  *
+ * ## Gathering quantity and Processing
+ *
+ * The game rolls a whole count uniformly over `minCount..maxCount`, multiplies
+ * it by `1 + gathering quantity` and rounds the result stochastically (measured
+ * 2026-09-23). Every buffed character — the community buff alone is +20% —
+ * therefore gathers more than the bare table, and a model that ignored it read
+ * every run as lucky. The caller passes the quantity the character gathers at;
+ * each drop's count distribution is built from it exactly, one whole outcome
+ * at a time, rather than from a continuous range.
+ *
+ * Processing Tea turns part of a raw stack into its processed item, so the log
+ * shows Cheese where the model rolled Milk. `processedFrom` names those
+ * conversions, and the income counts a processed item as the raw items it was
+ * made from — the model is about how much dropped, not what it was turned into.
+ *
  * ## Floors
  *
  * Mirroring `buildCombatSession`: no completed actions, no drop table (which is
@@ -39,6 +54,7 @@
  */
 
 import { multiplyCFs, powCF, dropCF, invertToCDF } from './drop-luck.js';
+import { unitPowers } from './complex-fft.js';
 
 /** Above this is a good run, below the mirror of it a bad one */
 const LUCKY_PERCENTILE = 0.75;
@@ -56,11 +72,15 @@ const UNLUCKY_PERCENTILE = 0.25;
  * @param {Object} input.actionDetail - The action's `actionDetailMap` entry
  * @param {number} input.actionCount - Actions completed in the run
  * @param {Function} input.priceOf - `(itemHrid) => number|null`
- * @returns {{drops: Array<Object>, actionCount: number}|null} A session, or null
- *   when the run cannot be modelled — no drop table, no completed actions, or
- *   nothing in the table with a price
+ * @param {number} [input.gatheringQuantity=0] - The character's gathering quantity, as a
+ *   decimal (0.35 for +35%)
+ * @param {Object<string, {rawHrid: string, ratio: number}>} [input.processedFrom] - Processing
+ *   conversions, processed item hrid → the raw item and how many of it one takes
+ * @returns {{drops: Array<Object>, actionCount: number, processedFrom: Object}|null} A session,
+ *   or null when the run cannot be modelled — no drop table, no completed actions, or nothing
+ *   in the table with a price
  */
-export function buildGatheringSession({ actionDetail, actionCount, priceOf }) {
+export function buildGatheringSession({ actionDetail, actionCount, priceOf, gatheringQuantity = 0, processedFrom }) {
     const dropTable = actionDetail?.dropTable;
     if (!dropTable?.length) return null;
     if (!(actionCount > 0)) return null;
@@ -80,11 +100,74 @@ export function buildGatheringSession({ actionDetail, actionCount, priceOf }) {
             maxCount,
             dropRate: Math.min(rate, 1),
             price,
+            quantity: Math.max(0, Number(gatheringQuantity) || 0),
         });
     }
     if (!drops.length) return null;
 
-    return { drops, actionCount };
+    // Only conversions of something the model rolls can be counted back
+    const modelled = new Set(drops.map((drop) => drop.itemHrid));
+    const conversions = {};
+    for (const [processedHrid, conversion] of Object.entries(processedFrom || {})) {
+        if (modelled.has(conversion?.rawHrid) && conversion.ratio > 0) conversions[processedHrid] = conversion;
+    }
+
+    return { drops, actionCount, processedFrom: conversions };
+}
+
+/**
+ * The whole counts one drop can pay and how likely each is, the way the game
+ * rolls them: a whole count uniform over `minCount..maxCount`, times
+ * `1 + quantity`, rounded up with probability equal to the fraction left over.
+ * Null when the range is not whole, which no gathering table has.
+ * @param {Object} drop - A session drop
+ * @returns {Map<number, number>|null} Count → probability, the miss included
+ */
+export function gatheringCountOutcomes(drop) {
+    const { minCount, maxCount, dropRate } = drop;
+    if (!Number.isInteger(minCount) || !Number.isInteger(maxCount) || maxCount < minCount) return null;
+
+    const multiplier = 1 + (drop.quantity || 0);
+    const each = dropRate / (maxCount - minCount + 1);
+    const outcomes = new Map([[0, 1 - dropRate]]);
+    const add = (count, probability) => {
+        if (probability > 0) outcomes.set(count, (outcomes.get(count) || 0) + probability);
+    };
+    for (let count = minCount; count <= maxCount; count++) {
+        const boosted = count * multiplier;
+        const whole = Math.floor(boosted);
+        const fraction = boosted - whole;
+        add(whole, each * (1 - fraction));
+        add(whole + 1, each * fraction);
+    }
+    return outcomes;
+}
+
+/**
+ * One drop's characteristic function from its whole-count outcomes; falls back
+ * to `dropCF`'s continuous range, scaled by the quantity, if the table is not whole.
+ * @param {Object} drop - A session drop
+ * @returns {import('./drop-luck.js').CharacteristicFunction}
+ */
+function gatheringDropCF(drop) {
+    const outcomes = gatheringCountOutcomes(drop);
+    if (!outcomes) {
+        const multiplier = 1 + (drop.quantity || 0);
+        return dropCF({ ...drop, minCount: drop.minCount * multiplier, maxCount: drop.maxCount * multiplier });
+    }
+
+    return (samples, scale) => {
+        const base = 2 * Math.PI * scale * drop.price;
+        const values = Array.from({ length: samples }, () => [0, 0]);
+        for (const [count, probability] of outcomes) {
+            const [cos, sin] = unitPowers(base * count, samples);
+            for (let i = 0; i < samples; i++) {
+                values[i][0] += probability * cos[i];
+                values[i][1] += probability * sin[i];
+            }
+        }
+        return values;
+    };
 }
 
 /**
@@ -102,12 +185,20 @@ export function buildGatheringSession({ actionDetail, actionCount, priceOf }) {
  */
 export function gatheringLootValue(session, drops) {
     const priceByItem = new Map(session.drops.map((drop) => [drop.itemHrid, drop.price]));
+    const processedFrom = session.processedFrom || {};
 
     let total = 0;
     for (const [hrid, count] of Object.entries(drops || {})) {
         const baseHrid = hrid.replace(/::\d+$/, '');
         const price = priceByItem.get(baseHrid);
-        if (price > 0) total += price * (count || 0);
+        if (price > 0) {
+            total += price * (count || 0);
+            continue;
+        }
+        // A processed item is the raw items Processing made it from
+        const conversion = processedFrom[baseHrid];
+        const rawPrice = conversion && priceByItem.get(conversion.rawHrid);
+        if (rawPrice > 0) total += rawPrice * conversion.ratio * (count || 0);
     }
     return total;
 }
@@ -125,7 +216,12 @@ export function gatheringLootValue(session, drops) {
  */
 export function gatheringSessionMean({ drops, actionCount }) {
     const perAction = drops.reduce(
-        (sum, drop) => sum + drop.dropRate * (((drop.minCount || 0) + (drop.maxCount || 0)) / 2) * drop.price,
+        (sum, drop) =>
+            sum +
+            drop.dropRate *
+                (((drop.minCount || 0) + (drop.maxCount || 0)) / 2) *
+                (1 + (drop.quantity || 0)) *
+                drop.price,
         0
     );
     return perAction * actionCount;
@@ -149,14 +245,19 @@ export function gatheringSessionMean({ drops, actionCount }) {
  *   the window the inversion settled on.
  */
 export function gatheringSessionLuck(session, income, options = {}) {
-    const cf = powCF(multiplyCFs(session.drops.map(dropCF)), session.actionCount);
+    const cf = powCF(multiplyCFs(session.drops.map(gatheringDropCF)), session.actionCount);
 
     // Opening guess: generous enough that the search shrinks onto the answer
     // rather than having to widen, which it cannot do — same reasoning as
     // `sessionLuck`, floored at the session's own theoretical maximum payout
     // (and the observed income) so one expensive drop table cannot alias the
     // transform into a window smaller than the values it must represent
-    const maxPossible = session.actionCount * session.drops.reduce((sum, drop) => sum + drop.maxCount * drop.price, 0);
+    const maxPossible =
+        session.actionCount *
+        session.drops.reduce(
+            (sum, drop) => sum + Math.ceil(drop.maxCount * (1 + (drop.quantity || 0))) * drop.price,
+            0
+        );
     const startingLimit = Math.max(1e8, 2e5 * Math.max(session.actionCount, 1), maxPossible * 1.5, (income || 0) * 1.5);
 
     const { limit, cdf } = invertToCDF(cf, startingLimit, options);
