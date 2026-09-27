@@ -217,6 +217,9 @@ class NetworthExclusionPopup {
     _build() {
         this.container = document.createElement('div');
         this.container.id = 'mwi-networth-exclusion-popup';
+        // width: a bare 400px (404px with the border) centered by translate(-50%) put the
+        // left edge off-screen on a phone (-22px at 360px wide). Capped to the viewport less
+        // an 8px gutter a side; desktop still gets 400px.
         this.container.style.cssText = `
             position: fixed;
             top: 50%;
@@ -224,6 +227,7 @@ class NetworthExclusionPopup {
             transform: translate(-50%, -50%);
             z-index: ${config.Z_FLOATING_PANEL};
             width: 400px;
+            max-width: calc(100vw - 20px);
             max-height: 580px;
             display: flex;
             flex-direction: column;

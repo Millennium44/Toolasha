@@ -164,3 +164,17 @@ describe('loadout exclusion amounts', () => {
         expect(rows).toEqual([{ name: 'sword +20', value: 50_000 }]);
     });
 });
+
+describe('fits a phone-width screen', () => {
+    // A bare `width: 400px` centered by translate(-50%) put the left edge
+    // off-screen on a phone (-22px at 360px wide), where nothing scrolls to it.
+    // happy-dom does no layout, so this pins the declaration; the fit was measured
+    // in Firefox, Chromium and WebKit at 360 and 390px wide, and 1280px unchanged.
+    test('the popup is never wider than the viewport less a gutter', () => {
+        networthExclusionPopup.open(networthData(0), () => {});
+
+        const popup = document.getElementById('mwi-networth-exclusion-popup');
+        expect(popup.style.width).toBe('400px');
+        expect(popup.style.maxWidth).toBe('calc(100vw - 20px)');
+    });
+});
