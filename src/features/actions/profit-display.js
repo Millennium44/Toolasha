@@ -1443,8 +1443,10 @@ function formatPerAction(value) {
  * @returns {HTMLElement} Breakdown section element
  */
 export function buildGatheringPerActionBreakdown(profitData) {
-    // Completions per hour: the divisor for every per-action figure below
-    const actionsPerHour = profitData.actionsPerHour * (profitData.efficiencyMultiplier || 1);
+    // Completions per hour: the divisor for every per-action figure below. `??`,
+    // not `||` — an efficiencyMultiplier of exactly 0 is not "missing", and
+    // should not be read as 1 (whole actions per hour, not completions)
+    const actionsPerHour = profitData.actionsPerHour * (profitData.efficiencyMultiplier ?? 1);
     const baseMissing = profitData.baseOutputs?.some((output) => output.missingPrice) || false;
     const gourmetMissing = profitData.gourmetBonuses?.some((output) => output.missingPrice) || false;
     const bonusMissing = profitData.bonusRevenue?.hasMissingPrices || false;
