@@ -41,10 +41,10 @@ import dungeon from './__fixtures__/combat-dungeon.json';
  *
  * @returns {Array<{maxHP: number, tally: Object, events: Array<Object>}>}
  */
-function replay() {
+function replay(ticks = capture.ticks) {
     const fights = [];
     let fight = null;
-    for (const tick of capture.ticks) {
+    for (const tick of ticks) {
         if (tick.type === 'new_battle') {
             const state = newAttributionState();
             noteActions(state, tick.payload.players);
@@ -131,6 +131,31 @@ describe('a real bleed capture', () => {
         expect(lower.hitRate).toBeCloseTo(47 / 72, 6);
         expect(lower.critRate).toBeCloseTo(14 / 47, 6);
         expect(lower.dotPerSwing).toBeCloseTo(12 / 72, 6);
+    });
+
+    test('without the Parry stat, those same counter-attacks would be bleed ticks', () => {
+        // Proof the stat is what keeps them: the 15 parries on the monster's
+        // attack ticks become ticks once the character cannot parry
+        const withoutParry = capture.ticks.map((tick) =>
+            tick.type === 'new_battle'
+                ? {
+                      ...tick,
+                      payload: {
+                          ...tick.payload,
+                          players: tick.payload.players.map((unit) => ({
+                              ...unit,
+                              combatDetails: { combatStats: {} },
+                          })),
+                      },
+                  }
+                : tick
+        );
+        const all = total(replay(withoutParry));
+        // 11 of them dealt damage and join the 47 ticks; the 4 that missed dealt
+        // none, and a tick that deals nothing is not a tick
+        expect(all.dotTicks).toBe(47 + 11);
+        expect(all.misses).toBe(91 - 4);
+        expect(all.hits + all.misses + all.dotTicks).toBe(245 + 91 - 4);
     });
 
     test('keeps a parry’s counter-attack as a swing', () => {
@@ -406,5 +431,56 @@ describe('the recorded parties', () => {
             noteActions(state, tick.payload.pMap);
         }
         expect(ticks).toEqual([]);
+    });
+});
+
+describe('a rise on a tick the monster attacked', () => {
+    const stated = (combatStats) => {
+        const state = started({ 0: player(10, { dmgCounter: 4 }) }, { 0: monster(10_000, 5, 0, 3) });
+        noteActions(state, { 0: { isPreparingAutoAttack: true, combatDetails: { combatStats } } });
+        return state;
+    };
+    // The monster attacks (its counter 3 → 4) and loses 60 with no swing behind it
+    const tickWith = (playerSplats) => ({
+        pMap: { 0: player(10, { dmgCounter: playerSplats }) },
+        mMap: { 0: monster(9_940, 6, 0, 4) },
+    });
+
+    test('is a bleed for a player who cannot counter', () => {
+        const state = stated({});
+        const [event] = attributeTick(tickWith(5), state);
+        expect(event).toMatchObject({ amount: 60, isDot: true });
+    });
+
+    test('is a bleed for a player who cannot counter, even when the attack missed them', () => {
+        const state = stated({ criticalRate: 0.3 });
+        const [event] = attributeTick(tickWith(4), state);
+        expect(event).toMatchObject({ amount: 60, isDot: true });
+    });
+
+    test('is a bleed when a parry-capable player was struck: the attack was not parried', () => {
+        const state = stated({ parry: 0.08 });
+        const [event] = attributeTick(tickWith(5), state);
+        expect(event).toMatchObject({ amount: 60, isDot: true });
+    });
+
+    test('is the parry’s counter-hit when the attack did not land on them', () => {
+        const state = stated({ parry: 0.08 });
+        const [event] = attributeTick(tickWith(4), state);
+        expect(event).toMatchObject({ amount: 60, isDot: false, isMiss: false });
+    });
+
+    test('is thorns or retaliation when the wearer was struck', () => {
+        for (const stat of ['retaliation', 'physicalThorns', 'elementalThorns']) {
+            const state = stated({ [stat]: 0.2 });
+            const [event] = attributeTick(tickWith(5), state);
+            expect(event).toMatchObject({ amount: 60, isDot: false });
+        }
+    });
+
+    test('is a hit, as it always was, when no `new_battle` stated the stats', () => {
+        const state = started({ 0: player(10, { dmgCounter: 4 }) }, { 0: monster(10_000, 5, 0, 3) });
+        const [event] = attributeTick(tickWith(5), state);
+        expect(event).toMatchObject({ amount: 60, isDot: false });
     });
 });

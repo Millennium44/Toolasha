@@ -22,7 +22,8 @@
                         "isPreparingAutoAttack": false,
                         "preparingAbilityHrid": "/abilities/fierce_aura",
                         "damageSplatCounter": 0,
-                        "criticalDamageSplatCounter": 0
+                        "criticalDamageSplatCounter": 0,
+                        "combatDetails": { "combatStats": { "parry": 0.08 } }
                     }
                 ],
                 "monsters": [
@@ -3120,7 +3121,8 @@
                         "isPreparingAutoAttack": false,
                         "preparingAbilityHrid": "/abilities/fierce_aura",
                         "damageSplatCounter": 0,
-                        "criticalDamageSplatCounter": 0
+                        "criticalDamageSplatCounter": 0,
+                        "combatDetails": { "combatStats": { "parry": 0.08 } }
                     }
                 ],
                 "monsters": [
@@ -5870,7 +5872,8 @@
                         "isPreparingAutoAttack": false,
                         "preparingAbilityHrid": "/abilities/fierce_aura",
                         "damageSplatCounter": 0,
-                        "criticalDamageSplatCounter": 0
+                        "criticalDamageSplatCounter": 0,
+                        "combatDetails": { "combatStats": { "parry": 0.08 } }
                     }
                 ],
                 "monsters": [
@@ -9894,7 +9897,8 @@
                         "isPreparingAutoAttack": false,
                         "preparingAbilityHrid": "/abilities/fierce_aura",
                         "damageSplatCounter": 0,
-                        "criticalDamageSplatCounter": 0
+                        "criticalDamageSplatCounter": 0,
+                        "combatDetails": { "combatStats": { "parry": 0.08 } }
                     }
                 ],
                 "monsters": [
@@ -14258,7 +14262,8 @@
                         "isPreparingAutoAttack": false,
                         "preparingAbilityHrid": "/abilities/fierce_aura",
                         "damageSplatCounter": 0,
-                        "criticalDamageSplatCounter": 0
+                        "criticalDamageSplatCounter": 0,
+                        "combatDetails": { "combatStats": { "parry": 0.08 } }
                     }
                 ],
                 "monsters": [
