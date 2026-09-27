@@ -6,6 +6,11 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Audit round: the enhancing tracker guessed where each run started
+
+- The enhancing tracker now scores the first attempt of a run from the level the item actually started at, instead of guessing from the result, which recorded successes as failures and charged protection the game never took. It also stops misreading the attempt after a reload as a Blessed jump.
+- Philosopher's Mirror attempts are charged the mirror and the base copy instead of the item's normal materials. A run that ended while the game was closed now ends at its last attempt, and the session tile keeps showing a finished run.
+
 ### Audit round: gathering runs read as lucky because the loot log ignored gathering quantity
 
 - The loot log's Expected line and drop-luck reading now count gathering quantity and Processing output, so an ordinary buffed milking, foraging or woodcutting run no longer reads far above expectation.
