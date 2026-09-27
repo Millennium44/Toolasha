@@ -208,7 +208,13 @@ import {
     zoneUptimeMismatches,
 } from './zone-uptime-harness.js';
 import { describeFights, MIN_REAL_CASTS } from './labyrinth-uptime-harness.js';
-import { newAttributionState, noteActions, attributeTick, foldEvents } from '../../utils/damage-attribution.js';
+import {
+    newAttributionState,
+    noteActions,
+    attributeTick,
+    foldEvents,
+    seedMonsterAttacks,
+} from '../../utils/damage-attribution.js';
 import { newTakenState, attributeIncoming, foldTaken } from '../../utils/damage-taken.js';
 import { registerRow } from '../../utils/overlay-rows.js';
 import { createPanel, panelCard, panelLine, panelNote } from '../../utils/simple-panel.js';
@@ -842,6 +848,7 @@ function seedWave(attribution, monsters) {
         attribution.monstersHP[index] = health;
         attribution.dmgCounter[index] = Number(details.dmgCounter ?? monster?.dmgCounter) || 0;
         attribution.critCounter[index] = Number(details.critCounter ?? monster?.critCounter) || 0;
+        seedMonsterAttacks(attribution, index, monster);
     }
 }
 

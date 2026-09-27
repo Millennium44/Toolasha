@@ -30,7 +30,13 @@ import { summarizePool, poolHygiene, nearMissRemainder } from './labyrinth-repla
 import { isCurrentFingerprintVersion } from './labyrinth-fingerprint.js';
 import { MIN_REPLAY_FIGHTS } from './labyrinth-replay-inputs.js';
 import labFightRecorder from './labyrinth-fight-recorder.js';
-import { newAttributionState, noteActions, attributeTick, foldEvents } from '../../utils/damage-attribution.js';
+import {
+    newAttributionState,
+    noteActions,
+    attributeTick,
+    foldEvents,
+    seedMonsterAttacks,
+} from '../../utils/damage-attribution.js';
 import labTickCapture from './labyrinth-tick-capture.js';
 import { accuracyReport } from './labyrinth-outcome-log.js';
 import { splitModelCohorts, calibrationReport, MIN_CALIBRATION_FIGHTS } from './labyrinth-calibration.js';
@@ -912,6 +918,7 @@ class LabyrinthRoomLogs {
             state.monstersHP[index] = hp;
             state.dmgCounter[index] = num(details.dmgCounter ?? monster?.dmgCounter) ?? 0;
             state.critCounter[index] = num(details.critCounter ?? monster?.critCounter) ?? 0;
+            seedMonsterAttacks(state, index, monster);
         }
         for (const [index, player] of Object.entries(data?.players || {})) {
             const details = player?.combatDetails || {};

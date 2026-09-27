@@ -1,0 +1,294 @@
+/**
+ * Attribution against a bleed build.
+ *
+ * `labyrinth-pyre-hunter-bleed.json` is a real labyrinth tick capture — five
+ * Pyre Hunter fights in two rooms (the monster's maximum health differs), a
+ * melee character running Maim — trimmed to the fields attribution reads, with
+ * the name replaced.
+ *
+ * ## What it caught
+ *
+ * A Maim bleed tick raises the monster's `dmgCounter` exactly as a swing does,
+ * and the attribution filed a tick as damage-over-time only when that counter
+ * stood still. So every bleed tick in a solo fight was a landed non-crit hit:
+ * `dotTicks` read zero, the hit rate was inflated and crit rate and damage per
+ * hit diluted. A tick is now a counter rise no swing paid for, on a tick the
+ * monster did not attack.
+ *
+ * The same capture shows why "the monster did not attack" is part of it: the
+ * character has Parry, and a parry's counter-attack also rings the monster's
+ * counter with no swing of the player's behind it. Those arrive on the tick the
+ * monster attacked, roll hits, misses and crits like any swing, and the sim
+ * counts them as swings — so they stay hits.
+ */
+
+import { describe, test, expect } from 'vitest';
+import {
+    newAttributionState,
+    noteActions,
+    attributeTick,
+    foldEvents,
+    seedMonsterAttacks,
+    DOT_ACTION,
+} from './damage-attribution.js';
+import capture from './__fixtures__/labyrinth-pyre-hunter-bleed.json';
+
+/**
+ * The capture, fight by fight, as the labyrinth room log tallies it: a fresh
+ * state per `new_battle`, seeded from its statement.
+ *
+ * @returns {Array<{maxHP: number, tally: Object, events: Array<Object>}>}
+ */
+function replay() {
+    const fights = [];
+    let fight = null;
+    for (const tick of capture.ticks) {
+        if (tick.type === 'new_battle') {
+            const state = newAttributionState();
+            noteActions(state, tick.payload.players);
+            tick.payload.monsters.forEach((monster, index) => {
+                state.monstersHP[index] = monster.currentHitpoints;
+                state.monstersMaxHP[index] = monster.maxHitpoints;
+                state.dmgCounter[index] = monster.damageSplatCounter;
+                state.critCounter[index] = monster.criticalDamageSplatCounter;
+                seedMonsterAttacks(state, index, monster);
+            });
+            tick.payload.players.forEach((player, index) => {
+                state.playersAtk[index] = player.attackAttemptCounter;
+                state.playersMP[index] = player.currentManapoints;
+            });
+            fight = { maxHP: tick.payload.monsters[0].maxHitpoints, state, tally: {}, events: [] };
+            fights.push(fight);
+            continue;
+        }
+        if (!fight) continue;
+        const events = attributeTick(tick.payload, fight.state);
+        fight.events.push(...events);
+        foldEvents(fight.tally, events, { filterNonDamaging: false });
+        noteActions(fight.state, tick.payload.pMap);
+    }
+    return fights;
+}
+
+/** Every fight's player row summed */
+function total(fights) {
+    const sum = { hits: 0, misses: 0, crits: 0, damage: 0, dotTicks: 0, dotDamage: 0 };
+    for (const fight of fights) {
+        for (const key of Object.keys(sum)) sum[key] += fight.tally['0']?.[key] || 0;
+    }
+    return sum;
+}
+
+describe('a real bleed capture', () => {
+    const fights = replay();
+
+    test('files its bleed ticks as damage over time, not as landed hits', () => {
+        const all = total(fights);
+
+        // Every counter rise used to be a hit or a miss: 245 hits, 91 misses
+        expect(all.hits + all.dotTicks).toBe(245);
+        expect(all.dotTicks).toBe(47);
+        expect(all.dotDamage).toBe(1_968);
+        expect(all.hits).toBe(198);
+        expect(all.misses).toBe(91);
+        expect(all.crits).toBe(65);
+    });
+
+    test('keeps every point of damage where it was', () => {
+        // Three losses and two kills: the last two fights took the whole bar
+        expect(fights.map((fight) => fight.tally['0'].damage)).toEqual([6_631, 5_913, 7_402, 10_600, 10_080]);
+    });
+
+    test('never crits or misses a tick', () => {
+        const ticks = fights.flatMap((fight) => fight.events).filter((event) => event.isDot);
+        expect(ticks).toHaveLength(47);
+        expect(ticks.every((event) => !event.isCrit && !event.isMiss && event.action === DOT_ACTION)).toBe(true);
+        // Maim's ticks are small and regular — nothing a sword swing looks like
+        expect(Math.max(...ticks.map((event) => event.amount))).toBeLessThan(100);
+    });
+
+    test('reads the corrected figures per room', () => {
+        const rate = (rows) => {
+            const sum = total(rows);
+            const swings = sum.hits + sum.misses;
+            return {
+                hitRate: sum.hits / swings,
+                critRate: sum.crits / sum.hits,
+                damagePerHit: (sum.damage - sum.dotDamage) / sum.hits,
+                dotPerSwing: sum.dotTicks / swings,
+            };
+        };
+
+        const higher = rate(fights.filter((fight) => fight.maxHP === 10_600));
+        expect(higher.hitRate).toBeCloseTo(151 / 217, 6);
+        expect(higher.critRate).toBeCloseTo(51 / 151, 6);
+        expect(higher.damagePerHit).toBeCloseTo((30_546 - 1_616) / 151, 6);
+        expect(higher.dotPerSwing).toBeCloseTo(35 / 217, 6);
+
+        const lower = rate(fights.filter((fight) => fight.maxHP === 10_080));
+        expect(lower.hitRate).toBeCloseTo(47 / 72, 6);
+        expect(lower.critRate).toBeCloseTo(14 / 47, 6);
+        expect(lower.dotPerSwing).toBeCloseTo(12 / 72, 6);
+    });
+
+    test('keeps a parry’s counter-attack as a swing', () => {
+        // Fight one, @30710: the monster attacked, the character swung nothing
+        // and was not hurt, and the monster lost 92 — a parry, not a bleed
+        const [parry] = fights[0].events.filter((event) => !event.isKill && event.amount === 92);
+        expect(parry).toMatchObject({ isDot: false, isMiss: false, playerIndex: '0' });
+    });
+});
+
+/** A wire-shaped monster entry */
+const monster = (cHP, dmgCounter, critCounter = 0, atkCounter = 1, mHP = 10_000) => ({
+    cHP,
+    mHP,
+    atkCounter,
+    dmgCounter,
+    critCounter,
+});
+
+/** A wire-shaped player entry */
+const player = (atkCounter, extra = {}) => ({
+    cHP: 2_000,
+    mHP: 2_000,
+    cMP: 500,
+    atkCounter,
+    isAutoAtk: true,
+    ...extra,
+});
+
+/** A state that has seen one baseline tick, as after a `new_battle` */
+function started(players, monsters) {
+    const state = newAttributionState();
+    attributeTick({ pMap: players, mMap: monsters }, state);
+    return state;
+}
+
+describe('a swing, a counter-attack and a tick', () => {
+    test('a solo run of swings and bleed ticks keeps them apart', () => {
+        const state = started({ 0: player(10) }, { 0: monster(10_000, 5) });
+        const events = [
+            // The swing that applies the bleed
+            ...attributeTick({ pMap: { 0: player(11) }, mMap: { 0: monster(9_700, 6) } }, state),
+            // Three ticks: the counter rises, the player's does not, the monster did not attack
+            ...attributeTick({ pMap: { 0: player(11) }, mMap: { 0: monster(9_640, 7) } }, state),
+            ...attributeTick({ pMap: {}, mMap: { 0: monster(9_580, 8) } }, state),
+            ...attributeTick({ pMap: { 0: player(12) }, mMap: { 0: monster(9_380, 9) } }, state),
+            ...attributeTick({ pMap: { 0: player(12) }, mMap: { 0: monster(9_320, 10) } }, state),
+        ];
+        const tally = foldEvents({}, events, { filterNonDamaging: false });
+
+        expect(tally['0']).toMatchObject({ hits: 2, misses: 0, dotTicks: 3, damage: 680, dotDamage: 180 });
+    });
+
+    test('a crit swing is a crit, marked by the crit counter catching up', () => {
+        // The game sets the crit counter to the splat that crit, so it jumps
+        const state = started({ 0: player(10) }, { 0: monster(10_000, 5, 2) });
+        const [hit] = attributeTick({ pMap: { 0: player(11) }, mMap: { 0: monster(9_690, 6, 6) } }, state);
+
+        expect(hit).toMatchObject({ amount: 310, isCrit: true, isDot: false, isMiss: false });
+    });
+
+    test('a swing that deals nothing is a miss', () => {
+        const state = started({ 0: player(10) }, { 0: monster(10_000, 5) });
+        const [miss] = attributeTick({ pMap: { 0: player(11) }, mMap: { 0: monster(10_000, 6) } }, state);
+
+        expect(miss).toMatchObject({ amount: 0, isMiss: true, isDot: false });
+    });
+
+    test('a parry on the monster’s attack is a counted swing, and can miss', () => {
+        const state = started({ 0: player(10) }, { 0: monster(10_000, 5, 0, 3) });
+        const [counter] = attributeTick({ pMap: { 0: player(10) }, mMap: { 0: monster(9_753, 6, 6, 4) } }, state);
+        const [whiff] = attributeTick({ pMap: { 0: player(10) }, mMap: { 0: monster(9_753, 7, 6, 5) } }, state);
+
+        expect(counter).toMatchObject({ amount: 247, isCrit: true, isDot: false, isMiss: false });
+        expect(whiff).toMatchObject({ amount: 0, isMiss: true, isDot: false });
+    });
+
+    test('a rise nothing paid for and the monster did not make, with no health lost, is nothing', () => {
+        const state = started({ 0: player(10) }, { 0: monster(10_000, 5) });
+        expect(attributeTick({ pMap: { 0: player(10) }, mMap: { 0: monster(10_000, 6) } }, state)).toEqual([]);
+    });
+
+    test('the phantom swing a respawn gap coalesces into the next battle is not left pending', () => {
+        // The first message after `new_battle`: a swing that touched no monster
+        const state = newAttributionState();
+        state.playersAtk['0'] = 1;
+        state.monstersHP['0'] = 10_000;
+        state.monstersMaxHP['0'] = 10_000;
+        state.dmgCounter['0'] = 0;
+        state.critCounter['0'] = 0;
+        seedMonsterAttacks(state, '0', { attackAttemptCounter: 1 });
+        expect(attributeTick({ pMap: { 0: player(2) }, mMap: {} }, state)).toEqual([]);
+
+        // A later bleed tick must not pay that swing off as a hit
+        const [event] = attributeTick({ pMap: { 0: player(2) }, mMap: { 0: monster(9_940, 1) } }, state);
+        expect(event).toMatchObject({ amount: 60, isDot: true });
+    });
+
+    test('a payload without attack counters keeps the old reading', () => {
+        const state = started({ 0: { cMP: 100 } }, { 0: monster(10_000, 5) });
+        const [hit] = attributeTick({ pMap: { 0: { cMP: 100 } }, mMap: { 0: monster(9_940, 6) } }, state);
+
+        expect(hit).toMatchObject({ amount: 60, isDot: false, isMiss: false });
+    });
+
+    test('a monster whose attacks were never seeded keeps the old reading for that tick', () => {
+        const state = newAttributionState();
+        state.playersAtk['0'] = 10;
+        state.monstersHP['0'] = 10_000;
+        state.dmgCounter['0'] = 5;
+        state.critCounter['0'] = 0;
+        const [event] = attributeTick({ pMap: { 0: player(10) }, mMap: { 0: monster(9_753, 6) } }, state);
+
+        expect(event).toMatchObject({ amount: 247, isDot: false });
+    });
+});
+
+describe('a party', () => {
+    const party = () =>
+        started({ 0: player(10), 1: player(20) }, { 0: monster(10_000, 5, 0, 1), 1: monster(10_000, 3, 0, 1) });
+
+    test('two players striking one monster on one tick get a swing each', () => {
+        const state = party();
+        const events = attributeTick({ pMap: { 0: player(11), 1: player(21) }, mMap: { 0: monster(9_400, 7) } }, state);
+        const tally = foldEvents({}, events, { filterNonDamaging: false });
+
+        expect(tally['0']).toMatchObject({ hits: 1, damage: 300, dotTicks: 0 });
+        expect(tally['1']).toMatchObject({ hits: 1, damage: 300, dotTicks: 0 });
+    });
+
+    test('one swinging while the other’s bleed ticks on another monster', () => {
+        const state = party();
+        const events = attributeTick(
+            {
+                pMap: { 0: player(11), 1: player(20) },
+                mMap: { 0: monster(9_700, 6), 1: monster(9_940, 4) },
+            },
+            state
+        );
+        const tally = foldEvents({}, events, { filterNonDamaging: false });
+
+        expect(tally['0']).toMatchObject({ hits: 1, damage: 300, dotTicks: 0 });
+        expect(tally['1']).toMatchObject({ hits: 0, damage: 60, dotTicks: 1, dotDamage: 60 });
+    });
+
+    test('one swinging while the other’s bleed ticks on the same monster', () => {
+        // Two splats on one monster, one swing: the health lost splits evenly
+        const state = party();
+        const events = attributeTick({ pMap: { 0: player(11), 1: player(20) }, mMap: { 0: monster(9_640, 7) } }, state);
+        const tally = foldEvents({}, events, { filterNonDamaging: false });
+
+        expect(tally['0']).toMatchObject({ hits: 1, damage: 180, dotTicks: 0 });
+        expect(tally['1']).toMatchObject({ hits: 0, damage: 180, dotTicks: 1 });
+    });
+
+    test('keeps the tick’s total whatever the split', () => {
+        const state = party();
+        const events = attributeTick({ pMap: { 0: player(11), 1: player(20) }, mMap: { 0: monster(9_640, 7) } }, state);
+        const dealt = events.filter((event) => !event.isKill).reduce((sum, event) => sum + event.amount, 0);
+
+        expect(dealt).toBe(360);
+    });
+});
