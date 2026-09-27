@@ -572,16 +572,37 @@ describe('compareLab verdicts and diagnosis', () => {
         expect(dps.verdict).toBe('insufficient');
     });
 
-    test('the taken metric tolerates the tick-summed undercount before crying "below"', () => {
-        // Observed taken is 10/s; the sim predicts 10.4/s — a ~3.8% shortfall that
-        // is within the damage-taken figure's known low bias, so it must read as
-        // consistent rather than "sim over-models the monster". (Your own damage,
-        // which carries no such bias, would flag the same gap.)
-        const result = compareLab(observed(), predictedLike({ takenPerSecond: 10.4 }));
+    test('a solo lab taken deviation inside its own margin reads consistent, not above', () => {
+        // A measured 28-fight Pyre Hunter group: taken averages 10.525/s against
+        // a 10/s prediction (+5.25%), with fight-to-fight spread that widens to a
+        // ±5.32% margin. The raw deviation sits inside that margin on its own —
+        // no downward-bias credit is needed or applied for a solo labyrinth fight
+        // (see the comment above `Z95` in labyrinth-replay-check.js), so this
+        // must read "consistent". A now-removed 3-point credit for a tick-merge
+        // undercount that does not occur in a solo fight used to push the judged
+        // deviation to +8.25%, past the margin, and call it "above".
+        const half = 14;
+        const mean = 10.525;
+        const spread = 1.375;
+        // Built directly rather than through deriveObserved's HP arithmetic: the
+        // fixture needs an exact mean/spread on takenSamples, which is easier to
+        // state than to reverse-engineer from HP endpoints. The other metrics
+        // reuse `observed()`'s dps/clear/seconds fields, which this test does
+        // not exercise.
+        const observedGroup = {
+            ...observed(),
+            fights: half * 2,
+            takenPerSecond: mean,
+            takenSamples: [
+                ...Array.from({ length: half }, () => mean + spread),
+                ...Array.from({ length: half }, () => mean - spread),
+            ],
+        };
+        const result = compareLab(observedGroup, predictedLike({ takenPerSecond: 10 }));
         const taken = result.metrics.find((m) => m.key === 'taken');
+        expect(taken.deviationPct).toBeCloseTo(5.25, 1);
+        expect(taken.marginPct).toBeCloseTo(5.32, 1);
         expect(taken.verdict).toBe('consistent');
-        // The shown deviation is still the honest raw figure, not bias-adjusted.
-        expect(taken.deviationPct).toBeCloseTo(-3.846, 2);
     });
 });
 
