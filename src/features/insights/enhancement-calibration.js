@@ -212,6 +212,10 @@ class EnhancementCalibration {
         if (session.currentLevel < session.targetLevel) return false;
 
         const prediction = session.predictions;
+        // A prediction made on stats typed into the simulator forecasts a run on somebody
+        // else's bench; the run itself was played on this character's. Measuring one against
+        // the other would convict (or acquit) the chain for the player's edit.
+        if (prediction?.benchEdited) return false;
         const observed = getCurrentLegCounters(session).attempts;
         if (!(observed > 0)) return false;
 

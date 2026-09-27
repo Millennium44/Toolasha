@@ -12,6 +12,7 @@ const state = vi.hoisted(() => ({
     characterData: null,
     personal: {},
     achievement: {},
+    manualOverrides: [],
 }));
 
 vi.mock('../../core/data-manager.js', () => ({
@@ -30,15 +31,23 @@ vi.mock('../../core/data-manager.js', () => ({
 }));
 
 vi.mock('../../utils/enhancement-config.js', () => ({
-    getEnhancingParams: () => ({}),
+    getEnhancingParams: () => ({
+        enhancingLevel: 60,
+        toolBonus: 0,
+        speedBonus: 0,
+        guzzlingBonus: 1,
+        teas: { blessed: false },
+        manualOverrides: state.manualOverrides,
+    }),
     describeParamsSource: () => null,
 }));
 
-import { calculateSuccessXP, getEnhancingActionTime } from './enhancement-xp.js';
+import { calculateEnhancementPredictions, calculateSuccessXP, getEnhancingActionTime } from './enhancement-xp.js';
 
 const enhancing = (buffs) => ({ '/action_types/enhancing': buffs });
 
 beforeEach(() => {
+    state.manualOverrides = [];
     state.personal = {};
     state.achievement = {};
     state.characterData = {
@@ -83,5 +92,13 @@ describe('getEnhancingActionTime', () => {
         // Boosted level 68.8 against item level 50 adds 18.8% speed
         const speed = 0.08 + 0.02 + 0.03 + 0.066 + 0.188;
         expect(getEnhancingActionTime('/items/test_sword')).toBeCloseTo(12 / (1 + speed), 9);
+    });
+});
+
+describe('calculateEnhancementPredictions', () => {
+    test('says whether the bench it predicted on was edited, so calibration can decline it', () => {
+        expect(calculateEnhancementPredictions('/items/test_sword', 0, 3, 0).benchEdited).toBe(false);
+        state.manualOverrides = ['Enhancing level'];
+        expect(calculateEnhancementPredictions('/items/test_sword', 0, 3, 0).benchEdited).toBe(true);
     });
 });
