@@ -8,6 +8,7 @@ import dataManager from '../../core/data-manager.js';
 import domObserver from '../../core/dom-observer.js';
 import tradeHistory from './trade-history.js';
 import { formatKMB3Digits, formatRelativeTime } from '../../utils/formatters.js';
+import { allowNavRowToWrap } from '../../utils/market-nav-row.js';
 
 /**
  * Explain when a personal price was observed, while keeping legacy histories useful.
@@ -238,10 +239,8 @@ class TradeHistoryDisplay {
 
         historyDiv.innerHTML = parts.join('');
 
-        // Our nowrap items made the row overrun a phone-width marketplace and squeezed the
-        // game's own buttons (fixed height, overflow: hidden) until their labels were cut off.
-        // Wrapping moves the overflow to a second line; a desktop row never needs one.
-        buttonContainer.style.flexWrap = 'wrap';
+        // Lets the row wrap rather than squeeze the game's own buttons; see market-nav-row.js.
+        allowNavRowToWrap();
         // Append to button container
         buttonContainer.appendChild(historyDiv);
 
