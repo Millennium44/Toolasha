@@ -468,8 +468,15 @@ class DungeonTracker {
         // A run older than any real one is not this run, however well the rest
         // matches. A paused record's start is judged at its pause: the time it
         // spent paused is shifted out of the start when it resumes.
+        // Every start the panel could measure from is judged, as
+        // `isRunImplausiblyOld` judges a live run: the reported record's own
+        // start was minutes old while its chat anchor was the day before, and
+        // the anchor is what the party elapsed figure reads.
         const activeUntil = Number.isFinite(saved.pausedAt) ? saved.pausedAt : Date.now();
-        if (Number.isFinite(saved.startTime) && activeUntil - saved.startTime > MAX_PLAUSIBLE_RUN_MS) {
+        const starts = [saved.startTime, saved.recoveredStartTime, saved.firstKeyCountTimestamp].filter(
+            Number.isFinite
+        );
+        if (starts.length > 0 && activeUntil - Math.min(...starts) > MAX_PLAUSIBLE_RUN_MS) {
             return false;
         }
 
