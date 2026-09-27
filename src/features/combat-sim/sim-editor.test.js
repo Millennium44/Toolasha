@@ -895,6 +895,28 @@ describe('the loadout selection is remembered', () => {
         expect(label).toContain('Bruteforce');
     });
 
+    test('a loadout applied on self is not claimed by another member’s Solo label', async () => {
+        // The selection is panel-wide, the application per player: player2
+        // never wore it, so its label and metadata must not name it
+        bridge.snapshots = [{ name: 'Bruteforce', actionTypeHrid: '/action_types/combat' }];
+        bridge.mutate = (dto) => {
+            dto.equipment = {
+                ...dto.equipment,
+                '/equipment_types/main_hand': { hrid: '/items/steel_sword', enhancementLevel: 5 },
+            };
+        };
+        const { el, editor } = await openEditor();
+
+        const select = el.querySelector('#mwi-csim-loadout-select');
+        select.value = 'Bruteforce';
+        select.dispatchEvent(new Event('change'));
+        await Promise.resolve();
+
+        expect(editor.getLoadoutNameFor('player1')).toBe('Bruteforce');
+        expect(editor.getLoadoutNameFor('player2')).toBe('');
+        expect(editor.generateSimLabel('player2')).not.toContain('Bruteforce');
+    });
+
     test('an edit made before selecting a loadout, to a field it does not replace, still shows', async () => {
         // The loadout replaces the main hand; defense is a what-if edit the
         // loadout leaves alone, so it must not be absorbed into the baseline

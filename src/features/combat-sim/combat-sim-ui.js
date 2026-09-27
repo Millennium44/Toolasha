@@ -2133,6 +2133,8 @@ class CombatSimUI {
         this._upgradeRunning = false;
         this._detachDrag = null;
         this._unsubscribeSkipSkillingRooms = null;
+        this._unsubscribeSoloMode?.();
+        this._unsubscribeSoloMode = null;
         // The Buy/Sell/Key pricing row above the results — see buildPanel() and
         // _subscribePricingQuickSettings()
         this._pricingQuickSettings = null;
@@ -2384,6 +2386,12 @@ class CombatSimUI {
             soloMode: config.getSettingValue('combatSim_soloMode', false),
             onSoloModeChange: (value) => config.setSettingValue('combatSim_soloMode', value),
         });
+        // The same setting is on the Settings page: a change there while this
+        // panel is open must reach the editor, or the next run uses the old value
+        this._unsubscribeSoloMode?.();
+        this._unsubscribeSoloMode = config.onSettingChange('combatSim_soloMode', (value) =>
+            this._editor?.setSoloMode(value)
+        );
 
         configureContent.appendChild(controls);
         configureContent.appendChild(allZonesRow);
@@ -5285,7 +5293,9 @@ class CombatSimUI {
             // Diffed for the player actually simulated: a Solo run of another
             // member is labelled from their edits, not the logged-in player's
             const historyLabel = this._editor?.generateSimLabel(selfHrid) || 'Current Gear';
-            const loadoutName = this._editor?.getSelectedLoadoutName?.() || null;
+            // Only if it was applied to the player simulated — a Solo run of
+            // another member did not wear the loadout picked on self's tab
+            const loadoutName = this._editor?.getLoadoutNameFor?.(selfHrid) || null;
             // `historyLabel` is the loadout/"Current Gear" name with any diffed
             // changes appended — if it says more than that name alone, the
             // editor's DTO was edited away from it.
@@ -7818,6 +7828,8 @@ class CombatSimUI {
         this._detachDrag = null;
         this._unsubscribeSkipSkillingRooms?.();
         this._unsubscribeSkipSkillingRooms = null;
+        this._unsubscribeSoloMode?.();
+        this._unsubscribeSoloMode = null;
         this._unsubscribePricingQuickSettings.forEach((unsubscribe) => unsubscribe());
         this._unsubscribePricingQuickSettings = [];
         this._pricingQuickSettings = null;

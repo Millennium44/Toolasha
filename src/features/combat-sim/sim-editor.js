@@ -268,6 +268,30 @@ export class SimEditor {
     getSoloMode() {
         return this._soloMode;
     }
+    /**
+     * Adopt a Solo value changed elsewhere (the Settings page) while the panel is open.
+     * @param {boolean} value
+     */
+    setSoloMode(value) {
+        const next = Boolean(value);
+        if (next === this._soloMode) return;
+        this._soloMode = next;
+        if (this._editorInitialized) this.renderEditor();
+    }
+    /**
+     * The selected loadout's name if it was applied to this player, else ''. The
+     * selection is panel-wide but a loadout is applied to one player's DTO, so a
+     * Solo run of another member must not be labelled with it.
+     * @param {string} playerHrid
+     * @returns {string}
+     */
+    getLoadoutNameFor(playerHrid) {
+        if (!this._selectedLoadoutName) return '';
+        const applied = this._loadoutBaselineDTOs
+            ? Boolean(this._loadoutBaselineDTOs[playerHrid])
+            : playerHrid === (this._selfHrid || this._activeEditPlayer);
+        return applied ? this._selectedLoadoutName : '';
+    }
     getMissingMembers() {
         return this._missingMembers;
     }
@@ -2769,15 +2793,16 @@ export class SimEditor {
      */
     generateSimLabel(playerHrid) {
         const selfHrid = playerHrid || this._selfHrid || this._activeEditPlayer;
+        const loadoutName = this.getLoadoutNameFor(selfHrid);
         // While a loadout is selected, diff against the DTO the loadout itself
         // produced — not against actual current gear, which the loadout is
         // usually meant to differ from. Only edits made after applying it
         // should read as "(edited)".
-        const original = this._selectedLoadoutName
+        const original = loadoutName
             ? this._loadoutBaselineDTOs?.[selfHrid] || this._originalDTOs?.[selfHrid]
             : this._originalDTOs?.[selfHrid];
         const edited = this._editedDTOs?.[selfHrid];
-        if (!original || !edited) return this._selectedLoadoutName || 'Current Gear';
+        if (!original || !edited) return loadoutName || 'Current Gear';
 
         const gameData = buildGameDataPayload();
         const itemDetailMap = gameData?.itemDetailMap || {};
@@ -2922,7 +2947,7 @@ export class SimEditor {
             }
         }
 
-        const loadoutPrefix = this._selectedLoadoutName || '';
+        const loadoutPrefix = loadoutName || '';
         if (changes.length === 0) return loadoutPrefix || 'Current Gear';
         const changesStr = changes.join(', ');
         return loadoutPrefix ? loadoutPrefix + ': ' + changesStr : changesStr;
