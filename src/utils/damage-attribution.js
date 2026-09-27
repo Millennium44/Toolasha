@@ -234,7 +234,32 @@ export function noteActions(state, players) {
         if (ability) state.actions[index] = ability;
         else if (auto) state.actions[index] = 'auto';
         else if (auto === false || !state.actions[index]) state.actions[index] = 'idle';
+
+        // Only `new_battle` states a unit's combat stats, and its long-spelled
+        // splat counter; a tick states neither, so a tick leaves both alone
+        const stats = player?.combatDetails?.combatStats;
+        if (stats && typeof stats === 'object') (state.counterStats ||= {})[index] = counterStatsOf(stats);
+        const splats = Number(player?.damageSplatCounter);
+        if (Number.isFinite(splats)) (state.playersDmg ||= {})[index] = splats;
     }
+}
+
+/**
+ * What a player can answer a monster's attack with, from `new_battle`'s stats.
+ *
+ * The game leaves a zero stat out of `combatStats` rather than sending 0, so a
+ * missing key is a real "cannot".
+ *
+ * @param {Object} stats - `combatDetails.combatStats`
+ * @returns {{parry: boolean, strikesBack: boolean}} Whether they can parry, and whether
+ *   being struck deals damage back (retaliation, physical or elemental thorns)
+ */
+function counterStatsOf(stats) {
+    const positive = (key) => Number(stats?.[key]) > 0;
+    return {
+        parry: positive('parry'),
+        strikesBack: positive('retaliation') || positive('physicalThorns') || positive('elementalThorns'),
+    };
 }
 
 /**
@@ -310,6 +335,9 @@ function resolveActors(
     const swung = [];
     const spent = [];
     const hurt = new Set();
+    // Who had a monster's attack land on them this tick
+    const struck = new Set();
+    const struckBefore = (state.playersDmg ||= {});
     // How many swings each present player made this tick, for `attributeTick`'s
     // pending-swing pool
     const swings = new Map();
@@ -348,9 +376,17 @@ function resolveActors(
             if (health[index] !== undefined && hp < health[index]) hurt.add(index);
             health[index] = hp;
         }
+
+        // The player's own damage counter: an attack that landed on them, hit or
+        // miss, rings it; one they parried does not
+        const splats = Number(player?.dmgCounter);
+        if (Number.isFinite(splats)) {
+            if (struckBefore[index] !== undefined && splats > struckBefore[index]) struck.add(index);
+            struckBefore[index] = splats;
+        }
     }
 
-    const acted = { hurt, swung: new Set(swung), swings, countersKnown, present: indices };
+    const acted = { hurt, struck, swung: new Set(swung), swings, countersKnown, present: indices };
     const one = (index) => ({ actors: [index], shared: false, ...acted });
     const split = () => ({ actors: [...indices], shared: true, ...acted });
     const none = () => ({ actors: [], shared: false, ...acted });
@@ -544,6 +580,54 @@ function swingLabel(action, abilityDetailMap) {
 }
 
 /**
+ * Whether anybody could have answered a monster's attack this tick with damage.
+ *
+ * An unpaid damage-counter rise on a tick the monster attacked is a counter-
+ * attack only if somebody could have made one. Three ways, each read from what
+ * the payload can show:
+ *
+ * - **Parry** blocks the attack and swings back. A parried attack does not land,
+ *   so the parrier's own damage counter stays still: on all 62 parry
+ *   counter-attacks in the four Pyre Hunter captures it did not move, and no
+ *   bleed tick in them shared a tick with a monster attack that landed.
+ * - **Retaliation and thorns** answer an attack that did land: their wearer was
+ *   struck or hurt this tick.
+ * - **A reflect buff** the caller knows is up (`reflecting`), on a player hurt
+ *   this tick.
+ *
+ * Anyone else's bleed ticking in the same update as the monster's attack is a
+ * bleed. What stays ambiguous: in a party, a parry-capable player who was not
+ * struck could be answering an attack aimed at them or standing idle while the
+ * monster hit someone else, and either reads as "could have countered"; and a
+ * bleed landing on the very tick a parry answered is read as the parry.
+ *
+ * Without the stats — no `new_battle` seen, or one that states no
+ * `combatStats` for some member — nobody can be ruled out, and the rise stays a
+ * hit as it always was.
+ *
+ * @param {Object} state - From `newAttributionState`
+ * @param {Set<string>} struck - Players a monster's attack landed on this tick
+ * @param {Set<string>} hurt - Players who lost health this tick
+ * @param {Object} [pMap] - This tick's players
+ * @param {Function|Map|Set|Object} [reflecting] - The caller's reflect input
+ * @returns {boolean}
+ */
+function couldCounter(state, struck, hurt, pMap, reflecting) {
+    const stats = state.counterStats || {};
+    const party = Object.keys(state.party || {});
+    const members = party.length ? party : Object.keys(pMap || {});
+    if (!members.length || members.some((index) => !stats[index])) return true;
+
+    return members.some((index) => {
+        const { parry, strikesBack } = stats[index];
+        const landed = struck.has(index) || hurt.has(index);
+        if (parry && !struck.has(index)) return true;
+        if (strikesBack && landed) return true;
+        return Boolean(reflecting && hurt.has(index) && reflectOf(reflecting, index, pMap?.[index]));
+    });
+}
+
+/**
  * Whether a swing is known to strike one monster only.
  *
  * An auto-attack does, and so does an ability whose damaging effects the game
@@ -627,7 +711,7 @@ function isSingleTarget(action, abilityDetailMap) {
  */
 export function attributeTick(tick, state, options) {
     const { mMap, pMap } = tick || {};
-    const { actors, shared, hurt, swung, swings, countersKnown, present } = resolveActors(pMap, state, options);
+    const { actors, shared, hurt, struck, swung, swings, countersKnown, present } = resolveActors(pMap, state, options);
     const abilityDetailMap = options?.abilityDetailMap;
     const reflecting = options?.reflecting;
     const emitUnattributed = options?.unattributed === true;
@@ -789,7 +873,10 @@ export function attributeTick(tick, state, options) {
         // A counter that went backwards is a different monster in the slot, and
         // says nothing about whether this one attacked
         const attackKnown = beforeAttacks !== undefined && Number.isFinite(attacks) && attacks >= beforeAttacks;
-        const isTick = countersKnown && attackKnown && attacks === beforeAttacks;
+        const isTick =
+            countersKnown &&
+            attackKnown &&
+            (attacks === beforeAttacks || !couldCounter(state, struck, hurt, pMap, reflecting));
         const counted = isTick ? 0 : unpaid;
 
         // A bleed cannot crit, so a crit belongs to the last counted splat
