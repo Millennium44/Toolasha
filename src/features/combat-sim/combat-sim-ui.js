@@ -94,6 +94,7 @@ import {
     getZonesThatDropItem,
     getGuildBuffDetailMap,
     guildBuffMaxLevel,
+    applyLoadoutSnapshotToDTO,
 } from './combat-sim-adapter.js';
 import { runSimulation, cancelActiveSimulations } from './combat-sim-runner.js';
 import { runAllZonesSimulation, cancelAllZonesSimulation } from './all-zones-runner.js';
@@ -2252,6 +2253,15 @@ class CombatSimUI {
         this._allZonesSortAsc = false;
         this._earlyExitEnabled = true; // default on
         this._maxTierFoodEnabled = false; // sim all zones on the best food of each kind you run
+        // Solo zones + party dungeons: independent loadout choices for its two
+        // sweeps, since dungeon fights often need different gear than ordinary
+        // zones. null means "not yet set" — the first time the mode turns on,
+        // both default to whatever the single Loadout dropdown currently has
+        // selected, so a run that never touches these behaves exactly as
+        // before this feature existed. Applied only to the simulated player's
+        // own DTO; every other loaded party member keeps their own gear.
+        this._soloZonesLoadoutName = null;
+        this._dungeonsLoadoutName = null;
         this._includeDungeons = false; // whether an all-zones run also simulates every dungeon
         // Bestiary planner: a time budget by default, a points target on request
         this._bestiaryPlanMode = 'hours';
@@ -2427,6 +2437,18 @@ class CombatSimUI {
                 <input type="checkbox" id="mwi-csim-allzones-soloparty" style="${checkboxStyle}">
                 Solo zones + party dungeons
             </label>
+            <span id="mwi-csim-soloparty-loadouts" style="display:none; align-items:center; gap:10px;">
+                <label style="display:flex; align-items:center; gap:4px; color:#888; font-size:11px;"
+                    title="Gear the selected player wears through the ordinary (solo) zones of this sweep. Defaults to the Loadout dropdown's current selection.">
+                    Solo zones loadout
+                    <select class="toolasha-select" id="mwi-csim-soloparty-solo-loadout" style="background:#1a1a2e; color:#e0e0e0; border:1px solid #444; border-radius:4px; padding:2px 6px; font-size:11px;"></select>
+                </label>
+                <label style="display:flex; align-items:center; gap:4px; color:#888; font-size:11px;"
+                    title="Gear the selected player wears through the party dungeons of this sweep — often different from their solo gear. Every other loaded party member keeps their own imported gear. Defaults to the Loadout dropdown's current selection.">
+                    Dungeons loadout
+                    <select class="toolasha-select" id="mwi-csim-soloparty-dungeon-loadout" style="background:#1a1a2e; color:#e0e0e0; border:1px solid #444; border-radius:4px; padding:2px 6px; font-size:11px;"></select>
+                </label>
+            </span>
             <label id="mwi-csim-allzones-hours-label" style="color:#888; font-size:12px; display:none;">Hours</label>
             <input id="mwi-csim-allzones-hours" type="number" min="1" max="10000" value="${config.getSettingValue('combatSim_allZonesDefaultHours', 10)}" style="display:none; width:60px; background:#1a1a2e; color:#e0e0e0; border:1px solid #444; border-radius:4px; padding:3px 6px; font-size:12px; text-align:center;">
             <label id="mwi-csim-earlyexit-label" style="${labelStyle} display:none;" title="Stop simming higher tiers for a zone if both XP/hr and profit/hr declined vs the previous tier">
@@ -3000,6 +3022,12 @@ class CombatSimUI {
             }
             this._updateAllZonesUI();
         });
+        this.panel.querySelector('#mwi-csim-soloparty-solo-loadout').addEventListener('change', (e) => {
+            this._soloZonesLoadoutName = e.target.value;
+        });
+        this.panel.querySelector('#mwi-csim-soloparty-dungeon-loadout').addEventListener('change', (e) => {
+            this._dungeonsLoadoutName = e.target.value;
+        });
         this._updateSoloPartyOffer();
 
         // Early exit toggle
@@ -3139,6 +3167,67 @@ class CombatSimUI {
             this._allZonesMode = null;
             this._updateAllZonesUI();
         }
+        this._updateSoloPartyLoadoutPickers();
+    }
+
+    /**
+     * The loadout names offered by the Solo zones + party dungeons pickers —
+     * the same filter (an "All Skills" snapshot, or one saved for combat) the
+     * Configure tab's own Loadout dropdown applies. Reached through the
+     * bridge the same way `_invalidationContext` already does; a store that
+     * has not loaded yet (no combat bundle has fed it) offers none, so the
+     * pickers show only "— Current Gear —".
+     * @returns {Array<{name: string, actionTypeHrid: string|null}>}
+     * @private
+     */
+    _soloPartyLoadoutOptions() {
+        const store = loadoutSnapshot();
+        if (!store) return [];
+        return (store.getAllSnapshots?.() || []).filter(
+            (s) => !s.actionTypeHrid || s.actionTypeHrid === '/action_types/combat'
+        );
+    }
+
+    /**
+     * Show/hide and (re)populate the Solo zones + party dungeons loadout
+     * pickers ("Solo zones loadout" / "Dungeons loadout").
+     *
+     * The first time the mode turns on (both fields still null), each
+     * defaults to whatever the single Loadout dropdown currently has
+     * selected — so a run that never touches these two pickers behaves
+     * exactly as it did before this feature existed. After that the two are
+     * independent and are left alone here, including across a party
+     * gain/loss that leaves the mode off and back on (see
+     * `_updateSoloPartyOffer`).
+     * @private
+     */
+    _updateSoloPartyLoadoutPickers() {
+        const wrap = this.panel?.querySelector('#mwi-csim-soloparty-loadouts');
+        const soloSelect = this.panel?.querySelector('#mwi-csim-soloparty-solo-loadout');
+        const dungeonSelect = this.panel?.querySelector('#mwi-csim-soloparty-dungeon-loadout');
+        if (!wrap || !soloSelect || !dungeonSelect) return;
+
+        const active = this._allZonesMode === SOLO_VS_PARTY_MODE;
+        wrap.style.display = active ? 'flex' : 'none';
+        if (!active) return;
+
+        if (this._soloZonesLoadoutName === null || this._dungeonsLoadoutName === null) {
+            const current = this._editor?.getSelectedLoadoutName?.() || '';
+            this._soloZonesLoadoutName = current;
+            this._dungeonsLoadoutName = current;
+        }
+
+        const options = this._soloPartyLoadoutOptions();
+        const optionsHtml =
+            '<option value="">— Current Gear —</option>' +
+            options.map((s) => `<option value="${s.name}">${s.name}</option>`).join('');
+        for (const [select, value] of [
+            [soloSelect, this._soloZonesLoadoutName],
+            [dungeonSelect, this._dungeonsLoadoutName],
+        ]) {
+            select.innerHTML = optionsHtml;
+            select.value = options.some((s) => s.name === value) ? value : '';
+        }
     }
 
     /**
@@ -3159,6 +3248,8 @@ class CombatSimUI {
         const mainHoursLabel = mainHoursInput?.previousElementSibling;
 
         if (!checklist) return;
+
+        this._updateSoloPartyLoadoutPickers();
 
         // Greyed rather than hidden when all-zones is off: it is the one option
         // here that answers a question people do not know they can ask, and a
@@ -5580,6 +5671,33 @@ class CombatSimUI {
     }
 
     /**
+     * A batch's player DTOs with a named loadout applied to the simulated
+     * player's own build, leaving every other DTO in the batch (the dungeon
+     * sweep's other loaded party members) exactly as it was.
+     *
+     * Used by Solo zones + party dungeons so its two sweeps can wear
+     * different gear — dungeon fights often call for different gear than
+     * ordinary zones — without touching the editor's own DTOs: this always
+     * works on copies, never the objects `dtos` was handed with.
+     *
+     * @param {Array<Object>} dtos - One sweep's player DTOs
+     * @param {string} playerHrid - The simulated player's own hrid
+     * @param {string} loadoutName - Snapshot name to apply, or '' for current gear (no-op)
+     * @param {Object} gameData - `buildGameDataPayload()` result
+     * @returns {Array<Object>} `dtos` unchanged when `loadoutName` is '' or resolves to nothing
+     * @private
+     */
+    _applyBatchLoadout(dtos, playerHrid, loadoutName, gameData) {
+        if (!loadoutName) return dtos;
+        return dtos.map((dto) => {
+            if (dto?.hrid !== playerHrid) return dto;
+            const copy = structuredClone(dto);
+            applyLoadoutSnapshotToDTO(copy, loadoutName, gameData);
+            return copy;
+        });
+    }
+
+    /**
      * Run simulations for all selected zones.
      * @private
      */
@@ -5716,15 +5834,22 @@ class CombatSimUI {
         let sweeps = [{ set: null, playerDTOs, zones: selectedZones }];
         if (soloVsParty) {
             const sets = soloVsPartySets(playerDTOs, this._activePlayerTab);
+            // Each sweep can wear its own loadout — dungeon fights often need
+            // different gear than ordinary zones — applied only to the
+            // simulated player's own DTO; every other party member (the
+            // dungeon sweep's other loaded members) keeps their own imported
+            // gear untouched. '' (or unset) means current gear, a no-op.
+            const soloLoadout = this._soloZonesLoadoutName || '';
+            const dungeonLoadout = this._dungeonsLoadoutName || '';
             sweeps = [
                 {
                     set: 'solo',
-                    playerDTOs: sets.solo,
+                    playerDTOs: this._applyBatchLoadout(sets.solo, sets.playerHrid, soloLoadout, gameData),
                     zones: selectedZones.filter((z) => !dungeonIds.has(z.zoneHrid)),
                 },
                 {
                     set: 'party',
-                    playerDTOs: sets.party,
+                    playerDTOs: this._applyBatchLoadout(sets.party, sets.playerHrid, dungeonLoadout, gameData),
                     zones: selectedZones.filter((z) => dungeonIds.has(z.zoneHrid)),
                 },
             ].filter((sweep) => sweep.zones.length);

@@ -106,6 +106,12 @@ const mocks = vi.hoisted(() => ({
     settingChangeCallbacks: new Map(),
     /** The `getSettingValue` mock's `profitCalc_keyPricingMode`, for the pricing quick-settings row */
     keyPricingMode: 'ask',
+    /** What `loadoutSnapshot()` (the bundle bridge) hands back; null means the store has not loaded */
+    loadoutStore: null,
+    /** What SimEditor#getSelectedLoadoutName() hands back */
+    editorLoadoutName: '',
+    /** Every `applyLoadoutSnapshotToDTO` call, in order: {hrid, snapshotName} */
+    loadoutApplications: [],
 }));
 
 vi.mock('../../core/config.js', () => ({
@@ -262,6 +268,7 @@ vi.mock('../../utils/bundle-bridge.js', () => ({
     marketWatchTarget: () => (itemHrid, enhancementLevel, quote) =>
         mocks.saved.push({ itemHrid, enhancementLevel, quote }),
     marketWatchItem: () => (itemHrid, name, enhancementLevel) => mocks.watched.push({ itemHrid, enhancementLevel }),
+    loadoutSnapshot: () => mocks.loadoutStore,
 }));
 
 vi.mock('../../api/marketplace.js', () => ({
@@ -323,6 +330,14 @@ vi.mock('./combat-sim-adapter.js', () => ({
     guildBuffMaxLevel: (detail) => detail?.maxLevel ?? 20,
     parseShykaiImport: () => null,
     buildShykaiExportPlayer: () => ({}),
+    // Stands in for the real loadout-applying mutation: tags the DTO with
+    // which loadout was "applied" (and records the call) rather than
+    // resolving real equipment, which these tests have no game data for.
+    applyLoadoutSnapshotToDTO: (dto, snapshotName) => {
+        mocks.loadoutApplications.push({ hrid: dto?.hrid, snapshotName });
+        dto.appliedLoadout = snapshotName;
+        return true;
+    },
 }));
 
 vi.mock('./combat-sim-runner.js', () => ({
@@ -463,6 +478,9 @@ vi.mock('./sim-editor.js', () => ({
         }
         setSoloMode(value) {
             mocks.editorSoloMode = value;
+        }
+        getSelectedLoadoutName() {
+            return mocks.editorLoadoutName;
         }
         getPlayerInfo() {
             return mocks.editedDTOs ? Object.keys(mocks.editedDTOs).map((hrid) => ({ hrid, name: hrid })) : [];
@@ -7406,6 +7424,9 @@ describe('Solo zones + party dungeons: one ranked table', () => {
                 return simFor({ player1: 9000, player2: own, player3: 50 }, { numberOfPlayers: 3, isDungeon: true });
             });
         mocks.monsters = null;
+        mocks.loadoutStore = null;
+        mocks.editorLoadoutName = '';
+        mocks.loadoutApplications = [];
         ui.buildPanel();
         // An earlier describe leaves these set, and Simulate/All Zones read them
         ui._allZonesMode = null;
@@ -7413,6 +7434,8 @@ describe('Solo zones + party dungeons: one ranked table', () => {
         ui._allZonesSnapshotMeta = null;
         ui._allZonesSortCol = 'score';
         ui._allZonesSortAsc = false;
+        ui._soloZonesLoadoutName = null;
+        ui._dungeonsLoadoutName = null;
         ui._updateAllZonesUI();
         ui._updateSoloPartyOffer();
         vi.spyOn(ui, '_requestBestiary').mockImplementation(() => {});
@@ -7421,6 +7444,8 @@ describe('Solo zones + party dungeons: one ranked table', () => {
     afterEach(() => {
         ui.destroy();
         ui._allZonesMode = null;
+        ui._soloZonesLoadoutName = null;
+        ui._dungeonsLoadoutName = null;
         mocks.editedDTOs = null;
         mocks.editorSelfHrid = null;
         mocks.editorActivePlayer = null;
@@ -7430,6 +7455,9 @@ describe('Solo zones + party dungeons: one ranked table', () => {
         mocks.revenueFor = null;
         mocks.monsters = null;
         mocks.zones = [];
+        mocks.loadoutStore = null;
+        mocks.editorLoadoutName = '';
+        mocks.loadoutApplications = [];
         vi.restoreAllMocks();
     });
 
@@ -7669,6 +7697,89 @@ describe('Solo zones + party dungeons: one ranked table', () => {
 
             expect(mocks.allZonesRuns).toBe(0);
             expect(text()).toContain('needs a party of two or more');
+        });
+
+        /**
+         * Dungeon fights often want different gear than ordinary zones, so the
+         * two sweeps can each wear their own named loadout — applied only to
+         * the simulated player's own DTO, never the other loaded party
+         * members a dungeon sweep carries.
+         */
+        describe('per-sweep loadouts', () => {
+            const soloSelect = () => ui.panel.querySelector('#mwi-csim-soloparty-solo-loadout');
+            const dungeonSelect = () => ui.panel.querySelector('#mwi-csim-soloparty-dungeon-loadout');
+            const pick = (select, name) => {
+                select.value = name;
+                select.dispatchEvent(new Event('change'));
+            };
+
+            test('each picker defaults to the single Loadout dropdown selection', () => {
+                // Both fields are only seeded from the editor's selection the
+                // first time the pickers populate after turning null — the
+                // outer beforeEach's click already did that once (at '',
+                // since no loadout was selected yet), so put a selection in
+                // place and null them out again to simulate turning the mode
+                // on fresh with one already chosen.
+                mocks.editorLoadoutName = 'Everyday';
+                mocks.loadoutStore = { getAllSnapshots: () => [{ name: 'Everyday', actionTypeHrid: null }] };
+                ui._soloZonesLoadoutName = null;
+                ui._dungeonsLoadoutName = null;
+                ui._updateSoloPartyLoadoutPickers();
+
+                expect(soloSelect().value).toBe('Everyday');
+                expect(dungeonSelect().value).toBe('Everyday');
+                expect(ui._soloZonesLoadoutName).toBe('Everyday');
+                expect(ui._dungeonsLoadoutName).toBe('Everyday');
+            });
+
+            test('left at Current Gear (the default with nothing selected), neither sweep touches gear', async () => {
+                await ui._onSimulateAllZones();
+
+                expect(mocks.loadoutApplications).toEqual([]);
+            });
+
+            test('each picker applies to only the simulated player, in only its own sweep', async () => {
+                mocks.loadoutStore = {
+                    getAllSnapshots: () => [
+                        { name: 'Solo Build', actionTypeHrid: null },
+                        { name: 'Dungeon Build', actionTypeHrid: '/action_types/combat' },
+                    ],
+                };
+                ui._updateSoloPartyLoadoutPickers();
+                pick(soloSelect(), 'Solo Build');
+                pick(dungeonSelect(), 'Dungeon Build');
+
+                await ui._onSimulateAllZones();
+
+                const [soloRun, partyRun] = mocks.allZonesArgsLog;
+                expect(soloRun.playerDTOs.map((p) => ({ hrid: p.hrid, appliedLoadout: p.appliedLoadout }))).toEqual([
+                    { hrid: 'player2', appliedLoadout: 'Solo Build' },
+                ]);
+                const partyByHrid = Object.fromEntries(partyRun.playerDTOs.map((p) => [p.hrid, p.appliedLoadout]));
+                expect(partyByHrid).toEqual({
+                    player1: undefined, // another party member: untouched
+                    player2: 'Dungeon Build', // the simulated player, this sweep's loadout
+                    player3: undefined,
+                });
+                expect(mocks.loadoutApplications).toEqual([
+                    { hrid: 'player2', snapshotName: 'Solo Build' },
+                    { hrid: 'player2', snapshotName: 'Dungeon Build' },
+                ]);
+                // The editor's own DTOs are never mutated — only sim-only copies are
+                expect(mocks.editedDTOs.player2.appliedLoadout).toBeUndefined();
+            });
+
+            test('picking one leaves the other at its own selection', async () => {
+                mocks.loadoutStore = { getAllSnapshots: () => [{ name: 'Dungeon Build', actionTypeHrid: null }] };
+                ui._updateSoloPartyLoadoutPickers();
+                pick(dungeonSelect(), 'Dungeon Build');
+
+                await ui._onSimulateAllZones();
+
+                const [soloRun, partyRun] = mocks.allZonesArgsLog;
+                expect(soloRun.playerDTOs[0].appliedLoadout).toBeUndefined();
+                expect(partyRun.playerDTOs.find((p) => p.hrid === 'player2').appliedLoadout).toBe('Dungeon Build');
+            });
         });
     });
 
