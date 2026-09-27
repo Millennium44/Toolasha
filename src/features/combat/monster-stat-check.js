@@ -41,16 +41,46 @@ const EVASION_ROWS = [
 /**
  * Timing and crit rows, compared game-vs-sim like every other row here.
  *
- * The game's `battle_unit_fetched`/`new_battle` payload carries these flat on
- * `combatDetails` (`attackInterval` in nanoseconds, `totalCastSpeed`,
- * `criticalRate`, `criticalDamage` as ratios — see the trial-badger fixture in
- * `guild-trial-messages.fixture.js`). The sim only ever computes them onto
- * `combatDetails.combatStats` (`combat-unit.js`'s `updateCombatDetails`, e.g.
- * `attackInterval /= 1 + attackLevel / 2000` then the weapon's own cast-speed
- * divisor) and never copies them up to the flat block the way it does for
- * `totalArmor`/`totalWaterResistance`. `compareStat` below falls back to
- * `combatStats` on whichever side lacks the flat key, so this row list reads
- * correctly off either shape without the two sides needing to agree on one.
+ * Verified against a real labyrinth tick capture (a Pyre Hunter at room 255
+ * and its player), not just the engine's own arithmetic:
+ *
+ * - `attackInterval` is flat on both the monster's and the player's
+ *   `combatDetails` (nanoseconds — 3,104,212,860 for the captured Pyre Hunter).
+ *   The sim never copies its own computed interval up to a flat field the way
+ *   it does `totalArmor`; it stays on `combatDetails.combatStats.attackInterval`
+ *   (`combat-unit.js`'s `updateCombatDetails`: `/= 1 + attackLevel / 2000`, then
+ *   the weapon/monster's own `attackSpeed` stat, then any `/buff_types/attack_speed`
+ *   buffs — folded in for a player by `planBuffFold`/`ENGINE_BUFF_TYPES`, which
+ *   already lists `attack_speed`).
+ * - `totalCastSpeed` is flat on both sides too, but it is **not** simply
+ *   `combatStats.castSpeed` renamed — that nested field is the raw, pre-buff
+ *   base stat (0.048 for the captured player). The flat total is
+ *   `combatStats.castSpeed + attackLevel / 2000 + the sum of every active
+ *   `/buff_types/cast_speed` buff's `flatBoost`. For the captured player that is
+ *   exactly `0.048 + 154/2000 + 0.316 = 0.441`, matching the capture's
+ *   `totalCastSpeed` to the decimal (the 0.316 comes from four stacked buffs:
+ *   the cast-speed guild buff, house room, labyrinth crate and labyrinth
+ *   upgrade — all real, current effects, not a coincidence). The sim computes
+ *   this identical sum into its own `combatStats.castSpeed` in place
+ *   (`updateCombatDetails`'s `+= boostOf(cast_speed).flatBoost` then
+ *   `+= attackLevel / 2000`), and `cast_speed` is also in `ENGINE_BUFF_TYPES`,
+ *   so a player's live cast-speed buffs fold onto the sim the same way any
+ *   other buffed stat here does. The captured monster carries none of this —
+ *   no base `castSpeed` stat, no buffs — so its `totalCastSpeed` (0.1275)
+ *   reduces to the bare `attackLevel / 2000` term, which is why an earlier,
+ *   monster-only check of this row could look like a plain rename.
+ * - `criticalRate`/`criticalDamage` are the reverse of `attackInterval`: the
+ *   capture shows **no** flat top-level field for either, on the monster or
+ *   the player — only `combatStats.criticalRate`/`criticalDamage`, added to by
+ *   `/buff_types/critical_rate`/`critical_damage` buffs the same way. Both
+ *   sides read the same nested path, so no alias is needed there.
+ *
+ * `compareStat` falls back to `combatStats` (via `NESTED_STAT_ALIASES` for the
+ * one field that renames) on whichever side lacks the flat key, so every row
+ * here reads correctly off either shape without the two sides needing to agree
+ * on one — provided the object handed in already has `combatStats` resolved
+ * (buffs applied, `updateCombatDetails` run), the same requirement every other
+ * row in this file already has.
  */
 const TIMING_ROWS = [
     ['attackInterval', 'Attack interval', 'ns'],
@@ -366,19 +396,24 @@ export function statRows(styleKey, unitKind = 'monster') {
  * Read a compared stat off a `combatDetails`-shaped object, falling back to
  * `combatStats` when the flat key isn't there. The mitigation/evasion/offense
  * rows only ever need the flat key — both the game and the sim copy those up to
- * the top level. The timing/crit rows do not: the game's payload carries them
- * flat, but the sim only ever computes them onto `combatStats` (see the comment
- * above `TIMING_ROWS`), so reading the sim side needs the fallback. The fallback
- * is harmless for the rows that don't need it, since neither side nests them.
+ * the top level. `attackInterval`/`totalCastSpeed` do not: a real capture shows
+ * the game carries them flat (both monster and player) while the sim only ever
+ * computes them onto `combatStats` (see the comment above `TIMING_ROWS`) —
+ * so reading the sim side needs the fallback. `criticalRate`/`criticalDamage`/
+ * `hpRegenPer10` are the opposite case: the same capture shows *neither* side
+ * has a flat form for these, only `combatStats`, so the fallback fires on both
+ * sides and lands on the same nested path either way. The fallback is
+ * harmless for the mitigation/evasion/offense rows, which never reach it.
  *
- * Cast speed additionally renames itself on the way to the flat block: a
- * monster's resolved `combatDetails.totalCastSpeed` is `combatStats.castSpeed`
- * underneath (see the trial-badger fixture in `guild-trial-messages.fixture.js`
- * for the flat name, and `combat-unit.js`'s `combatStats.castSpeed` for the
- * nested one), and a player's live sheet never gets the "total" flat form at
- * all — `guild-loadouts.js`'s `STAT_ROWS` reads `combatStats.castSpeed`
- * directly off it. The alias below is what lets `totalCastSpeed` find either
- * shape.
+ * Cast speed additionally renames itself on the way to the flat block, and is
+ * not a simple rename: a real capture's flat `totalCastSpeed` is
+ * `combatStats.castSpeed` (the raw base stat) *plus* `attackLevel / 2000` *plus*
+ * every active `/buff_types/cast_speed` buff's `flatBoost` — see the worked
+ * numbers in the comment above `TIMING_ROWS`. The sim computes that identical
+ * sum into its own `combatStats.castSpeed` in place, so the alias below still
+ * finds the right (already-resolved) number; it does not perform the addition
+ * itself, since by the time anything here reads `combatStats`, the sim has
+ * already run `updateCombatDetails()` and done that arithmetic.
  * @param {Object} details - A `combatDetails` object
  * @param {string} key
  * @returns {number|undefined}
