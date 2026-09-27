@@ -979,7 +979,11 @@ export function replayFights(ticks) {
             }
         }
 
-        const events = attributeTick(tick.payload, attribution);
+        // The ability map tells a known single-target cast from a possible area
+        // cast; without it every ability could pay off a rise on each monster
+        const events = attributeTick(tick.payload, attribution, {
+            abilityDetailMap: dataManager.getInitClientData?.()?.abilityDetailMap,
+        });
         // Bound per tick rather than read from the outer `monsters`: the wave is
         // replaced at every battle, and a closure over the variable would name
         // this tick's monsters after whichever battle happened to be last

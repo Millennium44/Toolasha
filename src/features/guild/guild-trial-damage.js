@@ -3446,7 +3446,9 @@ class GuildTrialDamage {
             if (!this.active) return;
 
             const now = Date.now();
-            const events = attributeTick(data, this.state);
+            const events = attributeTick(data, this.state, {
+                abilityDetailMap: dataManager.getInitClientData?.()?.abilityDetailMap,
+            });
             foldEvents(this.tally, events);
             this._foldKills(events);
             this._noteDeaths(data?.pMap);
