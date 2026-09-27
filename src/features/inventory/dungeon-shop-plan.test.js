@@ -144,4 +144,89 @@ describe('planTokenSpend', () => {
         expect(plan.gold).toBe(0);
         expect(plan.rows.every((r) => r.quantity === 0)).toBe(true);
     });
+
+    describe('the hold threshold', () => {
+        // Measured live: 15,000 tokens on 5 Chaotic Chain at 6.4M gold/token, then
+        // 1,170 tokens that used to fall through to Sinister Essence at 689 gold/token
+        const CHAIN_ESSENCE = [
+            { itemHrid: '/items/chaotic_chain', name: 'Chaotic Chain', cost: 3000, netValue: 3000 * 6_400_000 },
+            { itemHrid: '/items/sinister_essence', name: 'Sinister Essence', cost: 1, netValue: 689 },
+        ];
+        const chainEssenceCaps = {
+            '/items/chaotic_chain': { cap: 5, measured: true },
+            '/items/sinister_essence': { cap: 1_000_000, measured: true },
+        };
+
+        test('an item far below the best gold/token is held for next run instead of spent on', () => {
+            const plan = planTokenSpend({
+                offers: CHAIN_ESSENCE,
+                tokens: 16_170,
+                caps: chainEssenceCaps,
+                holdPercent: 80,
+            });
+            const byName = Object.fromEntries(plan.rows.map((r) => [r.name, r]));
+
+            expect(byName['Chaotic Chain']).toMatchObject({ quantity: 5, tokens: 15_000, reason: 'volume' });
+            expect(byName['Sinister Essence']).toMatchObject({ quantity: 0, tokens: 0, reason: 'below-threshold' });
+            expect(plan.spent).toBe(15_000);
+            expect(plan.held).toBe(1170);
+            expect(plan.leftover).toBe(0);
+        });
+
+        test('without a threshold, the same tokens fall through to the worse item as before', () => {
+            const plan = planTokenSpend({ offers: CHAIN_ESSENCE, tokens: 16_170, caps: chainEssenceCaps });
+            const essence = plan.rows.find((r) => r.name === 'Sinister Essence');
+            expect(essence).toMatchObject({ quantity: 1170, reason: 'tokens' });
+            expect(plan.held).toBe(0);
+            expect(plan.leftover).toBe(0);
+        });
+
+        test('two items within the threshold of each other both get tokens', () => {
+            const offers = [
+                { itemHrid: '/items/a', name: 'A', cost: 1, netValue: 1000 },
+                { itemHrid: '/items/b', name: 'B', cost: 1, netValue: 850 }, // 85% of A, above an 80% bar
+            ];
+            const caps = { '/items/a': { cap: 100, measured: true }, '/items/b': { cap: 100, measured: true } };
+            const plan = planTokenSpend({ offers, tokens: 200, caps, holdPercent: 80 });
+            const byName = Object.fromEntries(plan.rows.map((r) => [r.name, r]));
+            expect(byName['A'].quantity).toBe(100);
+            expect(byName['B'].quantity).toBe(100);
+            expect(plan.held).toBe(0);
+        });
+
+        test('a threshold of 0 reproduces the plan with no threshold at all', () => {
+            const withThreshold = planTokenSpend({
+                offers: OFFERS,
+                tokens: 10_500,
+                caps: Object.fromEntries(OFFERS.map((o) => [o.itemHrid, { cap: 10_000, measured: true }])),
+                holdPercent: 0,
+            });
+            const withoutThreshold = planTokenSpend({
+                offers: OFFERS,
+                tokens: 10_500,
+                caps: Object.fromEntries(OFFERS.map((o) => [o.itemHrid, { cap: 10_000, measured: true }])),
+            });
+            expect(withThreshold).toEqual(withoutThreshold);
+            expect(withThreshold.held).toBe(0);
+        });
+
+        test('the best item can be uncapped or unmeasured-but-included and still set the bar', () => {
+            const offers = [
+                // 1,000 gold/token, but so expensive per purchase only one is affordable
+                { itemHrid: '/items/best', name: 'Best', cost: 150, netValue: 150_000 },
+                { itemHrid: '/items/worse', name: 'Worse', cost: 1, netValue: 500 }, // 50% of Best, below an 80% bar
+            ];
+            const caps = {
+                '/items/best': { cap: Number.POSITIVE_INFINITY, measured: false },
+                '/items/worse': { cap: 100, measured: true },
+            };
+            const plan = planTokenSpend({ offers, tokens: 200, caps, holdPercent: 80 });
+            const byName = Object.fromEntries(plan.rows.map((r) => [r.name, r]));
+            expect(byName['Best']).toMatchObject({ quantity: 1, tokens: 150 });
+            expect(byName['Worse']).toMatchObject({ quantity: 0, reason: 'below-threshold' });
+            expect(plan.spent).toBe(150);
+            expect(plan.held).toBe(50);
+            expect(plan.leftover).toBe(0);
+        });
+    });
 });

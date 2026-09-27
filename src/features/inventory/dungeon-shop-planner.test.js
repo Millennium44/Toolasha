@@ -177,7 +177,9 @@ function announceModal(modal) {
 
 beforeEach(() => {
     document.body.innerHTML = '';
-    state.settings = {};
+    // Hold-threshold tests set this explicitly; every other test here predates the
+    // threshold and keeps its own expectations by running with it disabled
+    state.settings = { dungeonShopPlanner_holdPercent: 0 };
     state.asked = [];
     state.inventory = [{ itemHrid: '/items/pirate_token', count: 7500, itemLocationHrid: '/item_locations/inventory' }];
     state.volumes = {
@@ -332,6 +334,54 @@ describe('the plan', () => {
         box.dispatchEvent(new Event('change'));
         expect(qtyOf('/items/kraken_fang')).toBe('2');
         expect(rowFor('/items/kraken_fang').cells[5].textContent).toBe('unmeasured, uncapped');
+    });
+});
+
+describe('the hold threshold', () => {
+    test('the default holds an item far below the best gold/token, and says so', async () => {
+        delete state.settings.dungeonShopPlanner_holdPercent; // fall back to the schema default (80)
+        await openPirate();
+        // Fang 320/token after tax is the best (cap 1, affordable); Brooch at 240/token
+        // is 75% of that — below an 80% bar — and Essence at 96/token is further below
+        expect(qtyOf('/items/kraken_fang')).toBe('1');
+        expect(qtyOf('/items/marksman_brooch')).toBe('—');
+        expect(qtyOf('/items/pirate_essence')).toBe('—');
+        expect(rowFor('/items/marksman_brooch').cells[5].textContent).toContain('below 80% of best');
+        expect(body().textContent).toContain('held for next run');
+        expect(body().textContent).toContain('below 80% of the best gold/token');
+    });
+
+    test('a threshold of 0 spends on the next-best item exactly as before the feature', async () => {
+        state.settings.dungeonShopPlanner_holdPercent = 0;
+        await openPirate();
+        expect(qtyOf('/items/kraken_fang')).toBe('1');
+        expect(qtyOf('/items/marksman_brooch')).toBe('2');
+        expect(qtyOf('/items/pirate_essence')).toBe('500');
+        expect(body().textContent).not.toContain('held for next run');
+    });
+
+    test('the % of best input persists as a setting and re-plans', async () => {
+        state.settings.dungeonShopPlanner_holdPercent = 0;
+        await openPirate();
+        expect(qtyOf('/items/marksman_brooch')).toBe('2');
+
+        const hold = body().querySelector('.toolasha-dungeon-plan-hold');
+        expect(hold.value).toBe('0');
+        hold.value = '80';
+        hold.dispatchEvent(new Event('change'));
+
+        expect(state.settings.dungeonShopPlanner_holdPercent).toBe(80);
+        expect(qtyOf('/items/marksman_brooch')).toBe('—');
+    });
+
+    test('the % of best input accepts 0 (turning the hold off), unlike Days and % of volume', async () => {
+        state.settings.dungeonShopPlanner_holdPercent = 80;
+        await openPirate();
+        const hold = body().querySelector('.toolasha-dungeon-plan-hold');
+        hold.value = '0';
+        hold.dispatchEvent(new Event('change'));
+        expect(state.settings.dungeonShopPlanner_holdPercent).toBe(0);
+        expect(qtyOf('/items/marksman_brooch')).toBe('2');
     });
 });
 
