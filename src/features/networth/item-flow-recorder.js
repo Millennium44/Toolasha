@@ -74,6 +74,12 @@
  *
  * One record per local day in the `networthHistory` store, day-chunked for the
  * same reason as `combat-loot-recorder.js`: it is written on every completion.
+ *
+ * A day's row is rewritten all day, so two devices can each hold a different
+ * copy of it. A sync pull folds two copies of a chunk by union, and the union
+ * cannot tell two versions of one row from two rows: both are kept, and every
+ * reader summed them — the gathering, drinks and keys of the copy that was
+ * pulled counted twice. `mergeDayRows` folds them back into one on every load.
  */
 
 import storage from '../../core/storage.js';
@@ -256,6 +262,118 @@ export function gatheringRunTotals(rows, run) {
     }
 
     return found ? { gained, from, to } : null;
+}
+
+/**
+ * Two copies of one run's stretches, as one list.
+ *
+ * A stretch is known by where it began: two copies of it are the same watched
+ * stretch, one of them extended further by the device that kept watching, so
+ * the longer one is kept whole. Stretches that began at different moments are
+ * different stretches, and both are kept.
+ * @param {Array<Object>} a - One copy's stretches
+ * @param {Array<Object>} b - The other's
+ * @param {Function} keyOf - `(stretch) => string`, what makes two the same stretch
+ * @returns {Array<Object>} The merged stretches, oldest first
+ */
+function mergeStretches(a, b, keyOf) {
+    const byKey = new Map();
+    for (const stretch of [...(a || []), ...(b || [])]) {
+        if (!Number.isFinite(stretch?.from)) continue;
+        const key = keyOf(stretch);
+        const held = byKey.get(key);
+        const reach = Number.isFinite(stretch.to) ? stretch.to : stretch.from;
+        const heldReach = held ? (Number.isFinite(held.to) ? held.to : held.from) : -Infinity;
+        if (!held || reach > heldReach) byKey.set(key, stretch);
+    }
+    return [...byKey.values()].sort((x, y) => x.from - y.from);
+}
+
+/**
+ * Two copies of one tally (`keys`, `drinks`): the larger count of each item.
+ *
+ * A tally keeps no times, so a copy extended on one device cannot be told from
+ * one counted separately on another. The larger is right for the first, which
+ * is how a synced row diverges, and can only undercount the second — never
+ * count one fall twice.
+ * @param {Object<string, number>} [a]
+ * @param {Object<string, number>} [b]
+ * @returns {Object<string, number>|undefined}
+ */
+function mergeTally(a, b) {
+    if (!a) return b ? { ...b } : undefined;
+    if (!b) return { ...a };
+    const out = { ...a };
+    for (const [key, count] of Object.entries(b)) {
+        if (Number.isFinite(count) && !(out[key] >= count)) out[key] = count;
+    }
+    return out;
+}
+
+/**
+ * Fold two copies of one day's row into one.
+ * @param {ItemFlowDay} a
+ * @param {ItemFlowDay} b
+ * @returns {ItemFlowDay} A new row
+ */
+export function mergeDayRow(a, b) {
+    const out = { d: a.d };
+
+    const runs = new Set([...Object.keys(a.gathering || {}), ...Object.keys(b.gathering || {})]);
+    if (runs.size > 0) {
+        out.gathering = {};
+        for (const run of runs) {
+            const left = a.gathering?.[run];
+            const right = b.gathering?.[run];
+            out.gathering[run] = {
+                a: left?.a ?? right?.a,
+                stretches: mergeStretches(left?.stretches, right?.stretches, (stretch) => String(stretch.from)),
+            };
+        }
+    }
+
+    for (const kind of ['keys', 'drinks']) {
+        const tally = mergeTally(a[kind], b[kind]);
+        if (tally) out[kind] = tally;
+    }
+
+    if (a.combatConsumables || b.combatConsumables) {
+        out.combatConsumables = {
+            stretches: mergeStretches(
+                a.combatConsumables?.stretches,
+                b.combatConsumables?.stretches,
+                (stretch) => `${stretch.from}|${stretch.r ?? ''}`
+            ),
+        };
+    }
+    return out;
+}
+
+/**
+ * One row per day, however many copies of a day the store handed back.
+ * @param {Array<ItemFlowDay>} rows - As loaded, in order
+ * @returns {{rows: Array<ItemFlowDay>, folded: Array<string>}} The rows, first
+ *   position kept, and the days that had more than one copy
+ */
+export function mergeDayRows(rows) {
+    const out = [];
+    const at = new Map();
+    const folded = new Set();
+    for (const row of rows || []) {
+        if (!row?.d) {
+            if (row) out.push(row);
+            continue;
+        }
+        if (!at.has(row.d)) {
+            at.set(row.d, out.length);
+            out.push(row);
+            continue;
+        }
+        const index = at.get(row.d);
+        out[index] = mergeDayRow(out[index], row);
+        folded.add(row.d);
+    }
+    return { rows: out, folded: [...folded] };
 }
 
 /**
@@ -533,9 +651,13 @@ class ItemFlowRecorder {
         if (!this._loading) {
             this._charId = charId;
             this._loading = (async () => {
-                const rows = await this._store.load(charId);
+                const loaded = await this._store.load(charId);
                 if (this._generation !== generation) return;
+                // Two devices' copies of one day, kept side by side by a sync
+                // pull, are one row; the next save writes the merged copy back
+                const { rows, folded } = mergeDayRows(loaded);
                 this._rows = rows;
+                for (const day of folded) this._touchedChunks.add(rowChunkId({ d: day }));
                 // The first load landing is exactly the moment a synchronous
                 // reader drawn earlier (a null answer, before this resolved)
                 // stops being right without anything else telling it so.

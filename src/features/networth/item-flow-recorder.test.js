@@ -21,6 +21,8 @@ import {
 
 const hoisted = vi.hoisted(() => ({
     saved: [],
+    /** What the store hands back on load; null is an empty history */
+    loaded: null,
     listeners: new Map(),
     game: {
         charId: 'me',
@@ -46,7 +48,7 @@ vi.mock('../../core/storage.js', () => ({
 vi.mock('../../utils/chunked-history.js', () => ({
     timeChunkId: () => '2026-08-20',
     createChunkedHistory: () => ({
-        load: async () => [],
+        load: async () => hoisted.loaded ?? [],
         save: (_charId, rows) => hoisted.saved.push(JSON.parse(JSON.stringify(rows))),
         forget: () => {},
     }),
@@ -322,6 +324,31 @@ describe('reading one run’s gathering for a caller pairing it with a forecast'
         await settle();
         hoisted.listeners.get('character_switching')();
         expect(recorder.getCachedRunGathering('42')).toBeNull();
+    });
+});
+
+describe('two copies of one day in the store', () => {
+    afterEach(() => {
+        hoisted.loaded = null;
+        recorder.cleanup();
+    });
+
+    test('load answers one row per day, the copies merged', async () => {
+        const stretch = (to, milk) => ({ from: 1000, to, gained: { '/items/milk': milk } });
+        hoisted.loaded = [
+            { d: '2026-09-27', gathering: { 7: { a: '/actions/milking/cow', stretches: [stretch(2000, 10)] } } },
+            { d: '2026-09-27', gathering: { 7: { a: '/actions/milking/cow', stretches: [stretch(3000, 16)] } } },
+        ];
+        hoisted.game.charId = 'me';
+        recorder.cleanup();
+        recorder._rows = [];
+        recorder._charId = null;
+        recorder._loading = null;
+        await recorder.initialize();
+
+        const rows = await recorder.load();
+        expect(rows).toHaveLength(1);
+        expect(await recorder.getRunGathering('7')).toEqual({ gained: { '/items/milk': 16 }, from: 1000, to: 3000 });
     });
 });
 
