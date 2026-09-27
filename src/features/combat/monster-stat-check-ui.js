@@ -761,12 +761,21 @@ class MonsterStatCheckPanel {
                         'harness on a different monster, room or build.',
                 };
             } else {
-                // Nothing held: arm a fresh capture bound to this monster, room and build.
-                startCapture({ monsterHrid: snap.hrid, roomLevel: snap.roomLevel, fingerprint });
-                snap.uptime = {
-                    armed: true,
-                    message: 'Capturing — fight this monster, then click “Run uptime harness” again.',
-                };
+                // Nothing held yet — but `startCapture` itself still checks
+                // (and, on this character's first check this session,
+                // triggers) autosave recovery before arming anything, so a
+                // capture left over from a crashed or closed tab still wins
+                // this race even when the room-log feature never called
+                // `loadAutosave` at all. Its own return says whether it
+                // actually started.
+                const armed = startCapture({ monsterHrid: snap.hrid, roomLevel: snap.roomLevel, fingerprint });
+                snap.uptime = armed.started
+                    ? { armed: true, message: 'Capturing — fight this monster, then click “Run uptime harness” again.' }
+                    : {
+                          error:
+                              'Checking for a capture recovered from an earlier session — click “Run uptime ' +
+                              'harness” again in a moment.',
+                      };
             }
         } catch (error) {
             console.error('[MonsterStatCheck] Uptime harness failed:', error);

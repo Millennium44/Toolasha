@@ -1802,6 +1802,14 @@ class LabyrinthRoomLogs {
         const holding = !status.capturing && status.ticks > 0;
         const saved = holding && status.savedAt != null;
         const dupes = status.duplicatesDiscarded > 0 ? ` ${status.duplicatesDiscarded} repeated ticks discarded.` : '';
+        // Another tab captured under this character too, and its own
+        // autosave was found but not restored (recovery keeps only the
+        // freshest — see labTickCapture.performRecovery). Never deleted, so
+        // this just says they exist rather than pretending they do not.
+        const others =
+            status.otherRecoverableCount > 0
+                ? ` +${status.otherRecoverableCount} more recovered capture${status.otherRecoverableCount === 1 ? '' : 's'} from another tab, left on disk.`
+                : '';
 
         if (status.capturing) {
             this.captureButton.textContent = `Stop & save (${status.ticks})`;
@@ -1814,17 +1822,17 @@ class LabyrinthRoomLogs {
             this.captureButton.title =
                 'Already saved, but still held — a Save click is not proof the file reached disk (the browser ' +
                 'dialog can be cancelled), so it stays until you say otherwise. This discards it and starts a ' +
-                `fresh capture; use Discard alone to just let it go.${dupes}`;
+                `fresh capture; use Discard alone to just let it go.${dupes}${others}`;
         } else if (holding && status.stoppedReason === 'page_reload') {
             this.captureButton.textContent = `Recovered capture (${status.ticks})`;
             this.captureButton.title =
                 'A reload (or a crash) interrupted this capture before it could be saved; the ticks survived in ' +
-                `the autosave. Save writes the file; Discard throws them away.${dupes}`;
+                `the autosave. Save writes the file; Discard throws them away.${dupes}${others}`;
         } else if (holding) {
             this.captureButton.textContent = `Save capture (${status.ticks})`;
             this.captureButton.title =
                 'The capture stopped by itself (the fight moved to a different monster, or the time limit) and ' +
-                `is still holding these ticks. Save writes the file; Discard throws them away.${dupes}`;
+                `is still holding these ticks. Save writes the file; Discard throws them away.${dupes}${others}`;
         } else {
             this.captureButton.textContent = 'Capture';
             this.captureButton.title =

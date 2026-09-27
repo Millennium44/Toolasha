@@ -144,7 +144,11 @@ vi.mock('./labyrinth-clear-rate.js', () => ({
 }));
 vi.mock('./labyrinth-tick-capture.js', () => ({
     captureFile: () => tickCapture.file,
-    startCapture: (ctx) => tickCapture.started.push(ctx),
+    startCapture: (ctx) => {
+        tickCapture.started.push(ctx);
+        // Mirrors the real module's shape — the harness now reads .started.
+        return { started: tickCapture.startResult !== false };
+    },
     // Mirrors the real module's own fallback: the last new_battle tick's own
     // roomLevel, else the capture-wide context's.
     lastFightRoomLevel: (file) => {
@@ -196,6 +200,7 @@ beforeEach(() => {
     clearRate.harnessResult = null;
     tickCapture.file = { ticks: [] };
     tickCapture.started = [];
+    tickCapture.startResult = undefined;
 });
 
 describe('restoring the persisted history', () => {
@@ -322,6 +327,29 @@ describe('the uptime harness capture gate', () => {
 
         expect(clearRate.harnessCalls).toHaveLength(1);
         expect(panel.displayed.uptime.fightsLabel).toBe('2 fights (+1 partial excluded) — capture started mid-fight');
+    });
+
+    test('nothing held: arms a fresh capture and reports it as armed', async () => {
+        panel.displayed = snap({});
+        tickCapture.file = { ticks: [] };
+
+        await panel._runUptimeHarness();
+
+        expect(tickCapture.started).toHaveLength(1);
+        expect(panel.displayed.uptime.armed).toBe(true);
+        expect(panel.displayed.uptime.error).toBeUndefined();
+    });
+
+    test('startCapture refusing (autosave recovery still pending) is reported honestly, not as armed', async () => {
+        panel.displayed = snap({});
+        tickCapture.file = { ticks: [] };
+        tickCapture.startResult = false;
+
+        await panel._runUptimeHarness();
+
+        expect(tickCapture.started).toHaveLength(1);
+        expect(panel.displayed.uptime.armed).toBeUndefined();
+        expect(panel.displayed.uptime.error).toContain('recovered');
     });
 });
 
