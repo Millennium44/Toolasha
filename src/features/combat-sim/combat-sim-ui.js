@@ -874,7 +874,9 @@ export function resolveSimParty(editor, editedDTOs) {
                 trueSelfHrid: trueSelfHrid === soloHrid ? soloHrid : null,
                 selfHrid: soloHrid,
                 missingMembers: [],
-                profileStatus: [],
+                // The simulated member's own stale/gearless-profile warning
+                // still applies; only the other members' are dropped
+                profileStatus: profileStatus.filter((status) => status?.hrid === soloHrid),
                 soloApplied: true,
             };
         }
