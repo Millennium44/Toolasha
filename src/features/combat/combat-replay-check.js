@@ -1031,6 +1031,17 @@ export function busiestPlayer(fights) {
  * @param {Object} [context] - `{zoneHrid, difficultyTier, recordedAt, loadout}` to stamp it with
  * @returns {Object|null} An observation, or null when there is no completed fight in it
  */
+/**
+ * What an observation's swing counts mean, stamped on every new one.
+ *
+ * Version 2: a damage-over-time tick is not a hit, and each fight carries the
+ * damage-over-time it dealt as `dotDealt`. An observation without the stamp was
+ * replayed when every bleed tick counted as a landed hit, so its hits, hit rate
+ * and damage per hit measure something else — its damage and time are still
+ * right, and only the swing decomposition leaves it out.
+ */
+export const OBSERVATION_VERSION = 2;
+
 export function observeRecording(recording, context = {}) {
     const fights = replayFights(recording?.ticks);
     if (!fights.length) return null;
@@ -1056,6 +1067,7 @@ export function observeRecording(recording, context = {}) {
     }
 
     return {
+        attributionVersion: OBSERVATION_VERSION,
         recordedAt: context.recordedAt ?? Date.now(),
         recordingId: recording?.recordingId ?? null,
         segment: recording?.segment ?? null,
@@ -1147,13 +1159,20 @@ export function aggregateObservations(observations) {
     // the totals later because an observation recorded before hits and misses
     // were kept has neither, and a zero swing count is what says "this sample
     // cannot be decomposed" rather than "this character never swung".
-    const hits = fights.reduce((total, fight) => total + (fight.hits || 0), 0);
+    // The swing decomposition reads only observations whose swings mean what
+    // the simulator's do (see OBSERVATION_VERSION). Damage, time, kills and
+    // deaths above come from every fight, which is still right for all of them
+    const swingFights = cohort
+        .filter((entry) => Number(entry.attributionVersion) >= OBSERVATION_VERSION)
+        .flatMap((entry) => entry.fights);
+    const swingSeconds = swingFights.reduce((total, fight) => total + fight.seconds, 0);
+    const hits = swingFights.reduce((total, fight) => total + (fight.hits || 0), 0);
     // Damage per hit is swing damage over swings. `damageDealt` also carries
     // the damage-over-time ticks `hits` leaves out, and dividing one by the
     // other would overstate every hit of a bleed build. An observation recorded
     // before `dotDealt` existed has none to take out
-    const swingDealt = fights.reduce((total, fight) => total + swingDamageIn(fight), 0);
-    const swings = fights.reduce((total, fight) => total + (fight.hits || 0) + (fight.misses || 0), 0);
+    const swingDealt = swingFights.reduce((total, fight) => total + swingDamageIn(fight), 0);
+    const swings = swingFights.reduce((total, fight) => total + (fight.hits || 0) + (fight.misses || 0), 0);
 
     // The endpoint reconciliation, over only the fights that carry it — a
     // recording replayed before the residual existed contributes nothing
@@ -1221,6 +1240,10 @@ export function aggregateObservations(observations) {
         deaths,
         hits,
         swings,
+        // How many fights the swing decomposition rests on, and how many it set
+        // aside as replayed under the old reading of a bleed tick
+        swingFights: swingFights.length,
+        legacySwingFights: fights.length - swingFights.length,
         // How much of the waves' endpoint HP loss the attribution credited.
         // Null when no fight carries the reconciliation; the residual folds
         // designed exclusions (bleeds) with 3 Hz merge loss, so it is a
@@ -1230,7 +1253,7 @@ export function aggregateObservations(observations) {
         dps: seconds > 0 ? damageDealt / seconds : null,
         takenPerSecond: seconds > 0 ? damageTaken / seconds : null,
         secondsPerFight: fights.length ? seconds / fights.length : null,
-        swingsPerSecond: seconds > 0 && swings > 0 ? swings / seconds : null,
+        swingsPerSecond: swingSeconds > 0 && swings > 0 ? swings / swingSeconds : null,
         hitRate: swings > 0 ? hits / swings : null,
         damagePerHit: hits > 0 ? swingDealt / hits : null,
         xpBySkill,
@@ -1243,11 +1266,11 @@ export function aggregateObservations(observations) {
             dps: fights.map((fight) => (fight.seconds > 0 ? fight.damageDealt / fight.seconds : null)),
             takenPerSecond: fights.map((fight) => (fight.seconds > 0 ? fight.damageTaken / fight.seconds : null)),
             secondsPerFight: fights.map((fight) => fight.seconds),
-            swingsPerSecond: fights.map((fight) =>
+            swingsPerSecond: swingFights.map((fight) =>
                 fight.seconds > 0 && swingsIn(fight) > 0 ? swingsIn(fight) / fight.seconds : null
             ),
-            hitRate: fights.map((fight) => (swingsIn(fight) > 0 ? (fight.hits || 0) / swingsIn(fight) : null)),
-            damagePerHit: fights.map((fight) => (fight.hits > 0 ? swingDamageIn(fight) / fight.hits : null)),
+            hitRate: swingFights.map((fight) => (swingsIn(fight) > 0 ? (fight.hits || 0) / swingsIn(fight) : null)),
+            damagePerHit: swingFights.map((fight) => (fight.hits > 0 ? swingDamageIn(fight) / fight.hits : null)),
             // Only the fights whose gains were known. A fight that straddled a
             // restarted combat action has no experience to sample, and folding
             // it in as a zero would drag the mean towards one
@@ -1713,7 +1736,7 @@ export function deathCheck(observed, predicted) {
 export function compareRun(observed, predicted) {
     if (!observed || !predicted) return null;
 
-    const compare = ({ key, label }) =>
+    const compare = ({ key, label }, fights = observed.fights) =>
         compareMetric({
             key,
             label,
@@ -1723,8 +1746,11 @@ export function compareRun(observed, predicted) {
             // The cohort, not the sample array's length: a decomposition metric
             // may have fewer samples than the run had fights, and the bar is
             // about how much combat was watched.
-            fights: observed.fights,
+            fights,
         });
+    // The swing decomposition rests on the fights replayed under the current
+    // reading of a bleed tick; an aggregate from before the split has all of them
+    const swingCompare = (metric) => compare(metric, observed.swingFights ?? observed.fights);
 
     // Both sides or neither. A recording made before hits and misses were kept
     // has no swings to count, and a simulation result with no attack detail has
@@ -1747,8 +1773,11 @@ export function compareRun(observed, predicted) {
         observedSeconds: observed.seconds,
         predictedSeconds: predicted.seconds,
         warnings: predicted.warnings || [],
-        metrics: METRICS.map(compare),
-        decomposition: decomposable ? DECOMPOSITION_METRICS.map(compare) : [],
+        metrics: METRICS.map((metric) => compare(metric)),
+        decomposition: decomposable ? DECOMPOSITION_METRICS.map(swingCompare) : [],
+        // Fights left out of the decomposition because they were replayed when
+        // a bleed tick counted as a hit. Their damage and time are in `metrics`
+        legacySwingFights: observed.legacySwingFights || 0,
         // The total is banded like everything else. The split between skills is
         // not: it is decided by the primary and focus training on the snapshot
         // rather than by any roll, so its spread is not a sampling question and
@@ -3168,9 +3197,22 @@ export function downloadExport({ sanitized = false } = {}) {
  * @param {Object} comparison - From `compareRun`
  */
 function drawDecomposition(body, comparison) {
-    if (!comparison.decomposition?.length) return;
+    const legacy = comparison.legacySwingFights || 0;
+    const legacyNote = panelNote(
+        `${legacy} older fight${legacy === 1 ? '' : 's'} left out of this breakdown: recorded when a bleed ` +
+            'tick counted as a landed hit, so their swings do not compare. Their damage and time still count above.'
+    );
+    if (!comparison.decomposition?.length) {
+        if (legacy > 0) {
+            const card = panelCard(body, 'Where the damage difference is', ACCENT);
+            card.appendChild(legacyNote);
+            card.appendChild(panelNote('Every fight on hand is one of those. Record new fights to see the breakdown.'));
+        }
+        return;
+    }
 
     const card = panelCard(body, 'Where the damage difference is', ACCENT);
+    if (legacy > 0) card.appendChild(legacyNote);
     for (const metric of comparison.decomposition) {
         const deviation =
             metric.deviationPct === null
