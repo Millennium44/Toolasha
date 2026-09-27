@@ -230,6 +230,12 @@ function resetTracker() {
 }
 
 beforeEach(() => {
+    // The fixtures' runs happen on the morning of 2026-08-04, and the tracker
+    // judges a run's age against the clock — a run a real clock says is weeks
+    // old is dropped as stale. Only Date is pinned; tests that drive timers
+    // install their own fake timers over this.
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(Date.parse('2026-08-04T10:05:00.000Z'));
     mockStorage.reset();
     _resetAdoptionCache();
     game.characterId = 'market123';
@@ -686,7 +692,7 @@ describe('the in-progress record', () => {
             battleId: 42,
             dungeonHrid: DEN,
             tier: 1,
-            startTime: 1000,
+            startTime: Date.now() - 60_000,
             currentWave: 5,
             maxWaves: 10,
             wavesCompleted: 4,
@@ -815,7 +821,7 @@ describe('the in-progress record', () => {
             battleId: 42,
             dungeonHrid: DEN,
             tier: 0,
-            startTime: 1000,
+            startTime: Date.now() - 60_000,
             currentWave: 5,
             maxWaves: 10,
             wavesCompleted: 4,
@@ -828,7 +834,7 @@ describe('the in-progress record', () => {
 
         expect(tracker.isTracking).toBe(true);
         expect(tracker.currentRun.wavesCompleted).toBe(4);
-        expect(tracker.currentRun.startTime).toBe(1000);
+        expect(tracker.currentRun.startTime).toBe(Date.now() - 60_000);
     });
 
     test('a mid-dungeon new_battle with nothing to restore starts a run anyway', async () => {
@@ -1830,7 +1836,7 @@ describe('picking the run back up on page load', () => {
             battleId: 42,
             dungeonHrid: DEN,
             tier: 0,
-            startTime: 1000,
+            startTime: Date.now() - 60_000,
             currentWave: 5,
             maxWaves: 10,
             wavesCompleted: 4,
@@ -1933,7 +1939,7 @@ describe('picking the run back up on page load', () => {
         expect(tracker.currentRun).toMatchObject({
             dungeonHrid: DEN,
             tier: 0,
-            startTime: 1000,
+            startTime: Date.now() - 60_000,
             // The record's own wave; the restore replaces nothing it carries
             currentWave: 5,
             maxWaves: 10,
@@ -2448,7 +2454,7 @@ describe('switching characters', () => {
             battleId: 42,
             dungeonHrid: DEN,
             tier: 0,
-            startTime: 1000,
+            startTime: Date.now() - 60_000,
             currentWave: 5,
             maxWaves: 10,
             wavesCompleted: 4,
@@ -2478,7 +2484,7 @@ describe('switching characters', () => {
             battleId: 42,
             dungeonHrid: DEN,
             tier: 0,
-            startTime: 1000,
+            startTime: Date.now() - 60_000,
             currentWave: 5,
             maxWaves: 10,
             wavesCompleted: 4,
@@ -4368,5 +4374,330 @@ describe('a dungeon displaced by "Start Now"', () => {
             expect(tracker.restoredMidRun).toBe(false);
             expect(stored()).toMatchObject({ battleId: 92, pausedAt: null });
         });
+    });
+});
+
+describe('a start left over from another day', () => {
+    /*
+     * Reported from the live server, 3.61.1. A Pirate Cove party run completed
+     * on its key count at 9/26 10:29:27; the next run's ready check was then
+     * canceled ("not ready", "Battle ended: Pirate Cove"). A day later, with a
+     * different party of five, Sinister Circus: the panel read "Elapsed:
+     * 1604:39" at wave 55 of 60, and the run banked as 1608:19 dated 09-26
+     * 10:29:27 AM — the canceled start's key count, carried as the next run's
+     * anchor across the day, the party change and the dungeon change.
+     */
+    const COVE = '/actions/combat/pirate_cove';
+    const FIVE = ['MrChilimby', 'Sarin', 'Marketcow', 'feagle', 'ZazzBlammymataz'].map((name) => ({
+        character: { name },
+    }));
+    const PARTY_ID = 7301;
+
+    function partyMessage(m, iso, systemMetadata) {
+        return {
+            message: {
+                chan: '/chat_channel_types/party',
+                isSystemMessage: true,
+                m,
+                t: iso,
+                ...(systemMetadata ? { systemMetadata: JSON.stringify(systemMetadata) } : {}),
+            },
+        };
+    }
+
+    /** A party dungeon action as the queue carries it: party actions have a non-zero partyID. */
+    function partyAction(actionHrid, extra = {}) {
+        return { id: 9001, actionHrid, difficultyTier: 0, partyID: PARTY_ID, ordinal: 0, isDone: false, ...extra };
+    }
+
+    beforeEach(() => {
+        vi.useFakeTimers();
+        game.actionDetails[COVE] = { name: 'Pirate Cove', combatZoneInfo: { isDungeon: true } };
+        game.dungeonInfo[COVE] = { name: 'Pirate Cove', maxWaves: 65 };
+        game.dungeonInfo[LAIR] = { name: 'Sinister Circus', maxWaves: 60 };
+    });
+
+    /** Pirate Cove run #40 ends on its key count, then the next start is canceled. */
+    async function coveEndsThenCancels() {
+        vi.setSystemTime(Date.parse('2026-09-26T10:29:20.000Z'));
+        game.actions = [partyAction(COVE)];
+        beTracking({
+            dungeonHrid: COVE,
+            startTime: Date.parse('2026-09-26T09:58:14.000Z'),
+            currentWave: 65,
+            maxWaves: 65,
+            wavesCompleted: 65,
+            battleId: 40,
+            keyCountsMap: { Marketcow: 60, Alice: 58 },
+            anchoredAt: '2026-09-26T09:58:13.000Z',
+        });
+        vi.setSystemTime(Date.parse('2026-09-26T10:29:27.500Z'));
+        tracker.onChatMessage(
+            partyMessage('systemChatMessage.partyKeyCount', '2026-09-26T10:29:27.000Z', {
+                keyCountString: '[Marketcow - 59] [Alice - 57]',
+            })
+        );
+        await flush();
+        tracker.onChatMessage(partyMessage('systemChatMessage.partyBattleEnded', '2026-09-26T10:29:40.000Z'));
+        await flush();
+        game.actions = [];
+        tracker.onActionsUpdated({ endCharacterActions: [partyAction(COVE, { isDone: true })] });
+        await flush();
+    }
+
+    test('the canceled start does not open the next day’s Sinister Circus run', async () => {
+        await coveEndsThenCancels();
+        // Run #40 itself was a real, whole run and banks as one
+        expect(game.savedRuns).toHaveLength(1);
+        expect(game.savedRuns[0].run.duration).toBe(31 * 60_000 + 14_000);
+
+        // The next day: a new party, a new dungeon, its first battle
+        const runStart = Date.parse('2026-09-27T12:38:50.000Z');
+        vi.setSystemTime(runStart - 10_000);
+        game.actions = [partyAction(LAIR, { id: 9002 })];
+        tracker.onActionsUpdated({ endCharacterActions: [partyAction(LAIR, { id: 9002 })] });
+        tracker.onChatMessage(
+            partyMessage('systemChatMessage.partyBattleStarted', '2026-09-27T12:38:40.000Z', {
+                name: 'Sinister Circus',
+            })
+        );
+        vi.setSystemTime(runStart);
+        tracker.onChatMessage(
+            partyMessage('systemChatMessage.partyKeyCount', '2026-09-27T12:38:50.000Z', {
+                keyCountString: '[MrChilimby - 50] [Sarin - 50] [Marketcow - 51] [feagle - 37] [ZazzBlammymataz - 51]',
+            })
+        );
+        vi.setSystemTime(runStart + 2_000);
+        await tracker.onNewBattle({ wave: 1, battleId: 1, combatStartTime: '2026-09-27T12:38:52.000Z', players: FIVE });
+        await flush();
+        vi.advanceTimersByTime(200); // the post-start chat scan
+        await flush();
+
+        // Its start is its own key count, not the canceled one from the day before
+        expect(tracker.firstKeyCountTimestamp).toBe(runStart);
+
+        // Wave 55, eighteen minutes in: the panel reads minutes, not a day
+        vi.setSystemTime(runStart + 18 * 60_000);
+        await tracker.onNewBattle({
+            wave: 55,
+            battleId: 1,
+            combatStartTime: '2026-09-27T12:38:52.000Z',
+            players: FIVE,
+        });
+        await flush();
+        const shown = tracker.getCurrentRun();
+        expect(shown.dungeonHrid).toBe(LAIR);
+        expect(shown.totalElapsed).toBe(18 * 60_000);
+
+        // And it banks as the 19:28 the chat itself reports
+        vi.setSystemTime(Date.parse('2026-09-27T12:58:18.500Z'));
+        tracker.onChatMessage(
+            partyMessage('systemChatMessage.partyKeyCount', '2026-09-27T12:58:18.000Z', {
+                keyCountString: '[MrChilimby - 49] [Sarin - 49] [Marketcow - 50] [feagle - 36] [ZazzBlammymataz - 50]',
+            })
+        );
+        await flush();
+        expect(game.savedRuns).toHaveLength(2);
+        expect(game.savedRuns[1].run.dungeonName).toBe('Sinister Circus');
+        expect(game.savedRuns[1].run.duration).toBe(19 * 60_000 + 28_000);
+        expect(game.savedRuns[1].run.timestamp).toBe('2026-09-27T12:38:50.000Z');
+    });
+
+    test('a carried anchor that waited far longer than a run boundary is not used', async () => {
+        // No "Battle ended" or "Battle started" to disarm it: the age alone does
+        beTracking({ keyCountsMap: { Alice: 12 }, anchoredAt: '2026-08-04T10:00:00.000Z' });
+        vi.setSystemTime(Date.parse('2026-08-04T10:30:01.000Z'));
+        tracker.onChatMessage(keyCountsData('2026-08-04T10:30:00.000Z', 'Key counts: [Alice - 11]'));
+        await flush();
+        expect(tracker.pendingNextRunFirstKeyCount).toBe(Date.parse('2026-08-04T10:30:00.000Z'));
+
+        vi.setSystemTime(Date.parse('2026-08-05T12:00:00.000Z'));
+        game.actions = [{ actionHrid: DEN, difficultyTier: 0, isDone: false }];
+        await tracker.onNewBattle({ wave: 1, battleId: 1, combatStartTime: '2026-08-05T12:00:00.000Z' });
+        await flush();
+
+        expect(tracker.firstKeyCountTimestamp).toBeNull();
+        expect(tracker.getCurrentRun().totalElapsed).toBe(0);
+    });
+
+    test('a key-count pair a day apart is never banked as one run', async () => {
+        vi.setSystemTime(Date.parse('2026-09-27T13:10:00.000Z'));
+        beTracking({
+            dungeonHrid: LAIR,
+            currentWave: 60,
+            maxWaves: 60,
+            wavesCompleted: 60,
+            keyCountsMap: { Marketcow: 50, Sarin: 49 },
+            anchoredAt: '2026-09-26T10:29:27.000Z',
+            startTime: Date.parse('2026-09-27T12:58:20.000Z'),
+        });
+        vi.setSystemTime(Date.parse('2026-09-27T13:17:46.500Z'));
+        tracker.onChatMessage(keyCountsData('2026-09-27T13:17:46.000Z', '[Marketcow - 49] [Sarin - 48]'));
+        await flush();
+
+        expect(tracker.isTracking).toBe(false);
+        expect(game.savedRuns).toEqual([]);
+    });
+});
+
+describe('a run that is over but was never seen to end', () => {
+    const FIVE = ['MrChilimby', 'Sarin', 'Marketcow', 'feagle', 'ZazzBlammymataz'].map((name) => ({
+        character: { name },
+    }));
+    const DAY_AGO = Date.parse('2026-08-03T08:00:00.000Z');
+    const SC_PARTY = { id: 1, actionHrid: LAIR, difficultyTier: 0, partyID: 7301, ordinal: 0, isDone: false };
+
+    beforeEach(() => {
+        game.dungeonInfo[LAIR] = { name: 'Sinister Circus', maxWaves: 60 };
+    });
+
+    test('a restarted party action’s wave 1 is a new run even though its battle id is 1 again', async () => {
+        // A party action numbers its first run's battle 1 every time it starts
+        beTracking({
+            dungeonHrid: LAIR,
+            startTime: DAY_AGO,
+            currentWave: 55,
+            maxWaves: 60,
+            wavesCompleted: 54,
+            battleId: 1,
+        });
+        tracker.currentRun.partyNames = FIVE.map((p) => p.character.name).sort();
+        game.actions = [{ ...SC_PARTY }];
+        tracker.onActionsUpdated({ endCharacterActions: [{ ...SC_PARTY }] });
+
+        await tracker.onNewBattle({ wave: 1, battleId: 1, combatStartTime: '2026-08-04T10:05:00.000Z', players: FIVE });
+        await flush();
+
+        expect(tracker.currentRun.startTime).toBe(Date.now());
+        expect(tracker.currentRun.currentWave).toBe(1);
+        expect(tracker.currentRun.wavesCompleted).toBe(0);
+        expect(tracker.getCurrentRun().totalElapsed).toBe(0);
+    });
+
+    test('the same restart with a recent run is still a new run: a resend is only of the wave the run is on', async () => {
+        const recent = Date.now() - 15 * 60_000;
+        beTracking({
+            dungeonHrid: LAIR,
+            startTime: recent,
+            currentWave: 40,
+            maxWaves: 60,
+            wavesCompleted: 39,
+            battleId: 1,
+        });
+        game.actions = [{ ...SC_PARTY }];
+
+        await tracker.onNewBattle({ wave: 1, battleId: 1, combatStartTime: '2026-08-04T10:05:00.000Z', players: FIVE });
+        await flush();
+
+        expect(tracker.currentRun.startTime).toBe(Date.now());
+        expect(tracker.currentRun.wavesCompleted).toBe(0);
+    });
+
+    test('a later wave of a run a day old starts a new run rather than carrying it on', async () => {
+        beTracking({
+            dungeonHrid: LAIR,
+            startTime: DAY_AGO,
+            currentWave: 54,
+            maxWaves: 60,
+            wavesCompleted: 53,
+            battleId: 1,
+        });
+        game.actions = [{ ...SC_PARTY }];
+
+        await tracker.onNewBattle({
+            wave: 55,
+            battleId: 1,
+            combatStartTime: '2026-08-04T10:05:00.000Z',
+            players: FIVE,
+        });
+        await flush();
+
+        expect(tracker.currentRun.startTime).toBe(Date.now());
+        expect(tracker.currentRun.joinedMidRun).toBe(true);
+        expect(tracker.getCurrentRun().elapsedIsSinceNoticed).toBe(true);
+    });
+
+    test('a saved record a day old is not restored, however fresh its last write', async () => {
+        // Every wave of the wrongly continued run refreshed lastUpdateTime
+        game.actions = [{ ...SC_PARTY }];
+        mockStorage.storeFor('settings').set(`${IN_PROGRESS}_market123`, {
+            battleId: 1,
+            dungeonHrid: LAIR,
+            tier: 0,
+            startTime: DAY_AGO,
+            currentWave: 54,
+            maxWaves: 60,
+            wavesCompleted: 53,
+            waveTimes: [],
+            lastUpdateTime: Date.now() - 30_000,
+        });
+
+        await tracker.onNewBattle({
+            wave: 55,
+            battleId: 1,
+            combatStartTime: '2026-08-04T10:05:00.000Z',
+            players: FIVE,
+        });
+        await flush();
+
+        expect(tracker.currentRun.startTime).toBe(Date.now());
+        expect(tracker.restoredMidRun).toBe(false);
+    });
+
+    test('a saved record is not restored onto a battle below its own wave', async () => {
+        game.actions = [{ ...SC_PARTY }];
+        mockStorage.storeFor('settings').set(`${IN_PROGRESS}_market123`, {
+            battleId: 1,
+            dungeonHrid: LAIR,
+            tier: 0,
+            startTime: Date.now() - 20 * 60_000,
+            currentWave: 54,
+            maxWaves: 60,
+            wavesCompleted: 53,
+            waveTimes: [],
+            lastUpdateTime: Date.now() - 30_000,
+        });
+
+        await tracker.onNewBattle({ wave: 1, battleId: 1, combatStartTime: '2026-08-04T10:05:00.000Z', players: FIVE });
+        await flush();
+
+        expect(tracker.currentRun.startTime).toBe(Date.now());
+        expect(tracker.currentRun.wavesCompleted).toBe(0);
+    });
+
+    test('a finished party run held for a key count that never comes ends at the next wave', async () => {
+        vi.useFakeTimers();
+        const t0 = Date.parse('2026-08-04T10:05:00.000Z');
+        vi.setSystemTime(t0);
+        beTracking({
+            dungeonHrid: LAIR,
+            startTime: t0 - 20 * 60_000,
+            currentWave: 60,
+            maxWaves: 60,
+            wavesCompleted: 60,
+            battleId: 1,
+            anchoredAt: new Date(t0 - 20 * 60_000).toISOString(),
+        });
+        game.actions = [{ ...SC_PARTY }];
+
+        // The next run's wave 1: the run is held open for its completion key count
+        vi.setSystemTime(t0 + 3_000);
+        await tracker.onNewBattle({ wave: 1, battleId: 1, combatStartTime: '2026-08-04T09:00:00.000Z', players: FIVE });
+        await flush();
+        expect(tracker.currentRun.awaitingKeyCount).toBe(true);
+        vi.setSystemTime(t0 + 30_000);
+        tracker.onActionCompleted({ endCharacterAction: { actionHrid: LAIR, wave: 1, isDone: false } });
+        await flush();
+        expect(tracker.currentRun.wavesCompleted).toBe(60);
+
+        // It never came; wave 2 is the next run's, not the old run carried on
+        vi.setSystemTime(t0 + 33_000);
+        await tracker.onNewBattle({ wave: 2, battleId: 1, combatStartTime: '2026-08-04T09:00:00.000Z', players: FIVE });
+        await flush();
+
+        expect(tracker.currentRun.awaitingKeyCount).toBeUndefined();
+        expect(tracker.currentRun.currentWave).toBe(2);
+        expect(tracker.currentRun.startTime).toBe(t0 + 33_000);
+        expect(tracker.getCurrentRun().totalElapsed).toBe(0);
     });
 });
