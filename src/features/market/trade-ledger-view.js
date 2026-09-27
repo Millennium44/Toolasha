@@ -90,6 +90,19 @@ export function summarizeItems(items) {
 /** Stable key for persisting the modal's minimized state; there is no geometry to key off. */
 const PANEL_KEY = 'tradeLedgerModal';
 
+/**
+ * The dialog's width bounds. It was `min-width: 640px` with `max-width: 95%`,
+ * and a min-width beats a max-width: on a ~390px phone the dialog was 682px
+ * wide (padding and border on top), and the overlay's `align-items: center`
+ * hung it off both edges, the title clipped at the left where nothing can
+ * scroll to it and the close button off-screen right. Both bounds now leave
+ * room for the 20px padding and border (42px) plus an 8px gutter a side, so a
+ * phone gets a dialog that fits; at desktop width `min()` picks 640px and 95%
+ * exactly as before.
+ */
+const CONTENT_MIN_WIDTH = 'min(640px, calc(100% - 58px))';
+const CONTENT_MAX_WIDTH = 'min(95%, calc(100% - 58px))';
+
 const FILL_TIME_TOOLTIP =
     'Time from a listing being created to the fill that completed it — how long the capital stayed tied up, ' +
     'not how long until the first unit went. Undercut depth is measured against the top of your own side of ' +
@@ -362,17 +375,21 @@ class TradeLedgerView {
             border: 1px solid rgba(74, 158, 255, 0.5);
             border-radius: 8px;
             padding: 20px;
-            max-width: 95%;
+            max-width: ${CONTENT_MAX_WIDTH};
             max-height: 90%;
-            min-width: 640px;
+            min-width: ${CONTENT_MIN_WIDTH};
             overflow: auto;
             color: #e8ecf5;
             box-shadow: 0 8px 32px rgba(0, 0, 0, 0.6);
         `;
 
         const header = document.createElement('div');
+        // Wraps so a phone-width dialog moves the buttons under the title
+        // instead of pushing them past the right edge.
         header.style.cssText = `
             display: flex;
+            flex-wrap: wrap;
+            gap: 8px;
             justify-content: space-between;
             align-items: center;
             margin-bottom: 15px;
@@ -464,6 +481,9 @@ class TradeLedgerView {
 
         const tableContainer = document.createElement('div');
         tableContainer.className = 'mwi-trade-ledger-table-container';
+        // The six-column table is wider than a phone-width dialog; it scrolls
+        // sideways on its own rather than dragging the header along with it.
+        tableContainer.style.cssText = 'overflow-x: auto;';
 
         content.appendChild(header);
         content.appendChild(weeksContainer);
