@@ -42,6 +42,7 @@ import {
     foldEvents,
     foldEnemies,
     foldTeam,
+    seedMonsterAttacks,
 } from '../../utils/damage-attribution.js';
 import combatStatsDataCollector from '../combat-stats/combat-stats-data-collector.js';
 import { pushManaSample } from './combat-estimates.js';
@@ -1002,6 +1003,7 @@ export default {
                         state.dmgCounter[index] = 0;
                         state.critCounter[index] = 0;
                     }
+                    seedMonsterAttacks(state, index, monster);
                     if (Number.isFinite(maxHP)) state.monstersMaxHP[index] = maxHP;
 
                     const name = monsterName(monster);

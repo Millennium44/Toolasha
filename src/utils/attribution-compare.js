@@ -81,7 +81,7 @@ import {
 } from '../features/guild/guild-trial-damage.js';
 import { rosterFromBattle } from '../features/guild/guild-trial-units.js';
 import { trialFromHrid } from '../features/guild/guild-trials-math.js';
-import { newAttributionState, noteActions, attributeTick } from './damage-attribution.js';
+import { newAttributionState, noteActions, attributeTick, seedMonsterAttacks } from './damage-attribution.js';
 
 /**
  * Which message names carry a battle's opening statement and its per-tick
@@ -601,6 +601,7 @@ export function compareRecording(ticks, { maxSamples = MAX_SAMPLES, mode = 'pers
                 ours.monstersHP[index] = hp;
                 ours.dmgCounter[index] = num(details.dmgCounter ?? monster?.dmgCounter) ?? 0;
                 ours.critCounter[index] = num(details.critCounter ?? monster?.critCounter) ?? 0;
+                seedMonsterAttacks(ours, index, monster);
             }
             presenceNewBattle(presence, payload);
             observeNewBattle(obs, payload);

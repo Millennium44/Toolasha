@@ -62,12 +62,15 @@
  * produces no events — but it is why the swing behind a hit looks two ticks back
  * rather than one.
  *
- * ## A counter distinguishes a hit from a tick
+ * ## Two counters distinguish a hit from a tick
  *
- * Health falling is not sufficient — bleeds and regeneration move it too. A hit
- * is `dmgCounter` **rising**, and a crit is `critCounter` rising. Which also
- * gives the one case a health diff can never express: `dmgCounter` up with the
- * health unchanged is a **miss**, not a non-event.
+ * Health falling is not sufficient — regeneration moves it too. `dmgCounter`
+ * **rising** is damage landing, `critCounter` rising is a crit, and
+ * `dmgCounter` up with the health unchanged is a **miss** — the one case a
+ * health diff can never express. But `dmgCounter` counts damage *splats*, and a
+ * bleed tick rings it exactly as a swing does, so on its own it cannot tell the
+ * two apart. The player's `atkCounter` rising on the same tick is what makes a
+ * rise a swing; see {@link attributeTick}.
  *
  * ## What it deliberately does not do
  *
@@ -75,17 +78,24 @@
  * to the lone mana drop, because the payload cannot separate them otherwise —
  * and a tick that names nobody at all credits nobody rather than the wrong body.
  *
- * ## Health that fell without a counter is still damage
+ * ## Damage over time is damage, and not a swing
  *
- * A hit is `dmgCounter` rising, and everything else used to be discarded. A
- * bleed tick moves a monster's health without moving its hit counter, so every
- * point of it fell out of the per-player tables while
- * still showing up in the party total measured off the boss bar — the two
- * disagreed by exactly the damage-over-time volume. Those ticks are now their
- * own event class (`isDot`), attributed by the same rungs as a hit and folded
- * into a `dotDamage` subtotal that rides *inside* `damage`, so every total that
- * already existed is now right and the breakdown can still name the share.
- * Hit, miss and crit counts do not move for them: a bleed is not a swing.
+ * Damage-over-time ticks are their own event class (`isDot`), attributed by the
+ * same rungs as a hit and folded into a `dotDamage` subtotal that rides *inside*
+ * `damage`, so every total stays right and the breakdown can still name the
+ * share. Hit, miss and crit counts do not move for them: a bleed is not a swing.
+ *
+ * This file once said a bleed tick moves a monster's health **without** moving
+ * its damage counter, and filed a tick as damage-over-time only when the
+ * counter stood still. Measured, that is false: across 31 labyrinth tick
+ * captures not one monster health drop came without a `dmgCounter` rise, and
+ * every Maim bleed tick rang it. So a solo fight credited each bleed tick to the
+ * player as a landed non-crit hit — `dotTicks` read zero, the hit rate was
+ * inflated and crit rate and damage per hit were diluted (a Pyre Hunter room
+ * read 72.9% / 26.5% / 166 per hit against 68.5% / 32.8% / 195 once its 47
+ * ticks were taken out). A tick is now a rise that no swing paid for, on a tick
+ * the monster did not attack. Health falling with no counter at all — a payload
+ * from before the counter was streamed — is still a tick.
  *
  * ## Thorns do move the hit counter
  *
@@ -148,8 +158,32 @@ export function newAttributionState() {
         monstersMaxHP: {},
         dmgCounter: {},
         critCounter: {},
+        // Each monster's own attack counter, so a counter-attack on the tick it
+        // attacked is told apart from a damage-over-time tick
+        monstersAtk: {},
         actions: {},
     };
+}
+
+/**
+ * Seed a monster's attack-counter baseline from a `new_battle` statement.
+ *
+ * Wherever a caller seeds a slot's health and damage counter it should seed
+ * this too: without it, the first tick measured against the seed cannot tell a
+ * parry answering the monster's first attack from a damage-over-time tick, and
+ * reads the rise as a hit the way it always did.
+ *
+ * @param {Object} state - From `newAttributionState`, mutated
+ * @param {string|number} index - The monster's slot
+ * @param {Object} monster - The `new_battle` unit, long or short spelling
+ */
+export function seedMonsterAttacks(state, index, monster) {
+    const attacks = Number(
+        monster?.attackAttemptCounter ?? monster?.atkCounter ?? monster?.combatDetails?.attackAttemptCounter
+    );
+    const baselines = (state.monstersAtk ||= {});
+    if (Number.isFinite(attacks)) baselines[index] = attacks;
+    else delete baselines[index];
 }
 
 /**
@@ -257,9 +291,10 @@ export const COLLISION_SPLIT_THRESHOLD = 3;
  *   keyed by player index. When exactly one present player has one up and lost health this tick,
  *   they own a tick nothing above resolved, whatever the crowd size — thorns fire only when
  *   their wearer is struck, a causal link a crowd does not dilute. Omitted, nothing changes
- * @returns {{actors: string[], shared: boolean, hurt: Set<string>, swung: Set<string>}} The
- *   players the tick belongs to, whether it is divided between them, and who lost health and who
- *   swung this tick
+ * @returns {{actors: string[], shared: boolean, hurt: Set<string>, swung: Set<string>,
+ *   swings: Map<string, number>, countersKnown: boolean, present: string[]}} The players the tick
+ *   belongs to, whether it is divided between them, who lost health and who swung this tick, how
+ *   many swings each made, whether every swing this tick is visible, and who is in the tick
  */
 function resolveActors(
     pMap,
@@ -275,6 +310,13 @@ function resolveActors(
     const swung = [];
     const spent = [];
     const hurt = new Set();
+    // How many swings each present player made this tick, for `attributeTick`'s
+    // pending-swing pool
+    const swings = new Map();
+    // Whether every swing this tick is visible: a present player with no attack
+    // counter, or none measured before, could have swung unseen. With nobody
+    // present it is whether this fight streams attack counters at all
+    let countersKnown = indices.length > 0 || Object.keys(state.playersAtk).length > 0;
     // A state built before this field existed, or reset field by field
     const health = (state.playersHP ||= {});
 
@@ -284,8 +326,14 @@ function resolveActors(
         const attacks = Number(player?.atkCounter);
         const attacksBefore = state.playersAtk[index];
         if (Number.isFinite(attacks)) {
-            if (attacksBefore !== undefined && attacks > attacksBefore) swung.push(index);
+            if (attacksBefore === undefined) countersKnown = false;
+            else if (attacks > attacksBefore) {
+                swung.push(index);
+                swings.set(index, attacks - attacksBefore);
+            }
             state.playersAtk[index] = attacks;
+        } else {
+            countersKnown = false;
         }
 
         const mana = Number(player?.cMP);
@@ -302,7 +350,7 @@ function resolveActors(
         }
     }
 
-    const acted = { hurt, swung: new Set(swung) };
+    const acted = { hurt, swung: new Set(swung), swings, countersKnown, present: indices };
     const one = (index) => ({ actors: [index], shared: false, ...acted });
     const split = () => ({ actors: [...indices], shared: true, ...acted });
     const none = () => ({ actors: [], shared: false, ...acted });
@@ -498,6 +546,41 @@ function swingLabel(action, abilityDetailMap) {
 /**
  * The hits in one tick.
  *
+ * ## A rise of the damage counter is a swing, a counter-attack or a tick
+ *
+ * `dmgCounter` counts damage splats, not swings: a bleed tick rings it exactly
+ * as a sword does. So each rise is classified before it is credited, the way
+ * the labyrinth uptime harness pays off its queue of pending swings:
+ *
+ * - A **swing** is a rise paid off by a present player's `atkCounter` rising on
+ *   the same tick. Each rise pays off one pending swing.
+ * - A **counter-attack** is an unpaid rise on a tick where the monster's own
+ *   attack counter rose: it attacked and was answered by a parry or a reflect.
+ *   The game counts those as attacks — they miss and crit like swings, and the
+ *   sim tallies `parry` and `retaliation` as swings — so they stay hits.
+ * - A **damage-over-time tick** is an unpaid rise on a tick where the monster
+ *   did not attack: `isDot`, never a hit, crit or miss.
+ *
+ * Pending swings last one tick. Across 31 labyrinth captures every swing that
+ * dealt anything did it on the tick its attack counter rose, while 984 attack
+ * counter rises resolved nothing at all — buffs, heals and the phantom swing a
+ * respawn gap coalesces into the next battle's first message. A queue that kept
+ * those would pay the next bleed tick off as a hit.
+ *
+ * Ownership is the actor rungs' ({@link findActors}), with two refinements the
+ * pool makes possible. In a tick small enough for the attack counter to be
+ * authoritative ({@link COLLISION_SPLIT_THRESHOLD}), each paid swing goes to the
+ * player whose swing paid it, so two players striking one monster on one tick
+ * get a hit each rather than both going to the last swinger. And a
+ * damage-over-time tick on a tick somebody swung goes to the one present player
+ * who did not, when there is exactly one — the server groups a tick by actor,
+ * and the swingers' swings are already paid for.
+ *
+ * A merged rise splits the health lost evenly between its splats, as the
+ * harness does. A fight whose payloads carry no attack counters (older
+ * recordings, or a player whose counter has no baseline yet) keeps the old
+ * reading: every rise is a hit.
+ *
  * @param {Object} tick - A `battle_updated` payload
  * @param {Object} state - From `newAttributionState`, mutated
  * @param {Object} [options] - Passed to {@link findActors}; `{soloFallback, collisionThreshold}`, plus
@@ -516,16 +599,89 @@ function swingLabel(action, abilityDetailMap) {
  */
 export function attributeTick(tick, state, options) {
     const { mMap, pMap } = tick || {};
-    const { actors, shared, hurt, swung } = resolveActors(pMap, state, options);
+    const { actors, shared, hurt, swung, swings, countersKnown, present } = resolveActors(pMap, state, options);
     const abilityDetailMap = options?.abilityDetailMap;
     const reflecting = options?.reflecting;
     const emitUnattributed = options?.unattributed === true;
+    const collisionThreshold = options?.collisionThreshold ?? COLLISION_SPLIT_THRESHOLD;
+    const monsterAttacks = (state.monstersAtk ||= {});
     const events = [];
     const weight = actors.length ? 1 / actors.length : 0;
     // A kill goes to the tick's one owner or to nobody. Not a fraction: "0.05
     // kills" on twenty rows says nothing a player can read, and the shared tick
     // is exactly the one where nobody knows who landed the blow
     const killerIndex = !shared && actors.length === 1 ? actors[0] : null;
+
+    const tickOwners = actors.map((index) => ({ index, weight }));
+    // The swings still waiting for a resolution this tick, per player
+    const pending = new Map(swings);
+    const takeSwing = () => {
+        for (const [index, left] of pending) {
+            if (left > 0) {
+                pending.set(index, left - 1);
+                return index;
+            }
+        }
+        return null;
+    };
+    const bySwinger = present.length <= collisionThreshold;
+    const nonSwingers = present.filter((index) => !swung.has(index));
+    const dotOwners =
+        countersKnown && swung.size > 0 && nonSwingers.length === 1
+            ? [{ index: nonSwingers[0], weight: 1 }]
+            : tickOwners;
+
+    const unattributed = (monsterIndex, amount, isDot, isCrit) => {
+        if (!emitUnattributed || !(amount > 0)) return;
+        events.push({
+            playerIndex: null,
+            monsterIndex,
+            amount,
+            isCrit,
+            isMiss: false,
+            isHeal: false,
+            isDot,
+            isUnattributed: true,
+            weight: 1,
+            action: UNATTRIBUTED_ACTION,
+        });
+    };
+
+    // Real damage with no swing behind it: credited by the rungs like a hit, and
+    // carrying no crit, miss or ability of its own
+    const dotTick = (monsterIndex, amount) => {
+        if (!(amount > 0)) return;
+        if (!dotOwners.length) {
+            unattributed(monsterIndex, amount, true, false);
+            return;
+        }
+        for (const owner of dotOwners) {
+            events.push({
+                playerIndex: owner.index,
+                monsterIndex,
+                amount: amount * owner.weight,
+                isCrit: false,
+                isMiss: false,
+                isHeal: false,
+                isDot: true,
+                weight: owner.weight,
+                action: DOT_ACTION,
+            });
+        }
+    };
+
+    const swingEvent = (owner, monsterIndex, change, isCrit) => ({
+        playerIndex: owner.index,
+        monsterIndex,
+        amount: Math.abs(change) * owner.weight,
+        isCrit,
+        // The one case a health diff cannot express on its own
+        isMiss: change === 0,
+        isHeal: change < 0,
+        isDot: false,
+        weight: owner.weight,
+        action: swingLabel(state.actions[owner.index], abilityDetailMap),
+    });
 
     for (const [index, monster] of Object.entries(mMap || {})) {
         const health = Number(monster?.currentHitpoints ?? monster?.cHP);
@@ -536,14 +692,17 @@ export function attributeTick(tick, state, options) {
         const beforeMax = state.monstersMaxHP[index];
         const beforeDamage = state.dmgCounter[index];
         const beforeCrits = state.critCounter[index];
+        const beforeAttacks = monsterAttacks[index];
 
         const damageCount = Number(monster?.dmgCounter) || 0;
         const critCount = Number(monster?.critCounter) || 0;
+        const attacks = Number(monster?.atkCounter);
 
         state.monstersHP[index] = health;
         state.dmgCounter[index] = damageCount;
         state.critCounter[index] = critCount;
         if (Number.isFinite(maxHealth)) state.monstersMaxHP[index] = maxHealth;
+        if (Number.isFinite(attacks)) monsterAttacks[index] = attacks;
 
         // First sighting of a monster is not a hit for its entire health bar
         if (beforeHealth === undefined) continue;
@@ -556,94 +715,90 @@ export function attributeTick(tick, state, options) {
         if (Number.isFinite(maxHealth) && beforeMax !== undefined && maxHealth !== beforeMax) continue;
 
         // A death is its own event, separate from the hit that caused it.
-        // Merging the two would lose every kill landed by a bleed — the health
-        // reaches zero on a tick where no counter moved — and a kill counted
-        // only when a hit lands undercounts exactly the fights that take
-        // longest, which are the ones worth measuring.
+        // Merging the two would lose every kill landed by a bleed, and a kill
+        // counted only when a hit lands undercounts exactly the fights that
+        // take longest, which are the ones worth measuring.
         if (beforeHealth > 0 && health <= 0) {
             events.push({ monsterIndex: index, isKill: true, killerIndex });
         }
 
         const change = beforeHealth - health;
-        // A hit is the counter rising. Health falling without it is a bleed
-        // ticking — real damage, and the actor rungs name
-        // its owner exactly as they name a swing's, so it is emitted as its own
-        // class rather than discarded. It is emphatically not a swing, which is
-        // why it carries no crit, miss or ability of its own.
-        const hit = beforeDamage !== undefined && damageCount > beforeDamage;
+        const rises = beforeDamage !== undefined ? Math.max(0, damageCount - beforeDamage) : 0;
 
-        if (!actors.length) {
+        // Health falling with no counter rise at all — a payload without the
+        // counter. Real damage, and no swing behind it
+        if (!rises) {
+            dotTick(index, change);
+            continue;
+        }
+
+        const perSplat = change / rises;
+        const crit = beforeCrits !== undefined && critCount > beforeCrits;
+
+        // Each rise pays off one of this tick's swings. What is left over is a
+        // counter-attack when the monster attacked and a tick when it did not;
+        // with a swing that could not be seen, or a monster whose attacks could
+        // not, it stays what it always was — a hit
+        const paid = [];
+        if (countersKnown) {
+            for (let n = 0; n < rises; n++) {
+                const swinger = takeSwing();
+                if (swinger === null) break;
+                paid.push(swinger);
+            }
+        }
+        const unpaid = rises - paid.length;
+        // A counter that went backwards is a different monster in the slot, and
+        // says nothing about whether this one attacked
+        const attackKnown = beforeAttacks !== undefined && Number.isFinite(attacks) && attacks >= beforeAttacks;
+        const isTick = countersKnown && attackKnown && attacks === beforeAttacks;
+        const counted = isTick ? 0 : unpaid;
+
+        // A bleed cannot crit, so a crit belongs to the last counted splat
+        paid.forEach((swinger, n) => {
+            const isCrit = crit && counted === 0 && n === paid.length - 1;
+            const owners = bySwinger ? [{ index: swinger, weight: 1 }] : tickOwners;
+            for (const owner of owners) events.push(swingEvent(owner, index, perSplat, isCrit));
+        });
+
+        if (isTick) {
+            for (let n = 0; n < unpaid; n++) dotTick(index, perSplat);
+            continue;
+        }
+        if (!counted) continue;
+
+        const countedChange = perSplat * counted;
+        if (!tickOwners.length) {
             // Only lost health: a miss or a heal with no owner has no total to join
-            if (emitUnattributed && change > 0) {
-                events.push({
-                    playerIndex: null,
-                    monsterIndex: index,
-                    amount: change,
-                    isCrit: hit && beforeCrits !== undefined && critCount > beforeCrits,
-                    isMiss: false,
-                    isHeal: false,
-                    isDot: !hit,
-                    isUnattributed: true,
-                    weight: 1,
-                    action: UNATTRIBUTED_ACTION,
-                });
-            }
+            unattributed(index, countedChange, false, crit);
             continue;
         }
 
-        if (!hit) {
-            if (!(change > 0)) continue;
-            for (const actor of actors) {
-                events.push({
-                    playerIndex: actor,
-                    monsterIndex: index,
-                    amount: change * weight,
-                    isCrit: false,
-                    isMiss: false,
-                    isHeal: false,
-                    isDot: true,
-                    weight,
-                    action: DOT_ACTION,
-                });
-            }
-            continue;
-        }
-
-        for (const actor of actors) {
+        for (const owner of tickOwners) {
+            const actor = owner.index;
             // A reflect moves the hit counter too, so it is told apart from a
             // swing by the caller's buff state: a reflect up, hurt this tick, and
             // no swing of their own. Damage, not a swing — no hit, crit or miss
             const reflect =
-                reflecting && change > 0 && hurt.has(actor) && !swung.has(actor)
+                reflecting && countedChange > 0 && hurt.has(actor) && !swung.has(actor)
                     ? reflectOf(reflecting, actor, pMap?.[actor])
                     : null;
             if (reflect) {
                 events.push({
                     playerIndex: actor,
                     monsterIndex: index,
-                    amount: change * weight,
+                    amount: countedChange * owner.weight,
                     isCrit: false,
                     isMiss: false,
                     isHeal: false,
                     isDot: false,
                     isReflect: true,
-                    weight,
+                    weight: owner.weight,
                     action: reflect,
                 });
                 continue;
             }
-            events.push({
-                playerIndex: actor,
-                monsterIndex: index,
-                amount: Math.abs(change) * weight,
-                isCrit: beforeCrits !== undefined && critCount > beforeCrits,
-                // The one case a health diff cannot express on its own
-                isMiss: change === 0,
-                isHeal: change < 0,
-                isDot: false,
-                weight,
-                action: swingLabel(state.actions[actor], abilityDetailMap),
-            });
+            events.push(swingEvent(owner, index, countedChange, crit));
         }
     }
     return events;

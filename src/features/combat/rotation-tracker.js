@@ -39,7 +39,7 @@
 
 import dataManager from '../../core/data-manager.js';
 import webSocketHook from '../../core/websocket.js';
-import { newAttributionState, noteActions, attributeTick } from '../../utils/damage-attribution.js';
+import { newAttributionState, noteActions, attributeTick, seedMonsterAttacks } from '../../utils/damage-attribution.js';
 import { newReflectState, noteReflectBuffs, noteReflectCasts, reflectingFor } from '../../utils/reflect-state.js';
 import {
     newRotationState,
@@ -206,6 +206,7 @@ export function startRotationTracker() {
                     state.critCounter[index] = 0;
                 }
                 if (Number.isFinite(maxHP)) state.monstersMaxHP[index] = maxHP;
+                seedMonsterAttacks(state, index, monster);
             }
             battleSeeded = true;
 
