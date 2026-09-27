@@ -6,6 +6,7 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+- **Lab tick captures can no longer be lost**: a held capture blocks any new capture (including "Rerun uptime harness") until you discard it, since a Save click cannot prove the file landed; unsaved ticks are autosaved per character and come back as "Recovered capture" after a reload, and each fight in a capture now records its own room level.
 - **Planner hold boundary**: an item worth exactly the "% of best" share is no longer held back by a floating-point rounding quirk.
 - **Dungeon shop planner holds weak leftovers**: a "% of best" setting (default 80%) only spends leftover tokens on items worth at least that share of the best gold per token, and shows the rest as held for next run, when the volume caps have refreshed, instead of dumping them into far worse items.
 
