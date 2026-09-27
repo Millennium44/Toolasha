@@ -813,27 +813,6 @@ export function gearFingerprint(playerDTOs) {
 }
 
 /**
- * Whether a recorded dungeon run can set the pace of the simulated party.
- *
- * The run history is shared by every character on the account and every party
- * they ran with, and a pace only transfers to the same people: an alt's fast T2
- * clears say nothing about this character's slower build. So a run counts only
- * when it is this character's own — its `recordedBy` stamp, or for a legacy run
- * without one, this character's name on its roster (the dungeon tracker's
- * `runMatchesCharacter` rule, restated here because that module lives in
- * another bundle) — and was run by a team the size of the simulated one. When
- * the simulated roster's names are known, the team must be exactly that roster
- * (`teamKey`-style, names sorted). Nothing matching leaves the sim's own pace.
- *
- * @param {Object} run - A stored run (`recordedBy`, `team`, `teamKey`, …)
- * @param {Object} who
- * @param {string|null} who.characterId - The character the panel speaks for
- * @param {string|null} who.characterName - Their in-game name
- * @param {number} who.partySize - Players the sim ran with
- * @param {Array<string>|null} [who.roster] - The simulated party's names, when known
- * @returns {boolean}
- */
-/**
  * What a run should simulate, given the editor's loaded roster and its Solo
  * checkbox.
  *
@@ -866,7 +845,11 @@ export function resolveSimParty(editor, editedDTOs) {
         const soloDTO = editedDTOs[soloHrid];
         if (soloDTO) {
             return {
-                playerDTOs: [soloDTO],
+                // A copy with the level-gap penalty cleared: the adapter stamps
+                // each member's party-derived gap onto their DTO, and alone there
+                // is no higher-level member to be penalized against. The
+                // editor's own DTO keeps it for the next full-party run.
+                playerDTOs: [{ ...soloDTO, debuffOnLevelGap: 0 }],
                 playerInfo: playerInfo.filter((p) => p.hrid === soloHrid),
                 // Only carried through as the *true* self when the solo player
                 // actually is the live character — see `_persistConsumableRates`,
@@ -906,6 +889,27 @@ export function historyEntryPlayer(entry) {
     return { hrid: entry.playerHrid, playerInfo: Array.isArray(entry.playerInfo) ? entry.playerInfo : null };
 }
 
+/**
+ * Whether a recorded dungeon run can set the pace of the simulated party.
+ *
+ * The run history is shared by every character on the account and every party
+ * they ran with, and a pace only transfers to the same people: an alt's fast T2
+ * clears say nothing about this character's slower build. So a run counts only
+ * when it is this character's own — its `recordedBy` stamp, or for a legacy run
+ * without one, this character's name on its roster (the dungeon tracker's
+ * `runMatchesCharacter` rule, restated here because that module lives in
+ * another bundle) — and was run by a team the size of the simulated one. When
+ * the simulated roster's names are known, the team must be exactly that roster
+ * (`teamKey`-style, names sorted). Nothing matching leaves the sim's own pace.
+ *
+ * @param {Object} run - A stored run (`recordedBy`, `team`, `teamKey`, …)
+ * @param {Object} who
+ * @param {string|null} who.characterId - The character the panel speaks for
+ * @param {string|null} who.characterName - Their in-game name
+ * @param {number} who.partySize - Players the sim ran with
+ * @param {Array<string>|null} [who.roster] - The simulated party's names, when known
+ * @returns {boolean}
+ */
 export function runMatchesSimParty(
     run,
     { characterId = null, characterName = null, partySize = 1, roster = null } = {}
