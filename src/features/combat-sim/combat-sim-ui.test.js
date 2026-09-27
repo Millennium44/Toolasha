@@ -4631,14 +4631,21 @@ describe('linting a loaded party', () => {
  * them — not the class itself, which is mocked wholesale above for the panel
  * tests.
  */
-function fakeEditor({ playerInfo, selfHrid = null, activeEditPlayer = null, soloMode = false, missingMembers = [] }) {
+function fakeEditor({
+    playerInfo,
+    selfHrid = null,
+    activeEditPlayer = null,
+    soloMode = false,
+    missingMembers = [],
+    profileStatus = [],
+}) {
     return {
         getPlayerInfo: () => playerInfo,
         getSelfHrid: () => selfHrid,
         getActiveEditPlayer: () => activeEditPlayer,
         getSoloMode: () => soloMode,
         getMissingMembers: () => missingMembers,
-        getProfileStatus: () => [],
+        getProfileStatus: () => profileStatus,
     };
 }
 
@@ -4698,19 +4705,23 @@ describe('resolveSimParty: what a run simulates once Solo enters the picture', (
         expect(result.trueSelfHrid).toBeNull();
     });
 
-    test('on, missing members and profile status are dropped — they describe party members not being simmed', () => {
+    test('on, missing members and other members’ profile status are dropped, the simulated one’s kept', () => {
+        // A Solo run of a member whose shared profile is stale or gearless must
+        // still say so; the others' warnings describe players not being simmed
+        const stale = { hrid: 'player3', name: 'Cara', stale: true, gearless: true };
         const editor = fakeEditor({
             playerInfo,
             selfHrid: 'player1',
-            activeEditPlayer: 'player1',
+            activeEditPlayer: 'player3',
             soloMode: true,
             missingMembers: ['Bob'],
+            profileStatus: [{ hrid: 'player2', name: 'Bea', stale: true }, stale, { hrid: null, name: 'Bob' }],
         });
 
         const result = resolveSimParty(editor, editedDTOs);
 
         expect(result.missingMembers).toEqual([]);
-        expect(result.profileStatus).toEqual([]);
+        expect(result.profileStatus).toEqual([stale]);
     });
 
     test('on with only one player loaded is a no-op — nothing to narrow', () => {
