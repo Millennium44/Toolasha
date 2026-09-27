@@ -15,6 +15,7 @@ import { describe, test, expect, beforeEach, vi } from 'vitest';
 const game = vi.hoisted(() => ({
     rows: {},
     session: null,
+    stored: {},
     sessionThrows: false,
     uiToggles: 0,
 }));
@@ -31,6 +32,7 @@ vi.mock('./enhancement-tracker.js', () => ({
             if (game.sessionThrows) throw new Error('storage is asleep');
             return game.session;
         },
+        getAllSessions: () => game.stored,
     },
 }));
 
@@ -77,6 +79,7 @@ function draw() {
 describe('the enhancement session tile', () => {
     beforeEach(() => {
         game.session = null;
+        game.stored = {};
         game.sessionThrows = false;
         game.uiToggles = 0;
     });
@@ -86,7 +89,7 @@ describe('the enhancement session tile', () => {
         expect(game.rows.enhancementSession.defaultVisible).toBe(false);
     });
 
-    test('draws nothing when no session is running', () => {
+    test('draws nothing when there are no sessions at all', () => {
         expect(draw().textContent).toBe('');
     });
 
@@ -117,7 +120,13 @@ describe('the enhancement session tile', () => {
     });
 
     test('a finished session keeps drawing, and says that it is finished', () => {
-        game.session = session({ state: 'completed', currentLevel: 10 });
+        // The tracker's current session is null the moment a run completes;
+        // the finished one is only in the stored list
+        game.session = null;
+        game.stored = {
+            older: session({ state: 'completed', totalAttempts: 9, lastUpdateTime: 1_000 }),
+            latest: session({ state: 'completed', currentLevel: 10, lastUpdateTime: 2_000 }),
+        };
 
         const container = draw();
         expect(container.textContent).toContain('148');
