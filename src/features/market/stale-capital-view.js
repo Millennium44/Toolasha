@@ -33,6 +33,18 @@ import { registerCommand, unregisterCommand } from '../../utils/command-registry
 /** Stable key for persisting the modal's minimized state; there is no geometry to key off. */
 const PANEL_KEY = 'staleCapitalModal';
 
+/**
+ * The dialog's width bounds. It was `min-width: 640px` with `max-width: 95%`,
+ * and a min-width beats a max-width: on a ~390px phone the dialog was 682px
+ * wide, and the overlay's `align-items: center` hung it off both edges, the
+ * title clipped at the left where nothing can scroll to it and the close
+ * button off-screen right. Both bounds now leave room for the 20px padding and
+ * border (42px) plus an 8px gutter a side; at desktop width `min()` picks
+ * 640px and 95% exactly as before.
+ */
+const CONTENT_MIN_WIDTH = 'min(640px, calc(100% - 58px))';
+const CONTENT_MAX_WIDTH = 'min(95%, calc(100% - 58px))';
+
 const PRICE_TOOLTIP =
     'How your price compares to the current best on your side of the book: "above" the best ask (sells) or ' +
     '"below" the best bid (buys) usually explains why a listing isn\'t moving. "at" means you already match ' +
@@ -269,9 +281,9 @@ class StaleCapitalView {
             border: 1px solid rgba(74, 158, 255, 0.5);
             border-radius: 8px;
             padding: 20px;
-            max-width: 95%;
+            max-width: ${CONTENT_MAX_WIDTH};
             max-height: 90%;
-            min-width: 640px;
+            min-width: ${CONTENT_MIN_WIDTH};
             overflow: auto;
             color: #e8ecf5;
             box-shadow: 0 8px 32px rgba(0, 0, 0, 0.6);
@@ -323,10 +335,13 @@ class StaleCapitalView {
 
         const sellContainer = document.createElement('div');
         sellContainer.className = 'mwi-stale-capital-sell';
-        sellContainer.style.cssText = 'margin-bottom: 20px;';
+        // Each side's seven-column table is wider than a phone-width dialog; it
+        // scrolls sideways on its own rather than dragging the header with it.
+        sellContainer.style.cssText = 'margin-bottom: 20px; overflow-x: auto;';
 
         const buyContainer = document.createElement('div');
         buyContainer.className = 'mwi-stale-capital-buy';
+        buyContainer.style.cssText = 'overflow-x: auto;';
 
         content.appendChild(header);
         content.appendChild(totalsContainer);
