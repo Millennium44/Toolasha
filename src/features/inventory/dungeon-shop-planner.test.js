@@ -78,7 +78,10 @@ vi.mock('../../utils/market-data.js', () => ({
 }));
 
 vi.mock('../../utils/liquidity-cap.js', () => ({
-    itemDailyVolume: async (itemHrid) => state.volumes[itemHrid] || { itemHrid, unitsPerDay: 0, known: false },
+    itemDailyVolume: async (itemHrid) => {
+        state.asked.push(itemHrid);
+        return state.volumes[itemHrid] || { itemHrid, unitsPerDay: 0, known: false };
+    },
 }));
 
 vi.mock('../../utils/profit-helpers.js', () => ({
@@ -175,6 +178,7 @@ function announceModal(modal) {
 beforeEach(() => {
     document.body.innerHTML = '';
     state.settings = {};
+    state.asked = [];
     state.inventory = [{ itemHrid: '/items/pirate_token', count: 7500, itemLocationHrid: '/item_locations/inventory' }];
     state.volumes = {
         '/items/pirate_essence': { unitsPerDay: 4000, known: true },
@@ -278,6 +282,17 @@ describe('the plan', () => {
         // re-render mid-draw and leave two tables in the body
         expect(body().querySelectorAll('table').length).toBe(1);
         expect(body().textContent.match(/Pirate Tokens held/g)?.length).toBe(1);
+    });
+
+    test('a normal open measures each item once, not once from open() and again from the draw', async () => {
+        // No volume answers: an unknown result is not cached, so a pass that
+        // gets interrupted and restarted asks the same item again
+        state.volumes = {};
+        await openPirate();
+        const asked = state.asked;
+
+        expect(asked.length).toBeGreaterThan(0);
+        expect(asked.length).toBe(new Set(asked).size);
     });
 
     test('an item with no volume answer is asked again on the next open', async () => {
