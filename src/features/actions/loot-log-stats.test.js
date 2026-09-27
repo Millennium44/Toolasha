@@ -170,6 +170,115 @@ describe('LootLogStats.calculateExpectedRunValue', () => {
         expect(stats.calculateExpectedRunValue('/actions/foraging/x', 10)).toBeNull();
         expect(getItemPrices).not.toHaveBeenCalled();
     });
+
+    test('a fully Processing-converted run expects the processed item, not the raw it consumed', () => {
+        const milking = {
+            type: '/action_types/milking',
+            dropTable: [{ itemHrid: '/items/milk', dropRate: 1, minCount: 2, maxCount: 2 }],
+        };
+        dataManager.getActionDetails.mockReturnValue(milking);
+        dataManager.getInitClientData.mockReturnValue({
+            actionDetailMap: {
+                '/actions/milking/cow': milking,
+                '/actions/cheesesmithing/cheese': {
+                    type: '/action_types/cheesesmithing',
+                    inputItems: [{ itemHrid: '/items/milk', count: 2 }],
+                    outputItems: [{ itemHrid: '/items/cheese', count: 1 }],
+                },
+            },
+        });
+        getItemPrices.mockImplementation((hrid) =>
+            hrid === '/items/milk' ? { ask: 10, bid: 8 } : { ask: 50, bid: 40 }
+        );
+        // Every completion rolls exactly 2 milk (no gathering quantity, no
+        // efficiency repeats) and Processing procs every time, so every milk
+        // this run rolls becomes cheese — none of it should price as milk.
+        stats._gatheringEfficiencyContext = () => ({ totalGathering: 0, efficiencyMultiplier: 1, processingBonus: 1 });
+
+        const result = stats.calculateExpectedRunValue('/actions/milking/cow', 100);
+
+        // 100 completions x 1 cheese each, priced as cheese; no raw milk left over.
+        // Pricing the same 100 completions as raw milk instead (the old bug) would
+        // have read 100 x 2 x 10 = 2000 ask, less than half this.
+        expect(result.askExpected).toBeCloseTo(100 * 50, 6);
+        expect(result.bidExpected).toBeCloseTo(100 * 40, 6);
+    });
+
+    test('a partly Processing-converted run expects a mix of processed and remaining raw', () => {
+        const milking = {
+            type: '/action_types/milking',
+            dropTable: [{ itemHrid: '/items/milk', dropRate: 1, minCount: 2, maxCount: 2 }],
+        };
+        dataManager.getActionDetails.mockReturnValue(milking);
+        dataManager.getInitClientData.mockReturnValue({
+            actionDetailMap: {
+                '/actions/milking/cow': milking,
+                '/actions/cheesesmithing/cheese': {
+                    type: '/action_types/cheesesmithing',
+                    inputItems: [{ itemHrid: '/items/milk', count: 2 }],
+                    outputItems: [{ itemHrid: '/items/cheese', count: 1 }],
+                },
+            },
+        });
+        getItemPrices.mockImplementation((hrid) =>
+            hrid === '/items/milk' ? { ask: 10, bid: 8 } : { ask: 50, bid: 40 }
+        );
+        // Processing only procs half the time; the rest of the milk stays milk.
+        stats._gatheringEfficiencyContext = () => ({
+            totalGathering: 0,
+            efficiencyMultiplier: 1,
+            processingBonus: 0.5,
+        });
+
+        const result = stats.calculateExpectedRunValue('/actions/milking/cow', 100);
+
+        // 200 milk rolled; 50 completions' worth (100 milk) becomes 50 cheese,
+        // the other 100 milk stays milk.
+        expect(result.askExpected).toBeCloseTo(50 * 50 + 100 * 10, 6);
+        expect(result.bidExpected).toBeCloseTo(50 * 40 + 100 * 8, 6);
+    });
+});
+
+describe('LootLogStats processing-conversions memoization', () => {
+    // A loot-log render calls processingConversionsFor once per rendered row —
+    // hundreds in the visible list, thousands walking history — and it used to
+    // rescan the whole actionDetailMap every time. This pins the map down to one
+    // scan per game-data load rather than one per row.
+    let stats;
+
+    beforeEach(() => {
+        vi.clearAllMocks();
+        stats = new LootLogStats();
+    });
+
+    test('reuses the same conversions map while actionDetailMap keeps its identity', () => {
+        const actionDetailMap = {
+            '/actions/cheesesmithing/cheese': {
+                type: '/action_types/cheesesmithing',
+                inputItems: [{ itemHrid: '/items/milk', count: 2 }],
+                outputItems: [{ itemHrid: '/items/cheese', count: 1 }],
+            },
+        };
+        dataManager.getInitClientData.mockReturnValue({ actionDetailMap });
+
+        const first = stats._processingConversions();
+        const second = stats._processingConversions();
+
+        expect(second).toBe(first);
+        expect(first.get('/items/milk')).toEqual({ outputItemHrid: '/items/cheese', conversionRatio: 2 });
+    });
+
+    test('a new actionDetailMap identity (game data reloaded) rebuilds it', () => {
+        const first = { '/actions/a': { type: '/action_types/crafting', inputItems: [], outputItems: [] } };
+        dataManager.getInitClientData.mockReturnValue({ actionDetailMap: first });
+        const firstMap = stats._processingConversions();
+
+        const second = { '/actions/a': { type: '/action_types/crafting', inputItems: [], outputItems: [] } };
+        dataManager.getInitClientData.mockReturnValue({ actionDetailMap: second });
+        const secondMap = stats._processingConversions();
+
+        expect(secondMap).not.toBe(firstMap);
+    });
 });
 
 describe('LootLogStats.getModelPrice', () => {
