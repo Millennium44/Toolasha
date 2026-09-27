@@ -60,10 +60,31 @@ describe('a status line asked to hold one width', () => {
         const widget = createFloatingWidget({ id: 'fixed', statusWidth: '340px' });
 
         expect(widget.status.style.width).toBe('340px');
-        expect(widget.status.style.flex).toBe('0 0 340px');
+        expect(widget.status.style.flex).toBe('0 1 340px');
         // Still one line with an ellipsis — the fold-out is the caller's job
         expect(widget.status.style.whiteSpace).toBe('nowrap');
         expect(widget.status.style.textOverflow).toBe('ellipsis');
+    });
+});
+
+describe('a strip on a phone-width screen', () => {
+    // Pinned by its right edge, a row wider than the screen ran off the left
+    // edge: the Bulk Sell strip (~620px) put its status line at -245px on a
+    // 390px phone. happy-dom does no layout, so this pins the declarations; the
+    // fit was measured in Firefox, Chromium and WebKit at 360 and 390px wide,
+    // and 1280px unchanged.
+    test('is never wider than the screen less its anchor and a gutter', () => {
+        const widget = createFloatingWidget({ id: 'narrow', statusWidth: '340px' });
+
+        expect(widget.element.style.maxWidth).toBe('calc(100vw - 32px)');
+        expect(widget.element.style.boxSizing).toBe('border-box');
+    });
+
+    test('the status line is what gives up the width', () => {
+        const widget = createFloatingWidget({ id: 'narrow', statusWidth: '340px' });
+
+        expect(widget.status.style.minWidth).toBe('0');
+        expect(widget.status.style.flexShrink).toBe('1');
     });
 });
 
