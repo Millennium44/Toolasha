@@ -700,8 +700,8 @@ describe('the in-progress record', () => {
             waveStartTime: 7000,
             keyCountsMap: { Alice: 12, Bob: 8 },
             lastUpdateTime: Date.now(),
-            firstKeyCountTimestamp: 500,
-            lastKeyCountTimestamp: 500,
+            firstKeyCountTimestamp: Date.now() - 65_000,
+            lastKeyCountTimestamp: Date.now() - 65_000,
             hibernationDetected: true,
         });
 
@@ -710,7 +710,7 @@ describe('the in-progress record', () => {
         expect(tracker.currentRun).toMatchObject({ dungeonHrid: DEN, currentWave: 5, wavesCompleted: 4 });
         expect(tracker.waveTimes).toEqual([3000, 5000]);
         expect(tracker.waveStartTime.getTime()).toBe(7000);
-        expect(tracker.firstKeyCountTimestamp).toBe(500);
+        expect(tracker.firstKeyCountTimestamp).toBe(Date.now() - 65_000);
         expect(tracker.hibernationDetected).toBe(true);
     });
 
@@ -4691,6 +4691,62 @@ describe('a run that is over but was never seen to end', () => {
 
         expect(tracker.currentRun.startTime).toBe(Date.now());
         expect(tracker.restoredMidRun).toBe(false);
+    });
+
+    test('a saved record whose start is fresh but whose chat anchor is a day old is not restored', async () => {
+        // The reported record: started minutes ago, anchored on the canceled
+        // key count from the day before — and that anchor is what the party
+        // elapsed figure reads
+        game.actions = [{ ...SC_PARTY }];
+        for (const anchor of ['firstKeyCountTimestamp', 'recoveredStartTime']) {
+            resetTracker();
+            mockStorage.reset();
+            mockStorage.storeFor('settings').set(`${IN_PROGRESS}_market123`, {
+                battleId: 1,
+                dungeonHrid: LAIR,
+                tier: 0,
+                startTime: Date.now() - 10 * 60_000,
+                currentWave: 20,
+                maxWaves: 60,
+                wavesCompleted: 19,
+                waveTimes: [],
+                lastUpdateTime: Date.now() - 30_000,
+                [anchor]: DAY_AGO,
+                ...(anchor === 'firstKeyCountTimestamp' ? { lastKeyCountTimestamp: DAY_AGO } : {}),
+                ...(anchor === 'recoveredStartTime' ? { startRecovered: true, joinedMidRun: true } : {}),
+            });
+
+            await tracker.onNewBattle({
+                wave: 21,
+                battleId: 1,
+                combatStartTime: '2026-08-04T10:05:00.000Z',
+                players: FIVE,
+            });
+            await flush();
+
+            expect(tracker.restoredMidRun).toBe(false);
+            expect(tracker.currentRun.startTime).toBe(Date.now());
+            expect(tracker.firstKeyCountTimestamp).toBeNull();
+            expect(tracker.getCurrentRun().totalElapsed).toBe(0);
+        }
+    });
+
+    test('a paused record’s chat anchor is judged at its pause, so a long pause does not discard it', async () => {
+        const pausedAt = Date.now() - 5 * 60 * 60_000;
+        const record = {
+            battleId: 1,
+            dungeonHrid: LAIR,
+            startTime: pausedAt - 10 * 60_000,
+            firstKeyCountTimestamp: pausedAt - 10 * 60_000,
+            currentWave: 20,
+            pausedAt,
+        };
+        expect(tracker.canRestoreRecord(record, 1, { resumeWave: 20 })).toBe(true);
+        expect(
+            tracker.canRestoreRecord({ ...record, firstKeyCountTimestamp: pausedAt - 26 * 60 * 60_000 }, 1, {
+                resumeWave: 20,
+            })
+        ).toBe(false);
     });
 
     test('a saved record is not restored onto a battle below its own wave', async () => {
