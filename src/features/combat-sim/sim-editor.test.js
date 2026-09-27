@@ -940,6 +940,30 @@ describe('the loadout selection is remembered', () => {
         expect(editor.getLoadoutNameFor('player2')).toBe('Bravo');
     });
 
+    test('a player reverted to current gear no longer claims the loadout it dropped', async () => {
+        // player1 wears Alpha, goes back to Current Gear, then player2 takes
+        // Bravo: the selection is non-empty again, but player1 wears nothing
+        bridge.snapshots = [
+            { name: 'Alpha', actionTypeHrid: '/action_types/combat' },
+            { name: 'Bravo', actionTypeHrid: '/action_types/combat' },
+        ];
+        const { el, editor } = await openEditor();
+        const pick = async (name) => {
+            const select = el.querySelector('#mwi-csim-loadout-select');
+            select.value = name;
+            select.dispatchEvent(new Event('change'));
+            await Promise.resolve();
+        };
+
+        await pick('Alpha');
+        await pick('');
+        editor._activeEditPlayer = 'player2';
+        await pick('Bravo');
+
+        expect(editor.getLoadoutNameFor('player1')).toBe('');
+        expect(editor.getLoadoutNameFor('player2')).toBe('Bravo');
+    });
+
     test('an edit made before selecting a loadout, to a field it does not replace, still shows', async () => {
         // The loadout replaces the main hand; defense is a what-if edit the
         // loadout leaves alone, so it must not be absorbed into the baseline
