@@ -19,7 +19,9 @@
  * sim monster is built there because it needs live game data seeded first.
  */
 
-/** Rows compared under each heading. `[combatDetails key, label]`. */
+/** Rows compared under each heading. `[combatDetails key, label, unit]`. `unit` is
+ *  omitted for a flat rating, `'ns'` for a nanosecond duration, or `'ratio'` for a
+ *  fraction the UI reads as a percent. */
 const MITIGATION_ROWS = [
     ['maxHitpoints', 'Max HP'],
     ['totalArmor', 'Armor'],
@@ -35,6 +37,30 @@ const EVASION_ROWS = [
     ['rangedEvasionRating', 'Ranged evasion'],
     ['magicEvasionRating', 'Magic evasion'],
 ];
+
+/**
+ * Timing and crit rows, compared game-vs-sim like every other row here.
+ *
+ * The game's `battle_unit_fetched`/`new_battle` payload carries these flat on
+ * `combatDetails` (`attackInterval` in nanoseconds, `totalCastSpeed`,
+ * `criticalRate`, `criticalDamage` as ratios — see the trial-badger fixture in
+ * `guild-trial-messages.fixture.js`). The sim only ever computes them onto
+ * `combatDetails.combatStats` (`combat-unit.js`'s `updateCombatDetails`, e.g.
+ * `attackInterval /= 1 + attackLevel / 2000` then the weapon's own cast-speed
+ * divisor) and never copies them up to the flat block the way it does for
+ * `totalArmor`/`totalWaterResistance`. `compareStat` below falls back to
+ * `combatStats` on whichever side lacks the flat key, so this row list reads
+ * correctly off either shape without the two sides needing to agree on one.
+ */
+const TIMING_ROWS = [
+    ['attackInterval', 'Attack interval', 'ns'],
+    ['totalCastSpeed', 'Cast speed', 'ratio'],
+    ['criticalRate', 'Crit rate', 'ratio'],
+    ['criticalDamage', 'Crit damage', 'ratio'],
+];
+
+/** The player's own row, alongside `TIMING_ROWS`, only for a player comparison. */
+const PLAYER_TIMING_ROWS = [['hpRegenPer10', 'HP regen /10s', 'ratio']];
 
 /** Below this the room scale is ~1.0 — indistinguishable from no scaling. */
 const LABYRINTH_ROOM_FLOOR = 110;
@@ -311,10 +337,14 @@ export function buffedStatKeys(combatBuffMap, styleKey) {
 /**
  * The grouped list of rows to compare, given the monster's own combat style.
  * Offense is style-specific — a smasher has a `smashMaxDamage`, not a magic one.
+ * Timing/crit rows apply to either unit kind; `hpRegenPer10` is added only for a
+ * player comparison, matching the maintainer's request for the monster's timing
+ * and crit stats plus the player's regen, not the monster's regen too.
  * @param {string} styleKey
- * @returns {Array<{group: string, rows: Array<[string, string]>}>}
+ * @param {'monster'|'player'} [unitKind='monster']
+ * @returns {Array<{group: string, rows: Array<[string, string, string=]>}>}
  */
-export function statRows(styleKey) {
+export function statRows(styleKey, unitKind = 'monster') {
     return [
         { group: 'Mitigation', rows: MITIGATION_ROWS },
         { group: 'Evasion', rows: EVASION_ROWS },
@@ -325,7 +355,40 @@ export function statRows(styleKey) {
                 [`${styleKey}MaxDamage`, 'Max hit'],
             ],
         },
+        {
+            group: 'Timing',
+            rows: unitKind === 'player' ? [...TIMING_ROWS, ...PLAYER_TIMING_ROWS] : TIMING_ROWS,
+        },
     ];
+}
+
+/**
+ * Read a compared stat off a `combatDetails`-shaped object, falling back to
+ * `combatStats` when the flat key isn't there. The mitigation/evasion/offense
+ * rows only ever need the flat key — both the game and the sim copy those up to
+ * the top level. The timing/crit rows do not: the game's payload carries them
+ * flat, but the sim only ever computes them onto `combatStats` (see the comment
+ * above `TIMING_ROWS`), so reading the sim side needs the fallback. The fallback
+ * is harmless for the rows that don't need it, since neither side nests them.
+ *
+ * Cast speed additionally renames itself on the way to the flat block: a
+ * monster's resolved `combatDetails.totalCastSpeed` is `combatStats.castSpeed`
+ * underneath (see the trial-badger fixture in `guild-trial-messages.fixture.js`
+ * for the flat name, and `combat-unit.js`'s `combatStats.castSpeed` for the
+ * nested one), and a player's live sheet never gets the "total" flat form at
+ * all — `guild-loadouts.js`'s `STAT_ROWS` reads `combatStats.castSpeed`
+ * directly off it. The alias below is what lets `totalCastSpeed` find either
+ * shape.
+ * @param {Object} details - A `combatDetails` object
+ * @param {string} key
+ * @returns {number|undefined}
+ */
+const NESTED_STAT_ALIASES = { totalCastSpeed: 'castSpeed' };
+
+function readStat(details, key) {
+    const flat = details?.[key];
+    if (flat !== undefined) return flat;
+    return details?.combatStats?.[NESTED_STAT_ALIASES[key] || key];
 }
 
 /**
@@ -339,8 +402,8 @@ export function statRows(styleKey) {
  *   debuff is on), so the sign lines up with the direction of the live effect.
  */
 export function compareStat(key, gameDetails, simDetails) {
-    const gameRaw = Number(gameDetails?.[key]);
-    const simRaw = Number(simDetails?.[key]);
+    const gameRaw = Number(readStat(gameDetails, key));
+    const simRaw = Number(readStat(simDetails, key));
     const game = Number.isFinite(gameRaw) ? gameRaw : null;
     const sim = Number.isFinite(simRaw) ? simRaw : null;
     let deltaPct = null;
@@ -408,6 +471,7 @@ export function classify(deltaPct, hasBuffs) {
 export function buildComparison(gameUnit, simDetails, { simBuffed = false, leniencyKeys = null } = {}) {
     const gameDetails = gameUnit?.combatDetails || {};
     const styleKey = styleKeyOf(gameDetails.combatStats);
+    const unitKind = gameUnit?.isPlayer ? 'player' : 'monster';
     const buffs = activeBuffNames(gameUnit?.combatBuffMap);
     // When the sim carries the effects, a gap is not effect-explained — classify
     // it as a flat mismatch rather than a buff/debuff. Exception: a stat a live
@@ -416,14 +480,14 @@ export function buildComparison(gameUnit, simDetails, { simBuffed = false, lenie
     const classifyHasBuffs = simBuffed ? false : buffs.length > 0;
     let hasMismatch = false;
 
-    const groups = statRows(styleKey).map(({ group, rows }) => ({
+    const groups = statRows(styleKey, unitKind).map(({ group, rows }) => ({
         group,
-        rows: rows.map(([key, label]) => {
+        rows: rows.map(([key, label, unit]) => {
             const compared = compareStat(key, gameDetails, simDetails);
             const rowHasBuffs = leniencyKeys?.has(key) ? true : classifyHasBuffs;
             const verdict = classify(compared.deltaPct, rowHasBuffs);
             if (verdict === 'mismatch') hasMismatch = true;
-            return { ...compared, label, verdict };
+            return { ...compared, label, unit, verdict };
         }),
     }));
 
@@ -452,6 +516,7 @@ export function flaggedRows(comparison) {
                     game: row.game,
                     sim: row.sim,
                     deltaPct: row.deltaPct,
+                    unit: row.unit,
                     verdict: row.verdict,
                 });
             }

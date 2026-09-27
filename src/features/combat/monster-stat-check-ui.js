@@ -156,6 +156,21 @@ function fmt(n) {
     return Math.round(n).toLocaleString();
 }
 
+/**
+ * A stat row's value, in whatever unit `statRows` marked it with. Every row
+ * before the timing/crit rows is an unmarked flat rating, so `fmt` alone still
+ * covers it; `'ns'` (attack interval) and `'ratio'` (cast speed, crit rate/damage,
+ * HP regen) are the two new shapes those rows carry.
+ * @param {number|null} n
+ * @param {string} [unit]
+ */
+function fmtStat(n, unit) {
+    if (n == null || !Number.isFinite(n)) return '—';
+    if (unit === 'ns') return `${(n / 1e6).toFixed(1)}ms`;
+    if (unit === 'ratio') return `${(n * 100).toFixed(2)}%`;
+    return fmt(n);
+}
+
 /** @param {number|null} pct */
 function fmtDelta(pct) {
     if (pct == null || !Number.isFinite(pct)) return '';
@@ -955,8 +970,8 @@ class MonsterStatCheckPanel {
                 g.rows.map((r) => ({
                     group: g.group,
                     stat: r.label,
-                    game: r.game,
-                    sim: r.sim,
+                    game: fmtStat(r.game, r.unit),
+                    sim: fmtStat(r.sim, r.unit),
                     delta: r.deltaPct == null ? '' : `${r.deltaPct.toFixed(1)}%`,
                     verdict: r.verdict,
                 }))
@@ -988,7 +1003,9 @@ class MonsterStatCheckPanel {
                 lines.push(`[${g.group}]`);
                 for (const r of g.rows) {
                     const d = r.deltaPct == null ? '' : ` (${r.deltaPct >= 0 ? '+' : ''}${r.deltaPct.toFixed(1)}%)`;
-                    lines.push(`  ${r.label}: game ${fmt(r.game)} / sim ${fmt(r.sim)}${d} — ${r.verdict}`);
+                    lines.push(
+                        `  ${r.label}: game ${fmtStat(r.game, r.unit)} / sim ${fmtStat(r.sim, r.unit)}${d} — ${r.verdict}`
+                    );
                 }
             }
         }
@@ -1036,7 +1053,9 @@ class MonsterStatCheckPanel {
             lines.push(`[${g.group}]`);
             for (const r of g.rows) {
                 const d = r.deltaPct == null ? '' : ` (${r.deltaPct >= 0 ? '+' : ''}${r.deltaPct.toFixed(1)}%)`;
-                lines.push(`  ${r.label}: you ${fmt(r.game)} / sim ${fmt(r.sim)}${d} — ${r.verdict}`);
+                lines.push(
+                    `  ${r.label}: you ${fmtStat(r.game, r.unit)} / sim ${fmtStat(r.sim, r.unit)}${d} — ${r.verdict}`
+                );
             }
         }
         if (pc.fold?.folded?.length) lines.push(`Folded into the sim: ${pc.fold.folded.join(', ')}`);
@@ -1366,8 +1385,8 @@ class MonsterStatCheckPanel {
                 body.appendChild(
                     this._rowEl({
                         label: row.label,
-                        game: fmt(row.game),
-                        sim: fmt(row.sim),
+                        game: fmtStat(row.game, row.unit),
+                        sim: fmtStat(row.sim, row.unit),
                         delta: fmtDelta(row.deltaPct),
                         verdict: row.verdict,
                     })
@@ -1474,8 +1493,8 @@ class MonsterStatCheckPanel {
                             wrap.appendChild(
                                 this._rowEl({
                                     label: row.label,
-                                    game: fmt(row.game),
-                                    sim: fmt(row.sim),
+                                    game: fmtStat(row.game, row.unit),
+                                    sim: fmtStat(row.sim, row.unit),
                                     delta: fmtDelta(row.deltaPct),
                                     verdict: row.verdict,
                                 })

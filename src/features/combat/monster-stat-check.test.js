@@ -90,6 +90,21 @@ describe('compareStat', () => {
         expect(compareStat('x', { x: 5 }, { x: 0 }).deltaPct).toBeNull(); // can't divide by a zero baseline
         expect(compareStat('x', { x: 0 }, { x: 0 }).deltaPct).toBe(0);
     });
+
+    test('falls back to combatStats when the flat key is missing — the sim shape for timing/crit rows', () => {
+        // The game's payload carries attackInterval flat; the sim only ever
+        // computes it onto combatStats (see the comment above TIMING_ROWS in
+        // monster-stat-check.js). A flat key on one side and a nested one on
+        // the other must still compare correctly.
+        const game = { attackInterval: 3104213747 };
+        const sim = { combatStats: { attackInterval: 3104213747 } };
+        expect(compareStat('attackInterval', game, sim).deltaPct).toBe(0);
+        expect(compareStat('attackInterval', game, sim).sim).toBe(3104213747);
+    });
+
+    test('a flat key on both sides is read flat, never shadowed by a same-named nested one', () => {
+        expect(compareStat('x', { x: 100, combatStats: { x: 999 } }, { x: 100 }).game).toBe(100);
+    });
 });
 
 describe('classify', () => {
@@ -298,6 +313,150 @@ describe('buildComparison against an engine-built monster', () => {
     });
 });
 
+describe('Timing rows — monster attack interval/cast speed/crit, player HP regen', () => {
+    const HRID = '/monsters/pyre_hunter_stat_dummy';
+    const ROOM_LEVEL = 255; // a measured Pyre Hunter tick capture at this room
+
+    /** Base (unscaled) monster data shaped like a real combatMonsterDetailMap entry. */
+    function seed() {
+        setGameData({
+            abilityDetailMap: {},
+            combatMonsterDetailMap: {
+                [HRID]: {
+                    enrageTime: 0,
+                    experience: 100,
+                    abilities: [],
+                    combatDetails: {
+                        staminaLevel: 100,
+                        intelligenceLevel: 100,
+                        // Base attack level 100, scaled by roomLevel/100 to 255 at
+                        // room 255 — matching the measured attackLevel/2000 =
+                        // 0.1275 cast-speed component below.
+                        attackLevel: 100,
+                        meleeLevel: 100,
+                        defenseLevel: 100,
+                        rangedLevel: 100,
+                        magicLevel: 100,
+                        // Base auto-attack interval: 3500ms, in the sim's own
+                        // nanosecond unit (see combat-unit.js's default of
+                        // 3_000_000_000 for 3s).
+                        attackInterval: 3.5e9,
+                        combatStats: {
+                            combatStyleHrids: ['/combat_styles/magic'],
+                            attackInterval: 0, // 0 here means "seed from the flat base above"
+                            armor: 200,
+                            fireResistance: 500,
+                            natureResistance: 500,
+                            waterResistance: 100,
+                            criticalRate: 0.08,
+                            criticalDamage: 1.2,
+                        },
+                    },
+                },
+            },
+        });
+    }
+
+    afterEach(() => setGameData(null));
+
+    /**
+     * A `new_battle`-shaped game monster unit: `attackInterval` and
+     * `totalCastSpeed` flat on `combatDetails` (see the trial-badger fixture in
+     * `guild-trial-messages.fixture.js`), matching the sim's own numbers so the
+     * baseline test is a straight match.
+     */
+    function gameUnitMatching(monsterCombatDetails, extra = {}) {
+        return {
+            isPlayer: false,
+            combatBuffMap: {},
+            combatDetails: {
+                ...monsterCombatDetails,
+                attackInterval: monsterCombatDetails.combatStats.attackInterval,
+                totalCastSpeed: monsterCombatDetails.combatStats.castSpeed,
+                criticalRate: monsterCombatDetails.combatStats.criticalRate,
+                criticalDamage: monsterCombatDetails.combatStats.criticalDamage,
+                combatStats: { combatStyleHrids: ['/combat_styles/magic'] },
+            },
+            ...extra,
+        };
+    }
+
+    test('attack interval and cast speed match the measured Pyre Hunter figures at room 255', () => {
+        seed();
+        const monster = new Monster(HRID, 0, ROOM_LEVEL, true);
+        monster.updateCombatDetails();
+
+        // 3500ms / 1.1275 (1 + attackLevel(255)/2000) = 3104.2ms
+        expect(monster.combatDetails.combatStats.attackInterval / 1e6).toBeCloseTo(3104.2, 1);
+        expect(monster.combatDetails.combatStats.castSpeed).toBeCloseTo(0.1275, 4);
+    });
+
+    test('a monster comparison reads the sim’s attack interval off combatStats and matches the flat game value', () => {
+        seed();
+        const monster = new Monster(HRID, 0, ROOM_LEVEL, true);
+        monster.updateCombatDetails();
+        const gameUnit = gameUnitMatching(monster.combatDetails);
+
+        const result = buildComparison(gameUnit, monster.combatDetails);
+        const timing = result.groups.find((g) => g.group === 'Timing');
+        const interval = timing.rows.find((r) => r.key === 'attackInterval');
+        const castSpeed = timing.rows.find((r) => r.key === 'totalCastSpeed');
+        const critRate = timing.rows.find((r) => r.key === 'criticalRate');
+        const critDamage = timing.rows.find((r) => r.key === 'criticalDamage');
+
+        expect(interval.sim / 1e6).toBeCloseTo(3104.2, 1);
+        expect(interval.verdict).toBe('match');
+        expect(castSpeed.deltaPct).toBeCloseTo(0, 6);
+        expect(castSpeed.verdict).toBe('match');
+        expect(critRate.game).toBeCloseTo(0.08, 6);
+        expect(critRate.verdict).toBe('match');
+        expect(critDamage.verdict).toBe('match');
+        // No player-only row leaked into a monster comparison
+        expect(timing.rows.some((r) => r.key === 'hpRegenPer10')).toBe(false);
+        expect(result.hasMismatch).toBe(false);
+    });
+
+    test('a real gap in the monster’s attack interval is caught, not swallowed by the combatStats fallback', () => {
+        seed();
+        const monster = new Monster(HRID, 0, ROOM_LEVEL, true);
+        monster.updateCombatDetails();
+        const gameUnit = gameUnitMatching(monster.combatDetails);
+        // The game reads 10% faster than the sim computed — a real modelling gap
+        gameUnit.combatDetails.attackInterval = monster.combatDetails.combatStats.attackInterval * 0.9;
+
+        const result = buildComparison(gameUnit, monster.combatDetails);
+        const interval = result.groups.find((g) => g.group === 'Timing').rows.find((r) => r.key === 'attackInterval');
+        expect(interval.verdict).toBe('mismatch');
+        expect(result.hasMismatch).toBe(true);
+    });
+
+    test('a player comparison adds the HP regen row, read off combatStats on both sides', () => {
+        seed();
+        const monster = new Monster(HRID, 0, ROOM_LEVEL, true);
+        monster.updateCombatDetails();
+        // hpRegenPer10 is read off combatStats on both the game and sim side (a
+        // player's live sheet carries it there too — see guild-loadouts.js's
+        // STAT_ROWS), so it needs no flat/nested fallback the way the monster
+        // rows above do.
+        const simDetails = { ...monster.combatDetails, combatStats: { ...monster.combatDetails.combatStats } };
+        simDetails.combatStats.hpRegenPer10 = 0.015;
+        const playerUnit = {
+            isPlayer: true,
+            combatBuffMap: {},
+            combatDetails: {
+                ...gameUnitMatching(monster.combatDetails).combatDetails,
+                combatStats: { combatStyleHrids: ['/combat_styles/magic'], hpRegenPer10: 0.015 },
+            },
+        };
+
+        const result = buildComparison(playerUnit, simDetails);
+        const timing = result.groups.find((g) => g.group === 'Timing');
+        const regen = timing.rows.find((r) => r.key === 'hpRegenPer10');
+        expect(regen).toBeDefined();
+        expect(regen.verdict).toBe('match');
+    });
+});
+
 describe('planBuffFold — what the sim player is handed so both sides match', () => {
     // Guild damage (+3%) and the labyrinth combat-damage upgrade (+12%) are
     // persistent /buff_types/damage ratios: on you as the fight opens, and
@@ -455,6 +614,32 @@ describe('statRows', () => {
         const groups = statRows('magic');
         const offense = groups.find((g) => g.group === 'Offense');
         expect(offense.rows.map(([key]) => key)).toEqual(['magicAccuracyRating', 'magicMaxDamage']);
+    });
+
+    test('a monster gets the timing/crit rows but not the player-only regen row', () => {
+        const timing = statRows('magic', 'monster').find((g) => g.group === 'Timing');
+        expect(timing.rows.map(([key]) => key)).toEqual([
+            'attackInterval',
+            'totalCastSpeed',
+            'criticalRate',
+            'criticalDamage',
+        ]);
+    });
+
+    test('a player also gets HP regen alongside the timing/crit rows', () => {
+        const timing = statRows('magic', 'player').find((g) => g.group === 'Timing');
+        expect(timing.rows.map(([key]) => key)).toEqual([
+            'attackInterval',
+            'totalCastSpeed',
+            'criticalRate',
+            'criticalDamage',
+            'hpRegenPer10',
+        ]);
+    });
+
+    test('defaults to the monster row set when no unit kind is given', () => {
+        const timing = statRows('magic').find((g) => g.group === 'Timing');
+        expect(timing.rows.some(([key]) => key === 'hpRegenPer10')).toBe(false);
     });
 });
 
