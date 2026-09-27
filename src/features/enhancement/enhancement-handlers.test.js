@@ -77,6 +77,13 @@ vi.mock('../../core/data-manager.js', () => ({
                     ],
                 },
                 '/items/mirror_of_protection': { name: 'Mirror of Protection', sellPrice: 1250 },
+                // Shaped as the live itemDetailMap has it: every _refined item names its base
+                '/items/kraken_chaps_refined': {
+                    name: 'Kraken Chaps (R)',
+                    baseItemHrids: ['/items/kraken_chaps'],
+                    enhancementCosts: [{ itemHrid: '/items/holy_cheese', count: 3 }],
+                },
+                '/items/kraken_chaps': { name: 'Kraken Chaps', sellPrice: 7000 },
                 '/items/philosophers_mirror': { name: "Philosopher's Mirror", sellPrice: 90000 },
             },
         }),
@@ -633,6 +640,40 @@ describe('a session whose run ended while no page was connected', () => {
         expect(state.calls).toEqual([['finalize', 70_000]]);
     });
 
+    test('a new queue action for the same item is a new run: the stored one closes, and is not extended', async () => {
+        // The stored run (a1, target 15) ended offline; the snapshot runs b1 on the same item
+        // at +9 to +18. Before: same item read as same run, so b1 landed in the old session.
+        state.characterData = {};
+        state.current = stored();
+        trackerMock.findExtendableSession = () => 's1';
+        const b1 = (level, currentCount) =>
+            cachedEnhanceAction({
+                id: 'b1',
+                currentCount,
+                enhancingMaxLevel: 18,
+                primaryItemHash: '30404::/item_locations/inventory::/items/enchanted_cloak_refined::' + level,
+            });
+        state.actions = [b1(9, 0)];
+        setupEnhancementHandlers();
+
+        expect(state.calls).toEqual([['finalize', 50_000], ['pendingStart']]);
+
+        await state.handlers.action_completed({ endCharacterAction: b1(10, 1) });
+        expect(state.calls).toContainEqual(['start', '/items/enchanted_cloak_refined', 9, 18, 2]);
+        expect(state.calls).toContainEqual(['success', 9, 10, false]);
+        expect(state.calls.map(([kind]) => kind)).not.toContain('extend');
+        trackerMock.findExtendableSession = () => null;
+    });
+
+    test('the same queue action still running is the same run, and stays open', () => {
+        state.characterData = {};
+        state.current = stored();
+        state.actions = [cachedEnhanceAction({ id: 'a1', currentCount: 10 })];
+        setupEnhancementHandlers();
+
+        expect(state.calls.map(([kind]) => kind)).not.toContain('finalize');
+    });
+
     test('is left alone before the character snapshot has landed', () => {
         state.current = stored();
         state.actions = [];
@@ -724,5 +765,28 @@ describe('a character switch', () => {
             endCharacterAction: { ...row, currentCount: 1, primaryItemHash: row.primaryItemHash.replace('::5', '::6') },
         });
         expect(state.calls.map(([kind]) => kind)).toEqual(['start']);
+    });
+});
+
+describe('a mirror attempt on a refined item', () => {
+    test('consumes a copy of the base item, one level below', async () => {
+        const row = (level, currentCount) => ({
+            id: 'r1',
+            actionHrid: '/actions/enhancing/enhance',
+            isDone: false,
+            ordinal: 1,
+            currentCount,
+            primaryItemHash: '30404::/item_locations/inventory::/items/kraken_chaps_refined::' + level,
+            secondaryItemHash: '30404::/item_locations/inventory::/items/philosophers_mirror::0',
+            enhancingMaxLevel: 10,
+            enhancingProtectionMinLevel: 0,
+        });
+        state.actions = [row(8, 0)];
+        await state.handlers.actions_updated({ endCharacterActions: [row(8, 0)] });
+        await state.handlers.action_completed({ endCharacterAction: row(9, 1) });
+
+        expect(state.calls).toContainEqual(['success', 8, 9, false]);
+        // A +7 Kraken Chaps, not a refined copy and not the refined item's materials
+        expect(state.costs).toEqual([['mat', '/items/kraken_chaps', 1, 7000]]);
     });
 });
