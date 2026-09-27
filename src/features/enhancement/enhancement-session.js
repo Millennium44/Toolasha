@@ -325,10 +325,11 @@ export function getLevelAttempts(session, level) {
 /**
  * Finalize session (mark as completed)
  * @param {Object} session - Session object
+ * @param {number} [endTime] - When the run ended, when that was not now
  */
-export function finalizeSession(session) {
+export function finalizeSession(session, endTime = Date.now()) {
     session.state = SessionState.COMPLETED;
-    session.endTime = Date.now();
+    session.endTime = endTime;
 }
 
 /**

@@ -13,6 +13,7 @@ import {
     normalizeSession,
     recordFailure,
     recordSuccess,
+    SessionState,
 } from './enhancement-session.js';
 
 /** Run `count` failures at `level`, each landing back on the same level. */
@@ -301,5 +302,18 @@ describe('normalizeSession - backward compatibility', () => {
 
         expect(legacySession.totalSuccesses).toBe(12);
         expect(legacySession.totalXP).toBe(4500);
+    });
+});
+
+describe('finalizeSession end time', () => {
+    test('ends now by default, or at the moment it is handed', () => {
+        const session = createSession('/items/sword', 'Sword', 0, 5, 0);
+        finalizeSession(session, 12_345);
+        expect(session.state).toBe(SessionState.COMPLETED);
+        expect(session.endTime).toBe(12_345);
+
+        const now = createSession('/items/sword', 'Sword', 0, 5, 0);
+        finalizeSession(now);
+        expect(now.endTime).toBeGreaterThan(12_345);
     });
 });
