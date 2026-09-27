@@ -173,7 +173,9 @@ function fmtStat(n, unit) {
 
 /** @param {number|null} pct */
 function fmtDelta(pct) {
-    if (pct == null || !Number.isFinite(pct)) return '';
+    if (pct == null || Number.isNaN(pct)) return '';
+    // Against a zero sim baseline there is no percentage to state
+    if (!Number.isFinite(pct)) return pct > 0 ? '+ from 0' : '− from 0';
     const sign = pct >= 0 ? '+' : '−';
     return `${sign}${Math.abs(pct).toFixed(1)}%`;
 }
@@ -972,7 +974,7 @@ class MonsterStatCheckPanel {
                     stat: r.label,
                     game: fmtStat(r.game, r.unit),
                     sim: fmtStat(r.sim, r.unit),
-                    delta: r.deltaPct == null ? '' : `${r.deltaPct.toFixed(1)}%`,
+                    delta: r.deltaPct == null ? '' : fmtDelta(r.deltaPct),
                     verdict: r.verdict,
                 }))
             );
@@ -1002,7 +1004,7 @@ class MonsterStatCheckPanel {
             for (const g of view.groups) {
                 lines.push(`[${g.group}]`);
                 for (const r of g.rows) {
-                    const d = r.deltaPct == null ? '' : ` (${r.deltaPct >= 0 ? '+' : ''}${r.deltaPct.toFixed(1)}%)`;
+                    const d = r.deltaPct == null ? '' : ` (${fmtDelta(r.deltaPct)})`;
                     lines.push(
                         `  ${r.label}: game ${fmtStat(r.game, r.unit)} / sim ${fmtStat(r.sim, r.unit)}${d} — ${r.verdict}`
                     );
@@ -1052,7 +1054,7 @@ class MonsterStatCheckPanel {
         for (const g of view?.groups || []) {
             lines.push(`[${g.group}]`);
             for (const r of g.rows) {
-                const d = r.deltaPct == null ? '' : ` (${r.deltaPct >= 0 ? '+' : ''}${r.deltaPct.toFixed(1)}%)`;
+                const d = r.deltaPct == null ? '' : ` (${fmtDelta(r.deltaPct)})`;
                 lines.push(
                     `  ${r.label}: you ${fmtStat(r.game, r.unit)} / sim ${fmtStat(r.sim, r.unit)}${d} — ${r.verdict}`
                 );

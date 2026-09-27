@@ -458,6 +458,10 @@ export function compareStat(key, gameDetails, simDetails) {
     if (game != null && sim != null) {
         if (sim !== 0) deltaPct = ((game - sim) / sim) * 100;
         else if (game === 0) deltaPct = 0;
+        // A zero baseline the game does not share is a gap, not an unknown: the
+        // engine starts crit rate and crit damage at 0, so a crit source the sim
+        // is missing reads exactly like this, and that is what these rows are for
+        else deltaPct = game > 0 ? Infinity : -Infinity;
     }
     return { key, game, sim, deltaPct };
 }
