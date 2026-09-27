@@ -32,6 +32,8 @@ import {
     DOT_ACTION,
 } from './damage-attribution.js';
 import capture from './__fixtures__/labyrinth-pyre-hunter-bleed.json';
+import party from './__fixtures__/combat-party.json';
+import dungeon from './__fixtures__/combat-dungeon.json';
 
 /**
  * The capture, fight by fight, as the labyrinth room log tallies it: a fresh
@@ -247,8 +249,12 @@ describe('a swing, a counter-attack and a tick', () => {
 });
 
 describe('a party', () => {
-    const party = () =>
-        started({ 0: player(10), 1: player(20) }, { 0: monster(10_000, 5, 0, 1), 1: monster(10_000, 3, 0, 1) });
+    // Both auto-attacking, as `new_battle` would say
+    const party = () => {
+        const state = started({ 0: player(10), 1: player(20) }, { 0: monster(10_000, 5), 1: monster(10_000, 3) });
+        noteActions(state, { 0: player(10), 1: player(20) });
+        return state;
+    };
 
     test('two players striking one monster on one tick get a swing each', () => {
         const state = party();
@@ -290,5 +296,115 @@ describe('a party', () => {
         const dealt = events.filter((event) => !event.isKill).reduce((sum, event) => sum + event.amount, 0);
 
         expect(dealt).toBe(360);
+    });
+});
+
+describe('an area swing', () => {
+    const SURGE = '/abilities/frost_surge';
+    const SLASH = '/abilities/crippling_slash';
+    const abilityDetailMap = {
+        [SURGE]: { abilityEffects: [{ effectType: '/ability_effect_types/damage', targetType: 'allEnemies' }] },
+        [SLASH]: { abilityEffects: [{ effectType: '/ability_effect_types/damage', targetType: 'enemy' }] },
+    };
+    const three = () =>
+        started({ 0: player(10) }, { 0: monster(10_000, 5), 1: monster(10_000, 3), 2: monster(10_000, 8) });
+
+    test('one cast ringing three monsters is a hit on each, not a hit and two ticks', () => {
+        // The wire: the caster's counter rises once, every monster's once
+        const state = three();
+        noteActions(state, { 0: { abilityHrid: SURGE } });
+        const events = attributeTick(
+            {
+                pMap: { 0: player(11) },
+                mMap: { 0: monster(9_800, 6), 1: monster(9_750, 4), 2: monster(10_000, 9) },
+            },
+            state,
+            { abilityDetailMap }
+        );
+        const tally = foldEvents({}, events, { filterNonDamaging: false });
+
+        expect(tally['0']).toMatchObject({ hits: 2, misses: 1, dotTicks: 0, damage: 450 });
+    });
+
+    test('a cast the game data cannot place is read as one that may have struck them all', () => {
+        const state = three();
+        noteActions(state, { 0: { abilityHrid: '/abilities/unknown' } });
+        const events = attributeTick(
+            { pMap: { 0: player(11) }, mMap: { 0: monster(9_800, 6), 1: monster(9_750, 4) } },
+            state
+        );
+
+        expect(events.filter((event) => event.isDot)).toEqual([]);
+        expect(events).toHaveLength(2);
+    });
+
+    test('pays off at most one rise per monster', () => {
+        // One cast, a monster rung twice: the second splat is not the cast's
+        const state = three();
+        noteActions(state, { 0: { abilityHrid: SURGE } });
+        const events = attributeTick(
+            { pMap: { 0: player(11) }, mMap: { 0: monster(9_700, 7), 1: monster(9_900, 4) } },
+            state,
+            { abilityDetailMap }
+        );
+        const tally = foldEvents({}, events, { filterNonDamaging: false });
+
+        expect(tally['0']).toMatchObject({ hits: 2, dotTicks: 1, damage: 400, dotDamage: 150 });
+    });
+
+    test('a single-target swing beside a bleed on a second monster leaves the bleed a tick', () => {
+        for (const [label, options] of [
+            ['auto', undefined],
+            [SLASH, { abilityDetailMap }],
+        ]) {
+            const state = three();
+            noteActions(state, { 0: label === 'auto' ? { isAutoAtk: true } : { abilityHrid: label } });
+            const events = attributeTick(
+                { pMap: { 0: player(11) }, mMap: { 0: monster(9_700, 6), 1: monster(9_940, 4) } },
+                state,
+                options
+            );
+            const tally = foldEvents({}, events, { filterNonDamaging: false });
+
+            expect(tally['0']).toMatchObject({ hits: 1, dotTicks: 1, damage: 360, dotDamage: 60 });
+        }
+    });
+
+    test('in a party, each caster’s area swing pays its own hits', () => {
+        const state = started({ 0: player(10), 1: player(20) }, { 0: monster(10_000, 5), 1: monster(10_000, 3) });
+        noteActions(state, { 0: { abilityHrid: SURGE }, 1: { abilityHrid: SURGE } });
+        const events = attributeTick(
+            { pMap: { 0: player(11), 1: player(21) }, mMap: { 0: monster(9_600, 7), 1: monster(9_600, 5) } },
+            state,
+            { abilityDetailMap }
+        );
+        const tally = foldEvents({}, events, { filterNonDamaging: false });
+
+        expect(tally['0']).toMatchObject({ hits: 2, dotTicks: 0, damage: 400 });
+        expect(tally['1']).toMatchObject({ hits: 2, dotTicks: 0, damage: 400 });
+    });
+});
+
+describe('the recorded parties', () => {
+    // Frost Surge, Crippling Slash and Penetrating Shot/Strike each raise the
+    // caster's counter once and ring several monsters on the same tick
+    test.each([
+        ['combat-party', party],
+        ['combat-dungeon', dungeon],
+    ])('%s files no damage-over-time: its only multi-monster rises are area casts', (_, recording) => {
+        const state = newAttributionState();
+        const ticks = [];
+        for (const tick of recording.ticks) {
+            if (tick.type === 'new_battle') {
+                noteActions(state, tick.payload.players);
+                state.monstersHP = {};
+                state.dmgCounter = {};
+                state.critCounter = {};
+                continue;
+            }
+            ticks.push(...attributeTick(tick.payload, state).filter((event) => event.isDot));
+            noteActions(state, tick.payload.pMap);
+        }
+        expect(ticks).toEqual([]);
     });
 });
