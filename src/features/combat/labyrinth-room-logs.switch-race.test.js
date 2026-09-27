@@ -21,6 +21,9 @@ const world = vi.hoisted(() => ({
     /** Held open to park initialize() inside the record read */
     gate: null,
     characterId: 'char1',
+    /** Held open to park initialize() inside labTickCapture.loadAutosave() */
+    tickAutosaveGate: null,
+    tickAutosaveResult: false,
 }));
 
 /** Every live websocket handler, by message type, so leaks are countable. */
@@ -95,11 +98,15 @@ vi.mock('./labyrinth-tick-capture.js', () => ({
     default: {
         captureStatus: () => ({ capturing: false, ticks: 0, seconds: 0, duplicatesDiscarded: 0, savedAt: null }),
         isCapturing: () => false,
-        unsavedTickCount: () => 0,
+        heldTickCount: () => 0,
         startCapture: () => {},
         stopCapture: () => {},
         forgetForCharacterSwitch: () => {},
-        loadAutosave: async () => false,
+        // The read the switch can land inside, for the loadAutosave ticket test
+        loadAutosave: async () => {
+            if (world.tickAutosaveGate) await world.tickAutosaveGate;
+            return world.tickAutosaveResult;
+        },
         clearCapture: () => {},
         captureFile: () => ({ ticks: [] }),
     },
@@ -122,6 +129,8 @@ describe('a character switch landing inside the room log read', () => {
     beforeEach(async () => {
         world.gate = null;
         world.characterId = 'char1';
+        world.tickAutosaveGate = null;
+        world.tickAutosaveResult = false;
         await labyrinthRoomLogs.disable();
         socket.handlers = {};
         observers.registered = 0;
@@ -130,6 +139,7 @@ describe('a character switch landing inside the room log read', () => {
 
     afterEach(async () => {
         world.gate = null;
+        world.tickAutosaveGate = null;
         await labyrinthRoomLogs.disable();
     });
 
@@ -152,6 +162,33 @@ describe('a character switch landing inside the room log read', () => {
         world.gate = null;
         await pending;
     }
+
+    test('an autosave recovery that resolves after teardown does not repaint the departed panel', async () => {
+        let release;
+        world.tickAutosaveGate = new Promise((resolve) => {
+            release = resolve;
+        });
+        world.tickAutosaveResult = true;
+        const paintSpy = vi.spyOn(labyrinthRoomLogs, 'paintCapture');
+
+        // initialize() does not await loadAutosave() (it is fire-and-forget),
+        // so it resolves well before the gate below is released.
+        await labyrinthRoomLogs.initialize();
+        await labyrinthRoomLogs.disable();
+        world.characterId = 'char2';
+        release();
+        world.tickAutosaveGate = null;
+        // Flush the microtasks loadAutosave()'s own await and its .then()
+        // callback need to run.
+        await Promise.resolve();
+        await Promise.resolve();
+        await Promise.resolve();
+
+        // Gated by the same ticket as the record read: a recovery landing
+        // after this instance was torn down must not repaint it.
+        expect(paintSpy).not.toHaveBeenCalled();
+        paintSpy.mockRestore();
+    });
 
     test('the interrupted initialize registers nothing on the way out', async () => {
         await switchDuringInitialize();

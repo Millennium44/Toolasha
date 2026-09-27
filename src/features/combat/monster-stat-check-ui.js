@@ -41,7 +41,7 @@ import { tierMonsterHp } from '../guild/guild-trial-forecast.js';
 import { describeFights, MIN_REAL_CASTS } from './labyrinth-uptime-harness.js';
 import { downloadFile } from '../../utils/csv-export.js';
 import labyrinthClearRate from './labyrinth-clear-rate.js';
-import { captureFile, startCapture, unsavedTickCount } from './labyrinth-tick-capture.js';
+import { captureFile, startCapture, lastFightRoomLevel } from './labyrinth-tick-capture.js';
 import { registerCommand, unregisterCommand } from '../../utils/command-registry.js';
 import { runningAction } from '../../utils/combat-actions.js';
 
@@ -710,13 +710,18 @@ class MonsterStatCheckPanel {
             // A capture is usable if it holds ticks and matches this monster,
             // this room level AND this build (unlabelled fields pass) —
             // comparing ticks from one context against a sim of another reads
-            // as a finding when it is a context mismatch.
-            const mismatches = captureContextMismatches(capture?.context, {
-                monsterHrid: snap.hrid,
-                roomLevel: snap.roomLevel,
-                fingerprint,
-            });
-            const usable = capture?.ticks?.length && mismatches.length === 0;
+            // as a finding when it is a context mismatch. The room level
+            // compared is the capture's MOST RECENT fight, not
+            // `context.roomLevel` — a capture followed across rooms ("All
+            // rooms") can hold fights at several levels, and the context is
+            // only ever the level the capture started at.
+            const capturedRoomLevel = lastFightRoomLevel(capture);
+            const mismatches = captureContextMismatches(
+                { ...capture?.context, roomLevel: capturedRoomLevel ?? capture?.context?.roomLevel },
+                { monsterHrid: snap.hrid, roomLevel: snap.roomLevel, fingerprint }
+            );
+            const heldTicks = capture?.ticks?.length || 0;
+            const usable = heldTicks > 0 && mismatches.length === 0;
             if (usable) {
                 const result = await labyrinthClearRate.uptimeHarness(
                     snap.hrid,
@@ -735,34 +740,33 @@ class MonsterStatCheckPanel {
                           at: Date.now(),
                       }
                     : { error: 'Sim run failed.' };
+            } else if (heldTicks > 0) {
+                // A held capture — saved or not — is exactly the shape of the
+                // loss this guards against: arming a fresh one here would
+                // silently discard it, and a Save click is not consent to do
+                // that (the click stamps `savedAt` before the browser's own
+                // Save dialog has necessarily done anything, and that dialog
+                // can be cancelled). Refuse outright and name what differs —
+                // the room log panel's Capture/Discard buttons are the one
+                // place that resolves it, so point there rather than
+                // duplicating Save/Discard in this panel too.
+                const already = capture.savedAt != null;
+                const differs = mismatches.length ? ` It is from a different ${mismatches.join(' / ')}.` : '';
+                snap.uptime = {
+                    error:
+                        (already
+                            ? `A saved capture (${heldTicks.toLocaleString()} ticks) is still held.`
+                            : `Unsaved capture (${heldTicks.toLocaleString()} ticks).`) +
+                        `${differs} Discard it from the room log panel’s Capture button before running the ` +
+                        'harness on a different monster, room or build.',
+                };
             } else {
-                // A mismatched-but-unsaved held capture is exactly the shape of
-                // the loss this guards against: arming a fresh one here would
-                // silently throw it away mid-Save-dialog. Refuse instead — the
-                // room log panel's Capture/Discard buttons are the one place
-                // that resolves it, so point there rather than duplicating
-                // Save/Discard in this panel too.
-                const heldTicks = unsavedTickCount();
-                if (heldTicks > 0) {
-                    snap.uptime = {
-                        error:
-                            `Unsaved capture (${heldTicks.toLocaleString()} ticks) — save or discard it from the ` +
-                            'room log panel’s Capture button before running the harness on a different monster, ' +
-                            'room or build.',
-                    };
-                } else {
-                    // Arm a capture bound to this monster, room and build. When a
-                    // held capture was refused, name what differed rather than
-                    // silently starting over.
-                    startCapture({ monsterHrid: snap.hrid, roomLevel: snap.roomLevel, fingerprint });
-                    const refusal = capture?.ticks?.length
-                        ? `Held capture is from a different ${mismatches.join(' / ')} — starting a fresh one. `
-                        : '';
-                    snap.uptime = {
-                        armed: true,
-                        message: `${refusal}Capturing — fight this monster, then click “Run uptime harness” again.`,
-                    };
-                }
+                // Nothing held: arm a fresh capture bound to this monster, room and build.
+                startCapture({ monsterHrid: snap.hrid, roomLevel: snap.roomLevel, fingerprint });
+                snap.uptime = {
+                    armed: true,
+                    message: 'Capturing — fight this monster, then click “Run uptime harness” again.',
+                };
             }
         } catch (error) {
             console.error('[MonsterStatCheck] Uptime harness failed:', error);

@@ -106,6 +106,17 @@ let initialClientBuild = null;
 let autosaveOwnerId = null;
 /** `Date.now()` of the last autosave write, so the tick loop is not slowed by writing every tick */
 let lastAutosaveAt = 0;
+/**
+ * A restored capture's recorded span, in ms — the last tick's own `at` (already
+ * elapsed-since-start), read once at restore time. Null for a live capture,
+ * whose `seconds` is measured off `startedAt` and the real clock instead.
+ * `startedAt` on a restored capture is the ORIGINAL session's wall-clock start
+ * (kept for `recordedAt`'s sake), which can be hours or days behind `Date.now()`
+ * by the time it is recovered — `captureStatus().seconds` must not compute off
+ * that gap, which is elapsed *wall time since the original capture*, not the
+ * capture's own duration.
+ */
+let restoredDurationMs = null;
 
 /** The autosave key for one character, mirroring `character-key.js`'s `${base}_${id}` idiom. */
 function autosaveKey(ownerId) {
@@ -121,16 +132,23 @@ function autosaveKey(ownerId) {
  * Kept regardless of `savedAt` — a click on Save is not proof the file landed
  * (Firefox's Save dialog can be cancelled), so the autosave outlives it and is
  * only ever cleared by an explicit Discard or a confirmed new capture.
+ *
+ * @param {boolean} [immediate=false] - Skip `storage.set`'s debounce. The
+ *   periodic in-progress write (`maybeAutosave`) leaves it debounced — a burst
+ *   of ticks near the interval boundary should still coalesce into one write —
+ *   but the on-stop write (`endCapture`) and the post-download refresh pass
+ *   `true`: those are the moments most likely to be followed by a crash or a
+ *   closed tab, and a debounced write queued right before either is lost.
  */
-function writeAutosave() {
+function writeAutosave(immediate = false) {
     if (!ticks.length || !autosaveOwnerId) return;
     // Recorders of bulky history stand down under quota pressure rather than
     // spend every write failing the same way; this is that same convention.
     if (storage.isQuotaExceeded?.()) return;
     lastAutosaveAt = Date.now();
     try {
-        Promise.resolve(storage.set(autosaveKey(autosaveOwnerId), captureFile(), AUTOSAVE_STORE)).catch((error) =>
-            console.error('[LabyrinthTickCapture] Autosaving the capture failed:', error)
+        Promise.resolve(storage.set(autosaveKey(autosaveOwnerId), captureFile(), AUTOSAVE_STORE, immediate)).catch(
+            (error) => console.error('[LabyrinthTickCapture] Autosaving the capture failed:', error)
         );
     } catch (error) {
         console.error('[LabyrinthTickCapture] Autosaving the capture failed:', error);
@@ -167,10 +185,33 @@ function clientBuild() {
     };
 }
 
+/** The first monster in a `new_battle` payload, or null. */
+function firstMonster(payload) {
+    const monsters = Array.isArray(payload?.monsters) ? payload.monsters : Object.values(payload?.monsters || {});
+    return monsters[0] || null;
+}
+
 /** The first monster's hrid in a `new_battle` payload, or null. */
 function firstMonsterHrid(payload) {
-    const monsters = Array.isArray(payload?.monsters) ? payload.monsters : Object.values(payload?.monsters || {});
-    return monsters[0]?.hrid || null;
+    return firstMonster(payload)?.hrid || null;
+}
+
+/**
+ * This fight's own labyrinth room level, read straight off its monster's
+ * scaled combat level — not assumed from the capture's start-of-run context,
+ * which is only ever the level the capture *started* at and goes stale the
+ * instant a capture follows the player into a different room ("All rooms").
+ * Measured: a labyrinth monster's `combatDetails.combatLevel` (and
+ * `staminaLevel`, which the labyrinth scales identically) equals the room
+ * level directly — no base-stat lookup or inverse formula needed. Null for a
+ * payload that carries no such field (a non-labyrinth fight, or a payload
+ * shape too old to have one).
+ * @param {Object} payload - A `new_battle` payload
+ * @returns {number|null}
+ */
+function fightRoomLevel(payload) {
+    const level = Number(firstMonster(payload)?.combatDetails?.combatLevel);
+    return Number.isFinite(level) && level > 0 ? level : null;
 }
 
 /** @returns {boolean} Whether a capture is running */
@@ -179,21 +220,21 @@ export function isCapturing() {
 }
 
 /**
- * How many held ticks would be silently discarded if a fresh capture started
- * right now — zero once they are saved (or none are held).
+ * How many ticks are currently held — running or stopped, saved or not.
  *
- * Every path that can start or reset a capture (the harness rerun, the
- * Capture button, anything future) must check this — or pass `force` to
- * {@link startCapture} — before calling it, and route through Save/Discard
- * when it is non-zero. This is *not* the same test as the autosave's: the
- * autosave keeps backing up the ticks even after `savedAt` is set, because a
- * click is not proof the file landed; this guard stops being non-zero right
- * at that click, because requiring a Discard after every acknowledged save
- * would be a needless second step for the ordinary case.
+ * A Save click is not consent to discard: `downloadCapture()` stamps
+ * `savedAt` the moment the download link is clicked, before the browser's own
+ * Save dialog has necessarily done anything, and that dialog can be
+ * cancelled. So "already saved" is not a safe reason to let a fresh capture
+ * silently replace what is held — only an explicit Discard (`clearCapture()`)
+ * or a caller passing `force` to {@link startCapture} after getting the
+ * user's own go-ahead may do that. Every path that can start or reset a
+ * capture (the harness rerun, the Capture button, anything future) must
+ * check this first and route through Save/Discard when it is non-zero.
  * @returns {number}
  */
-export function unsavedTickCount() {
-    return savedAt === null ? ticks.length : 0;
+export function heldTickCount() {
+    return ticks.length;
 }
 
 /**
@@ -254,7 +295,16 @@ function push(type, payload, build = null) {
         }
         if (key !== null) lastBattleKey = key;
     }
-    ticks.push({ at: Date.now() - startedAt, type, payload, ...(build ? { clientBuild: build } : {}) });
+    ticks.push({
+        at: Date.now() - startedAt,
+        type,
+        payload,
+        // Tagged on the tick itself, not only in the capture-wide context: a
+        // capture that follows the player across rooms ("All rooms") has one
+        // room level per fight, and the context is only ever the first one.
+        ...(type === 'new_battle' ? { roomLevel: fightRoomLevel(payload) } : {}),
+        ...(build ? { clientBuild: build } : {}),
+    });
     // Keep the newest: a long capture that overflows should hold the recent
     // fight, not the one it opened on. Counted, so an overflowed capture's file
     // says it is a window, not the whole feed.
@@ -278,17 +328,18 @@ function push(type, payload, build = null) {
  *   a different monster begins (so clearing the room doesn't record what comes
  *   after). Only applies when `ctx.monsterHrid` is set; a general capture with no
  *   target monster records until stopped.
- * @param {boolean} [opts.force=false] - Start even while {@link unsavedTickCount}
+ * @param {boolean} [opts.force=false] - Start even while {@link heldTickCount}
  *   is non-zero, discarding the held ticks. Only for a caller that has already
  *   gotten the user's explicit go-ahead (e.g. its own Discard button) — never
- *   the default for a path that would otherwise reset silently.
- * @returns {{started: boolean, unsavedTicks?: number}} `started: false` means
+ *   the default for a path that would otherwise reset silently, and a Save
+ *   click is not that go-ahead (see {@link heldTickCount}).
+ * @returns {{started: boolean, heldTicks?: number}} `started: false` means
  *   nothing changed — the caller must not assume a capture is now running.
  */
 export function startCapture(ctx = null, { stopOnLeave = true, force = false } = {}) {
     if (!force) {
-        const heldTicks = unsavedTickCount();
-        if (heldTicks > 0) return { started: false, unsavedTicks: heldTicks };
+        const held = heldTickCount();
+        if (held > 0) return { started: false, heldTicks: held };
     }
     // Stop first: `endCapture` below autosaves whatever the previous capture
     // still held (a normal, harmless write — see `writeAutosave`). Clearing
@@ -311,6 +362,7 @@ export function startCapture(ctx = null, { stopOnLeave = true, force = false } =
     initialClientBuild = clientBuild();
     autosaveOwnerId = dataManager.getCurrentCharacterId() || 'default';
     lastAutosaveAt = 0;
+    restoredDurationMs = null;
 
     // Both sides' health/mana/counters, and the message that names the units and
     // their abilities. `battle_updated` is trimmed to what a fight reads; the
@@ -365,9 +417,10 @@ function endCapture(reason) {
     capturing = false;
     // Beyond the throttled per-tick writes: a stop is exactly the moment the
     // held ticks stop changing and are least likely to be autosaved again
-    // soon, so it writes immediately rather than waiting for the next tick
-    // that may never come.
-    writeAutosave();
+    // soon, so this writes now rather than waiting for the next tick that may
+    // never come — and skips storage's own debounce too, so a crash right
+    // after stopping cannot lose a write that was still queued.
+    writeAutosave(true);
 }
 
 /** Stop recording. What was captured stays captured, for the file. */
@@ -397,6 +450,7 @@ export function forgetForCharacterSwitch() {
     initialClientBuild = null;
     autosaveOwnerId = null;
     lastAutosaveAt = 0;
+    restoredDurationMs = null;
 }
 
 /** Stop, throw away the captured ticks, and clear their autosave. The ref to the last saved file survives. */
@@ -416,6 +470,7 @@ export function clearCapture() {
     initialClientBuild = null;
     autosaveOwnerId = null;
     lastAutosaveAt = 0;
+    restoredDurationMs = null;
 }
 
 /**
@@ -427,7 +482,13 @@ export function captureStatus() {
     return {
         capturing,
         ticks: ticks.length,
-        seconds: startedAt ? (Date.now() - startedAt) / 1000 : 0,
+        // A restored capture's `startedAt` is the ORIGINAL session's wall
+        // clock, which can be hours or days behind `Date.now()` by the time
+        // it is recovered — computing off that gap reads as an absurd
+        // duration. Its own recorded span (the last tick's own `at`) is what
+        // this asks for instead.
+        seconds:
+            restoredDurationMs !== null ? restoredDurationMs / 1000 : startedAt ? (Date.now() - startedAt) / 1000 : 0,
         duplicatesDiscarded,
         savedAt,
         captureId,
@@ -443,6 +504,13 @@ export function captureStatus() {
  * against which server (live and test do not share balance), and how many
  * repeated ticks were dropped — a capture whose duplicates were silently kept
  * would read as twice the cadence it really had.
+ *
+ * Version 4: every `new_battle` tick carries its own `roomLevel`, read from
+ * that fight's own monster data (see `fightRoomLevel`) — a capture followed
+ * across rooms ("All rooms") can hold fights at several levels, and
+ * `context.roomLevel` is only ever the level the capture started at. Additive
+ * and optional, so nothing that read version 3 breaks; `lastFightRoomLevel`
+ * falls back to `context.roomLevel` for a file that predates it.
  * @returns {Object}
  */
 export function captureFile() {
@@ -462,7 +530,7 @@ export function captureFile() {
     }
     return {
         format: 'toolasha-labyrinth-tick-capture',
-        version: 3,
+        version: 4,
         toolashaVersion: scriptVersion(),
         host,
         isTestServer: host ? host.includes('test.') : null,
@@ -509,12 +577,13 @@ export function downloadCapture() {
             monsterHrid: context?.monsterHrid ?? null,
             roomLevel: context?.roomLevel ?? null,
         };
-        // Refresh the autosave with the now-stamped savedAt. Not proof the
-        // click actually landed on disk (the Save dialog can still be
-        // cancelled), so this does not stop the autosave — only Discard or a
-        // confirmed new capture does that — but the copy should carry the
-        // freshest state either way.
-        writeAutosave();
+        // Refresh the autosave with the now-stamped savedAt, immediately: not
+        // proof the click actually landed on disk (the Save dialog can still
+        // be cancelled), so this does not stop the autosave — only Discard or
+        // a confirmed new capture does that — but the copy should carry the
+        // freshest state either way, and this is another moment a crash right
+        // after should not be able to lose a still-queued debounced write.
+        writeAutosave(true);
         return true;
     } catch (error) {
         console.error('[LabyrinthTickCapture] Writing the capture failed:', error);
@@ -535,6 +604,28 @@ export function lastCaptureRef() {
 }
 
 /**
+ * The room level of a capture's most recent fight, read from that fight's own
+ * `new_battle` tick — not `context.roomLevel`, which is only ever the level
+ * the capture started at. A capture followed across rooms ("All rooms") can
+ * hold fights at several levels; this is the one to compare against whatever
+ * is on screen right now. Falls back to `context.roomLevel` for a legacy
+ * capture whose ticks predate per-fight tagging (no tick carries `roomLevel`
+ * at all), and to `null` when neither is known.
+ * @param {{ticks?: Array<Object>, context?: {roomLevel?: number}}} file - A
+ *   `captureFile()`-shaped object (or the file as downloaded and re-parsed)
+ * @returns {number|null}
+ */
+export function lastFightRoomLevel(file) {
+    const fights = (file?.ticks || []).filter((tick) => tick?.type === 'new_battle');
+    for (let i = fights.length - 1; i >= 0; i--) {
+        const level = Number(fights[i].roomLevel);
+        if (Number.isFinite(level) && level > 0) return level;
+    }
+    const legacy = Number(file?.context?.roomLevel);
+    return Number.isFinite(legacy) && legacy > 0 ? legacy : null;
+}
+
+/**
  * Restore an autosaved capture from a previous session, if this character has
  * one held. Call once, from the room-log feature's `initialize()`, after the
  * current character is known (the same timing as `labFightRecorder.load()`).
@@ -545,6 +636,15 @@ export function lastCaptureRef() {
  * capture that stopped itself is already in — rather than losing them with
  * the page. Never overwrites a capture already running or held in this
  * session: this is page-load recovery, not a merge.
+ *
+ * Guards the character identity across the read, not only whether anything is
+ * armed: `dataManager.getCurrentCharacterId()` is captured before the await
+ * and checked again after it, so a switch landing while the read is in flight
+ * cannot hand character B a read that was made for character A. The caller
+ * (`labyrinth-room-logs.js`'s `initialize()`) additionally gates its own use
+ * of the result with an ownership ticket, for the same reason `record.load()`
+ * and `labFightRecorder.load()` do — this recheck protects this module's own
+ * state; the ticket protects what the caller does with a `true` result.
  * @returns {Promise<boolean>} Whether a capture was recovered
  */
 export async function loadAutosave() {
@@ -557,14 +657,19 @@ export async function loadAutosave() {
         console.error('[LabyrinthTickCapture] Reading the autosaved capture failed:', error);
         return false;
     }
-    // Nothing armed while the read was in flight — a page-load call, so this
-    // is defensive rather than a real race, but it is cheap to check.
+    // Nothing armed while the read was in flight, AND still the same
+    // character — a switch mid-read must not hand the departing character's
+    // ticks to whoever has arrived, even if nothing else claimed them first.
     if (capturing || ticks.length) return false;
+    if ((dataManager.getCurrentCharacterId() || 'default') !== ownerId) return false;
     if (!stored || !Array.isArray(stored.ticks) || !stored.ticks.length) return false;
 
     ticks = stored.ticks;
     context = stored.context || null;
     captureId = stored.captureId || null;
+    // Kept as the true original wall-clock start, for `recordedAt` — but see
+    // `restoredDurationMs` below for why `captureStatus().seconds` must not
+    // be computed from it.
     startedAt = Number(stored.recordedAt) || 0;
     duplicatesDiscarded = Number(stored.duplicatesDiscarded) || 0;
     ticksDropped = Number(stored.ticksDropped) || 0;
@@ -579,12 +684,18 @@ export async function loadAutosave() {
     capturing = false;
     autosaveOwnerId = ownerId;
     lastAutosaveAt = Date.now();
+    // The recorded span, in ms: the last tick's own `at`, which is already
+    // elapsed-since-the-original-start. `Date.now() - startedAt` would
+    // instead measure wall time since that original session, which can be
+    // hours or days by the time a reload recovers this.
+    const last = ticks[ticks.length - 1];
+    restoredDurationMs = Number.isFinite(Number(last?.at)) ? Number(last.at) : 0;
     return true;
 }
 
 export default {
     isCapturing,
-    unsavedTickCount,
+    heldTickCount,
     startCapture,
     stopCapture,
     clearCapture,
@@ -594,4 +705,5 @@ export default {
     captureFile,
     downloadCapture,
     lastCaptureRef,
+    lastFightRoomLevel,
 };

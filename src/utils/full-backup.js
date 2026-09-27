@@ -59,9 +59,17 @@ export const DEVICE_LOCAL_KEY_PREFIXES = ['toolasha_local_'];
  * {@link DEVICE_LOCAL_KEY_PREFIXES}: it is the list `core/settings-storage.js`
  * is pinned against, and that module cannot import this one (Core loads before
  * Utils), so the store the chat record actually lives in stays named here.
+ *
+ * `labyrinth`'s `labyrinthTickCaptureAutosave_` is the raw tick capture's
+ * autosave (`features/combat/labyrinth-tick-capture.js`) — a held capture can
+ * run to several MB (8000 ticks) and is device-local recovery state for a
+ * crash or a cancelled Save dialog, not history worth keeping in a backup or
+ * syncing to a gist. It is also the same reasoning `trialTraceChunk_` above
+ * already established for this list: large, transient, single-device.
  */
 export const EXCLUDED_STORE_KEY_PREFIXES = {
     guildHistory: ['trialTraceManifest', 'trialTraceChunk_'],
+    labyrinth: ['labyrinthTickCaptureAutosave_'],
     settings: [...DEVICE_LOCAL_KEY_PREFIXES],
 };
 
