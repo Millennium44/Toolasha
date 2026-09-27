@@ -800,6 +800,24 @@ describe('the stored settings', () => {
         expect(fresh.filterText).toBe('widget');
     });
 
+    test('switching to a character whose settings cannot be read starts from defaults, not the last one', async () => {
+        // An unreadable load assigns nothing, so without a reset the previous
+        // character's toggles and cost overrides priced the new one's rows
+        await calc.loadSettings();
+        calc.ownInputs = true;
+        calc.keepPhilo = true;
+        calc.itemCostOverrides = { [WIDGET_HRID]: 900 };
+
+        mocks.characterId = 'char2';
+        storageMock.unavailable = true;
+        await calc.loadSettings();
+        storageMock.unavailable = false;
+
+        expect(calc.ownInputs).toBe(false);
+        expect(calc.keepPhilo).toBe(false);
+        expect(calc.itemCostOverrides).toEqual({});
+    });
+
     test('the own-use toggles persist', async () => {
         calc.ownInputs = true;
         calc.keepPhilo = true;
