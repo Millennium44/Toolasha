@@ -6,6 +6,8 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+- **Sim yourself solo while in a party**: a Solo checkbox on the combat sim's Configure tab runs just the selected player, keeping the party roster and fetched loadouts for when you untick it; its history entries are labelled Solo. A fresh character's empty chat channel no longer triggers a false "Chat messages — selector missing" warning.
+
 - **Shop planner, trial checker and View Loadout edge cases**: the shop planner no longer reuses volumes measured with pooled history after it is switched off, runs one volume lookup at a time across token switches, and a stale plan click no longer opens the Shop for another character; the trial checker's Fetch next skips no-loadout players found by Recapture too; a loadout reply is matched to your own newer click, and a party-loadout fetch no longer overwrites a scenario you loaded meanwhile.
 
 - **Combat sim comparison labels and budget goals**: each Comparison baseline now names its area, party or solo, and loadout or current gear (e.g. "Current gear · Party (3) · Fly"), and the upgrade budget planner can also aim at encounters/hr, fewer deaths/hr, or overall Score.
