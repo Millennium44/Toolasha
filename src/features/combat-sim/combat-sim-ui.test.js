@@ -4678,7 +4678,7 @@ describe('resolveSimParty: what a run simulates once Solo enters the picture', (
 
         const result = resolveSimParty(editor, editedDTOs);
 
-        expect(result.playerDTOs).toEqual([{ hrid: 'player2' }]);
+        expect(result.playerDTOs).toEqual([{ hrid: 'player2', debuffOnLevelGap: 0 }]);
         expect(result.playerInfo).toEqual([{ hrid: 'player2', name: 'Bob' }]);
         expect(result.selfHrid).toBe('player2');
         expect(result.soloApplied).toBe(true);
@@ -4787,7 +4787,9 @@ describe('the Solo checkbox end to end: Simulate and All Zones', () => {
 
         await ui._onSimulate();
 
-        expect(mocks.simRunArgs.playerDTOs).toEqual([{ hrid: 'player2', equipment: {}, food: [null, null, null] }]);
+        expect(mocks.simRunArgs.playerDTOs).toEqual([
+            { hrid: 'player2', equipment: {}, food: [null, null, null], debuffOnLevelGap: 0 },
+        ]);
     });
 
     test('a Solo run is labelled from the simulated player’s edits, not self’s', async () => {
@@ -4796,6 +4798,19 @@ describe('the Solo checkbox end to end: Simulate and All Zones', () => {
         await ui._onSimulate();
 
         expect(mocks.labelPlayer).toBe('player2');
+    });
+
+    test('a Solo run clears the party level-gap penalty for the run only', async () => {
+        // The adapter stamps a lower-level member's party-derived penalty on
+        // their DTO; alone there is nobody to be penalized against
+        mocks.editedDTOs.player2.debuffOnLevelGap = 0.5;
+        selectZone();
+
+        await ui._onSimulate();
+
+        expect(mocks.simRunArgs.playerDTOs[0].debuffOnLevelGap).toBe(0);
+        // The editor's own DTO keeps it for the next full-party run
+        expect(mocks.editedDTOs.player2.debuffOnLevelGap).toBe(0.5);
     });
 
     test('the history entry records a party of one, so the comparison label reads Solo', async () => {
@@ -4833,7 +4848,9 @@ describe('the Solo checkbox end to end: Simulate and All Zones', () => {
 
         await ui._onSimulateAllZones();
 
-        expect(mocks.allZonesArgs.playerDTOs).toEqual([{ hrid: 'player2', equipment: {}, food: [null, null, null] }]);
+        expect(mocks.allZonesArgs.playerDTOs).toEqual([
+            { hrid: 'player2', equipment: {}, food: [null, null, null], debuffOnLevelGap: 0 },
+        ]);
         expect(ui._activePlayerTab).toBe('player2');
     });
 
