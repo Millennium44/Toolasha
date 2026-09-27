@@ -27,6 +27,8 @@ const game = vi.hoisted(() => ({
     battleParty: null,
     /** Set per-test to stub what a player DTO exports to */
     buildExport: null,
+    /** Set per-test to stub what a pasted "+ Import" text parses to */
+    parseImport: null,
 }));
 
 vi.mock('../../core/data-manager.js', () => ({
@@ -72,7 +74,7 @@ vi.mock('./combat-sim-adapter.js', () => ({
         return game.allPlayers;
     },
     buildPlayerDTO: () => (game.selfDTO ? structuredClone(game.selfDTO) : null),
-    parseShykaiImport: () => null,
+    parseShykaiImport: (text) => (game.parseImport ? game.parseImport(text) : null),
     buildShykaiExportPlayer: (dto, name) => (game.buildExport ? game.buildExport(dto, name) : { name, dto }),
     // The real one returns false for a name no snapshot answers to, which is
     // what the remembered-selection restore leans on
@@ -200,6 +202,7 @@ beforeEach(() => {
     game.selfDTO = { ...emptyDTO('player1'), attackLevel: 90, debuffOnLevelGap: 0.3 };
     game.houseRooms = null;
     game.buildExport = null;
+    game.parseImport = null;
     game.allPlayers = {
         players: [
             { ...emptyDTO('player1'), attackLevel: 90 },
@@ -1523,5 +1526,124 @@ describe('Export', () => {
 
         expect(el.textContent).toContain('Could not copy automatically');
         expect(el.querySelector('textarea[readonly]')).toBeTruthy();
+    });
+});
+
+/**
+ * Replacing one party member via import.
+ *
+ * "+ Import" used to only ever append a new player. This is the other half:
+ * put an imported build into an already-loaded slot, in place, without
+ * touching anyone else in the party or moving anyone's tab.
+ */
+describe('replacing one party member via import', () => {
+    function fullParty() {
+        const el = document.createElement('div');
+        const editor = new SimEditor({ editorEl: el });
+        editor.importPlayers(
+            [emptyDTO('a'), emptyDTO('b'), emptyDTO('c'), emptyDTO('d'), emptyDTO('e')],
+            ['A', 'B', 'C', 'D', 'E']
+        );
+        return { el, editor };
+    }
+
+    test('keeps the slot position and leaves every other loaded player untouched', () => {
+        const { editor } = fullParty();
+        const hridsBefore = editor._editedPlayerInfo.map((p) => p.hrid);
+        const othersBefore = hridsBefore
+            .filter((hrid) => hrid !== 'player3')
+            .map((hrid) => structuredClone(editor._editedDTOs[hrid]));
+
+        const ok = editor.replacePlayer('player3', { ...emptyDTO('ignored'), attackLevel: 999 }, 'Replacement', []);
+
+        expect(ok).toBe(true);
+        // Same five slots, same order
+        expect(editor._editedPlayerInfo.map((p) => p.hrid)).toEqual(hridsBefore);
+        expect(editor._editedPlayerInfo.find((p) => p.hrid === 'player3').name).toBe('Replacement');
+        expect(editor._editedDTOs.player3.attackLevel).toBe(999);
+        expect(editor._editedDTOs.player3.hrid).toBe('player3'); // the imported DTO takes the slot's own hrid
+
+        const othersAfter = hridsBefore.filter((hrid) => hrid !== 'player3').map((hrid) => editor._editedDTOs[hrid]);
+        expect(othersAfter).toEqual(othersBefore);
+    });
+
+    test('replacing yourself clears selfHrid, so the live house/shrine sync stops touching that slot', () => {
+        const el = document.createElement('div');
+        const editor = new SimEditor({ editorEl: el });
+        editor.resetToSelf();
+        expect(editor.getSelfHrid()).toBe('player1');
+
+        editor.replacePlayer('player1', emptyDTO('ignored'), 'Someone Else');
+
+        expect(editor.getSelfHrid()).toBeNull();
+    });
+
+    test('refuses a slot that is not currently loaded', () => {
+        const el = document.createElement('div');
+        const editor = new SimEditor({ editorEl: el });
+        expect(editor.replacePlayer('player9', emptyDTO('x'), 'X')).toBe(false);
+    });
+
+    test('the import area offers "Replace <name>" for whichever chip is selected', () => {
+        const { el } = editorWithStrangers(); // active player is "Stranger B"
+        expect(el.textContent).toContain('Replace Stranger B');
+    });
+
+    test('clicking Replace puts the pasted build in the active slot only', () => {
+        const { el, editor } = editorWithStrangers(); // active: player2 / "Stranger B"
+        game.parseImport = () => ({
+            players: [{ ...emptyDTO('ignored'), attackLevel: 123 }],
+            names: ['Replacement'],
+            skipped: [],
+        });
+        el.querySelector('#mwi-csim-import-text').value = 'whatever';
+        el.querySelector('#mwi-csim-import-replace').click();
+
+        expect(editor._editedPlayerInfo.map((p) => p.hrid)).toEqual(['player1', 'player2']);
+        expect(editor._editedPlayerInfo[1].name).toBe('Replacement');
+        expect(editor._editedDTOs.player2.attackLevel).toBe(123);
+        expect(editor._editedDTOs.player1.hrid).toBe('player1');
+    });
+
+    test('clicking "Add as new member" appends instead of replacing', () => {
+        const { el, editor } = editorWithStrangers();
+        game.parseImport = () => ({ players: [emptyDTO('ignored')], names: ['Newcomer'], skipped: [] });
+        el.querySelector('#mwi-csim-import-text').value = 'whatever';
+        el.querySelector('#mwi-csim-import-go').click();
+
+        expect(editor._editedPlayerInfo.map((p) => p.name)).toEqual(['Stranger A', 'Stranger B', 'Newcomer']);
+    });
+
+    test('a 6th member is refused, not silently dropped, once the party is full', () => {
+        const { el, editor } = fullParty();
+
+        const importGo = el.querySelector('#mwi-csim-import-go');
+        expect(importGo.disabled).toBe(true);
+        expect(importGo.getAttribute('title')).toContain('replace one instead');
+
+        game.parseImport = () => ({ players: [emptyDTO('f')], names: ['F'], skipped: [] });
+        el.querySelector('#mwi-csim-import-text').value = 'whatever';
+        importGo.click();
+
+        expect(editor._editedPlayerInfo.length).toBe(5);
+    });
+
+    test('the in-handler cap check also refuses an import that would push the party over 5', () => {
+        // Belt and suspenders on the button's own disabled state: an import
+        // bringing more than one player at once (a multi-slot paste) must be
+        // capped even from a party that had room for fewer than it delivers.
+        const el = document.createElement('div');
+        const editor = new SimEditor({ editorEl: el });
+        editor.importPlayers([emptyDTO('a'), emptyDTO('b'), emptyDTO('c')], ['A', 'B', 'C']);
+        game.parseImport = () => ({
+            players: [emptyDTO('d'), emptyDTO('e'), emptyDTO('f')],
+            names: ['D', 'E', 'F'],
+            skipped: [],
+        });
+        el.querySelector('#mwi-csim-import-text').value = 'whatever';
+        el.querySelector('#mwi-csim-import-go').click();
+
+        expect(editor._editedPlayerInfo.length).toBe(3);
+        expect(el.querySelector('#mwi-csim-import-error').textContent).toContain('replace a member instead');
     });
 });
