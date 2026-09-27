@@ -334,13 +334,17 @@ class TransmuteHistoryViewer {
 
         const content = document.createElement('div');
         content.className = 'mwi-transmute-history-content';
+        // Width bounds leave room for the 20px padding and an 8px gutter a side. A bare
+        // min-width: 500px beat max-width: 95vw on a phone, and the overlay's
+        // align-items: center hung the dialog off both edges (left edge -75px at 390px
+        // wide), where nothing can scroll to the clipped part. Desktop still gets 500px.
         content.style.cssText = `
             background: #2a2a2a;
             border-radius: 8px;
             padding: 20px;
             width: fit-content;
-            min-width: 500px;
-            max-width: 95vw;
+            min-width: min(500px, calc(100% - 56px));
+            max-width: min(95vw, calc(100% - 56px));
             max-height: 90%;
             overflow: auto;
             box-shadow: 0 4px 20px rgba(0,0,0,0.5);
