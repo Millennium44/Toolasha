@@ -139,7 +139,9 @@ export function planTokenSpend({ offers, tokens, caps, holdPercent = 0 }) {
 
         const purchaseCap = purchaseCapOf(offer, capInfo);
 
-        if (bar > 0 && offer.goldPerToken < bar) {
+        // A relative tolerance: two independently rounded ratios exactly on the
+        // bar (12 × 0.8 = 9.600000000000001 against 9.6) must count as meeting it
+        if (bar > 0 && offer.goldPerToken < bar * (1 - 1e-9)) {
             // Below the bar: not spent on for real, but report what it would have
             // taken, so the tokens read as held rather than vanishing from the total
             if (holdPool === null) holdPool = remaining;

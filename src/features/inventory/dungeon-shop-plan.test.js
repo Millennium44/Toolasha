@@ -194,6 +194,20 @@ describe('planTokenSpend', () => {
             expect(plan.held).toBe(0);
         });
 
+        test('an item exactly on the threshold is not held by float rounding', () => {
+            // 24,000 / 2,000 = 12 and 28,800 / 3,000 = 9.6 — exactly 80%, but
+            // 12 × 0.8 computes to 9.600000000000001
+            const offers = [
+                { itemHrid: '/items/a', name: 'A', cost: 2000, netValue: 24_000 },
+                { itemHrid: '/items/b', name: 'B', cost: 3000, netValue: 28_800 },
+            ];
+            const caps = { '/items/a': { cap: 1, measured: true }, '/items/b': { cap: 5, measured: true } };
+            const plan = planTokenSpend({ offers, tokens: 5000, caps, holdPercent: 80 });
+            const byName = Object.fromEntries(plan.rows.map((r) => [r.name, r]));
+            expect(byName['B'].quantity).toBe(1);
+            expect(plan.held).toBe(0);
+        });
+
         test('a threshold of 0 reproduces the plan with no threshold at all', () => {
             const withThreshold = planTokenSpend({
                 offers: OFFERS,
