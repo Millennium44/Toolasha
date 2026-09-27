@@ -161,6 +161,9 @@ class DungeonShopPlanner {
      */
     open(tokenHrid = null) {
         this.tokenHrid = tokenHrid || this.tokenHrid || mostHeldToken();
+        // Marked before the draw, so the draw does not queue a second pass
+        // that would interrupt this one and ask for its first item again
+        this.measureAttempted.add(this.tokenHrid);
         this.panel?.show();
         this.measure(this.tokenHrid);
     }
@@ -388,6 +391,8 @@ class DungeonShopPlanner {
         select.addEventListener('change', () => {
             this.tokenHrid = select.value;
             this.status = '';
+            // As in open(): this path measures explicitly, the draw must not too
+            this.measureAttempted.add(select.value);
             this.panel?.render();
             this.measure(select.value);
         });
