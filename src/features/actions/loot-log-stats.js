@@ -269,6 +269,10 @@ class LootLogStats {
         // (`dataManager.getActionDetails` hands back the same instance for the same
         // hrid) — a render pass reads this for the same handful of actions across
         // hundreds of rows, and re-parsing gear and drinks per row is wasted work.
+        // The action object itself never changes, but the loadout behind the
+        // context does (gear, drinks, community buff, achievements, seals), so
+        // this is reset at the start of every render pass — `_resetGatheringContextCache` —
+        // rather than kept for the instance's whole life.
         this._gatheringContextCache = new WeakMap();
         // `processingConversions()` scans every recipe in `actionDetailMap`; cached
         // by that map's own identity (stable once game data is loaded) so a loot-log
@@ -361,6 +365,7 @@ class LootLogStats {
      * Run the statistics pass over every loot log row on screen.
      */
     processVisibleRows() {
+        this._resetGatheringContextCache();
         const lootLogElements = document.querySelectorAll('.LootLogPanel_actionLoot__32gl_');
         lootLogElements.forEach((element, index) => this.processLootLogElement(element, index, lootLogElements.length));
     }
@@ -388,6 +393,10 @@ class LootLogStats {
      */
     handleLootLogUpdate(data) {
         if (!data || !Array.isArray(data.lootLog)) return;
+
+        // A new wave of loot log data is exactly when the character's loadout
+        // might have changed since the last one was read
+        this._resetGatheringContextCache();
 
         // Store loot log data for matching with DOM elements
         this.currentLootLogData = data.lootLog;
@@ -1179,9 +1188,14 @@ class LootLogStats {
      * The action's gathering efficiency context — quantity, efficiency multiplier
      * and Processing chance, the same figures the profit panel reads — cached per
      * action object (`dataManager.getActionDetails` hands back the same instance
-     * for the same hrid every time). A loot-log render calls this for the same
-     * handful of actions across hundreds of rows; re-parsing gear and drinks per
-     * row is wasted work `getActionEfficiencyContext` does not do cheaply.
+     * for the same hrid every time) for the current render pass. A loot-log
+     * render calls this for the same handful of actions across hundreds of rows;
+     * re-parsing gear and drinks per row is wasted work `getActionEfficiencyContext`
+     * does not do cheaply. The action object never changes, but gear, drinks,
+     * achievements and buffs do, so the cache itself is reset at the start of
+     * every render pass (`_resetGatheringContextCache`) rather than kept for the
+     * instance's whole life — otherwise a loadout change made between two loot
+     * log updates would never be read again.
      * @param {Object} actionDetail - The action's `actionDetailMap` entry
      * @returns {{totalGathering: number, efficiencyMultiplier: number, processingBonus: number}|null}
      *   Null for a non-gathering action or when it cannot be read
@@ -1206,6 +1220,25 @@ class LootLogStats {
         }
         this._gatheringContextCache.set(actionDetail, result);
         return result;
+    }
+
+    /**
+     * Drop the per-action gathering-efficiency cache so the next read picks up
+     * the character's current loadout rather than whatever it was at the last
+     * render pass. Called at the start of every entry point that (re)draws the
+     * loot log: a `loot_log_updated` wave, a full pass over the visible rows
+     * (`processVisibleRows`, also run when the stats overlay is switched on),
+     * and a history-panel rebuild (`renderHistoricalEntries`) — a gear, drink,
+     * achievement or buff change made between two of those is otherwise invisible
+     * for the rest of the page's life, since the action object the cache keys on
+     * never itself changes.
+     *
+     * `_processingConversions`'s own cache is untouched here: it depends only on
+     * `actionDetailMap`, which is static once game data loads, not on the
+     * character's loadout.
+     */
+    _resetGatheringContextCache() {
+        this._gatheringContextCache = new WeakMap();
     }
 
     /**
@@ -1769,6 +1802,7 @@ class LootLogStats {
      * Render historical entries below native loot log entries
      */
     async renderHistoricalEntries() {
+        this._resetGatheringContextCache();
         const container = document.querySelector('.LootLogPanel_actionLoots__3oTid');
         if (!container) return;
 
