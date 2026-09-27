@@ -36,6 +36,39 @@ export function getBlessedTeaBonus(itemDetailMap) {
 }
 
 /**
+ * Enhancing buffs the game applies that no gear, house, tea or community reading here covers:
+ * the MooPass and guild maps (both unioned into an action's buffs by the client's
+ * calcSkillingActionTypeBuffsDict), the achievement map's action speed, and, for wisdom, a
+ * Scroll of Wisdom. Left out, a MooPass holder's XP read 5% short and a guild speed buff never
+ * reached the enhancing panel's action time, though the tracker counted it.
+ *
+ * Action speed from a Labyrinth scroll is not included: the enhancing panel adds that itself.
+ *
+ * @returns {{speed: number, wisdom: number}} Percentages
+ */
+function getLiveOnlyEnhancingBonuses() {
+    const charData = dataManager.characterData;
+    const sumMaps = (buffTypeHrid) => {
+        let total = 0;
+        for (const mapName of ['mooPassActionTypeBuffsMap', 'guildActionTypeBuffsMap']) {
+            const buffs = charData?.[mapName]?.['/action_types/enhancing'];
+            if (!Array.isArray(buffs)) continue;
+            for (const buff of buffs) {
+                if (buff?.typeHrid === buffTypeHrid) total += buff.flatBoost || 0;
+            }
+        }
+        return total;
+    };
+    const speed =
+        sumMaps('/buff_types/action_speed') +
+        (dataManager.getAchievementBuffFlatBoost?.('/action_types/enhancing', '/buff_types/action_speed') || 0);
+    const wisdom =
+        sumMaps('/buff_types/wisdom') +
+        (dataManager.getPersonalBuffFlatBoost?.('/action_types/enhancing', '/buff_types/wisdom') || 0);
+    return { speed: speed * 100, wisdom: wisdom * 100 };
+}
+
+/**
  * Get enhancing parameters (auto-detected or manual)
  *
  * Every surface that quotes what *this* character's enhancing will cost goes through here, so
@@ -286,12 +319,18 @@ export function getAutoDetectedParams() {
     // Calculate total speed bonus
     // Speed bonus (from equipment) + house bonus (1% per level) + community buff + tea speed
     const houseSpeedBonus = houseLevel * 1.0; // 1% per level for action speed
-    const totalSpeedBonus = gear.speedBonus + houseSpeedBonus + communitySpeedBonus + teaSpeedBonus;
+    const live = getLiveOnlyEnhancingBonuses();
+    const totalSpeedBonus = gear.speedBonus + houseSpeedBonus + communitySpeedBonus + teaSpeedBonus + live.speed;
 
     // Calculate total experience bonus
-    // Equipment + house wisdom + tea wisdom + community wisdom + achievement wisdom
+    // Equipment + house wisdom + tea wisdom + community wisdom + achievement wisdom + MooPass/guild/scroll
     const totalExperienceBonus =
-        gear.experienceBonus + houseWisdomBonus + teaWisdomBonus + communityWisdomBonus + achievementWisdomBonus;
+        gear.experienceBonus +
+        houseWisdomBonus +
+        teaWisdomBonus +
+        communityWisdomBonus +
+        achievementWisdomBonus +
+        live.wisdom;
 
     // Calculate guzzling bonus multiplier (1.0 at level 0, scales with drink concentration)
     const guzzlingBonus = 1 + drinkConcentration / 100;
@@ -321,6 +360,8 @@ export function getAutoDetectedParams() {
         achievementWisdomBonus: achievementWisdomBonus, // For display
         teaSpeedBonus: teaSpeedBonus, // For display
         teaWisdomBonus: teaWisdomBonus, // For display
+        otherSpeedBonus: live.speed, // For display: MooPass, guild, achievement
+        otherWisdomBonus: live.wisdom, // For display: MooPass, guild, Scroll of Wisdom
         drinkConcentration: drinkConcentration, // For display
         houseRareFindBonus: houseRareFindBonus, // For display
         achievementRareFindBonus: achievementRareFindBonus, // For display
@@ -842,11 +883,21 @@ function getManualParams({ useShippedDefaults = false } = {}) {
     const achievementWisdomBonus =
         dataManager.getAchievementBuffFlatBoost('/action_types/enhancing', '/buff_types/wisdom') * 100;
 
+    // MooPass, guild and scroll buffs belong to the character, not the kit, so the pro bench
+    // leaves them out
+    const live = useShippedDefaults ? { speed: 0, wisdom: 0 } : getLiveOnlyEnhancingBonuses();
+
     // --- TOTALS ---
     const totalToolBonus = equipmentSuccessBonus + houseSuccessBonus + achievementSuccessBonus;
-    const totalSpeedBonus = equipmentSpeedBonus + houseSpeedBonus + communitySpeedBonus + scaledTeaSpeedBonus;
+    const totalSpeedBonus =
+        equipmentSpeedBonus + houseSpeedBonus + communitySpeedBonus + scaledTeaSpeedBonus + live.speed;
     const totalExperienceBonus =
-        equipmentExperience + houseWisdomBonus + teaWisdomBonus + communityWisdomBonus + achievementWisdomBonus;
+        equipmentExperience +
+        houseWisdomBonus +
+        teaWisdomBonus +
+        communityWisdomBonus +
+        achievementWisdomBonus +
+        live.wisdom;
     const guzzlingBonus = 1 + drinkConcentration / 100;
 
     return {
@@ -869,6 +920,13 @@ function getManualParams({ useShippedDefaults = false } = {}) {
         communityBuffLevel: communityBuffLevel,
         communitySpeedBonus: communitySpeedBonus,
         teaSpeedBonus: scaledTeaSpeedBonus,
+        teaWisdomBonus: teaWisdomBonus,
+        houseWisdomBonus: houseWisdomBonus,
+        communityWisdomLevel: communityWisdomLevel,
+        communityWisdomBonus: communityWisdomBonus,
+        achievementWisdomBonus: achievementWisdomBonus,
+        otherSpeedBonus: live.speed,
+        otherWisdomBonus: live.wisdom,
         equipmentSpeedBonus: equipmentSpeedBonus,
         houseSpeedBonus: houseSpeedBonus,
         equipmentSuccessBonus: equipmentSuccessBonus,

@@ -131,6 +131,8 @@ export async function displayEnhancementStats(panel, itemHrid) {
             house: (params.houseSpeedBonus || 0) / 100,
             community: (params.communitySpeedBonus || 0) / 100,
             consumable: (params.teaSpeedBonus || 0) / 100,
+            // MooPass, guild and achievement speed: applied by the game, counted by the tracker
+            other: (params.otherSpeedBonus || 0) / 100,
             personal: personalSpeed,
             levelAdvantage,
             total:
@@ -138,6 +140,7 @@ export async function displayEnhancementStats(panel, itemHrid) {
                 (params.houseSpeedBonus || 0) / 100 +
                 (params.communitySpeedBonus || 0) / 100 +
                 (params.teaSpeedBonus || 0) / 100 +
+                (params.otherSpeedBonus || 0) / 100 +
                 personalSpeed +
                 levelAdvantage,
         };
@@ -1077,6 +1080,11 @@ function formatEnhancementDisplay(
                 `<div style="color: #aaddff; font-size: 0.8em; padding-left: 10px;"><span style="color: #666;">Tea:</span> +${(speedBreakdown.consumable * 100).toFixed(1)}%</div>`
             );
         }
+        if (speedBreakdown.other > 0) {
+            lines.push(
+                `<div style="color: #aaddff; font-size: 0.8em; padding-left: 10px;"><span style="color: #666;">MooPass / guild / achievement:</span> +${(speedBreakdown.other * 100).toFixed(1)}%</div>`
+            );
+        }
         if (speedBreakdown.personal > 0) {
             lines.push(
                 `<div style="color: #aaddff; font-size: 0.8em; padding-left: 10px;"><span style="color: #666;">Labyrinth:</span> +${(speedBreakdown.personal * 100).toFixed(1)}%</div>`
@@ -1155,9 +1163,10 @@ function formatEnhancementDisplay(
         const houseWisdom = params.houseWisdomBonus || 0;
         const communityWisdom = params.communityWisdomBonus || 0;
         const achievementWisdom = params.achievementWisdomBonus || 0;
+        const otherWisdom = params.otherWisdomBonus || 0;
         const equipmentExperience = Math.max(
             0,
-            params.experienceBonus - houseWisdom - teaWisdom - communityWisdom - achievementWisdom
+            params.experienceBonus - houseWisdom - teaWisdom - communityWisdom - achievementWisdom - otherWisdom
         );
 
         if (equipmentExperience > 0) {
@@ -1191,6 +1200,11 @@ function formatEnhancementDisplay(
         if (achievementWisdom > 0) {
             lines.push(
                 `<div style="color: #ffdd88; font-size: 0.8em; padding-left: 10px;"><span style="color: #666;">Achievement:</span> +${achievementWisdom.toFixed(1)}%</div>`
+            );
+        }
+        if (otherWisdom > 0) {
+            lines.push(
+                `<div style="color: #ffdd88; font-size: 0.8em; padding-left: 10px;"><span style="color: #666;">MooPass / guild / scroll:</span> +${otherWisdom.toFixed(1)}%</div>`
             );
         }
         lines.push('</div>');

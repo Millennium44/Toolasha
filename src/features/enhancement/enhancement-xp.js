@@ -29,6 +29,62 @@ function getBaseItemLevel(itemHrid) {
 }
 
 /**
+ * The per-action-type buff maps the game unions into an action's buffs, as named on
+ * `characterData`. The client's `calcSkillingActionTypeBuffsDict` takes exactly these, plus the
+ * personal (Labyrinth scroll) map and the achievement map, which are read through dataManager's
+ * getters below so a scroll the player is simulating counts the way it does everywhere else.
+ */
+const CHARACTER_BUFF_MAPS = [
+    'mooPassActionTypeBuffsMap',
+    'communityActionTypeBuffsMap',
+    'houseActionTypeBuffsMap',
+    'guildActionTypeBuffsMap',
+    'consumableActionTypeBuffsMap',
+    'equipmentActionTypeBuffsMap',
+];
+
+/**
+ * Sum one buff type's flatBoost and ratioBoost over every source the game applies to enhancing.
+ *
+ * The client builds an action's buffs from eight maps (MooPass, community, house, guild,
+ * achievement, consumable, equipment, personal) and sums every entry of a type. Reading only
+ * some of them is how this module missed the MooPass's 5% wisdom and a Scroll of Wisdom.
+ *
+ * @param {Object} charData - dataManager.characterData
+ * @param {string} buffTypeHrid - e.g. '/buff_types/wisdom'
+ * @returns {{flatBoost: number, ratioBoost: number}} Totals across all sources
+ */
+function sumEnhancingBuff(charData, buffTypeHrid) {
+    const total = { flatBoost: 0, ratioBoost: 0 };
+    for (const mapName of CHARACTER_BUFF_MAPS) {
+        const buffs = charData?.[mapName]?.['/action_types/enhancing'];
+        if (!Array.isArray(buffs)) continue;
+        for (const buff of buffs) {
+            if (buff?.typeHrid !== buffTypeHrid) continue;
+            total.flatBoost += buff.flatBoost || 0;
+            total.ratioBoost += buff.ratioBoost || 0;
+        }
+    }
+    total.flatBoost += dataManager.getAchievementBuffFlatBoost?.('/action_types/enhancing', buffTypeHrid) || 0;
+    total.ratioBoost += dataManager.getAchievementBuffRatioBoost?.('/action_types/enhancing', buffTypeHrid) || 0;
+    total.flatBoost += dataManager.getPersonalBuffFlatBoost?.('/action_types/enhancing', buffTypeHrid) || 0;
+    return total;
+}
+
+/**
+ * The enhancing level the game compares against the item's level, as getBoostedSkillLevel does:
+ * (1 + Σ ratio) × level + Σ flat over every enhancing_level buff, unfloored.
+ * @param {Object} charData - dataManager.characterData
+ * @returns {number} Boosted enhancing level
+ */
+function getBoostedEnhancingLevel(charData) {
+    const enhancingSkill = charData?.characterSkills?.find((s) => s.skillHrid === '/skills/enhancing');
+    const baseLevel = enhancingSkill?.level || 1;
+    const boost = sumEnhancingBuff(charData, '/buff_types/enhancing_level');
+    return (1 + boost.ratioBoost) * baseLevel + boost.flatBoost;
+}
+
+/**
  * Get wisdom buff percentage from all sources
  * Reads from dataManager.characterData (NOT localStorage)
  * @returns {number} Wisdom buff as decimal (e.g., 0.20 for 20%)
@@ -39,60 +95,8 @@ function getWisdomBuff() {
         const charData = dataManager.characterData;
         if (!charData) return 0;
 
-        let totalFlatBoost = 0;
-
-        // 1. Community Buffs
-        const communityEnhancingBuffs = charData.communityActionTypeBuffsMap?.['/action_types/enhancing'];
-        if (Array.isArray(communityEnhancingBuffs)) {
-            communityEnhancingBuffs.forEach((buff) => {
-                if (buff.typeHrid === '/buff_types/wisdom') {
-                    totalFlatBoost += buff.flatBoost || 0;
-                }
-            });
-        }
-
-        // 2. Equipment Buffs
-        const equipmentEnhancingBuffs = charData.equipmentActionTypeBuffsMap?.['/action_types/enhancing'];
-        if (Array.isArray(equipmentEnhancingBuffs)) {
-            equipmentEnhancingBuffs.forEach((buff) => {
-                if (buff.typeHrid === '/buff_types/wisdom') {
-                    totalFlatBoost += buff.flatBoost || 0;
-                }
-            });
-        }
-
-        // 3. House Buffs
-        const houseEnhancingBuffs = charData.houseActionTypeBuffsMap?.['/action_types/enhancing'];
-        if (Array.isArray(houseEnhancingBuffs)) {
-            houseEnhancingBuffs.forEach((buff) => {
-                if (buff.typeHrid === '/buff_types/wisdom') {
-                    totalFlatBoost += buff.flatBoost || 0;
-                }
-            });
-        }
-
-        // 4. Guild Buffs
-        const guildEnhancingBuffs = charData.guildActionTypeBuffsMap?.['/action_types/enhancing'];
-        if (Array.isArray(guildEnhancingBuffs)) {
-            guildEnhancingBuffs.forEach((buff) => {
-                if (buff.typeHrid === '/buff_types/wisdom') {
-                    totalFlatBoost += buff.flatBoost || 0;
-                }
-            });
-        }
-
-        // 5. Consumable Buffs (from wisdom tea, etc.)
-        const consumableEnhancingBuffs = charData.consumableActionTypeBuffsMap?.['/action_types/enhancing'];
-        if (Array.isArray(consumableEnhancingBuffs)) {
-            consumableEnhancingBuffs.forEach((buff) => {
-                if (buff.typeHrid === '/buff_types/wisdom') {
-                    totalFlatBoost += buff.flatBoost || 0;
-                }
-            });
-        }
-
-        // 5. Achievement Buffs
-        totalFlatBoost += dataManager.getAchievementBuffFlatBoost('/action_types/enhancing', '/buff_types/wisdom');
+        // Every source the game sums, the MooPass and a Scroll of Wisdom included
+        const totalFlatBoost = sumEnhancingBuff(charData, '/buff_types/wisdom').flatBoost;
 
         // Return as decimal (flatBoost is already in decimal form, e.g., 0.2 for 20%)
         return totalFlatBoost;
@@ -174,48 +178,11 @@ export function getEnhancingActionTime(itemHrid) {
         const actionDetails = dataManager.getActionDetails('/actions/enhancing/enhance');
         const baseTime = actionDetails?.baseTimeCost ? actionDetails.baseTimeCost / 1e9 : 12;
 
-        // Get enhancing skill level
-        const enhancingSkill = charData.characterSkills?.find((s) => s.skillHrid === '/skills/enhancing');
-        const baseLevel = enhancingSkill?.level || 1;
+        // Sum action_speed flatBoost from every source the game applies
+        let totalSpeedBuff = sumEnhancingBuff(charData, '/buff_types/action_speed').flatBoost;
 
-        // Get tea level bonus from consumable buff map
-        let teaLevelBonus = 0;
-        const consumableBuffs = charData.consumableActionTypeBuffsMap?.['/action_types/enhancing'];
-        if (Array.isArray(consumableBuffs)) {
-            for (const buff of consumableBuffs) {
-                if (buff.typeHrid === '/buff_types/enhancing_level') {
-                    teaLevelBonus = buff.flatBoost || 0;
-                }
-            }
-        }
-
-        // Sum action_speed flatBoost from ALL buff sources (equipment, house, community, tea)
-        let totalSpeedBuff = 0;
-
-        const buffMaps = [
-            charData.equipmentActionTypeBuffsMap,
-            charData.houseActionTypeBuffsMap,
-            charData.guildActionTypeBuffsMap,
-            charData.communityActionTypeBuffsMap,
-            charData.consumableActionTypeBuffsMap,
-        ];
-
-        for (const buffMap of buffMaps) {
-            const enhancingBuffs = buffMap?.['/action_types/enhancing'];
-            if (!Array.isArray(enhancingBuffs)) continue;
-
-            for (const buff of enhancingBuffs) {
-                if (buff.typeHrid === '/buff_types/action_speed') {
-                    totalSpeedBuff += buff.flatBoost || 0;
-                }
-            }
-        }
-
-        // Add personal buffs (Labyrinth seals)
-        totalSpeedBuff += dataManager.getPersonalBuffFlatBoost('/action_types/enhancing', '/buff_types/action_speed');
-
-        // Add level advantage: (effectiveLevel - itemLevel) / 100
-        const effectiveLevel = baseLevel + teaLevelBonus;
+        // Add level advantage: (boostedLevel - itemLevel) / 100
+        const effectiveLevel = getBoostedEnhancingLevel(charData);
         const itemLevel = getBaseItemLevel(itemHrid);
         if (effectiveLevel > itemLevel) {
             totalSpeedBuff += (effectiveLevel - itemLevel) / 100;
