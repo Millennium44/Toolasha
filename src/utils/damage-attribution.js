@@ -731,11 +731,12 @@ export function attributeTick(tick, state, options) {
     const tickOwners = actors.map((index) => ({ index, weight }));
     // The swings still waiting for a resolution this tick. A swing known to be
     // single-target pays off one rise anywhere; any other can be an area swing,
-    // which rings every monster it reaches, so it pays off one rise on each
+    // which rings every monster it reaches, so it pays off one rise on each.
+    // Coalesced swings (the counter up by 2+) of a known single-target action
+    // stay in the tick-wide pool with their full count: two Water Strikes can
+    // land two hits, not one on every monster that rang (combat-party.json)
     const singleTarget = new Set(
-        [...swings]
-            .filter(([index, count]) => count === 1 && isSingleTarget(state.actions[index], abilityDetailMap))
-            .map(([index]) => index)
+        [...swings].filter(([index]) => isSingleTarget(state.actions[index], abilityDetailMap)).map(([index]) => index)
     );
     const tickPending = new Map([...swings].filter(([index]) => singleTarget.has(index)));
     const takeSwing = (monsterPending) => {

@@ -363,6 +363,23 @@ describe('an area swing', () => {
         expect(events).toHaveLength(2);
     });
 
+    test('two coalesced single-target swings pay off two rises, not one on every monster', () => {
+        // combat-party.json: a Water Strike counter up by 2 while three monsters rang
+        const state = three();
+        noteActions(state, { 0: { abilityHrid: SLASH } });
+        const events = attributeTick(
+            {
+                pMap: { 0: player(12) },
+                mMap: { 0: monster(9_800, 6), 1: monster(9_800, 4), 2: monster(9_950, 9) },
+            },
+            state,
+            { abilityDetailMap }
+        );
+        const tally = foldEvents({}, events, { filterNonDamaging: false });
+
+        expect(tally['0']).toMatchObject({ hits: 2, dotTicks: 1 });
+    });
+
     test('pays off at most one rise per monster', () => {
         // One cast, a monster rung twice: the second splat is not the cast's
         const state = three();
