@@ -6,6 +6,11 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Audit round: enhancing figures checked against the game's own formulas
+
+- Enhancement prices no longer treat a +2 as mirrored: the game only lets a Philosopher's Mirror work on items at +2 or higher, so +3 is the first level it can make. The enhancing panel's mirror column now also counts the second base item a mirror uses up.
+- Enhancing XP and action time now count MooPass, guild, achievement and scroll buffs the game applies, and the panel shows them on their own lines. Calibration skips runs predicted on hand-edited stats.
+
 <!-- shipped in 3.61.0 -->
 
 - **Lab replay check and stat check**: the labyrinth replay check's 3-point damage-taken allowance now only pulls a low reading toward the prediction instead of lifting every reading (it wrongly tipped Pyre Hunter to "monster hits harder"), and the stat check now compares monster attack interval, cast speed, crit rate and crit damage, plus your HP regen.
