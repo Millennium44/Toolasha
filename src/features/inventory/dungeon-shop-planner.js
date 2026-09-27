@@ -73,6 +73,8 @@ class DungeonShopPlanner {
         this.volumes = new Map();
         /** @type {Set<string>} itemHrids being measured */
         this.measuring = new Set();
+        /** @type {Set<string>} Tokens whose measuring has been started since load or the last source change */
+        this.measureAttempted = new Set();
         this.status = '';
         this.lastPlan = null;
         this.initialized = false;
@@ -122,6 +124,7 @@ class DungeonShopPlanner {
         this.autofill = null;
         this.volumes.clear();
         this.measuring.clear();
+        this.measureAttempted.clear();
         this.status = '';
         this.initialized = false;
         this.pendingToken = null;
@@ -192,6 +195,8 @@ class DungeonShopPlanner {
         this.volumes.clear();
         // Lookups still in flight answer for the old source; let them be asked again
         this.measuring.clear();
+        // and an open panel re-measures on its next draw under the new source
+        this.measureAttempted.clear();
     }
 
     /**
@@ -299,6 +304,15 @@ class DungeonShopPlanner {
     draw(body) {
         const tokenHrid = this.tokenHrid || mostHeldToken();
         this.tokenHrid = tokenHrid;
+        // A panel left open is reopened on page load by the panel shell itself,
+        // which never goes through `open()` — so nothing was ever measured and
+        // every row read "no volume data". Measure a token the first time it is
+        // drawn; after that, retries stay on the explicit open/picker paths so
+        // the 5 s refresh cannot hammer the history host.
+        if (tokenHrid && !this.measureAttempted.has(tokenHrid)) {
+            this.measureAttempted.add(tokenHrid);
+            this.measure(tokenHrid);
+        }
         const result = this.plan(tokenHrid);
         this.lastPlan = result;
 
