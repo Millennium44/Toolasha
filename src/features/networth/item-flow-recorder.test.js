@@ -181,6 +181,24 @@ describe('recording from the game’s messages', () => {
         expect(gathered()[0].stretches[0].gained).toEqual({ '/items/sugar': 13, '/items/egg': 2 });
     });
 
+    test('a stack sent several times in one completion is credited its net change once', async () => {
+        // One action_completed can carry the same stack more than once, as
+        // successive snapshots of an efficiency batch; with Processing the last
+        // snapshot is after part of the stack was converted. Only the last is
+        // what the stack ended on, and the gain is that net of the start.
+        items({
+            endCharacterAction: { id: 7, characterID: 'me', actionHrid: '/actions/foraging/farmland' },
+            endCharacterItems: [
+                row('/items/cotton', 10),
+                row('/items/cotton', 20),
+                row('/items/cotton', 16),
+                row('/items/cotton_fabric', 2),
+            ],
+        });
+        await settle();
+        expect(gathered()[0].stretches[0].gained).toEqual({ '/items/cotton': 16, '/items/cotton_fabric': 2 });
+    });
+
     test('a marketplace claim or a chest is not gathering, even mid-foraging', async () => {
         // A plain items_updated names no action at all
         items({ endCharacterItems: [row('/items/sugar', 200), row('/items/coin', 9000)] });
