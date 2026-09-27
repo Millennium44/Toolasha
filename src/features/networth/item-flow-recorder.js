@@ -898,8 +898,15 @@ class ItemFlowRecorder {
             const type = dataManager.getActionDetails?.(action.actionHrid)?.type;
             if (!GATHERING_ACTION_TYPES.includes(type)) return;
 
+            // Net per stack, then the gains: one completion can carry the same
+            // stack several times (successive snapshots of an efficiency batch),
+            // and with Processing the last is after part of it was converted.
+            // Summing only the rises credited the converted raw items as well as
+            // what they became
+            const net = {};
+            for (const { key, delta } of moved) net[key] = (net[key] || 0) + delta;
             const gained = {};
-            for (const { key, delta } of moved) if (delta > 0) gained[key] = (gained[key] || 0) + delta;
+            for (const [key, delta] of Object.entries(net)) if (delta > 0) gained[key] = delta;
             if (Object.keys(gained).length === 0) return;
 
             const run = String(action.id ?? action.actionHrid);
