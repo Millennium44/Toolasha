@@ -544,12 +544,22 @@ describe('heldTickCount and the start/reset guard', () => {
     });
 
     test('a bare startCapture refuses while ticks are held, and changes nothing', () => {
-        capture.startCapture({ monsterHrid: '/monsters/cyclops' });
-        emit('battle_updated', battle);
-        const before = capture.captureFile();
-        const result = capture.startCapture({ monsterHrid: '/monsters/dryad' });
-        expect(result).toEqual({ started: false, heldTicks: 1 });
-        expect(capture.captureFile()).toEqual(before);
+        // Frozen clock: captureFile() stamps a fresh `exportedAt: Date.now()`
+        // on every call, so two snapshots taken moments apart can cross a
+        // millisecond boundary on a loaded CI runner and fail toEqual on a
+        // field this test isn't about. Freezing the clock is what actually
+        // pins "nothing changed", not a race against the wall clock.
+        vi.useFakeTimers();
+        try {
+            capture.startCapture({ monsterHrid: '/monsters/cyclops' });
+            emit('battle_updated', battle);
+            const before = capture.captureFile();
+            const result = capture.startCapture({ monsterHrid: '/monsters/dryad' });
+            expect(result).toEqual({ started: false, heldTicks: 1 });
+            expect(capture.captureFile()).toEqual(before);
+        } finally {
+            vi.useRealTimers();
+        }
     });
 
     test('a bare startCapture refuses even once the held capture is saved — this is the exact loss the guard exists for', () => {
@@ -729,16 +739,25 @@ describe('recovering an autosaved capture on load', () => {
     });
 
     test('never overwrites a capture already held or running in this session', async () => {
-        await storage.set(
-            'labyrinthTickCaptureAutosave_char1',
-            { ticks: [{ at: 0, type: 'battle_updated', payload: {} }] },
-            'labyrinth'
-        );
-        capture.startCapture({ monsterHrid: '/monsters/dryad' });
-        emit('battle_updated', battle);
-        const before = capture.captureFile();
-        expect(await capture.loadAutosave()).toBe(false);
-        expect(capture.captureFile()).toEqual(before);
+        // Frozen clock, for the same reason as the guard test above:
+        // captureFile()'s `exportedAt` is a fresh Date.now() every call, and
+        // the await below is a real gap a slow CI runner can push across a
+        // millisecond boundary — a flake unrelated to what this test checks.
+        vi.useFakeTimers();
+        try {
+            await storage.set(
+                'labyrinthTickCaptureAutosave_char1',
+                { ticks: [{ at: 0, type: 'battle_updated', payload: {} }] },
+                'labyrinth'
+            );
+            capture.startCapture({ monsterHrid: '/monsters/dryad' });
+            emit('battle_updated', battle);
+            const before = capture.captureFile();
+            expect(await capture.loadAutosave()).toBe(false);
+            expect(capture.captureFile()).toEqual(before);
+        } finally {
+            vi.useRealTimers();
+        }
     });
 });
 
