@@ -19,6 +19,8 @@ const character = vi.hoisted(() => ({
     achievementSuccessRatio: 0,
     settings: {},
     id: 'market123',
+    characterData: {},
+    personalWisdom: 0,
 }));
 
 /** Every (settingId, fallback) pair the module hands to config — the shipped defaults */
@@ -50,6 +52,10 @@ vi.mock('../core/data-manager.js', () => ({
         getActionDrinkSlots: () => character.drinks,
         getEquipment: () => character.equipment,
         getCurrentCharacterId: () => character.id,
+        getPersonalBuffFlatBoost: (_action, buff) => (buff === '/buff_types/wisdom' ? character.personalWisdom : 0),
+        get characterData() {
+            return character.characterData;
+        },
     },
 }));
 
@@ -71,6 +77,8 @@ beforeEach(() => {
     character.achievementSuccessRatio = 0;
     character.communityBuffLevel = 0;
     character.id = 'market123';
+    character.characterData = {};
+    character.personalWisdom = 0;
 });
 
 // The values the settings panel ships with — a professional enhancer, not this character
@@ -337,5 +345,39 @@ describe('shipped defaults versus the settings schema', () => {
                 `${key}: resolver's shipped default drifted from the schema default`
             ).toEqual({ key, shipped: definition.default });
         }
+    });
+});
+
+describe('buffs the game applies beyond gear, house, tea and community', () => {
+    const enhancing = (buffs) => ({ '/action_types/enhancing': buffs });
+
+    beforeEach(() => {
+        character.settings = { enhanceSim_autoDetect: true };
+        character.characterData = {
+            mooPassActionTypeBuffsMap: enhancing([{ typeHrid: '/buff_types/wisdom', flatBoost: 0.05 }]),
+            guildActionTypeBuffsMap: enhancing([{ typeHrid: '/buff_types/action_speed', flatBoost: 0.03 }]),
+        };
+        character.personalWisdom = 0.2;
+    });
+
+    test('detected params count the MooPass and Scroll of Wisdom wisdom and a guild speed buff', () => {
+        const params = getAutoDetectedParams();
+        expect(params.experienceBonus).toBeCloseTo(25, 9);
+        expect(params.otherWisdomBonus).toBeCloseTo(25, 9);
+        expect(params.speedBonus).toBeCloseTo(3 + params.houseSpeedBonus, 9);
+        expect(params.otherSpeedBonus).toBeCloseTo(3, 9);
+    });
+
+    test('the manual bench counts them too, they are the character not the kit', () => {
+        character.settings = { enhanceSim_autoDetect: false, ...SHIPPED };
+        const params = getEnhancingParams();
+        expect(params.otherWisdomBonus).toBeCloseTo(25, 9);
+        expect(params.otherSpeedBonus).toBeCloseTo(3, 9);
+    });
+
+    test('the pro bench leaves them out', () => {
+        const params = getProRatesParams();
+        expect(params.otherWisdomBonus).toBe(0);
+        expect(params.otherSpeedBonus).toBe(0);
     });
 });
