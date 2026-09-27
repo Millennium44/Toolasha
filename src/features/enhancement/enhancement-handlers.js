@@ -494,7 +494,18 @@ async function applyAttempt({ session, action, itemHrid, previousLevel, newLevel
         await trackMaterialCosts(itemHrid);
     }
 
-    if (!knownStart) return;
+    if (!knownStart) {
+        // Not scored — the level it started from is unknown, so it is no success or failure at
+        // any level — but where the item now stands, and when that was seen, are known. Left
+        // stale, the tile showed the pre-gap level, worth-it and gold sources valued the item
+        // at it, and the extend guard compared a later run against it. Milestones stay as they
+        // are: they record levels crossed, and the path to this one was not seen.
+        session.currentLevel = newLevel;
+        session.lastUpdateTime = Date.now();
+        await enhancementTracker.saveSessions();
+        enhancementUI.scheduleUpdate();
+        return;
+    }
 
     const wasSuccess = newLevel > previousLevel;
     // A failure resets to 0 or, protected, drops exactly one level. Level unchanged above 0 is

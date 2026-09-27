@@ -30,6 +30,7 @@ const trackerMock = vi.hoisted(() => {
         recordFailure: vi.fn(async (...a) => state.calls.push(['failure', ...a])),
         trackCoinCost: async (...a) => state.costs.push(['coin', ...a]),
         trackMaterialCost: async (...a) => state.costs.push(['mat', ...a]),
+        saveSessions: async () => {},
         trackProtectionCost: vi.fn(async (...a) => state.calls.push(['prot', ...a])),
         extendSessionTarget: vi.fn(async (sessionId, newTarget) => {
             state.calls.push(['extend', sessionId, newTarget]);
@@ -561,6 +562,18 @@ describe('a page reload in the middle of a session', () => {
         await state.handlers.action_completed({ endCharacterAction: row(1, 13) });
 
         expect(state.calls.filter(([kind]) => kind === 'success' || kind === 'failure')).toEqual([]);
+    });
+
+    test('an unscored attempt still moves the level and the time the item was last seen', async () => {
+        vi.setSystemTime(90_000);
+        state.current = { ...storedSession(5, 10), currentLevel: 5, lastUpdateTime: 40_000 };
+        await state.handlers.action_completed({ endCharacterAction: row(1, 13) });
+
+        // Not tallied, but the tile, worth-it, gold sources and the extend guard read +1 now
+        expect(state.calls.filter(([kind]) => kind === 'success' || kind === 'failure')).toEqual([]);
+        expect(state.current.currentLevel).toBe(1);
+        expect(state.current.lastUpdateTime).toBe(90_000);
+        vi.useRealTimers();
     });
 });
 
