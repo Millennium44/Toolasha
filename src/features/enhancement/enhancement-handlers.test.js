@@ -620,12 +620,47 @@ describe('a session whose run ended while no page was connected', () => {
         expect(state.calls).toEqual([['finalize', 50_000], ['pendingStart']]);
     });
 
+    test('closes at the later of the last scored attempt and the last attempt seen at all', () => {
+        // An unscored attempt (count skipped ahead) moves lastAttempt but not lastUpdateTime
+        state.characterData = {};
+        state.current = {
+            ...stored(),
+            lastAttempt: { attemptNumber: 11, level: 0, timestamp: 70_000, actionId: 'a1', currentCount: 13 },
+        };
+        state.actions = [];
+        setupEnhancementHandlers();
+
+        expect(state.calls).toEqual([['finalize', 70_000]]);
+    });
+
     test('is left alone before the character snapshot has landed', () => {
         state.current = stored();
         state.actions = [];
         setupEnhancementHandlers();
 
         expect(state.calls).toEqual([]);
+    });
+});
+
+describe('a mirror named only by the configured protection field', () => {
+    test('is charged as a mirror attempt, not normal materials', async () => {
+        const mirrorRow = (level, currentCount) => ({
+            id: 'a1',
+            actionHrid: '/actions/enhancing/enhance',
+            isDone: false,
+            ordinal: 1,
+            currentCount,
+            primaryItemHash: '30404::/item_locations/inventory::/items/enchanted_cloak_refined::' + level,
+            enhancingProtectionItemHrid: '/items/philosophers_mirror',
+            enhancingMaxLevel: 10,
+            enhancingProtectionMinLevel: 0,
+        });
+        state.actions = [mirrorRow(8, 0)];
+        await state.handlers.actions_updated({ endCharacterActions: [mirrorRow(8, 0)] });
+        await state.handlers.action_completed({ endCharacterAction: mirrorRow(9, 1) });
+
+        expect(state.calls).toContainEqual(['prot', '/items/philosophers_mirror', 90000]);
+        expect(state.costs).toEqual([['mat', '/items/enchanted_cloak_refined', 1, 5000]]);
     });
 });
 
