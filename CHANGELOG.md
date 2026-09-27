@@ -6,6 +6,12 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Audit round: gathering runs read as lucky because the loot log ignored gathering quantity
+
+- The loot log's Expected line and drop-luck reading now count gathering quantity and Processing output, so an ordinary buffed milking, foraging or woodcutting run no longer reads far above expectation.
+- Gold Sources no longer counts a day's gathering, drinks and keys twice after syncing between devices, and a gathering run that was only partly watched says so instead of pairing the whole run's count with part of its value.
+- The gathering panel's per-action breakdown adds up at any efficiency, the tea optimizer counts gathering quantity from gear and seals, calibration charges runs the drinks their forecast charged, and the planner checks the processed items a Processing run actually sells.
+
 ### Audit round: enhancing figures checked against the game's own formulas
 
 - Enhancement prices no longer treat a +2 as mirrored: the game only lets a Philosopher's Mirror work on items at +2 or higher, so +3 is the first level it can make. The enhancing panel's mirror column now also counts the second base item a mirror uses up.
