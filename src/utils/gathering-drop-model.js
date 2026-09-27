@@ -17,9 +17,15 @@
  * ## What is modelled, and what is deliberately not
  *
  * The model covers the action's own `dropTable` — the same table
- * `loot-log-stats.calculateExpectedRunValue()` builds its expectation from, so
- * the two figures beside each other in the loot log describe the same run.
- * Essence and rare-find tables are **not** modelled: their realised rates
+ * `loot-log-stats.calculateExpectedRunValue()` builds its expectation from, and
+ * the same gathering-quantity and Processing adjustments, so the two figures
+ * beside each other in the loot log are never comparing a buffed or
+ * Processing-adjusted run against a bare-table one. They do not share one
+ * pricing convention for a processed item, because they are not answering the
+ * same question: this model prices it back as the raw items it consumed, to
+ * compare against a session mean built the same way; `calculateExpectedRunValue`
+ * prices it as itself, to compare against `calculateTotalValue`, which prices
+ * whatever the run actually shows. Essence and rare-find tables are **not** modelled: their realised rates
  * depend on find bonuses the loot log does not capture, and a model that reads
  * their base rates would quietly call every buffed character permanently lucky
  * — the exact failure `combat-drop-model.js` warns about. They are therefore

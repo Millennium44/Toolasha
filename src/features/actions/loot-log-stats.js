@@ -14,7 +14,7 @@ import { formatKMB, numberFormatter, formatDateTime } from '../../utils/formatte
 import { createTimerRegistry } from '../../utils/timer-registry.js';
 import { MARKET_TAX, GATHERING_TYPES } from '../../utils/profit-constants.js';
 import { getActionEfficiencyContext } from '../../utils/efficiency.js';
-import { processingConversions } from '../../utils/gathering-processing.js';
+import { processingConversions, expectedProcessedItems } from '../../utils/gathering-processing.js';
 import { isIronCowCharacter } from '../../utils/ironcow-valuation.js';
 import { signedPercent } from '../../utils/overlay-format.js';
 import {
@@ -265,6 +265,15 @@ class LootLogStats {
         // (by characterActionId), and which the user has picked to combine.
         this.enhSummaries = new Map();
         this.enhSelected = new Set();
+        // Gathering quantity/efficiency/Processing-chance context, per action object
+        // (`dataManager.getActionDetails` hands back the same instance for the same
+        // hrid) — a render pass reads this for the same handful of actions across
+        // hundreds of rows, and re-parsing gear and drinks per row is wasted work.
+        this._gatheringContextCache = new WeakMap();
+        // `processingConversions()` scans every recipe in `actionDetailMap`; cached
+        // by that map's own identity (stable once game data is loaded) so a loot-log
+        // render with hundreds of rows scans it once, not once per row.
+        this._processingConversionsCache = { source: null, map: null };
     }
 
     /**
@@ -840,11 +849,15 @@ class LootLogStats {
 
     /**
      * Calculate the expected total value for a completed run of `actionCount` actions,
-     * from the action's drop table odds (drop rate × average count) rather than what was
-     * actually rolled. Mirrors `calculateTotalValue`'s price resolution (coins at face
-     * value, openable containers priced via expected value) so the two totals are directly
-     * comparable — this is only available for actions with a static drop table (gathering);
-     * combat drops come from the monster, not the action, and production has none.
+     * from the action's drop table odds (drop rate × average count × gathering
+     * quantity), with Processing's own share of that priced as the processed item
+     * rather than the raw it consumed — the same split `buildLuckReading`'s income
+     * reads off the actual drops, and what `calculateTotalValue` prices whatever a
+     * Processing run actually turned raw material into. Without this a Processing
+     * run's "Expected" figure priced every roll as raw, so the comparison drifted
+     * by the raw/processed value gap on every such run, buffed or not. Available
+     * only for actions with a static drop table (gathering); combat drops come from
+     * the monster, not the action, and production has none.
      * @param {string} actionHrid - Action HRID
      * @param {number} actionCount - Number of completed actions
      * @returns {Object|null} { askExpected, bidExpected } or null when unavailable
@@ -857,48 +870,88 @@ class LootLogStats {
         if (!dropTable || dropTable.length === 0) return null;
 
         // The game multiplies every gathered count by 1 + gathering quantity
-        const quantityMultiplier = 1 + this.gatheringQuantityFor(actionDetails);
+        const gatheringQuantity = this.gatheringQuantityFor(actionDetails);
+        const quantityMultiplier = 1 + gatheringQuantity;
+        const efficiencyContext = this._gatheringEfficiencyContext(actionDetails);
+        const conversions = this._processingConversions();
 
         let askExpected = 0;
         let bidExpected = 0;
         let hasAnyPrice = false;
+        const addPriced = (itemHrid, count) => {
+            if (!(count > 0)) return;
+            if (itemHrid === '/items/coin') {
+                askExpected += count;
+                bidExpected += count;
+                hasAnyPrice = true;
+                return;
+            }
+            const priced = this.priceExpectedDrop(itemHrid, count);
+            if (priced) {
+                askExpected += priced.ask;
+                bidExpected += priced.bid;
+                hasAnyPrice = true;
+            }
+        };
 
         for (const drop of dropTable) {
             const dropRate = drop.dropRate || 0;
             const avgCount = ((drop.minCount || 0) + (drop.maxCount || 0)) / 2;
             if (dropRate <= 0 || avgCount <= 0) continue;
 
-            const expectedCount = dropRate * avgCount * quantityMultiplier * actionCount;
+            let rawCount = dropRate * avgCount * quantityMultiplier * actionCount;
 
-            if (drop.itemHrid === '/items/coin') {
-                askExpected += expectedCount;
-                bidExpected += expectedCount;
-                hasAnyPrice = true;
-                continue;
+            // Processing rolls once per completion, pooled across efficiency repeats
+            // (mirrors gathering-profit.js); what it converts is priced as the
+            // processed item, not counted twice as the raw it was made from.
+            const conversion = conversions.get(drop.itemHrid);
+            if (
+                conversion?.conversionRatio > 0 &&
+                efficiencyContext?.processingBonus > 0 &&
+                efficiencyContext.efficiencyMultiplier > 0
+            ) {
+                const processedPerCompletion =
+                    efficiencyContext.processingBonus *
+                    expectedProcessedItems(
+                        drop,
+                        conversion.conversionRatio,
+                        gatheringQuantity,
+                        efficiencyContext.efficiencyMultiplier
+                    );
+                const processedCount = (processedPerCompletion / efficiencyContext.efficiencyMultiplier) * actionCount;
+                rawCount = Math.max(0, rawCount - processedCount * conversion.conversionRatio);
+                addPriced(conversion.outputItemHrid, processedCount);
             }
 
-            const itemDetails = dataManager.getItemDetails(drop.itemHrid);
-            if (itemDetails?.isOpenable && expectedValueCalculator.isInitialized) {
-                const evData = expectedValueCalculator.calculateExpectedValue(drop.itemHrid);
-                if (evData && evData.expectedValue > 0) {
-                    askExpected += evData.expectedValue * expectedCount;
-                    bidExpected += evData.expectedValue * expectedCount;
-                    hasAnyPrice = true;
-                    continue;
-                }
-            }
-
-            const prices = getItemPrices(drop.itemHrid, 0);
-            if (!prices) continue;
-
-            askExpected += (prices.ask || 0) * expectedCount;
-            bidExpected += (prices.bid || 0) * expectedCount;
-            hasAnyPrice = true;
+            addPriced(drop.itemHrid, rawCount);
         }
 
         if (!hasAnyPrice) return null;
 
         return { askExpected, bidExpected };
+    }
+
+    /**
+     * `count` of one item hrid priced the way `calculateTotalValue` prices an
+     * observed drop: openable containers by expected value, everything else at
+     * the market's own ask/bid. Coins are handled by callers directly (face value,
+     * no lookup needed).
+     * @param {string} itemHrid
+     * @param {number} count
+     * @returns {{ask: number, bid: number}|null} Null when nothing prices it
+     */
+    priceExpectedDrop(itemHrid, count) {
+        const itemDetails = dataManager.getItemDetails(itemHrid);
+        if (itemDetails?.isOpenable && expectedValueCalculator.isInitialized) {
+            const evData = expectedValueCalculator.calculateExpectedValue(itemHrid);
+            if (evData && evData.expectedValue > 0) {
+                return { ask: evData.expectedValue * count, bid: evData.expectedValue * count };
+            }
+        }
+
+        const prices = getItemPrices(itemHrid, 0);
+        if (!prices) return null;
+        return { ask: (prices.ask || 0) * count, bid: (prices.bid || 0) * count };
     }
 
     /**
@@ -1123,6 +1176,39 @@ class LootLogStats {
     }
 
     /**
+     * The action's gathering efficiency context — quantity, efficiency multiplier
+     * and Processing chance, the same figures the profit panel reads — cached per
+     * action object (`dataManager.getActionDetails` hands back the same instance
+     * for the same hrid every time). A loot-log render calls this for the same
+     * handful of actions across hundreds of rows; re-parsing gear and drinks per
+     * row is wasted work `getActionEfficiencyContext` does not do cheaply.
+     * @param {Object} actionDetail - The action's `actionDetailMap` entry
+     * @returns {{totalGathering: number, efficiencyMultiplier: number, processingBonus: number}|null}
+     *   Null for a non-gathering action or when it cannot be read
+     */
+    _gatheringEfficiencyContext(actionDetail) {
+        if (!GATHERING_TYPES.includes(actionDetail?.type)) return null;
+        if (this._gatheringContextCache.has(actionDetail)) return this._gatheringContextCache.get(actionDetail);
+
+        let result = null;
+        try {
+            const gameData = dataManager.getInitClientData?.();
+            if (gameData) {
+                const context = getActionEfficiencyContext(actionDetail, { gameData });
+                result = {
+                    totalGathering: context.totalGathering || 0,
+                    efficiencyMultiplier: context.efficiencyMultiplier || 1,
+                    processingBonus: context.processingBonus || 0,
+                };
+            }
+        } catch (error) {
+            console.error('[LootLogStats] Reading gathering efficiency context failed:', error);
+        }
+        this._gatheringContextCache.set(actionDetail, result);
+        return result;
+    }
+
+    /**
      * The gathering quantity the current character gathers this action at, as a
      * decimal — the same total the action panel's profit uses. A loot log entry
      * does not record what the run was played under, so this is today's figure;
@@ -1131,15 +1217,22 @@ class LootLogStats {
      * @returns {number} 0 for a non-gathering action or when it cannot be read
      */
     gatheringQuantityFor(actionDetail) {
-        if (!GATHERING_TYPES.includes(actionDetail?.type)) return 0;
-        try {
-            const gameData = dataManager.getInitClientData?.();
-            if (!gameData) return 0;
-            return getActionEfficiencyContext(actionDetail, { gameData }).totalGathering || 0;
-        } catch (error) {
-            console.error('[LootLogStats] Reading gathering quantity failed:', error);
-            return 0;
+        return this._gatheringEfficiencyContext(actionDetail)?.totalGathering || 0;
+    }
+
+    /**
+     * `processingConversions()` over the current game data, computed once and
+     * reused for as long as `actionDetailMap` keeps the same identity (stable once
+     * game data is loaded) — it scans every recipe in every production skill, and
+     * is otherwise repeated once per rendered loot-log row.
+     * @returns {Map<string, {outputItemHrid: string, conversionRatio: number}>}
+     */
+    _processingConversions() {
+        const actionDetailMap = dataManager.getInitClientData?.()?.actionDetailMap;
+        if (this._processingConversionsCache.source !== actionDetailMap) {
+            this._processingConversionsCache = { source: actionDetailMap, map: processingConversions(actionDetailMap) };
         }
+        return this._processingConversionsCache.map;
     }
 
     /**
@@ -1156,7 +1249,7 @@ class LootLogStats {
         const raws = new Set((actionDetail?.dropTable || []).map((drop) => drop.itemHrid));
         if (!raws.size) return result;
 
-        const conversions = processingConversions(dataManager.getInitClientData?.()?.actionDetailMap);
+        const conversions = this._processingConversions();
         for (const [rawHrid, conversion] of conversions) {
             if (raws.has(rawHrid) && conversion.conversionRatio > 0) {
                 result[conversion.outputItemHrid] = { rawHrid, ratio: conversion.conversionRatio };
