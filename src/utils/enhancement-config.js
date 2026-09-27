@@ -44,9 +44,12 @@ export function getBlessedTeaBonus(itemDetailMap) {
  *
  * Action speed from a Labyrinth scroll is not included: the enhancing panel adds that itself.
  *
+ * @param {Object} [options] - Options
+ * @param {boolean} [options.includeAchievement=true] - Count the achievement map's speed; the
+ *   manual bench passes its Achievement toggle here so one switch governs every achievement buff
  * @returns {{speed: number, wisdom: number}} Percentages
  */
-function getLiveOnlyEnhancingBonuses() {
+function getLiveOnlyEnhancingBonuses({ includeAchievement = true } = {}) {
     const charData = dataManager.characterData;
     const sumMaps = (buffTypeHrid) => {
         let total = 0;
@@ -61,7 +64,9 @@ function getLiveOnlyEnhancingBonuses() {
     };
     const speed =
         sumMaps('/buff_types/action_speed') +
-        (dataManager.getAchievementBuffFlatBoost?.('/action_types/enhancing', '/buff_types/action_speed') || 0);
+        (includeAchievement
+            ? dataManager.getAchievementBuffFlatBoost?.('/action_types/enhancing', '/buff_types/action_speed') || 0
+            : 0);
     const wisdom =
         sumMaps('/buff_types/wisdom') +
         (dataManager.getPersonalBuffFlatBoost?.('/action_types/enhancing', '/buff_types/wisdom') || 0);
@@ -879,13 +884,16 @@ function getManualParams({ useShippedDefaults = false } = {}) {
     const communityWisdomLevel = dataManager.getCommunityBuffLevel('/community_buff_types/experience');
     const communityWisdomBonus = communityWisdomLevel > 0 ? 20 + (communityWisdomLevel - 1) * 0.5 : 0;
 
-    // Achievement wisdom buff
-    const achievementWisdomBonus =
-        dataManager.getAchievementBuffFlatBoost('/action_types/enhancing', '/buff_types/wisdom') * 100;
+    // Achievement wisdom buff, behind the same Achievement toggle as its success buff
+    const achievementWisdomBonus = achievementEnabled
+        ? dataManager.getAchievementBuffFlatBoost('/action_types/enhancing', '/buff_types/wisdom') * 100
+        : 0;
 
     // MooPass, guild and scroll buffs belong to the character, not the kit, so the pro bench
-    // leaves them out
-    const live = useShippedDefaults ? { speed: 0, wisdom: 0 } : getLiveOnlyEnhancingBonuses();
+    // leaves them out. Achievement speed follows the Achievement toggle like the rest.
+    const live = useShippedDefaults
+        ? { speed: 0, wisdom: 0 }
+        : getLiveOnlyEnhancingBonuses({ includeAchievement: achievementEnabled });
 
     // --- TOTALS ---
     const totalToolBonus = equipmentSuccessBonus + houseSuccessBonus + achievementSuccessBonus;

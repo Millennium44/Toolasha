@@ -21,6 +21,7 @@ const character = vi.hoisted(() => ({
     id: 'market123',
     characterData: {},
     personalWisdom: 0,
+    achievementFlat: {},
 }));
 
 /** Every (settingId, fallback) pair the module hands to config — the shipped defaults */
@@ -47,7 +48,7 @@ vi.mock('../core/data-manager.js', () => ({
         getHouseRoomLevel: () => character.observatoryLevel,
         getHouseRooms: () => new Map(),
         getCommunityBuffLevel: () => character.communityBuffLevel,
-        getAchievementBuffFlatBoost: () => 0,
+        getAchievementBuffFlatBoost: (_action, buff) => character.achievementFlat[buff] || 0,
         getAchievementBuffRatioBoost: () => character.achievementSuccessRatio,
         getActionDrinkSlots: () => character.drinks,
         getEquipment: () => character.equipment,
@@ -79,6 +80,7 @@ beforeEach(() => {
     character.id = 'market123';
     character.characterData = {};
     character.personalWisdom = 0;
+    character.achievementFlat = {};
 });
 
 // The values the settings panel ships with — a professional enhancer, not this character
@@ -379,5 +381,36 @@ describe('buffs the game applies beyond gear, house, tea and community', () => {
         const params = getProRatesParams();
         expect(params.otherWisdomBonus).toBe(0);
         expect(params.otherSpeedBonus).toBe(0);
+    });
+});
+
+describe('the manual bench Achievement toggle', () => {
+    beforeEach(() => {
+        character.achievementSuccessRatio = 0.002;
+        character.achievementFlat = { '/buff_types/wisdom': 0.02, '/buff_types/action_speed': 0.01 };
+    });
+
+    test('off, it removes every achievement buff: success, wisdom and speed', () => {
+        character.settings = { enhanceSim_autoDetect: false, ...SHIPPED, enhanceSim_achievement: false };
+        const params = getEnhancingParams();
+        expect(params.achievementSuccessBonus).toBe(0);
+        expect(params.achievementWisdomBonus).toBe(0);
+        expect(params.otherSpeedBonus).toBe(0);
+        expect(params.experienceBonus).toBe(0);
+    });
+
+    test('on, all three count', () => {
+        character.settings = { enhanceSim_autoDetect: false, ...SHIPPED, enhanceSim_achievement: true };
+        const params = getEnhancingParams();
+        expect(params.achievementSuccessBonus).toBeCloseTo(0.2, 9);
+        expect(params.achievementWisdomBonus).toBeCloseTo(2, 9);
+        expect(params.otherSpeedBonus).toBeCloseTo(1, 9);
+    });
+
+    test('auto-detect is not governed by the toggle', () => {
+        character.settings = { enhanceSim_autoDetect: true, enhanceSim_achievement: false };
+        const params = getAutoDetectedParams();
+        expect(params.achievementWisdomBonus).toBeCloseTo(2, 9);
+        expect(params.otherSpeedBonus).toBeCloseTo(1, 9);
     });
 });
