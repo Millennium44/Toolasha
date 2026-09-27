@@ -315,7 +315,50 @@ describe('buildComparison against an engine-built monster', () => {
 
 describe('Timing rows — monster attack interval/cast speed/crit, player HP regen', () => {
     const HRID = '/monsters/pyre_hunter_stat_dummy';
-    const ROOM_LEVEL = 255; // a measured Pyre Hunter tick capture at this room
+    const ROOM_LEVEL = 255;
+
+    // Trimmed straight from a real labyrinth tick capture (a Pyre Hunter at room
+    // 255 and its player, `new_battle` payloads) — not derived from anything the
+    // sim computes. Building the "game" side from these, rather than by copying
+    // the sim's own numbers, is the point: it proves the comparison reproduces
+    // what the game actually sent, not just that a value equals itself.
+    const REAL_MONSTER = {
+        attackLevel: 255,
+        rawAttackInterval: 3_500_000_000, // combatStats.attackInterval (base, pre-scaling)
+        attackInterval: 3_104_212_860, // flat, resolved — attackLevel/2000 = 0.1275 only, no buffs
+        totalCastSpeed: 0.1275,
+    };
+    const REAL_PLAYER = {
+        attackLevel: 154,
+        rawAttackInterval: 2_718_060_971, // combatStats.attackInterval (weapon base)
+        attackInterval: 1_917_730_617, // flat, resolved — attackLevel/2000 + a 0.316 attack-speed buff total
+        rawCastSpeed: 0.048, // combatStats.castSpeed (base gear stat, pre-level, pre-buff)
+        totalCastSpeed: 0.441, // flat, resolved — see the arithmetic test below
+        // Neither the monster nor the player capture has a flat top-level form
+        // of these three; both only ever carry them under combatStats.
+        criticalRate: 0.312128,
+        criticalDamage: 0.1,
+        hpRegenPer10: 0.0742,
+        // A trimmed slice of the real combatBuffMap: enough cast/attack-speed
+        // buffs to be a non-empty, realistic buff set (a player's map is never
+        // actually this short — guild, house, community and achievement buffs
+        // are always present too), and enough to bridge the cast-speed gap below.
+        combatBuffMap: {
+            '/buff_uniques/cast_speed_guild_buff': { typeHrid: '/buff_types/cast_speed', flatBoost: 0.016 },
+            '/buff_uniques/house_cast_speed': { typeHrid: '/buff_types/cast_speed', flatBoost: 0.03 },
+            '/buff_uniques/labyrinth_crate_cast_speed': { typeHrid: '/buff_types/cast_speed', flatBoost: 0.15 },
+            '/buff_uniques/labyrinth_upgrade_cast_speed': { typeHrid: '/buff_types/cast_speed', flatBoost: 0.12 },
+        },
+    };
+
+    test('the real player capture’s flat totalCastSpeed is the raw stat plus attackLevel/2000 plus its cast-speed buffs', () => {
+        // This is the arithmetic TIMING_ROWS's comment cites: not a rename, an
+        // addition of three components, checked against the real numbers.
+        const buffTotal = Object.values(REAL_PLAYER.combatBuffMap).reduce((sum, b) => sum + b.flatBoost, 0);
+        expect(buffTotal).toBeCloseTo(0.316, 6);
+        const rebuilt = REAL_PLAYER.rawCastSpeed + REAL_PLAYER.attackLevel / 2000 + buffTotal;
+        expect(rebuilt).toBeCloseTo(REAL_PLAYER.totalCastSpeed, 6);
+    });
 
     /** Base (unscaled) monster data shaped like a real combatMonsterDetailMap entry. */
     function seed() {
@@ -330,17 +373,13 @@ describe('Timing rows — monster attack interval/cast speed/crit, player HP reg
                         staminaLevel: 100,
                         intelligenceLevel: 100,
                         // Base attack level 100, scaled by roomLevel/100 to 255 at
-                        // room 255 — matching the measured attackLevel/2000 =
-                        // 0.1275 cast-speed component below.
+                        // room 255, matching REAL_MONSTER.attackLevel.
                         attackLevel: 100,
                         meleeLevel: 100,
                         defenseLevel: 100,
                         rangedLevel: 100,
                         magicLevel: 100,
-                        // Base auto-attack interval: 3500ms, in the sim's own
-                        // nanosecond unit (see combat-unit.js's default of
-                        // 3_000_000_000 for 3s).
-                        attackInterval: 3.5e9,
+                        attackInterval: REAL_MONSTER.rawAttackInterval,
                         combatStats: {
                             combatStyleHrids: ['/combat_styles/magic'],
                             attackInterval: 0, // 0 here means "seed from the flat base above"
@@ -348,8 +387,6 @@ describe('Timing rows — monster attack interval/cast speed/crit, player HP reg
                             fireResistance: 500,
                             natureResistance: 500,
                             waterResistance: 100,
-                            criticalRate: 0.08,
-                            criticalDamage: 1.2,
                         },
                     },
                 },
@@ -359,58 +396,38 @@ describe('Timing rows — monster attack interval/cast speed/crit, player HP reg
 
     afterEach(() => setGameData(null));
 
-    /**
-     * A `new_battle`-shaped game monster unit: `attackInterval` and
-     * `totalCastSpeed` flat on `combatDetails` (see the trial-badger fixture in
-     * `guild-trial-messages.fixture.js`), matching the sim's own numbers so the
-     * baseline test is a straight match.
-     */
-    function gameUnitMatching(monsterCombatDetails, extra = {}) {
-        return {
+    test('the sim reproduces the real Pyre Hunter’s attack interval and cast speed from its base stats', () => {
+        seed();
+        const monster = new Monster(HRID, 0, ROOM_LEVEL, true);
+        monster.updateCombatDetails();
+
+        expect(monster.combatDetails.combatStats.attackInterval).toBeCloseTo(REAL_MONSTER.attackInterval, -3);
+        expect(monster.combatDetails.combatStats.castSpeed).toBeCloseTo(REAL_MONSTER.totalCastSpeed, 4);
+    });
+
+    test('a monster comparison matches the real capture’s flat attack interval and cast speed, not a self-copy', () => {
+        seed();
+        const monster = new Monster(HRID, 0, ROOM_LEVEL, true);
+        monster.updateCombatDetails();
+        // The "game" side is the literal captured numbers, independent of
+        // whatever the sim above computed — a genuine cross-check.
+        const gameUnit = {
             isPlayer: false,
             combatBuffMap: {},
             combatDetails: {
-                ...monsterCombatDetails,
-                attackInterval: monsterCombatDetails.combatStats.attackInterval,
-                totalCastSpeed: monsterCombatDetails.combatStats.castSpeed,
-                criticalRate: monsterCombatDetails.combatStats.criticalRate,
-                criticalDamage: monsterCombatDetails.combatStats.criticalDamage,
+                attackInterval: REAL_MONSTER.attackInterval,
+                totalCastSpeed: REAL_MONSTER.totalCastSpeed,
                 combatStats: { combatStyleHrids: ['/combat_styles/magic'] },
             },
-            ...extra,
         };
-    }
-
-    test('attack interval and cast speed match the measured Pyre Hunter figures at room 255', () => {
-        seed();
-        const monster = new Monster(HRID, 0, ROOM_LEVEL, true);
-        monster.updateCombatDetails();
-
-        // 3500ms / 1.1275 (1 + attackLevel(255)/2000) = 3104.2ms
-        expect(monster.combatDetails.combatStats.attackInterval / 1e6).toBeCloseTo(3104.2, 1);
-        expect(monster.combatDetails.combatStats.castSpeed).toBeCloseTo(0.1275, 4);
-    });
-
-    test('a monster comparison reads the sim’s attack interval off combatStats and matches the flat game value', () => {
-        seed();
-        const monster = new Monster(HRID, 0, ROOM_LEVEL, true);
-        monster.updateCombatDetails();
-        const gameUnit = gameUnitMatching(monster.combatDetails);
 
         const result = buildComparison(gameUnit, monster.combatDetails);
         const timing = result.groups.find((g) => g.group === 'Timing');
         const interval = timing.rows.find((r) => r.key === 'attackInterval');
         const castSpeed = timing.rows.find((r) => r.key === 'totalCastSpeed');
-        const critRate = timing.rows.find((r) => r.key === 'criticalRate');
-        const critDamage = timing.rows.find((r) => r.key === 'criticalDamage');
 
-        expect(interval.sim / 1e6).toBeCloseTo(3104.2, 1);
         expect(interval.verdict).toBe('match');
-        expect(castSpeed.deltaPct).toBeCloseTo(0, 6);
         expect(castSpeed.verdict).toBe('match');
-        expect(critRate.game).toBeCloseTo(0.08, 6);
-        expect(critRate.verdict).toBe('match');
-        expect(critDamage.verdict).toBe('match');
         // No player-only row leaked into a monster comparison
         expect(timing.rows.some((r) => r.key === 'hpRegenPer10')).toBe(false);
         expect(result.hasMismatch).toBe(false);
@@ -420,9 +437,16 @@ describe('Timing rows — monster attack interval/cast speed/crit, player HP reg
         seed();
         const monster = new Monster(HRID, 0, ROOM_LEVEL, true);
         monster.updateCombatDetails();
-        const gameUnit = gameUnitMatching(monster.combatDetails);
-        // The game reads 10% faster than the sim computed — a real modelling gap
-        gameUnit.combatDetails.attackInterval = monster.combatDetails.combatStats.attackInterval * 0.9;
+        const gameUnit = {
+            isPlayer: false,
+            combatBuffMap: {},
+            combatDetails: {
+                // The game reads 10% faster than the real capture — a genuine gap
+                attackInterval: REAL_MONSTER.attackInterval * 0.9,
+                totalCastSpeed: REAL_MONSTER.totalCastSpeed,
+                combatStats: { combatStyleHrids: ['/combat_styles/magic'] },
+            },
+        };
 
         const result = buildComparison(gameUnit, monster.combatDetails);
         const interval = result.groups.find((g) => g.group === 'Timing').rows.find((r) => r.key === 'attackInterval');
@@ -430,30 +454,86 @@ describe('Timing rows — monster attack interval/cast speed/crit, player HP reg
         expect(result.hasMismatch).toBe(true);
     });
 
-    test('a player comparison adds the HP regen row, read off combatStats on both sides', () => {
-        seed();
-        const monster = new Monster(HRID, 0, ROOM_LEVEL, true);
-        monster.updateCombatDetails();
-        // hpRegenPer10 is read off combatStats on both the game and sim side (a
-        // player's live sheet carries it there too — see guild-loadouts.js's
-        // STAT_ROWS), so it needs no flat/nested fallback the way the monster
-        // rows above do.
-        const simDetails = { ...monster.combatDetails, combatStats: { ...monster.combatDetails.combatStats } };
-        simDetails.combatStats.hpRegenPer10 = 0.015;
-        const playerUnit = {
+    test('an unfolded player baseline reads the cast-speed/attack-interval gap as a buff, not a mismatch', () => {
+        // The raw (unfolded) sim build carries only what a fresh, self-buff-free
+        // player would have: attackLevel/2000 and nothing else. The real game
+        // unit is fully buffed (cast_speed_guild_buff and friends). This is the
+        // scenario the P1 report raised — the row must read "buff", the same as
+        // every other row already does when live buffs are up and the sim
+        // baseline lacks them, never "mismatch".
+        const unbuffedSimDetails = {
+            combatStats: {
+                combatStyleHrids: ['/combat_styles/slash'],
+                castSpeed: REAL_PLAYER.rawCastSpeed + REAL_PLAYER.attackLevel / 2000, // 0.125, no buffs folded
+                attackInterval: REAL_PLAYER.rawAttackInterval / (1 + REAL_PLAYER.attackLevel / 2000), // no attack-speed buffs
+                criticalRate: 0,
+                criticalDamage: 0,
+                hpRegenPer10: 0,
+            },
+        };
+        const gameUnit = {
             isPlayer: true,
-            combatBuffMap: {},
+            combatBuffMap: REAL_PLAYER.combatBuffMap,
             combatDetails: {
-                ...gameUnitMatching(monster.combatDetails).combatDetails,
-                combatStats: { combatStyleHrids: ['/combat_styles/magic'], hpRegenPer10: 0.015 },
+                attackInterval: REAL_PLAYER.attackInterval,
+                totalCastSpeed: REAL_PLAYER.totalCastSpeed,
+                combatStats: { combatStyleHrids: ['/combat_styles/slash'] },
             },
         };
 
-        const result = buildComparison(playerUnit, simDetails);
+        const result = buildComparison(gameUnit, unbuffedSimDetails, { simBuffed: false });
         const timing = result.groups.find((g) => g.group === 'Timing');
-        const regen = timing.rows.find((r) => r.key === 'hpRegenPer10');
-        expect(regen).toBeDefined();
-        expect(regen.verdict).toBe('match');
+        const castSpeed = timing.rows.find((r) => r.key === 'totalCastSpeed');
+        const interval = timing.rows.find((r) => r.key === 'attackInterval');
+
+        expect(castSpeed.verdict).toBe('buff');
+        // Not "mismatch" — the P1 this guards against. `classify` always reads
+        // game-above-baseline as "buff", game-below as "debuff", with no notion
+        // that a SHORTER interval is the good direction for this one row (every
+        // other row here is higher-is-better). A real attack-speed buff shortens
+        // the interval, so it reads "debuff" here — misleadingly named, but not
+        // the bug in question: it is still buff-explained, not a raw mismatch,
+        // so it does not flag `hasMismatch` or read as a modelling gap.
+        expect(interval.verdict).toBe('debuff');
+        expect(result.hasMismatch).toBe(false);
+    });
+
+    test('a folded player comparison matches the real capture on cast speed, attack interval, crit and regen', () => {
+        // Once buffs are folded onto the sim (planBuffFold; cast_speed and
+        // attack_speed are both in ENGINE_BUFF_TYPES), its combatStats carries
+        // the same resolved totals the game reports flat — so the comparison
+        // must read every timing/crit/regen row as a match, not a permanent gap.
+        const foldedSimDetails = {
+            combatStats: {
+                combatStyleHrids: ['/combat_styles/slash'],
+                castSpeed: REAL_PLAYER.totalCastSpeed,
+                attackInterval: REAL_PLAYER.attackInterval,
+                criticalRate: REAL_PLAYER.criticalRate,
+                criticalDamage: REAL_PLAYER.criticalDamage,
+                hpRegenPer10: REAL_PLAYER.hpRegenPer10,
+            },
+        };
+        const playerUnit = {
+            isPlayer: true,
+            combatBuffMap: REAL_PLAYER.combatBuffMap,
+            combatDetails: {
+                attackInterval: REAL_PLAYER.attackInterval,
+                totalCastSpeed: REAL_PLAYER.totalCastSpeed,
+                combatStats: {
+                    combatStyleHrids: ['/combat_styles/slash'],
+                    criticalRate: REAL_PLAYER.criticalRate,
+                    criticalDamage: REAL_PLAYER.criticalDamage,
+                    hpRegenPer10: REAL_PLAYER.hpRegenPer10,
+                },
+            },
+        };
+
+        const result = buildComparison(playerUnit, foldedSimDetails, { simBuffed: true });
+        const timing = result.groups.find((g) => g.group === 'Timing');
+        for (const key of ['attackInterval', 'totalCastSpeed', 'criticalRate', 'criticalDamage', 'hpRegenPer10']) {
+            expect(timing.rows.find((r) => r.key === key).verdict).toBe('match');
+        }
+        expect(result.hasMismatch).toBe(false);
     });
 });
 
