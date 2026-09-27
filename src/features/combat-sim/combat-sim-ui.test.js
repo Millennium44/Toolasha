@@ -321,6 +321,8 @@ vi.mock('./combat-sim-adapter.js', () => ({
     getZonesThatDropItem: () => [],
     getGuildBuffDetailMap: () => mocks.guildBuffDetailMap || {},
     guildBuffMaxLevel: (detail) => detail?.maxLevel ?? 20,
+    parseShykaiImport: () => null,
+    buildShykaiExportPlayer: () => ({}),
 }));
 
 vi.mock('./combat-sim-runner.js', () => ({

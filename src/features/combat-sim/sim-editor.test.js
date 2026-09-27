@@ -13,7 +13,7 @@
  * `MAX_COMMUNITY_BUFF_LEVEL` in upgrade-advisor.js.
  */
 
-import { describe, test, expect, beforeEach, vi } from 'vitest';
+import { describe, test, expect, beforeEach, afterEach, vi } from 'vitest';
 
 const game = vi.hoisted(() => ({
     charId: 'me',
@@ -25,6 +25,8 @@ const game = vi.hoisted(() => ({
     houseRooms: null,
     /** The roster the last `new_battle` named, or null before any fight */
     battleParty: null,
+    /** Set per-test to stub what a player DTO exports to */
+    buildExport: null,
 }));
 
 vi.mock('../../core/data-manager.js', () => ({
@@ -71,6 +73,7 @@ vi.mock('./combat-sim-adapter.js', () => ({
     },
     buildPlayerDTO: () => (game.selfDTO ? structuredClone(game.selfDTO) : null),
     parseShykaiImport: () => null,
+    buildShykaiExportPlayer: (dto, name) => (game.buildExport ? game.buildExport(dto, name) : { name, dto }),
     // The real one returns false for a name no snapshot answers to, which is
     // what the remembered-selection restore leans on
     applyLoadoutSnapshotToDTO: (dto, name) => {
@@ -196,6 +199,7 @@ beforeEach(() => {
     game.battleParty = null;
     game.selfDTO = { ...emptyDTO('player1'), attackLevel: 90, debuffOnLevelGap: 0.3 };
     game.houseRooms = null;
+    game.buildExport = null;
     game.allPlayers = {
         players: [
             { ...emptyDTO('player1'), attackLevel: 90 },
@@ -1447,5 +1451,77 @@ describe('onRender: the owner follows the roster', () => {
         expect(() => editor.importPlayers([emptyDTO('x')], ['Stranger A'])).not.toThrow();
         expect(el.innerHTML).not.toBe('');
         error.mockRestore();
+    });
+});
+
+/**
+ * Export: the button next to "+ Import" copies a build in the same format
+ * Import accepts, so it round-trips. `buildShykaiExportPlayer` itself (and
+ * the round trip through `parseShykaiImport`) is exercised in
+ * combat-sim-adapter.test.js; this only checks the editor picks the right
+ * player(s), copies the right text, and says so on screen.
+ */
+describe('Export', () => {
+    let writeText;
+
+    beforeEach(() => {
+        writeText = vi.fn().mockResolvedValue(undefined);
+        Object.defineProperty(navigator, 'clipboard', { value: { writeText }, configurable: true });
+    });
+
+    afterEach(() => {
+        delete navigator.clipboard;
+    });
+
+    test('copies only the active player, in the format buildShykaiExportPlayer produces', async () => {
+        const { editor } = editorWithStrangers(); // x, y imported → active is the last one, player2/"Stranger B"
+        game.buildExport = (dto) => ({ marker: dto.hrid });
+
+        await editor._exportActivePlayer();
+
+        expect(writeText).toHaveBeenCalledTimes(1);
+        expect(JSON.parse(writeText.mock.calls[0][0])).toEqual({ marker: 'player2' });
+    });
+
+    test('shows a confirmation naming the player once copied', async () => {
+        const { el, editor } = editorWithStrangers();
+        await editor._exportActivePlayer();
+        expect(el.textContent).toMatch(/Copied Stranger B'?s build/);
+    });
+
+    test('Export Party copies every loaded player, keyed by their slot number', async () => {
+        const { editor } = editorWithStrangers();
+        game.buildExport = (dto, name) => ({ marker: dto.hrid, name });
+
+        await editor._exportParty();
+
+        expect(writeText).toHaveBeenCalledTimes(1);
+        const payload = JSON.parse(writeText.mock.calls[0][0]);
+        expect(Object.keys(payload).sort()).toEqual(['1', '2']);
+        expect(JSON.parse(payload['1'])).toEqual({ marker: 'player1', name: 'Stranger A' });
+        expect(JSON.parse(payload['2'])).toEqual({ marker: 'player2', name: 'Stranger B' });
+    });
+
+    test('the Export Party button only appears once more than one player is loaded', () => {
+        const el = document.createElement('div');
+        const editor = new SimEditor({ editorEl: el });
+        editor.importPlayers([emptyDTO('solo')], ['Solo']);
+        expect(el.querySelector('#mwi-csim-export-party-btn')).toBeNull();
+
+        editor.importPlayers([emptyDTO('second')], ['Second']);
+        expect(el.querySelector('#mwi-csim-export-party-btn')).toBeTruthy();
+    });
+
+    test('falls back to showing the export text when the clipboard write fails', async () => {
+        // A denied permission or an insecure context rejects rather than being
+        // absent; happy-dom has no working document.execCommand either, so the
+        // textarea-copy fallback fails too and the last resort must kick in.
+        writeText.mockRejectedValue(new Error('denied'));
+        const { el, editor } = editorWithStrangers();
+
+        await editor._exportActivePlayer();
+
+        expect(el.textContent).toContain('Could not copy automatically');
+        expect(el.querySelector('textarea[readonly]')).toBeTruthy();
     });
 });

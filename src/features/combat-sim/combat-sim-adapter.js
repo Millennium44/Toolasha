@@ -728,6 +728,59 @@ export function parseShykaiImport(jsonString) {
             dto.guildCombatBuffs = guildCombatBuffs;
         }
 
+        // Labyrinth scrolls (Toolasha extension — Shykai's own export carries
+        // none of these). Filtered against the known combat scroll types so a
+        // stray/renamed value from a hand-edited paste cannot land on the DTO.
+        if (Array.isArray(slotData.scrollBuffs)) {
+            dto.scrollBuffs = slotData.scrollBuffs.filter((typeHrid) => COMBAT_SCROLL_BUFF_TYPES.includes(typeHrid));
+        }
+
+        // Achievement combat buffs. Toolasha's own export (see
+        // `buildShykaiExportPlayer`) carries the resolved buffs and their
+        // off-set directly (`achievementCombatBuffs`/`achievementBuffsOff`),
+        // so an Export → Import round trip needs no re-derivation. A plain
+        // Shykai export carries only completed-achievement hrids
+        // (`achievements: {hrid: true}`), which is enough to derive the same
+        // buffs a shared profile's are derived from — see
+        // `deriveAchievementCombatBuffs`. Neither present falls back to the
+        // same manual, defaulted-off buffs `buildPartyMemberDTO` offers a
+        // party member with no achievement data at all.
+        if (Array.isArray(slotData.achievementCombatBuffs) && slotData.achievementCombatBuffs.length) {
+            dto.achievementCombatBuffs = slotData.achievementCombatBuffs;
+            dto.achievementBuffsOff = Array.isArray(slotData.achievementBuffsOff)
+                ? [...slotData.achievementBuffsOff]
+                : [];
+            dto.achievementBuffsDerived = true;
+        } else if (slotData.achievements && typeof slotData.achievements === 'object') {
+            const achievementDetailMap = clientData.achievementDetailMap;
+            if (achievementDetailMap && Object.keys(achievementDetailMap).length) {
+                const characterAchievements = Object.keys(slotData.achievements).map((hrid) => ({
+                    achievementHrid: hrid,
+                    isCompleted: !!slotData.achievements[hrid],
+                }));
+                const { buffs, activeTypeHrids } = deriveAchievementCombatBuffs(
+                    characterAchievements,
+                    achievementDetailMap
+                );
+                const activeSet = new Set(activeTypeHrids);
+                dto.achievementCombatBuffs = buffs;
+                dto.achievementBuffsOff = buffs
+                    .filter((buff) => !activeSet.has(buff.typeHrid))
+                    .map((buff) => buff.typeHrid);
+                dto.achievementBuffsDerived = true;
+            } else {
+                const manualBuffs = manualAchievementCombatBuffs();
+                dto.achievementCombatBuffs = manualBuffs;
+                dto.achievementBuffsOff = manualBuffs.map((buff) => buff.typeHrid);
+                dto.achievementBuffsManual = true;
+            }
+        } else {
+            const manualBuffs = manualAchievementCombatBuffs();
+            dto.achievementCombatBuffs = manualBuffs;
+            dto.achievementBuffsOff = manualBuffs.map((buff) => buff.typeHrid);
+            dto.achievementBuffsManual = true;
+        }
+
         players.push(dto);
         names.push(slotData.name || p.name || `Player ${slot}`);
     }
@@ -735,6 +788,123 @@ export function parseShykaiImport(jsonString) {
     if (!players.length) return null;
 
     return { players, names, skipped };
+}
+
+/**
+ * `guildCombatBuffLevels` block (shrine-hrid-tail → level) for a player DTO's
+ * `guildShrineLevels`, in the shape `parseShykaiImport` decodes above.
+ *
+ * Every known combat shrine is emitted, zeros included — a level known to be
+ * zero is real information, same reasoning as `buildGuildCombatBuffLevels` in
+ * `combat-sim-export.js` (not reused directly: that one reads through a
+ * level-source callback that a DTO's own object literal does not need).
+ * @param {Object} dto - Player DTO
+ * @returns {Object|null} Level map, or null when no combat shrine is known at all
+ */
+function buildGuildCombatBuffLevelsExport(dto) {
+    const detailMap = getGuildBuffDetailMap();
+    const entries = Object.entries(detailMap).filter(([, detail]) => detail?.isCombat && detail.shrineHrid);
+    if (!entries.length) return null;
+    const levels = dto.guildShrineLevels || {};
+    const out = {};
+    for (const [buffHrid, detail] of entries) {
+        out[detail.shrineHrid.split('/').pop()] = Math.max(0, Math.floor(Number(levels[buffHrid]) || 0));
+    }
+    return out;
+}
+
+/**
+ * Turn a sim editor player DTO back into the Shykai/Toolasha export format
+ * `parseShykaiImport` accepts, so a build made or edited in the Configure tab
+ * can be exported and re-imported (by this or another Toolasha session)
+ * without losing anything the import side reads.
+ *
+ * The plain Shykai format alone cannot carry guild shrine levels, achievement
+ * combat buffs, or active labyrinth scrolls — those are Toolasha extensions
+ * (`guildCombatBuffLevels`, `achievementCombatBuffs`/`achievementBuffsOff`,
+ * `scrollBuffs`) that a plain Shykai-format importer ignores as unknown keys,
+ * and that this side's own `parseShykaiImport` reads back out.
+ *
+ * @param {Object} dto - Player DTO from the sim editor
+ * @param {string} name - Display name to carry in the export's `name` field
+ * @returns {Object} Single-player export object, ready for `JSON.stringify`
+ */
+export function buildShykaiExportPlayer(dto, name) {
+    const player = {
+        attackLevel: dto.attackLevel || 1,
+        magicLevel: dto.magicLevel || 1,
+        meleeLevel: dto.meleeLevel || 1,
+        rangedLevel: dto.rangedLevel || 1,
+        defenseLevel: dto.defenseLevel || 1,
+        staminaLevel: dto.staminaLevel || 1,
+        intelligenceLevel: dto.intelligenceLevel || 1,
+        equipment: [],
+    };
+    for (const [slotType, item] of Object.entries(dto.equipment || {})) {
+        if (!item?.hrid) continue;
+        player.equipment.push({
+            itemLocationHrid: slotType,
+            itemHrid: item.hrid,
+            enhancementLevel: item.enhancementLevel || 0,
+        });
+    }
+
+    const triggerMap = {};
+    const addTriggers = (hrid, triggers) => {
+        if (!hrid || !Array.isArray(triggers) || triggers.length === 0) return;
+        triggerMap[hrid] = triggers.map((t) => ({
+            dependencyHrid: t.dependencyHrid,
+            conditionHrid: t.conditionHrid,
+            comparatorHrid: t.comparatorHrid,
+            value: t.value || 0,
+        }));
+    };
+
+    const food = { '/action_types/combat': [] };
+    for (let i = 0; i < 3; i++) {
+        const slot = (dto.food || [])[i];
+        food['/action_types/combat'].push({ itemHrid: slot?.hrid || '' });
+        if (slot?.hrid) addTriggers(slot.hrid, slot.triggers);
+    }
+
+    const drinks = { '/action_types/combat': [] };
+    for (let i = 0; i < 3; i++) {
+        const slot = (dto.drinks || [])[i];
+        drinks['/action_types/combat'].push({ itemHrid: slot?.hrid || '' });
+        if (slot?.hrid) addTriggers(slot.hrid, slot.triggers);
+    }
+
+    const abilities = [];
+    for (let i = 0; i < 5; i++) {
+        const slot = (dto.abilities || [])[i];
+        abilities.push({ abilityHrid: slot?.hrid || '', level: slot?.level || 1 });
+        if (slot?.hrid) addTriggers(slot.hrid, slot.triggers);
+    }
+
+    const exportObj = {
+        player,
+        food,
+        drinks,
+        abilities,
+        triggerMap,
+        houseRooms: { ...(dto.houseRooms || {}) },
+        name: name || 'Player',
+        zone: '/actions/combat/fly',
+    };
+
+    const guildCombatBuffLevels = buildGuildCombatBuffLevelsExport(dto);
+    if (guildCombatBuffLevels) exportObj.guildCombatBuffLevels = guildCombatBuffLevels;
+
+    if (Array.isArray(dto.achievementCombatBuffs) && dto.achievementCombatBuffs.length) {
+        exportObj.achievementCombatBuffs = dto.achievementCombatBuffs;
+        exportObj.achievementBuffsOff = Array.isArray(dto.achievementBuffsOff) ? [...dto.achievementBuffsOff] : [];
+    }
+
+    if (Array.isArray(dto.scrollBuffs) && dto.scrollBuffs.length) {
+        exportObj.scrollBuffs = [...dto.scrollBuffs];
+    }
+
+    return exportObj;
 }
 
 /**

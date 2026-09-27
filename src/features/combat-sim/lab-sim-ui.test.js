@@ -179,6 +179,8 @@ vi.mock('./combat-sim-adapter.js', () => ({
         const levels = Object.keys(detail?.levelCosts || {}).map(Number);
         return levels.length ? Math.max(...levels) : 0;
     },
+    parseShykaiImport: () => null,
+    buildShykaiExportPlayer: () => ({}),
 }));
 
 vi.mock('./combat-sim-runner.js', () => ({
