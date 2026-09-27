@@ -17,6 +17,12 @@ export const DEFAULT_CAP_DAYS = 3;
 export const DEFAULT_CAP_SHARE_PERCENT = 25;
 
 /**
+ * Opening hold threshold: an item only gets tokens if its gold/token is at least this
+ * percent of the best purchasable item's gold/token. 0 disables the threshold.
+ */
+export const DEFAULT_HOLD_PERCENT = 80;
+
+/**
  * How many of an item the market could take from you.
  *
  * @param {{unitsPerDay: number, known: boolean}|null} volume - The pooled-history measurement;
@@ -41,6 +47,15 @@ export function volumeCap(volume, { days, sharePercent, includeUnmeasured = fals
 /**
  * Allocate tokens across the shop's items.
  *
+ * Once the best items hit their volume caps, a plain greedy pass dumps the rest
+ * into whatever is next in line — often a far worse item, at prices that will
+ * recover as volume trades. `holdPercent` keeps those leftovers uncommitted
+ * instead: an item only receives tokens if its gold/token is at least
+ * `holdPercent`% of the best purchasable item's gold/token. Tokens an
+ * otherwise-purchasable item would have taken, but didn't because of the
+ * threshold, are reported separately as `held` ("held for next run"), distinct
+ * from `leftover` (tokens nothing at all could absorb).
+ *
  * @param {Object} input
  * @param {Array<{itemHrid: string, name: string, cost: number, outputCount?: number, netValue: number|null}>}
  *   input.offers - What the shop sells for this token, per purchase: `cost` tokens buys `outputCount` units
@@ -48,14 +63,18 @@ export function volumeCap(volume, { days, sharePercent, includeUnmeasured = fals
  * @param {number} input.tokens - Tokens held
  * @param {Object<string, {cap: number, measured: boolean}>} input.caps - Per-item cap, by hrid;
  *   an item with no entry is treated as unmeasured with a cap of 0
- * @returns {{rows: Array<Object>, spent: number, leftover: number, gold: number}}
+ * @param {number} [input.holdPercent=0] - The hold threshold, in percent of the best purchasable
+ *   item's gold/token; 0 disables it (every purchasable item is spent on, as before)
+ * @returns {{rows: Array<Object>, spent: number, held: number, leftover: number, gold: number}}
  *   One row per offer, best gold/token first, each with `quantity`, `tokens`,
  *   `gold`, `goldPerToken`, `cap`, `measured` and `reason` — why the quantity is
- *   what it is (`volume`, `tokens`, `no-price`, `unprofitable`, `no-volume`, or
- *   `null` when neither bound was reached)
+ *   what it is (`volume`, `tokens`, `no-price`, `unprofitable`, `no-volume`,
+ *   `below-threshold`, or `null` when neither bound was reached). `held` is
+ *   tokens withheld by the threshold; `leftover` is tokens nothing could buy
+ *   even without it.
  */
-export function planTokenSpend({ offers, tokens, caps }) {
-    const held = Math.max(0, Math.floor(Number(tokens) || 0));
+export function planTokenSpend({ offers, tokens, caps, holdPercent = 0 }) {
+    const startingTokens = Math.max(0, Math.floor(Number(tokens) || 0));
     const ranked = (offers || [])
         .filter((offer) => offer?.itemHrid && offer.cost > 0)
         .map((offer) => ({
@@ -64,8 +83,34 @@ export function planTokenSpend({ offers, tokens, caps }) {
         }))
         .sort((a, b) => b.goldPerToken - a.goldPerToken || a.cost - b.cost);
 
-    let remaining = held;
+    const purchaseCapOf = (offer, capInfo) => {
+        // `cap` counts units sold; a purchase that yields several units uses up that many
+        const perPurchase = offer.outputCount > 0 ? offer.outputCount : 1;
+        return Math.floor(capInfo.cap / perPurchase);
+    };
+
+    // The bar: the highest gold/token among items with a price that the plan could
+    // buy at least one of — capped-and-affordable, or uncapped/unmeasured-but-included.
+    // Ranked is already sorted best-first, so the first one that qualifies is it.
+    let bestGoldPerToken = 0;
+    for (const offer of ranked) {
+        if (!(offer.netValue > 0)) continue;
+        const capInfo = caps?.[offer.itemHrid] || { cap: 0, measured: false };
+        if (!capInfo.measured && !(capInfo.cap > 0)) continue;
+        if (!(purchaseCapOf(offer, capInfo) >= 1)) continue;
+        if (offer.cost > startingTokens) continue;
+        bestGoldPerToken = offer.goldPerToken;
+        break;
+    }
+    const bar = bestGoldPerToken * (Math.max(0, Number(holdPercent) || 0) / 100);
+
+    let remaining = startingTokens;
     let gold = 0;
+    let held = 0;
+    // Lazily seeded with `remaining` the first time a row falls below the bar; every
+    // later below-bar row (goldPerToken only ever falls, since rows are sorted) draws
+    // from this same pool, so the reported `held` total is not overcounted.
+    let holdPool = null;
     const rows = ranked.map((offer) => {
         const capInfo = caps?.[offer.itemHrid] || { cap: 0, measured: false };
         const row = {
@@ -92,9 +137,20 @@ export function planTokenSpend({ offers, tokens, caps }) {
             return row;
         }
 
-        // `cap` counts units sold; a purchase that yields several units uses up that many
-        const perPurchase = offer.outputCount > 0 ? offer.outputCount : 1;
-        const purchaseCap = Math.floor(capInfo.cap / perPurchase);
+        const purchaseCap = purchaseCapOf(offer, capInfo);
+
+        if (bar > 0 && offer.goldPerToken < bar) {
+            // Below the bar: not spent on for real, but report what it would have
+            // taken, so the tokens read as held rather than vanishing from the total
+            if (holdPool === null) holdPool = remaining;
+            const affordable = Math.floor(holdPool / offer.cost);
+            const quantity = Math.max(0, Math.min(affordable, purchaseCap));
+            holdPool -= quantity * offer.cost;
+            held += quantity * offer.cost;
+            row.reason = 'below-threshold';
+            return row;
+        }
+
         const affordable = Math.floor(remaining / offer.cost);
         const quantity = Math.max(0, Math.min(affordable, purchaseCap));
         row.quantity = quantity;
@@ -106,7 +162,7 @@ export function planTokenSpend({ offers, tokens, caps }) {
         return row;
     });
 
-    return { rows, spent: held - remaining, leftover: remaining, gold };
+    return { rows, spent: startingTokens - remaining, held, leftover: remaining - held, gold };
 }
 
-export default { DEFAULT_CAP_DAYS, DEFAULT_CAP_SHARE_PERCENT, volumeCap, planTokenSpend };
+export default { DEFAULT_CAP_DAYS, DEFAULT_CAP_SHARE_PERCENT, DEFAULT_HOLD_PERCENT, volumeCap, planTokenSpend };

@@ -882,6 +882,16 @@ export const settingsGroups = {
                 default: false,
                 requires: 'dungeonShopPlanner',
             },
+            dungeonShopPlanner_holdPercent: {
+                id: 'dungeonShopPlanner_holdPercent',
+                label: 'Dungeon shop planner: Hold items below this % of the best gold/token',
+                type: 'number',
+                default: 80,
+                min: 0,
+                max: 100,
+                requires: 'dungeonShopPlanner',
+                help: 'Once the best items hit their volume caps, leftover tokens used to fall through to whatever was next in line, often at a much worse price. This holds those tokens for the next run instead of spending them on an item below this share of the best gold/token available. 0 turns the hold off.',
+            },
             itemTooltip_gathering: {
                 id: 'itemTooltip_gathering',
                 label: 'Show gathering sources and profit',

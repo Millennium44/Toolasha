@@ -35,13 +35,20 @@ import { calculatePriceAfterTax, outputTaxRate } from '../../utils/profit-helper
 import { createPanel, panelNote } from '../../utils/simple-panel.js';
 import { openShopTab, setShopFilter } from '../../utils/tester-shop-nav.js';
 import { DUNGEON_TOKEN_HRIDS, dungeonShopOffers, ownedTokenCount } from './dungeon-shop-offers.js';
-import { DEFAULT_CAP_DAYS, DEFAULT_CAP_SHARE_PERCENT, planTokenSpend, volumeCap } from './dungeon-shop-plan.js';
+import {
+    DEFAULT_CAP_DAYS,
+    DEFAULT_CAP_SHARE_PERCENT,
+    DEFAULT_HOLD_PERCENT,
+    planTokenSpend,
+    volumeCap,
+} from './dungeon-shop-plan.js';
 
 /** The feature's switch; also gates the tooltip hint line */
 export const PLANNER_SETTING = 'dungeonShopPlanner';
 export const DAYS_SETTING = 'dungeonShopPlanner_days';
 export const SHARE_SETTING = 'dungeonShopPlanner_sharePercent';
 export const UNMEASURED_SETTING = 'dungeonShopPlanner_includeUnmeasured';
+export const HOLD_SETTING = 'dungeonShopPlanner_holdPercent';
 
 /** The Shop tab the dungeon items are sold on */
 export const DUNGEON_TAB_LABEL = /^\s*dungeons?\s*$/i;
@@ -182,6 +189,9 @@ class DungeonShopPlanner {
                 DEFAULT_CAP_SHARE_PERCENT
             ),
             includeUnmeasured: config.getSetting(UNMEASURED_SETTING, false) === true,
+            // 0 is a real, distinct value here (the threshold off) rather than "unset", so it
+            // is clamped rather than treated as invalid the way `clampNumber` treats a stored 0
+            holdPercent: clampHoldPercent(config.getSettingValue(HOLD_SETTING, DEFAULT_HOLD_PERCENT)),
         };
     }
 
@@ -296,7 +306,7 @@ class DungeonShopPlanner {
         }
         const tokens = ownedTokenCount(tokenHrid);
         return {
-            ...planTokenSpend({ offers, tokens, caps }),
+            ...planTokenSpend({ offers, tokens, caps, holdPercent: options.holdPercent }),
             tokens,
             options,
             measuring: offers.filter((offer) => this.measuring.has(offer.itemHrid)).length,
@@ -345,9 +355,16 @@ class DungeonShopPlanner {
 
         const summary = document.createElement('div');
         summary.style.fontWeight = 'bold';
-        summary.textContent =
-            `Spend ${formatWithSeparator(result.spent)} → ~${formatKMB(result.gold)} gold after tax` +
-            ` · ${formatWithSeparator(result.leftover)} left over`;
+        let summaryText = `Spend ${formatWithSeparator(result.spent)} → ~${formatKMB(result.gold)} gold after tax`;
+        if (result.held > 0) {
+            summaryText +=
+                ` · ${formatWithSeparator(result.held)} held for next run` +
+                ` (below ${result.options.holdPercent}% of the best gold/token)`;
+        }
+        if (result.leftover > 0 || result.held === 0) {
+            summaryText += ` · ${formatWithSeparator(result.leftover)} left over`;
+        }
+        summary.textContent = summaryText;
         body.appendChild(summary);
 
         if (result.measuring > 0) {
@@ -417,6 +434,18 @@ class DungeonShopPlanner {
                 this.panel?.render();
             })
         );
+        row.appendChild(
+            numberField(
+                '% of best',
+                options.holdPercent,
+                'toolasha-dungeon-plan-hold',
+                (value) => {
+                    config.setSettingValue(HOLD_SETTING, value);
+                    this.panel?.render();
+                },
+                { allowZero: true }
+            )
+        );
 
         const label = document.createElement('label');
         Object.assign(label.style, { display: 'flex', gap: '3px', alignItems: 'center', cursor: 'pointer' });
@@ -475,7 +504,7 @@ class DungeonShopPlanner {
                 planned ? formatWithSeparator(planRow.tokens) : '',
                 planned ? formatKMB(planRow.gold) : '',
                 planRow.goldPerToken > 0 ? formatKMB(planRow.goldPerToken) : '',
-                this.capText(planRow),
+                this.capText(planRow, result.options.holdPercent),
             ];
             cells.forEach((text, index) => {
                 const td = tr.insertCell();
@@ -492,17 +521,25 @@ class DungeonShopPlanner {
     /**
      * What the Cap cell says for a row.
      * @param {Object} planRow - One plan row
+     * @param {number} holdPercent - The hold threshold in effect, for the below-threshold note
      * @returns {string}
      */
-    capText(planRow) {
+    capText(planRow, holdPercent) {
         if (this.measuring.has(planRow.itemHrid)) return 'measuring…';
         if (planRow.reason === 'no-price' || planRow.reason === 'unprofitable') return REASON_TEXT[planRow.reason];
-        if (!planRow.measured) {
+        if (!planRow.measured && planRow.reason !== 'below-threshold') {
             return planRow.cap === Number.POSITIVE_INFINITY ? 'unmeasured, uncapped' : REASON_TEXT['no-volume'];
         }
-        const perDay = planRow.unitsPerDay >= 1 ? Math.round(planRow.unitsPerDay) : planRow.unitsPerDay.toFixed(2);
+        const capNote = planRow.measured
+            ? `${formatWithSeparator(planRow.cap)} (~${
+                  planRow.unitsPerDay >= 1 ? Math.round(planRow.unitsPerDay) : planRow.unitsPerDay.toFixed(2)
+              }/day)`
+            : 'unmeasured, uncapped';
+        if (planRow.reason === 'below-threshold') {
+            return `${capNote} · below ${holdPercent}% of best`;
+        }
         const suffix = planRow.reason === 'volume' ? ' ◂' : '';
-        return `${formatWithSeparator(planRow.cap)} (~${perDay}/day)${suffix}`;
+        return `${capNote}${suffix}`;
     }
 
     /**
@@ -595,10 +632,12 @@ function createPlanButton(onClick) {
  * @param {string} labelText - Label
  * @param {number} value - Current value
  * @param {string} className - For tests and styling
- * @param {Function} onChange - `(number) => void`, only for a positive number
+ * @param {Function} onChange - `(number) => void`, only for a valid value
+ * @param {Object} [options]
+ * @param {boolean} [options.allowZero=false] - Accept 0 as a real value instead of discarding it
  * @returns {HTMLElement}
  */
-function numberField(labelText, value, className, onChange) {
+function numberField(labelText, value, className, onChange, { allowZero = false } = {}) {
     const label = document.createElement('label');
     Object.assign(label.style, { display: 'flex', gap: '3px', alignItems: 'center' });
     const input = document.createElement('input');
@@ -610,7 +649,7 @@ function numberField(labelText, value, className, onChange) {
     input.style.width = '52px';
     input.addEventListener('change', () => {
         const next = Number(input.value);
-        if (Number.isFinite(next) && next > 0) onChange(next);
+        if (Number.isFinite(next) && (next > 0 || (allowZero && next === 0))) onChange(next);
     });
     label.append(document.createTextNode(labelText), input);
     return label;
@@ -627,6 +666,18 @@ function clampNumber(value, min, max, fallback) {
     const number = Number(value);
     if (!Number.isFinite(number) || number <= 0) return fallback;
     return Math.min(max, Math.max(min, number));
+}
+
+/**
+ * Like `clampNumber`, but 0 is a real, distinct value (the hold threshold off)
+ * rather than "unset" — only a non-finite stored value falls back to the default.
+ * @param {*} value - A stored setting
+ * @returns {number} Clamped to [0, 100]
+ */
+function clampHoldPercent(value) {
+    const number = Number(value);
+    if (!Number.isFinite(number)) return DEFAULT_HOLD_PERCENT;
+    return Math.min(100, Math.max(0, number));
 }
 
 /** The dungeon token the character holds most of, the first one when none */
