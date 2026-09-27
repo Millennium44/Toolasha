@@ -226,6 +226,8 @@ export async function calculateGatheringProfit(actionHrid) {
             processingRevenueBonus += revenueFromConversion;
             processingRevenueBonusPerAction += processedItemsPerAction * valueGainPerConversion;
             processingConversions.push({
+                rawItemHrid: drop.itemHrid,
+                processedItemHrid,
                 rawItem: rawItemName,
                 processedItem: processedItemName,
                 valueGain: valueGainPerConversion,

@@ -210,6 +210,32 @@ function costSideIncomplete(profit) {
 }
 
 /**
+ * What a gathering method puts on the market each hour.
+ *
+ * The drop table, less the raw items Processing Tea turns into their processed
+ * item, plus that processed item — the sell-through check has to ask about the
+ * Cheese a Processing run actually makes, not about Milk it no longer has.
+ *
+ * @param {Object} profit - A result from `calculateGatheringProfit`
+ * @returns {Array<{itemHrid: string, name: string|null, unitsPerHour: number}>}
+ */
+export function gatheringSells(profit) {
+    const byItem = new Map();
+    const add = (itemHrid, name, units) => {
+        if (!itemHrid || !Number.isFinite(units)) return;
+        const line = byItem.get(itemHrid) || { itemHrid, name: name || null, unitsPerHour: 0 };
+        line.unitsPerHour += units;
+        byItem.set(itemHrid, line);
+    };
+    for (const output of profit?.baseOutputs || []) add(output?.itemHrid, output?.name, output?.itemsPerHour);
+    for (const conversion of profit?.processingConversions || []) {
+        add(conversion?.rawItemHrid, conversion?.rawItem, -(conversion?.rawConsumedPerHour || 0));
+        add(conversion?.processedItemHrid, conversion?.processedItem, conversion?.conversionsPerHour || 0);
+    }
+    return [...byItem.values()].filter((line) => line.unitsPerHour > 0);
+}
+
+/**
  * Every action the character's levels allow, of a set of types.
  *
  * "Allow" means what the game itself would let you start right now: the base
@@ -323,15 +349,9 @@ async function measureGoldRates() {
                 kind: 'gathering',
                 sustainable: UNBOUNDED,
                 // Gathering consumes nothing, so it needs no capital to start;
-                // what it sells is its own drop table
+                // what it sells is its own drop table, after Processing
                 upfrontCost: 0,
-                sells: (profit.baseOutputs || [])
-                    .filter((output) => output?.itemHrid && output.itemsPerHour > 0)
-                    .map((output) => ({
-                        itemHrid: output.itemHrid,
-                        name: output.name || null,
-                        unitsPerHour: output.itemsPerHour,
-                    })),
+                sells: gatheringSells(profit),
             });
             byAction.set(hrid, profit.profitPerHour);
         } catch (error) {
