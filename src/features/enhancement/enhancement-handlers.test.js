@@ -102,7 +102,7 @@ vi.mock('./tooltip-enhancement.js', () => ({ getEnhancementMaterialPrice: () => 
 vi.mock('./enhancement-ui.js', () => ({ default: { switchToSession: () => {}, scheduleUpdate: () => {} } }));
 vi.mock('./enhancement-tracker.js', () => ({ default: trackerMock }));
 
-const { setupEnhancementHandlers } = await import('./enhancement-handlers.js');
+const { setupEnhancementHandlers, cleanupEnhancementHandlers } = await import('./enhancement-handlers.js');
 
 const cachedEnhanceAction = (extra = {}) => ({
     actionHrid: '/actions/enhancing/enhance',
@@ -626,5 +626,68 @@ describe('a session whose run ended while no page was connected', () => {
         setupEnhancementHandlers();
 
         expect(state.calls).toEqual([]);
+    });
+});
+
+describe('a mirror attempt with no known start', () => {
+    // Blessed can make a mirror success +2, so a result N came from N-1 or N-2
+    const row = (level, currentCount) => ({
+        id: 'a1',
+        actionHrid: '/actions/enhancing/enhance',
+        isDone: false,
+        ordinal: 1,
+        currentCount,
+        primaryItemHash: '30404::/item_locations/inventory::/items/enchanted_cloak_refined::' + level,
+        secondaryItemHash: '30404::/item_locations/inventory::/items/philosophers_mirror::0',
+        enhancingMaxLevel: 12,
+        enhancingProtectionMinLevel: 0,
+    });
+
+    test('at +4 or above the mirror certainly applied and is charged', async () => {
+        await state.handlers.action_completed({ endCharacterAction: row(9, 40) });
+
+        expect(state.calls).toContainEqual(['prot', '/items/philosophers_mirror', 90000]);
+        expect(state.costs).toEqual([['mat', '/items/enchanted_cloak_refined', 1, 5000]]);
+    });
+
+    test('at +3 a Blessed ordinary attempt from +1 fits too, so it is charged as ordinary', async () => {
+        await state.handlers.action_completed({ endCharacterAction: row(3, 40) });
+
+        expect(state.calls.map(([kind]) => kind)).not.toContain('prot');
+        expect(state.costs).toEqual([
+            ['mat', '/items/holy_cheese', 2],
+            ['coin', 900],
+        ]);
+    });
+});
+
+describe('a character switch', () => {
+    // The registry disables the feature on character_switching and initializes it again for
+    // the arriving character; nothing read off the departing character's queue may survive.
+    test('a start level read from the departing character is not used for the arriving one', async () => {
+        const row = {
+            id: 'a1',
+            actionHrid: '/actions/enhancing/enhance',
+            isDone: false,
+            ordinal: 1,
+            currentCount: 0,
+            primaryItemHash: '30404::/item_locations/inventory::/items/enchanted_cloak_refined::5',
+            secondaryItemHash: '',
+            enhancingMaxLevel: 15,
+            enhancingProtectionMinLevel: 0,
+        };
+        state.actions = [row];
+        await state.handlers.actions_updated({ endCharacterActions: [row] });
+
+        cleanupEnhancementHandlers();
+        state.actions = [];
+        state.calls = [];
+        trackerMock.pendingSessionStart = false;
+        setupEnhancementHandlers();
+
+        await state.handlers.action_completed({
+            endCharacterAction: { ...row, currentCount: 1, primaryItemHash: row.primaryItemHash.replace('::5', '::6') },
+        });
+        expect(state.calls.map(([kind]) => kind)).toEqual(['start']);
     });
 });

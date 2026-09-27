@@ -437,10 +437,14 @@ async function applyAttempt({ session, action, itemHrid, previousLevel, newLevel
 
     const knownStart = scored && Number.isFinite(previousLevel);
     const mirror = usesPhilosophersMirror(action);
-    // The mirror needs an item at +2 or higher; below that the attempt is an ordinary one. An
-    // attempt with no known start is charged from the level just below its result, which is
-    // where a mirror success came from.
-    const mirrorFrom = knownStart ? previousLevel : newLevel - 1;
+    // The mirror needs an item at +2 or higher; below that the attempt is an ordinary one.
+    //
+    // With no known start the result has to say it. The Blessed buff is "+2 instead of +1 on
+    // enhancing success" and nothing in the client excludes a mirror success from it (the roll
+    // is server-side), so a mirror result N came from N-1 or N-2. Only N >= 4 puts both at +2
+    // or above, where the mirror certainly applied; the copy is then priced at the un-Blessed
+    // reading. At N <= 3 a Blessed ordinary attempt from +1 fits too, and it stays ordinary.
+    const mirrorFrom = knownStart ? previousLevel : newLevel >= 4 ? newLevel - 1 : -1;
     if (mirror && mirrorFrom >= 2) {
         await trackMirrorCosts(itemHrid, mirrorFrom);
     } else {
