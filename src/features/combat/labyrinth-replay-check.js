@@ -64,16 +64,20 @@ function median(values) {
 /** The sim's own run-to-run wobble, folded into every margin so a within-noise call stays honest */
 const SIM_NOISE_FLOOR_PCT = 2;
 
-/**
- * How much the damage-taken figure is known to run low. Damage you take is the 3
- * Hz tick-summed drops (see `exchange`) — two hits inside one frame collapse to a
- * single drop, so the total undercounts by a few percent. Damage you deal takes
- * the exact endpoint floor instead and carries no such bias, so this is credited
- * back to the taken metric alone, before its verdict, so a session that lands a
- * couple of points low on top of the bias is not called "below" (which reads as
- * "the sim over-models the monster") on what is really a measurement artifact.
- */
-const TAKEN_UNDERCOUNT_PCT = 3;
+// Damage you take here is the 3 Hz tick-summed drops (see `exchange`), which in
+// principle undercounts when two hits land inside one frame and collapse to a
+// single drop. A solo labyrinth fight never sees that: a measured Pyre Hunter
+// tick capture had zero merged frames across 166 hits on the player, because a
+// solo fight has one damage source hitting the player and no ally attacks or
+// heals to land in the same tick. A credit for the merge used to be applied to
+// `compareLab`'s taken metric anyway, and it moved a real +5.25% / ±5.32%
+// "consistent" taken-damage result to "above" for a 28-fight Pyre Hunter group
+// — crediting a bias that was not present. No allowance is applied there for
+// that reason: this module only ever compares solo labyrinth fights (see
+// `compareLab`'s single-player caller in `labyrinth-sim-cache.js`). Party or
+// multi-source fights, where two attackers or a heal really can land in the
+// same 3 Hz frame, are handled by `combat-replay-check.js`'s own endpoint
+// reconciliation, not by this module.
 
 /** 95% of a normal sits inside this many standard errors of the mean */
 const Z95 = 1.96;
@@ -1149,14 +1153,16 @@ export function compareLab(observed, predicted) {
         observed.dpsSamples,
         observed.fights
     );
+    // No downward-bias credit here: see the comment above `SIM_NOISE_FLOOR_PCT`
+    // — this module only ever compares solo labyrinth fights, where the 3 Hz
+    // tick-merge undercount this credit was built for does not occur.
     const taken = compareMetric(
         'taken',
         'Monster damage / s',
         observed.takenPerSecond,
         predicted.takenPerSecond,
         observed.takenSamples,
-        observed.fights,
-        TAKEN_UNDERCOUNT_PCT
+        observed.fights
     );
     const clear = compareMetric(
         'clearRate',
