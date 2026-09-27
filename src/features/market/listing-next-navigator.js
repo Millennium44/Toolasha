@@ -18,6 +18,7 @@ import { navigateToMyListings } from '../../utils/marketplace-tabs.js';
 import { createMutationWatcher } from '../../utils/dom-observer-helpers.js';
 import { itemHridFromIcon } from '../../utils/item-icon.js';
 import { GAME } from '../../utils/selectors.js';
+import { allowNavRowToWrap } from '../../utils/market-nav-row.js';
 import listingRefreshNavigator from './listing-refresh-navigator.js';
 
 const CONTAINER_SEL = '[class*="MarketplacePanel_marketNavButtonContainer"]';
@@ -132,10 +133,8 @@ class ListingNextNavigator {
             btn.style.flexShrink = '0';
             btn.style.whiteSpace = 'nowrap';
             btn.addEventListener('click', () => this._handleClick());
-            // Our nowrap items made the row overrun a phone-width marketplace and squeezed the
-            // game's own buttons (fixed height, overflow: hidden) until their labels were cut off.
-            // Wrapping moves the overflow to a second line; a desktop row never needs one.
-            container.style.flexWrap = 'wrap';
+            // Lets the row wrap rather than squeeze the game's own buttons; see market-nav-row.js.
+            allowNavRowToWrap();
             container.appendChild(btn);
             this.nextBtn = btn;
         }

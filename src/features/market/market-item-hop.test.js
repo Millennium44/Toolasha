@@ -9,6 +9,7 @@
  */
 
 import { describe, test, expect, beforeEach, afterEach, vi } from 'vitest';
+import { NAV_ROW_WRAP_STYLE_ID, OUR_NAV_ROW_ITEMS } from '../../utils/market-nav-row.js';
 
 const mocks = vi.hoisted(() => ({
     navigate: vi.fn(),
@@ -292,9 +293,21 @@ describe('Market Item Hop', () => {
         // On a phone-width marketplace our nowrap items overran the row and squeezed the game's own
         // buttons until their labels were cut off (measured in Firefox, Chromium and WebKit); the row
         // wraps instead. happy-dom does no layout, so this pins the declaration.
-        test('lets the row wrap rather than squeeze the game buttons', () => {
+        test('lets the row wrap rather than squeeze the game buttons, and stops on cleanup', () => {
+            // happy-dom cannot parse a relative `:has(> …)`; evaluate the installed rule the way a
+            // browser would: the row wraps while it has a direct child that is one of ours.
+            const rowWraps = (row) =>
+                Boolean(document.getElementById(NAV_ROW_WRAP_STYLE_ID)) &&
+                [...row.children].some((child) => OUR_NAV_ROW_ITEMS.some((sel) => child.matches(sel)));
             openFromGrid('plank');
-            expect(document.getElementById('mwi-item-hop-prev').parentElement.style.flexWrap).toBe('wrap');
+            const row = document.getElementById('mwi-item-hop-prev').parentElement;
+            expect(rowWraps(row)).toBe(true);
+            // Nothing written onto the game's own row, so cleanup has nothing to undo
+            expect(row.style.flexWrap).toBe('');
+
+            itemHop.cleanup();
+            expect(rowWraps(row)).toBe(false);
+            expect(row.style.flexWrap).toBe('');
         });
     });
 
