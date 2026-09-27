@@ -6,6 +6,7 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+- **Solo zones vs party dungeons in one table**: with a party loaded, a new All Zones option sims you solo through every zone and your party through the dungeons, ranking both together with a Solo/Party column using your own share of each; the Bestiary planner can route through either. The All Zones table also keeps the player it measured, so a later tab click or price change no longer re-reads it for someone else.
 - **Sim yourself solo while in a party**: a Solo checkbox on the combat sim's Configure tab runs just the selected player, keeping the party roster and fetched loadouts for when you untick it; its history entries are labelled Solo. A fresh character's empty chat channel no longer triggers a false "Chat messages — selector missing" warning.
 
 - **Shop planner, trial checker and View Loadout edge cases**: the shop planner no longer reuses volumes measured with pooled history after it is switched off, runs one volume lookup at a time across token switches, and a stale plan click no longer opens the Shop for another character; the trial checker's Fetch next skips no-loadout players found by Recapture too; a loadout reply is matched to your own newer click, and a party-loadout fetch no longer overwrites a scenario you loaded meanwhile.
