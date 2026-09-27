@@ -6,6 +6,8 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+- **Dungeon shop planner holds weak leftovers**: a "% of best" setting (default 80%) only spends leftover tokens on items worth at least that share of the best gold per token, and shows the rest as held for next run, when the volume caps have refreshed, instead of dumping them into far worse items.
+
 - **Philo calculator own-use toggles**: "I own the inputs" costs loot you already hold at what selling it would net after tax (items with no sell price keep their usual cost), and "Keep the Philo" counts the stone at full price with no sales tax, for when you use it yourself.
 
 - **Dungeon shop planner after a reload**: a planner left open across a page reload no longer shows "no volume data" for every item with nothing planned; it measures volumes when it reappears.
