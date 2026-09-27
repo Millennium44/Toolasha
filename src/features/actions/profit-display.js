@@ -1429,11 +1429,22 @@ function formatPerAction(value) {
 
 /**
  * Build "Per action breakdown" section for gathering actions
+ *
+ * "Per action" is one completed action — what the queue counts, efficiency
+ * repeats included — so every figure here is the hourly one divided by
+ * completions per hour. That is the unit `profitPerAction` and each output's
+ * `itemsPerAction`/`revenuePerAction` already use, and the one
+ * `buildGatheringActionsBreakdown` multiplies by the Repeat count. Dividing the
+ * header, costs and bonus drops by time-consuming actions instead made
+ * Revenue − Costs come out at `efficiencyMultiplier` times the Net Profit shown
+ * under them.
+ *
  * @param {Object} profitData - Profit calculation data
  * @returns {HTMLElement} Breakdown section element
  */
-function buildGatheringPerActionBreakdown(profitData) {
-    const actionsPerHour = profitData.actionsPerHour;
+export function buildGatheringPerActionBreakdown(profitData) {
+    // Completions per hour: the divisor for every per-action figure below
+    const actionsPerHour = profitData.actionsPerHour * (profitData.efficiencyMultiplier || 1);
     const baseMissing = profitData.baseOutputs?.some((output) => output.missingPrice) || false;
     const gourmetMissing = profitData.gourmetBonuses?.some((output) => output.missingPrice) || false;
     const bonusMissing = profitData.bonusRevenue?.hasMissingPrices || false;
