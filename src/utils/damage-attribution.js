@@ -544,6 +544,28 @@ function swingLabel(action, abilityDetailMap) {
 }
 
 /**
+ * Whether a swing is known to strike one monster only.
+ *
+ * An auto-attack does, and so does an ability whose damaging effects the game
+ * data names no `allEnemies` target for. Anything the data cannot answer — no
+ * data, an unknown hrid, no label — is not known to, and is read as a swing that
+ * may have struck every monster: an area cast (Frost Surge, Crippling Slash,
+ * Penetrating Shot) raises the caster's attack counter once and rings each
+ * monster it reaches, and reading its second target as a bleed tick is the
+ * worse mistake.
+ *
+ * @param {string} [action] - From `state.actions`, the swing's label
+ * @param {Object} [abilityDetailMap] - Game data
+ * @returns {boolean}
+ */
+function isSingleTarget(action, abilityDetailMap) {
+    if (action === 'auto') return true;
+    const effects = abilityDetailMap?.[action]?.abilityEffects;
+    if (!Array.isArray(effects)) return false;
+    return !effects.some((effect) => String(effect?.targetType || '') === 'allEnemies');
+}
+
+/**
  * The hits in one tick.
  *
  * ## A rise of the damage counter is a swing, a counter-attack or a tick
@@ -553,7 +575,13 @@ function swingLabel(action, abilityDetailMap) {
  * the labyrinth uptime harness pays off its queue of pending swings:
  *
  * - A **swing** is a rise paid off by a present player's `atkCounter` rising on
- *   the same tick. Each rise pays off one pending swing.
+ *   the same tick. Each rise pays off one pending swing — on each monster, for
+ *   a swing that may be an area cast, since one cast rings every monster it
+ *   reaches and raises the caster's counter once (seen on every Frost Surge,
+ *   Crippling Slash and Penetrating Shot/Strike tick in the party, five-player
+ *   and dungeon recordings); and once in the whole tick for a swing known to be
+ *   single-target (an auto-attack, or an ability the game data gives no
+ *   `allEnemies` target), so a bleed ticking on a second monster stays a tick.
  * - A **counter-attack** is an unpaid rise on a tick where the monster's own
  *   attack counter rose: it attacked and was answered by a parry or a reflect.
  *   The game counts those as attacks — they miss and crit like swings, and the
@@ -613,10 +641,19 @@ export function attributeTick(tick, state, options) {
     const killerIndex = !shared && actors.length === 1 ? actors[0] : null;
 
     const tickOwners = actors.map((index) => ({ index, weight }));
-    // The swings still waiting for a resolution this tick, per player
-    const pending = new Map(swings);
-    const takeSwing = () => {
-        for (const [index, left] of pending) {
+    // The swings still waiting for a resolution this tick. A swing known to be
+    // single-target pays off one rise anywhere; any other can be an area swing,
+    // which rings every monster it reaches, so it pays off one rise on each
+    const singleTarget = new Set(
+        [...swings]
+            .filter(([index, count]) => count === 1 && isSingleTarget(state.actions[index], abilityDetailMap))
+            .map(([index]) => index)
+    );
+    const tickPending = new Map([...swings].filter(([index]) => singleTarget.has(index)));
+    const takeSwing = (monsterPending) => {
+        for (const index of swings.keys()) {
+            const pending = singleTarget.has(index) ? tickPending : monsterPending;
+            const left = pending.get(index) || 0;
             if (left > 0) {
                 pending.set(index, left - 1);
                 return index;
@@ -741,8 +778,9 @@ export function attributeTick(tick, state, options) {
         // not, it stays what it always was — a hit
         const paid = [];
         if (countersKnown) {
+            const monsterPending = new Map([...swings].filter(([swinger]) => !singleTarget.has(swinger)));
             for (let n = 0; n < rises; n++) {
-                const swinger = takeSwing();
+                const swinger = takeSwing(monsterPending);
                 if (swinger === null) break;
                 paid.push(swinger);
             }
