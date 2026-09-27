@@ -217,7 +217,7 @@ function calculateEnhancementCost(params) {
     }
 
     // Apply Philosopher's Mirror optimization, through the same serialised sweep the tooltip
-    // path runs — the worker's own copy started at level 3 and never let +2 be mirrored.
+    // path runs, so the two cannot drift (it starts at +3: the game will not mirror below +2).
     let mirrorPrice = priceMap['/items/philosophers_mirror:0'] || 0;
     if (mirrorPrice === 0) {
         mirrorPrice = calculateProductionCost('/items/philosophers_mirror', priceMap, recipes);
