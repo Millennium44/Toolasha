@@ -8,10 +8,6 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 - **Lab replay check and stat check**: the labyrinth replay check's 3-point damage-taken allowance now only pulls a low reading toward the prediction instead of lifting every reading (it wrongly tipped Pyre Hunter to "monster hits harder"), and the stat check now compares monster attack interval, cast speed, crit rate and crit damage, plus your HP regen.
 
-
-
-- **Lab replay check and stat check**: solo labyrinth replay checks no longer add a 3-point allowance to damage taken (it wrongly tipped Pyre Hunter to "monster hits harder"), and the stat check now compares monster attack interval, cast speed, crit rate and crit damage, plus your HP regen.
-
 - **Bleed and DoT ticks no longer count as your hits**: combat meters, lab room logs and the replay checks counted every bleed tick (Maim) as a non-crit landed hit, which inflated hit rate and deflated crit rate and damage per hit; ticks are now told apart from swings and parry counter-attacks, area casts count a hit on every target, and damage totals are unchanged.
 
 - **Lab tick captures can no longer be lost**: a held capture blocks any new capture (including "Rerun uptime harness") until you discard it, since a Save click cannot prove the file landed; unsaved ticks are autosaved per character and come back as "Recovered capture" after a reload, and each fight in a capture now records its own room level.
