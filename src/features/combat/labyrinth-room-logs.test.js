@@ -13,8 +13,14 @@ vi.mock('./labyrinth-tick-capture.js', () => ({
     default: {
         captureStatus: () => ({ ...tick.status }),
         isCapturing: () => tick.status.capturing,
+        unsavedTickCount: () => (tick.status.savedAt == null ? tick.status.ticks : 0),
         startCapture: (...args) => tick.calls.push(['start', ...args]),
         stopCapture: () => tick.calls.push(['stop']),
+        forgetForCharacterSwitch: () => tick.calls.push(['forget']),
+        loadAutosave: async () => {
+            tick.calls.push(['loadAutosave']);
+            return false;
+        },
         downloadCapture: () => {
             tick.calls.push(['download']);
             tick.status.savedAt = 123;

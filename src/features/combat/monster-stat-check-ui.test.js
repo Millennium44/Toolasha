@@ -145,6 +145,10 @@ vi.mock('./labyrinth-clear-rate.js', () => ({
 vi.mock('./labyrinth-tick-capture.js', () => ({
     captureFile: () => tickCapture.file,
     startCapture: (ctx) => tickCapture.started.push(ctx),
+    // Mirrors the real module's own rule: ticks held with no savedAt are
+    // what a fresh start must not silently discard.
+    unsavedTickCount: () =>
+        tickCapture.file?.savedAt == null && tickCapture.file?.ticks?.length ? tickCapture.file.ticks.length : 0,
 }));
 
 const {
@@ -238,6 +242,10 @@ describe('the uptime harness capture gate', () => {
         panel.displayed = snap({});
         tickCapture.file = {
             ticks: [{}, {}],
+            // Already saved: nothing at risk, so a mismatched capture may be
+            // replaced without asking — see the unsaved-capture test below
+            // for the case where it may not.
+            savedAt: 111,
             context: { monsterHrid: '/monsters/cyclops', roomLevel: 206, fingerprint: 'fp-old' },
         };
 
@@ -259,6 +267,7 @@ describe('the uptime harness capture gate', () => {
         panel.displayed = snap({});
         tickCapture.file = {
             ticks: [{}],
+            savedAt: 111,
             context: { monsterHrid: '/monsters/dryad', roomLevel: 206, fingerprint: 'fp-now' },
         };
 
@@ -266,6 +275,25 @@ describe('the uptime harness capture gate', () => {
 
         expect(panel.displayed.uptime.message).toContain('different monster');
         expect(panel.displayed.uptime.message).not.toContain('build');
+    });
+
+    test('an unsaved held capture is never silently discarded to arm a mismatched one', async () => {
+        panel.displayed = snap({});
+        tickCapture.file = {
+            ticks: [{}, {}],
+            // No savedAt: exactly the shape of the ticks a cancelled Save
+            // dialog would otherwise lose (the 1000-tick capture this guard
+            // exists for).
+            context: { monsterHrid: '/monsters/cyclops', roomLevel: 206, fingerprint: 'fp-old' },
+        };
+
+        await panel._runUptimeHarness();
+
+        expect(clearRate.harnessCalls).toHaveLength(0);
+        // Refused outright — no fresh capture armed over the unsaved one
+        expect(tickCapture.started).toHaveLength(0);
+        expect(panel.displayed.uptime.armed).toBeUndefined();
+        expect(panel.displayed.uptime.error).toContain('Unsaved capture (2 ticks)');
     });
 
     test('a legacy capture with no fingerprint still runs, and the section carries the fight counts', async () => {

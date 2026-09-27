@@ -41,7 +41,7 @@ import { tierMonsterHp } from '../guild/guild-trial-forecast.js';
 import { describeFights, MIN_REAL_CASTS } from './labyrinth-uptime-harness.js';
 import { downloadFile } from '../../utils/csv-export.js';
 import labyrinthClearRate from './labyrinth-clear-rate.js';
-import { captureFile, startCapture } from './labyrinth-tick-capture.js';
+import { captureFile, startCapture, unsavedTickCount } from './labyrinth-tick-capture.js';
 import { registerCommand, unregisterCommand } from '../../utils/command-registry.js';
 import { runningAction } from '../../utils/combat-actions.js';
 
@@ -736,17 +736,33 @@ class MonsterStatCheckPanel {
                       }
                     : { error: 'Sim run failed.' };
             } else {
-                // Arm a capture bound to this monster, room and build. When a
-                // held capture was refused, name what differed rather than
-                // silently starting over.
-                startCapture({ monsterHrid: snap.hrid, roomLevel: snap.roomLevel, fingerprint });
-                const refusal = capture?.ticks?.length
-                    ? `Held capture is from a different ${mismatches.join(' / ')} — starting a fresh one. `
-                    : '';
-                snap.uptime = {
-                    armed: true,
-                    message: `${refusal}Capturing — fight this monster, then click “Run uptime harness” again.`,
-                };
+                // A mismatched-but-unsaved held capture is exactly the shape of
+                // the loss this guards against: arming a fresh one here would
+                // silently throw it away mid-Save-dialog. Refuse instead — the
+                // room log panel's Capture/Discard buttons are the one place
+                // that resolves it, so point there rather than duplicating
+                // Save/Discard in this panel too.
+                const heldTicks = unsavedTickCount();
+                if (heldTicks > 0) {
+                    snap.uptime = {
+                        error:
+                            `Unsaved capture (${heldTicks.toLocaleString()} ticks) — save or discard it from the ` +
+                            'room log panel’s Capture button before running the harness on a different monster, ' +
+                            'room or build.',
+                    };
+                } else {
+                    // Arm a capture bound to this monster, room and build. When a
+                    // held capture was refused, name what differed rather than
+                    // silently starting over.
+                    startCapture({ monsterHrid: snap.hrid, roomLevel: snap.roomLevel, fingerprint });
+                    const refusal = capture?.ticks?.length
+                        ? `Held capture is from a different ${mismatches.join(' / ')} — starting a fresh one. `
+                        : '';
+                    snap.uptime = {
+                        armed: true,
+                        message: `${refusal}Capturing — fight this monster, then click “Run uptime harness” again.`,
+                    };
+                }
             }
         } catch (error) {
             console.error('[MonsterStatCheck] Uptime harness failed:', error);

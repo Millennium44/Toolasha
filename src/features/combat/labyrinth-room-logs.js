@@ -392,6 +392,17 @@ class LabyrinthRoomLogs {
             .load()
             .catch((error) => console.error('[LabyrinthRoomLogs] Loading fight pool failed:', error));
 
+        // A capture nobody could save — a crash, a closed tab, a Save dialog
+        // the user cancelled — survives a reload as a stopped, held capture
+        // instead of vanishing with the page. Repaint once it lands, so a
+        // panel already open picks up the "Recovered" state without a click.
+        labTickCapture
+            .loadAutosave()
+            .then((recovered) => {
+                if (recovered) this.paintCapture();
+            })
+            .catch((error) => console.error('[LabyrinthRoomLogs] Loading the autosaved capture failed:', error));
+
         this.progressHandler = (data) => this.onRoomProgress(data);
         webSocketHook.on('labyrinth_room_progress', this.progressHandler);
 
@@ -481,8 +492,12 @@ class LabyrinthRoomLogs {
         for (const [type, handler] of this.xpHandlers) webSocketHook.off(type, handler);
         this.xpHandlers = [];
         // A raw capture registers its own socket listeners; a feature teardown
-        // that left them on would leak them past the panel that started it
+        // that left them on would leak them past the panel that started it.
+        // `stopCapture` autosaves whatever is held (see labyrinth-tick-capture.js),
+        // so the departing character's own next login recovers it; forgetting it
+        // in memory here is what keeps the arriving character from seeing it.
         labTickCapture.stopCapture();
+        labTickCapture.forgetForCharacterSwitch();
         this.flushReport();
         if (this.unregisterTab) {
             this.unregisterTab();
@@ -1784,6 +1799,11 @@ class LabyrinthRoomLogs {
                 'Stop the raw capture and download it. It records the moment-to-moment combat feed — every ' +
                 'health, mana and counter tick — so the stun cadence and per-hit damage behind a rate mismatch ' +
                 `can be read. Hand the file over.${dupes}`;
+        } else if (holdingUnsaved && status.stoppedReason === 'page_reload') {
+            this.captureButton.textContent = `Recovered capture (${status.ticks})`;
+            this.captureButton.title =
+                'A reload (or a crash) interrupted this capture before it could be saved; the ticks survived in ' +
+                `the autosave. Save writes the file; Discard throws them away.${dupes}`;
         } else if (holdingUnsaved) {
             this.captureButton.textContent = `Save capture (${status.ticks})`;
             this.captureButton.title =

@@ -4,7 +4,7 @@
  * arming, the trimming, and that a stopped capture hears nothing more.
  */
 
-import { describe, test, expect, beforeEach, vi } from 'vitest';
+import { describe, test, expect, beforeEach, afterEach, vi } from 'vitest';
 
 // Hoisted: the recommendation-module graph the fingerprint-spec import pulls in
 // registers websocket listeners while the imports are still being evaluated
@@ -22,8 +22,43 @@ vi.mock('../../core/websocket.js', () => ({
     },
 }));
 
+// A minimal in-memory stand-in, scoped by (store, key) like the real thing —
+// good enough to exercise the autosave's write/read/delete without touching
+// IndexedDB (unavailable in this test's node environment anyway).
+const storageMock = vi.hoisted(() => {
+    const stores = new Map();
+    const storeFor = (name) => {
+        if (!stores.has(name)) stores.set(name, new Map());
+        return stores.get(name);
+    };
+    return {
+        stores,
+        quotaExceeded: false,
+        reset() {
+            stores.clear();
+            storageMock.quotaExceeded = false;
+        },
+        isQuotaExceeded: () => storageMock.quotaExceeded,
+        get: async (key, store = 'settings', fallback = null) => {
+            const map = storeFor(store);
+            return map.has(key) ? structuredClone(map.get(key)) : fallback;
+        },
+        set: async (key, value, store = 'settings') => {
+            if (storageMock.quotaExceeded) return false;
+            storeFor(store).set(key, structuredClone(value));
+            return true;
+        },
+        delete: async (key, store = 'settings') => {
+            storeFor(store).delete(key);
+            return true;
+        },
+    };
+});
+vi.mock('../../core/storage.js', () => ({ default: storageMock }));
+
 import capture from './labyrinth-tick-capture.js';
 import dataManager from '../../core/data-manager.js';
+import storage from '../../core/storage.js';
 
 function emit(type, payload) {
     for (const fn of bus.get(type) || []) fn(payload);
@@ -45,6 +80,11 @@ const refBeforeAnySave = capture.lastCaptureRef();
 beforeEach(() => {
     capture.stopCapture();
     capture.clearCapture();
+    storageMock.reset();
+});
+
+afterEach(() => {
+    vi.restoreAllMocks();
 });
 
 describe('labyrinth tick capture', () => {
@@ -151,9 +191,15 @@ describe('labyrinth tick capture', () => {
         expect(capture.isCapturing()).toBe(false);
     });
 
-    test('starting again drops the previous capture', () => {
+    test('starting again drops the previous capture, once it is no longer unsaved', () => {
         capture.startCapture();
         emit('battle_updated', battle);
+        // Unsaved ticks are held: a bare startCapture() must refuse rather
+        // than silently drop them (see the guard describe block below)
+        expect(capture.startCapture()).toEqual({ started: false, unsavedTicks: 1 });
+        expect(capture.captureStatus().ticks).toBe(1);
+
+        capture.clearCapture();
         capture.startCapture();
         expect(capture.captureStatus().ticks).toBe(0);
     });
@@ -413,7 +459,9 @@ describe('adjacent duplicate ticks are dropped, and counted', () => {
         capture.startCapture();
         emit('battle_updated', battle);
         emit('battle_updated', battle);
-        capture.startCapture();
+        // The held tick is unsaved; force past the guard the way a caller
+        // that has gotten explicit go-ahead would (see the guard tests below)
+        capture.startCapture(null, { force: true });
         // Same payload as before the restart, but the first of this capture
         emit('battle_updated', battle);
 
@@ -453,5 +501,232 @@ describe('the capture ends when the fight leaves its monster', () => {
         emit('new_battle', { monsters: [{ hrid: '/monsters/cyclops' }], players: [] });
         emit('new_battle', { monsters: [{ hrid: '/monsters/other' }], players: [] });
         expect(capture.isCapturing()).toBe(true);
+    });
+});
+
+describe('unsavedTickCount and the start/reset guard', () => {
+    test('zero with nothing held', () => {
+        expect(capture.unsavedTickCount()).toBe(0);
+    });
+
+    test('non-zero once ticks are held and unsaved, whether running or stopped', () => {
+        capture.startCapture();
+        emit('battle_updated', battle);
+        expect(capture.unsavedTickCount()).toBe(1);
+        capture.stopCapture();
+        expect(capture.unsavedTickCount()).toBe(1);
+    });
+
+    test('zero again once the held ticks are saved', () => {
+        vi.stubGlobal('Blob', class {});
+        vi.stubGlobal('URL', { createObjectURL: () => 'blob:x', revokeObjectURL: () => {} });
+        vi.stubGlobal('document', { createElement: () => ({ click: () => {} }) });
+        capture.startCapture();
+        emit('battle_updated', battle);
+        capture.stopCapture();
+        capture.downloadCapture();
+        expect(capture.unsavedTickCount()).toBe(0);
+        vi.unstubAllGlobals();
+    });
+
+    test('a bare startCapture refuses while ticks are unsaved, and changes nothing', () => {
+        capture.startCapture({ monsterHrid: '/monsters/cyclops' });
+        emit('battle_updated', battle);
+        const before = capture.captureFile();
+        const result = capture.startCapture({ monsterHrid: '/monsters/dryad' });
+        expect(result).toEqual({ started: false, unsavedTicks: 1 });
+        expect(capture.captureFile()).toEqual(before);
+    });
+
+    test('force starts anyway, discarding the held ticks', () => {
+        capture.startCapture({ monsterHrid: '/monsters/cyclops' });
+        emit('battle_updated', battle);
+        const result = capture.startCapture({ monsterHrid: '/monsters/dryad' }, { force: true });
+        expect(result).toEqual({ started: true });
+        expect(capture.captureFile().ticks).toHaveLength(0);
+        expect(capture.captureFile().context.monsterHrid).toBe('/monsters/dryad');
+    });
+
+    test('starting is allowed once the held capture is discarded', () => {
+        capture.startCapture({ monsterHrid: '/monsters/cyclops' });
+        emit('battle_updated', battle);
+        capture.clearCapture();
+        expect(capture.startCapture({ monsterHrid: '/monsters/dryad' })).toEqual({ started: true });
+        expect(capture.captureFile().context.monsterHrid).toBe('/monsters/dryad');
+    });
+
+    test('starting is allowed once the held capture is saved', () => {
+        vi.stubGlobal('Blob', class {});
+        vi.stubGlobal('URL', { createObjectURL: () => 'blob:x', revokeObjectURL: () => {} });
+        vi.stubGlobal('document', { createElement: () => ({ click: () => {} }) });
+        capture.startCapture({ monsterHrid: '/monsters/cyclops' });
+        emit('battle_updated', battle);
+        capture.stopCapture();
+        capture.downloadCapture();
+        expect(capture.startCapture({ monsterHrid: '/monsters/dryad' })).toEqual({ started: true });
+        vi.unstubAllGlobals();
+    });
+});
+
+describe('the autosave', () => {
+    beforeEach(() => {
+        vi.spyOn(dataManager, 'getCurrentCharacterId').mockReturnValue('char1');
+    });
+
+    test('is written on stop, so a capture that ends by itself survives a reload', async () => {
+        capture.startCapture({ monsterHrid: '/monsters/cyclops' });
+        emit('battle_updated', battle);
+        capture.stopCapture();
+        const stored = await storage.get('labyrinthTickCaptureAutosave_char1', 'labyrinth', null);
+        expect(stored?.ticks).toHaveLength(1);
+    });
+
+    test('throttles writes while ticks accumulate, at most once per interval', () => {
+        vi.useFakeTimers();
+        try {
+            capture.startCapture({ monsterHrid: '/monsters/cyclops' });
+            emit('battle_updated', battle); // the first tick's own immediate write, not under test here
+            const setSpy = vi.spyOn(storage, 'set');
+            emit('battle_updated', { ...battle, pMap: { 0: { cHP: 90 } } });
+            emit('battle_updated', { ...battle, pMap: { 0: { cHP: 80 } } });
+            expect(setSpy).not.toHaveBeenCalled();
+            vi.advanceTimersByTime(10_000);
+            emit('battle_updated', { ...battle, pMap: { 0: { cHP: 70 } } });
+            expect(setSpy).toHaveBeenCalledTimes(1);
+        } finally {
+            vi.useRealTimers();
+        }
+    });
+
+    test('is cleared on Discard', async () => {
+        capture.startCapture({ monsterHrid: '/monsters/cyclops' });
+        emit('battle_updated', battle);
+        capture.stopCapture();
+        capture.clearCapture();
+        const stored = await storage.get('labyrinthTickCaptureAutosave_char1', 'labyrinth', null);
+        expect(stored).toBeNull();
+    });
+
+    test('is cleared when a new capture explicitly replaces it (force)', async () => {
+        capture.startCapture({ monsterHrid: '/monsters/cyclops' });
+        emit('battle_updated', battle);
+        capture.stopCapture();
+        capture.startCapture({ monsterHrid: '/monsters/dryad' }, { force: true });
+        // Nothing pushed yet for the new capture — no ticks to write — so the
+        // key holding the discarded fight must simply be gone, not stale
+        const stored = await storage.get('labyrinthTickCaptureAutosave_char1', 'labyrinth', null);
+        expect(stored).toBeNull();
+    });
+
+    test('stands down under quota pressure rather than fail on every tick', () => {
+        storageMock.quotaExceeded = true;
+        capture.startCapture({ monsterHrid: '/monsters/cyclops' });
+        expect(() => emit('battle_updated', battle)).not.toThrow();
+        expect(capture.captureFile().ticks).toHaveLength(1);
+    });
+});
+
+describe('recovering an autosaved capture on load', () => {
+    beforeEach(() => {
+        vi.spyOn(dataManager, 'getCurrentCharacterId').mockReturnValue('char1');
+    });
+
+    test('restores a held capture as stopped, unsaved, and shaped like a live one', async () => {
+        capture.startCapture({ monsterHrid: '/monsters/cyclops', roomLevel: 206, fingerprint: 'fp1' });
+        emit('new_battle', { monsters: [{ hrid: '/monsters/cyclops' }], players: [] });
+        emit('battle_updated', battle);
+        const liveFile = capture.captureFile();
+        capture.stopCapture();
+
+        // A fresh module load forgets everything in memory but leaves the
+        // autosave behind — that is what a page reload does.
+        capture.forgetForCharacterSwitch();
+        expect(capture.captureFile().ticks).toHaveLength(0);
+
+        const recovered = await capture.loadAutosave();
+        expect(recovered).toBe(true);
+        const restored = capture.captureFile();
+        expect(restored.ticks).toEqual(liveFile.ticks);
+        expect(restored.captureId).toBe(liveFile.captureId);
+        expect(restored.context).toEqual(liveFile.context);
+        expect(restored.format).toBe(liveFile.format);
+        // Always presented as unsaved, whatever the autosave's own savedAt said
+        expect(restored.savedAt).toBeNull();
+        expect(capture.isCapturing()).toBe(false);
+        expect(capture.unsavedTickCount()).toBe(liveFile.ticks.length);
+    });
+
+    test('does nothing when nothing is autosaved', async () => {
+        expect(await capture.loadAutosave()).toBe(false);
+        expect(capture.captureFile().ticks).toHaveLength(0);
+    });
+
+    test('never overwrites a capture already held or running in this session', async () => {
+        await storage.set(
+            'labyrinthTickCaptureAutosave_char1',
+            { ticks: [{ at: 0, type: 'battle_updated', payload: {} }] },
+            'labyrinth'
+        );
+        capture.startCapture({ monsterHrid: '/monsters/dryad' });
+        emit('battle_updated', battle);
+        const before = capture.captureFile();
+        expect(await capture.loadAutosave()).toBe(false);
+        expect(capture.captureFile()).toEqual(before);
+    });
+});
+
+describe('per-character scoping', () => {
+    test('character B never sees character A held capture', async () => {
+        const spy = vi.spyOn(dataManager, 'getCurrentCharacterId').mockReturnValue('charA');
+        capture.startCapture({ monsterHrid: '/monsters/cyclops' });
+        emit('battle_updated', battle);
+        capture.stopCapture();
+        capture.forgetForCharacterSwitch();
+
+        spy.mockReturnValue('charB');
+        expect(await capture.loadAutosave()).toBe(false);
+        expect(capture.captureFile().ticks).toHaveLength(0);
+
+        spy.mockReturnValue('charA');
+        expect(await capture.loadAutosave()).toBe(true);
+        expect(capture.captureFile().ticks).toHaveLength(1);
+    });
+
+    test('a mid-capture character switch autosaves under whoever fought it, not whoever is current at write time', async () => {
+        const spy = vi.spyOn(dataManager, 'getCurrentCharacterId').mockReturnValue('charA');
+        capture.startCapture({ monsterHrid: '/monsters/cyclops' });
+        emit('battle_updated', battle);
+        // The character switches while the ticks are still held; re-reading
+        // "current character" at write time would autosave this under
+        // charB's key instead of the one who actually fought it
+        spy.mockReturnValue('charB');
+        capture.stopCapture();
+
+        const underA = await storage.get('labyrinthTickCaptureAutosave_charA', 'labyrinth', null);
+        const underB = await storage.get('labyrinthTickCaptureAutosave_charB', 'labyrinth', null);
+        expect(underA?.ticks).toHaveLength(1);
+        expect(underB).toBeNull();
+    });
+});
+
+describe('downloadCapture refreshes the autosave, but never clears it', () => {
+    test('a saved capture stays autosaved until Discard', async () => {
+        vi.spyOn(dataManager, 'getCurrentCharacterId').mockReturnValue('char1');
+        vi.stubGlobal('Blob', class {});
+        vi.stubGlobal('URL', { createObjectURL: () => 'blob:x', revokeObjectURL: () => {} });
+        vi.stubGlobal('document', { createElement: () => ({ click: () => {} }) });
+
+        capture.startCapture({ monsterHrid: '/monsters/cyclops' });
+        emit('battle_updated', battle);
+        capture.stopCapture();
+        capture.downloadCapture();
+
+        const stored = await storage.get('labyrinthTickCaptureAutosave_char1', 'labyrinth', null);
+        // Firefox's Save dialog can be cancelled, so the click alone must not
+        // be what clears the safety net
+        expect(stored?.ticks).toHaveLength(1);
+        expect(stored?.savedAt).not.toBeNull();
+
+        vi.unstubAllGlobals();
     });
 });
