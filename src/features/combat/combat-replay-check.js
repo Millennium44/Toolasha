@@ -1088,6 +1088,10 @@ export function observeRecording(recording, context = {}) {
                 ? Object.values(fight.gains[playerIndex].xp).reduce((total, value) => total + value, 0)
                 : null,
             damageDealt: fight.players[playerIndex]?.damage || 0,
+            // The part of `damageDealt` no swing dealt — damage-over-time ticks,
+            // which `hits` does not count. Kept so damage per hit divides swing
+            // damage by swings, the way the simulator's side does
+            dotDealt: fight.players[playerIndex]?.dotDamage || 0,
             damageTaken: fight.taken[playerIndex]?.damage || 0,
             regen: fight.taken[playerIndex]?.regen || 0,
             hits: fight.players[playerIndex]?.hits || 0,
@@ -1144,6 +1148,11 @@ export function aggregateObservations(observations) {
     // were kept has neither, and a zero swing count is what says "this sample
     // cannot be decomposed" rather than "this character never swung".
     const hits = fights.reduce((total, fight) => total + (fight.hits || 0), 0);
+    // Damage per hit is swing damage over swings. `damageDealt` also carries
+    // the damage-over-time ticks `hits` leaves out, and dividing one by the
+    // other would overstate every hit of a bleed build. An observation recorded
+    // before `dotDealt` existed has none to take out
+    const swingDealt = fights.reduce((total, fight) => total + swingDamageIn(fight), 0);
     const swings = fights.reduce((total, fight) => total + (fight.hits || 0) + (fight.misses || 0), 0);
 
     // The endpoint reconciliation, over only the fights that carry it — a
@@ -1223,7 +1232,7 @@ export function aggregateObservations(observations) {
         secondsPerFight: fights.length ? seconds / fights.length : null,
         swingsPerSecond: seconds > 0 && swings > 0 ? swings / seconds : null,
         hitRate: swings > 0 ? hits / swings : null,
-        damagePerHit: hits > 0 ? damageDealt / hits : null,
+        damagePerHit: hits > 0 ? swingDealt / hits : null,
         xpBySkill,
         drops,
         gainsSeconds,
@@ -1238,7 +1247,7 @@ export function aggregateObservations(observations) {
                 fight.seconds > 0 && swingsIn(fight) > 0 ? swingsIn(fight) / fight.seconds : null
             ),
             hitRate: fights.map((fight) => (swingsIn(fight) > 0 ? (fight.hits || 0) / swingsIn(fight) : null)),
-            damagePerHit: fights.map((fight) => (fight.hits > 0 ? fight.damageDealt / fight.hits : null)),
+            damagePerHit: fights.map((fight) => (fight.hits > 0 ? swingDamageIn(fight) / fight.hits : null)),
             // Only the fights whose gains were known. A fight that straddled a
             // restarted combat action has no experience to sample, and folding
             // it in as a zero would drag the mean towards one
@@ -1247,6 +1256,17 @@ export function aggregateObservations(observations) {
             ),
         },
     };
+}
+
+/**
+ * The damage the player's swings dealt in one fight: everything dealt, less the
+ * damage-over-time ticks no swing is counted for.
+ *
+ * @param {Object} fight - One entry from an observation's `fights`
+ * @returns {number}
+ */
+function swingDamageIn(fight) {
+    return Math.max(0, (Number(fight?.damageDealt) || 0) - (Number(fight?.dotDealt) || 0));
 }
 
 /**
