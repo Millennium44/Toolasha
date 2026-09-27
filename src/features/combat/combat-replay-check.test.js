@@ -138,6 +138,7 @@ import replayCheck, {
     waveTimingFromRecording,
     dungeonWaveTiming,
     aggregateObservations,
+    OBSERVATION_VERSION,
     describeCohort,
     describeLoadoutDifference,
     largestLoadoutCohort,
@@ -572,6 +573,7 @@ describe('an observation', () => {
  */
 function evenObservation({ seconds = 10, damageDealt = 1000, damageTaken = 100, fights = 5, ...rest } = {}) {
     return {
+        attributionVersion: OBSERVATION_VERSION,
         recordedAt: 1_700_000_000_000,
         zoneHrid: '/actions/combat/fly',
         difficultyTier: 0,
@@ -616,9 +618,59 @@ describe('damage per hit on a bleed build', () => {
         expect(observed.dps).toBeCloseTo(observed.damageDealt / observed.seconds, 9);
     });
 
-    test('an observation from before the subtotal existed divides what it has', () => {
-        const observed = aggregateObservations([evenObservation({ damageDealt: 1000, fights: 2 })]);
+    test('a new observation is stamped with what its swings mean', () => {
+        expect(observation.attributionVersion).toBe(OBSERVATION_VERSION);
+    });
+});
+
+describe('observations from before a bleed tick stopped being a hit', () => {
+    // Stored before the stamp: every bleed tick in their hits, no `dotDealt`
+    const legacy = (options) => {
+        const { attributionVersion: _, ...entry } = evenObservation(options);
+        return entry;
+    };
+
+    test('stay in damage and time, and out of the swing decomposition', () => {
+        const observed = aggregateObservations([
+            evenObservation({ damageDealt: 1000, fights: 2 }),
+            legacy({ damageDealt: 3000, fights: 3, recordedAt: 1_600_000_000_000 }),
+        ]);
+
+        expect(observed.fights).toBe(5);
+        expect(observed.damageDealt).toBe(2 * 1000 + 3 * 3000);
+        expect(observed.dps).toBeCloseTo((2 * 1000 + 3 * 3000) / 50, 9);
+        // Only the two current fights: 4 hits and 1 miss each
+        expect(observed.swingFights).toBe(2);
+        expect(observed.legacySwingFights).toBe(3);
+        expect(observed.hits).toBe(8);
+        expect(observed.swings).toBe(10);
         expect(observed.damagePerHit).toBe(250);
+        expect(observed.swingsPerSecond).toBeCloseTo(10 / 20, 9);
+        expect(observed.samples.hitRate).toEqual([0.8, 0.8]);
+        expect(observed.samples.damagePerHit).toEqual([250, 250]);
+        expect(observed.samples.dps).toHaveLength(5);
+    });
+
+    test('alone, leave nothing to decompose, and the comparison says how many were set aside', () => {
+        const observed = aggregateObservations([legacy({ fights: 4 })]);
+        expect(observed.swings).toBe(0);
+        expect(observed.hitRate).toBe(null);
+        expect(observed.damagePerHit).toBe(null);
+
+        const comparison = compareRun(observed, {
+            seconds: 100,
+            dps: 100,
+            takenPerSecond: 10,
+            secondsPerFight: 10,
+            swings: 50,
+            hits: 40,
+            swingsPerSecond: 0.5,
+            hitRate: 0.8,
+            damagePerHit: 250,
+        });
+        expect(comparison.decomposition).toEqual([]);
+        expect(comparison.legacySwingFights).toBe(4);
+        expect(comparison.metrics.length).toBeGreaterThan(0);
     });
 });
 
@@ -3267,6 +3319,27 @@ describe('the panel, on everything it now says', () => {
         expect(text()).toContain('Share of swings landing');
         expect(text()).toContain('Crits are not compared');
         expect(text()).not.toContain('could not be drawn');
+    });
+
+    test('fights from before a bleed tick stopped being a hit are named, not decomposed', () => {
+        const { attributionVersion: _, ...legacy } = evenObservation({ fights: 6 });
+        replayCheck.observations = [legacy];
+        replayCheck.comparison = compareRun(aggregateObservations(replayCheck.observations), predictFromSim(fullSim));
+        replayCheckPanel.show({ remember: false });
+
+        expect(text()).toContain('6 older fights left out of this breakdown');
+        expect(text()).toContain('Record new fights to see the breakdown');
+        expect(text()).not.toContain('Share of swings landing');
+        expect(text()).not.toContain('could not be drawn');
+
+        replayCheckPanel.hide({ remember: false });
+        replayCheck.observations = [legacy, evenObservation({ fights: 6 })];
+        replayCheck.comparison = compareRun(aggregateObservations(replayCheck.observations), predictFromSim(fullSim));
+        replayCheckPanel.show({ remember: false });
+
+        expect(text()).toContain('Share of swings landing');
+        expect(text()).toContain('6 older fights left out of this breakdown');
+        expect(text()).not.toContain('Record new fights');
     });
 
     test('the hints only appear when something is outside its band', () => {
