@@ -260,6 +260,19 @@ describe('the plan', () => {
         spy.mockRestore();
     });
 
+    test('a panel reopened on page load (never through open()) still measures', async () => {
+        // Regression: the panel shell reopens a panel left open by calling show()
+        // alone. Measuring only started in open(), so every row stayed "no
+        // volume data" after a reload.
+        dungeonShopPlanner.tokenHrid = '/items/pirate_token';
+        dungeonShopPlanner.panel.show();
+        for (let i = 0; i < 5; i++) await flush();
+        dungeonShopPlanner.panel.render();
+
+        expect(dungeonShopPlanner.volumes.get('/items/kraken_fang')?.known).toBe(true);
+        expect(qtyOf('/items/kraken_fang')).toBe('1');
+    });
+
     test('an item with no volume answer is asked again on the next open', async () => {
         const fang = state.volumes['/items/kraken_fang'];
         delete state.volumes['/items/kraken_fang'];
