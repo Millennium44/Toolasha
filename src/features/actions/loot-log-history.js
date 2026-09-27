@@ -133,11 +133,18 @@ class LootLogHistory {
      * Merge entries from a loot_log_updated message into stored history.
      * Deduplicates by characterActionId (incoming entries replace stored copies, so ongoing
      * sessions stay fresh), keeps newest first, caps at MAX_ENTRIES.
+     *
+     * Whose log it is is decided here, when the message arrives, not when the
+     * chain reaches it: a merge queued behind another waits out that one's
+     * storage read, and a character switch landing in the wait would otherwise
+     * have this message read "the current character" as the arriving one and
+     * file the departing character's loot under it.
      * @param {Array} lootLog - Array from the WebSocket message
      * @returns {Promise<void>} Resolves when this merge has been queued for writing
      */
     async mergeAndSave(lootLog) {
-        const run = () => this._mergeAndSave(lootLog);
+        const charId = this._charId();
+        const run = () => this._mergeAndSave(lootLog, charId);
         this._chain = this._chain.then(run, run);
         return this._chain;
     }
@@ -145,12 +152,13 @@ class LootLogHistory {
     /**
      * The merge itself, run one at a time by `mergeAndSave`.
      * @param {Array} lootLog - Array from the WebSocket message
+     * @param {string|null} charId - Whose log it is, taken when the message arrived
      * @returns {Promise<void>}
      * @private
      */
-    async _mergeAndSave(lootLog) {
+    async _mergeAndSave(lootLog, charId) {
         try {
-            await this._merge(lootLog);
+            await this._merge(lootLog, charId);
         } catch (error) {
             // Never rejected: the chain is what the next message extends, and a
             // rejected link would surface as an unhandled rejection in a caller
@@ -161,10 +169,12 @@ class LootLogHistory {
 
     /**
      * @param {Array} lootLog - Array from the WebSocket message
+     * @param {string|null} [owner] - Whose log it is, taken when the message arrived;
+     *   the current character when omitted
      * @returns {Promise<void>}
      * @private
      */
-    async _merge(lootLog) {
+    async _merge(lootLog, owner = this._charId()) {
         if (!lootLog || lootLog.length === 0) return;
         // Nothing that follows can be stored, and building it costs a full
         // merge over the whole window per loot message
@@ -176,8 +186,8 @@ class LootLogHistory {
         // inside that window must not have the save that follows write this
         // merge under the *new* character's keys. See trade-ledger-store.js
         // for the same pattern.
-        const charId = this._charId();
-        if (!charId) return;
+        const charId = owner;
+        if (!charId || this._charId() !== charId) return;
 
         const existing = await this._load(charId);
         // A newer switch happened while the read was in flight: this merge
@@ -235,20 +245,23 @@ class LootLogHistory {
      * @returns {Promise<void>} Resolves when this delete has been queued for writing
      */
     async deleteEntry(characterActionId) {
-        const run = () => this._deleteEntry(characterActionId);
+        // Whose entry, decided at the click, for the same reason as `mergeAndSave`
+        const charId = this._charId();
+        const run = () => this._deleteEntry(characterActionId, charId);
         this._chain = this._chain.then(run, run);
         return this._chain;
     }
 
     /**
      * @param {number} characterActionId - Which entry to remove
+     * @param {string|null} [owner] - Whose entry, taken at the click; the current character when omitted
      * @returns {Promise<void>}
      * @private
      */
-    async _deleteEntry(characterActionId) {
+    async _deleteEntry(characterActionId, owner = this._charId()) {
         try {
-            const charId = this._charId();
-            if (!charId) return;
+            const charId = owner;
+            if (!charId || this._charId() !== charId) return;
 
             const existing = await this._load(charId);
             // See `_merge`'s note on the same check: a switch landing inside the

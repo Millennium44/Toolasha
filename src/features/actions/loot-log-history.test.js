@@ -389,6 +389,35 @@ describe('a character switch landing mid-merge', () => {
         expect(storageMock.store.has('lootLogRec_char-1_2026-08-01T13')).toBe(false);
     });
 
+    test('a merge queued behind another before a switch is filed under the character it arrived for', async () => {
+        // The first merge's storage read is slow; the second loot message (still
+        // char-1's) is queued behind it, and the switch lands while it waits
+        let release;
+        const gate = new Promise((resolve) => (release = resolve));
+        const originalLoad = lootLogHistory._load.bind(lootLogHistory);
+        vi.spyOn(lootLogHistory, '_load').mockImplementationOnce(async (charId) => {
+            await gate;
+            return originalLoad(charId);
+        });
+
+        const first = lootLogHistory.mergeAndSave([entry(1, '2026-08-01T13:20:00Z')]);
+        const second = lootLogHistory.mergeAndSave([entry(2, '2026-08-01T14:20:00Z')]);
+        character.id = 'char-2';
+        lootLogHistory._store.forget();
+        release();
+        await first;
+        await second;
+        lootLogHistory._load.mockRestore();
+
+        // Neither of char-1's messages was written under char-2
+        expect(storageMock.set).not.toHaveBeenCalledWith(
+            expect.stringContaining('lootLogRec_char-2_'),
+            expect.anything(),
+            expect.anything(),
+            expect.anything()
+        );
+    });
+
     test('a merge that completes without a switch is unaffected', async () => {
         await lootLogHistory.mergeAndSave([entry(1, '2026-08-01T13:20:00Z')]);
 
