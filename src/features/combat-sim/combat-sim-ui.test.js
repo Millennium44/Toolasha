@@ -4837,6 +4837,44 @@ describe('the Solo checkbox end to end: Simulate and All Zones', () => {
         expect(ui._allZonesSnapshotMeta).toBeNull();
     });
 
+    test('Seek also runs only the selected player while Solo is on', async () => {
+        ui.panel.querySelector('#mwi-csim-seek-input').value = 'Cheese';
+        mocks.allZonesArgs = null;
+        ui._seekItems = [{ itemHrid: '/items/cheese', name: 'Cheese' }];
+        ui._seekSelectedItem = { itemHrid: '/items/cheese', name: 'Cheese' };
+        const adapter = await import('./combat-sim-adapter.js');
+        const dropSpy = vi
+            .spyOn(adapter, 'getZonesThatDropItem')
+            .mockReturnValue([{ hrid: '/actions/combat/fly', name: 'Fly', difficultyTier: 0 }]);
+        mocks.drops = new Map([['/items/cheese', 5]]);
+        mocks.allZonesResult = [{ simulatedTime: 3600 * 1e9, encounters: 10, deaths: {}, experienceGained: {} }];
+
+        await ui._onSeek();
+        dropSpy.mockRestore();
+        mocks.drops = new Map();
+
+        expect(mocks.allZonesArgs.playerDTOs.map((p) => p.hrid)).toEqual(['player2']);
+        expect(ui._activePlayerTab).toBe('player2');
+    });
+
+    test('an earlier party entry reopened after a Solo run shows its whole roster', async () => {
+        mocks.editorSoloMode = false;
+        mocks.simResult.numberOfPlayers = 2;
+        selectZone();
+        await ui._onSimulate();
+        const partyIndex = ui._simHistory.length - 1;
+        expect(ui._simHistory[partyIndex].playerInfo.map((p) => p.hrid)).toEqual(['player1', 'player2']);
+
+        mocks.editorSoloMode = true;
+        await ui._onSimulate();
+        expect(ui._playerInfo.map((p) => p.hrid)).toEqual(['player2']);
+
+        ui._activeDetailIndex = partyIndex;
+        ui._displayResults(ui._lastSimResult, ui._lastSimHours, ui._lastGameData);
+        const tabs = [...ui.panel.querySelectorAll('#mwi-csim-results [data-tab]')].map((b) => b.dataset.tab);
+        expect(tabs).toEqual(expect.arrayContaining(['player1', 'player2']));
+    });
+
     test('a Solo entry is re-read for its own player after a later party run resets the tab', async () => {
         selectZone();
         await ui._onSimulate();

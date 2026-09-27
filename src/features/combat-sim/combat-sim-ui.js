@@ -4715,13 +4715,15 @@ class CombatSimUI {
         try {
             const editedDTOs = this._editor?.getEditedDTOs();
             if (editedDTOs) {
-                playerDTOs = Object.values(editedDTOs);
+                // Same Solo narrowing as Simulate and All Zones — see resolveSimParty()
+                const resolved = resolveSimParty(this._editor, editedDTOs);
+                playerDTOs = resolved.playerDTOs;
                 // Revenue/drops below are computed for whichever player
                 // `_activePlayerTab` names, and that field doubles as "which
                 // player's tab is open in a previous single-zone result" — left
                 // alone here, a party where self isn't player1 would price this
                 // run for whoever's tab a past result happened to leave selected.
-                this._activePlayerTab = this._editor?.getSelfHrid() || playerDTOs[0]?.hrid || 'player1';
+                this._activePlayerTab = resolved.selfHrid;
             } else {
                 const result = await buildAllPlayerDTOs();
                 playerDTOs = result.players;
@@ -5932,6 +5934,10 @@ class CombatSimUI {
         // If an active detail index is set, show that history entry's details instead
         let partyWarnings = this._lastPartyWarnings || [];
         let entryPlayer = null;
+        // The roster the viewed entry ran with: a later Solo run narrows
+        // `_playerInfo` to one member, which must not hide the others' tabs
+        // when an earlier party entry is reopened
+        let entryRoster = null;
         if (this._activeDetailIndex !== null && this._simHistory[this._activeDetailIndex]) {
             const entry = this._simHistory[this._activeDetailIndex];
             simResult = entry.simResult;
@@ -5939,6 +5945,7 @@ class CombatSimUI {
             gameData = entry.gameData;
             partyWarnings = entry.partyWarnings || [];
             entryPlayer = historyEntryPlayer(entry);
+            entryRoster = Array.isArray(entry.playerInfo) && entry.playerInfo.length ? entry.playerInfo : null;
         }
 
         const container = this.panel.querySelector('#mwi-csim-results');
@@ -5953,7 +5960,7 @@ class CombatSimUI {
         // A one-player (Solo) entry is read for the player it ran, whichever
         // tab a later party run left open
         const activeTab = entryPlayer?.hrid || this._activePlayerTab;
-        const playerInfo = entryPlayer?.playerInfo || this._playerInfo;
+        const playerInfo = entryPlayer?.playerInfo || entryRoster || this._playerInfo;
         const numberOfPlayers = simResult.numberOfPlayers || 1;
 
         const sectionStyle = 'margin-bottom:12px;';
