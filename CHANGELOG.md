@@ -6,6 +6,12 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Combat Simulator: Export, replace one party member, and a loadout per sweep
+
+- The Configure tab has an Export button next to Import. It copies the selected player's build, or with several players loaded the whole party via Export Party, in the same format Import reads.
+- With a player selected, Import can replace just that player and keep the rest of the party and their slot order, instead of only adding a new member.
+- "Solo zones + party dungeons" now lists the real multi-enemy zones instead of single-monster spawns like Fly and Jerry. It can also use a different loadout for the solo zones than for the dungeons.
+
 ### The Toolasha tab moves into the inventory's own tab strip
 
 - With the game's new inventory tabs, the Toolasha tab is now an icon tab at the start of the inventory's own tab strip instead of a button in the character panel, which no longer loses its Inventory tab. On the older layout it stays where it was, and "Toolasha tab by default" now opens the inventory on the Toolasha tab. Expand All and Collapse All are now compact icon buttons.
