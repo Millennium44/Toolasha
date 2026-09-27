@@ -20,6 +20,56 @@ import { ironCowBook } from '../../utils/ironcow-valuation.js';
 // running one (present in the delta, not yet running) is never mistaken for a switch or a stop.
 let trackedEnhanceActionId = null;
 
+const ENHANCE_ACTION_HRID = '/actions/enhancing/enhance';
+const PHILOSOPHERS_MIRROR_HRID = '/items/philosophers_mirror';
+
+// The level the running enhance stood at before its next attempt, read off the queue row
+// (actions_updated, or the login snapshot) — { actionId, itemHrid, level, currentCount }.
+//
+// An action_completed carries only the level the attempt ended at. From that alone the level
+// it started at cannot be told: +6 is a success from +5, a protected failure from +7, or a
+// Blessed jump from +4, and +0 is a failure from anywhere. The queue row seen before the
+// attempt says exactly where it started.
+let pendingBaseline = null;
+
+/**
+ * The baseline a queue row gives the attempt that follows it.
+ * @param {Object} action - Enhance row from the queue
+ * @returns {Object|null} Baseline, or null when the row names no item
+ */
+function baselineFrom(action) {
+    const { itemHrid, level } = parseItemHash(action?.primaryItemHash);
+    if (!itemHrid) return null;
+    return {
+        actionId: action.id ?? null,
+        itemHrid,
+        level,
+        currentCount: Number.isFinite(action.currentCount) ? action.currentCount : null,
+    };
+}
+
+/**
+ * Take the pending baseline for this attempt, if it describes it: the same item, the same
+ * queue action, and the count just before this one. Consumed either way.
+ * @param {Object} action - endCharacterAction of the attempt
+ * @param {string} itemHrid - Item being enhanced
+ * @returns {number|null} The level the attempt started from, or null when unknown
+ */
+function takeBaseline(action, itemHrid) {
+    const baseline = pendingBaseline;
+    pendingBaseline = null;
+    if (!baseline || baseline.itemHrid !== itemHrid) return null;
+    if (baseline.actionId != null && action.id != null && baseline.actionId !== action.id) return null;
+    if (
+        baseline.currentCount != null &&
+        Number.isFinite(action.currentCount) &&
+        action.currentCount !== baseline.currentCount + 1
+    ) {
+        return null;
+    }
+    return baseline.level;
+}
+
 /**
  * Setup enhancement event handlers
  */
@@ -28,6 +78,7 @@ export function setupEnhancementHandlers() {
     // over a stale id from whatever ran before it (a previous character, or a prior setup/
     // cleanup cycle within the same one).
     trackedEnhanceActionId = null;
+    pendingBaseline = null;
 
     // Listen for action_completed (when enhancement completes)
     webSocketHook.on('action_completed', handleActionCompleted);
@@ -55,13 +106,23 @@ export function setupEnhancementHandlers() {
 function bootstrapFromCurrentEnhancingAction() {
     if (!config.getSetting('enhancementTracker')) return;
     if (!enhancementTracker.isInitialized) return;
-    if (enhancementTracker.getCurrentSession()) return;
 
     const activeEnhancingAction = runningAction(
         dataManager.getCurrentActions(),
-        (action) => action.actionHrid === '/actions/enhancing/enhance'
+        (action) => action.actionHrid === ENHANCE_ACTION_HRID
     );
     if (!activeEnhancingAction) return;
+
+    // The snapshot is the level the item stands at now, after anything that completed while no
+    // page was connected — the one baseline the next live attempt can be scored against.
+    pendingBaseline = baselineFrom(activeEnhancingAction);
+
+    const currentSession = enhancementTracker.getCurrentSession();
+    if (currentSession) {
+        trackedEnhanceActionId = activeEnhancingAction.id;
+        void reconcileReloadGap(currentSession, activeEnhancingAction);
+        return;
+    }
 
     // A completed session for this item near this level is meant to be picked back up by
     // extending it (see findExtendableSession below in handleEnhancementResult), not shadowed by
@@ -76,6 +137,40 @@ function bootstrapFromCurrentEnhancingAction() {
 }
 
 /**
+ * A page that comes up on a session already in progress: the game kept enhancing while no page
+ * was connected, and the attempt that completed in that gap was never delivered as an
+ * action_completed — the login snapshot already includes it. When the snapshot is exactly one
+ * attempt on from the last one recorded, on the same queue action, that attempt is known in
+ * full (its start level is the one recorded, its end level the snapshot's) and is scored now.
+ * A longer gap cannot be told apart attempt by attempt; the snapshot baseline still keeps the
+ * next live attempt from being scored against the stale level.
+ * @param {Object} session - The tracker's current session
+ * @param {Object} active - The running enhance row from the snapshot
+ * @returns {Promise<void>}
+ */
+async function reconcileReloadGap(session, active) {
+    const { itemHrid, level } = parseItemHash(active.primaryItemHash);
+    const last = session.lastAttempt;
+    if (!itemHrid || session.itemHrid !== itemHrid || !last) return;
+    if (last.actionId == null || last.actionId !== active.id) return;
+    if (!Number.isFinite(last.currentCount) || !Number.isFinite(active.currentCount)) return;
+    if (active.currentCount - last.currentCount !== 1) return;
+
+    try {
+        await applyAttempt({
+            session,
+            action: active,
+            itemHrid,
+            previousLevel: last.level,
+            newLevel: level,
+            scored: true,
+        });
+    } catch (error) {
+        console.error('[EnhancementHandlers] Reconciling the reload gap failed:', error);
+    }
+}
+
+/**
  * Handle actions_updated message (detects new enhancing queue)
  * Sets pendingSessionStart so the next action_completed creates a session regardless of currentCount.
  * @param {Object} data - WebSocket message data
@@ -86,17 +181,20 @@ async function handleActionsUpdated(data) {
 
     const actions = data.endCharacterActions;
     if (!Array.isArray(actions)) return;
-    // Cheap short-circuit: nothing about the enhancing queue changed in this delta at all.
-    if (!actions.some((a) => a?.actionHrid === '/actions/enhancing/enhance')) return;
-
     // Decide from the merged queue (dataManager has already folded this delta into it before
     // emitting), not the delta rows — the delta lists only what changed, so a second enhance
     // queued behind the running one would otherwise be mistaken for the row actually running
     // and wrongly end the live session's stats/history.
     const enhancingAction = runningAction(
         dataManager.getCurrentActions(),
-        (action) => action.actionHrid === '/actions/enhancing/enhance'
+        (action) => action.actionHrid === ENHANCE_ACTION_HRID
     );
+
+    // Nothing about enhancing changed — unless an enhance queued behind something else has just
+    // come to the front. The delta then carries only the row that finished ahead of it, and
+    // this is the one message that says the run has started (and at what level).
+    const deltaHasEnhance = actions.some((a) => a?.actionHrid === ENHANCE_ACTION_HRID);
+    if (!deltaHasEnhance && (!enhancingAction || enhancingAction.id === trackedEnhanceActionId)) return;
 
     if (enhancingAction && enhancingAction.id === trackedEnhanceActionId) {
         // Same run still executing (e.g. a differently-targeted enhance queued behind it) —
@@ -104,6 +202,7 @@ async function handleActionsUpdated(data) {
         return;
     }
     trackedEnhanceActionId = enhancingAction?.id ?? null;
+    pendingBaseline = enhancingAction ? baselineFrom(enhancingAction) : null;
 
     if (!enhancingAction) {
         // No enhance action is running anymore — a real stop.
@@ -141,7 +240,7 @@ async function handleActionCompleted(data) {
 
     // Check if this is an enhancement action
     // Ultimate Enhancement Tracker checks: actionHrid === "/actions/enhancing/enhance"
-    if (action.actionHrid !== '/actions/enhancing/enhance') {
+    if (action.actionHrid !== ENHANCE_ACTION_HRID) {
         return;
     }
 
@@ -228,28 +327,159 @@ function getEnhancementMaterials(itemHrid) {
  * Track material costs for current attempt
  * Based on Ultimate Enhancement Tracker's trackMaterialCosts function
  * @param {string} itemHrid - Item HRID
- * @returns {Promise<{materialCost: number, coinCost: number}>}
+ * @returns {Promise<void>}
  */
 async function trackMaterialCosts(itemHrid) {
     const materials = getEnhancementMaterials(itemHrid) || [];
-    let materialCost = 0;
-    let coinCost = 0;
 
     for (const [resourceHrid, count] of materials) {
-        // Check if this is coins
         if (resourceHrid.includes('/items/coin')) {
-            // Track coins for THIS ATTEMPT ONLY
-            coinCost = count; // Coins are 1:1 value
             await enhancementTracker.trackCoinCost(count);
         } else {
-            // Track material costs
             await enhancementTracker.trackMaterialCost(resourceHrid, count);
-            // Add to material cost total, using the same pricing rules the tracker just used
-            materialCost += getEnhancementMaterialPrice(resourceHrid, 'ask') * count;
+        }
+    }
+}
+
+/**
+ * Price of one unit of an item at an enhancement level: the Iron Cow book, then the market's
+ * ask, then its bid, then the vendor price.
+ * @param {string} itemHrid - Item HRID
+ * @param {number} level - Enhancement level
+ * @returns {number} Unit price (0 when nothing prices it)
+ */
+function unitPrice(itemHrid, level = 0) {
+    const marketPrice = ironCowBook(itemHrid, level) ?? marketAPI.getPrice(itemHrid, level);
+    const price = marketPrice?.ask || marketPrice?.bid || 0;
+    if (price > 0) return price;
+
+    const item = dataManager.getInitClientData()?.itemDetailMap?.[itemHrid];
+    if (!item) {
+        console.warn(`[EnhancementHandlers] Item not found in game data: ${itemHrid}`);
+    }
+    return item?.sellPrice || 0;
+}
+
+/**
+ * Whether the action's protection slot holds a Philosopher's Mirror.
+ * @param {Object} action - Enhance action
+ * @returns {boolean}
+ */
+function usesPhilosophersMirror(action) {
+    return parseItemHash(action?.secondaryItemHash).itemHrid === PHILOSOPHERS_MIRROR_HRID;
+}
+
+/**
+ * Charge one Philosopher's Mirror attempt. The game replaces the enhancement costs of a mirror
+ * attempt with one copy of the base item at one level below the item, and the mirror itself is
+ * consumed every attempt (game client: getPhilosophersMirrorCost, and the mirror's item
+ * description). None of the item's normal materials or coins are spent.
+ * @param {string} itemHrid - Item being enhanced
+ * @param {number} fromLevel - Level the attempt started at
+ * @returns {Promise<void>}
+ */
+async function trackMirrorCosts(itemHrid, fromLevel) {
+    const baseHrid = dataManager.getInitClientData()?.itemDetailMap?.[itemHrid]?.baseItemHrids?.[0] || itemHrid;
+    const copyLevel = Math.max(0, fromLevel - 1);
+    const copyPrice = copyLevel === 0 ? getEnhancementMaterialPrice(baseHrid, 'ask') : unitPrice(baseHrid, copyLevel);
+    await enhancementTracker.trackMaterialCost(baseHrid, 1, copyPrice);
+    await enhancementTracker.trackProtectionCost(PHILOSOPHERS_MIRROR_HRID, unitPrice(PHILOSOPHERS_MIRROR_HRID));
+}
+
+/**
+ * Charge and, when its start level is known, score one attempt against the session.
+ *
+ * The level baseline is claimed and handed on in one synchronous step at the top. websocket.js
+ * calls handlers fire-and-forget — it never awaits the promise an async handler returns — so a
+ * second action_completed runs while the first is still suspended on the cost writes below.
+ * Reading lastAttempt after those awaits, and writing it after them too, let a slower handler
+ * stamp its own older level over a newer one.
+ *
+ * Game rules (client guide text): a success raises the level by 1 (Blessed Tea: 2); a failure
+ * resets it to 0, or, protected, drops it by exactly 1 and consumes one protection item.
+ * Protection is effective from +2. A Philosopher's Mirror attempt always succeeds.
+ *
+ * @param {Object} p
+ * @param {Object} p.session - The session the attempt belongs to (the tracker's current one)
+ * @param {Object} p.action - The enhance action as it stood after the attempt
+ * @param {string} p.itemHrid - Item being enhanced
+ * @param {number|null} p.previousLevel - Level the attempt started at, null when unknown
+ * @param {number} p.newLevel - Level the attempt ended at
+ * @param {boolean} p.scored - False when the start level is not known: costs only
+ * @returns {Promise<void>}
+ */
+async function applyAttempt({ session, action, itemHrid, previousLevel, newLevel, scored }) {
+    session.lastAttempt = {
+        attemptNumber: calculateAdjustedAttemptCount(session),
+        level: newLevel,
+        timestamp: Date.now(),
+        actionId: action.id ?? null,
+        currentCount: Number.isFinite(action.currentCount) ? action.currentCount : null,
+    };
+
+    const knownStart = scored && Number.isFinite(previousLevel);
+    const mirror = usesPhilosophersMirror(action);
+    // The mirror needs an item at +2 or higher; below that the attempt is an ordinary one. An
+    // attempt with no known start is charged from the level just below its result, which is
+    // where a mirror success came from.
+    const mirrorFrom = knownStart ? previousLevel : newLevel - 1;
+    if (mirror && mirrorFrom >= 2) {
+        await trackMirrorCosts(itemHrid, mirrorFrom);
+    } else {
+        await trackMaterialCosts(itemHrid);
+    }
+
+    if (!knownStart) return;
+
+    const wasSuccess = newLevel > previousLevel;
+    // A failure resets to 0 or, protected, drops exactly one level. Level unchanged above 0 is
+    // not an outcome the game produces — it means the baseline was wrong, so it is not scored.
+    const wasFailure = newLevel < previousLevel || (previousLevel === 0 && newLevel === 0);
+    const wasProtectedFailure = wasFailure && previousLevel >= 2 && newLevel === previousLevel - 1;
+
+    if (wasProtectedFailure && !mirror) {
+        const protectionItemHrid = getProtectionItemHrid(action);
+        if (protectionItemHrid) {
+            await enhancementTracker.trackProtectionCost(protectionItemHrid, unitPrice(protectionItemHrid));
         }
     }
 
-    return { materialCost, coinCost };
+    if (wasSuccess) {
+        session.totalXP += calculateSuccessXP(previousLevel, itemHrid);
+        await enhancementTracker.recordSuccess(previousLevel, newLevel, newLevel - previousLevel >= 2);
+        enhancementUI.scheduleUpdate();
+    } else if (wasFailure) {
+        session.totalXP += calculateFailureXP(previousLevel, itemHrid);
+        await enhancementTracker.recordFailure(previousLevel, newLevel);
+        enhancementUI.scheduleUpdate();
+    }
+}
+
+/**
+ * Start a session for the attempt in hand.
+ * @param {Object} action - endCharacterAction
+ * @param {string} itemHrid - Item being enhanced
+ * @param {number} newLevel - Level the attempt ended at
+ * @param {number|null} baselineLevel - Level it started at, when known
+ * @returns {Promise<Object|null>} The new session
+ */
+async function startSessionFor(action, itemHrid, newLevel, baselineLevel) {
+    const protectFrom = action.enhancingProtectionMinLevel || 0;
+    let startLevel = baselineLevel;
+    if (startLevel == null) {
+        // No queue row was seen before this attempt. Best guess only — the attempt is not
+        // scored — so the session tile has a level to show: below the protection threshold a
+        // non-zero result most likely came from one level down.
+        startLevel = newLevel;
+        if (newLevel > 0 && newLevel < Math.max(2, protectFrom)) {
+            startLevel = newLevel - 1;
+        }
+    }
+    const targetLevel = action.enhancingMaxLevel || Math.min(newLevel + 5, 20);
+    const sessionId = await enhancementTracker.startSession(itemHrid, startLevel, targetLevel, protectFrom);
+    enhancementUI.switchToSession(sessionId);
+    enhancementUI.scheduleUpdate();
+    return enhancementTracker.getCurrentSession();
 }
 
 /**
@@ -266,213 +496,75 @@ async function handleEnhancementResult(action, _data) {
             return;
         }
 
-        // Check for item changes on EVERY attempt (not just rawCount === 1)
-        let currentSession = enhancementTracker.getCurrentSession();
-        let justCreatedNewSession = false;
+        // Taken first and synchronously, before anything below can yield to another attempt
+        const baselineLevel = takeBaseline(action, itemHrid);
 
-        // If session exists but is for a different item, finalize and start new session
+        let currentSession = enhancementTracker.getCurrentSession();
+        let isNewSession = false;
+
+        // A session for a different item ends here; this attempt starts the next one
         if (currentSession && currentSession.itemHrid !== itemHrid) {
             await enhancementTracker.finalizeCurrentSession();
-            currentSession = null;
-
-            // Create new session for the new item
-            const protectFrom = action.enhancingProtectionMinLevel || 0;
-            const targetLevel = action.enhancingMaxLevel || Math.min(newLevel + 5, 20);
-
-            // Infer starting level from current level
-            let startLevel = newLevel;
-            if (newLevel > 0 && newLevel < Math.max(2, protectFrom)) {
-                startLevel = newLevel - 1;
-            }
-
-            const sessionId = await enhancementTracker.startSession(itemHrid, startLevel, targetLevel, protectFrom);
-            currentSession = enhancementTracker.getCurrentSession();
-            justCreatedNewSession = true; // Flag that we just created this session
-
-            // Switch UI to new session and update display
-            enhancementUI.switchToSession(sessionId);
-            enhancementUI.scheduleUpdate();
+            currentSession = await startSessionFor(action, itemHrid, newLevel, baselineLevel);
+            if (!currentSession) return;
+            isNewSession = true;
         }
 
         // On first attempt (rawCount === 1) OR after a clear/new-queue (pendingSessionStart),
         // start a session if none is active yet.
-        const startedViaPending = enhancementTracker.pendingSessionStart && rawCount !== 1;
-        const shouldStartNew =
-            (rawCount === 1 || enhancementTracker.pendingSessionStart) && !justCreatedNewSession && !currentSession;
-
-        if (shouldStartNew) {
+        if (!currentSession && (rawCount === 1 || enhancementTracker.pendingSessionStart)) {
             enhancementTracker.pendingSessionStart = false;
-            // CRITICAL: On first event, primaryItemHash shows RESULT level, not starting level
-            // We need to infer the starting level from the result
-            const protectFrom = action.enhancingProtectionMinLevel || 0;
-            let startLevel = newLevel;
-
-            // If result > 0 and below protection threshold, must have started one level lower
-            if (newLevel > 0 && newLevel < Math.max(2, protectFrom)) {
-                startLevel = newLevel - 1; // Successful enhancement (e.g., 0→1)
-            }
-            // Otherwise, started at same level (e.g., 0→0 failure, or protected failure)
-
-            // Always start new session when tracker is enabled
-            const targetLevel = action.enhancingMaxLevel || Math.min(newLevel + 5, 20);
-            const sessionId = await enhancementTracker.startSession(itemHrid, startLevel, targetLevel, protectFrom);
-            currentSession = enhancementTracker.getCurrentSession();
-
-            // Switch UI to new session and update display
-            enhancementUI.switchToSession(sessionId);
-            enhancementUI.scheduleUpdate();
-
-            if (!currentSession) {
-                return;
-            }
-
-            // Session was created mid-run (not at a natural queue start) — we don't have a
-            // reliable baseline level, so skip recording success/failure for this first attempt.
-            // Costs are still tracked. On a normal rawCount === 1 start, we record as usual.
-            if (startedViaPending) {
-                justCreatedNewSession = true;
-            }
+            currentSession = await startSessionFor(action, itemHrid, newLevel, baselineLevel);
+            if (!currentSession) return;
+            isNewSession = true;
         }
 
         // If no active session, check if we can extend a completed session
         if (!currentSession) {
-            // Try to extend a completed session for the same item
-            const extendableSessionId = enhancementTracker.findExtendableSession(itemHrid, newLevel);
+            const extendableSessionId = enhancementTracker.findExtendableSession(itemHrid, baselineLevel ?? newLevel);
             if (extendableSessionId) {
                 const newTarget = action.enhancingMaxLevel || Math.min(newLevel + 5, 20);
                 await enhancementTracker.extendSessionTarget(extendableSessionId, newTarget);
                 currentSession = enhancementTracker.getCurrentSession();
 
-                // Switch UI to extended session and update display
                 enhancementUI.switchToSession(extendableSessionId);
                 enhancementUI.scheduleUpdate();
             } else {
-                // Mid-run pickup: the script came up after the queue started (a
-                // page load during a run), so no count-1 attempt was seen and no
-                // actions_updated flagged a pending start. Start a session here —
-                // the first attempt has no baseline, so it is costed, not recorded
+                // Mid-run pickup: the script came up after the queue started (a page load
+                // during a run) with nothing flagging a pending start.
                 enhancementTracker.pendingSessionStart = false;
-                const protectFrom = action.enhancingProtectionMinLevel || 0;
-                // Same inference the other two "first observed attempt" branches
-                // above make: primaryItemHash carries the RESULT level, and below
-                // the protection threshold a non-zero result can only have come
-                // from one level down. Without this, a session picked up mid-run
-                // at a low level recorded a startLevel one higher than the item
-                // actually started at — wrong on the session tile and wrong in
-                // the predictions computed from it.
-                let startLevel = newLevel;
-                if (newLevel > 0 && newLevel < Math.max(2, protectFrom)) {
-                    startLevel = newLevel - 1;
-                }
-                const targetLevel = action.enhancingMaxLevel || Math.min(newLevel + 5, 20);
-                const sessionId = await enhancementTracker.startSession(itemHrid, startLevel, targetLevel, protectFrom);
-                currentSession = enhancementTracker.getCurrentSession();
-                enhancementUI.switchToSession(sessionId);
-                enhancementUI.scheduleUpdate();
-                if (!currentSession) {
-                    return;
-                }
-                justCreatedNewSession = true;
+                currentSession = await startSessionFor(action, itemHrid, newLevel, baselineLevel);
+                if (!currentSession) return;
+                isNewSession = true;
             }
         }
+        if (!currentSession) return;
 
-        // Calculate adjusted attempt count (resume-proof)
-        const adjustedCount = calculateAdjustedAttemptCount(currentSession);
-
-        // Claim the level baseline and hand it on in one synchronous step.
-        //
-        // websocket.js calls handlers fire-and-forget — it never awaits the
-        // promise an async handler returns — so a second action_completed runs
-        // while the first is still suspended on the cost writes below. Reading
-        // lastAttempt after those awaits, and writing it after them too, let a
-        // slower handler stamp its own older level over a newer one: the next
-        // attempt then scored 6 → 7 as a 5 → 7 Blessed double jump that never
-        // happened, and mis-attributed the success to level 5's tally.
-        const previousLevel = currentSession.lastAttempt?.level ?? currentSession.startLevel;
-        currentSession.lastAttempt = {
-            attemptNumber: adjustedCount,
-            level: newLevel,
-            timestamp: Date.now(),
-        };
-
-        // Track costs for EVERY attempt (including first)
-        const { materialCost: _materialCost, coinCost: _coinCost } = await trackMaterialCosts(itemHrid);
-
-        // Check protection item usage BEFORE recording attempt
-        // Track protection cost if protection item exists in action data
-        // Protection items are consumed when:
-        // 1. Level would have decreased (Mirror of Protection prevents decrease, level stays same)
-        // A session started from the attempt in hand has no baseline: the first
-        // attempt cannot tell a protected failure from a success, so it is not
-        // charged a protection either
-        const protectionItemHrid = getProtectionItemHrid(action);
-        if (protectionItemHrid && !justCreatedNewSession) {
-            // Only track if we're at a level where protection might be used
-            const protectFrom = currentSession.protectFrom || 0;
-            const shouldTrack = previousLevel >= Math.max(2, protectFrom);
-
-            // Protection is consumed only on failure (level stays same or would have decreased)
-            // Successful enhancements do NOT consume a protection item
-            if (shouldTrack && newLevel <= previousLevel) {
-                // Use market price (like Ultimate Tracker) instead of vendor price
-                const marketPrice = ironCowBook(protectionItemHrid) ?? marketAPI.getPrice(protectionItemHrid, 0);
-                let protectionCost = marketPrice?.ask || marketPrice?.bid || 0;
-
-                // Fall back to vendor price if market price unavailable
-                if (protectionCost === 0) {
-                    const gameData = dataManager.getInitClientData();
-                    const protectionItem = gameData?.itemDetailMap?.[protectionItemHrid];
-                    if (!protectionItem) {
-                        console.warn(
-                            `[EnhancementHandlers] Protection item not found in game data: ${protectionItemHrid}`
-                        );
-                    }
-                    protectionCost = protectionItem?.sellPrice || 0;
-                }
-
-                await enhancementTracker.trackProtectionCost(protectionItemHrid, protectionCost);
-            }
+        // The level the attempt started from: the queue row seen just before it when there was
+        // one, else the level the session's previous attempt ended at — provided that attempt
+        // was the one just before this on the same queue action. A count that skipped ahead
+        // means attempts completed unseen (a dropped connection), and the stored level is stale.
+        let previousLevel = baselineLevel;
+        if (previousLevel == null && !isNewSession) {
+            const last = currentSession.lastAttempt;
+            const skipped =
+                last?.actionId != null &&
+                action.id != null &&
+                last.actionId === action.id &&
+                Number.isFinite(last.currentCount) &&
+                Number.isFinite(action.currentCount) &&
+                action.currentCount - last.currentCount > 1;
+            if (!skipped) previousLevel = last?.level ?? currentSession.startLevel;
         }
 
-        // Determine result type
-        const wasSuccess = newLevel > previousLevel;
-
-        // Failure detection:
-        // 1. Level decreased (1→0, 5→4, etc.)
-        // 2. Stayed at 0 (0→0 fail)
-        // 3. Stayed at non-zero level WITH protection item (protected failure)
-        const levelDecreased = newLevel < previousLevel;
-        const failedAtZero = previousLevel === 0 && newLevel === 0;
-        const protectedFailure = previousLevel > 0 && newLevel === previousLevel && protectionItemHrid !== null;
-        const wasFailure = levelDecreased || failedAtZero || protectedFailure;
-
-        const wasBlessed = wasSuccess && newLevel - previousLevel >= 2; // Blessed tea detection
-
-        // Record the result and track XP
-        // Skip on the first attempt of a newly created session — we don't have a reliable
-        // baseline level yet, but lastAttempt is still set so the next attempt works correctly.
-        if (!justCreatedNewSession) {
-            if (wasSuccess) {
-                const xpGain = calculateSuccessXP(previousLevel, itemHrid);
-                currentSession.totalXP += xpGain;
-
-                await enhancementTracker.recordSuccess(previousLevel, newLevel, wasBlessed);
-                enhancementUI.scheduleUpdate(); // Update UI after success
-
-                // Check if we've reached target
-                if (newLevel >= currentSession.targetLevel) {
-                    // Target reached - session will auto-complete on next UI update
-                }
-            } else if (wasFailure) {
-                const xpGain = calculateFailureXP(previousLevel, itemHrid);
-                currentSession.totalXP += xpGain;
-
-                await enhancementTracker.recordFailure(previousLevel, newLevel);
-                enhancementUI.scheduleUpdate(); // Update UI after failure
-            }
-        }
-        // Note: If newLevel === previousLevel (and not 0->0), we track costs but don't record attempt
-        // This happens with protection items that prevent level decrease
+        await applyAttempt({
+            session: currentSession,
+            action,
+            itemHrid,
+            previousLevel,
+            newLevel,
+            scored: previousLevel != null,
+        });
     } catch (error) {
         console.error('[EnhancementHandlers] Enhancement result handler failed:', error);
     }
@@ -485,4 +577,5 @@ export function cleanupEnhancementHandlers() {
     webSocketHook.off('action_completed', handleActionCompleted);
     dataManager.off('actions_updated', handleActionsUpdated);
     trackedEnhanceActionId = null;
+    pendingBaseline = null;
 }

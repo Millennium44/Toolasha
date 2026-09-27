@@ -215,3 +215,17 @@ describe('EnhancementTracker.disable() — character switch teardown', () => {
         expect(enhancementTracker.isInitialized).toBe(false);
     });
 });
+
+describe('EnhancementTracker material costs', () => {
+    test('a unit cost handed in is used as given; otherwise the material price rules apply', async () => {
+        const session = createSession('/items/sword', 'Sword', 8, 10, 0);
+        await loadWith(session);
+
+        // A mirror attempt's +7 copy is not priced by the +0 material rules
+        await enhancementTracker.trackMaterialCost('/items/sword', 1, 5000);
+        await enhancementTracker.trackMaterialCost('/items/sword', 2);
+
+        const tracked = enhancementTracker.getCurrentSession().materialCosts['/items/sword'];
+        expect(tracked).toEqual({ count: 3, totalCost: 5000 });
+    });
+});

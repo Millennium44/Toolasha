@@ -278,17 +278,19 @@ class EnhancementTracker {
      * Track material costs for current session
      * @param {string} itemHrid - Material item HRID
      * @param {number} count - Quantity used
+     * @param {number} [unitCost] - Price per unit, for a cost the material price rules do not
+     *   cover (a Philosopher's Mirror attempt's enhanced base-item copy)
      * @returns {Promise<void>}
      */
-    async trackMaterialCost(itemHrid, count) {
+    async trackMaterialCost(itemHrid, count, unitCost) {
         const session = this.getCurrentSession();
         if (!session) return;
 
         // Same pricing rules the tooltip and XPH calculator use, so a tracked run and its
         // prediction cost the same materials the same way
-        const unitCost = getEnhancementMaterialPrice(itemHrid, 'ask');
+        const price = Number.isFinite(unitCost) ? unitCost : getEnhancementMaterialPrice(itemHrid, 'ask');
 
-        addMaterialCost(session, itemHrid, count, unitCost);
+        addMaterialCost(session, itemHrid, count, price);
         await saveSessions(this.sessions);
     }
 
