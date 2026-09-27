@@ -11,17 +11,31 @@
 
 import { describe, test, expect, beforeEach, afterEach, vi } from 'vitest';
 
+const world = vi.hoisted(() => ({
+    character: { id: 'market123', name: 'Marketcow' },
+}));
+
 vi.mock('./dungeon-tracker-storage.js', () => ({
     default: {
         getAllRuns: vi.fn(async () => []),
+        getRunsForCharacter: vi.fn(async () => []),
+        importRuns: vi.fn(async () => ({ added: 0, alreadyPresent: 0, ok: true })),
         deleteRun: async () => true,
         getTeamKey: (names) => [...names].sort().join(','),
     },
     filterRunsForCharacter: (runs) => runs,
-    currentCharacter: () => 'me',
+    currentCharacter: () => world.character,
     runIdentity: (run) => `${run?.teamKey ?? ''}|${run?.timestamp ?? ''}|${run?.duration ?? ''}`,
+    runTime: (run) => {
+        const time = new Date(run?.timestamp).getTime();
+        return Number.isFinite(time) ? time : null;
+    },
 }));
 vi.mock('../../utils/formatters.js', () => ({ formatDateTime: () => '04/08 10:00' }));
+vi.mock('../../utils/csv-export.js', async (importOriginal) => {
+    const actual = await importOriginal();
+    return { ...actual, downloadFile: vi.fn() };
+});
 
 const {
     default: DungeonTrackerUIHistory,
@@ -29,6 +43,8 @@ const {
     DUNGEON_RUN_CSV_COLUMNS,
 } = await import('./dungeon-tracker-ui-history.js');
 const { default: dungeonTrackerStorage } = await import('./dungeon-tracker-storage.js');
+const { downloadFile } = await import('../../utils/csv-export.js');
+const { DUNGEON_RUNS_BACKUP_FORMAT, DUNGEON_RUNS_BACKUP_VERSION } = await import('./dungeon-tracker-run-import.js');
 
 /** A fresh panel state, the shape dungeon-tracker-ui-state.js hands over. */
 function freshState(groupBy = 'team') {
@@ -58,11 +74,51 @@ function render(history, groups) {
 
 beforeEach(() => {
     document.body.innerHTML = '<div class="Chat_chatInputContainer__c"><input /></div>';
+    world.character = { id: 'market123', name: 'Marketcow' };
+    dungeonTrackerStorage.getRunsForCharacter.mockReset().mockResolvedValue([]);
+    dungeonTrackerStorage.importRuns.mockReset().mockResolvedValue({ added: 0, alreadyPresent: 0, ok: true });
+    downloadFile.mockReset();
+    window.alert = vi.fn();
+    window.confirm = vi.fn().mockReturnValue(true);
 });
 
 afterEach(() => {
     document.body.innerHTML = '';
 });
+
+/** A well-formed stored run, matching what `dungeon-tracker-storage.js` writes. */
+function storedRun(overrides = {}) {
+    return {
+        recordedBy: 'market123',
+        recordedByName: 'Marketcow',
+        timestamp: '2026-08-04T10:00:00.000Z',
+        dungeonName: 'Chimerical Den',
+        dungeonHrid: '/actions/combat/chimerical_den',
+        tier: 1,
+        team: ['Aster', 'Briar'],
+        teamKey: 'Aster,Briar',
+        duration: 300_000,
+        validated: true,
+        startRecovered: false,
+        source: 'chat',
+        waveTimes: null,
+        avgWaveTime: null,
+        keyCountsMap: { Aster: 2, Briar: 3 },
+        ...overrides,
+    };
+}
+
+/** A well-formed backup envelope. */
+function backupEnvelope(runs, overrides = {}) {
+    return {
+        format: DUNGEON_RUNS_BACKUP_FORMAT,
+        version: DUNGEON_RUNS_BACKUP_VERSION,
+        characterId: 'market123',
+        exportedAt: 1_700_000_000_000,
+        runs,
+        ...overrides,
+    };
+}
 
 describe('team group headers', () => {
     test('each name in the header is its own clickable span, and the label reads unchanged', () => {
@@ -205,6 +261,183 @@ describe('the CSV export', () => {
 
         expect(container.textContent).toContain('No runs yet');
         expect(container.querySelector('[data-csv-export]')).toBeNull();
+        // Import has to be reachable with nothing recorded yet — that is
+        // exactly when restoring a backup is the point
+        expect(container.querySelector('[data-json-backup]')).not.toBeNull();
+    });
+});
+
+describe('the JSON backup export/import bar', () => {
+    test('carries an Export button and an Import button', () => {
+        const history = new DungeonTrackerUIHistory(freshState('team'), (ms) => `${ms}ms`);
+        const bar = history.historyBackupBar();
+        const labels = [...bar.querySelectorAll('button')].map((b) => b.textContent);
+
+        expect(bar.dataset.jsonBackup).toBe('dungeon-runs');
+        expect(labels).toEqual(['Export', 'Import']);
+    });
+});
+
+describe('exportRunHistoryBackup', () => {
+    test('downloads every stored run for the current character, unfiltered, in an envelope', async () => {
+        const runs = [storedRun(), storedRun({ timestamp: '2026-08-03T09:00:00.000Z' })];
+        dungeonTrackerStorage.getRunsForCharacter.mockResolvedValue(runs);
+        const history = new DungeonTrackerUIHistory(freshState('team'), (ms) => `${ms}ms`);
+
+        await history.exportRunHistoryBackup();
+
+        expect(dungeonTrackerStorage.getRunsForCharacter).toHaveBeenCalledWith('mine');
+        expect(downloadFile).toHaveBeenCalledTimes(1);
+        const [filename, text, mime] = downloadFile.mock.calls[0];
+        expect(filename).toMatch(/\.json$/);
+        expect(mime).toBe('application/json;charset=utf-8;');
+        expect(JSON.parse(text)).toEqual({
+            format: DUNGEON_RUNS_BACKUP_FORMAT,
+            version: DUNGEON_RUNS_BACKUP_VERSION,
+            characterId: 'market123',
+            exportedAt: expect.any(Number),
+            runs,
+        });
+    });
+});
+
+describe('importBackupText', () => {
+    test('an export → import round trip into empty storage adds every run', async () => {
+        const runs = [storedRun()];
+        const history = new DungeonTrackerUIHistory(freshState('team'), (ms) => `${ms}ms`);
+        dungeonTrackerStorage.importRuns.mockResolvedValue({ added: 1, alreadyPresent: 0, ok: true });
+
+        await history.importBackupText(JSON.stringify(backupEnvelope(runs)));
+
+        expect(dungeonTrackerStorage.importRuns).toHaveBeenCalledWith(runs);
+        expect(window.alert).toHaveBeenCalledWith(expect.stringContaining('Imported 1 run(s)'));
+    });
+
+    test('a re-import is a no-op — the summary says so and storage reports nothing new', async () => {
+        dungeonTrackerStorage.importRuns.mockResolvedValue({ added: 0, alreadyPresent: 1, ok: true });
+        const history = new DungeonTrackerUIHistory(freshState('team'), (ms) => `${ms}ms`);
+
+        await history.importBackupText(JSON.stringify(backupEnvelope([storedRun()])));
+
+        expect(window.alert).toHaveBeenCalledWith(expect.stringContaining('Imported 0 run(s), 1 already present'));
+    });
+
+    test('a merge with overlapping runs reports the overlap, exactly as storage folded it', async () => {
+        dungeonTrackerStorage.importRuns.mockResolvedValue({ added: 2, alreadyPresent: 3, ok: true });
+        const history = new DungeonTrackerUIHistory(freshState('team'), (ms) => `${ms}ms`);
+
+        await history.importBackupText(JSON.stringify(backupEnvelope([storedRun(), storedRun(), storedRun()])));
+
+        expect(window.alert).toHaveBeenCalledWith(expect.stringContaining('Imported 2 run(s), 3 already present'));
+    });
+
+    test('a bad format is refused with no write', async () => {
+        const history = new DungeonTrackerUIHistory(freshState('team'), (ms) => `${ms}ms`);
+
+        await history.importBackupText(JSON.stringify(backupEnvelope([storedRun()], { format: 'not-this' })));
+
+        expect(dungeonTrackerStorage.importRuns).not.toHaveBeenCalled();
+        expect(window.alert).toHaveBeenCalledWith(expect.stringContaining('Import refused'));
+    });
+
+    test('a version this copy of Toolasha does not read is refused with no write', async () => {
+        const history = new DungeonTrackerUIHistory(freshState('team'), (ms) => `${ms}ms`);
+
+        await history.importBackupText(
+            JSON.stringify(backupEnvelope([storedRun()], { version: DUNGEON_RUNS_BACKUP_VERSION + 1 }))
+        );
+
+        expect(dungeonTrackerStorage.importRuns).not.toHaveBeenCalled();
+        expect(window.alert).toHaveBeenCalledWith(expect.stringContaining('Import refused'));
+    });
+
+    test('invalid JSON is refused with no write', async () => {
+        const history = new DungeonTrackerUIHistory(freshState('team'), (ms) => `${ms}ms`);
+
+        await history.importBackupText('{not json');
+
+        expect(dungeonTrackerStorage.importRuns).not.toHaveBeenCalled();
+        expect(window.alert).toHaveBeenCalledWith(expect.stringContaining('Import refused'));
+    });
+
+    test('an absurd 1608-minute run is rejected, not written, and the rest of the file still imports', async () => {
+        const good = storedRun();
+        const absurd = storedRun({ timestamp: '2026-08-05T10:00:00.000Z', duration: 1608 * 60 * 1000 });
+        dungeonTrackerStorage.importRuns.mockResolvedValue({ added: 1, alreadyPresent: 0, ok: true });
+        const history = new DungeonTrackerUIHistory(freshState('team'), (ms) => `${ms}ms`);
+
+        await history.importBackupText(JSON.stringify(backupEnvelope([good, absurd])));
+
+        expect(dungeonTrackerStorage.importRuns).toHaveBeenCalledWith([good]);
+        expect(window.alert).toHaveBeenCalledWith(expect.stringContaining('1 rejected'));
+    });
+
+    test('a non-positive duration and a missing dungeon are rejected the same way', async () => {
+        const nonPositive = storedRun({ timestamp: '2026-08-05T10:00:00.000Z', duration: 0 });
+        const noDungeon = storedRun({ timestamp: '2026-08-06T10:00:00.000Z', dungeonName: '' });
+        dungeonTrackerStorage.importRuns.mockResolvedValue({ added: 0, alreadyPresent: 0, ok: true });
+        const history = new DungeonTrackerUIHistory(freshState('team'), (ms) => `${ms}ms`);
+
+        await history.importBackupText(JSON.stringify(backupEnvelope([nonPositive, noDungeon])));
+
+        expect(dungeonTrackerStorage.importRuns).toHaveBeenCalledWith([]);
+        expect(window.alert).toHaveBeenCalledWith(expect.stringContaining('2 rejected'));
+    });
+
+    test('a different characterId is imported only after confirmation', async () => {
+        window.confirm.mockReturnValue(false);
+        const history = new DungeonTrackerUIHistory(freshState('team'), (ms) => `${ms}ms`);
+
+        await history.importBackupText(JSON.stringify(backupEnvelope([storedRun()], { characterId: 'someone-else' })));
+
+        expect(window.confirm).toHaveBeenCalled();
+        expect(dungeonTrackerStorage.importRuns).not.toHaveBeenCalled();
+    });
+
+    test('a different characterId proceeds once confirmed', async () => {
+        window.confirm.mockReturnValue(true);
+        dungeonTrackerStorage.importRuns.mockResolvedValue({ added: 1, alreadyPresent: 0, ok: true });
+        const history = new DungeonTrackerUIHistory(freshState('team'), (ms) => `${ms}ms`);
+
+        await history.importBackupText(JSON.stringify(backupEnvelope([storedRun()], { characterId: 'someone-else' })));
+
+        expect(dungeonTrackerStorage.importRuns).toHaveBeenCalled();
+    });
+
+    test('a character switch during import writes nothing to the new character', async () => {
+        // The switch lands while the confirmation dialog is "open" — the
+        // moment `importBackupText` cannot see coming, and exactly the window
+        // the character-swap guard exists for.
+        window.confirm.mockImplementation(() => {
+            world.character = { id: 'someone-new', name: 'NewCow' };
+            return true;
+        });
+        const history = new DungeonTrackerUIHistory(freshState('team'), (ms) => `${ms}ms`);
+
+        await history.importBackupText(JSON.stringify(backupEnvelope([storedRun()])));
+
+        expect(dungeonTrackerStorage.importRuns).not.toHaveBeenCalled();
+        expect(window.alert).toHaveBeenCalledWith(expect.stringContaining('active character changed'));
+    });
+
+    test('a failed write is reported as a failure, not a success with zero runs', async () => {
+        dungeonTrackerStorage.importRuns.mockResolvedValue({ added: 0, alreadyPresent: 0, ok: false });
+        const history = new DungeonTrackerUIHistory(freshState('team'), (ms) => `${ms}ms`);
+
+        await history.importBackupText(JSON.stringify(backupEnvelope([storedRun()])));
+
+        expect(window.alert).toHaveBeenCalledWith(expect.stringContaining('Import failed'));
+    });
+
+    test('a successful import redraws the panel through the onImport callback', async () => {
+        dungeonTrackerStorage.importRuns.mockResolvedValue({ added: 1, alreadyPresent: 0, ok: true });
+        const history = new DungeonTrackerUIHistory(freshState('team'), (ms) => `${ms}ms`);
+        const onImport = vi.fn();
+        history.onImport(onImport);
+
+        await history.importBackupText(JSON.stringify(backupEnvelope([storedRun()])));
+
+        expect(onImport).toHaveBeenCalledTimes(1);
     });
 });
 
