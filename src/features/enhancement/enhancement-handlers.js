@@ -14,7 +14,7 @@ import { getEnhancementMaterialPrice } from './tooltip-enhancement.js';
 import { parseItemHash } from '../../utils/item-hash.js';
 import { runningAction } from '../../utils/combat-actions.js';
 import { ironCowBook } from '../../utils/ironcow-valuation.js';
-import { SessionState } from './enhancement-session.js';
+import { SessionState, getCurrentLegCounters } from './enhancement-session.js';
 
 // Id of the queue action the tracker last saw running as the enhance row. Read against
 // dataManager's merged queue in handleActionsUpdated so a second enhance queued behind the
@@ -124,11 +124,7 @@ function bootstrapFromCurrentEnhancingAction() {
     // session's last attempt) is a run started after the stored one ended.
     let currentSession = enhancementTracker.getCurrentSession();
     let closedEndedRun = false;
-    const lastActionId = currentSession?.lastAttempt?.actionId;
-    const sameRun =
-        !!activeEnhancingAction &&
-        parseItemHash(activeEnhancingAction.primaryItemHash).itemHrid === currentSession?.itemHrid &&
-        (lastActionId == null || activeEnhancingAction.id == null || lastActionId === activeEnhancingAction.id);
+    const sameRun = isSameRun(currentSession, activeEnhancingAction);
     if (currentSession && currentSession.state === SessionState.TRACKING && dataManager.characterData && !sameRun) {
         // The last attempt seen: lastUpdateTime moves only on a scored one, lastAttempt on any
         const lastSeen = Math.max(currentSession.lastUpdateTime || 0, currentSession.lastAttempt?.timestamp || 0);
@@ -161,6 +157,41 @@ function bootstrapFromCurrentEnhancingAction() {
 
     enhancementTracker.setPendingStart();
     trackedEnhanceActionId = activeEnhancingAction.id;
+}
+
+/**
+ * Whether the running enhance in a snapshot is the run a stored session was recording.
+ *
+ * The queue action id settles it when both sides have one. A session saved before attempts
+ * carried their action id has none, and a missing id is unknown, not a match: the run is then
+ * the same only if everything else the snapshot says agrees — the same target and protect-from
+ * levels, a count no lower than the attempts this leg recorded (a new action counts from zero),
+ * and, when both sides carry a count, a level reachable from the session's in that many
+ * attempts (at most +2 each, with Blessed Tea).
+ * @param {Object|null} session - The tracker's current session
+ * @param {Object|null} active - The running enhance row from the snapshot
+ * @returns {boolean}
+ */
+function isSameRun(session, active) {
+    if (!session || !active) return false;
+    const { itemHrid, level } = parseItemHash(active.primaryItemHash);
+    if (itemHrid !== session.itemHrid) return false;
+
+    const last = session.lastAttempt;
+    if (last?.actionId != null && active.id != null) return last.actionId === active.id;
+
+    if ((active.enhancingMaxLevel || 0) !== (session.targetLevel || 0)) return false;
+    if ((active.enhancingProtectionMinLevel || 0) !== (session.protectFrom || 0)) return false;
+
+    const count = Number.isFinite(active.currentCount) ? active.currentCount : null;
+    if (count !== null && count < getCurrentLegCounters(session).attempts) return false;
+    if (count !== null && Number.isFinite(last?.currentCount)) {
+        const delta = count - last.currentCount;
+        const from = Number.isFinite(last.level) ? last.level : session.currentLevel;
+        if (delta < 0) return false;
+        if (delta === 0 ? level !== from : level > from + 2 * delta) return false;
+    }
+    return true;
 }
 
 /**
