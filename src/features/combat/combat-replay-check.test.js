@@ -25,6 +25,8 @@ import { describe, test, expect, beforeEach, afterEach, vi } from 'vitest';
 
 /** What the adapter would say the character is wearing, and what the sim was handed */
 const game = vi.hoisted(() => ({
+    /** Game ability data the replay hands to attribution; tests set it when target width matters */
+    abilityDetailMap: {},
     dto: {},
     zone: { zoneHrid: '/actions/combat/fly', difficultyTier: 0 },
     lastRun: null,
@@ -75,7 +77,10 @@ vi.mock('../../utils/adoption-consent.js', () => ({
 }));
 vi.mock('../../core/data-manager.js', () => ({
     default: {
-        getInitClientData: () => ({ actionDetailMap: { '/actions/combat/fly': { name: 'Fly' } } }),
+        getInitClientData: () => ({
+            actionDetailMap: { '/actions/combat/fly': { name: 'Fly' } },
+            abilityDetailMap: game.abilityDetailMap,
+        }),
         // The panel's draw reaches storage through the character key
         getCurrentCharacterId: () => game.characterId,
         getCurrentCharacterGameMode: () => 'standard',
@@ -293,6 +298,50 @@ describe('deriving what happened from a recording', () => {
     test('damage taken is derived too, from the same ticks', () => {
         const taken = fights.reduce((total, fight) => total + (fight.taken['0']?.damage || 0), 0);
         expect(taken).toBeGreaterThan(0);
+    });
+});
+
+describe('replay reads target width from the game data', () => {
+    test('a single-target cast beside a bleed on a second monster leaves the bleed a tick', () => {
+        // Without the ability map every ability could be an area cast, so the
+        // one swing paid off both monsters' rises and the bleed became a hit
+        const SLASH = '/abilities/crippling_slash';
+        game.abilityDetailMap = {
+            [SLASH]: { abilityEffects: [{ effectType: '/ability_effect_types/damage', targetType: 'enemy' }] },
+        };
+        const monster = (name) => ({
+            name,
+            dmgCounter: 5,
+            attackAttemptCounter: 3,
+            combatDetails: { currentHitpoints: 10_000, maxHitpoints: 10_000 },
+        });
+        const opened = {
+            at: 0,
+            type: 'new_battle',
+            payload: {
+                players: { 0: { attackAttemptCounter: 10, currentManapoints: 500, preparingAbilityHrid: SLASH } },
+                monsters: { 0: monster('Fly'), 1: monster('Fly') },
+            },
+        };
+        const tick = {
+            at: 1_000,
+            type: 'battle_updated',
+            payload: {
+                pMap: { 0: { atkCounter: 11, cMP: 480, abilityHrid: SLASH } },
+                // The real wire sends a monster's whole state, attack counter
+                // included, whenever it appears in mMap
+                mMap: {
+                    0: { cHP: 9_700, dmgCounter: 6, atkCounter: 3 },
+                    1: { cHP: 9_940, dmgCounter: 6, atkCounter: 3 },
+                },
+            },
+        };
+        try {
+            const [fight] = replayFights([opened, tick, { ...opened, at: 2_000 }]);
+            expect(fight.players['0']).toMatchObject({ hits: 1, dotTicks: 1, dotDamage: 60 });
+        } finally {
+            game.abilityDetailMap = {};
+        }
     });
 });
 

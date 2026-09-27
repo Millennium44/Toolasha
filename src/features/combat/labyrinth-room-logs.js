@@ -1057,7 +1057,9 @@ class LabyrinthRoomLogs {
         // missing unit map — a sparse tick just contributes fewer events.
         try {
             noteActions(fight.attrState, data.pMap);
-            const events = attributeTick({ pMap: data.pMap, mMap: data.mMap }, fight.attrState);
+            const events = attributeTick({ pMap: data.pMap, mMap: data.mMap }, fight.attrState, {
+                abilityDetailMap: dataManager.getInitClientData?.()?.abilityDetailMap,
+            });
             foldEvents(fight.attrTally, events, { filterNonDamaging: false });
         } catch (error) {
             console.error('[LabyrinthRoomLogs] Attributing a fight tick failed:', error);
