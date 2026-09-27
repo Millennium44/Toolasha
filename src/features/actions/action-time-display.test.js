@@ -505,6 +505,29 @@ describe('updateRunSoFar — whole-run count vs. a partially recorded run', () =
         expect(actionTimeDisplay.runElement.innerHTML).toContain('1.00K');
     });
 
+    test('a run that went on unwatched in the middle is not paired with the whole-run count', () => {
+        // Recorded from the run's start for ten minutes, then the tab was closed for
+        // eight hours while the endless gather went on offline, then watched again
+        const runStart = Date.parse('2026-09-03T18:25:36Z');
+        game.runGathering = {
+            gained: { '/items/milk': 100 },
+            from: runStart,
+            to: runStart + 9 * 60 * 60_000,
+            unwatchedMs: 8 * 60 * 60_000,
+        };
+
+        actionTimeDisplay.updateRunSoFar(
+            { id: 1, currentCount: 3000, createdAt: '2026-09-03T18:25:36Z' },
+            gatheringDetails
+        );
+
+        const html = actionTimeDisplay.runElement.innerHTML;
+        expect(html).not.toContain('3,000');
+        expect(html).not.toContain('This run:');
+        expect(html).toContain('Watched since');
+        expect(html).toContain('1.00K');
+    });
+
     test('a short gap (reload, feature just turned on) still counts as full coverage', () => {
         const runStart = Date.parse('2026-09-03T18:25:36Z');
         // 90 seconds late — well under the tolerance for an ordinary reload.

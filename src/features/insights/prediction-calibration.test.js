@@ -425,6 +425,20 @@ describe('measuring gathering runs the loot log panel never saw (the live-record
         expect((await calibration.getRecords())[0]).toMatchObject({ actual: 750, actualBid: 550 });
     });
 
+    test('time the run went on unwatched is not part of the rate', async () => {
+        gathering(1);
+        await flush();
+        // Half an hour watched, split by an hour and a half the tab was closed
+        game.itemFlowRuns[1] = { gained: { '/items/milk': 100 }, from: 0, to: 120 * 60_000, unwatchedMs: 90 * 60_000 };
+
+        gathering(2);
+        await vi.advanceTimersByTimeAsync(LIVE_FALLBACK_GRACE_MS);
+
+        const records = await calibration.getRecords();
+        expect(records).toHaveLength(1);
+        expect(records[0]).toMatchObject({ id: 1, actual: 1000, durationSec: 30 * 60 });
+    });
+
     test('an overlapping loot-log and recorder period is not counted twice', async () => {
         gathering(1);
         await flush();

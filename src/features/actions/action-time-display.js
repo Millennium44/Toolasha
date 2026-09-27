@@ -5800,7 +5800,12 @@ class ActionTimeDisplay {
         // turned on, or storage recovering from a quota all cost a few seconds, not minutes, so
         // this only distinguishes a run genuinely older than its first recorded stretch.
         const runStart = Date.parse(action.createdAt);
-        const coversWholeRun = !Number.isFinite(runStart) || totals.from - runStart <= RUN_COVERAGE_TOLERANCE_MS;
+        // A run can also go on unwatched in the middle — the tab closed overnight while an
+        // endless gather kept going offline — and the value then covers only the watched
+        // stretches however early the first of them began
+        const unwatchedInside = totals.unwatchedMs > 0;
+        const coversWholeRun =
+            !unwatchedInside && (!Number.isFinite(runStart) || totals.from - runStart <= RUN_COVERAGE_TOLERANCE_MS);
 
         if (coversWholeRun) {
             this.runElement.innerHTML =
@@ -5817,7 +5822,8 @@ class ActionTimeDisplay {
         const fromDate = new Date(totals.from);
         const startedToday = fromDate.toDateString() === new Date().toDateString();
         const sinceTime = formatDateTime(fromDate, { includeDate: !startedToday, includeSeconds: false });
-        this.runElement.innerHTML = `<span style="color:#888;">Since ${sinceTime}:</span> ${valueHtml}`;
+        const label = unwatchedInside ? `Watched since ${sinceTime}` : `Since ${sinceTime}`;
+        this.runElement.innerHTML = `<span style="color:#888;">${label}:</span> ${valueHtml}`;
     }
 
     async updateActionBarProfit(action, remainingActions) {

@@ -281,7 +281,27 @@ describe('gatheringRunTotals', () => {
             gained: { '/items/sugar': 13, '/items/egg': 1 },
             from: 1000,
             to: 95000,
+            unwatchedMs: 0,
         });
+    });
+
+    test('names the time the run went on unwatched, and only gaps longer than a silence', () => {
+        const hour = 60 * 60 * 1000;
+        const stretch = (from, to) => ({ from, to, gained: { '/items/milk': 1 } });
+        const rows = [
+            {
+                d: '2026-09-26',
+                gathering: {
+                    7: { a: '/actions/milking/cow', stretches: [stretch(0, hour), stretch(9 * hour, 10 * hour)] },
+                },
+            },
+            // Across midnight the next day's stretch starts one completion later: not a gap
+            {
+                d: '2026-09-27',
+                gathering: { 7: { a: '/actions/milking/cow', stretches: [stretch(10 * hour + 6000, 11 * hour)] } },
+            },
+        ];
+        expect(gatheringRunTotals(rows, '7').unwatchedMs).toBe(8 * hour);
     });
 
     test('a run never recorded is null, not an empty total', () => {
@@ -320,6 +340,7 @@ describe('reading one run’s gathering for a caller pairing it with a forecast'
             gained: { '/items/sugar': 13 },
             from: expect.any(Number),
             to: expect.any(Number),
+            unwatchedMs: 0,
         });
         expect(await recorder.getRunGathering('does-not-exist')).toBeNull();
     });
@@ -366,7 +387,12 @@ describe('two copies of one day in the store', () => {
 
         const rows = await recorder.load();
         expect(rows).toHaveLength(1);
-        expect(await recorder.getRunGathering('7')).toEqual({ gained: { '/items/milk': 16 }, from: 1000, to: 3000 });
+        expect(await recorder.getRunGathering('7')).toEqual({
+            gained: { '/items/milk': 16 },
+            from: 1000,
+            to: 3000,
+            unwatchedMs: 0,
+        });
     });
 });
 

@@ -232,11 +232,16 @@ export function foldGathering(row, run, actionHrid, t, gained) {
  * (async, wants the whole run once it has ended) and the action panel's "so far
  * this run" row (sync, wants whatever is in memory right now).
  *
+ * `unwatchedMs` is how much of `from..to` fell in gaps between stretches longer
+ * than `GAP_MS` — the tab closed or the character offline while the run went on,
+ * which none of `gained` covers. A midnight split is not one: the next day's
+ * stretch starts one completion after the last.
+ *
  * @param {Array<ItemFlowDay>} rows - Loaded rows
  * @param {string} run - The character action's id, this recorder's own key
- * @returns {{gained: Object<string, number>, from: number, to: number}|null} Merged totals,
- *   or null when this run was never recorded at all (recorder off, storage over quota, or
- *   recording had not started yet when the run did)
+ * @returns {{gained: Object<string, number>, from: number, to: number, unwatchedMs: number}|null}
+ *   Merged totals, or null when this run was never recorded at all (recorder off, storage
+ *   over quota, or recording had not started yet when the run did)
  */
 export function gatheringRunTotals(rows, run) {
     // Not `!run`: a numeric action id of 0 is falsy but a perfectly real run —
@@ -246,6 +251,7 @@ export function gatheringRunTotals(rows, run) {
     let to = null;
     const gained = {};
     let found = false;
+    const spans = [];
 
     for (const row of rows || []) {
         const held = row?.gathering?.[run];
@@ -255,13 +261,23 @@ export function gatheringRunTotals(rows, run) {
             if (from === null || stretch.from < from) from = stretch.from;
             const stretchTo = Number.isFinite(stretch.to) && stretch.to > stretch.from ? stretch.to : stretch.from;
             if (to === null || stretchTo > to) to = stretchTo;
+            spans.push([stretch.from, stretchTo]);
             for (const [key, count] of Object.entries(stretch.gained || {})) {
                 if (count > 0) gained[key] = (gained[key] || 0) + count;
             }
         }
     }
+    if (!found) return null;
 
-    return found ? { gained, from, to } : null;
+    let unwatchedMs = 0;
+    spans.sort((a, b) => a[0] - b[0]);
+    let reach = spans[0][1];
+    for (const [start, end] of spans.slice(1)) {
+        if (start - reach > GAP_MS) unwatchedMs += start - reach;
+        if (end > reach) reach = end;
+    }
+
+    return { gained, from, to, unwatchedMs };
 }
 
 /**
