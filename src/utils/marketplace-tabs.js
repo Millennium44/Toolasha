@@ -8,6 +8,7 @@ import dataManager from '../core/data-manager.js';
 import webSocketHook from '../core/websocket.js';
 import { formatWithSeparator } from './formatters.js';
 import { GAME } from './selectors.js';
+import { addStyles } from './dom.js';
 
 /**
  * What this module's API supports, for an outside caller to check before it
@@ -418,6 +419,23 @@ function isOwnTab(el) {
     );
 }
 
+/** Id of the one stylesheet that lets a strip carrying our tabs wrap. */
+export const TAB_STRIP_WRAP_STYLE_ID = 'toolasha-tab-strip-wrap';
+
+/**
+ * The rule. Scoped with `:has()` to a strip that currently holds one of our
+ * tabs (the same three markers `isOwnTab` reads), so it reverts by itself the
+ * moment the last of them is removed, by whichever path removes it: a feature's
+ * disable(), `removeMaterialTabs`, a dismiss button, or the game rebuilding the
+ * strip. Nothing is written onto the game's element, so nothing needs undoing.
+ * A browser without `:has()` drops the rule and keeps the old single row.
+ */
+const TAB_STRIP_WRAP_CSS = `
+    .MuiTabs-flexContainer[role="tablist"]:has(> [${TAB_ORDER_ATTR}], > [data-mwi-custom-tab], > [data-mwi-shrine-tab]) {
+        flex-wrap: wrap;
+    }
+`;
+
 /**
  * Let a tab strip we add tabs to wrap onto a second row.
  *
@@ -429,14 +447,18 @@ function isOwnTab(el) {
  * tabs past the right edge were clipped away with no way to reach them.
  * Wrapping is the game's own answer (`TabsComponent_wrap` sets exactly this
  * on the flex container); a desktop-width strip never needs a second row, so
- * nothing changes there. The pinned material tabs already set it the same way.
+ * nothing changes there.
  *
- * @param {HTMLElement} container - The strip (`.MuiTabs-flexContainer`)
+ * MUI's `.MuiTabs-indicator` is placed from the selected tab's offsetLeft and
+ * knows nothing of rows, but the game hides it in every TabsComponent strip
+ * (`TabsComponent_tabsContainer [class*=MuiTabs-root] [class*=MuiTabs-indicator]
+ * {display:none}`) and marks the selected tab by its background instead; the
+ * scroller has no fixed height, so it grows to show the second row. Both
+ * measured with a second-row tab selected, in Firefox, Chromium and WebKit.
  */
-function allowTabStripToWrap(container) {
-    if (container.style && container.style.flexWrap !== 'wrap') {
-        container.style.flexWrap = 'wrap';
-    }
+function allowTabStripToWrap() {
+    if (typeof document === 'undefined' || document.getElementById(TAB_STRIP_WRAP_STYLE_ID)) return;
+    addStyles(TAB_STRIP_WRAP_CSS, TAB_STRIP_WRAP_STYLE_ID);
 }
 
 /**
@@ -472,7 +494,7 @@ function allowTabStripToWrap(container) {
 export function insertTabInOrder(container, tab, key) {
     if (!container || !tab) return;
     if (key) tab.setAttribute(TAB_ORDER_ATTR, key);
-    allowTabStripToWrap(container);
+    allowTabStripToWrap();
 
     const myRank = tabRank(key);
     let nextSibling = null;
