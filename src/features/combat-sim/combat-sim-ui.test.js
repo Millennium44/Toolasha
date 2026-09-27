@@ -68,6 +68,12 @@ const mocks = vi.hoisted(() => ({
     allZonesArgs: null,
     /** What `runAllZonesSimulation` resolves with — one entry per selected zone/tier */
     allZonesResult: [],
+    /** Every all-zones run's params, in order — a Solo zones + party dungeons run makes two */
+    allZonesArgsLog: [],
+    /** Optional (params) → results, for a test whose sweeps must answer differently */
+    allZonesResultFor: null,
+    /** Optional (simResult, playerHrid) → revenue, standing in for calculateSimRevenue's answer */
+    revenueFor: null,
     /** itemHrid → unit price, what `resolveItemPrice` answers with */
     itemPrices: {},
     /** The Bestiary as `getCharacterMonsters` hands it back; null until the tab has loaded it */
@@ -306,7 +312,7 @@ vi.mock('./combat-sim-adapter.js', () => ({
     calculateDungeonKeyCosts: () => [],
     calculateSimRevenue: (simResult, gameData, playerHrid) => {
         mocks.revenueCalls.push(playerHrid);
-        return { netPerHour: 0, costPerHour: 0, revenuePerHour: 0 };
+        return mocks.revenueFor?.(simResult, playerHrid) || { netPerHour: 0, costPerHour: 0, revenuePerHour: 0 };
     },
     // Faithful to the real one: coin untaxed, cowbell 18%, everything else the
     // 5% patch-live market rate the suite runs under
@@ -396,8 +402,9 @@ vi.mock('./all-zones-runner.js', () => ({
     runAllZonesSimulation: async (params) => {
         mocks.allZonesRuns++;
         mocks.allZonesArgs = params;
+        mocks.allZonesArgsLog.push(params);
         if (params.onProgress) params.onProgress(100);
-        return mocks.allZonesResult;
+        return mocks.allZonesResultFor ? mocks.allZonesResultFor(params) : mocks.allZonesResult;
     },
     cancelAllZonesSimulation: () => {},
 }));
@@ -534,6 +541,10 @@ const {
     runMatchesSimParty,
     resolveSimParty,
     historyEntryPlayer,
+    SOLO_VS_PARTY_MODE,
+    soloVsPartySets,
+    mergeSoloPartySweeps,
+    bestiaryPlanZoneForRow,
 } = await import('./combat-sim-ui.js');
 
 /** A result row shaped like the upgrade advisor's output. */
@@ -7320,5 +7331,355 @@ describe('the cost basis detail', () => {
             candidate: {},
         });
         expect(html).not.toContain('Enhance rates');
+    });
+});
+
+describe('Solo zones + party dungeons: one ranked table', () => {
+    const HOUR_NS = 3600 * 1e9;
+    const fly = { hrid: '/actions/combat/fly', name: 'Fly', maxSpawnCount: 3, maxDifficulty: 0, isDungeon: false };
+    const bog = { hrid: '/actions/combat/bog', name: 'Bog', maxSpawnCount: 1, maxDifficulty: 0, isDungeon: false };
+    const den = { hrid: '/actions/combat/den', name: 'Den', maxSpawnCount: 1, maxDifficulty: 0, isDungeon: true };
+    const party3 = () => ({
+        player1: { hrid: 'player1', equipment: {}, food: [null, null, null] },
+        player2: { hrid: 'player2', equipment: {}, food: [null, null, null] },
+        player3: { hrid: 'player3', equipment: {}, food: [null, null, null] },
+    });
+    /** A one-hour result whose players each earned `xpBy[hrid]` defense XP, and a tenth of it in gold */
+    const simFor = (xpBy, { numberOfPlayers = 1, isDungeon = false } = {}) => ({
+        simulatedTime: HOUR_NS,
+        encounters: 10,
+        numberOfPlayers,
+        isDungeon,
+        dungeonsCompleted: isDungeon ? 6 : 0,
+        dungeonsFailed: 0,
+        deaths: {},
+        experienceGained: Object.fromEntries(Object.entries(xpBy).map(([hrid, xp]) => [hrid, { defense: xp }])),
+        // Read back by the revenue stand-in: gold/hr per player
+        _net: Object.fromEntries(Object.entries(xpBy).map(([hrid, xp]) => [hrid, xp / 10])),
+    });
+    const tableRows = () =>
+        [...ui.panel.querySelectorAll('#mwi-csim-results tbody tr')].map((tr) =>
+            [...tr.querySelectorAll('td')].map((td) => td.textContent.trim())
+        );
+    const headers = () => [...ui.panel.querySelectorAll('#mwi-csim-results thead th')].map((th) => th.dataset.col);
+    const soloPartyBox = () => ui.panel.querySelector('#mwi-csim-allzones-soloparty');
+    const soloPartyLabel = () => ui.panel.querySelector('#mwi-csim-allzones-soloparty-label');
+
+    beforeEach(() => {
+        mocks.zones = [fly, bog, den];
+        mocks.editedDTOs = party3();
+        mocks.editorSelfHrid = 'player1';
+        // The tab open in the editor is not self: both sweeps must follow it
+        mocks.editorActivePlayer = 'player2';
+        mocks.editorSoloMode = false;
+        mocks.allZonesArgsLog = [];
+        mocks.allZonesRuns = 0;
+        mocks.revenueCalls = [];
+        mocks.revenueFor = (simResult, playerHrid) => {
+            const net = simResult?._net?.[playerHrid] || 0;
+            return { netPerHour: net, revenuePerHour: net, costPerHour: 0, dropEntries: [] };
+        };
+        // Solo sweep: Fly beats every dungeon tier, Bog sits between them.
+        // Party sweep: each player's own XP differs, and player1's 9,000 alone
+        // would outrank everything if the party's figures leaked in.
+        mocks.allZonesResultFor = (params) =>
+            params.zones.map((zone) => {
+                if (zone.zoneHrid === fly.hrid) return simFor({ player2: 300 });
+                if (zone.zoneHrid === bog.hrid) return simFor({ player2: 150 });
+                const own = [200, 100, null][zone.difficultyTier];
+                if (own === null) return null;
+                return simFor({ player1: 9000, player2: own, player3: 50 }, { numberOfPlayers: 3, isDungeon: true });
+            });
+        mocks.monsters = null;
+        ui.buildPanel();
+        // An earlier describe leaves these set, and Simulate/All Zones read them
+        ui._allZonesMode = null;
+        ui._includeDungeons = false;
+        ui._allZonesSnapshotMeta = null;
+        ui._allZonesSortCol = 'score';
+        ui._allZonesSortAsc = false;
+        ui._updateAllZonesUI();
+        ui._updateSoloPartyOffer();
+        vi.spyOn(ui, '_requestBestiary').mockImplementation(() => {});
+    });
+
+    afterEach(() => {
+        ui.destroy();
+        ui._allZonesMode = null;
+        mocks.editedDTOs = null;
+        mocks.editorSelfHrid = null;
+        mocks.editorActivePlayer = null;
+        mocks.editorSoloMode = false;
+        mocks.allZonesResultFor = null;
+        mocks.allZonesResult = [];
+        mocks.revenueFor = null;
+        mocks.monsters = null;
+        mocks.zones = [];
+        vi.restoreAllMocks();
+    });
+
+    describe('when it is offered', () => {
+        test('with a party loaded the checkbox shows, and checking it is its own mode', () => {
+            expect(soloPartyLabel().style.display).not.toBe('none');
+
+            ui.panel.querySelector('#mwi-csim-allzones-group').click();
+            soloPartyBox().click();
+
+            expect(ui._allZonesMode).toBe(SOLO_VS_PARTY_MODE);
+            expect(ui.panel.querySelector('#mwi-csim-allzones-group').checked).toBe(false);
+            expect(ui.panel.querySelector('#mwi-csim-allzones-solo').checked).toBe(false);
+            expect(ui.panel.querySelector('#mwi-csim-allzones-dungeons').checked).toBe(false);
+            // Every ordinary zone and every dungeon, under the set each runs as
+            expect([...ui.panel.querySelectorAll('.mwi-csim-zone-cb')].map((box) => box.dataset.hrid)).toEqual([
+                fly.hrid,
+                bog.hrid,
+                den.hrid,
+            ]);
+            expect([...ui.panel.querySelectorAll('.mwi-csim-zone-set-heading')].map((h) => h.textContent)).toEqual([
+                'Solo — zones',
+                'Party — dungeons',
+            ]);
+
+            // Any other mode takes over from it
+            ui.panel.querySelector('#mwi-csim-allzones-dungeons').click();
+            expect(ui._allZonesMode).toBe('dungeons');
+            expect(soloPartyBox().checked).toBe(false);
+        });
+
+        test('with one player loaded it is not offered, and a party lost mid-session leaves the mode', () => {
+            soloPartyBox().click();
+            expect(ui._allZonesMode).toBe(SOLO_VS_PARTY_MODE);
+
+            mocks.editedDTOs = { player1: party3().player1 };
+            ui._updateSoloPartyOffer();
+
+            expect(soloPartyLabel().style.display).toBe('none');
+            expect(soloPartyBox().checked).toBe(false);
+            expect(ui._allZonesMode).toBeNull();
+        });
+
+        test('with no editor party at all it is not offered', () => {
+            mocks.editedDTOs = null;
+            ui._updateSoloPartyOffer();
+            expect(soloPartyLabel().style.display).toBe('none');
+        });
+    });
+
+    describe('the run', () => {
+        beforeEach(() => {
+            soloPartyBox().click();
+        });
+
+        test('runs the selected player solo through the zones, then the full party through the dungeons', async () => {
+            await ui._onSimulateAllZones();
+
+            expect(mocks.allZonesArgsLog).toHaveLength(2);
+            const [soloRun, partyRun] = mocks.allZonesArgsLog;
+            expect(soloRun.playerDTOs.map((p) => p.hrid)).toEqual(['player2']);
+            expect(soloRun.zones).toEqual([
+                { zoneHrid: fly.hrid, difficultyTier: 0 },
+                { zoneHrid: bog.hrid, difficultyTier: 0 },
+            ]);
+            expect(partyRun.playerDTOs.map((p) => p.hrid).sort()).toEqual(['player1', 'player2', 'player3']);
+            expect(partyRun.zones).toEqual([0, 1, 2].map((tier) => ({ zoneHrid: den.hrid, difficultyTier: tier })));
+            // Both sweeps prune early-exit tiers by the player the table shows
+            expect(soloRun.playerHrid).toBe('player2');
+            expect(partyRun.playerHrid).toBe('player2');
+        });
+
+        test('the Solo checkbox does not narrow the party sweep', async () => {
+            mocks.editorSoloMode = true;
+
+            await ui._onSimulateAllZones();
+
+            expect(mocks.allZonesArgsLog[0].playerDTOs.map((p) => p.hrid)).toEqual(['player2']);
+            expect(mocks.allZonesArgsLog[1].playerDTOs).toHaveLength(3);
+        });
+
+        test('the merged table ranks both sets together and tags every row', async () => {
+            await ui._onSimulateAllZones();
+
+            expect(headers().slice(0, 3)).toEqual(['zone', 'tier', 'set']);
+            const rows = tableRows();
+            // Default sort is the Score (XP/hr and Profit/day blended): solo and
+            // party rows interleave by it rather than sitting in two blocks
+            expect(rows.map((cells) => [cells[0].split(/best|◎/)[0].trim(), cells[1], cells[2]])).toEqual([
+                ['Fly', 'T0', 'Solo'],
+                ['[D] Den', 'T0', 'Party'],
+                ['Bog', 'T0', 'Solo'],
+                ['[D] Den', 'T1', 'Party'],
+            ]);
+            expect(ui._allZonesResults.map((entry) => entry.set)).toEqual(['solo', 'solo', 'party', 'party']);
+            expect(text()).toContain('solo zones + party dungeons');
+            expect(text()).not.toContain('could not be drawn');
+        });
+
+        test("party rows are the selected player's own share, not the party's total", async () => {
+            await ui._onSimulateAllZones();
+
+            // Every row is priced for the selected player, party rows included
+            expect(new Set(mocks.revenueCalls)).toEqual(new Set(['player2']));
+            const xpCol = headers().indexOf('totalXP');
+            const profitCol = headers().indexOf('profit');
+            const denT0 = tableRows().find((cells) => cells[0].startsWith('[D] Den') && cells[1] === 'T0');
+            // player2's 200 XP/hr and 20 gold/hr, not player1's 9,000 or the party's 9,250
+            expect(denT0[xpCol]).toBe('200');
+            expect(denT0[profitCol]).toMatch(/^20/);
+        });
+
+        test('the headline names each winner with its set', async () => {
+            await ui._onSimulateAllZones();
+            expect(text()).toContain('Fly T0 (Solo)');
+        });
+
+        test('a mixed sweep is not written to the all-zones snapshot', async () => {
+            ui._allZonesSnapshotMeta = { ownerId: 'char1', meta: { hours: 1 } };
+            const before = await loadAllZonesSnapshot();
+
+            await ui._onSimulateAllZones();
+
+            expect(ui._allZonesSnapshotMeta).toBeNull();
+            expect(await loadAllZonesSnapshot()).toEqual(before);
+        });
+
+        test('refuses without a party that includes the selected player', async () => {
+            mocks.editorActivePlayer = 'player9';
+            mocks.editorSelfHrid = 'player9';
+
+            await ui._onSimulateAllZones();
+
+            expect(mocks.allZonesRuns).toBe(0);
+            expect(text()).toContain('needs a party of two or more');
+        });
+    });
+
+    describe('the Bestiary planner', () => {
+        const gameData = {
+            combatMonsterDetailMap: { '/monsters/fly': { name: 'Fly' }, '/monsters/goblin': { name: 'Goblin' } },
+        };
+        const soloEntry = {
+            zone: { name: 'Farm', difficultyTier: 0, zoneHrid: '/actions/combat/farm' },
+            simResult: {
+                simulatedTime: HOUR_NS,
+                encounters: 10,
+                numberOfPlayers: 1,
+                deaths: { player2: 0, '/monsters/fly': 10 },
+                experienceGained: { player2: { defense: 100 } },
+            },
+            revenue: { netPerHour: 1, revenuePerHour: 1, costPerHour: 0, dropEntries: [] },
+        };
+        const partyEntry = {
+            zone: { name: 'Den', difficultyTier: 1, zoneHrid: '/actions/combat/den' },
+            simResult: {
+                simulatedTime: HOUR_NS,
+                encounters: 300,
+                numberOfPlayers: 3,
+                isDungeon: true,
+                dungeonsCompleted: 6,
+                dungeonsFailed: 0,
+                deaths: { player2: 0, '/monsters/goblin': 60 },
+                experienceGained: { player2: { defense: 100 } },
+            },
+            revenue: { netPerHour: 1, revenuePerHour: 1, costPerHour: 0, dropEntries: [] },
+        };
+
+        test('plans a route through both sets and says which set each stop came from', async () => {
+            ui._activePlayerTab = 'player2';
+            ui._bestiaryPlanMode = 'hours';
+            mocks.monsters = [
+                { monsterHrid: '/monsters/fly', count: 8 },
+                { monsterHrid: '/monsters/goblin', count: 8 },
+            ];
+            await ui._displayAllZonesResults(mergeSoloPartySweeps([soloEntry], [partyEntry]), 1, gameData);
+
+            ui.panel.querySelector('#mwi-csim-bestiary-plan-value').value = '1';
+            ui.panel
+                .querySelector('#mwi-csim-bestiary-plan-btn')
+                .dispatchEvent(new window.Event('click', { bubbles: true }));
+
+            const stops = [...ui.panel.querySelectorAll('#mwi-csim-bestiary-plan-out tbody tr')].map((tr) =>
+                tr.querySelectorAll('td')[1].textContent.trim()
+            );
+            expect(stops).toEqual(expect.arrayContaining(['Farm T0 (Solo)▶', '[D] Den T1 (Party)▶']));
+            expect(ui._bestiaryPlanZones.map((zone) => zone.source)).toEqual(['solo', 'party']);
+        });
+
+        test('bestiaryPlanZoneForRow tags a row from a mixed sweep and leaves an ordinary row alone', () => {
+            const base = { zone: 'Farm', zoneHrid: '/actions/combat/farm', tier: 0, _creditsPerHour: {} };
+            expect(bestiaryPlanZoneForRow({ ...base, _set: 'solo' })).toMatchObject({
+                name: 'Farm T0 (Solo)',
+                source: 'solo',
+                zoneHrid: '/actions/combat/farm|T0',
+            });
+            const plain = bestiaryPlanZoneForRow(base);
+            expect(plain.name).toBe('Farm T0');
+            expect(plain).not.toHaveProperty('source');
+        });
+    });
+
+    describe('the existing modes are unchanged', () => {
+        test('Sim All Zones still runs one sweep, draws no Set column and saves its snapshot', async () => {
+            ui.panel.querySelector('#mwi-csim-allzones-group').click();
+            // The worn-gear path: the editor stand-in has no loadout name to record
+            mocks.editedDTOs = null;
+
+            await ui._onSimulateAllZones();
+
+            expect(mocks.allZonesArgsLog).toHaveLength(1);
+            expect(mocks.allZonesArgsLog[0].zones).toEqual([{ zoneHrid: fly.hrid, difficultyTier: 0 }]);
+            expect(headers()).not.toContain('set');
+            expect(ui._allZonesResults.every((entry) => !('set' in entry))).toBe(true);
+            expect(ui._allZonesSnapshotMeta).not.toBeNull();
+        });
+
+        test('Sim All Dungeons still runs the party it is given, once', async () => {
+            ui.panel.querySelector('#mwi-csim-allzones-dungeons').click();
+
+            await ui._onSimulateAllZones();
+
+            expect(mocks.allZonesArgsLog).toHaveLength(1);
+            expect(mocks.allZonesArgsLog[0].playerDTOs).toHaveLength(3);
+            expect(headers()).not.toContain('set');
+        });
+    });
+});
+
+describe('the Solo zones + party dungeons helpers', () => {
+    test('soloVsPartySets: the selected player alone, and the whole party', () => {
+        const party = [{ hrid: 'player1' }, { hrid: 'player2' }];
+        expect(soloVsPartySets(party, 'player2')).toEqual({
+            solo: [{ hrid: 'player2' }],
+            party,
+            playerHrid: 'player2',
+        });
+        expect(soloVsPartySets([{ hrid: 'player1' }], 'player1')).toBeNull();
+        expect(soloVsPartySets(party, 'player9')).toBeNull();
+    });
+
+    test('mergeSoloPartySweeps tags each entry and leaves the inputs alone', () => {
+        const solo = [{ zone: 'a' }];
+        const party = [{ zone: 'b' }, null];
+        expect(mergeSoloPartySweeps(solo, party)).toEqual([
+            { zone: 'a', set: 'solo' },
+            { zone: 'b', set: 'party' },
+        ]);
+        expect(solo[0]).not.toHaveProperty('set');
+    });
+
+    test('resolveSimParty: an explicit solo overrides the checkbox either way', () => {
+        const editedDTOs = { player1: { hrid: 'player1' }, player2: { hrid: 'player2' } };
+        const playerInfo = [
+            { hrid: 'player1', name: 'Alice' },
+            { hrid: 'player2', name: 'Bob' },
+        ];
+        const checked = fakeEditor({ playerInfo, selfHrid: 'player1', activeEditPlayer: 'player2', soloMode: true });
+        expect(resolveSimParty(checked, editedDTOs, { solo: false }).playerDTOs).toHaveLength(2);
+
+        const unchecked = fakeEditor({ playerInfo, selfHrid: 'player1', activeEditPlayer: 'player2' });
+        const forced = resolveSimParty(unchecked, editedDTOs, { solo: true });
+        expect(forced.playerDTOs).toEqual([{ hrid: 'player2' }]);
+        expect(forced.selfHrid).toBe('player2');
+        // No override: the checkbox decides, as before
+        expect(resolveSimParty(unchecked, editedDTOs).playerDTOs).toHaveLength(2);
     });
 });

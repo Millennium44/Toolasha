@@ -829,18 +829,23 @@ export function gearFingerprint(playerDTOs) {
  *
  * @param {import('./sim-editor.js').SimEditor} editor
  * @param {Object<string, Object>} editedDTOs - hrid -> DTO, as `editor.getEditedDTOs()` returns it
+ * @param {Object} [options]
+ * @param {boolean} [options.solo] - Force Solo on or off regardless of the editor's checkbox
  * @returns {{playerDTOs: Array<Object>, playerInfo: Array<{hrid: string, name: string}>,
  *   trueSelfHrid: string|null, selfHrid: string, missingMembers: Array,
  *   profileStatus: Array, soloApplied: boolean}}
  */
-export function resolveSimParty(editor, editedDTOs) {
+export function resolveSimParty(editor, editedDTOs, { solo } = {}) {
     const allDTOs = Object.values(editedDTOs || {});
     const playerInfo = editor?.getPlayerInfo() || [];
     const trueSelfHrid = editor?.getSelfHrid() || null;
     const missingMembers = editor?.getMissingMembers() || [];
     const profileStatus = editor?.getProfileStatus?.() || [];
+    // An explicit `solo` overrides the checkbox — the Solo zones + party
+    // dungeons sweep needs both answers from one editor, whatever it says
+    const soloWanted = typeof solo === 'boolean' ? solo : Boolean(editor?.getSoloMode?.());
 
-    if (editor?.getSoloMode?.() && allDTOs.length > 1) {
+    if (soloWanted && allDTOs.length > 1) {
         const soloHrid = editor.getActiveEditPlayer?.() || trueSelfHrid || allDTOs[0].hrid;
         const soloDTO = editedDTOs[soloHrid];
         if (soloDTO) {
@@ -887,6 +892,57 @@ export function resolveSimParty(editor, editedDTOs) {
 export function historyEntryPlayer(entry) {
     if (entry?.partySize !== 1 || !entry.playerHrid) return null;
     return { hrid: entry.playerHrid, playerInfo: Array.isArray(entry.playerInfo) ? entry.playerInfo : null };
+}
+
+/**
+ * The All Zones mode that ranks the selected player solo in every ordinary
+ * zone against the whole loaded party in every dungeon, in one table.
+ */
+export const SOLO_VS_PARTY_MODE = 'soloVsParty';
+
+/**
+ * The two player sets a Solo zones + party dungeons sweep simulates: the
+ * selected player alone, and the full party they are part of.
+ *
+ * Both sweeps are read for the same player (`playerHrid`) — a party dungeon
+ * row is that player's own XP, drops and consumables, never the party's sum —
+ * so the two sets rank against each other per character.
+ *
+ * @param {Array<Object>} partyDTOs - Every loaded player's DTO
+ * @param {string|null} playerHrid - The selected player
+ * @returns {{solo: Array<Object>, party: Array<Object>, playerHrid: string}|null}
+ *   null when there is no party (fewer than two players) or the selected player is not in it
+ */
+export function soloVsPartySets(partyDTOs, playerHrid) {
+    const party = Array.isArray(partyDTOs) ? partyDTOs.filter(Boolean) : [];
+    if (party.length < 2) return null;
+    const selected = party.find((dto) => dto.hrid === playerHrid);
+    if (!selected) return null;
+    return { solo: [selected], party, playerHrid };
+}
+
+/**
+ * One results list out of a solo sweep and a party sweep, each entry tagged
+ * with the set it came from. The table ranks the merged list as one.
+ *
+ * @param {Array<Object>} soloEntries - `{zone, simResult, revenue}` from the solo sweep
+ * @param {Array<Object>} partyEntries - The same, from the party sweep
+ * @returns {Array<Object>} Tagged copies, solo first; the inputs are left alone
+ */
+export function mergeSoloPartySweeps(soloEntries, partyEntries) {
+    const tag = (entries, set) => (Array.isArray(entries) ? entries.filter(Boolean).map((e) => ({ ...e, set })) : []);
+    return [...tag(soloEntries, 'solo'), ...tag(partyEntries, 'party')];
+}
+
+/**
+ * The table's label for a row's set.
+ * @param {string|null|undefined} set - 'solo', 'party', or nothing for a single-set sweep
+ * @returns {string|null}
+ */
+function sweepSetLabel(set) {
+    if (set === 'solo') return 'Solo';
+    if (set === 'party') return 'Party';
+    return null;
 }
 
 /**
@@ -971,6 +1027,13 @@ export function bestiaryPlanZoneForRow(row, runs = [], who = {}) {
         // planBestiaryRoute's tolerancePercent
         score: row.score,
     };
+    // A Solo zones + party dungeons sweep plans across both sets; the name is
+    // what the plan prints, so the set rides on it
+    const setLabel = sweepSetLabel(row._set);
+    if (setLabel) {
+        zone.name = `${zone.name} (${setLabel})`;
+        zone.source = row._set;
+    }
     if (!row._dungeon) return withNote(zone, partySizeNote);
 
     const simHours = Number(row._dungeon.simHours) || 0;
@@ -2348,6 +2411,10 @@ class CombatSimUI {
                 <input type="checkbox" id="mwi-csim-allzones-dungeons" style="${checkboxStyle}">
                 Sim All Dungeons
             </label>
+            <label id="mwi-csim-allzones-soloparty-label" style="${labelStyle} display:none;" title="Rank the selected player solo in every ordinary zone against the whole loaded party in every dungeon, in one table. Party rows are the selected player's own share of XP and loot. Only offered while a party is loaded.">
+                <input type="checkbox" id="mwi-csim-allzones-soloparty" style="${checkboxStyle}">
+                Solo zones + party dungeons
+            </label>
             <label id="mwi-csim-allzones-hours-label" style="color:#888; font-size:12px; display:none;">Hours</label>
             <input id="mwi-csim-allzones-hours" type="number" min="1" max="10000" value="${config.getSettingValue('combatSim_allZonesDefaultHours', 10)}" style="display:none; width:60px; background:#1a1a2e; color:#e0e0e0; border:1px solid #444; border-radius:4px; padding:3px 6px; font-size:12px; text-align:center;">
             <label id="mwi-csim-earlyexit-label" style="${labelStyle} display:none;" title="Stop simming higher tiers for a zone if both XP/hr and profit/hr declined vs the previous tier">
@@ -2391,6 +2458,8 @@ class CombatSimUI {
             labMode: false,
             soloMode: config.getSettingValue('combatSim_soloMode', false),
             onSoloModeChange: (value) => config.setSettingValue('combatSim_soloMode', value),
+            // The Solo zones + party dungeons mode is offered only with a party loaded
+            onRender: () => this._updateSoloPartyOffer(),
         });
         // The same setting is on the Settings page: a change there while this
         // panel is open must reach the editor, or the next run uses the old value
@@ -2871,10 +2940,15 @@ class CombatSimUI {
         this.panel.querySelector('#mwi-csim-zone').addEventListener('change', () => this._updateTierDropdown());
 
         // All Zones toggles
+        const uncheckSoloParty = () => {
+            const box = this.panel.querySelector('#mwi-csim-allzones-soloparty');
+            if (box) box.checked = false;
+        };
         this.panel.querySelector('#mwi-csim-allzones-group').addEventListener('change', (e) => {
             if (e.target.checked) {
                 this.panel.querySelector('#mwi-csim-allzones-solo').checked = false;
                 this.panel.querySelector('#mwi-csim-allzones-dungeons').checked = false;
+                uncheckSoloParty();
                 this._allZonesMode = 'group';
             } else {
                 this._allZonesMode = null;
@@ -2885,6 +2959,7 @@ class CombatSimUI {
             if (e.target.checked) {
                 this.panel.querySelector('#mwi-csim-allzones-group').checked = false;
                 this.panel.querySelector('#mwi-csim-allzones-dungeons').checked = false;
+                uncheckSoloParty();
                 this._allZonesMode = 'solo';
             } else {
                 this._allZonesMode = null;
@@ -2895,12 +2970,25 @@ class CombatSimUI {
             if (e.target.checked) {
                 this.panel.querySelector('#mwi-csim-allzones-group').checked = false;
                 this.panel.querySelector('#mwi-csim-allzones-solo').checked = false;
+                uncheckSoloParty();
                 this._allZonesMode = 'dungeons';
             } else {
                 this._allZonesMode = null;
             }
             this._updateAllZonesUI();
         });
+        this.panel.querySelector('#mwi-csim-allzones-soloparty').addEventListener('change', (e) => {
+            if (e.target.checked) {
+                this.panel.querySelector('#mwi-csim-allzones-group').checked = false;
+                this.panel.querySelector('#mwi-csim-allzones-solo').checked = false;
+                this.panel.querySelector('#mwi-csim-allzones-dungeons').checked = false;
+                this._allZonesMode = SOLO_VS_PARTY_MODE;
+            } else {
+                this._allZonesMode = null;
+            }
+            this._updateAllZonesUI();
+        });
+        this._updateSoloPartyOffer();
 
         // Early exit toggle
         this.panel.querySelector('#mwi-csim-earlyexit').addEventListener('change', (e) => {
@@ -3004,6 +3092,35 @@ class CombatSimUI {
             ''
         );
         tierSelect.value = String(Math.min(currentTier, maxTier));
+    }
+
+    /**
+     * Whether more than one player is loaded — the Solo zones + party dungeons
+     * mode has no party to compare against otherwise.
+     * @returns {boolean}
+     * @private
+     */
+    _hasPartyLoaded() {
+        return (this._editor?.getPlayerInfo?.() || []).length > 1;
+    }
+
+    /**
+     * Show the Solo zones + party dungeons checkbox only while a party is
+     * loaded. Losing the party while the mode is on leaves the mode, the same
+     * as unchecking it: with one player, Sim All Zones already covers it.
+     * @private
+     */
+    _updateSoloPartyOffer() {
+        const label = this.panel?.querySelector('#mwi-csim-allzones-soloparty-label');
+        const box = this.panel?.querySelector('#mwi-csim-allzones-soloparty');
+        if (!label || !box) return;
+        const offered = this._hasPartyLoaded();
+        label.style.display = offered ? 'flex' : 'none';
+        box.checked = offered && this._allZonesMode === SOLO_VS_PARTY_MODE;
+        if (!offered && this._allZonesMode === SOLO_VS_PARTY_MODE && !this._isBusy()) {
+            this._allZonesMode = null;
+            this._updateAllZonesUI();
+        }
     }
 
     /**
@@ -3154,7 +3271,10 @@ class CombatSimUI {
         const checklist = this.panel?.querySelector('#mwi-csim-zone-checklist');
         if (!checklist) return;
 
+        const soloVsParty = this._allZonesMode === SOLO_VS_PARTY_MODE;
         const zones = getCombatZones().filter((z) => {
+            // Every ordinary zone (run solo) and every dungeon (run as the party)
+            if (soloVsParty) return true;
             if (this._allZonesMode === 'dungeons') return z.isDungeon;
             if (z.isDungeon) return false;
             if (this._allZonesMode === 'group') return z.maxSpawnCount > 1;
@@ -3170,7 +3290,21 @@ class CombatSimUI {
             </label>
         `;
 
+        // Ordinary zones first, then dungeons, each under the set it runs as
+        if (soloVsParty) zones.sort((a, b) => Number(Boolean(a.isDungeon)) - Number(Boolean(b.isDungeon)));
+        let heading = null;
         for (const zone of zones) {
+            if (soloVsParty) {
+                const want = zone.isDungeon ? 'Party — dungeons' : 'Solo — zones';
+                if (want !== heading) {
+                    heading = want;
+                    const head = document.createElement('div');
+                    head.className = 'mwi-csim-zone-set-heading';
+                    head.style.cssText = 'color:#888; font-size:10px; font-weight:600; margin:4px 0 1px;';
+                    head.textContent = want;
+                    checklist.appendChild(head);
+                }
+            }
             const label = document.createElement('label');
             label.style.cssText =
                 'display:flex; align-items:center; gap:4px; color:#ccc; font-size:11px; padding:1px 0; cursor:pointer;';
@@ -3212,7 +3346,7 @@ class CombatSimUI {
         // The Bestiary planner can still add every dungeon to an ordinary zone
         // sweep. Append those last so the ordinary rows keep their old order;
         // dungeon-only mode already gets its selected dungeons from the checklist.
-        if (this._includeDungeons && this._allZonesMode !== 'dungeons') {
+        if (this._includeDungeons && this._allZonesMode !== 'dungeons' && this._allZonesMode !== SOLO_VS_PARTY_MODE) {
             for (const zone of allZones.filter((z) => z.isDungeon)) {
                 // T0-T2, the same range the Configure tier dropdown offers
                 for (let t = 0; t <= DUNGEON_MAX_TIER; t++) {
@@ -3309,7 +3443,7 @@ class CombatSimUI {
         const parts = [];
         const foodNote = this._allZonesFoodNoteHtml();
         if (foodNote) parts.push(foodNote);
-        const name = (row) => `${row.zone} T${row.tier}`;
+        const name = (row) => `${row.zone} T${row.tier}${row.set ? ` (${row.set})` : ''}`;
         if (best.xp) {
             parts.push(
                 `<span style="color:#8ab4f8;">Best XP</span> <span style="color:#e0e0e0;">${name(best.xp)}</span>` +
@@ -3525,6 +3659,10 @@ class CombatSimUI {
                     zone: dungeon ? `[D] ${r.zone.name}` : r.zone.name,
                     zoneHrid: r.zone.zoneHrid || r.zone.hrid,
                     tier: r.zone.difficultyTier,
+                    // Which sweep of a Solo zones + party dungeons run this came
+                    // from; null (and no Set column) for every other run
+                    set: sweepSetLabel(r.set),
+                    _set: r.set || null,
                     _dungeon: dungeon,
                     encounters,
                     deaths: playerDeaths,
@@ -3638,9 +3776,22 @@ class CombatSimUI {
         // run can still include dungeons even when the mode itself isn't
         // "dungeons only".
         const hasDungeonRows = rows.some((row) => row._dungeon);
+        const hasSetRows = rows.some((row) => row.set);
         const cols = [
             { key: 'zone', label: 'Zone' },
             { key: 'tier', label: 'T' },
+            ...(hasSetRows
+                ? [
+                      {
+                          key: 'set',
+                          label: 'Set',
+                          title:
+                              'Solo: the selected player alone in an ordinary zone. Party: the whole loaded party in a ' +
+                              "dungeon, with XP, loot, keys and consumables the selected player's own share — so both " +
+                              'rank per character.',
+                      },
+                  ]
+                : []),
             { key: 'encounters', label: 'Enc/hr' },
             { key: 'deaths', label: 'Deaths/hr' },
             ...(hasDungeonRows
@@ -3706,7 +3857,10 @@ class CombatSimUI {
         // those columns being hidden — fall back to the table's default sort
         // (Score, descending) rather than sorting by a column nobody can see.
         const dungeonOnlyCols = new Set(['clearsPerDay', 'failsPerDay', 'avgClearTime']);
-        if (!hasDungeonRows && dungeonOnlyCols.has(this._allZonesSortCol)) {
+        if (
+            (!hasDungeonRows && dungeonOnlyCols.has(this._allZonesSortCol)) ||
+            (!hasSetRows && this._allZonesSortCol === 'set')
+        ) {
             this._allZonesSortCol = 'score';
             this._allZonesSortAsc = false;
         }
@@ -3749,7 +3903,7 @@ class CombatSimUI {
         const maxVals = {};
         const minVals = {};
         for (const col of cols) {
-            if (col.key === 'zone' || col.key === 'tier') continue;
+            if (col.key === 'zone' || col.key === 'tier' || col.key === 'set') continue;
             const values = rows.map((r) => r[col.key] || 0);
             maxVals[col.key] = Math.max(...values);
             minVals[col.key] = Math.min(...values);
@@ -3759,7 +3913,8 @@ class CombatSimUI {
         const headerCells = cols
             .map((col) => {
                 const arrow = this._allZonesSortCol === col.key ? (this._allZonesSortAsc ? ' ▲' : ' ▼') : '';
-                const align = col.key === 'zone' ? 'left' : col.key === 'tier' ? 'center' : 'right';
+                const align =
+                    col.key === 'zone' ? 'left' : col.key === 'tier' || col.key === 'set' ? 'center' : 'right';
                 const title = col.title ? ` title="${col.title}"` : '';
                 return (
                     `<th data-col="${col.key}"${title} style="padding:3px 4px; cursor:pointer; white-space:nowrap; ` +
@@ -3801,6 +3956,13 @@ class CombatSimUI {
                         } else if (col.key === 'tier') {
                             display = `T${val}`;
                             style += ' color:#888; text-align:center;';
+                        } else if (col.key === 'set') {
+                            display = val
+                                ? `<span style="${ROW_NOTE_STYLE} margin-left:0; background:${
+                                      row._set === 'party' ? 'rgba(186,104,200,0.16)' : 'rgba(74,158,255,0.12)'
+                                  }; color:${row._set === 'party' ? '#ce93d8' : '#8ab4f8'};">${val}</span>`
+                                : '—';
+                            style += ' text-align:center;';
                         } else if (col.key === 'bestiary') {
                             const outlook = row._bestiary;
                             if (!outlook) {
@@ -3946,6 +4108,7 @@ class CombatSimUI {
             columns: [
                 { key: 'zone', label: 'Zone' },
                 { key: 'tier', label: 'Tier' },
+                ...(hasSetRows ? [{ key: 'set', label: 'Set' }] : []),
                 ...(maxTierFood ? [{ key: 'food', label: 'Food' }] : []),
                 { key: 'encounters', label: 'Encounters/hr' },
                 { key: 'deaths', label: 'Deaths/hr' },
@@ -3978,7 +4141,7 @@ class CombatSimUI {
                     this._allZonesSortAsc = !this._allZonesSortAsc;
                 } else {
                     this._allZonesSortCol = col;
-                    this._allZonesSortAsc = col === 'zone'; // Ascending for zone name, descending for numbers
+                    this._allZonesSortAsc = col === 'zone' || col === 'set'; // Ascending for names, descending for numbers
                 }
                 // Read the live results rather than the `zoneResults` this render
                 // closed over: a reprice (`_repriceAllZonesResults`) may have
@@ -4162,7 +4325,7 @@ class CombatSimUI {
                     // dungeon to the next run. A Dungeons run is nothing but
                     // dungeons already, so there it would be a switch that
                     // changes nothing — and it never filtered the plan.
-                    this._allZonesMode === 'dungeons'
+                    this._allZonesMode === 'dungeons' || this._allZonesMode === SOLO_VS_PARTY_MODE
                         ? ''
                         : `<label style="color:#888; display:flex; align-items:center; gap:4px; cursor:pointer;" title="Simulate every dungeon at T0-T2 as well, and let the plan send you into one. Dungeon rows are marked [D] and are planned at the clear time your own runs at that tier measured, where there are any. Takes effect on the next All Zones run.">
                     <input id="mwi-csim-bestiary-plan-dungeons" type="checkbox"${this._includeDungeons ? ' checked' : ''} style="margin:0; cursor:pointer;">
@@ -4571,6 +4734,8 @@ class CombatSimUI {
         if (groupBox) groupBox.checked = false;
         if (soloBox) soloBox.checked = false;
         if (dungeonBox) dungeonBox.checked = false;
+        const soloPartyBox = this.panel.querySelector('#mwi-csim-allzones-soloparty');
+        if (soloPartyBox) soloPartyBox.checked = false;
         this._updateAllZonesUI();
 
         const zoneSelect = this.panel.querySelector('#mwi-csim-zone');
@@ -5400,6 +5565,9 @@ class CombatSimUI {
             this._setStatus('No zones selected.');
             return;
         }
+        // Taken with the zones, before the players load: the checklist it was
+        // built from is this mode's, whatever the checkbox says by then
+        const soloVsParty = this._allZonesMode === SOLO_VS_PARTY_MODE;
 
         const hours = Math.min(
             10000,
@@ -5426,8 +5594,14 @@ class CombatSimUI {
         try {
             editedDTOs = this._editor?.getEditedDTOs();
             if (editedDTOs) {
-                // Same Solo narrowing as the single-zone run — see resolveSimParty()
-                const resolved = resolveSimParty(this._editor, editedDTOs);
+                // Same Solo narrowing as the single-zone run — see resolveSimParty().
+                // Solo zones + party dungeons loads the whole party whatever the
+                // Solo checkbox says, and reads both sweeps for the player Solo
+                // would have narrowed to.
+                const resolved = resolveSimParty(this._editor, editedDTOs, soloVsParty ? { solo: false } : {});
+                const selectedHrid = soloVsParty
+                    ? resolveSimParty(this._editor, editedDTOs, { solo: true }).selfHrid
+                    : resolved.selfHrid;
                 playerDTOs = resolved.playerDTOs;
                 soloOtherMember = resolved.soloApplied && resolved.trueSelfHrid === null;
                 // The roster the bestiary pace matches recorded runs against (`runMatchesSimParty`);
@@ -5439,7 +5613,7 @@ class CombatSimUI {
                 // player's tab is open in a previous single-zone result" — left
                 // alone here, a party where self isn't player1 would price this
                 // run for whoever's tab a past result happened to leave selected.
-                this._activePlayerTab = resolved.selfHrid;
+                this._activePlayerTab = selectedHrid;
             } else {
                 const result = await buildAllPlayerDTOs();
                 playerDTOs = result.players;
@@ -5475,10 +5649,20 @@ class CombatSimUI {
                 .map((z) => z.hrid)
         );
         const dungeonsOnly = selectedZones.every((z) => dungeonIds.has(z.zoneHrid));
-        const maxParty = dungeonsOnly ? DUNGEON_MAX_PARTY : ZONE_MAX_PARTY;
+        if (soloVsParty) {
+            // The ordinary zones run one player; only the dungeons take the party
+            if (!soloVsPartySets(playerDTOs, this._activePlayerTab)) {
+                this._setStatus(
+                    'Solo zones + party dungeons needs a party of two or more loaded, including the selected player.'
+                );
+                return;
+            }
+        }
+        const partyCapIsDungeons = dungeonsOnly || soloVsParty;
+        const maxParty = partyCapIsDungeons ? DUNGEON_MAX_PARTY : ZONE_MAX_PARTY;
         if (playerDTOs.length > maxParty) {
             this._showWarning(
-                dungeonsOnly
+                partyCapIsDungeons
                     ? `Dungeons support max ${DUNGEON_MAX_PARTY} players (you have ${playerDTOs.length}). Remove players to continue.`
                     : `Non-dungeon zones support max ${ZONE_MAX_PARTY} players (you have ${playerDTOs.length}). Remove players to continue.`
             );
@@ -5498,6 +5682,26 @@ class CombatSimUI {
         }
         this._allZonesMaxTierFood = useMaxTierFood;
         this._allZonesFoodSwaps = foodSwaps;
+
+        // One sweep for an ordinary run. Solo zones + party dungeons is two: the
+        // selected player alone through the ordinary zones, then the whole party
+        // through the dungeons — built after the food swap so both run on it.
+        let sweeps = [{ set: null, playerDTOs, zones: selectedZones }];
+        if (soloVsParty) {
+            const sets = soloVsPartySets(playerDTOs, this._activePlayerTab);
+            sweeps = [
+                {
+                    set: 'solo',
+                    playerDTOs: sets.solo,
+                    zones: selectedZones.filter((z) => !dungeonIds.has(z.zoneHrid)),
+                },
+                {
+                    set: 'party',
+                    playerDTOs: sets.party,
+                    zones: selectedZones.filter((z) => dungeonIds.has(z.zoneHrid)),
+                },
+            ].filter((sweep) => sweep.zones.length);
+        }
 
         const communityBuffs = getCommunityBuffs();
 
@@ -5536,27 +5740,40 @@ class CombatSimUI {
         }, 100);
 
         try {
-            const zones = selectedZones.map((z) => ({ zoneHrid: z.zoneHrid, difficultyTier: z.difficultyTier }));
-
-            const simResults = await runAllZonesSimulation(
-                {
-                    gameData,
-                    playerDTOs,
-                    zones,
-                    hours,
-                    communityBuffs,
-                    useEarlyExit: this._earlyExitEnabled,
-                    // The early-exit decision must read the same player the ranked
-                    // table shows, or it prunes tiers by a figure the user never sees
-                    playerHrid: this._activePlayerTab || 'player1',
-                },
-                (percent) => {
-                    if (!this._isCurrentRun(ownerId, startToken)) return;
-                    const { text: remaining } = eta.update(percent / 100);
-                    progressFill.style.width = `${percent}%`;
-                    progressText.textContent = remaining ? `${percent}% · ${remaining}` : `${percent}%`;
-                }
-            );
+            // Sweeps run one after another, the progress bar covering all of
+            // them in proportion to their zone counts
+            const sweepRuns = [];
+            let zonesDone = 0;
+            for (const sweep of sweeps) {
+                const zones = sweep.zones.map((z) => ({ zoneHrid: z.zoneHrid, difficultyTier: z.difficultyTier }));
+                const offset = zonesDone;
+                const simResults = await runAllZonesSimulation(
+                    {
+                        gameData,
+                        playerDTOs: sweep.playerDTOs,
+                        zones,
+                        hours,
+                        communityBuffs,
+                        useEarlyExit: this._earlyExitEnabled,
+                        // The early-exit decision must read the same player the ranked
+                        // table shows, or it prunes tiers by a figure the user never sees
+                        playerHrid: this._activePlayerTab || 'player1',
+                    },
+                    (sweepPercent) => {
+                        if (!this._isCurrentRun(ownerId, startToken)) return;
+                        const percent =
+                            sweeps.length === 1
+                                ? sweepPercent
+                                : Math.round(((offset + (sweepPercent / 100) * zones.length) / zoneCount) * 100);
+                        const { text: remaining } = eta.update(percent / 100);
+                        progressFill.style.width = `${percent}%`;
+                        progressText.textContent = remaining ? `${percent}% · ${remaining}` : `${percent}%`;
+                    }
+                );
+                if (!this._isCurrentRun(ownerId, startToken)) return;
+                sweepRuns.push({ sweep, simResults });
+                zonesDone += zones.length;
+            }
 
             clearInterval(elapsedTimer);
             if (!this._isCurrentRun(ownerId, startToken)) return;
@@ -5570,26 +5787,36 @@ class CombatSimUI {
             // what is actually happening instead of freezing on stale words.
             this._setStatus(`Finalizing ${zoneCount} zones' results...`);
 
-            // Build zone results with revenue calculations
+            // Build zone results with revenue calculations. Every sweep is read
+            // for the same player: in a party dungeon that is this player's own
+            // XP, chest share, keys and consumables — never the party's sum —
+            // so a party row ranks against a solo row per character.
             const playerHrid = this._activePlayerTab || 'player1';
-            const zoneResults = simResults
-                .map((simResult, i) => {
-                    if (!simResult) return null;
+            const entriesFor = ({ sweep, simResults }) =>
+                simResults
+                    .map((simResult, i) => {
+                        if (!simResult) return null;
 
-                    let revenue = null;
-                    try {
-                        revenue = calculateSimRevenue(simResult, gameData, playerHrid, hours);
-                    } catch {
-                        // Revenue calculation may not be available
-                    }
+                        let revenue = null;
+                        try {
+                            revenue = calculateSimRevenue(simResult, gameData, playerHrid, hours);
+                        } catch {
+                            // Revenue calculation may not be available
+                        }
 
-                    return {
-                        zone: selectedZones[i],
-                        simResult,
-                        revenue,
-                    };
-                })
-                .filter(Boolean);
+                        return {
+                            zone: sweep.zones[i],
+                            simResult,
+                            revenue,
+                        };
+                    })
+                    .filter(Boolean);
+            const zoneResults = soloVsParty
+                ? mergeSoloPartySweeps(
+                      entriesFor(sweepRuns.find((run) => run.sweep.set === 'solo') || { simResults: [] }),
+                      entriesFor(sweepRuns.find((run) => run.sweep.set === 'party') || { simResults: [] })
+                  )
+                : entriesFor(sweepRuns[0]);
 
             this._allZonesSortCol = 'score';
             this._allZonesSortAsc = false;
@@ -5604,8 +5831,12 @@ class CombatSimUI {
             // character's zone profits to every reader, indefinitely. The same
             // holds for a Solo sweep of another party member: the snapshot is
             // read as this character's own forecast, so theirs is not written
-            // (and a later re-price has no saved sweep to rewrite).
-            if (soloOtherMember) {
+            // (and a later re-price has no saved sweep to rewrite). A mixed
+            // Solo zones + party dungeons sweep is not saved either: the
+            // snapshot records one party size for the whole run, and the
+            // ranked action list reading it would take party dungeon rows for
+            // solo ones or the reverse.
+            if (soloOtherMember || soloVsParty) {
                 this._allZonesSnapshotMeta = null;
             } else if (this._stillSameCharacter(ownerId)) {
                 // A pricing change during the run is replayed on screen after it ends,
@@ -5642,6 +5873,7 @@ class CombatSimUI {
             this._switchTab('results');
             this._setStatus(
                 `All zones complete in ${totalElapsed}: ${zoneCount} zones · ${formatWithSeparator(hours)} hours each` +
+                    (soloVsParty ? ' · solo zones + party dungeons' : '') +
                     (useMaxTierFood ? ' · max-tier food' : '')
             );
         } catch (error) {

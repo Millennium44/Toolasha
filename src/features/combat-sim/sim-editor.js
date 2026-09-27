@@ -77,8 +77,17 @@ export class SimEditor {
      * @param {boolean} [options.soloMode=false] - Initial state of the Solo checkbox (combat mode only)
      * @param {Function} [options.onSoloModeChange] - Called with the new boolean whenever the
      *   Solo checkbox is toggled by hand, so the owner can persist it
+     * @param {Function} [options.onRender] - Called after every full editor render, so the owner
+     *   can follow the loaded roster (e.g. offer a mode only while a party is loaded)
      */
-    constructor({ editorEl, labMode = false, skillingMode = false, soloMode = false, onSoloModeChange = null }) {
+    constructor({
+        editorEl,
+        labMode = false,
+        skillingMode = false,
+        soloMode = false,
+        onSoloModeChange = null,
+        onRender = null,
+    }) {
         this._editorEl = editorEl;
         this.labMode = labMode;
         this.skillingMode = skillingMode;
@@ -125,6 +134,7 @@ export class SimEditor {
         // roster, fetched loadouts and edits untouched underneath it.
         this._soloMode = Boolean(soloMode);
         this._onSoloModeChange = onSoloModeChange;
+        this._onRender = onRender;
     }
 
     getEditedDTOs() {
@@ -1004,9 +1014,21 @@ export class SimEditor {
     }
 
     /**
-     * Render the loadout editor for the active player.
+     * Render the loadout editor for the active player, then tell the owner
+     * (`onRender`) — every roster change (a party load, an import, a removed
+     * player) goes through here. A failing listener never breaks the editor.
      */
     renderEditor() {
+        this._renderEditorBody();
+        try {
+            this._onRender?.();
+        } catch (error) {
+            console.error('[SimEditor] onRender listener failed:', error);
+        }
+    }
+
+    /** @private */
+    _renderEditorBody() {
         const editorArea = this._editorEl;
         if (!editorArea || !this._editedDTOs) return;
 
