@@ -487,12 +487,30 @@ class PhiloCalculator {
      * the values in hand — unless they are another character's, which must
      * not stand in for this one's nor be folded into their record.
      */
+    /** The calculator's per-character options at their constructor defaults */
+    resetSettingsToDefaults() {
+        this.useCatalyst = true;
+        this.useCatalyticTea = false;
+        this.drinkConcentrationLevel = null;
+        this.hideNegativeProfitItems = true;
+        this.filterText = '';
+        this.pricingMode = DEFAULT_PRICING_MODE;
+        this.ownInputs = false;
+        this.keepPhilo = false;
+        this.itemCostOverrides = {};
+    }
+
     async loadSettings() {
         try {
             const who = dataManager.getCurrentCharacterId?.() || null;
             if (who !== settingsOwner) {
                 settingsRecord.reset();
                 settingsOwner = who;
+                // Back to defaults before reading the new owner's record: when
+                // it is empty or unreadable, the block below assigns nothing,
+                // and the previous character's choices (own-use toggles, cost
+                // overrides) would silently price this character's rows.
+                this.resetSettingsToDefaults();
             }
             const previous = settingsRecord.get();
             settingsRecord.set({});
