@@ -1303,4 +1303,95 @@ describe('buildShykaiExportPlayer round trips through parseShykaiImport', () => 
         const dto = parseShykaiImport(payload).players[0];
         expect(dto.scrollBuffs).toEqual(['/buff_types/wisdom']);
     });
+
+    /**
+     * The export's `itemLocationHrid` must be a real Shykai/game raw location
+     * (`/item_locations/*`), not Toolasha's own canonical `/equipment_types/*`
+     * slot key — pasting the export into an external Shykai-format simulator
+     * reads that field to place gear, and every equipment type in this file's
+     * own fixtures (and `parseShykaiImport`'s TLA-045 comment) confirms the
+     * location's tail matches the equipment type's own, two-handed weapons
+     * included (`/item_locations/two_hand`, not `/item_locations/main_hand`).
+     */
+    test('emits real /item_locations/* location hrids, not the /equipment_types/* slot key', () => {
+        mocks.clientData.itemDetailMap['/items/bludgeon'] = {
+            equipmentDetail: { type: '/equipment_types/two_hand' },
+        };
+        const dto = {
+            ...fullDTO(),
+            equipment: {
+                '/equipment_types/head': { hrid: '/items/helm', enhancementLevel: 4 },
+                '/equipment_types/two_hand': { hrid: '/items/bludgeon', enhancementLevel: 2 },
+            },
+        };
+
+        const exportObj = buildShykaiExportPlayer(dto, 'Milkman');
+
+        const byItem = Object.fromEntries(exportObj.player.equipment.map((e) => [e.itemHrid, e.itemLocationHrid]));
+        expect(byItem['/items/helm']).toBe('/item_locations/head');
+        expect(byItem['/items/bludgeon']).toBe('/item_locations/two_hand');
+    });
+
+    describe('guild shrine levels: unknown vs. confirmed guildless', () => {
+        test('omits guildCombatBuffLevels when the DTO never learned the guild (undefined)', () => {
+            const dto = fullDTO();
+            delete dto.guildShrineLevels;
+
+            const exportObj = buildShykaiExportPlayer(dto, 'Milkman');
+
+            expect(exportObj.guildCombatBuffLevels).toBeUndefined();
+        });
+
+        test('round trip: an unknown guild stays unknown, not "confirmed guildless"', () => {
+            const dto = fullDTO();
+            delete dto.guildShrineLevels;
+
+            const exportObj = buildShykaiExportPlayer(dto, 'Milkman');
+            const back = parseShykaiImport(JSON.stringify(exportObj)).players[0];
+
+            // Not `{}`: an omitted block must leave the map missing entirely,
+            // the same distinction parseShykaiImport itself documents for a
+            // plain import with no `guildCombatBuffLevels` field at all.
+            expect(back.guildShrineLevels).toBeUndefined();
+        });
+
+        test('a genuinely guildless DTO ({}) still round trips as guildless, not unknown', () => {
+            const dto = { ...fullDTO(), guildShrineLevels: {} };
+
+            const exportObj = buildShykaiExportPlayer(dto, 'Milkman');
+            expect(exportObj.guildCombatBuffLevels).toEqual({ force: 0 });
+
+            const back = parseShykaiImport(JSON.stringify(exportObj)).players[0];
+            expect(back.guildShrineLevels).toEqual({});
+        });
+    });
+
+    describe('achievement buff provenance', () => {
+        test('a manual-default player round trips as manual, not relabelled "Derived"', () => {
+            const dto = {
+                ...fullDTO(),
+                achievementBuffsOff: ['/buff_types/wisdom', '/buff_types/rare_find', '/buff_types/damage'],
+                achievementBuffsManual: true,
+                achievementBuffsDerived: false,
+            };
+
+            const exportObj = buildShykaiExportPlayer(dto, 'Milkman');
+            expect(exportObj.achievementBuffsManual).toBe(true);
+
+            const back = parseShykaiImport(JSON.stringify(exportObj)).players[0];
+            expect(back.achievementBuffsManual).toBe(true);
+            expect(back.achievementBuffsDerived).toBeUndefined();
+        });
+
+        test('a derived player round trips as derived', () => {
+            const dto = { ...fullDTO(), achievementBuffsManual: false, achievementBuffsDerived: true };
+
+            const exportObj = buildShykaiExportPlayer(dto, 'Milkman');
+            expect(exportObj.achievementBuffsManual).toBe(false);
+
+            const back = parseShykaiImport(JSON.stringify(exportObj)).players[0];
+            expect(back.achievementBuffsDerived).toBe(true);
+            expect(back.achievementBuffsManual).toBeUndefined();
+        });
+    });
 });
