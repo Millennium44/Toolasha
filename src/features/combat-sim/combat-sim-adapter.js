@@ -738,8 +738,13 @@ export function parseShykaiImport(jsonString) {
         // Achievement combat buffs. Toolasha's own export (see
         // `buildShykaiExportPlayer`) carries the resolved buffs and their
         // off-set directly (`achievementCombatBuffs`/`achievementBuffsOff`),
-        // so an Export → Import round trip needs no re-derivation. A plain
-        // Shykai export carries only completed-achievement hrids
+        // so an Export → Import round trip needs no re-derivation — and it
+        // also carries which caption applied (`achievementBuffsManual`),
+        // since a manual-default player round-tripping through Export must
+        // not come back relabelled "Derived from their completed
+        // achievements" (that claim is specifically about a shared profile's
+        // actual achievement data, which a manual-default player never had).
+        // A plain Shykai export carries only completed-achievement hrids
         // (`achievements: {hrid: true}`), which is enough to derive the same
         // buffs a shared profile's are derived from — see
         // `deriveAchievementCombatBuffs`. Neither present falls back to the
@@ -750,7 +755,11 @@ export function parseShykaiImport(jsonString) {
             dto.achievementBuffsOff = Array.isArray(slotData.achievementBuffsOff)
                 ? [...slotData.achievementBuffsOff]
                 : [];
-            dto.achievementBuffsDerived = true;
+            if (slotData.achievementBuffsManual) {
+                dto.achievementBuffsManual = true;
+            } else {
+                dto.achievementBuffsDerived = true;
+            }
         } else if (slotData.achievements && typeof slotData.achievements === 'object') {
             const achievementDetailMap = clientData.achievementDetailMap;
             if (achievementDetailMap && Object.keys(achievementDetailMap).length) {
@@ -794,18 +803,28 @@ export function parseShykaiImport(jsonString) {
  * `guildCombatBuffLevels` block (shrine-hrid-tail → level) for a player DTO's
  * `guildShrineLevels`, in the shape `parseShykaiImport` decodes above.
  *
- * Every known combat shrine is emitted, zeros included — a level known to be
- * zero is real information, same reasoning as `buildGuildCombatBuffLevels` in
- * `combat-sim-export.js` (not reused directly: that one reads through a
+ * `dto.guildShrineLevels` missing entirely (`null`/`undefined`) means this
+ * player's guild was never read — "unknown" — and must produce no block at
+ * all, the same distinction `parseShykaiImport`'s own decode comment draws:
+ * a present block reads as an authoritative reading, and an all-zero one
+ * decodes back to "confirmed guildless" (`{}`), which is a real answer, not
+ * "unknown". Zero-filling this block for an unknown DTO would silently turn
+ * "we never asked" into "confirmed guildless" on reimport. Once the DTO does
+ * carry a level source (including a genuinely empty `{}`, i.e. guildless),
+ * every known combat shrine is emitted, zeros included, since a level known
+ * to be zero is real information — same reasoning as `buildGuildCombatBuffLevels`
+ * in `combat-sim-export.js` (not reused directly: that one reads through a
  * level-source callback that a DTO's own object literal does not need).
  * @param {Object} dto - Player DTO
- * @returns {Object|null} Level map, or null when no combat shrine is known at all
+ * @returns {Object|null} Level map, or null when the DTO's guild is unknown, or
+ *   when no combat shrine is known at all
  */
 function buildGuildCombatBuffLevelsExport(dto) {
+    if (dto.guildShrineLevels == null) return null;
     const detailMap = getGuildBuffDetailMap();
     const entries = Object.entries(detailMap).filter(([, detail]) => detail?.isCombat && detail.shrineHrid);
     if (!entries.length) return null;
-    const levels = dto.guildShrineLevels || {};
+    const levels = dto.guildShrineLevels;
     const out = {};
     for (const [buffHrid, detail] of entries) {
         out[detail.shrineHrid.split('/').pop()] = Math.max(0, Math.floor(Number(levels[buffHrid]) || 0));
@@ -843,7 +862,18 @@ export function buildShykaiExportPlayer(dto, name) {
     for (const [slotType, item] of Object.entries(dto.equipment || {})) {
         if (!item?.hrid) continue;
         player.equipment.push({
-            itemLocationHrid: slotType,
+            // A real Shykai export's itemLocationHrid is /item_locations/*,
+            // not Toolasha's canonical /equipment_types/* slot key — see the
+            // TLA-045 comment on parseShykaiImport's own equipment read,
+            // above, whose own example is a two-handed weapon at
+            // /item_locations/two_hand. The tail matches the equipment type's
+            // own for every slot the sim editor carries (including two_hand),
+            // confirmed against that comment and the real-shaped equipment
+            // fixtures throughout this file's own tests. parseShykaiImport
+            // itself never reads this back (it resolves slots from itemHrid
+            // alone), but an external Shykai-format simulator does, so a
+            // wrong location here would silently misplace gear there.
+            itemLocationHrid: slotType.replace('/equipment_types/', '/item_locations/'),
             itemHrid: item.hrid,
             enhancementLevel: item.enhancementLevel || 0,
         });
@@ -898,6 +928,12 @@ export function buildShykaiExportPlayer(dto, name) {
     if (Array.isArray(dto.achievementCombatBuffs) && dto.achievementCombatBuffs.length) {
         exportObj.achievementCombatBuffs = dto.achievementCombatBuffs;
         exportObj.achievementBuffsOff = Array.isArray(dto.achievementBuffsOff) ? [...dto.achievementBuffsOff] : [];
+        // Provenance: whether the Configure tab's caption should read "Derived
+        // from their completed achievements" or the manual-default one.
+        // Without this, reimporting a manual-default player always relabels
+        // it "Derived" — a claim about actual achievement data this player
+        // never had.
+        exportObj.achievementBuffsManual = Boolean(dto.achievementBuffsManual);
     }
 
     if (Array.isArray(dto.scrollBuffs) && dto.scrollBuffs.length) {
