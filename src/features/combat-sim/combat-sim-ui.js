@@ -891,6 +891,19 @@ export function resolveSimParty(editor, editedDTOs) {
     };
 }
 
+/**
+ * The player a history entry's figures belong to regardless of the panel's open
+ * tab: a one-player run (Solo, or a lone character) has only that player, and a
+ * later party run resetting the panel-wide tab must not re-read it for someone
+ * who was not in it. Party entries follow the open tab, as before.
+ * @param {Object} entry - A sim history entry
+ * @returns {{hrid: string, playerInfo: Array|null}|null}
+ */
+export function historyEntryPlayer(entry) {
+    if (entry?.partySize !== 1 || !entry.playerHrid) return null;
+    return { hrid: entry.playerHrid, playerInfo: Array.isArray(entry.playerInfo) ? entry.playerInfo : null };
+}
+
 export function runMatchesSimParty(
     run,
     { characterId = null, characterName = null, partySize = 1, roster = null } = {}
@@ -5284,6 +5297,9 @@ class CombatSimUI {
                 zoneName: selectedZone?.name || null,
                 difficultyTier,
                 partySize: playerDTOs.length,
+                // Which player the run's figures are read for — see historyEntryPlayer()
+                playerHrid: selfHrid,
+                playerInfo: [...(playerInfo || [])],
                 loadoutName,
                 wasEdited,
                 simResult,
@@ -5383,6 +5399,8 @@ class CombatSimUI {
         // Use edited DTOs if available, otherwise auto-fill
         let playerDTOs;
         let editedDTOs;
+        // Solo on a party member other than yourself: their sweep, not yours
+        let soloOtherMember = false;
         this._runStarting = true;
         const startToken = ++this._runStartToken;
         try {
@@ -5391,6 +5409,7 @@ class CombatSimUI {
                 // Same Solo narrowing as the single-zone run — see resolveSimParty()
                 const resolved = resolveSimParty(this._editor, editedDTOs);
                 playerDTOs = resolved.playerDTOs;
+                soloOtherMember = resolved.soloApplied && resolved.trueSelfHrid === null;
                 // The roster the bestiary pace matches recorded runs against (`runMatchesSimParty`);
                 // the single-zone path copies it the same way, this one used to leave it empty
                 // A copy: the editor mutates its own array in place when a player is imported later
@@ -5562,8 +5581,13 @@ class CombatSimUI {
             // Which is exactly why a run that outlived its character must not be
             // written — the snapshot carries no character of its own, so one
             // filed under the arriving character quotes the departing
-            // character's zone profits to every reader, indefinitely.
-            if (this._stillSameCharacter(ownerId)) {
+            // character's zone profits to every reader, indefinitely. The same
+            // holds for a Solo sweep of another party member: the snapshot is
+            // read as this character's own forecast, so theirs is not written
+            // (and a later re-price has no saved sweep to rewrite).
+            if (soloOtherMember) {
+                this._allZonesSnapshotMeta = null;
+            } else if (this._stillSameCharacter(ownerId)) {
                 // A pricing change during the run is replayed on screen after it ends,
                 // but the snapshot is written here, so it is priced now as well
                 const snapshotRows = this._repricePending
@@ -5905,12 +5929,14 @@ class CombatSimUI {
     _displayResults(simResult, hours, gameData) {
         // If an active detail index is set, show that history entry's details instead
         let partyWarnings = this._lastPartyWarnings || [];
+        let entryPlayer = null;
         if (this._activeDetailIndex !== null && this._simHistory[this._activeDetailIndex]) {
             const entry = this._simHistory[this._activeDetailIndex];
             simResult = entry.simResult;
             hours = entry.hours;
             gameData = entry.gameData;
             partyWarnings = entry.partyWarnings || [];
+            entryPlayer = historyEntryPlayer(entry);
         }
 
         const container = this.panel.querySelector('#mwi-csim-results');
@@ -5922,8 +5948,10 @@ class CombatSimUI {
         // again) always reprices the one actually on screen.
         this._activeResultKind = 'single';
 
-        const activeTab = this._activePlayerTab;
-        const playerInfo = this._playerInfo;
+        // A one-player (Solo) entry is read for the player it ran, whichever
+        // tab a later party run left open
+        const activeTab = entryPlayer?.hrid || this._activePlayerTab;
+        const playerInfo = entryPlayer?.playerInfo || this._playerInfo;
         const numberOfPlayers = simResult.numberOfPlayers || 1;
 
         const sectionStyle = 'margin-bottom:12px;';
@@ -7065,9 +7093,10 @@ class CombatSimUI {
             this._evGeneration,
         ].join('|');
         for (const entry of this._simHistory) {
-            if (!entry.metrics || entry.metricsTab !== activeTab || entry.metricsPricing !== pricing) {
-                entry.metrics = this._computeMetrics(entry.simResult, entry.hours, entry.gameData, activeTab);
-                entry.metricsTab = activeTab;
+            const tab = historyEntryPlayer(entry)?.hrid || activeTab;
+            if (!entry.metrics || entry.metricsTab !== tab || entry.metricsPricing !== pricing) {
+                entry.metrics = this._computeMetrics(entry.simResult, entry.hours, entry.gameData, tab);
+                entry.metricsTab = tab;
                 entry.metricsPricing = pricing;
             }
         }
