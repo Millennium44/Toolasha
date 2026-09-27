@@ -2782,20 +2782,22 @@ class DungeonTracker {
                         duration += 24 * 60 * 60 * 1000; // Add 24 hours
                     }
 
-                    // Find nearest battle_ended or battle_start before this run
-                    // Prioritize battle_ended (appears right before key count completion)
-                    const battleEnded = events
-                        .slice(0, i)
-                        .reverse()
-                        .find((e) => e.type === 'cancel' && e.dungeonName);
+                    // Two key counts further apart than any run takes are two
+                    // runs' boundaries, not one run's start and end
+                    if (duration > MAX_PLAUSIBLE_RUN_MS) continue;
 
-                    const battleStart = events
-                        .slice(0, i)
-                        .reverse()
-                        .find((e) => e.type === 'battle_start');
-
-                    // Use battle_ended if available, otherwise fall back to battle_start
-                    const dungeonName = battleEnded?.dungeonName || battleStart?.dungeonName || 'Unknown';
+                    // The run is the dungeon the party last started. A "Battle
+                    // ended" names a dungeon too, but only the one it ended: it
+                    // used to be preferred, which filed a Sinister Circus run
+                    // under the Pirate Cove canceled the day before, though
+                    // "Battle started: Sinister Circus" sat between them. Chat
+                    // loses its oldest lines first, so a later start is never
+                    // missing while an earlier end is still there; the end is
+                    // only a fallback for a log that has lost every start.
+                    const before = events.slice(0, i).reverse();
+                    const battleStart = before.find((e) => e.type === 'battle_start');
+                    const battleEnded = before.find((e) => e.type === 'cancel' && e.dungeonName);
+                    const dungeonName = battleStart?.dungeonName || battleEnded?.dungeonName || 'Unknown';
 
                     // Get team key
                     const teamKey = dungeonTrackerStorage.getTeamKey(event.team);
