@@ -29,6 +29,8 @@ const game = vi.hoisted(() => ({
     artisanBonus: 0,
     /** The options each `calculateProfit` call was handed */
     profitCalls: [],
+    /** The drink bill the forecast was computed under, per hour */
+    drinkCostPerHour: 0,
 }));
 
 vi.mock('../../core/config.js', () => ({ default: { getSetting: () => true } }));
@@ -89,7 +91,7 @@ vi.mock('../../core/websocket.js', () => ({
 vi.mock('../actions/gathering-profit.js', () => ({
     calculateGatheringProfit: async () => {
         if (game.gate) await game.gate;
-        return { profitPerHour: game.profitPerHour, hasMissingPrices: false };
+        return { profitPerHour: game.profitPerHour, hasMissingPrices: false, drinkCostPerHour: game.drinkCostPerHour };
     },
 }));
 vi.mock('../actions/production-profit.js', () => ({
@@ -97,6 +99,7 @@ vi.mock('../actions/production-profit.js', () => ({
         profitPerHour: game.profitPerHour,
         hasMissingPrices: false,
         artisanBonus: game.artisanBonus,
+        totalTeaCostPerHour: game.drinkCostPerHour,
     }),
 }));
 vi.mock('../actions/loot-log-stats.js', () => ({
@@ -151,6 +154,7 @@ beforeEach(async () => {
     game.actionType = '/action_types/milking';
     game.artisanBonus = 0;
     game.profitCalls = [];
+    game.drinkCostPerHour = 0;
     calibration = new PredictionCalibration();
     await calibration.initialize();
 });
@@ -219,6 +223,29 @@ describe('pairing a forecast with a finished run', () => {
 
         expect(await calibration.getRecords()).toHaveLength(1);
         expect(game.profitCalls).toEqual([{ artisanBonus: 0.1 }]);
+    });
+
+    test('the run is charged the drinks the forecast charged, so a tea bill is not read as drift', async () => {
+        // A forecast of 1000/h net of a 300/h tea bill; the loot log's own
+        // arithmetic (drops after tax, inputs) knows nothing of the teas
+        game.drinkCostPerHour = 300;
+        await send([entry(1, '2026-08-04T10:00:00Z')]);
+        // The tea price moved afterwards; the run was drunk at the forecast's
+        game.drinkCostPerHour = 0;
+        await send([entry(2, '2026-08-04T11:30:00Z'), entry(1, '2026-08-04T10:00:00Z')]);
+
+        const [record] = await calibration.getRecords();
+        // 500 ask / 400 bid over the hour, less 300/h of drinks
+        expect(record).toMatchObject({ predicted: 1000, actual: 200, actualBid: 100 });
+    });
+
+    test('a production run is charged its tea bill too', async () => {
+        game.actionType = '/action_types/cooking';
+        game.drinkCostPerHour = 150;
+        await send([entry(1, '2026-08-04T10:00:00Z')]);
+        await send([entry(2, '2026-08-04T11:30:00Z'), entry(1, '2026-08-04T10:00:00Z')]);
+
+        expect((await calibration.getRecords())[0]).toMatchObject({ actual: 350, actualBid: 250 });
     });
 
     test('refuses a run that was already over when the script started', async () => {
@@ -383,6 +410,19 @@ describe('measuring gathering runs the loot log panel never saw (the live-record
         // reused for the recorder's own drops) is 1000/h — same rate math as the
         // loot-log path, just fed from the recorder's own timestamps.
         expect(records[0]).toMatchObject({ id: 1, actionType: 'milking', predicted: 1000, actual: 1000 });
+    });
+
+    test('a pair from the recorder is charged the forecast drink bill as well', async () => {
+        game.drinkCostPerHour = 250;
+        gathering(1);
+        await flush();
+        game.itemFlowRuns[1] = { gained: { '/items/milk': 100 }, from: 0, to: 30 * 60_000 };
+
+        gathering(2);
+        await vi.advanceTimersByTimeAsync(LIVE_FALLBACK_GRACE_MS);
+
+        // 500 over half an hour is 1000/h, less 250/h of drinks; bid 800/h less the same
+        expect((await calibration.getRecords())[0]).toMatchObject({ actual: 750, actualBid: 550 });
     });
 
     test('an overlapping loot-log and recorder period is not counted twice', async () => {
