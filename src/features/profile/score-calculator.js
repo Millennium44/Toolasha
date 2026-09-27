@@ -720,8 +720,8 @@ async function calculateEquipmentScore(profileData, scoreType = 'combat', contex
                 }
                 targetCosts.push(minCost ?? getRealisticBaseItemPrice(item.itemHrid));
             }
-            // Apply Philosopher's Mirror optimization — literally the tooltip's pass now, not a
-            // copy of it that had drifted into starting at level 3 and skipping the +2 mirror
+            // Apply Philosopher's Mirror optimization — literally the tooltip's pass, so the two
+            // cannot drift (it starts at +3: the game will not mirror an item below +2)
             applyMirrorOptimization(targetCosts, getRealisticBaseItemPrice('/items/philosophers_mirror'));
             itemCost = targetCosts[item.enhancementLevel];
         } else {

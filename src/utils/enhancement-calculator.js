@@ -122,9 +122,11 @@ export function buildEnhancementMarkov(math, options) {
  * time level n is considered, n−1 and n−2 already hold the cheapest way to reach them, so the
  * comparison is against the best available and not against a stale figure.
  *
- * The sweep starts at **2**, not 3. A +2 is reachable by mirroring a +1 onto a plain +0, and
- * skipping that level does not merely misprice +2 — every level above it is built from a +2
- * that was never allowed to get cheap, so the whole array drifts upwards.
+ * The sweep starts at **3**. The game will not run a mirror on anything below +2: with a
+ * Philosopher's Mirror selected and the item at +0 or +1, the client disables both Start and
+ * Add to Queue and warns "Item Must Be +2 Or Higher" (`philosophersMirrorMinLevelWarning`,
+ * gated on `primaryItem.enhancementLevel < 2`). So the first level a mirror can make is +3,
+ * from a +2 and a +1; a +2 is only ever built the hard way.
  *
  * Like `buildEnhancementMarkov`, this closes over nothing: the networth worker serialises it
  * with `toString()`, so a module-scope read from here would not exist inside the worker.
@@ -139,7 +141,7 @@ export function applyMirrorOptimization(targetCosts, mirrorPrice) {
     const usedMirror = new Array(targetCosts.length).fill(false);
     if (!(mirrorPrice > 0)) return usedMirror;
 
-    for (let level = 2; level < targetCosts.length; level++) {
+    for (let level = 3; level < targetCosts.length; level++) {
         const mirrorCost = targetCosts[level - 2] + targetCosts[level - 1] + mirrorPrice;
         if (mirrorCost < targetCosts[level]) {
             usedMirror[level] = true;

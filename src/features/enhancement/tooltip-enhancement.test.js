@@ -217,18 +217,21 @@ describe('calculateEnhancementPath', () => {
             expect(Number.isFinite(item.costEach)).toBe(true);
         }
         // The first mirrored level is one the walk back from the target actually reaches
-        expect(strategy.mirrorStartLevel).toBeGreaterThanOrEqual(2);
+        expect(strategy.mirrorStartLevel).toBeGreaterThanOrEqual(3);
         expect(strategy.mirrorStartLevel).toBeLessThanOrEqual(data.targetLevel);
     });
 
-    test('mirroring is considered at +2, not only from +3 up', () => {
-        // Make the mirror nearly free so combining a +0 and a +1 must beat enhancing to +2
+    test('a +2 is never mirrored, however cheap the mirror — the game will not run one below +2', () => {
         const cheapMirror = { ...prices[MIRROR] };
         prices[MIRROR] = { ask: 1, bid: 1 };
         try {
-            const data = calculateEnhancementPath(ITEM, 2, enhancingConfig);
-            expect(data.optimalStrategy.usedMirror).toBe(true);
-            expect(data.optimalStrategy.mirrorStartLevel).toBe(2);
+            const two = calculateEnhancementPath(ITEM, 2, enhancingConfig);
+            expect(two.optimalStrategy.usedMirror).toBe(false);
+
+            // +3 is the first level a mirror can make
+            const three = calculateEnhancementPath(ITEM, 3, enhancingConfig);
+            expect(three.optimalStrategy.usedMirror).toBe(true);
+            expect(three.optimalStrategy.mirrorStartLevel).toBe(3);
         } finally {
             prices[MIRROR] = cheapMirror;
         }

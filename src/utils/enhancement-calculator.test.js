@@ -160,17 +160,27 @@ describe('buildEnhancementMarkov as shared worker source', () => {
 });
 
 describe('applyMirrorOptimization', () => {
-    test('mirrors +2 from a +1 and a plain +0 — the level a level-3 start never reaches', () => {
-        // Hard-way costs rise steeply while the mirror is cheap, so every level from 2 up
-        // should be bought as two smaller items welded together.
+    test('never mirrors +2 — the game will not run a mirror on an item below +2', () => {
+        // Hard-way costs rise steeply while the mirror is cheap. Welding a +1 onto a +0 would
+        // be cheaper still, but the client disables Start and Add to Queue with a mirror on
+        // anything below +2 ("Item Must Be +2 Or Higher"), so that route does not exist.
         const costs = [100, 10_100, 33_433, 85_285];
         const used = applyMirrorOptimization(costs, 2000);
 
-        expect(used[2]).toBe(true);
-        expect(costs[2]).toBe(100 + 10_100 + 2000);
-        // And the saving compounds: +3 is built from the mirrored +2, not the hard-way one
+        expect(used[2]).toBe(false);
+        expect(costs[2]).toBe(33_433);
+        // +3 is the first level a mirror can make, from the hard-way +2 and the +1
         expect(used[3]).toBe(true);
-        expect(costs[3]).toBe(10_100 + 12_200 + 2000);
+        expect(costs[3]).toBe(33_433 + 10_100 + 2000);
+    });
+
+    test('the mirror saving compounds from +3 up', () => {
+        const costs = [100, 10_100, 33_433, 85_285, 300_000];
+        const used = applyMirrorOptimization(costs, 2000);
+
+        expect(used[4]).toBe(true);
+        // +4 is built from the mirrored +3, not the hard-way one
+        expect(costs[4]).toBe(45_533 + 33_433 + 2000);
     });
 
     test('leaves a level alone when welding it costs more than building it', () => {
@@ -187,12 +197,10 @@ describe('applyMirrorOptimization', () => {
         expect(costs).toEqual([100, 10_100, 33_433]);
     });
 
-    test('+0 and +1 can never be mirrored — there is nothing below them to combine', () => {
-        const costs = [1, 1, 1];
+    test('+0, +1 and +2 can never be mirrored', () => {
+        const costs = [1, 1, 1000];
         const used = applyMirrorOptimization(costs, 0.000001);
-        expect(used[0]).toBe(false);
-        expect(used[1]).toBe(false);
-        expect(costs[0]).toBe(1);
-        expect(costs[1]).toBe(1);
+        expect(used).toEqual([false, false, false]);
+        expect(costs).toEqual([1, 1, 1000]);
     });
 });

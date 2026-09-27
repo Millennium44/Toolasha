@@ -191,12 +191,12 @@ describe('generated worker sources', () => {
         expect(calculateProductionCost('/items/plank', askOnlyMap, withLogRecipe)).toBe(0);
     });
 
-    test('the networth worker mirrors from +2, like the path the tooltip quotes', async () => {
-        // A Philosopher's Mirror combines a +(n-1) and a +(n-2) into a +n, and
-        // +2 is reachable that way from a +1 and a plain +0 — which is why
-        // calculateEnhancementPath's mirror pass runs from level 2. The worker
-        // ran its copy of the same pass from level 3, so +2 never got the
-        // mirror price and every level above it compounded the miss.
+    test('the networth worker mirrors from +3, like the path the tooltip quotes', async () => {
+        // A Philosopher's Mirror combines a +(n-1) and a +(n-2) into a +n, but
+        // the game refuses to run one on an item below +2 (Start and Add to
+        // Queue are disabled, "Item Must Be +2 Or Higher"). So +2 is only ever
+        // built the hard way and the first mirrored level is +3. The worker
+        // runs the one shared pass, so it must agree.
         vi.resetModules();
         const { calculateItemValueBatch } = await import('./networth-worker-manager.js');
         const source = await captureWorkerScript(() =>
@@ -233,12 +233,12 @@ describe('generated worker sources', () => {
         // mirror it — the anchor both branches agree on.
         expect(calculateEnhancementCost({ ...params, targetLevel: 1 })).toBeCloseTo(100 + 2 * 5000, 6);
 
-        // +2 built the hard way expects 1.5 / 0.225 attempts; mirroring a +0
-        // onto a +1 costs 100 + 10100 + 2000 and is far cheaper, so it wins.
-        expect(calculateEnhancementCost({ ...params, targetLevel: 2 })).toBeCloseTo(12200, 6);
+        // +2 cannot be mirrored: it is built the hard way, 1.5 / 0.225 attempts.
+        const hardTwo = 100 + (1.5 / 0.225) * 5000;
+        expect(calculateEnhancementCost({ ...params, targetLevel: 2 })).toBeCloseTo(hardTwo, 6);
 
-        // And the saving carries: +3 mirrors the now-cheaper +2 with the +1.
-        expect(calculateEnhancementCost({ ...params, targetLevel: 3 })).toBeCloseTo(24300, 6);
+        // +3 is the first level a mirror can make: the hard-way +2 with the +1.
+        expect(calculateEnhancementCost({ ...params, targetLevel: 3 })).toBeCloseTo(hardTwo + 10100 + 2000, 6);
     });
 
     test('an unquoted enhancement material falls back to its sell price, never to a negative one', async () => {
