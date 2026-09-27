@@ -215,3 +215,22 @@ describe('what start-up costs the settings store', () => {
         expect(taskAutoReroll.protectedHrids.size).toBe(0);
     });
 });
+
+describe('the config popup fits a phone-width screen', () => {
+    // A bare `width: 400px` (404px with the border) centered by translate(-50%)
+    // put the left edge off-screen on a phone (-22px at 360px wide). happy-dom
+    // does no layout, so this pins the declaration; the fit was measured in
+    // Firefox, Chromium and WebKit at 360 and 390px wide, and 1280px unchanged.
+    test('is never wider than the viewport less a gutter', async () => {
+        const { default: dataManager } = await import('../../core/data-manager.js');
+        dataManager.getInitClientData = () => ({ actionDetailMap: {}, itemDetailMap: {} });
+        document.getElementById('mwi-task-autoreroll-popup')?.remove();
+
+        taskAutoReroll.openConfigPopup();
+
+        const popup = document.getElementById('mwi-task-autoreroll-popup');
+        expect(popup.style.width).toBe('400px');
+        expect(popup.style.maxWidth).toBe('calc(100vw - 20px)');
+        popup.remove();
+    });
+});
