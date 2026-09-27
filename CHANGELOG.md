@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### House room dialog keeps its Build button on phones
+
+- On a phone-sized screen (Firefox and Safari especially), the house room dialog squeezed the game's Build button to nothing once the cost list was tall, and its cost rows ran past both edges so the counts were cut off and the panel scrolled sideways. The Build button now keeps its size and the rows wrap to fit the dialog.
+
 ### Audit round: the enhancing tracker guessed where each run started
 
 - The enhancing tracker now scores the first attempt of a run from the level the item actually started at, instead of guessing from the result, which recorded successes as failures and charged protection the game never took. It also stops misreading the attempt after a reload as a Blessed jump.

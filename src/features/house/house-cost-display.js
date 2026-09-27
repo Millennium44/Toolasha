@@ -59,6 +59,14 @@ const PANEL_LAYOUT_STYLE_ID = 'toolasha-house-panel-layout';
  * Firefox is the exception, and it needs a rule of its own — see
  * `SCROLLER_MAX_HEIGHT` below.
  *
+ * `min-height: fit-content` alone is not enough outside Chromium. Once
+ * `SCROLLER_MAX_HEIGHT` caps the scroller, Firefox and WebKit keep the panel
+ * clamped to it (the game's `height: 100%` wins), and the whole deficit lands
+ * on the Build button: measured at 0px in both at 390×640 and 360×640 with the
+ * list at level 5, and 12.5px in WebKit at 1280×700. So the rule also sets
+ * `height: auto` (`PANEL_HEIGHT`): with no percentage to resolve, the panel is
+ * as tall as its contents in every engine, and the scroller scrolls it.
+ *
  * `:has(.mwi-house-to-level)` is the restore path. The rule only ever matches a
  * house panel that is currently carrying this file's section, so removing the
  * section — a room switch, `removeExistingColumn()`, a game update that renames
@@ -73,6 +81,13 @@ const PANEL_LAYOUT_STYLE_ID = 'toolasha-house-panel-layout';
  * browsers. See `PANEL_MIN_HEIGHT` and `supportsHasSelector()`.
  */
 const PANEL_MIN_HEIGHT = 'fit-content';
+
+/**
+ * The panel's `height` while it carries this file's section. Replaces the
+ * game's `height: 100%`, which Firefox and WebKit resolve against the capped
+ * scroller. See the note above `PANEL_MIN_HEIGHT`.
+ */
+const PANEL_HEIGHT = 'auto';
 
 /**
  * The values the inline fallback will try for `min-height`, in order.
@@ -145,6 +160,7 @@ const SCROLLER_PADDING_BOTTOM_FALLBACK = '0px';
 
 const PANEL_LAYOUT_CSS = `
     [class*="HousePanel_modalContent"]:has(.mwi-house-to-level) {
+        height: ${PANEL_HEIGHT};
         min-height: ${PANEL_MIN_HEIGHT};
     }
 
@@ -394,7 +410,7 @@ class HouseCostDisplay {
     }
 
     /**
-     * Set the panel's `min-height` inline on browsers without `:has()`.
+     * Set the panel's `min-height` and `height` inline on browsers without `:has()`.
      *
      * The stylesheet rule is the primary and stays the primary: where the
      * browser understands `:has()` this does nothing, so the two can never
@@ -410,6 +426,9 @@ class HouseCostDisplay {
         if (!modalContent || supportsHasSelector()) {
             return;
         }
+        // Firefox before 121 and Safari before 15.4 are in this band, and both
+        // engines need `height: auto` — see PANEL_HEIGHT.
+        modalContent.style.height = PANEL_HEIGHT;
         for (const value of PANEL_MIN_HEIGHT_VALUES) {
             modalContent.style.minHeight = value;
             if (modalContent.style.minHeight) {
@@ -419,10 +438,10 @@ class HouseCostDisplay {
     }
 
     /**
-     * Take the inline `min-height` back off the panel.
+     * Take the inline `min-height` and `height` back off the panel.
      *
-     * Only clears a value this file put there, so a game update that starts
-     * setting its own `min-height` inline is left alone.
+     * Only clears values this file put there, so a game update that starts
+     * setting its own `min-height` or `height` inline is left alone.
      *
      * @param {Element} modalContent - The HousePanel_modalContent element
      */
@@ -432,6 +451,9 @@ class HouseCostDisplay {
         }
         if (PANEL_MIN_HEIGHT_VALUES.includes(modalContent.style.minHeight)) {
             modalContent.style.minHeight = '';
+        }
+        if (modalContent.style.height === PANEL_HEIGHT) {
+            modalContent.style.height = '';
         }
     }
 
@@ -895,8 +917,16 @@ class HouseCostDisplay {
         const isCoin = material.itemHrid === '/items/coin';
 
         const row = document.createElement('div');
+        // `flex-wrap: wrap`: the four columns' min-widths add up to ~550px, far
+        // wider than a phone's dialog. Unwrapped, that min-content made the
+        // section wider than the panel, and the panel (`align-items: center`)
+        // centered it — so it hung off both edges: the count column clipped at
+        // the left, where nothing can scroll to it, and the rest scrolling
+        // sideways on the right. Wrapped, a narrow dialog moves the price and
+        // Missing columns onto a second line; a wide one still fits one line.
         row.style.cssText = `
             display: flex;
+            flex-wrap: wrap;
             align-items: center;
             gap: 8px;
             font-size: 0.875rem;

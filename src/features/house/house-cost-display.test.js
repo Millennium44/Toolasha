@@ -54,6 +54,39 @@ beforeEach(() => {
     document.body.innerHTML = '';
 });
 
+describe('the material rows fit a phone-width dialog', () => {
+    // The four columns' min-widths add up to ~550px. Unwrapped, that min-content
+    // made the section wider than a ~340px phone dialog, and the panel's
+    // `align-items: center` hung it off both edges: the count column clipped
+    // at the left and the rest scrolling sideways. happy-dom does no layout, so
+    // this pins the declaration; the fit was measured in Firefox, Chromium and
+    // WebKit at 360 and 390px wide against a copy of the game's dialog CSS.
+    test('every row may wrap its columns onto a second line', async () => {
+        const section = await render();
+        const rows = section.querySelectorAll('.mwi-cumulative-materials-list > div');
+
+        expect(rows.length).toBe(MATERIALS.length + 1); // coins + materials
+        for (const row of rows) {
+            expect(row.style.display).toBe('flex');
+            expect(row.style.flexWrap).toBe('wrap');
+        }
+    });
+
+    test('the section is appended after everything the game drew, Build button included', async () => {
+        const panel = document.createElement('div');
+        const costsSection = document.createElement('div');
+        const build = document.createElement('button');
+        panel.append(costsSection, build);
+        document.body.appendChild(panel);
+
+        await houseCostDisplay.addCompactToLevel(costsSection, '/house_rooms/mystical_study', 5);
+
+        const section = panel.querySelector('.mwi-house-to-level');
+        expect(panel.lastElementChild).toBe(section);
+        expect(build.compareDocumentPosition(section) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    });
+});
+
 describe('the materials list has no scroller of its own', () => {
     // One scroller now: the game's dialog (`Modal_modalContent`, bounded by
     // SCROLLER_MAX_HEIGHT). A second bound on the list here would recreate the
@@ -127,6 +160,23 @@ describe('the section holds its own height inside the panel flex column', () => 
         expect(sheet.textContent).toContain('min-height: fit-content');
     });
 
+    test('the panel drops the game percentage height, so the capped scroller cannot clamp it', () => {
+        houseCostDisplay.initialize();
+        const sheet = document.getElementById('toolasha-house-panel-layout').textContent;
+        // Firefox and WebKit resolve the game's `height: 100%` against the
+        // scroller once SCROLLER_MAX_HEIGHT caps it, and `min-height:
+        // fit-content` does not lift it there: the Build button took the whole
+        // deficit and measured 0px on a phone-sized dialog. Both declarations
+        // must sit in the panel rule, not the scroller rule.
+        const selector = '[class*="HousePanel_modalContent"]:has(.mwi-house-to-level)';
+        const start = sheet.indexOf(selector);
+        expect(start).toBeGreaterThanOrEqual(0);
+        const body = sheet.slice(sheet.indexOf('{', start) + 1, sheet.indexOf('}', start));
+        const declarations = body.split(';').map((d) => d.trim());
+        expect(declarations).toContain('height: auto');
+        expect(declarations).toContain('min-height: fit-content');
+    });
+
     test('the panel rule is scoped to panels this file has drawn into', () => {
         houseCostDisplay.initialize();
         const sheet = document.getElementById('toolasha-house-panel-layout');
@@ -198,6 +248,8 @@ describe('the panel min-height fallback on browsers without :has()', () => {
         // section would otherwise hand the entire deficit to the game's Build
         // button. This is the same value the rule would have set.
         expect(modalContent.style.minHeight).toContain('fit-content');
+        // The rule's `height: auto` goes with it — see PANEL_HEIGHT.
+        expect(modalContent.style.height).toBe('auto');
     });
 
     test('leaves the panel alone when :has() is supported', async () => {
@@ -210,6 +262,7 @@ describe('the panel min-height fallback on browsers without :has()', () => {
         // The sheet is doing the job. An inline style here would be a second
         // opinion on the same property with no way to be overruled.
         expect(modalContent.style.minHeight).toBe('');
+        expect(modalContent.style.height).toBe('');
     });
 
     test('treats a throwing or absent CSS.supports as unsupported', async () => {
@@ -239,6 +292,7 @@ describe('the panel min-height fallback on browsers without :has()', () => {
 
         expect(modalContent.querySelector('.mwi-house-to-level')).toBeNull();
         expect(modalContent.style.minHeight).toBe('');
+        expect(modalContent.style.height).toBe('');
     });
 
     test('disabling the feature clears it', async () => {
@@ -250,6 +304,7 @@ describe('the panel min-height fallback on browsers without :has()', () => {
         houseCostDisplay.disable();
 
         expect(modalContent.style.minHeight).toBe('');
+        expect(modalContent.style.height).toBe('');
     });
 
     test('does not clear a min-height the game set itself', () => {
@@ -259,6 +314,15 @@ describe('the panel min-height fallback on browsers without :has()', () => {
         houseCostDisplay.removeExistingColumn(modalContent);
 
         expect(modalContent.style.minHeight).toBe('320px');
+    });
+
+    test('does not clear a height the game set itself', () => {
+        const { modalContent } = buildPanel();
+        modalContent.style.height = '100%';
+
+        houseCostDisplay.removeExistingColumn(modalContent);
+
+        expect(modalContent.style.height).toBe('100%');
     });
 });
 
