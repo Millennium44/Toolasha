@@ -402,6 +402,9 @@ describe('calculateGatheringProfit — Processing Tea', () => {
 
         const conversion = result.processingConversions[0];
         expect(conversion).toMatchObject({
+            // By hrid too: the planner's sell-through check reads what Processing sells
+            rawItemHrid: '/items/milk',
+            processedItemHrid: CHEESE,
             rawItem: 'Milk',
             processedItem: 'Cheese',
             valueGain: 150,

@@ -116,7 +116,7 @@ vi.mock('../../utils/inventory-reservations.js', () => ({
         excludeOwner === 'goal:mine' ? '' : `${short} short — reserved`,
 }));
 
-const { buildPlannerContext } = await import('./goal-planner-context.js');
+const { buildPlannerContext, gatheringSells } = await import('./goal-planner-context.js');
 
 /**
  * A combat provider result with one zone.
@@ -172,6 +172,40 @@ beforeEach(() => {
     rates.alchemy = [];
     rates.combat = { rates: [], best: null, status: { note: null } };
     rates.alchemyCalls = [];
+});
+
+describe('gatheringSells', () => {
+    test('a Processing run sells the Cheese it makes and only the Milk it keeps', () => {
+        // Shaped as gathering-profit.js returns it
+        const profit = {
+            baseOutputs: [{ itemHrid: '/items/milk', name: 'Milk', itemsPerHour: 1000 }],
+            processingConversions: [
+                {
+                    rawItemHrid: '/items/milk',
+                    processedItemHrid: '/items/cheese',
+                    rawItem: 'Milk',
+                    processedItem: 'Cheese',
+                    conversionsPerHour: 100,
+                    rawConsumedPerHour: 200,
+                },
+            ],
+        };
+        expect(gatheringSells(profit)).toEqual([
+            { itemHrid: '/items/milk', name: 'Milk', unitsPerHour: 800 },
+            { itemHrid: '/items/cheese', name: 'Cheese', unitsPerHour: 100 },
+        ]);
+    });
+
+    test('without Processing it is the drop table', () => {
+        expect(
+            gatheringSells({
+                baseOutputs: [
+                    { itemHrid: '/items/egg', name: 'Egg', itemsPerHour: 50 },
+                    { itemHrid: '/items/wheat', name: 'Wheat', itemsPerHour: 0 },
+                ],
+            })
+        ).toEqual([{ itemHrid: '/items/egg', name: 'Egg', unitsPerHour: 50 }]);
+    });
 });
 
 describe('goldRates — four providers, one ranking', () => {
