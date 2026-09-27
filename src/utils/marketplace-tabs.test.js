@@ -37,6 +37,7 @@ import {
     watchTabForAcquisition,
     attachRegularTabClearListener,
     insertTabInOrder,
+    TAB_STRIP_WRAP_STYLE_ID,
 } from './marketplace-tabs.js';
 
 /** Fire the exact wildcard path watchTabForAcquisition listens on — the same
@@ -91,20 +92,65 @@ describe('insertTabInOrder', () => {
         document.body.appendChild(container);
     });
 
-    test('lets the strip wrap onto a second row, so a tab past a phone-width edge stays reachable', () => {
-        // The game renders the marketplace strip without its isWrappable option,
-        // and MUI puts an inline `overflow: hidden` on the scroller, so a strip
-        // wider than the window neither wraps nor scrolls. With our four
-        // persistent tabs a ~390px phone window clipped the last of them away
-        // (measured in Firefox, Chromium and WebKit against the game's CSS);
-        // happy-dom does no layout, so this pins the declaration.
+    // The game renders the marketplace strip without its isWrappable option,
+    // and MUI puts an inline `overflow: hidden` on the scroller, so a strip
+    // wider than the window neither wraps nor scrolls. With our four
+    // persistent tabs a ~390px phone window clipped the last of them away
+    // (measured in Firefox, Chromium and WebKit against the game's CSS).
+    // happy-dom does no layout, so these pin the rule and its scope.
+    // happy-dom cannot parse a relative `:has(> …)`, so the rule's selector is
+    // taken apart and evaluated the way a browser would: the strip matches the
+    // outer part and has a direct child matching one of the inner ones.
+    const ruleMatches = (strip) => {
+        const text = document.getElementById(TAB_STRIP_WRAP_STYLE_ID).textContent;
+        const selector = text.slice(0, text.indexOf('{')).trim();
+        const outer = selector.slice(0, selector.indexOf(':has('));
+        const inner = selector
+            .slice(selector.indexOf(':has(') + 5, selector.lastIndexOf(')'))
+            .split(',')
+            .map((part) => part.trim().replace(/^>s*/, ''));
+        return strip.matches(outer) && [...strip.children].some((child) => inner.some((sel) => child.matches(sel)));
+    };
+
+    test('lets a strip carrying one of our tabs wrap onto a second row', () => {
+        container.className = 'MuiTabs-flexContainer';
+        container.setAttribute('role', 'tablist');
         container.appendChild(buildGameTab('Market Listings'));
         container.appendChild(buildGameTab('My Listings'));
-        expect(container.style.flexWrap).toBe('');
 
         insertTabInOrder(container, document.createElement('button'), 'ledger');
 
-        expect(container.style.flexWrap).toBe('wrap');
+        expect(document.getElementById(TAB_STRIP_WRAP_STYLE_ID).textContent).toContain('flex-wrap: wrap');
+        expect(ruleMatches(container)).toBe(true);
+        // Nothing is written onto the game's own element, so there is nothing to undo
+        expect(container.style.flexWrap).toBe('');
+    });
+
+    test('the wrap reverts by itself once the last of our tabs is gone, however it was removed', () => {
+        container.className = 'MuiTabs-flexContainer';
+        container.setAttribute('role', 'tablist');
+        container.appendChild(buildGameTab('Market Listings'));
+        const ledger = document.createElement('button');
+        insertTabInOrder(container, ledger, 'ledger');
+        const pinned = buildUnkeyedCustomTab('Lumber');
+        container.appendChild(pinned);
+
+        ledger.remove();
+        expect(ruleMatches(container)).toBe(true); // the pinned tab still needs it
+
+        removeMaterialTabs();
+        expect(container.querySelector('[data-mwi-custom-tab]')).toBeNull();
+        expect(ruleMatches(container)).toBe(false);
+        expect(container.style.flexWrap).toBe('');
+    });
+
+    test('a game strip with none of our tabs is never matched', () => {
+        container.className = 'MuiTabs-flexContainer';
+        container.setAttribute('role', 'tablist');
+        container.appendChild(buildGameTab('Market Listings'));
+        insertTabInOrder(document.createElement('div'), document.createElement('button'), 'ledger');
+
+        expect(ruleMatches(container)).toBe(false);
     });
 
     test('a tab another script added is ordered after ours, not left mid-strip', () => {
