@@ -24,6 +24,7 @@ import { calculateBonusRevenue } from './bonus-revenue-calculator.js';
 import alchemyProfitCalculator from '../features/market/alchemy-profit-calculator.js';
 import { runningAction } from './combat-actions.js';
 import { expectedProcessedItems } from './gathering-processing.js';
+import { getCommunityGatheringQuantity } from './community-buffs.js';
 
 /**
  * Skill name to action type mapping.
@@ -1059,15 +1060,14 @@ function getOtherEfficiencySources(actionType, houseRoomLevels = null) {
         }
     }
 
-    // Community gathering buff
-    const communityGatheringLevel = dataManager.getCommunityBuffLevel('/community_buff_types/gathering_quantity');
-    if (communityGatheringLevel) {
-        result.gathering = 0.2 + (communityGatheringLevel - 1) * 0.005;
-    }
-
-    // Achievement gathering buff (stacks with community gathering)
-    const achievementGathering = dataManager.getAchievementBuffFlatBoost(actionType, '/buff_types/gathering');
-    result.gathering += achievementGathering;
+    // Gathering quantity from everything but teas and equipment, which the callers add for the
+    // combo and the gear they are scoring: the community buff (strength and skills from the
+    // game's own definition), achievement tiers and a Seal of Gathering — the same non-tea,
+    // non-gear sources getActionEfficiencyContext stacks for the action panel's figure
+    result.gathering =
+        getCommunityGatheringQuantity(actionType) +
+        dataManager.getAchievementBuffFlatBoost(actionType, '/buff_types/gathering') +
+        dataManager.getPersonalBuffFlatBoost(actionType, '/buff_types/gathering');
 
     // Community wisdom buff
     const communityWisdomLevel = dataManager.getCommunityBuffLevel('/community_buff_types/experience');
@@ -1198,6 +1198,14 @@ export function findOptimalTeas(
     // Get other efficiency sources
     const actionType = SKILL_TO_ACTION_TYPE[normalizedSkill];
     const otherEfficiency = getOtherEfficiencySources(actionType);
+
+    // Equipment gathering quantity, as scoreEquipmentSetup and calculateSkillPerformance add it:
+    // how much quantity the gear already gives decides whether a Gathering Tea or an
+    // Efficiency Tea is worth more, so leaving it out tilts the recommendation
+    if (isGathering) {
+        const equipGathering = parseGatheringQuantityBonus(equipment, gameData.itemDetailMap);
+        if (equipGathering > 0) otherEfficiency.gathering = (otherEfficiency.gathering || 0) + equipGathering;
+    }
 
     // Score each combination
     const results = [];

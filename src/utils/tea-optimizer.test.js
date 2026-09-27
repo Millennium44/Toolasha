@@ -232,6 +232,69 @@ describe('calculateSkillPerformance — gathering Processing', () => {
     });
 });
 
+describe('gathering quantity from gear and seals', () => {
+    function milkingWith(extraItems = {}) {
+        state.gameData = {
+            itemDetailMap: {
+                '/items/milk': { name: 'Milk' },
+                '/items/gathering_tea': {
+                    consumableDetail: { buffs: [{ typeHrid: '/buff_types/gathering', flatBoost: 0.15 }] },
+                },
+                '/items/efficiency_tea': {
+                    consumableDetail: { buffs: [{ typeHrid: '/buff_types/efficiency', flatBoost: 0.1 }] },
+                },
+                ...extraItems,
+            },
+            actionDetailMap: {
+                '/actions/milking/cow': {
+                    type: '/action_types/milking',
+                    baseTimeCost: 10e9,
+                    levelRequirement: { level: 1 },
+                    dropTable: [{ itemHrid: '/items/milk', dropRate: 1, minCount: 1, maxCount: 1 }],
+                },
+            },
+        };
+        prices.byHrid = { '/items/milk': 100, '/items/gathering_tea': 0, '/items/efficiency_tea': 0 };
+    }
+
+    const onlyGatheringTea = {
+        pinned: new Set(['/items/gathering_tea']),
+        banned: new Set(['/items/efficiency_tea', '/items/wisdom_tea', '/items/processing_tea']),
+    };
+
+    test('the tea search counts the gathering quantity the gear already gives', () => {
+        milkingWith({
+            '/items/collectors_boots': {
+                name: "Collector's Boots",
+                equipmentDetail: { noncombatStats: { gatheringQuantity: 0.2 } },
+            },
+        });
+        // Keyed by item location, as the game's characterEquipment map is
+        const gear = new Map([['/item_locations/feet', { itemHrid: '/items/collectors_boots', enhancementLevel: 0 }]]);
+
+        const withGear = findOptimalTeas('milking', 'gold', null, null, onlyGatheringTea, null, gear, null, 1);
+        const perform = calculateSkillPerformance('milking', gear, ['/items/gathering_tea'], 1);
+
+        // 360 actions/hr × 1 Milk × (1 + 0.15 tea + 0.2 boots) × 100, after tax
+        const expected = 360 * 1.35 * 100 * (1 - MARKET_TAX);
+        expect(perform.goldPerHour).toBeCloseTo(expected, 6);
+        // Same gear, same tea: the recommendation and the "current" figure must agree
+        expect(withGear.optimal.avgScore).toBeCloseTo(expected, 6);
+    });
+
+    test('a Seal of Gathering counts in every tea-optimizer gold figure', () => {
+        milkingWith();
+        state.personalBuffs['/action_types/milking|/buff_types/gathering'] = 0.1;
+
+        const result = findOptimalTeas('milking', 'gold', null, null, onlyGatheringTea, null, new Map(), null, 1);
+        const perform = calculateSkillPerformance('milking', new Map(), ['/items/gathering_tea'], 1);
+
+        const expected = 360 * 1.25 * 100 * (1 - MARKET_TAX);
+        expect(result.optimal.avgScore).toBeCloseTo(expected, 6);
+        expect(perform.goldPerHour).toBeCloseTo(expected, 6);
+    });
+});
+
 describe('getTeaBuffDescription', () => {
     test('returns empty string without game data or unknown tea', () => {
         state.gameData = null;
