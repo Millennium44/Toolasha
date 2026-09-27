@@ -12,6 +12,7 @@ const state = vi.hoisted(() => ({
     calls: [],
     costs: [],
     actions: [],
+    characterData: null,
 }));
 
 const trackerMock = vi.hoisted(() => {
@@ -40,8 +41,8 @@ const trackerMock = vi.hoisted(() => {
             };
             return true;
         }),
-        finalizeCurrentSession: vi.fn(async () => {
-            state.calls.push(['finalize']);
+        finalizeCurrentSession: vi.fn(async (...a) => {
+            state.calls.push(['finalize', ...a]);
             state.current = null;
         }),
         // Mirrors the real tracker: arms the same flag the handler itself checks/clears, so a
@@ -80,6 +81,9 @@ vi.mock('../../core/data-manager.js', () => ({
             },
         }),
         getCurrentActions: () => state.actions,
+        get characterData() {
+            return state.characterData;
+        },
         on: (type, fn) => {
             state.handlers[type] = fn;
         },
@@ -128,6 +132,7 @@ beforeEach(() => {
     state.calls = [];
     state.costs = [];
     state.actions = [];
+    state.characterData = null;
     trackerMock.pendingSessionStart = false;
     setupEnhancementHandlers();
 });
@@ -575,5 +580,51 @@ describe('a Philosopher’s Mirror attempt', () => {
         expect(state.calls).toContainEqual(['prot', '/items/philosophers_mirror', 90000]);
         // The +7 copy, priced at the item's vendor price with the market empty in this file
         expect(state.costs).toEqual([['mat', '/items/enchanted_cloak_refined', 1, 5000]]);
+    });
+});
+
+describe('a session whose run ended while no page was connected', () => {
+    // Target reached, protection or materials run out, or stopped from another device while the
+    // page was closed: no actions_updated will ever say so. Left open, the next run to start
+    // finalized it with that later moment as its end — hours or days of idle time in its
+    // duration and in the gold-sources day span.
+    const stored = () => ({
+        id: 's1',
+        state: 'tracking',
+        itemHrid: '/items/enchanted_cloak_refined',
+        targetLevel: 15,
+        protectFrom: 3,
+        totalXP: 0,
+        startTime: 1_000,
+        lastUpdateTime: 50_000,
+        lastAttempt: { attemptNumber: 10, level: 9, timestamp: 50_000, actionId: 'a1', currentCount: 10 },
+    });
+
+    test('is closed at its last recorded attempt when the snapshot has no enhance running', () => {
+        state.characterData = {};
+        state.current = stored();
+        state.actions = [];
+        setupEnhancementHandlers();
+
+        expect(state.calls).toEqual([['finalize', 50_000]]);
+    });
+
+    test('is closed the same way when the snapshot is enhancing a different item', () => {
+        state.characterData = {};
+        state.current = stored();
+        state.actions = [
+            cachedEnhanceAction({ id: 'b1', primaryItemHash: '30404::/item_locations/inventory::/items/other::2' }),
+        ];
+        setupEnhancementHandlers();
+
+        expect(state.calls).toEqual([['finalize', 50_000], ['pendingStart']]);
+    });
+
+    test('is left alone before the character snapshot has landed', () => {
+        state.current = stored();
+        state.actions = [];
+        setupEnhancementHandlers();
+
+        expect(state.calls).toEqual([]);
     });
 });

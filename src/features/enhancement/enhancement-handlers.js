@@ -14,6 +14,7 @@ import { getEnhancementMaterialPrice } from './tooltip-enhancement.js';
 import { parseItemHash } from '../../utils/item-hash.js';
 import { runningAction } from '../../utils/combat-actions.js';
 import { ironCowBook } from '../../utils/ironcow-valuation.js';
+import { SessionState } from './enhancement-session.js';
 
 // Id of the queue action the tracker last saw running as the enhance row. Read against
 // dataManager's merged queue in handleActionsUpdated so a second enhance queued behind the
@@ -111,13 +112,30 @@ function bootstrapFromCurrentEnhancingAction() {
         dataManager.getCurrentActions(),
         (action) => action.actionHrid === ENHANCE_ACTION_HRID
     );
+
+    // A session left in progress whose run is no longer the one going ended while no page was
+    // connected (target reached, materials or protection run out, stopped from another device).
+    // No actions_updated will ever say so: close it now, at its last recorded attempt, rather
+    // than leave it open until some later run finalizes it with that later moment as its end —
+    // which stretched its duration and its gold-sources day span over the idle gap. Only
+    // against a loaded character: an empty queue before the snapshot lands means nothing.
+    let currentSession = enhancementTracker.getCurrentSession();
+    if (
+        currentSession &&
+        currentSession.state === SessionState.TRACKING &&
+        dataManager.characterData &&
+        parseItemHash(activeEnhancingAction?.primaryItemHash).itemHrid !== currentSession.itemHrid
+    ) {
+        void enhancementTracker.finalizeCurrentSession(currentSession.lastUpdateTime || currentSession.startTime);
+        currentSession = null;
+    }
+
     if (!activeEnhancingAction) return;
 
     // The snapshot is the level the item stands at now, after anything that completed while no
     // page was connected — the one baseline the next live attempt can be scored against.
     pendingBaseline = baselineFrom(activeEnhancingAction);
 
-    const currentSession = enhancementTracker.getCurrentSession();
     if (currentSession) {
         trackedEnhanceActionId = activeEnhancingAction.id;
         void reconcileReloadGap(currentSession, activeEnhancingAction);

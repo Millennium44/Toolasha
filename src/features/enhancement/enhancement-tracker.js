@@ -192,9 +192,11 @@ class EnhancementTracker {
 
     /**
      * Finalize current session (mark as completed)
+     * @param {number} [endTime] - When the run ended, when that was not now (a run that ended
+     *   while no page was connected ended at some point after its last recorded attempt)
      * @returns {Promise<void>}
      */
-    async finalizeCurrentSession() {
+    async finalizeCurrentSession(endTime) {
         const session = this.getCurrentSession();
         if (!session) {
             return;
@@ -202,7 +204,7 @@ class EnhancementTracker {
 
         const sessions = this.sessions;
         const owner = dataManager.getCurrentCharacterId();
-        finalizeSession(session);
+        finalizeSession(session, endTime);
         await saveSessions(sessions);
 
         // A new session (or an extension of this one) may have started while
