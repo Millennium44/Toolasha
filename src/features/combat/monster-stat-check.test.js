@@ -103,6 +103,10 @@ describe('compareStat', () => {
             { combatStats: { criticalRate: 0 } }
         );
         expect(classify(crit.deltaPct, false)).toBe('mismatch');
+        // JSON has no Infinity: the flag is what survives into an exported file
+        expect(crit.zeroBaseline).toBe(true);
+        expect(JSON.parse(JSON.stringify(crit))).toMatchObject({ deltaPct: null, zeroBaseline: true });
+        expect(compareStat('x', { x: 5 }, { x: 4 }).zeroBaseline).toBe(false);
     });
 
     test('falls back to combatStats when the flat key is missing — the sim shape for timing/crit rows', () => {
