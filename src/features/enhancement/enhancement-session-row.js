@@ -31,12 +31,24 @@ import { SessionState, getOverallSuccessRate } from './enhancement-session.js';
 import enhancementUI from './enhancement-ui.js';
 
 /**
- * The session the tracker is on, if there is one.
+ * The session the tracker is on, or else the one it last finished.
+ *
+ * The tracker lets go of a session the moment it completes — its current
+ * session is null from then on — so reading only that blanked the tile at
+ * exactly the moment its totals are the whole story. The most recently active
+ * stored session stands in until the next one starts or the list is cleared.
  * @returns {Object|null} A session, or null
  */
 function currentSession() {
     try {
-        return enhancementTracker.getCurrentSession?.() || null;
+        const live = enhancementTracker.getCurrentSession?.();
+        if (live) return live;
+        let latest = null;
+        for (const session of Object.values(enhancementTracker.getAllSessions?.() || {})) {
+            const at = (s) => s?.lastUpdateTime || s?.startTime || 0;
+            if (session && (!latest || at(session) > at(latest))) latest = session;
+        }
+        return latest;
     } catch (error) {
         console.error('[EnhancementSessionRow] Reading the current session failed:', error);
         return null;
