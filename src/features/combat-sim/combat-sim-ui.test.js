@@ -4805,7 +4805,8 @@ describe('the Solo checkbox end to end: Simulate and All Zones', () => {
 
         const entry = ui._simHistory.at(-1);
         expect(entry.partySize).toBe(1);
-        expect(ui._historyEntryLabel(entry).short).toContain('Solo');
+        // Named, so two members simmed alone in the same gear and zone differ
+        expect(ui._historyEntryLabel(entry).short).toContain('Solo (player2)');
     });
 
     test('unchecking Solo goes straight back to the full party — nothing about the roster was touched', async () => {

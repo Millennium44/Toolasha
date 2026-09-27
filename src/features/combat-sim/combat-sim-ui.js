@@ -7326,7 +7326,10 @@ class CombatSimUI {
         const areaPart = entry.zoneName
             ? entry.zoneName + (entry.difficultyTier ? ` T${entry.difficultyTier}` : '')
             : null;
-        const partyPart = entry.partySize > 1 ? `Party (${entry.partySize})` : 'Solo';
+        // A one-player entry names who ran: two members simmed alone in the same
+        // gear, zone and tier are otherwise indistinguishable in the selector
+        const soloName = entry.partySize === 1 && entry.playerInfo?.length === 1 ? entry.playerInfo[0]?.name : null;
+        const partyPart = entry.partySize > 1 ? `Party (${entry.partySize})` : soloName ? `Solo (${soloName})` : 'Solo';
         const gearPart = entry.loadoutName
             ? entry.loadoutName + (entry.wasEdited ? ' (edited)' : '')
             : entry.wasEdited
