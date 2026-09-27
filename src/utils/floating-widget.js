@@ -144,7 +144,13 @@ export function createFloatingWidget({
         `position:fixed; top:${top}; right:${right}; z-index:${zIndex || config.Z_FLOATING_PANEL || 9000}; ` +
         'display:flex; flex-direction:column; align-items:stretch; gap:6px; padding:5px 9px; border-radius:7px; ' +
         `background:${background}; border:1px solid ${border}; color:${text}; font-size:12px; font-family:inherit; ` +
-        'box-shadow:0 3px 10px rgba(0,0,0,0.45); user-select:none;';
+        'box-shadow:0 3px 10px rgba(0,0,0,0.45); user-select:none; ' +
+        // Never wider than the screen less its 24px anchor and an 8px gutter. The
+        // strip is pinned by its right edge, so on a phone a row wider than the
+        // screen (the Bulk Sell strip is ~620px) ran off the left edge — the
+        // status line entirely out of reach (-245px at 390px wide). Capped, the
+        // status line gives up the width instead; see its min-width below.
+        'max-width:calc(100vw - 32px); box-sizing:border-box;';
 
     const row = document.createElement('div');
     row.style.cssText = 'display:flex; align-items:center; gap:6px;';
@@ -153,9 +159,11 @@ export function createFloatingWidget({
     status.className = `${id}-status`;
     // A fixed width, where one is asked for: the strip is anchored by one edge
     // and its width follows its content, so a status line that grows and
-    // shrinks with the text drags everything beside it sideways.
+    // shrinks with the text drags everything beside it sideways. It may still
+    // shrink (min-width: 0) — but only when the strip hits its screen-width cap
+    // on a phone; any screen with room for the whole row keeps the full width.
     status.style.cssText = statusWidth
-        ? `flex:0 0 ${statusWidth}; width:${statusWidth}; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;`
+        ? `flex:0 1 ${statusWidth}; width:${statusWidth}; min-width:0; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;`
         : 'max-width:340px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;';
 
     // Whatever the feature wants between the status and the main button — a
