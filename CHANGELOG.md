@@ -6,6 +6,11 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Marketplace and other panels fit a phone screen
+
+- The marketplace tab strip now wraps on phones, so Ledger, Stale capital and Bulk Sell stay reachable, and the trade ledger and stale capital windows fit the screen instead of hanging off both edges.
+- The marketplace button row, the alchemy history and Best Items windows, the networth and task reroll popups, and the floating Bulk Sell and reroll strips also fit a phone screen now.
+
 ### Chest key zones no longer run into the stack value
 
 - The zone list on chest key icons ("5·7·8·10") ran straight into the item's stack value in the top-right corner. It now wraps onto two short lines in the top-left, clear of both the value and the item count.
