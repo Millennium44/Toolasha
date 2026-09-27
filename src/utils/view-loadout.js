@@ -263,7 +263,13 @@ export function handleLoadoutShared(data) {
     // character than the request still goes to the click whatever the order.
     const recentClick = lastUserClick && now - lastUserClick.at <= USER_CLICK_WINDOW_MS ? lastUserClick : null;
     const clickAskedFirst =
-        recentClick && inFlight && recentClick.context !== inFlight.context && recentClick.at < inFlight.sentAt;
+        recentClick &&
+        inFlight &&
+        // Send order only holds within one socket: a click made on a character
+        // since switched away from says nothing about this character's request
+        recentClick.owner === inFlight.owner &&
+        recentClick.context !== inFlight.context &&
+        recentClick.at < inFlight.sentAt;
 
     const request = !clickAskedFirst && answers(inFlight, rowId, name) ? inFlight : null;
     const click = !request && recentClick ? recentClick : null;

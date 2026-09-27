@@ -358,6 +358,10 @@ export class SimEditor {
         // nothing rebuilt it. A sim run from there reports the wrong
         // character's numbers as a measurement, and reads as one.
         const owner = dataManager.getCurrentCharacterId?.() ?? null;
+        // Likewise the scenario: an import, reset to self or external DTO
+        // adopted while the build was out is newer than this build, which must
+        // not overwrite it (a party-loadout fetch's resetToParty lands here).
+        const scenario = this._scenarioToken;
 
         try {
             const { players, playerInfo, selfHrid, missingMembers, profileStatus } = await buildAllPlayerDTOs();
@@ -367,6 +371,7 @@ export class SimEditor {
                 this._editorInitialized = false;
                 return;
             }
+            if (this._scenarioToken !== scenario) return;
             if (!players.length) {
                 editorArea.innerHTML =
                     '<div style="color:#555; font-size:12px; text-align:center; padding:20px 0;">No character data available.</div>';
