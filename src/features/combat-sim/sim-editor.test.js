@@ -1605,6 +1605,29 @@ describe('replacing one party member via import', () => {
         expect(editor._editedDTOs.player1.hrid).toBe('player1');
     });
 
+    test('a multi-player paste attributes skipped equipment to the player actually used, not every pasted slot', () => {
+        const { el, editor } = editorWithStrangers(); // active: player2
+        game.parseImport = () => ({
+            // The first non-empty parsed slot was slot 3 (a party export can
+            // start anywhere) — result.players[0] carries that as its hrid.
+            players: [{ ...emptyDTO('player3'), attackLevel: 55 }],
+            names: ['Replacement'],
+            skipped: [
+                { slot: 3, itemHrid: '/items/used_slot_drop', itemName: 'Used Slot Drop', itemLocationHrid: null },
+                { slot: 5, itemHrid: '/items/other_slot_drop', itemName: 'Other Slot Drop', itemLocationHrid: null },
+            ],
+        });
+        el.querySelector('#mwi-csim-import-text').value = 'whatever';
+        el.querySelector('#mwi-csim-import-replace').click();
+
+        // Only the used slot's own skip is attributed to the replaced player;
+        // slot 5's (never used here) must not show up as "not equipped" on
+        // a player who never carried it.
+        expect(editor._importSkipped).toEqual([
+            { slot: 3, itemHrid: '/items/used_slot_drop', itemName: 'Used Slot Drop', itemLocationHrid: null },
+        ]);
+    });
+
     test('clicking "Add as new member" appends instead of replacing', () => {
         const { el, editor } = editorWithStrangers();
         game.parseImport = () => ({ players: [emptyDTO('ignored')], names: ['Newcomer'], skipped: [] });

@@ -3032,7 +3032,19 @@ export class SimEditor {
                 // A multi-slot paste replaces the selected slot with its first
                 // player only — a replace is asked for one slot at a time, and
                 // the rest of a pasted party is available as "Add as new member".
-                this.replacePlayer(this._activeEditPlayer, result.players[0], result.names[0], result.skipped);
+                // `result.skipped` is tagged by the *pasted export's own* slot
+                // number (1-5), which is not necessarily 1 — a party export
+                // can start from any slot — so it is read off the used
+                // player's own hrid (still `player<slot>` at this point,
+                // before replacePlayer renames it) rather than assumed. Left
+                // unfiltered, a skipped item from a slot that was never used
+                // here would wrongly show up as "not equipped" on the
+                // replaced player.
+                const usedSlot = parseInt(result.players[0].hrid?.match(/player(\d+)/)?.[1], 10);
+                const skippedForUsed = Array.isArray(result.skipped)
+                    ? result.skipped.filter((entry) => entry.slot === usedSlot)
+                    : [];
+                this.replacePlayer(this._activeEditPlayer, result.players[0], result.names[0], skippedForUsed);
                 const area = editorArea.querySelector('#mwi-csim-import-area');
                 if (area) area.style.display = 'none';
             });
