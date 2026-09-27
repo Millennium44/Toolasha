@@ -3,6 +3,7 @@ import { describe, test, expect, vi, beforeEach } from 'vitest';
 
 import dataManager from '../../core/data-manager.js';
 import { getItemPrices } from '../../utils/market-data.js';
+import { getActionEfficiencyContext } from '../../utils/efficiency.js';
 import expectedValueCalculator from '../market/expected-value-calculator.js';
 import {
     LootLogStats,
@@ -41,6 +42,15 @@ vi.mock('../../core/data-manager.js', () => ({
         getItemDetails: vi.fn(),
         getInitClientData: vi.fn(),
     },
+}));
+
+// Every other test in this file drives gathering quantity through the
+// `gatheringQuantityFor`/`_gatheringEfficiencyContext` override points instead
+// of exercising the real efficiency pipeline (gear, drinks, achievements, buffs
+// — a lot to stand up realistically). This mock only matters for the cache
+// tests below, which need to control what a re-read returns.
+vi.mock('../../utils/efficiency.js', () => ({
+    getActionEfficiencyContext: vi.fn(),
 }));
 
 vi.mock('../../utils/market-data.js', () => ({
@@ -278,6 +288,64 @@ describe('LootLogStats processing-conversions memoization', () => {
         const secondMap = stats._processingConversions();
 
         expect(secondMap).not.toBe(firstMap);
+    });
+});
+
+describe('LootLogStats gathering-context cache invalidation', () => {
+    // The gathering-efficiency cache is keyed on the action object, which never
+    // itself changes — so unlike processingConversions (keyed on actionDetailMap,
+    // which really is static), this one must be reset on a schedule, or a gear,
+    // drink, achievement or buff change made after the first read is never seen
+    // again for the rest of the page's life.
+    let stats;
+    const actionDetail = { type: '/action_types/milking', dropTable: [] };
+
+    beforeEach(() => {
+        vi.clearAllMocks();
+        stats = new LootLogStats();
+        dataManager.getActionDetails.mockReturnValue(actionDetail);
+        dataManager.getInitClientData.mockReturnValue({});
+    });
+
+    test('a render pass reset picks up a loadout change the cache would otherwise hide', () => {
+        getActionEfficiencyContext
+            .mockReturnValueOnce({ totalGathering: 0.1, efficiencyMultiplier: 1, processingBonus: 0 })
+            .mockReturnValueOnce({ totalGathering: 0.5, efficiencyMultiplier: 1, processingBonus: 0 });
+
+        expect(stats.gatheringQuantityFor(actionDetail)).toBeCloseTo(0.1, 6);
+        // Same action object, second read: without the fix this returns the
+        // first (now stale) loadout's reading forever
+        expect(stats.gatheringQuantityFor(actionDetail)).toBeCloseTo(0.1, 6);
+        expect(getActionEfficiencyContext).toHaveBeenCalledTimes(1);
+
+        // A fresh loot_log_updated wave is exactly the point a loadout change
+        // (new tea, swapped gear, an achievement popping) should be picked up
+        stats.handleLootLogUpdate({ lootLog: [] });
+
+        expect(stats.gatheringQuantityFor(actionDetail)).toBeCloseTo(0.5, 6);
+        expect(getActionEfficiencyContext).toHaveBeenCalledTimes(2);
+    });
+
+    test('a visible-rows pass also resets it', () => {
+        getActionEfficiencyContext
+            .mockReturnValueOnce({ totalGathering: 0.2, efficiencyMultiplier: 1, processingBonus: 0 })
+            .mockReturnValueOnce({ totalGathering: 0.4, efficiencyMultiplier: 1, processingBonus: 0 });
+
+        expect(stats.gatheringQuantityFor(actionDetail)).toBeCloseTo(0.2, 6);
+
+        stats.processVisibleRows();
+
+        expect(stats.gatheringQuantityFor(actionDetail)).toBeCloseTo(0.4, 6);
+        expect(getActionEfficiencyContext).toHaveBeenCalledTimes(2);
+    });
+
+    test('processingConversions stays cached across a render-pass reset — it does not depend on the loadout', () => {
+        dataManager.getInitClientData.mockReturnValue({ actionDetailMap: {} });
+        const before = stats._processingConversions();
+
+        stats.handleLootLogUpdate({ lootLog: [] });
+
+        expect(stats._processingConversions()).toBe(before);
     });
 });
 
