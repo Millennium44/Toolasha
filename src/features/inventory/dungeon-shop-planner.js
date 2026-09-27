@@ -311,7 +311,12 @@ class DungeonShopPlanner {
         // the 5 s refresh cannot hammer the history host.
         if (tokenHrid && !this.measureAttempted.has(tokenHrid)) {
             this.measureAttempted.add(tokenHrid);
-            this.measure(tokenHrid);
+            // Deferred past this draw: `measure` renders synchronously before
+            // its first await, and a render nested inside this draw would clear
+            // and refill the body, then this draw would append a second copy
+            queueMicrotask(() => {
+                if (this.initialized) this.measure(tokenHrid);
+            });
         }
         const result = this.plan(tokenHrid);
         this.lastPlan = result;

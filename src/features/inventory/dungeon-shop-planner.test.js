@@ -266,11 +266,18 @@ describe('the plan', () => {
         // volume data" after a reload.
         dungeonShopPlanner.tokenHrid = '/items/pirate_token';
         dungeonShopPlanner.panel.show();
+        // Checked at once, before any later redraw can heal it: a measure started
+        // inside the draw used to re-render mid-draw and leave two copies
+        expect(body().querySelectorAll('table').length).toBe(1);
         for (let i = 0; i < 5; i++) await flush();
         dungeonShopPlanner.panel.render();
 
         expect(dungeonShopPlanner.volumes.get('/items/kraken_fang')?.known).toBe(true);
         expect(qtyOf('/items/kraken_fang')).toBe('1');
+        // One copy of the panel: a measure started inside the draw used to
+        // re-render mid-draw and leave two tables in the body
+        expect(body().querySelectorAll('table').length).toBe(1);
+        expect(body().textContent.match(/Pirate Tokens held/g)?.length).toBe(1);
     });
 
     test('an item with no volume answer is asked again on the next open', async () => {
