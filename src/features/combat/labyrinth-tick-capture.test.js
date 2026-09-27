@@ -33,6 +33,7 @@ const storageMock = vi.hoisted(() => {
     };
     return {
         stores,
+        storeFor,
         quotaExceeded: false,
         reset() {
             stores.clear();
@@ -191,12 +192,12 @@ describe('labyrinth tick capture', () => {
         expect(capture.isCapturing()).toBe(false);
     });
 
-    test('starting again drops the previous capture, once it is no longer unsaved', () => {
+    test('starting again drops the previous capture, once it is no longer held', () => {
         capture.startCapture();
         emit('battle_updated', battle);
-        // Unsaved ticks are held: a bare startCapture() must refuse rather
-        // than silently drop them (see the guard describe block below)
-        expect(capture.startCapture()).toEqual({ started: false, unsavedTicks: 1 });
+        // Held ticks: a bare startCapture() must refuse rather than silently
+        // drop them (see the guard describe block below)
+        expect(capture.startCapture()).toEqual({ started: false, heldTicks: 1 });
         expect(capture.captureStatus().ticks).toBe(1);
 
         capture.clearCapture();
@@ -430,7 +431,7 @@ describe('adjacent duplicate ticks are dropped, and counted', () => {
         expect(capture.captureFile().duplicatesDiscarded).toBe(0);
     });
 
-    test('saving marks the capture saved; starting or clearing unmarks it', () => {
+    test('saving marks the capture saved; only Discard unmarks it — a Save click alone does not authorize a fresh start', () => {
         vi.stubGlobal('Blob', class {});
         vi.stubGlobal('URL', { createObjectURL: () => 'blob:x', revokeObjectURL: () => {} });
         vi.stubGlobal('document', { createElement: () => ({ click: () => {} }) });
@@ -446,10 +447,15 @@ describe('adjacent duplicate ticks are dropped, and counted', () => {
         expect(capture.captureStatus().ticks).toBe(1);
         expect(capture.captureStatus().savedAt).not.toBeNull();
 
-        capture.startCapture();
-        expect(capture.captureStatus().savedAt).toBeNull();
+        // A bare startCapture is refused: saved is not discarded
+        expect(capture.startCapture()).toEqual({ started: false, heldTicks: 1 });
+        expect(capture.captureStatus().savedAt).not.toBeNull();
+
         capture.stopCapture();
         capture.clearCapture();
+        expect(capture.captureStatus().savedAt).toBeNull();
+        // Discard having run, a fresh start is allowed again
+        expect(capture.startCapture()).toEqual({ started: true });
         expect(capture.captureStatus().savedAt).toBeNull();
 
         vi.unstubAllGlobals();
@@ -504,20 +510,20 @@ describe('the capture ends when the fight leaves its monster', () => {
     });
 });
 
-describe('unsavedTickCount and the start/reset guard', () => {
+describe('heldTickCount and the start/reset guard', () => {
     test('zero with nothing held', () => {
-        expect(capture.unsavedTickCount()).toBe(0);
+        expect(capture.heldTickCount()).toBe(0);
     });
 
-    test('non-zero once ticks are held and unsaved, whether running or stopped', () => {
+    test('non-zero once ticks are held, whether running or stopped', () => {
         capture.startCapture();
         emit('battle_updated', battle);
-        expect(capture.unsavedTickCount()).toBe(1);
+        expect(capture.heldTickCount()).toBe(1);
         capture.stopCapture();
-        expect(capture.unsavedTickCount()).toBe(1);
+        expect(capture.heldTickCount()).toBe(1);
     });
 
-    test('zero again once the held ticks are saved', () => {
+    test('a Save click does NOT bring it back to zero — a click is not proof the file reached disk', () => {
         vi.stubGlobal('Blob', class {});
         vi.stubGlobal('URL', { createObjectURL: () => 'blob:x', revokeObjectURL: () => {} });
         vi.stubGlobal('document', { createElement: () => ({ click: () => {} }) });
@@ -525,17 +531,42 @@ describe('unsavedTickCount and the start/reset guard', () => {
         emit('battle_updated', battle);
         capture.stopCapture();
         capture.downloadCapture();
-        expect(capture.unsavedTickCount()).toBe(0);
+        expect(capture.captureStatus().savedAt).not.toBeNull();
+        expect(capture.heldTickCount()).toBe(1);
         vi.unstubAllGlobals();
     });
 
-    test('a bare startCapture refuses while ticks are unsaved, and changes nothing', () => {
+    test('only Discard brings it back to zero', () => {
+        capture.startCapture();
+        emit('battle_updated', battle);
+        capture.clearCapture();
+        expect(capture.heldTickCount()).toBe(0);
+    });
+
+    test('a bare startCapture refuses while ticks are held, and changes nothing', () => {
         capture.startCapture({ monsterHrid: '/monsters/cyclops' });
         emit('battle_updated', battle);
         const before = capture.captureFile();
         const result = capture.startCapture({ monsterHrid: '/monsters/dryad' });
-        expect(result).toEqual({ started: false, unsavedTicks: 1 });
+        expect(result).toEqual({ started: false, heldTicks: 1 });
         expect(capture.captureFile()).toEqual(before);
+    });
+
+    test('a bare startCapture refuses even once the held capture is saved — this is the exact loss the guard exists for', () => {
+        vi.stubGlobal('Blob', class {});
+        vi.stubGlobal('URL', { createObjectURL: () => 'blob:x', revokeObjectURL: () => {} });
+        vi.stubGlobal('document', { createElement: () => ({ click: () => {} }) });
+        capture.startCapture({ monsterHrid: '/monsters/cyclops' });
+        emit('battle_updated', battle);
+        capture.stopCapture();
+        capture.downloadCapture();
+
+        const result = capture.startCapture({ monsterHrid: '/monsters/dryad' });
+
+        expect(result).toEqual({ started: false, heldTicks: 1 });
+        expect(capture.captureFile().ticks).toHaveLength(1);
+        expect(capture.captureFile().context.monsterHrid).toBe('/monsters/cyclops');
+        vi.unstubAllGlobals();
     });
 
     test('force starts anyway, discarding the held ticks', () => {
@@ -553,18 +584,6 @@ describe('unsavedTickCount and the start/reset guard', () => {
         capture.clearCapture();
         expect(capture.startCapture({ monsterHrid: '/monsters/dryad' })).toEqual({ started: true });
         expect(capture.captureFile().context.monsterHrid).toBe('/monsters/dryad');
-    });
-
-    test('starting is allowed once the held capture is saved', () => {
-        vi.stubGlobal('Blob', class {});
-        vi.stubGlobal('URL', { createObjectURL: () => 'blob:x', revokeObjectURL: () => {} });
-        vi.stubGlobal('document', { createElement: () => ({ click: () => {} }) });
-        capture.startCapture({ monsterHrid: '/monsters/cyclops' });
-        emit('battle_updated', battle);
-        capture.stopCapture();
-        capture.downloadCapture();
-        expect(capture.startCapture({ monsterHrid: '/monsters/dryad' })).toEqual({ started: true });
-        vi.unstubAllGlobals();
     });
 });
 
@@ -653,12 +672,60 @@ describe('recovering an autosaved capture on load', () => {
         // Always presented as unsaved, whatever the autosave's own savedAt said
         expect(restored.savedAt).toBeNull();
         expect(capture.isCapturing()).toBe(false);
-        expect(capture.unsavedTickCount()).toBe(liveFile.ticks.length);
+        expect(capture.heldTickCount()).toBe(liveFile.ticks.length);
     });
 
     test('does nothing when nothing is autosaved', async () => {
         expect(await capture.loadAutosave()).toBe(false);
         expect(capture.captureFile().ticks).toHaveLength(0);
+    });
+
+    test('a character switch mid-read is not restored — the read is for whoever asked, not whoever is current when it lands', async () => {
+        const spy = vi.spyOn(dataManager, 'getCurrentCharacterId').mockReturnValue('charA');
+        storageMock.storeFor('labyrinth').set('labyrinthTickCaptureAutosave_charA', {
+            ticks: [{ at: 0, type: 'battle_updated', payload: {} }],
+        });
+
+        // Delay the read so the switch can land while it is in flight — the
+        // existing mock resolves instantly and cannot exercise this at all.
+        let release;
+        const gate = new Promise((resolve) => {
+            release = resolve;
+        });
+        const getSpy = vi.spyOn(storage, 'get').mockImplementation(async (key, store, fallback) => {
+            await gate;
+            const map = storageMock.storeFor(store);
+            return map.has(key) ? structuredClone(map.get(key)) : fallback;
+        });
+
+        const pending = capture.loadAutosave(); // reads under charA
+        spy.mockReturnValue('charB'); // the switch lands while the read is in flight
+        release();
+        expect(await pending).toBe(false);
+        expect(capture.captureFile().ticks).toHaveLength(0);
+
+        getSpy.mockRestore();
+    });
+
+    test('a restored capture reports its own recorded span, not wall time since the original session', async () => {
+        vi.useFakeTimers();
+        try {
+            capture.startCapture({ monsterHrid: '/monsters/cyclops' });
+            emit('battle_updated', battle);
+            vi.advanceTimersByTime(5000);
+            emit('battle_updated', { ...battle, pMap: { 0: { cHP: 90 } } });
+            capture.stopCapture();
+            capture.forgetForCharacterSwitch();
+
+            // A reload days later — the original startedAt is now far in the past
+            vi.advanceTimersByTime(3 * 24 * 60 * 60 * 1000);
+            expect(await capture.loadAutosave()).toBe(true);
+
+            // The capture's own span (5s), not the days elapsed since it ran
+            expect(capture.captureStatus().seconds).toBeCloseTo(5, 5);
+        } finally {
+            vi.useRealTimers();
+        }
     });
 
     test('never overwrites a capture already held or running in this session', async () => {
@@ -728,5 +795,83 @@ describe('downloadCapture refreshes the autosave, but never clears it', () => {
         expect(stored?.savedAt).not.toBeNull();
 
         vi.unstubAllGlobals();
+    });
+});
+
+describe('per-fight room level', () => {
+    /**
+     * A labyrinth monster shaped like the real payload (measured against a
+     * live capture, 2026-09-27): `combatDetails.combatLevel` — and
+     * `staminaLevel`, which the labyrinth scales identically — equals the
+     * room level directly. `maxHitpoints` here mirrors the actual measured
+     * pair (255 -> 10600, 242 -> 10080) as corroborating context, not
+     * something the code reads.
+     */
+    const labMonster = (hrid, roomLevel, maxHitpoints) => ({
+        hrid,
+        combatDetails: {
+            combatLevel: roomLevel,
+            staminaLevel: roomLevel,
+            maxHitpoints,
+            currentHitpoints: maxHitpoints,
+        },
+    });
+
+    test('a new_battle tick carries its own fight room level', () => {
+        capture.startCapture({ monsterHrid: '/monsters/pyre_hunter', roomLevel: 255 });
+        emit('new_battle', { monsters: [labMonster('/monsters/pyre_hunter', 255, 10600)], players: [] });
+
+        const file = capture.captureFile();
+        expect(file.ticks[0].roomLevel).toBe(255);
+    });
+
+    test('a capture followed across rooms tags each fight with its own level, not the one it started at', () => {
+        capture.startCapture({ monsterHrid: '/monsters/pyre_hunter', roomLevel: 255 }, { stopOnLeave: false });
+        emit('new_battle', { monsters: [labMonster('/monsters/pyre_hunter', 255, 10600)], players: [] });
+        emit('new_battle', { monsters: [labMonster('/monsters/pyre_hunter', 255, 10600)], players: [] });
+        emit('new_battle', { monsters: [labMonster('/monsters/pyre_hunter', 255, 10600)], players: [] });
+        emit('new_battle', { monsters: [labMonster('/monsters/pyre_hunter', 255, 10600)], players: [] });
+        // The room the maintainer's capture actually moved to: same monster,
+        // lower level, and a correspondingly lower max HP
+        emit('new_battle', { monsters: [labMonster('/monsters/pyre_hunter', 242, 10080)], players: [] });
+
+        const file = capture.captureFile();
+        const fights = file.ticks.filter((t) => t.type === 'new_battle');
+        expect(fights).toHaveLength(5);
+        expect(fights.map((f) => f.roomLevel)).toEqual([255, 255, 255, 255, 242]);
+
+        // context.roomLevel is kept exactly as before — the level the capture
+        // started at, for whatever already reads it — never overwritten by a
+        // later fight
+        expect(file.context.roomLevel).toBe(255);
+
+        // The reader that must prefer the per-fight level sees the true
+        // current one, not the stale capture-wide context
+        expect(capture.lastFightRoomLevel(file)).toBe(242);
+    });
+
+    test('lastFightRoomLevel falls back to context.roomLevel for a legacy file with no per-tick level', () => {
+        const legacy = {
+            context: { roomLevel: 206 },
+            ticks: [
+                { type: 'new_battle', payload: {} },
+                { type: 'battle_updated', payload: {} },
+            ],
+        };
+        expect(capture.lastFightRoomLevel(legacy)).toBe(206);
+    });
+
+    test('lastFightRoomLevel is null when neither a per-fight level nor a context level is known', () => {
+        expect(capture.lastFightRoomLevel({ ticks: [], context: {} })).toBeNull();
+    });
+
+    test('a monster payload with no scaled level tags the tick null rather than guessing', () => {
+        capture.startCapture({ monsterHrid: '/monsters/fly', roomLevel: 10 });
+        emit('new_battle', { monsters: [{ hrid: '/monsters/fly' }], players: [] });
+
+        const file = capture.captureFile();
+        expect(file.ticks[0].roomLevel).toBeNull();
+        // Falls back to the capture-wide context rather than reporting nothing
+        expect(capture.lastFightRoomLevel(file)).toBe(10);
     });
 });

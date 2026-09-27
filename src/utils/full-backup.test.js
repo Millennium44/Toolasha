@@ -230,6 +230,14 @@ describe('stripExcludedKeys', () => {
         stripExcludedKeys('guildHistory', entries);
         expect(entries).toEqual({ trialTraceManifest_1: {}, keep: 1 });
     });
+
+    test('drops the labyrinth tick capture autosave but keeps the rest of the labyrinth store', () => {
+        const kept = stripExcludedKeys('labyrinth', {
+            labyrinthTickCaptureAutosave_char1: { ticks: new Array(8000).fill({}) },
+            labyrinthFightRecorder_char1: { entries: [] },
+        });
+        expect(kept).toEqual({ labyrinthFightRecorder_char1: { entries: [] } });
+    });
 });
 
 describe('trial trace exclusion end to end', () => {

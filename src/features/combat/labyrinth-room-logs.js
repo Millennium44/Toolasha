@@ -396,10 +396,15 @@ class LabyrinthRoomLogs {
         // the user cancelled — survives a reload as a stopped, held capture
         // instead of vanishing with the page. Repaint once it lands, so a
         // panel already open picks up the "Recovered" state without a click.
+        // Gated on the same ticket as the record read above: `loadAutosave`
+        // itself rechecks the character identity across its own await, which
+        // protects its module state; this ticket is what stops a resolution
+        // landing after THIS instance was torn down (a same-character
+        // reconnect included) from repainting a panel that is no longer ours.
         labTickCapture
             .loadAutosave()
             .then((recovered) => {
-                if (recovered) this.paintCapture();
+                if (recovered && stillOurs(ticket)) this.paintCapture();
             })
             .catch((error) => console.error('[LabyrinthRoomLogs] Loading the autosaved capture failed:', error));
 
@@ -1781,16 +1786,21 @@ class LabyrinthRoomLogs {
     }
 
     /**
-     * Paint the capture button for its three states: idle, recording (live tick
-     * count), and stopped-holding-an-unsaved-capture (a capture that ended by
+     * Paint the capture button for its states: idle, recording (live tick
+     * count), stopped-holding-an-unsaved-capture (a capture that ended by
      * itself — the monster changed, or the time limit — still needs a way out
      * to a file; before this state existed those ticks were only ever one
-     * Capture press away from silent erasure).
+     * Capture press away from silent erasure), and stopped-holding-a-SAVED
+     * capture (still held on purpose — see `labTickCapture.heldTickCount` — so
+     * this needs its own explicit way to let go of it and start fresh).
      */
     paintCapture() {
         if (!this.captureButton) return;
         const status = labTickCapture.captureStatus();
-        const holdingUnsaved = !status.capturing && status.ticks > 0 && !status.savedAt;
+        // Any held capture — saved or not — blocks a fresh one from starting
+        // silently; only Discard (here, or the button below) lets go of it.
+        const holding = !status.capturing && status.ticks > 0;
+        const saved = holding && status.savedAt != null;
         const dupes = status.duplicatesDiscarded > 0 ? ` ${status.duplicatesDiscarded} repeated ticks discarded.` : '';
 
         if (status.capturing) {
@@ -1799,12 +1809,18 @@ class LabyrinthRoomLogs {
                 'Stop the raw capture and download it. It records the moment-to-moment combat feed — every ' +
                 'health, mana and counter tick — so the stun cadence and per-hit damage behind a rate mismatch ' +
                 `can be read. Hand the file over.${dupes}`;
-        } else if (holdingUnsaved && status.stoppedReason === 'page_reload') {
+        } else if (saved) {
+            this.captureButton.textContent = `Discard & start new (${status.ticks})`;
+            this.captureButton.title =
+                'Already saved, but still held — a Save click is not proof the file reached disk (the browser ' +
+                'dialog can be cancelled), so it stays until you say otherwise. This discards it and starts a ' +
+                `fresh capture; use Discard alone to just let it go.${dupes}`;
+        } else if (holding && status.stoppedReason === 'page_reload') {
             this.captureButton.textContent = `Recovered capture (${status.ticks})`;
             this.captureButton.title =
                 'A reload (or a crash) interrupted this capture before it could be saved; the ticks survived in ' +
                 `the autosave. Save writes the file; Discard throws them away.${dupes}`;
-        } else if (holdingUnsaved) {
+        } else if (holding) {
             this.captureButton.textContent = `Save capture (${status.ticks})`;
             this.captureButton.title =
                 'The capture stopped by itself (the fight moved to a different monster, or the time limit) and ' +
@@ -1821,14 +1837,14 @@ class LabyrinthRoomLogs {
             'white-space:nowrap; flex-shrink:0; ' +
             (status.capturing
                 ? 'background:rgba(255,110,110,0.85); color:#fff;'
-                : holdingUnsaved
+                : holding
                   ? 'background:rgba(255,190,80,0.85); color:#222;'
                   : 'background:rgba(255,255,255,0.12); color:#9ec4ff;');
         if (this.captureDiscardButton) {
             this.captureDiscardButton.style.cssText =
                 'height:18px; border:0; border-radius:4px; font-size:10px; cursor:pointer; padding:0 6px; ' +
                 'white-space:nowrap; flex-shrink:0; background:rgba(255,255,255,0.12); color:#ffb3b3; ' +
-                (holdingUnsaved ? '' : 'display:none;');
+                (holding ? '' : 'display:none;');
         }
     }
 
@@ -2091,42 +2107,60 @@ class LabyrinthRoomLogs {
     }
 
     /**
-     * Start the raw tick capture, or stop it and download the file.
+     * Start the raw tick capture, stop it and download the file, save a
+     * capture that stopped by itself, or discard an already-saved one to
+     * start fresh.
      *
      * Stop and save is one press: the file is the whole point of the capture, so
      * there is nothing to do between stopping and handing it over.
+     *
+     * A held capture — saved or not — blocks a fresh start; `savedAt` being set
+     * is never by itself read as consent to discard it, because the click that
+     * set it is not proof the file reached disk (the browser's own Save dialog
+     * can be cancelled). Once it IS saved, this button becomes the explicit
+     * "Discard & start new" the user presses to say so; see
+     * `labTickCapture.heldTickCount`.
      */
     onCaptureClicked() {
         const status = labTickCapture.captureStatus();
         if (status.capturing) {
             labTickCapture.stopCapture();
             labTickCapture.downloadCapture();
-        } else if (status.ticks > 0 && !status.savedAt) {
-            // A capture that stopped by itself is still held; this press is the
-            // save it never got. Starting fresh from here would erase it —
-            // that path is only reachable once these ticks are saved or
-            // discarded, so a Capture press can never silently destroy a fight.
+        } else if (status.ticks > 0 && status.savedAt != null) {
+            // Saved but still held: this press IS the explicit consent to
+            // throw it away and start fresh.
+            labTickCapture.clearCapture();
+            this.armFreshCapture();
+        } else if (status.ticks > 0) {
+            // Stopped, unsaved, and held: this press is the save it never got.
             labTickCapture.downloadCapture();
         } else {
-            // Best-effort label from whatever knows the current room; the capture
-            // backfills the monster from the fight's own feed if this is empty
-            const room = this.labContext?.room;
-            const monsterHrid = this.fight?.monsterHrid || this.activeSession?.monsterHrid || room?.monsterHrid || null;
-            const roomLevel =
-                this.fight?.session?.roomLevel ||
-                this.activeSession?.roomLevel ||
-                Math.floor(Number(room?.recommendedLevel) || 0) ||
-                0;
-            labTickCapture.startCapture(
-                {
-                    monsterHrid,
-                    roomLevel,
-                    fingerprint: this.simSource?.fingerprint?.() || null,
-                },
-                { stopOnLeave: !this.captureAllRooms?.checked }
-            );
+            this.armFreshCapture();
         }
         this.paintCapture();
+    }
+
+    /**
+     * Start a fresh raw tick capture, labelled from whatever knows the current
+     * room; the capture backfills the monster and, for a room the label
+     * missed, the per-fight room level, from the fight's own feed.
+     */
+    armFreshCapture() {
+        const room = this.labContext?.room;
+        const monsterHrid = this.fight?.monsterHrid || this.activeSession?.monsterHrid || room?.monsterHrid || null;
+        const roomLevel =
+            this.fight?.session?.roomLevel ||
+            this.activeSession?.roomLevel ||
+            Math.floor(Number(room?.recommendedLevel) || 0) ||
+            0;
+        labTickCapture.startCapture(
+            {
+                monsterHrid,
+                roomLevel,
+                fingerprint: this.simSource?.fingerprint?.() || null,
+            },
+            { stopOnLeave: !this.captureAllRooms?.checked }
+        );
     }
 
     /**

@@ -13,7 +13,7 @@ vi.mock('./labyrinth-tick-capture.js', () => ({
     default: {
         captureStatus: () => ({ ...tick.status }),
         isCapturing: () => tick.status.capturing,
-        unsavedTickCount: () => (tick.status.savedAt == null ? tick.status.ticks : 0),
+        heldTickCount: () => tick.status.ticks,
         startCapture: (...args) => tick.calls.push(['start', ...args]),
         stopCapture: () => tick.calls.push(['stop']),
         forgetForCharacterSwitch: () => tick.calls.push(['forget']),
@@ -1314,7 +1314,7 @@ describe('the capture button knows its three states', () => {
         expect(labyrinthRoomLogs.captureDiscardButton.style.display).not.toBe('none');
     });
 
-    test('clicking Save downloads the held capture and cannot start a new one over it', () => {
+    test('clicking Save downloads the held capture, which stays held — a Save click is not consent to start fresh over it', () => {
         tick.status = { ...tick.status, capturing: false, ticks: 300 };
         labyrinthRoomLogs.paintCapture();
 
@@ -1322,8 +1322,10 @@ describe('the capture button knows its three states', () => {
 
         expect(tick.calls).toContainEqual(['download']);
         expect(tick.calls.some(([what]) => what === 'start')).toBe(false);
-        // Saved: the button falls back to a plain Capture
-        expect(labyrinthRoomLogs.captureButton.textContent).toBe('Capture');
+        // Saved but still held: the button now offers the explicit discard,
+        // not a plain Capture — a Save click alone never authorizes a fresh
+        // start (see labTickCapture.heldTickCount).
+        expect(labyrinthRoomLogs.captureButton.textContent).toBe('Discard & start new (300)');
     });
 
     test('Discard throws the held capture away deliberately', () => {
@@ -1336,13 +1338,19 @@ describe('the capture button knows its three states', () => {
         expect(labyrinthRoomLogs.captureButton.textContent).toBe('Capture');
     });
 
-    test('an already-saved capture offers a fresh start, not a second download', () => {
+    test('an already-saved capture offers "Discard & start new", which discards it before arming a fresh one', () => {
         tick.status = { ...tick.status, capturing: false, ticks: 300, savedAt: 99 };
         labyrinthRoomLogs.paintCapture();
-        expect(labyrinthRoomLogs.captureButton.textContent).toBe('Capture');
+        expect(labyrinthRoomLogs.captureButton.textContent).toBe('Discard & start new (300)');
+        expect(labyrinthRoomLogs.captureDiscardButton.style.display).not.toBe('none');
 
         labyrinthRoomLogs.onCaptureClicked();
+        // Discarded before the fresh one is armed — never both held at once
+        expect(tick.calls).toContainEqual(['clear']);
         expect(tick.calls.some(([what]) => what === 'start')).toBe(true);
+        expect(tick.calls.findIndex(([what]) => what === 'clear')).toBeLessThan(
+            tick.calls.findIndex(([what]) => what === 'start')
+        );
     });
 
     test('discarded repeats are reported where there is room — the title', () => {

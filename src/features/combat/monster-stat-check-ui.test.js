@@ -145,10 +145,13 @@ vi.mock('./labyrinth-clear-rate.js', () => ({
 vi.mock('./labyrinth-tick-capture.js', () => ({
     captureFile: () => tickCapture.file,
     startCapture: (ctx) => tickCapture.started.push(ctx),
-    // Mirrors the real module's own rule: ticks held with no savedAt are
-    // what a fresh start must not silently discard.
-    unsavedTickCount: () =>
-        tickCapture.file?.savedAt == null && tickCapture.file?.ticks?.length ? tickCapture.file.ticks.length : 0,
+    // Mirrors the real module's own fallback: the last new_battle tick's own
+    // roomLevel, else the capture-wide context's.
+    lastFightRoomLevel: (file) => {
+        const fights = (file?.ticks || []).filter((t) => t?.type === 'new_battle' && t.roomLevel != null);
+        if (fights.length) return fights[fights.length - 1].roomLevel;
+        return file?.context?.roomLevel ?? null;
+    },
 }));
 
 const {
@@ -238,13 +241,13 @@ describe('the uptime harness capture gate', () => {
     // _render at the end of the run paths needs the panel built once
     beforeEach(() => panel._ensureBuilt());
 
-    test('a held capture from another build is refused BY NAME, and a fresh one armed with the current fingerprint', async () => {
+    test('a held capture from another build is refused BY NAME, even once it is saved — a Save click is not consent to replace it', async () => {
         panel.displayed = snap({});
         tickCapture.file = {
             ticks: [{}, {}],
-            // Already saved: nothing at risk, so a mismatched capture may be
-            // replaced without asking — see the unsaved-capture test below
-            // for the case where it may not.
+            // Saved does not mean safe to overwrite: `savedAt` is stamped at
+            // the download click, before the browser's own Save dialog has
+            // necessarily done anything, and that dialog can be cancelled.
             savedAt: 111,
             context: { monsterHrid: '/monsters/cyclops', roomLevel: 206, fingerprint: 'fp-old' },
         };
@@ -252,15 +255,11 @@ describe('the uptime harness capture gate', () => {
         await panel._runUptimeHarness();
 
         expect(clearRate.harnessCalls).toHaveLength(0);
-        expect(panel.displayed.uptime.armed).toBe(true);
-        expect(panel.displayed.uptime.message).toContain('different build');
-        // The refusal still arms a capture, bound to the current build
-        expect(tickCapture.started).toHaveLength(1);
-        expect(tickCapture.started[0]).toMatchObject({
-            monsterHrid: '/monsters/cyclops',
-            roomLevel: 206,
-            fingerprint: 'fp-now',
-        });
+        // Refused outright — no fresh capture armed over the held one, saved or not
+        expect(tickCapture.started).toHaveLength(0);
+        expect(panel.displayed.uptime.armed).toBeUndefined();
+        expect(panel.displayed.uptime.error).toContain('saved capture (2 ticks)');
+        expect(panel.displayed.uptime.error).toContain('different build');
     });
 
     test('a wrong-monster capture names the monster, not the build', async () => {
@@ -273,8 +272,8 @@ describe('the uptime harness capture gate', () => {
 
         await panel._runUptimeHarness();
 
-        expect(panel.displayed.uptime.message).toContain('different monster');
-        expect(panel.displayed.uptime.message).not.toContain('build');
+        expect(panel.displayed.uptime.error).toContain('different monster');
+        expect(panel.displayed.uptime.error).not.toContain('different build');
     });
 
     test('an unsaved held capture is never silently discarded to arm a mismatched one', async () => {
@@ -294,6 +293,21 @@ describe('the uptime harness capture gate', () => {
         expect(tickCapture.started).toHaveLength(0);
         expect(panel.displayed.uptime.armed).toBeUndefined();
         expect(panel.displayed.uptime.error).toContain('Unsaved capture (2 ticks)');
+    });
+
+    test('a held capture that matches on context.roomLevel but not the more recent per-fight level is still named a mismatch', async () => {
+        panel.displayed = snap({}); // roomLevel: 206
+        tickCapture.file = {
+            ticks: [
+                { type: 'new_battle', roomLevel: 206 },
+                { type: 'new_battle', roomLevel: 242 }, // the capture followed the player into a different room
+            ],
+            context: { monsterHrid: '/monsters/cyclops', roomLevel: 206, fingerprint: 'fp-now' },
+        };
+
+        await panel._runUptimeHarness();
+
+        expect(panel.displayed.uptime.error).toContain('room level');
     });
 
     test('a legacy capture with no fingerprint still runs, and the section carries the fight counts', async () => {
