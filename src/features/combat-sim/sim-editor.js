@@ -293,6 +293,22 @@ export class SimEditor {
         if (this._loadoutAppliedNames) return this._loadoutAppliedNames[playerHrid] || '';
         return playerHrid === (this._selfHrid || this._activeEditPlayer) ? this._selectedLoadoutName : '';
     }
+    /**
+     * Forget which loadout a player's DTO was built from, once that DTO no longer
+     * wears it: one player reverted to current gear, or (no argument) every
+     * player, when the loaded DTOs are replaced or reset wholesale.
+     * @param {string} [playerHrid]
+     * @private
+     */
+    _forgetAppliedLoadouts(playerHrid) {
+        if (playerHrid === undefined) {
+            this._loadoutBaselineDTOs = null;
+            this._loadoutAppliedNames = null;
+            return;
+        }
+        if (this._loadoutBaselineDTOs) delete this._loadoutBaselineDTOs[playerHrid];
+        if (this._loadoutAppliedNames) delete this._loadoutAppliedNames[playerHrid];
+    }
     getMissingMembers() {
         return this._missingMembers;
     }
@@ -434,6 +450,7 @@ export class SimEditor {
 
             this._originalDTOs = structuredClone(dtoMap);
             this._editedDTOs = structuredClone(dtoMap);
+            this._forgetAppliedLoadouts();
             this._editedPlayerInfo = playerInfo;
             this._selfHrid = selfHrid;
             this._activeEditPlayer = selfHrid;
@@ -599,6 +616,7 @@ export class SimEditor {
         this._externalNote = '';
         this._loadoutFetchNote = '';
         this._selectedLoadoutName = '';
+        this._forgetAppliedLoadouts();
         this._partyKeyAtLoad = this._partySignature().key;
         this._editorInitialized = true;
         this._scenarioToken++;
@@ -645,6 +663,7 @@ export class SimEditor {
         this._profileStatus = [];
         this._importSkipped = [];
         this._selectedLoadoutName = '';
+        this._forgetAppliedLoadouts();
         this._partyKeyAtLoad = null;
         this._externalNote = '';
         this._loadoutFetchNote = '';
@@ -2684,6 +2703,7 @@ export class SimEditor {
             resetBtn.addEventListener('click', () => {
                 this._editedDTOs = structuredClone(this._originalDTOs);
                 this._selectedLoadoutName = '';
+                this._forgetAppliedLoadouts();
                 this.renderEditor();
             });
         }
@@ -2774,6 +2794,7 @@ export class SimEditor {
                 this._selectedLoadoutName = selectedName;
                 if (!selectedName) {
                     const activePlayer = this._activeEditPlayer;
+                    this._forgetAppliedLoadouts(activePlayer);
                     if (this._originalDTOs?.[activePlayer]) {
                         this._editedDTOs[activePlayer] = structuredClone(this._originalDTOs[activePlayer]);
                     }
