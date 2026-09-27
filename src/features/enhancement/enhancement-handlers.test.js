@@ -790,3 +790,46 @@ describe('a mirror attempt on a refined item', () => {
         expect(state.costs).toEqual([['mat', '/items/kraken_chaps', 1, 7000]]);
     });
 });
+
+describe('a session saved before attempts carried their action id', () => {
+    // A missing id is unknown, not a match: the snapshot's other evidence decides
+    const legacy = () => ({
+        id: 'old',
+        state: 'tracking',
+        itemHrid: '/items/enchanted_cloak_refined',
+        targetLevel: 15,
+        protectFrom: 2,
+        totalAttempts: 40,
+        totalXP: 0,
+        startTime: 1_000,
+        lastUpdateTime: 50_000,
+        lastAttempt: { attemptNumber: 41, level: 5, timestamp: 50_000 },
+    });
+
+    test('the same run still going (target, protect-from and count all agree) stays open', () => {
+        state.characterData = {};
+        state.current = legacy();
+        state.actions = [cachedEnhanceAction({ id: 'a1' })]; // target 15, protect 2, count 2070
+        setupEnhancementHandlers();
+
+        expect(state.calls.map(([kind]) => kind)).not.toContain('finalize');
+    });
+
+    test('a same-item run with another target is a new run, and the stored one closes', () => {
+        state.characterData = {};
+        state.current = legacy();
+        state.actions = [cachedEnhanceAction({ id: 'b1', enhancingMaxLevel: 18, currentCount: 0 })];
+        setupEnhancementHandlers();
+
+        expect(state.calls).toContainEqual(['finalize', 50_000]);
+    });
+
+    test('a same-item run whose count is below the attempts already recorded is a new action', () => {
+        state.characterData = {};
+        state.current = legacy();
+        state.actions = [cachedEnhanceAction({ id: 'b1', currentCount: 3 })];
+        setupEnhancementHandlers();
+
+        expect(state.calls).toContainEqual(['finalize', 50_000]);
+    });
+});

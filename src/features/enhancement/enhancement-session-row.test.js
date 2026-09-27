@@ -133,6 +133,22 @@ describe('the enhancement session tile', () => {
         expect(container.title).toContain('finished');
     });
 
+    test('the latest session is the one last seen, not the one last scored', () => {
+        // Closed after its last attempt: endTime and lastAttempt run past lastUpdateTime
+        game.stored = {
+            closed: session({
+                state: 'completed',
+                totalAttempts: 77,
+                lastUpdateTime: 1_000,
+                lastAttempt: { timestamp: 4_000 },
+                endTime: 5_000,
+            }),
+            older: session({ state: 'completed', totalAttempts: 9, lastUpdateTime: 2_000, endTime: 2_000 }),
+        };
+
+        expect(draw().textContent).toContain('77');
+    });
+
     test('a session with no attempts yet still draws, at zero', () => {
         game.session = session({ totalAttempts: 0, totalSuccesses: 0, totalCost: 0, currentLevel: 5 });
 

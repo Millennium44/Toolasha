@@ -45,7 +45,10 @@ function currentSession() {
         if (live) return live;
         let latest = null;
         for (const session of Object.values(enhancementTracker.getAllSessions?.() || {})) {
-            const at = (s) => s?.lastUpdateTime || s?.startTime || 0;
+            // lastUpdateTime moves only on a scored attempt; an unscored one moves lastAttempt,
+            // and a run stopped or closed after its last attempt carries endTime
+            const at = (s) =>
+                Math.max(s?.endTime || 0, s?.lastAttempt?.timestamp || 0, s?.lastUpdateTime || 0) || s?.startTime || 0;
             if (session && (!latest || at(session) > at(latest))) latest = session;
         }
         return latest;
