@@ -122,10 +122,8 @@ export async function displayEnhancementStats(panel, itemHrid) {
         // Build speed breakdown from params (respects manual override)
         const itemLevel = dataManager.getInitClientData()?.itemDetailMap?.[itemHrid]?.itemLevel || 0;
         const levelAdvantage = params.enhancingLevel > itemLevel ? (params.enhancingLevel - itemLevel) / 100 : 0;
-        const autoDetect = config.getSettingValue('enhanceSim_autoDetect', false);
-        const personalSpeed = autoDetect
-            ? dataManager.getPersonalBuffFlatBoost('/action_types/enhancing', '/buff_types/action_speed')
-            : 0;
+        // A Labyrinth scroll's speed comes with the bench (auto and manual alike; the Pro kit has none)
+        const personalSpeed = (params.personalSpeedBonus || 0) / 100;
         const speedBreakdown = {
             equipment: (params.equipmentSpeedBonus || 0) / 100,
             house: (params.houseSpeedBonus || 0) / 100,

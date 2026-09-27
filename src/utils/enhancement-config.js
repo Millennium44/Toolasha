@@ -42,12 +42,14 @@ export function getBlessedTeaBonus(itemDetailMap) {
  * Scroll of Wisdom. Left out, a MooPass holder's XP read 5% short and a guild speed buff never
  * reached the enhancing panel's action time, though the tracker counted it.
  *
- * Action speed from a Labyrinth scroll is not included: the enhancing panel adds that itself.
+ * Action speed from a Labyrinth scroll (active, or simulated through dataManager's scroll
+ * simulation) is returned on its own as `personalSpeed` so the panel can show it as its own line;
+ * `speed` does not include it.
  *
  * @param {Object} [options] - Options
  * @param {boolean} [options.includeAchievement=true] - Count the achievement map's speed; the
  *   manual bench passes its Achievement toggle here so one switch governs every achievement buff
- * @returns {{speed: number, wisdom: number}} Percentages
+ * @returns {{speed: number, personalSpeed: number, wisdom: number}} Percentages
  */
 function getLiveOnlyEnhancingBonuses({ includeAchievement = true } = {}) {
     const charData = dataManager.characterData;
@@ -70,7 +72,9 @@ function getLiveOnlyEnhancingBonuses({ includeAchievement = true } = {}) {
     const wisdom =
         sumMaps('/buff_types/wisdom') +
         (dataManager.getPersonalBuffFlatBoost?.('/action_types/enhancing', '/buff_types/wisdom') || 0);
-    return { speed: speed * 100, wisdom: wisdom * 100 };
+    const personalSpeed =
+        dataManager.getPersonalBuffFlatBoost?.('/action_types/enhancing', '/buff_types/action_speed') || 0;
+    return { speed: speed * 100, personalSpeed: personalSpeed * 100, wisdom: wisdom * 100 };
 }
 
 /**
@@ -325,7 +329,8 @@ export function getAutoDetectedParams() {
     // Speed bonus (from equipment) + house bonus (1% per level) + community buff + tea speed
     const houseSpeedBonus = houseLevel * 1.0; // 1% per level for action speed
     const live = getLiveOnlyEnhancingBonuses();
-    const totalSpeedBonus = gear.speedBonus + houseSpeedBonus + communitySpeedBonus + teaSpeedBonus + live.speed;
+    const totalSpeedBonus =
+        gear.speedBonus + houseSpeedBonus + communitySpeedBonus + teaSpeedBonus + live.speed + live.personalSpeed;
 
     // Calculate total experience bonus
     // Equipment + house wisdom + tea wisdom + community wisdom + achievement wisdom + MooPass/guild/scroll
@@ -366,6 +371,7 @@ export function getAutoDetectedParams() {
         teaSpeedBonus: teaSpeedBonus, // For display
         teaWisdomBonus: teaWisdomBonus, // For display
         otherSpeedBonus: live.speed, // For display: MooPass, guild, achievement
+        personalSpeedBonus: live.personalSpeed, // For display: Labyrinth scroll
         otherWisdomBonus: live.wisdom, // For display: MooPass, guild, Scroll of Wisdom
         drinkConcentration: drinkConcentration, // For display
         houseRareFindBonus: houseRareFindBonus, // For display
@@ -892,13 +898,18 @@ function getManualParams({ useShippedDefaults = false } = {}) {
     // MooPass, guild and scroll buffs belong to the character, not the kit, so the pro bench
     // leaves them out. Achievement speed follows the Achievement toggle like the rest.
     const live = useShippedDefaults
-        ? { speed: 0, wisdom: 0 }
+        ? { speed: 0, personalSpeed: 0, wisdom: 0 }
         : getLiveOnlyEnhancingBonuses({ includeAchievement: achievementEnabled });
 
     // --- TOTALS ---
     const totalToolBonus = equipmentSuccessBonus + houseSuccessBonus + achievementSuccessBonus;
     const totalSpeedBonus =
-        equipmentSpeedBonus + houseSpeedBonus + communitySpeedBonus + scaledTeaSpeedBonus + live.speed;
+        equipmentSpeedBonus +
+        houseSpeedBonus +
+        communitySpeedBonus +
+        scaledTeaSpeedBonus +
+        live.speed +
+        live.personalSpeed;
     const totalExperienceBonus =
         equipmentExperience +
         houseWisdomBonus +
@@ -934,6 +945,7 @@ function getManualParams({ useShippedDefaults = false } = {}) {
         communityWisdomBonus: communityWisdomBonus,
         achievementWisdomBonus: achievementWisdomBonus,
         otherSpeedBonus: live.speed,
+        personalSpeedBonus: live.personalSpeed,
         otherWisdomBonus: live.wisdom,
         equipmentSpeedBonus: equipmentSpeedBonus,
         houseSpeedBonus: houseSpeedBonus,

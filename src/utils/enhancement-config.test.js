@@ -21,6 +21,7 @@ const character = vi.hoisted(() => ({
     id: 'market123',
     characterData: {},
     personalWisdom: 0,
+    personalSpeed: 0,
     achievementFlat: {},
 }));
 
@@ -53,7 +54,12 @@ vi.mock('../core/data-manager.js', () => ({
         getActionDrinkSlots: () => character.drinks,
         getEquipment: () => character.equipment,
         getCurrentCharacterId: () => character.id,
-        getPersonalBuffFlatBoost: (_action, buff) => (buff === '/buff_types/wisdom' ? character.personalWisdom : 0),
+        getPersonalBuffFlatBoost: (_action, buff) =>
+            buff === '/buff_types/wisdom'
+                ? character.personalWisdom
+                : buff === '/buff_types/action_speed'
+                  ? character.personalSpeed
+                  : 0,
         get characterData() {
             return character.characterData;
         },
@@ -81,6 +87,7 @@ beforeEach(() => {
     character.characterData = {};
     character.personalWisdom = 0;
     character.achievementFlat = {};
+    character.personalSpeed = 0;
 });
 
 // The values the settings panel ships with — a professional enhancer, not this character
@@ -412,5 +419,32 @@ describe('the manual bench Achievement toggle', () => {
         const params = getAutoDetectedParams();
         expect(params.achievementWisdomBonus).toBeCloseTo(2, 9);
         expect(params.otherSpeedBonus).toBeCloseTo(1, 9);
+    });
+});
+
+describe('a Labyrinth Action Speed scroll', () => {
+    beforeEach(() => {
+        character.personalSpeed = 0.15;
+    });
+
+    test('is in the detected bench speed, and named as its own part', () => {
+        character.settings = { enhanceSim_autoDetect: true };
+        const params = getAutoDetectedParams();
+        expect(params.personalSpeedBonus).toBeCloseTo(15, 9);
+        expect(params.speedBonus).toBeCloseTo(15 + params.houseSpeedBonus, 9);
+    });
+
+    test('is in the manual bench speed', () => {
+        character.settings = { enhanceSim_autoDetect: false, ...SHIPPED };
+        const params = getEnhancingParams();
+        expect(params.personalSpeedBonus).toBeCloseTo(15, 9);
+        expect(params.speedBonus - params.equipmentSpeedBonus - params.houseSpeedBonus).toBeCloseTo(
+            15 + params.communitySpeedBonus + params.teaSpeedBonus,
+            9
+        );
+    });
+
+    test('is not part of the pro kit', () => {
+        expect(getProRatesParams().personalSpeedBonus).toBe(0);
     });
 });
