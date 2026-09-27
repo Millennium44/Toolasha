@@ -448,6 +448,9 @@ class TaskAutoReroll {
 
         const popup = document.createElement('div');
         popup.id = 'mwi-task-autoreroll-popup';
+        // width: a bare 400px (404px with the border) centered by translate(-50%) put the
+        // left edge off-screen on a phone (-22px at 360px wide). Capped to the viewport less
+        // an 8px gutter a side; desktop still gets 400px.
         popup.style.cssText = `
             position: fixed;
             top: 50%;
@@ -458,6 +461,7 @@ class TaskAutoReroll {
             border: 2px solid rgba(239, 68, 68, 0.5);
             border-radius: 10px;
             width: 400px;
+            max-width: calc(100vw - 20px);
             max-height: 500px;
             display: flex;
             flex-direction: column;
