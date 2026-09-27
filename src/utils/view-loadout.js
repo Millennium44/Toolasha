@@ -255,23 +255,21 @@ export function handleLoadoutShared(data) {
     const rowId = characterIdFromLoadout(loadout);
     const now = Date.now();
 
-    // The game does not echo which click or request a reply is for, so a
-    // manual "View Loadout" click in a different context — the roster page,
-    // say, while a Toolasha fetch for the same player is out for a trial —
-    // can equally be what this specific reply answers. A click made *after*
-    // the in-flight request was sent is the more recent ask and wins the
-    // correlation; the in-flight request is left standing for its own reply,
-    // rather than being satisfied and mislabeled with the click's context.
+    // The game does not echo which click or request a reply is for, and a click
+    // does not record which player it was for. Both travel the one socket, so
+    // replies come back in the order they were asked: while a manual click in
+    // another context and a Toolasha request are both unanswered, the first
+    // reply belongs to whichever was sent first. A reply that names a different
+    // character than the request still goes to the click whatever the order.
     const recentClick = lastUserClick && now - lastUserClick.at <= USER_CLICK_WINDOW_MS ? lastUserClick : null;
-    const clickIsNewer =
-        recentClick && inFlight && recentClick.context !== inFlight.context && recentClick.at > inFlight.sentAt;
+    const clickAskedFirst =
+        recentClick && inFlight && recentClick.context !== inFlight.context && recentClick.at < inFlight.sentAt;
 
-    const request = !clickIsNewer && answers(inFlight, rowId, name) ? inFlight : null;
+    const request = !clickAskedFirst && answers(inFlight, rowId, name) ? inFlight : null;
     const click = !request && recentClick ? recentClick : null;
-    // Claimed by this reply: the in-flight request's own answer is still to
-    // come, and must not find this same click again and be attributed to it
-    // a second time — a click answers at most one reply.
-    if (clickIsNewer) lastUserClick = null;
+    // A click answers at most one reply: once claimed, a later reply (the
+    // request's own) must not find it again.
+    if (click) lastUserClick = null;
 
     /** @type {CapturedLoadout} */
     const entry = {

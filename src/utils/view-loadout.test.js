@@ -230,21 +230,8 @@ describe('fetchLoadout', () => {
         expect(isFetchingLoadout()).toBe(false);
     });
 
-    test('a manual click in a different context, made after the request, claims the next reply instead of the request', async () => {
-        // Regression: a manual "View Loadout" click from the roster (party
-        // context) landing while a Toolasha fetch for the same player was out
-        // for a trial used to satisfy the in-flight request (matched by
-        // character id alone) and get mislabeled with the request's context —
-        // recording a party loadout as a guild-trial one, or the reverse.
-        game.core = { handleViewProfile: () => {}, handleViewLoadout: vi.fn() };
-
-        const run = fetchLoadout({ characterID: 7, characterName: 'Ally' }, VIEW_LOADOUT_CONTEXT.GuildTrial, 'trial', {
-            closeGameModal: false,
-        });
-        await vi.advanceTimersByTimeAsync(50);
-
-        // A manual click on the roster's own "View Loadout", after the request
-        // above was already sent
+    /** A trusted click on the party card's own "View Loadout". */
+    function clickPartyViewLoadout() {
         const button = document.createElement('div');
         button.className = 'Party_memberCard';
         button.textContent = 'View Loadout';
@@ -252,6 +239,21 @@ describe('fetchLoadout', () => {
         const click = new MouseEvent('click', { bubbles: true });
         Object.defineProperty(click, 'isTrusted', { value: true });
         button.dispatchEvent(click);
+    }
+
+    test('a manual click in a different context, sent before the request, claims the first reply', async () => {
+        // Regression: a manual "View Loadout" click from the party (still
+        // unanswered) followed by a Toolasha fetch for the same player for a
+        // trial used to let the click's reply satisfy the request, recording a
+        // party loadout as a guild-trial one. Replies come back in send order.
+        game.core = { handleViewProfile: () => {}, handleViewLoadout: vi.fn() };
+
+        clickPartyViewLoadout();
+        await vi.advanceTimersByTimeAsync(20);
+        const run = fetchLoadout({ characterID: 7, characterName: 'Ally' }, VIEW_LOADOUT_CONTEXT.GuildTrial, 'trial', {
+            closeGameModal: false,
+        });
+        await vi.advanceTimersByTimeAsync(50);
 
         // The click's own reply lands first
         deliver(reply(7, 'Ally'));
@@ -272,6 +274,28 @@ describe('fetchLoadout', () => {
             requested: true,
             context: 'guild_trial',
         });
+    });
+
+    test('a click for another player made after the request does not steal the request’s reply', async () => {
+        // A fetch for Ally is out; the user then clicks View Loadout for Buddy
+        // in the party. Ally's reply was asked first and must resolve the fetch.
+        game.core = { handleViewProfile: () => {}, handleViewLoadout: vi.fn() };
+
+        const run = fetchLoadout({ characterID: 7, characterName: 'Ally' }, VIEW_LOADOUT_CONTEXT.GuildTrial, 'trial', {
+            closeGameModal: false,
+        });
+        await vi.advanceTimersByTimeAsync(50);
+        clickPartyViewLoadout();
+
+        deliver(reply(7, 'Ally'));
+        await vi.advanceTimersByTimeAsync(10);
+        const result = await run;
+        expect(result.status).toBe('done');
+        expect(result.entry).toMatchObject({ context: 'guild_trial', requested: true });
+
+        // Buddy's reply then goes to the click
+        deliver(reply(8, 'Buddy'));
+        expect(getLoadout(8, VIEW_LOADOUT_CONTEXT.Party)).toMatchObject({ requested: false, context: 'party' });
     });
 
     test("another player's reply arriving mid-request is captured under its own character, not the one asked for", async () => {
