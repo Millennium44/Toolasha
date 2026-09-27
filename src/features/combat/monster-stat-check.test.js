@@ -130,6 +130,20 @@ describe('classify', () => {
     test('no data is unknown', () => {
         expect(classify(null, true)).toBe('unknown');
     });
+
+    test('lowerIsBetter flips which direction reads as a buff', () => {
+        // Attack interval: game below the sim baseline (a real attack-speed
+        // buff shortened it) must read as a buff, not a debuff.
+        expect(classify(-19.8, true, true)).toBe('buff');
+        // Game above the baseline (interval got longer) is the bad direction.
+        expect(classify(19.8, true, true)).toBe('debuff');
+    });
+
+    test('lowerIsBetter does not change a mismatch or a match', () => {
+        expect(classify(-32, false, true)).toBe('mismatch');
+        expect(classify(0.5, true, true)).toBe('match');
+        expect(classify(null, true, true)).toBe('unknown');
+    });
 });
 
 describe('buildComparison against an engine-built monster', () => {
@@ -342,19 +356,27 @@ describe('Timing rows — monster attack interval/cast speed/crit, player HP reg
         // A trimmed slice of the real combatBuffMap: enough cast/attack-speed
         // buffs to be a non-empty, realistic buff set (a player's map is never
         // actually this short — guild, house, community and achievement buffs
-        // are always present too), and enough to bridge the cast-speed gap below.
+        // are always present too), enough to bridge the cast-speed gap below,
+        // and the matching attack-speed buffs (same four sources, ratioBoost
+        // instead of flatBoost) that shorten the real attack interval.
         combatBuffMap: {
             '/buff_uniques/cast_speed_guild_buff': { typeHrid: '/buff_types/cast_speed', flatBoost: 0.016 },
             '/buff_uniques/house_cast_speed': { typeHrid: '/buff_types/cast_speed', flatBoost: 0.03 },
             '/buff_uniques/labyrinth_crate_cast_speed': { typeHrid: '/buff_types/cast_speed', flatBoost: 0.15 },
             '/buff_uniques/labyrinth_upgrade_cast_speed': { typeHrid: '/buff_types/cast_speed', flatBoost: 0.12 },
+            '/buff_uniques/attack_speed_guild_buff': { typeHrid: '/buff_types/attack_speed', ratioBoost: 0.016 },
+            '/buff_uniques/house_attack_speed': { typeHrid: '/buff_types/attack_speed', ratioBoost: 0.03 },
+            '/buff_uniques/labyrinth_crate_attack_speed': { typeHrid: '/buff_types/attack_speed', ratioBoost: 0.15 },
+            '/buff_uniques/labyrinth_upgrade_attack_speed': { typeHrid: '/buff_types/attack_speed', ratioBoost: 0.12 },
         },
     };
 
     test('the real player capture’s flat totalCastSpeed is the raw stat plus attackLevel/2000 plus its cast-speed buffs', () => {
         // This is the arithmetic TIMING_ROWS's comment cites: not a rename, an
         // addition of three components, checked against the real numbers.
-        const buffTotal = Object.values(REAL_PLAYER.combatBuffMap).reduce((sum, b) => sum + b.flatBoost, 0);
+        const buffTotal = Object.values(REAL_PLAYER.combatBuffMap)
+            .filter((b) => b.typeHrid === '/buff_types/cast_speed')
+            .reduce((sum, b) => sum + b.flatBoost, 0);
         expect(buffTotal).toBeCloseTo(0.316, 6);
         const rebuilt = REAL_PLAYER.rawCastSpeed + REAL_PLAYER.attackLevel / 2000 + buffTotal;
         expect(rebuilt).toBeCloseTo(REAL_PLAYER.totalCastSpeed, 6);
@@ -457,10 +479,13 @@ describe('Timing rows — monster attack interval/cast speed/crit, player HP reg
     test('an unfolded player baseline reads the cast-speed/attack-interval gap as a buff, not a mismatch', () => {
         // The raw (unfolded) sim build carries only what a fresh, self-buff-free
         // player would have: attackLevel/2000 and nothing else. The real game
-        // unit is fully buffed (cast_speed_guild_buff and friends). This is the
-        // scenario the P1 report raised — the row must read "buff", the same as
-        // every other row already does when live buffs are up and the sim
-        // baseline lacks them, never "mismatch".
+        // unit is fully buffed (cast_speed_guild_buff, attack_speed_guild_buff
+        // and friends). This is the scenario the P1 report raised — every row
+        // must read "buff", the same as every other row already does when live
+        // buffs are up and the sim baseline lacks them, never "mismatch" — and,
+        // for attack interval specifically, "buff" even though the real
+        // (buffed) interval is the SMALLER number (see `lowerIsBetter` on the
+        // `attackInterval` row and the `classify` tests above).
         const unbuffedSimDetails = {
             combatStats: {
                 combatStyleHrids: ['/combat_styles/slash'],
@@ -487,14 +512,11 @@ describe('Timing rows — monster attack interval/cast speed/crit, player HP reg
         const interval = timing.rows.find((r) => r.key === 'attackInterval');
 
         expect(castSpeed.verdict).toBe('buff');
-        // Not "mismatch" — the P1 this guards against. `classify` always reads
-        // game-above-baseline as "buff", game-below as "debuff", with no notion
-        // that a SHORTER interval is the good direction for this one row (every
-        // other row here is higher-is-better). A real attack-speed buff shortens
-        // the interval, so it reads "debuff" here — misleadingly named, but not
-        // the bug in question: it is still buff-explained, not a raw mismatch,
-        // so it does not flag `hasMismatch` or read as a modelling gap.
-        expect(interval.verdict).toBe('debuff');
+        // The real attack-speed buffs shorten the interval below the unbuffed
+        // baseline — the good direction for this row — and must read "buff",
+        // not "debuff" (a plain higher-is-better read would get this backwards)
+        // and not "mismatch" (there IS an effect explaining it).
+        expect(interval.verdict).toBe('buff');
         expect(result.hasMismatch).toBe(false);
     });
 

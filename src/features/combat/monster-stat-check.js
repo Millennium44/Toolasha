@@ -82,8 +82,14 @@ const EVASION_ROWS = [
  * (buffs applied, `updateCombatDetails` run), the same requirement every other
  * row in this file already has.
  */
+// `attackInterval` is the one row in this whole table where a smaller number is
+// the good direction — a real attack-speed buff shortens it. Every other row,
+// old and new (armor, evasion, accuracy, cast speed, crit, HP regen), is
+// higher-is-better, so `classify` defaults to that and this row opts out via
+// its 4th tuple element (see `statRows`'s JSDoc and `classify`'s `lowerIsBetter`
+// parameter) rather than every row having to state the common case.
 const TIMING_ROWS = [
-    ['attackInterval', 'Attack interval', 'ns'],
+    ['attackInterval', 'Attack interval', 'ns', true],
     ['totalCastSpeed', 'Cast speed', 'ratio'],
     ['criticalRate', 'Crit rate', 'ratio'],
     ['criticalDamage', 'Crit damage', 'ratio'],
@@ -370,9 +376,16 @@ export function buffedStatKeys(combatBuffMap, styleKey) {
  * Timing/crit rows apply to either unit kind; `hpRegenPer10` is added only for a
  * player comparison, matching the maintainer's request for the monster's timing
  * and crit stats plus the player's regen, not the monster's regen too.
+ *
+ * A row tuple is `[combatDetails key, label, unit, lowerIsBetter]`. `unit` is
+ * `undefined` for a flat rating, `'ns'` for a nanosecond duration, or `'ratio'`
+ * for a fraction the UI reads as a percent. `lowerIsBetter` defaults to false
+ * (every row here reads higher-as-buff except `attackInterval` — see the
+ * comment above `TIMING_ROWS`) and is threaded into `classify` by
+ * `buildComparison`.
  * @param {string} styleKey
  * @param {'monster'|'player'} [unitKind='monster']
- * @returns {Array<{group: string, rows: Array<[string, string, string=]>}>}
+ * @returns {Array<{group: string, rows: Array<[string, string, string=, boolean=]>}>}
  */
 export function statRows(styleKey, unitKind = 'monster') {
     return [
@@ -463,19 +476,27 @@ export function compareStat(key, gameDetails, simDetails) {
  * stat — so the clean read is a monster with an empty buff map.)
  *
  * - `match` — within tolerance, the sim has this stat right.
- * - `buff` — game above the baseline with an effect up (raised by a buff).
- * - `debuff` — game below the baseline with an effect up (lowered by a debuff).
+ * - `buff` — game reads in the good direction with an effect up (raised by a
+ *   buff, or — for a `lowerIsBetter` row like attack interval — lowered by one).
+ * - `debuff` — game reads in the bad direction with an effect up.
  * - `mismatch` — a gap with no active effect to explain it.
  * - `unknown` — one side had no number to compare.
  *
  * @param {number|null} deltaPct - Game relative to the sim baseline
  * @param {boolean} hasBuffs - Whether any combat effect is active on the unit
+ * @param {boolean} [lowerIsBetter=false] - True for a row where a smaller game
+ *   value is the buffed direction (attack interval: a real attack-speed buff
+ *   shortens it). Every other row here is higher-is-better, the default.
  * @returns {'match'|'buff'|'debuff'|'mismatch'|'unknown'}
  */
-export function classify(deltaPct, hasBuffs) {
+export function classify(deltaPct, hasBuffs, lowerIsBetter = false) {
     if (deltaPct == null) return 'unknown';
     if (Math.abs(deltaPct) < MATCH_TOLERANCE_PCT) return 'match';
-    if (hasBuffs) return deltaPct > 0 ? 'buff' : 'debuff';
+    if (hasBuffs) {
+        const raised = deltaPct > 0;
+        const buffed = lowerIsBetter ? !raised : raised;
+        return buffed ? 'buff' : 'debuff';
+    }
     return 'mismatch';
 }
 
@@ -517,10 +538,10 @@ export function buildComparison(gameUnit, simDetails, { simBuffed = false, lenie
 
     const groups = statRows(styleKey, unitKind).map(({ group, rows }) => ({
         group,
-        rows: rows.map(([key, label, unit]) => {
+        rows: rows.map(([key, label, unit, lowerIsBetter]) => {
             const compared = compareStat(key, gameDetails, simDetails);
             const rowHasBuffs = leniencyKeys?.has(key) ? true : classifyHasBuffs;
-            const verdict = classify(compared.deltaPct, rowHasBuffs);
+            const verdict = classify(compared.deltaPct, rowHasBuffs, lowerIsBetter);
             if (verdict === 'mismatch') hasMismatch = true;
             return { ...compared, label, unit, verdict };
         }),
