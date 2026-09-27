@@ -38,6 +38,13 @@ vi.mock('./dungeon-tracker-storage.js', () => ({
         filterCharacter === 'mine' ? (runs || []).filter((run) => run.recordedBy === character?.id) : runs || [],
     currentCharacter: () => ({ id: world.characterId, name: world.characterId }),
     runIdentity: (run) => `${run?.teamKey ?? ''}|${run?.timestamp ?? ''}|${run?.duration ?? ''}`,
+    runTime: (run) => {
+        const time = new Date(run?.timestamp).getTime();
+        return Number.isFinite(time) ? time : null;
+    },
+}));
+vi.mock('./dungeon-tracker-chat-annotations.js', () => ({
+    default: { refreshRunCounts: async () => {} },
 }));
 vi.mock('../../utils/formatters.js', () => ({ formatDateTime: () => '04/08 10:00' }));
 vi.mock('../../utils/panel-z-index.js', () => ({ PANEL_Z_CAP: 100 }));

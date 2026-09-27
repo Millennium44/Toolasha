@@ -9,11 +9,14 @@ import {
     DUNGEON_RUNS_BACKUP_FORMAT,
     DUNGEON_RUNS_BACKUP_VERSION,
     MAX_PLAUSIBLE_RUN_MS,
+    MAX_FUTURE_TIMESTAMP_MS,
+    MAX_IMPORT_RUNS,
     buildDungeonRunsBackupEnvelope,
     parseDungeonRunsJson,
     validateDungeonRunsEnvelope,
     validateImportedRun,
     planDungeonRunImport,
+    dungeonRunsBackupFilename,
 } from './dungeon-tracker-run-import.js';
 
 function run(overrides = {}) {
@@ -120,6 +123,17 @@ describe('validateDungeonRunsEnvelope', () => {
         expect(validateDungeonRunsEnvelope(envelope({ runs: 'nope' })).ok).toBe(false);
         expect(validateDungeonRunsEnvelope(envelope({ runs: {} })).ok).toBe(false);
     });
+
+    test('rejects a runs list over the cap, by length alone, before any run is looked at', () => {
+        const result = validateDungeonRunsEnvelope(envelope({ runs: new Array(MAX_IMPORT_RUNS + 1).fill(null) }));
+        expect(result.ok).toBe(false);
+        expect(result.error).toMatch(/too many runs/);
+    });
+
+    test('a runs list exactly at the cap passes', () => {
+        const result = validateDungeonRunsEnvelope(envelope({ runs: new Array(MAX_IMPORT_RUNS).fill(null) }));
+        expect(result.ok).toBe(true);
+    });
 });
 
 describe('validateImportedRun', () => {
@@ -144,8 +158,15 @@ describe('validateImportedRun', () => {
         expect(validateImportedRun(run({ duration: NaN })).ok).toBe(false);
     });
 
-    test('a legacy websocket run reports its duration through totalTime', () => {
-        expect(validateImportedRun(run({ duration: undefined, totalTime: 120_000 })).ok).toBe(true);
+    test('does NOT fall back to totalTime — that is planDungeonRunImport’s job, so identity agrees', () => {
+        // Passed to validateImportedRun directly (unnormalized), a totalTime-only
+        // run has no usable `duration` and must be refused, not silently priced
+        // off a field runIdentity never reads.
+        const legacy = run({ totalTime: 120_000 });
+        delete legacy.duration;
+        const result = validateImportedRun(legacy);
+        expect(result.ok).toBe(false);
+        expect(result.reason).toMatch(/duration/);
     });
 
     test('rejects a duration past the three-hour plausibility ceiling — an absurd 1608-minute run', () => {
@@ -164,6 +185,17 @@ describe('validateImportedRun', () => {
         expect(validateImportedRun(run({ timestamp: '' })).ok).toBe(false);
         expect(validateImportedRun(run({ timestamp: 'not a date' })).ok).toBe(false);
     });
+
+    test('rejects a timestamp more than a day in the future', () => {
+        const now = Date.parse('2026-09-27T00:00:00.000Z');
+        const justUnder = new Date(now + MAX_FUTURE_TIMESTAMP_MS - 60_000).toISOString();
+        const justOver = new Date(now + MAX_FUTURE_TIMESTAMP_MS + 60_000).toISOString();
+
+        expect(validateImportedRun(run({ timestamp: justUnder }), MAX_PLAUSIBLE_RUN_MS, now).ok).toBe(true);
+        const result = validateImportedRun(run({ timestamp: justOver }), MAX_PLAUSIBLE_RUN_MS, now);
+        expect(result.ok).toBe(false);
+        expect(result.reason).toMatch(/future/);
+    });
 });
 
 describe('planDungeonRunImport', () => {
@@ -173,11 +205,44 @@ describe('planDungeonRunImport', () => {
         const plan = planDungeonRunImport([good, bad]);
 
         expect(plan.valid).toEqual([good]);
-        expect(plan.rejected).toEqual([{ run: bad, reason: 'non-positive duration' }]);
+        expect(plan.rejected).toEqual([{ run: bad, reason: 'non-positive or missing duration' }]);
     });
 
     test('an empty or non-array input plans to nothing', () => {
         expect(planDungeonRunImport([])).toEqual({ valid: [], rejected: [] });
         expect(planDungeonRunImport(null)).toEqual({ valid: [], rejected: [] });
+    });
+
+    test('normalizes a legacy totalTime-only run onto duration before validating and admitting it', () => {
+        const legacy = run({ totalTime: 120_000 });
+        delete legacy.duration;
+
+        const plan = planDungeonRunImport([legacy]);
+
+        expect(plan.rejected).toEqual([]);
+        expect(plan.valid).toEqual([{ ...legacy, duration: 120_000 }]);
+    });
+
+    test('a rejected run is reported as the original, unnormalized object', () => {
+        const bad = run({ totalTime: -1 });
+        delete bad.duration;
+
+        const plan = planDungeonRunImport([bad]);
+
+        expect(plan.valid).toEqual([]);
+        expect(plan.rejected).toEqual([{ run: bad, reason: 'non-positive or missing duration' }]);
+    });
+
+    test('a run whose duration is already usable is passed through untouched, not copied', () => {
+        const good = run();
+        const plan = planDungeonRunImport([good]);
+        expect(plan.valid[0]).toBe(good);
+    });
+});
+
+describe('dungeonRunsBackupFilename', () => {
+    test('names the file with the format stem and a timestamp, like the CSV export', () => {
+        const name = dungeonRunsBackupFilename(new Date(2026, 7, 3, 22, 14));
+        expect(name).toBe('toolasha-dungeon-runs-backup-20260803-2214.json');
     });
 });

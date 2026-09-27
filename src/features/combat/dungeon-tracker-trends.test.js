@@ -19,6 +19,13 @@ vi.mock('./dungeon-tracker-storage.js', () => ({
     filterRunsForCharacter: (runs) => runs,
     currentCharacter: () => 'me',
     runIdentity: (run) => `${run?.teamKey ?? ''}|${run?.timestamp ?? ''}|${run?.duration ?? ''}`,
+    runTime: (run) => {
+        const time = new Date(run?.timestamp).getTime();
+        return Number.isFinite(time) ? time : null;
+    },
+}));
+vi.mock('./dungeon-tracker-chat-annotations.js', () => ({
+    default: { refreshRunCounts: async () => {} },
 }));
 vi.mock('../../utils/formatters.js', () => ({ formatDateTime: () => '04/08 10:00' }));
 
