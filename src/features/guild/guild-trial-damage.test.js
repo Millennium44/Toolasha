@@ -1436,6 +1436,19 @@ describe('the watcher’s own slot', () => {
         expect(guildTrialDamage._ownIdentity()).toEqual({ slot: '19', name: 'Player20', characterId: 900020 });
     });
 
+    test('a spectated new battle notes the roster’s counter stats for bleed attribution', () => {
+        // Without them a bleed tick on a monster-attack tick stayed a counted hit
+        // for every member, since nobody was known to be unable to counter
+        const withParry = structuredClone(NEW_GUILD_BATTLE);
+        withParry.players[0] = {
+            ...withParry.players[0],
+            combatDetails: { ...(withParry.players[0].combatDetails || {}), combatStats: { parry: 0.08 } },
+        };
+        game.wsHandlers.new_guild_battle(withParry);
+
+        expect(guildTrialDamage.state.counterStats?.[0]).toBeTruthy();
+    });
+
     test('an id the roster does not list leaves the slot unknown', () => {
         // Watching a trial you are not fighting in. Refusing to guess is the
         // whole point: a wrong own slot is somebody else's damage under your name

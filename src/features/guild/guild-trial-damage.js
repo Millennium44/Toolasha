@@ -1358,6 +1358,9 @@ class GuildTrialDamage {
             const newFight = this._isNewFight({ battleId, tier, startMs, encounter });
             if (newFight || battleId !== this.guildBattleId || tier !== this.tier) {
                 this._newSpectatedWave(battleId, tier, now, { newFight, arriving: data.players });
+                // As the personal path does: the roster's combat stats say who
+                // can Parry or reflect, which tells a bleed from a counter-attack
+                noteActions(this.state, data.players || {});
             } else if (this._isRedeal(slotIds, wave)) {
                 // The same battle and tier stated again with its slots dealt to
                 // different characters, or a new wave number. The live tally is
@@ -1365,6 +1368,7 @@ class GuildTrialDamage {
                 // occupant, so the wave so far banks under the names it was
                 // earned by before the roster below relabels those slots
                 this._newSpectatedWave(battleId, tier, now, { newFight: false, arriving: data.players });
+                noteActions(this.state, data.players || {});
             }
             if (startMs !== null && (this.fightStartMs === null || startMs < this.fightStartMs)) {
                 this.fightStartMs = startMs;
