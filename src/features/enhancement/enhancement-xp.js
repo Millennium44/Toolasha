@@ -362,6 +362,10 @@ export function calculateEnhancementPredictions(itemHrid, startLevel, targetLeve
             // Recorded with the prediction, so a session opened days later still says which
             // stats it was predicted against
             paramsNote: describeParamsSource(params),
+            // Whether any stat was typed into the simulator rather than read off the character.
+            // A live run is always played at the character's own bench, so a prediction made at
+            // an edited one is not a forecast of it — calibration declines those.
+            benchEdited: (params.manualOverrides?.length || 0) > 0,
         };
     } catch {
         return null;

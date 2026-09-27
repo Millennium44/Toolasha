@@ -137,6 +137,19 @@ describe('recording a completed session', () => {
         expect(await calibration.recordCompletion(completedSession({ predictions: null }))).toBe(false);
     });
 
+    test('declines a prediction made on stats typed into the simulator', async () => {
+        const edited = completedSession({
+            predictions: {
+                expectedAttemptsExact: 10,
+                expectedAttempts: 10,
+                attemptsVariance: 30,
+                minAttempts: 5,
+                benchEdited: true,
+            },
+        });
+        expect(await calibration.recordCompletion(edited)).toBe(false);
+    });
+
     test('measures an extended session on its current leg only', async () => {
         // 40 attempts over the whole session, 25 of them before the extension —
         // the prediction was recomputed at extend time, so the draw is the 15
