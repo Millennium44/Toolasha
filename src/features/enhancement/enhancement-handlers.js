@@ -126,7 +126,9 @@ function bootstrapFromCurrentEnhancingAction() {
         dataManager.characterData &&
         parseItemHash(activeEnhancingAction?.primaryItemHash).itemHrid !== currentSession.itemHrid
     ) {
-        void enhancementTracker.finalizeCurrentSession(currentSession.lastUpdateTime || currentSession.startTime);
+        // The last attempt seen: lastUpdateTime moves only on a scored one, lastAttempt on any
+        const lastSeen = Math.max(currentSession.lastUpdateTime || 0, currentSession.lastAttempt?.timestamp || 0);
+        void enhancementTracker.finalizeCurrentSession(lastSeen || currentSession.startTime);
         currentSession = null;
     }
 
@@ -384,7 +386,10 @@ function unitPrice(itemHrid, level = 0) {
  * @returns {boolean}
  */
 function usesPhilosophersMirror(action) {
-    return parseItemHash(action?.secondaryItemHash).itemHrid === PHILOSOPHERS_MIRROR_HRID;
+    // The loaded item's hash first; the configured field when the action carries no hash, the
+    // same precedence getProtectionItemHrid and the queue display use
+    const loaded = parseItemHash(action?.secondaryItemHash).itemHrid || action?.enhancingProtectionItemHrid || null;
+    return loaded === PHILOSOPHERS_MIRROR_HRID;
 }
 
 /**
