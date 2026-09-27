@@ -8,11 +8,14 @@ import dungeonTrackerStorage, {
     currentCharacter,
     runIdentity,
 } from './dungeon-tracker-storage.js';
+import dungeonTrackerChatAnnotations from './dungeon-tracker-chat-annotations.js';
 import {
     buildDungeonRunsBackupEnvelope,
     parseDungeonRunsJson,
     validateDungeonRunsEnvelope,
     planDungeonRunImport,
+    dungeonRunsBackupFilename,
+    MAX_IMPORT_FILE_BYTES,
 } from './dungeon-tracker-run-import.js';
 import { trendsFor, directionMarker, NOT_ENOUGH_RUNS, TREND_WINDOW } from './dungeon-tracker-trends.js';
 import { toCsv, csvFilename, downloadCsv, downloadFile } from '../../utils/csv-export.js';
@@ -555,11 +558,12 @@ class DungeonTrackerUIHistory {
      * An Export / Import bar for a lossless JSON backup of the run history.
      *
      * Unlike {@link csvExportBar}, this is not built from whatever the current
-     * filters allow — Export always reads the current character's whole stored
-     * history fresh from storage, unfiltered, because a backup that quietly
-     * left out runs the panel happened to be filtering when it was pressed
-     * would not be a backup. Always present, even on an empty list: an empty
-     * history is exactly when importing a backup is the point.
+     * filters allow — Export always reads this character's whole stored
+     * history fresh from storage, unfiltered by the panel's dungeon, tier or
+     * team dropdowns, because a backup that quietly left out runs the panel
+     * happened to be filtering when it was pressed would not be a backup.
+     * Always present, even on an empty list: an empty history is exactly when
+     * importing a backup is the point.
      *
      * @returns {HTMLElement} The bar
      */
@@ -575,7 +579,8 @@ class DungeonTrackerUIHistory {
         const exportButton = document.createElement('button');
         exportButton.textContent = 'Export';
         exportButton.title =
-            'Download a lossless JSON backup of this character’s ENTIRE run history, for re-importing later';
+            'Download a JSON backup of the runs THIS CHARACTER recorded, for re-importing later. ' +
+            'For every character at once, use "Back Up Everything" in Settings instead.';
         exportButton.style.cssText = buttonStyle;
         exportButton.addEventListener('click', (event) => {
             event.stopPropagation();
@@ -588,8 +593,7 @@ class DungeonTrackerUIHistory {
         const importButton = document.createElement('button');
         importButton.textContent = 'Import';
         importButton.title =
-            'Restore runs from a JSON backup and merge them into this character’s history — a run already ' +
-            'present adds nothing';
+            'Restore runs from a JSON backup and merge them into the history — a run already present adds nothing';
         importButton.style.cssText = buttonStyle;
         importButton.addEventListener('click', (event) => {
             event.stopPropagation();
@@ -601,20 +605,20 @@ class DungeonTrackerUIHistory {
     }
 
     /**
-     * Download the current character's whole stored run history as a JSON
-     * backup — every field, unfiltered by whatever the panel's dropdowns
-     * currently show.
+     * Download this character's stored run history as a JSON backup — every
+     * field, for every run `recordedBy` this character (the same "This
+     * character" scope the panel's own character filter uses), unfiltered by
+     * whatever the panel's dungeon/tier/team dropdowns currently show. Not the
+     * whole account: every character's runs in one file are already reachable
+     * through Settings' full backup, which walks every store rather than one
+     * character's slice of one.
      * @returns {Promise<void>}
      */
     async exportRunHistoryBackup() {
         const characterId = currentCharacter().id;
         const runs = await dungeonTrackerStorage.getRunsForCharacter('mine');
         const envelope = buildDungeonRunsBackupEnvelope({ characterId, runs });
-        downloadFile(
-            csvFilename('dungeon-runs-backup').replace(/\.csv$/, '.json'),
-            JSON.stringify(envelope, null, 2),
-            'application/json;charset=utf-8;'
-        );
+        downloadFile(dungeonRunsBackupFilename(), JSON.stringify(envelope, null, 2), 'application/json;charset=utf-8;');
     }
 
     /**
@@ -647,6 +651,18 @@ class DungeonTrackerUIHistory {
      * @returns {Promise<void>}
      */
     async importBackupFile(file) {
+        // Refused by size alone, before a byte of it is read — a genuine
+        // export is a few hundred bytes per run, so a file this large is not
+        // one worth reading into memory just to reject afterwards.
+        if (file.size > MAX_IMPORT_FILE_BYTES) {
+            const limitMb = Math.round(MAX_IMPORT_FILE_BYTES / (1024 * 1024));
+            alert(
+                `Import refused: the file is too large (${Math.ceil(file.size / (1024 * 1024))} MB; ` +
+                    `limit is ${limitMb} MB).`
+            );
+            return;
+        }
+
         let text;
         try {
             text = await file.text();
@@ -668,6 +684,13 @@ class DungeonTrackerUIHistory {
      * that window (a confirm dialog can sit open indefinitely) cancels the
      * import rather than merging a payload built for one character's panel
      * into whatever history happens to be current when it finally lands.
+     *
+     * **Ownership is never rewritten.** An imported run keeps the
+     * `recordedBy` it already carries — the character it was actually
+     * recorded under, possibly not this one — because that is a fact about
+     * who ran it, not about who is doing the importing. A run recorded by
+     * someone else shows up under "All characters" in this panel, never under
+     * "This character", however it arrived here.
      *
      * @param {string} text - The file's raw contents
      * @returns {Promise<void>}
@@ -692,7 +715,9 @@ class DungeonTrackerUIHistory {
         if (envelope.characterId && envelope.characterId !== charIdBefore) {
             const proceed = confirm(
                 `This backup was exported from a different character (${envelope.characterId}), ` +
-                    `not the current one (${charIdBefore}).\n\nImport it into the CURRENT character's history anyway?`
+                    `not the current one (${charIdBefore}).\n\n` +
+                    `The runs keep their original owner — they will show up under "All characters" in this ` +
+                    `panel, not under "This character".\n\nImport them anyway?`
             );
             if (!proceed) return;
         }
@@ -720,6 +745,14 @@ class DungeonTrackerUIHistory {
             alert('Import failed: the stored history could not be read. Nothing was written.');
             return;
         }
+
+        // Chat annotation run numbers and cumulative averages are seeded from
+        // stored history at load time and never revisited on their own — the
+        // same reason Backfill and "Delete all history" both refresh them
+        // (dungeon-tracker-ui-interactions.js). Without this, the panel and
+        // storage would agree on the merged history while chat kept counting
+        // from before the import.
+        await dungeonTrackerChatAnnotations.refreshRunCounts();
 
         if (this.onImportCallback) this.onImportCallback();
 

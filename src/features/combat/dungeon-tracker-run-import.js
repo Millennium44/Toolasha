@@ -4,9 +4,14 @@
  * The CSV export the history panel already had (`dungeon-tracker-ui-history.js`)
  * is for spreadsheets: display-shaped values, one row per run, no way back in,
  * and always narrowed to whatever the panel's filters currently allow. This is
- * the other direction — a JSON envelope of the EXACT stored run records for the
- * current character, unfiltered, meant as a full-fidelity backup and as the
- * thing a merge (a second device, a friend's export) comes back in through.
+ * the other direction — a JSON envelope of the EXACT stored run records this
+ * character recorded (`recordedBy` matches it — the same "This character" scope
+ * the panel's own character filter uses), unfiltered by the panel's dungeon,
+ * tier or team dropdowns, meant as a full-fidelity backup and as the thing a
+ * merge (a second device, a friend's export) comes back in through. It is
+ * *not* the whole account's history — every character's runs, in one file, are
+ * already reachable through the full backup in Settings ("Back Up Everything"),
+ * which walks every IndexedDB store rather than one character's slice of one.
  *
  * ## The envelope
  *
@@ -70,11 +75,58 @@ export const DUNGEON_RUNS_BACKUP_VERSION = 1;
 export const MAX_PLAUSIBLE_RUN_MS = 3 * 60 * 60 * 1000;
 
 /**
+ * How far a run's own timestamp may sit ahead of "now" and still be believed.
+ * A run is a record of something that already happened; one dated tomorrow is
+ * a hand-edited or corrupted field, not clock skew worth tolerating the way
+ * {@link BASELINE_FUTURE_TOLERANCE_MS: dungeon-tracker-storage.js} tolerates a
+ * few minutes of it for a baseline marker — a run has no marker's excuse.
+ */
+export const MAX_FUTURE_TIMESTAMP_MS = 24 * 60 * 60 * 1000;
+
+/**
+ * A file bigger than this is refused before it is even read. No genuine
+ * export gets remotely close — a run is a few hundred bytes, so 20 MB is tens
+ * of thousands of runs already, and reading a larger file into memory just to
+ * reject it afterwards is the one cost this check exists to avoid paying.
+ */
+export const MAX_IMPORT_FILE_BYTES = 20 * 1024 * 1024;
+
+/**
+ * A backup naming more runs than this is refused outright, checked by array
+ * length before a single one is validated. No real account approaches it —
+ * it exists so a hand-edited or corrupted file cannot make the browser tab
+ * iterate an unbounded list.
+ */
+export const MAX_IMPORT_RUNS = 200_000;
+
+/**
  * @param {*} value - Anything
  * @returns {boolean} Whether it is a plain object (not null, not an array)
  */
 function isPlainObject(value) {
     return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+/**
+ * A run's duration, normalized onto the `duration` field `runIdentity` and
+ * every other reader here look at. A legacy websocket-recorded run states its
+ * length as `totalTime` instead; a straight validation split between the two
+ * fields would agree on "how long did this take" while disagreeing about
+ * which property that answer lives on, and the run's identity — computed
+ * downstream from `duration` alone — would come out different from what
+ * validation checked. Normalizing first means both are answering about the
+ * same field. Returns the original object untouched when `duration` is
+ * already usable, and a shallow copy otherwise; never mutates the input.
+ *
+ * @param {Object} run - One entry from the backup's `runs` array
+ * @returns {Object} `run`, or a copy of it with `duration` filled from `totalTime`
+ */
+function normalizeImportedRunDuration(run) {
+    if (!isPlainObject(run)) return run;
+    if (Number.isFinite(Number(run.duration))) return run;
+    const totalTime = Number(run.totalTime);
+    if (!Number.isFinite(totalTime)) return run;
+    return { ...run, duration: totalTime };
 }
 
 /**
@@ -154,6 +206,15 @@ export function validateDungeonRunsEnvelope(envelope) {
     if (!Array.isArray(envelope.runs)) {
         return { ok: false, error: 'The backup has no runs list.' };
     }
+    // A length check, not a scan — cheap enough to run before anything else
+    // touches the list, which is the point: this is what stands between a
+    // corrupted or hostile file and iterating it run by run.
+    if (envelope.runs.length > MAX_IMPORT_RUNS) {
+        return {
+            ok: false,
+            error: `The backup has too many runs (${envelope.runs.length}; the limit is ${MAX_IMPORT_RUNS}).`,
+        };
+    }
     return { ok: true };
 }
 
@@ -167,27 +228,41 @@ export function validateDungeonRunsEnvelope(envelope) {
  * `tier`s), and the point is to catch a run that would corrupt the store or
  * skew its statistics, not to police every field.
  *
- * @param {Object} run - One entry from the backup's `runs` array
+ * Requires a real `duration` field rather than reading `totalTime` as a
+ * fallback here: `runIdentity` (`dungeon-tracker-storage.js`) only ever reads
+ * `duration`, so a run admitted on its `totalTime` alone would validate
+ * successfully and then carry a different, undefined identity into storage
+ * than the one just checked. Call {@link planDungeonRunImport}, not this
+ * directly, on a legacy websocket-shaped run — it normalizes `totalTime` into
+ * `duration` first so the two never disagree.
+ *
+ * @param {Object} run - One entry from the backup's `runs` array, already
+ *   normalized (see {@link planDungeonRunImport})
  * @param {number} [maxRunMs] - The longest a run may plausibly have taken
+ * @param {number} [now] - "Now", injectable for tests
  * @returns {{ok: true}|{ok: false, reason: string}}
  */
-export function validateImportedRun(run, maxRunMs = MAX_PLAUSIBLE_RUN_MS) {
+export function validateImportedRun(run, maxRunMs = MAX_PLAUSIBLE_RUN_MS, now = Date.now()) {
     if (!isPlainObject(run)) return { ok: false, reason: 'not an object' };
 
     if (typeof run.dungeonName !== 'string' || run.dungeonName.trim() === '') {
         return { ok: false, reason: 'missing dungeon name' };
     }
 
-    const duration = Number(run.duration ?? run.totalTime);
+    const duration = Number(run.duration);
     if (!Number.isFinite(duration) || duration <= 0) {
-        return { ok: false, reason: 'non-positive duration' };
+        return { ok: false, reason: 'non-positive or missing duration' };
     }
     if (duration > maxRunMs) {
         return { ok: false, reason: 'duration exceeds the three-hour plausibility ceiling' };
     }
 
-    if (runTime(run) === null) {
+    const time = runTime(run);
+    if (time === null) {
         return { ok: false, reason: 'missing or unusable timestamp' };
+    }
+    if (time > now + MAX_FUTURE_TIMESTAMP_MS) {
+        return { ok: false, reason: 'timestamp is more than a day in the future' };
     }
 
     return { ok: true };
@@ -196,27 +271,58 @@ export function validateImportedRun(run, maxRunMs = MAX_PLAUSIBLE_RUN_MS) {
 /**
  * Sort a backup's runs into what may be imported and what must be rejected.
  *
+ * Normalizes each run's duration (see {@link normalizeImportedRunDuration})
+ * before validating it, so a legacy `totalTime`-only run is judged — and, if
+ * it passes, imported — with the same `duration` value its identity will be
+ * computed from. A rejected entry still names the original, unnormalized run,
+ * since nothing downstream will ever see it again.
+ *
  * @param {Array<Object>} runs - The envelope's `runs` array
  * @param {number} [maxRunMs] - The longest a run may plausibly have taken
+ * @param {number} [now] - "Now", injectable for tests
  * @returns {{valid: Array<Object>, rejected: Array<{run: Object, reason: string}>}}
  */
-export function planDungeonRunImport(runs, maxRunMs = MAX_PLAUSIBLE_RUN_MS) {
+export function planDungeonRunImport(runs, maxRunMs = MAX_PLAUSIBLE_RUN_MS, now = Date.now()) {
     const valid = [];
     const rejected = [];
-    for (const run of Array.isArray(runs) ? runs : []) {
-        const result = validateImportedRun(run, maxRunMs);
+    for (const raw of Array.isArray(runs) ? runs : []) {
+        const run = normalizeImportedRunDuration(raw);
+        const result = validateImportedRun(run, maxRunMs, now);
         if (result.ok) valid.push(run);
-        else rejected.push({ run, reason: result.reason });
+        else rejected.push({ run: raw, reason: result.reason });
     }
     return { valid, rejected };
+}
+
+/**
+ * The download filename for a run-history backup, timestamped like
+ * `csvFilename` (`utils/csv-export.js`) builds the CSV export's — but its own
+ * function rather than borrowed through a string replace, since the two
+ * formats have no reason to stay in lockstep just because they happen to
+ * share a stem-and-stamp shape today.
+ *
+ * @param {Date} [now] - Injectable for tests
+ * @returns {string} e.g. `toolasha-dungeon-runs-backup-20260803-2214.json`
+ */
+export function dungeonRunsBackupFilename(now = new Date()) {
+    const pad = (value) => String(value).padStart(2, '0');
+    const stamp =
+        `${now.getFullYear()}${pad(now.getMonth() + 1)}${pad(now.getDate())}` +
+        `-${pad(now.getHours())}${pad(now.getMinutes())}`;
+    return `toolasha-dungeon-runs-backup-${stamp}.json`;
 }
 
 export default {
     DUNGEON_RUNS_BACKUP_FORMAT,
     DUNGEON_RUNS_BACKUP_VERSION,
+    MAX_PLAUSIBLE_RUN_MS,
+    MAX_FUTURE_TIMESTAMP_MS,
+    MAX_IMPORT_FILE_BYTES,
+    MAX_IMPORT_RUNS,
     buildDungeonRunsBackupEnvelope,
     parseDungeonRunsJson,
     validateDungeonRunsEnvelope,
     validateImportedRun,
     planDungeonRunImport,
+    dungeonRunsBackupFilename,
 };
