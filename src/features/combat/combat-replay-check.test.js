@@ -169,6 +169,7 @@ import combatRecorder from './combat-recorder.js';
 import { resetRecordTargetCache } from './combat-record-control.js';
 import { ROW_COLORS } from '../../utils/overlay-format.js';
 import recording from '../../utils/__fixtures__/combat-run.json';
+import bleedCapture from '../../utils/__fixtures__/labyrinth-pyre-hunter-bleed.json';
 
 /** Where the scoped keys land, given the character the data manager is pretending to be */
 const OBSERVATIONS_KEY = 'combatReplayCheck_observations_char1';
@@ -534,6 +535,8 @@ describe('an observation', () => {
                     'damageDealt',
                     'damageTaken',
                     'deaths',
+                    // Damage-over-time, so damage per hit can take it back out
+                    'dotDealt',
                     // The endpoint reconciliation rides with each fight
                     'endpointDealt',
                     'unattributedDealt',
@@ -589,6 +592,35 @@ function evenObservation({ seconds = 10, damageDealt = 1000, damageTaken = 100, 
         ...rest,
     };
 }
+
+describe('damage per hit on a bleed build', () => {
+    // A real Maim run: its bleed ticks are damage the hit count does not count,
+    // so they come out of the damage before it is divided by the hits — the
+    // simulator's side measures swing damage over swings too
+    const observation = observeRecording(bleedCapture, { zoneHrid: '/z', difficultyTier: 0, recordedAt: 1 });
+
+    test('each fight carries the damage-over-time part of what it dealt', () => {
+        expect(observation.fights.map((fight) => fight.dotDealt)).toEqual([322, 421, 352, 521]);
+    });
+
+    test('is swing damage over swing hits, overall and per fight', () => {
+        const observed = aggregateObservations([observation]);
+        const swingDealt = observed.damageDealt - (322 + 421 + 352 + 521);
+
+        expect(observed.hits).toBe(151);
+        expect(observed.damagePerHit).toBeCloseTo(swingDealt / 151, 9);
+        expect(observed.samples.damagePerHit).toEqual(
+            observation.fights.map((fight) => (fight.damageDealt - fight.dotDealt) / fight.hits)
+        );
+        // Damage per second is still everything dealt, as the simulator's is
+        expect(observed.dps).toBeCloseTo(observed.damageDealt / observed.seconds, 9);
+    });
+
+    test('an observation from before the subtotal existed divides what it has', () => {
+        const observed = aggregateObservations([evenObservation({ damageDealt: 1000, fights: 2 })]);
+        expect(observed.damagePerHit).toBe(250);
+    });
+});
 
 describe('folding observations together', () => {
     test('the rates are ratios of the totals, not means of the fights', () => {
