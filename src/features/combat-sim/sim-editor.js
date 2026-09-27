@@ -10,6 +10,7 @@ import {
     buildAllPlayerDTOs,
     buildPlayerDTO,
     parseShykaiImport,
+    buildShykaiExportPlayer,
     applyLoadoutSnapshotToDTO,
     getGuildBuffDetailMap,
     guildBuffMaxLevel,
@@ -135,6 +136,12 @@ export class SimEditor {
         this._soloMode = Boolean(soloMode);
         this._onSoloModeChange = onSoloModeChange;
         this._onRender = onRender;
+        // The last Export click's outcome ("Copied Milkman's build." or, when
+        // the clipboard is unavailable, a note plus the text itself so the user
+        // can copy it by hand) and the timer that clears it a few seconds later.
+        this._exportNote = '';
+        this._exportNoteText = '';
+        this._exportNoteTimer = null;
     }
 
     getEditedDTOs() {
@@ -990,6 +997,121 @@ export class SimEditor {
     }
 
     /**
+     * The last Export click's outcome, shown until the next render clears it.
+     *
+     * When the clipboard write succeeded this is one confirmation line. When it
+     * did not (no `navigator.clipboard`, a denied permission, or a non-secure
+     * context), the fallback textarea copy is attempted instead, and if that
+     * also fails the export text itself is shown in a read-only box so the user
+     * can still select and copy it by hand — an Export button that silently
+     * does nothing on failure is worse than no button.
+     * @private
+     * @returns {string} HTML for the note, or '' when there is nothing to say
+     */
+    _renderExportNote() {
+        if (!this._exportNote) return '';
+        let html = `<div style="color:${ACCENT}; font-size:11px; margin:-4px 0 8px;">${escapeHtml(this._exportNote)}</div>`;
+        if (this._exportNoteText) {
+            html += `<textarea readonly onclick="this.select();" style="
+                width:100%; height:60px; background:#1a1a2e; color:#e0e0e0; border:1px solid #444;
+                border-radius:4px; padding:6px; font-size:11px; font-family:monospace; resize:vertical;
+                box-sizing:border-box; margin:-4px 0 8px;">${escapeHtml(this._exportNoteText)}</textarea>`;
+        }
+        return html;
+    }
+
+    /**
+     * Copy export text to the clipboard, falling back to a hidden textarea's
+     * copy command, and finally to showing the text itself for a manual copy
+     * when neither works (e.g. an insecure context, or a denied permission).
+     * @private
+     * @param {string} text - The JSON to copy
+     * @returns {Promise<boolean>} True when the clipboard now holds `text`
+     */
+    async _copyToClipboard(text) {
+        try {
+            if (navigator?.clipboard?.writeText) {
+                await navigator.clipboard.writeText(text);
+                return true;
+            }
+        } catch {
+            /* fall through to the textarea fallback */
+        }
+        try {
+            const textarea = document.createElement('textarea');
+            textarea.value = text;
+            textarea.style.position = 'fixed';
+            textarea.style.opacity = '0';
+            document.body.appendChild(textarea);
+            textarea.focus();
+            textarea.select();
+            const ok = document.execCommand('copy');
+            document.body.removeChild(textarea);
+            return ok;
+        } catch {
+            return false;
+        }
+    }
+
+    /**
+     * Copy an export string to the clipboard and show a confirmation, or —
+     * when copying failed outright — the text itself for a manual copy.
+     * @private
+     * @param {string} text - The JSON to copy
+     * @param {string} confirmedMessage - Shown on a successful copy
+     */
+    async _exportToClipboard(text, confirmedMessage) {
+        clearTimeout(this._exportNoteTimer);
+        const copied = await this._copyToClipboard(text);
+        this._exportNote = copied ? confirmedMessage : 'Could not copy automatically — copy the text below by hand.';
+        this._exportNoteText = copied ? '' : text;
+        this.renderEditor();
+        this._exportNoteTimer = setTimeout(() => {
+            this._exportNote = '';
+            this._exportNoteText = '';
+            this.renderEditor();
+        }, 6000);
+    }
+
+    /**
+     * Export the active player's build in the same format "+ Import" accepts,
+     * so it can be pasted back in (this session, another character, or a
+     * teammate's) and land as an identical build.
+     * @private
+     */
+    async _exportActivePlayer() {
+        const hrid = this._activeEditPlayer;
+        const dto = this._editedDTOs?.[hrid];
+        if (!dto) return;
+        const name = this._editedPlayerInfo?.find((p) => p.hrid === hrid)?.name || 'Player';
+        const exportObj = buildShykaiExportPlayer(dto, name);
+        await this._exportToClipboard(JSON.stringify(exportObj), `Copied ${name}'s build to the clipboard.`);
+    }
+
+    /**
+     * Export every loaded player in the multi-slot format "+ Import" accepts,
+     * keyed by the same slot numbers they hold here, so re-importing it lands
+     * everyone back in the same seats.
+     * @private
+     */
+    async _exportParty() {
+        const info = this._editedPlayerInfo || [];
+        if (!info.length) return;
+        const exportObj = {};
+        for (const { hrid, name } of info) {
+            const dto = this._editedDTOs[hrid];
+            if (!dto) continue;
+            const match = hrid.match(/player(\d+)/);
+            const slot = match ? match[1] : '1';
+            exportObj[slot] = JSON.stringify(buildShykaiExportPlayer(dto, name));
+        }
+        await this._exportToClipboard(
+            JSON.stringify(exportObj),
+            `Copied the ${info.length}-player party to the clipboard.`
+        );
+    }
+
+    /**
      * @private
      * @param {HTMLElement} editorArea - Container the editor rendered into
      */
@@ -1143,6 +1265,16 @@ export class SimEditor {
             background:rgba(255,255,255,0.04); border:1px solid #333; color:#888;
             padding:3px 8px; border-radius:5px; font-size:11px; cursor:pointer;
             font-family:inherit;" title="Import players from Shykai export string">+ Import</button>`;
+        html += `<button id="mwi-csim-export-btn" style="
+            background:rgba(255,255,255,0.04); border:1px solid #333; color:#888;
+            padding:3px 8px; border-radius:5px; font-size:11px; cursor:pointer;
+            font-family:inherit;" title="Copy the selected player's build in the same format + Import accepts">Export</button>`;
+        if (playerInfo.length > 1) {
+            html += `<button id="mwi-csim-export-party-btn" style="
+                background:rgba(255,255,255,0.04); border:1px solid #333; color:#888;
+                padding:3px 8px; border-radius:5px; font-size:11px; cursor:pointer;
+                font-family:inherit;" title="Copy every loaded player as a multi-slot export">Export Party</button>`;
+        }
         html += this._renderResetControls();
         // Combat mode only, and only once there is a party to sim solo out of —
         // the lab and skilling editors never load more than one player, so the
@@ -1161,6 +1293,7 @@ export class SimEditor {
         html += this._renderMissingMembersNote();
         html += this._renderProfileAgeNote();
         html += this._renderImportSkippedNote();
+        html += this._renderExportNote();
 
         // Import paste area (hidden by default)
         html += `<div id="mwi-csim-import-area" style="display:none; margin-bottom:10px;">
@@ -2807,6 +2940,16 @@ export class SimEditor {
                 const area = editorArea.querySelector('#mwi-csim-import-area');
                 if (area) area.style.display = 'none';
             });
+        }
+
+        const exportBtn = editorArea.querySelector('#mwi-csim-export-btn');
+        if (exportBtn) {
+            exportBtn.addEventListener('click', () => this._exportActivePlayer());
+        }
+
+        const exportPartyBtn = editorArea.querySelector('#mwi-csim-export-party-btn');
+        if (exportPartyBtn) {
+            exportPartyBtn.addEventListener('click', () => this._exportParty());
         }
 
         const loadoutSelect = editorArea.querySelector('#mwi-csim-loadout-select');

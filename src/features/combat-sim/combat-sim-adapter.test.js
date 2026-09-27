@@ -103,6 +103,7 @@ const {
     buildPlayerDTOFromLoadout,
     applySharedLoadoutToDTO,
     parseShykaiImport,
+    buildShykaiExportPlayer,
     taxedDropValue,
     getCurrentCombatZone,
     getLabyrinthMonsters,
@@ -1144,5 +1145,162 @@ describe('getLabyrinthMonsters orders by the labyrinth panel, not by name', () =
     test('no client data at all returns an empty list', () => {
         mocks.clientData = null;
         expect(getLabyrinthMonsters()).toEqual([]);
+    });
+});
+
+/**
+ * The Configure tab's Export button feeds `buildShykaiExportPlayer`'s output
+ * straight into `parseShykaiImport` — a round trip that must reproduce the
+ * player it started from. An earlier export (real game history, see
+ * `combat-sim-export.js`) silently dropped `guildCombatBuffLevels`; this guards
+ * every field the editor's own Export/Import can carry, not just that one.
+ */
+describe('buildShykaiExportPlayer round trips through parseShykaiImport', () => {
+    beforeEach(() => {
+        mocks.clientData = {
+            itemDetailMap: {
+                '/items/helm': { equipmentDetail: { type: '/equipment_types/head' } },
+                '/items/sword': { equipmentDetail: { type: '/equipment_types/main_hand' } },
+            },
+            abilityDetailMap: {},
+            guildBuffDetailMap: {
+                '/guild_buffs/force_combat': FORCE,
+                '/guild_buffs/scholar_skilling': SCHOLAR_SKILLING,
+            },
+        };
+    });
+
+    function fullDTO() {
+        return {
+            hrid: 'player1',
+            attackLevel: 80,
+            magicLevel: 1,
+            meleeLevel: 1,
+            rangedLevel: 1,
+            defenseLevel: 60,
+            staminaLevel: 90,
+            intelligenceLevel: 1,
+            equipment: {
+                '/equipment_types/head': { hrid: '/items/helm', enhancementLevel: 4 },
+                '/equipment_types/main_hand': { hrid: '/items/sword', enhancementLevel: 6 },
+            },
+            food: [
+                {
+                    hrid: '/items/food_a',
+                    triggers: [{ dependencyHrid: '/x', conditionHrid: '/y', comparatorHrid: '/z', value: 3 }],
+                },
+                null,
+                null,
+            ],
+            drinks: [{ hrid: '/items/drink_a', triggers: null }, null, null],
+            abilities: [
+                { hrid: '/abilities/aura', level: 3, triggers: null },
+                {
+                    hrid: '/abilities/strike',
+                    level: 5,
+                    triggers: [{ dependencyHrid: '/a', conditionHrid: '/b', comparatorHrid: '/c', value: 1 }],
+                },
+                null,
+                null,
+                null,
+            ],
+            houseRooms: { '/house_rooms/dojo': 5, '/house_rooms/gym': 3 },
+            guildShrineLevels: { '/guild_buffs/force_combat': 4 },
+            guildCombatBuffs: [],
+            achievementCombatBuffs: [
+                { typeHrid: '/buff_types/wisdom', flatBoost: 0.02 },
+                { typeHrid: '/buff_types/rare_find', flatBoost: 0.02 },
+                { typeHrid: '/buff_types/damage', ratioBoost: 0.02 },
+            ],
+            achievementBuffsOff: ['/buff_types/rare_find'],
+            scrollBuffs: ['/buff_types/wisdom'],
+        };
+    }
+
+    test('gives back an identical player build, including guild levels, house, achievements and scrolls', () => {
+        const dto = fullDTO();
+        const exportObj = buildShykaiExportPlayer(dto, 'Milkman');
+        const parsed = parseShykaiImport(JSON.stringify(exportObj));
+
+        expect(parsed).not.toBeNull();
+        expect(parsed.names[0]).toBe('Milkman');
+        const back = parsed.players[0];
+
+        expect(back.attackLevel).toBe(80);
+        expect(back.defenseLevel).toBe(60);
+        expect(back.staminaLevel).toBe(90);
+
+        // Equipment lands on the real equipment-type keys, keyed exactly the
+        // way the game's own DTOs are (TLA-045).
+        expect(back.equipment['/equipment_types/head']).toEqual({ hrid: '/items/helm', enhancementLevel: 4 });
+        expect(back.equipment['/equipment_types/main_hand']).toEqual({ hrid: '/items/sword', enhancementLevel: 6 });
+
+        // Food/drinks/abilities, each with their triggers
+        expect(back.food[0]).toEqual({
+            hrid: '/items/food_a',
+            triggers: [{ dependencyHrid: '/x', conditionHrid: '/y', comparatorHrid: '/z', value: 3 }],
+        });
+        expect(back.drinks[0]).toEqual({ hrid: '/items/drink_a', triggers: null });
+        expect(back.abilities[0]).toEqual({ hrid: '/abilities/aura', level: 3, triggers: null });
+        expect(back.abilities[1]).toEqual({
+            hrid: '/abilities/strike',
+            level: 5,
+            triggers: [{ dependencyHrid: '/a', conditionHrid: '/b', comparatorHrid: '/c', value: 1 }],
+        });
+
+        // House
+        expect(back.houseRooms).toEqual({ '/house_rooms/dojo': 5, '/house_rooms/gym': 3 });
+
+        // Guild shrine levels — only the combat shrine is carried; the
+        // skilling one in the same detail map is not a combat sim's concern.
+        expect(back.guildShrineLevels).toEqual({ '/guild_buffs/force_combat': 4 });
+        expect(back.guildCombatBuffs).toHaveLength(1);
+        expect(back.guildCombatBuffs[0].ratioBoost).toBeCloseTo(0.003 + 3 * 0.003);
+
+        // Achievements: the exact resolved buffs and their off-set round trip untouched
+        expect(back.achievementCombatBuffs).toEqual(dto.achievementCombatBuffs);
+        expect(back.achievementBuffsOff).toEqual(['/buff_types/rare_find']);
+        expect(back.achievementBuffsDerived).toBe(true);
+
+        // Scrolls
+        expect(back.scrollBuffs).toEqual(['/buff_types/wisdom']);
+    });
+
+    test('a plain Shykai export (no Toolasha extensions) derives achievement buffs from completed achievements', () => {
+        mocks.clientData.achievementDetailMap = {
+            '/achievements/novice_1': { tierHrid: '/achievement_tiers/novice' },
+            '/achievements/novice_2': { tierHrid: '/achievement_tiers/novice' },
+        };
+        const payload = JSON.stringify({
+            player: { attackLevel: 50, equipment: [] },
+            achievements: { '/achievements/novice_1': true, '/achievements/novice_2': true },
+        });
+
+        const dto = parseShykaiImport(payload).players[0];
+
+        expect(dto.achievementBuffsDerived).toBe(true);
+        const wisdom = dto.achievementCombatBuffs.find((b) => b.typeHrid === '/buff_types/wisdom');
+        expect(wisdom).toBeTruthy();
+        expect(dto.achievementBuffsOff).not.toContain('/buff_types/wisdom');
+    });
+
+    test('an import with no achievement data at all falls back to the manual, defaulted-off buffs', () => {
+        const payload = JSON.stringify({ player: { attackLevel: 50, equipment: [] } });
+
+        const dto = parseShykaiImport(payload).players[0];
+
+        expect(dto.achievementBuffsManual).toBe(true);
+        expect(dto.achievementCombatBuffs).toHaveLength(3);
+        expect(dto.achievementBuffsOff).toEqual(dto.achievementCombatBuffs.map((b) => b.typeHrid));
+    });
+
+    test('an unrecognized scroll type is dropped rather than trusted as-is', () => {
+        const payload = JSON.stringify({
+            player: { attackLevel: 50, equipment: [] },
+            scrollBuffs: ['/buff_types/wisdom', '/buff_types/not_a_real_scroll'],
+        });
+
+        const dto = parseShykaiImport(payload).players[0];
+        expect(dto.scrollBuffs).toEqual(['/buff_types/wisdom']);
     });
 });
