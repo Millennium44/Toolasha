@@ -60,7 +60,8 @@ describe('a status line asked to hold one width', () => {
         const widget = createFloatingWidget({ id: 'fixed', statusWidth: '340px' });
 
         expect(widget.status.style.width).toBe('340px');
-        expect(widget.status.style.flex).toBe('0 1 340px');
+        expect(widget.status.style.flex).toBe('1 1 0px');
+        expect(widget.status.style.maxWidth).toBe('340px');
         // Still one line with an ellipsis — the fold-out is the caller's job
         expect(widget.status.style.whiteSpace).toBe('nowrap');
         expect(widget.status.style.textOverflow).toBe('ellipsis');
@@ -78,6 +79,13 @@ describe('a strip on a phone-width screen', () => {
 
         expect(widget.element.style.maxWidth).toBe('calc(100vw - 32px)');
         expect(widget.element.style.boxSizing).toBe('border-box');
+    });
+
+    test('the row wraps as a last resort, once the controls alone overrun the strip', () => {
+        const widget = createFloatingWidget({ id: 'narrow', statusWidth: '340px' });
+
+        // At 280px wide the controls pushed ⚙ and ✕ out of the capped strip
+        expect(widget.row.style.flexWrap).toBe('wrap');
     });
 
     test('the status line is what gives up the width', () => {

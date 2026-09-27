@@ -153,17 +153,23 @@ export function createFloatingWidget({
         'max-width:calc(100vw - 32px); box-sizing:border-box;';
 
     const row = document.createElement('div');
-    row.style.cssText = 'display:flex; align-items:center; gap:6px;';
+    // Wraps only as a last resort: the status slot's flex-basis is 0 (below), so a
+    // line breaks only when the controls alone overrun the capped strip — at 280px
+    // wide they pushed ⚙ and ✕ out of it. Anywhere wider, everything stays on one line.
+    row.style.cssText = 'display:flex; flex-wrap:wrap; align-items:center; gap:6px;';
 
     const status = document.createElement('span');
     status.className = `${id}-status`;
     // A fixed width, where one is asked for: the strip is anchored by one edge
     // and its width follows its content, so a status line that grows and
-    // shrinks with the text drags everything beside it sideways. It may still
-    // shrink (min-width: 0) — but only when the strip hits its screen-width cap
-    // on a phone; any screen with room for the whole row keeps the full width.
+    // shrinks with the text drags everything beside it sideways. Its width sets
+    // the strip's size (a max-content contribution of exactly statusWidth), and
+    // it grows back up to that from a 0 basis, so any screen with room for the
+    // whole row keeps the full width; only when the strip hits its screen-width
+    // cap on a phone does it give up width (min-width: 0). The 0 basis is also
+    // what keeps the row's flex-wrap from breaking the line early.
     status.style.cssText = statusWidth
-        ? `flex:0 1 ${statusWidth}; width:${statusWidth}; min-width:0; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;`
+        ? `flex:1 1 0; width:${statusWidth}; max-width:${statusWidth}; min-width:0; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;`
         : 'max-width:340px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;';
 
     // Whatever the feature wants between the status and the main button — a
