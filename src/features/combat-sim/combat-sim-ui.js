@@ -902,7 +902,8 @@ export const SOLO_VS_PARTY_MODE = 'soloVsParty';
 
 /**
  * The two player sets a Solo zones + party dungeons sweep simulates: the
- * selected player alone, and the full party they are part of.
+ * selected player alone (without the party's level-gap penalty), and the
+ * full party they are part of.
  *
  * Both sweeps are read for the same player (`playerHrid`) — a party dungeon
  * row is that player's own XP, drops and consumables, never the party's sum —
@@ -918,7 +919,11 @@ export function soloVsPartySets(partyDTOs, playerHrid) {
     if (party.length < 2) return null;
     const selected = party.find((dto) => dto.hrid === playerHrid);
     if (!selected) return null;
-    return { solo: [selected], party, playerHrid };
+    // A copy with the level-gap penalty cleared, as resolveSimParty's Solo
+    // branch does: the gap stamped on the DTO is party-derived, and alone there
+    // is no higher-level member to be penalized against. The party sweep keeps
+    // each member's own gap, which a dungeon run with them really carries.
+    return { solo: [{ ...selected, debuffOnLevelGap: 0 }], party, playerHrid };
 }
 
 /**

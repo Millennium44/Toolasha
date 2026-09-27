@@ -7506,6 +7506,20 @@ describe('Solo zones + party dungeons: one ranked table', () => {
             expect(partyRun.playerHrid).toBe('player2');
         });
 
+        test('the solo sweep drops the party level-gap penalty; the party sweep keeps each member’s', async () => {
+            mocks.editedDTOs.player2.debuffOnLevelGap = 0.3;
+            mocks.editedDTOs.player3.debuffOnLevelGap = 0.1;
+
+            await ui._onSimulateAllZones();
+
+            const [soloRun, partyRun] = mocks.allZonesArgsLog;
+            expect(soloRun.playerDTOs[0].debuffOnLevelGap).toBe(0);
+            const gaps = Object.fromEntries(partyRun.playerDTOs.map((p) => [p.hrid, p.debuffOnLevelGap]));
+            expect(gaps).toMatchObject({ player2: 0.3, player3: 0.1 });
+            // The editor's own DTO is left as it was
+            expect(mocks.editedDTOs.player2.debuffOnLevelGap).toBe(0.3);
+        });
+
         test('the Solo checkbox does not narrow the party sweep', async () => {
             mocks.editorSoloMode = true;
 
@@ -7729,7 +7743,7 @@ describe('the Solo zones + party dungeons helpers', () => {
     test('soloVsPartySets: the selected player alone, and the whole party', () => {
         const party = [{ hrid: 'player1' }, { hrid: 'player2' }];
         expect(soloVsPartySets(party, 'player2')).toEqual({
-            solo: [{ hrid: 'player2' }],
+            solo: [{ hrid: 'player2', debuffOnLevelGap: 0 }],
             party,
             playerHrid: 'player2',
         });
@@ -7763,7 +7777,7 @@ describe('the Solo zones + party dungeons helpers', () => {
 
         const unchecked = fakeEditor({ playerInfo, selfHrid: 'player1', activeEditPlayer: 'player2' });
         const forced = resolveSimParty(unchecked, editedDTOs, { solo: true });
-        expect(forced.playerDTOs).toEqual([{ hrid: 'player2' }]);
+        expect(forced.playerDTOs).toEqual([{ hrid: 'player2', debuffOnLevelGap: 0 }]);
         expect(forced.selfHrid).toBe('player2');
         // No override: the checkbox decides, as before
         expect(resolveSimParty(unchecked, editedDTOs).playerDTOs).toHaveLength(2);
