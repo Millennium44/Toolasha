@@ -1206,6 +1206,66 @@ class DungeonTrackerStorage {
     }
 
     /**
+     * Merge a batch of already-validated runs (a JSON backup import) into the
+     * stored history, by the same identity everything else here folds on.
+     *
+     * Deliberately not {@link DungeonTrackerStorage#saveTeamRun}'s path: that
+     * method's duplicate check is a fuzzy window (within 10s and 2s of
+     * duration) meant to reconcile two *independent observations* of one run
+     * — the live tracker and a chat backfill timing the same completion to
+     * different precision. An imported run is neither: it is a copy of a
+     * record this store (or a peer's copy of it) already wrote, so the exact
+     * `runIdentity` triple {@link mergeRuns} and the sync fold already use is
+     * the right comparison — anything looser would quietly refuse a second,
+     * genuinely different run that happens to land in the same fuzzy window.
+     *
+     * A run whose identity is currently tombstoned is left out rather than
+     * revived: an import restoring a run the user deliberately deleted would
+     * make deletion pointless the moment anyone re-exported before deleting.
+     *
+     * @param {Array<Object>} runs - Runs already checked against the sanity
+     *   rules (`dungeon-tracker-run-import.js`), unmerged, as the backup held
+     *   them
+     * @returns {Promise<{added: number, alreadyPresent: number, ok: boolean}>}
+     *   How many landed and how many were already accounted for (present or
+     *   deleted); `ok` is false only when the history could not be read at
+     *   all, in which case nothing was written and neither count means
+     *   anything
+     */
+    async importRuns(runs) {
+        const incoming = Array.isArray(runs) ? runs : [];
+        if (incoming.length === 0) return { added: 0, alreadyPresent: 0, ok: true };
+
+        const allRuns = await this._loadRuns();
+        if (!allRuns) {
+            console.warn('[DungeonTrackerStorage] Import refused: the stored history could not be read first');
+            return { added: 0, alreadyPresent: 0, ok: false };
+        }
+
+        const known = new Set(allRuns.map(runIdentity));
+        const toAdd = [];
+        let alreadyPresent = 0;
+        for (const run of incoming) {
+            const id = runIdentity(run);
+            if (known.has(id) || this._deleted.has(id)) {
+                alreadyPresent++;
+                continue;
+            }
+            known.add(id);
+            toAdd.push({ ...run });
+        }
+
+        if (toAdd.length === 0) return { added: 0, alreadyPresent, ok: true };
+
+        // mergeRuns folds by identity and re-sorts newest-first, exactly what
+        // adding a batch of historical runs (not necessarily newer than what
+        // is already stored) needs
+        this._index(mergeRuns(allRuns, toAdd, this._deleted));
+        await this._persist(true);
+        return { added: toAdd.length, alreadyPresent, ok: true };
+    }
+
+    /**
      * Remove the run(s) recorded at a timestamp.
      * @param {string} timestamp - The run's ISO timestamp, as stored
      * @returns {Promise<boolean>} Whether the write landed

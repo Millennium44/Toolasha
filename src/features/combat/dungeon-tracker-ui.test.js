@@ -64,6 +64,7 @@ const stubModule = vi.hoisted(() => () => ({
         setupAll = vi.fn();
         applyInitialStates = vi.fn();
         onDelete = vi.fn();
+        onImport = vi.fn();
     },
 }));
 vi.mock('./dungeon-tracker-ui-chart.js', stubModule);

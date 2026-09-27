@@ -460,6 +460,100 @@ describe('saveTeamRun', () => {
     });
 });
 
+describe('importRuns', () => {
+    function importedRun(overrides = {}) {
+        return {
+            teamKey: 'A,B',
+            team: ['A', 'B'],
+            dungeonName: 'Chimerical Den',
+            tier: 1,
+            duration: 300_000,
+            timestamp: '2026-01-01T00:00:00.000Z',
+            recordedBy: 'someoneElse',
+            ...overrides,
+        };
+    }
+
+    test('an import into empty storage adds every run, unchanged', async () => {
+        seedRuns([]);
+        const result = await dungeonTrackerStorage.importRuns([importedRun()]);
+
+        expect(result).toEqual({ added: 1, alreadyPresent: 0, ok: true });
+        expect(await dungeonTrackerStorage.getAllRuns()).toEqual([importedRun()]);
+    });
+
+    test('re-importing the same file a second time adds nothing', async () => {
+        seedRuns([]);
+        await dungeonTrackerStorage.importRuns([importedRun()]);
+        const second = await dungeonTrackerStorage.importRuns([importedRun()]);
+
+        expect(second).toEqual({ added: 0, alreadyPresent: 1, ok: true });
+        expect(await dungeonTrackerStorage.getAllRuns()).toHaveLength(1);
+    });
+
+    test('a merge with one overlapping run and one new one adds only the new one', async () => {
+        seedRuns([importedRun()]);
+        const result = await dungeonTrackerStorage.importRuns([
+            importedRun(), // already present
+            importedRun({ timestamp: '2026-01-02T00:00:00.000Z' }), // new
+        ]);
+
+        expect(result).toEqual({ added: 1, alreadyPresent: 1, ok: true });
+        expect(await dungeonTrackerStorage.getAllRuns()).toHaveLength(2);
+    });
+
+    test('an identity match is exact — teamKey, timestamp and duration together, not any one alone', async () => {
+        seedRuns([importedRun()]);
+        // Same team and timestamp, different duration: a different run, not the one already stored
+        const result = await dungeonTrackerStorage.importRuns([importedRun({ duration: 400_000 })]);
+
+        expect(result).toEqual({ added: 1, alreadyPresent: 0, ok: true });
+        expect(await dungeonTrackerStorage.getAllRuns()).toHaveLength(2);
+    });
+
+    test('a run whose identity was deliberately deleted is not resurrected by an import', async () => {
+        seedRuns([importedRun()]);
+        await dungeonTrackerStorage.deleteRun('2026-01-01T00:00:00.000Z');
+
+        const result = await dungeonTrackerStorage.importRuns([importedRun()]);
+
+        expect(result).toEqual({ added: 0, alreadyPresent: 1, ok: true });
+        expect(await dungeonTrackerStorage.getAllRuns()).toEqual([]);
+    });
+
+    test('an empty import list is a no-op that does not touch storage', async () => {
+        seedRuns([importedRun()]);
+        const writesBefore = game.writes.length;
+
+        const result = await dungeonTrackerStorage.importRuns([]);
+
+        expect(result).toEqual({ added: 0, alreadyPresent: 0, ok: true });
+        expect(game.writes.length).toBe(writesBefore);
+    });
+
+    test('imported runs merge with whatever another tab has already written, like any other save', async () => {
+        seedRuns([importedRun()]);
+        // A second tab wrote a run of its own since this tab last read
+        game.saved.unifiedRuns.allRuns.push(importedRun({ timestamp: '2026-01-03T00:00:00.000Z' }));
+
+        await dungeonTrackerStorage.importRuns([importedRun({ timestamp: '2026-01-02T00:00:00.000Z' })]);
+
+        const stored = game.saved.unifiedRuns.allRuns.map((r) => r.timestamp).sort();
+        expect(stored).toEqual(['2026-01-01T00:00:00.000Z', '2026-01-02T00:00:00.000Z', '2026-01-03T00:00:00.000Z']);
+    });
+
+    test('a read that could not be made refuses the whole import rather than guessing', async () => {
+        seedRuns([]);
+        game.unreadable = true;
+
+        const result = await dungeonTrackerStorage.importRuns([importedRun()]);
+
+        expect(result).toEqual({ added: 0, alreadyPresent: 0, ok: false });
+        game.unreadable = false;
+        expect(await dungeonTrackerStorage.getAllRuns()).toEqual([]);
+    });
+});
+
 describe('deleting runs', () => {
     test('deleteRun drops the run at a timestamp and writes at once', async () => {
         seedRuns([

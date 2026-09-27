@@ -8,8 +8,14 @@ import dungeonTrackerStorage, {
     currentCharacter,
     runIdentity,
 } from './dungeon-tracker-storage.js';
+import {
+    buildDungeonRunsBackupEnvelope,
+    parseDungeonRunsJson,
+    validateDungeonRunsEnvelope,
+    planDungeonRunImport,
+} from './dungeon-tracker-run-import.js';
 import { trendsFor, directionMarker, NOT_ENOUGH_RUNS, TREND_WINDOW } from './dungeon-tracker-trends.js';
-import { toCsv, csvFilename, downloadCsv } from '../../utils/csv-export.js';
+import { toCsv, csvFilename, downloadCsv, downloadFile } from '../../utils/csv-export.js';
 import { formatDateTime } from '../../utils/formatters.js';
 import { openPlayerProfile, VALID_PLAYER_NAME_RE } from '../../utils/profile-command.js';
 
@@ -228,6 +234,9 @@ class DungeonTrackerUIHistory {
             if (allRuns.length === 0) {
                 runList.innerHTML =
                     '<div style="color: #888; font-style: italic; text-align: center; padding: 8px;">No runs yet</div>';
+                // Import has to be reachable even with nothing recorded yet —
+                // that is exactly when restoring a backup is the point
+                runList.prepend(this.historyBackupBar());
                 return;
             }
 
@@ -248,6 +257,7 @@ class DungeonTrackerUIHistory {
             if (filteredRuns.length === 0) {
                 runList.innerHTML =
                     '<div style="color: #888; font-style: italic; text-align: center; padding: 8px;">No runs match filters</div>';
+                runList.prepend(this.historyBackupBar());
                 return;
             }
 
@@ -266,11 +276,13 @@ class DungeonTrackerUIHistory {
 
             runList.prepend(this.trendsBlock(trendGroups));
 
-            // The export bar sits inside the list it describes, so the redraw
-            // that replaces the list replaces the bar with it. The rows come
+            // The export bars sit inside the list they describe, so the redraw
+            // that replaces the list replaces them with it. The CSV rows come
             // from the grouped data at click time — what the filters allowed,
-            // in the order the groups hold it — never from the DOM.
+            // in the order the groups hold it — never from the DOM. The JSON
+            // backup bar is filter-independent — see `historyBackupBar`.
             runList.prepend(this.csvExportBar(groups.flatMap((group) => group.runs)));
+            runList.prepend(this.historyBackupBar());
         } catch (error) {
             console.error('[Dungeon Tracker UI History] Update error:', error);
             runList.innerHTML =
@@ -537,6 +549,194 @@ class DungeonTrackerUIHistory {
 
         bar.appendChild(button);
         return bar;
+    }
+
+    /**
+     * An Export / Import bar for a lossless JSON backup of the run history.
+     *
+     * Unlike {@link csvExportBar}, this is not built from whatever the current
+     * filters allow — Export always reads the current character's whole stored
+     * history fresh from storage, unfiltered, because a backup that quietly
+     * left out runs the panel happened to be filtering when it was pressed
+     * would not be a backup. Always present, even on an empty list: an empty
+     * history is exactly when importing a backup is the point.
+     *
+     * @returns {HTMLElement} The bar
+     */
+    historyBackupBar() {
+        const bar = document.createElement('div');
+        bar.dataset.jsonBackup = 'dungeon-runs';
+        bar.style.cssText = 'display: flex; justify-content: flex-end; gap: 6px; margin: 0 0 6px 0;';
+
+        const buttonStyle =
+            'background: none; border: 1px solid #555; color: #aaa; border-radius: 2px; ' +
+            'font-size: 9px; padding: 1px 6px; cursor: pointer;';
+
+        const exportButton = document.createElement('button');
+        exportButton.textContent = 'Export';
+        exportButton.title =
+            'Download a lossless JSON backup of this character’s ENTIRE run history, for re-importing later';
+        exportButton.style.cssText = buttonStyle;
+        exportButton.addEventListener('click', (event) => {
+            event.stopPropagation();
+            this.exportRunHistoryBackup().catch((error) => {
+                console.error('[Dungeon Tracker UI History] JSON export failed:', error);
+            });
+        });
+        bar.appendChild(exportButton);
+
+        const importButton = document.createElement('button');
+        importButton.textContent = 'Import';
+        importButton.title =
+            'Restore runs from a JSON backup and merge them into this character’s history — a run already ' +
+            'present adds nothing';
+        importButton.style.cssText = buttonStyle;
+        importButton.addEventListener('click', (event) => {
+            event.stopPropagation();
+            this.triggerImportBackup();
+        });
+        bar.appendChild(importButton);
+
+        return bar;
+    }
+
+    /**
+     * Download the current character's whole stored run history as a JSON
+     * backup — every field, unfiltered by whatever the panel's dropdowns
+     * currently show.
+     * @returns {Promise<void>}
+     */
+    async exportRunHistoryBackup() {
+        const characterId = currentCharacter().id;
+        const runs = await dungeonTrackerStorage.getRunsForCharacter('mine');
+        const envelope = buildDungeonRunsBackupEnvelope({ characterId, runs });
+        downloadFile(
+            csvFilename('dungeon-runs-backup').replace(/\.csv$/, '.json'),
+            JSON.stringify(envelope, null, 2),
+            'application/json;charset=utf-8;'
+        );
+    }
+
+    /**
+     * Open a file picker for a JSON backup and import whatever is chosen.
+     *
+     * A single hidden `<input type="file">` is reused across openings rather
+     * than recreated each time, and its value is cleared after every change so
+     * picking the same file twice in a row still fires `change`.
+     */
+    triggerImportBackup() {
+        if (!this.importInput) {
+            const input = document.createElement('input');
+            input.type = 'file';
+            input.accept = '.json,application/json';
+            input.style.display = 'none';
+            input.addEventListener('change', async (event) => {
+                const file = event.target.files?.[0];
+                input.value = '';
+                if (!file) return;
+                await this.importBackupFile(file);
+            });
+            document.body.appendChild(input);
+            this.importInput = input;
+        }
+        this.importInput.click();
+    }
+
+    /**
+     * @param {File} file - The chosen file
+     * @returns {Promise<void>}
+     */
+    async importBackupFile(file) {
+        let text;
+        try {
+            text = await file.text();
+        } catch (error) {
+            alert(`Could not read the file: ${error.message}`);
+            return;
+        }
+        await this.importBackupText(text);
+    }
+
+    /**
+     * Validate and merge a JSON backup's runs into the stored history, after a
+     * confirmation summary. Nothing is written until the user confirms, and
+     * any refusal below leaves storage untouched.
+     *
+     * **The character-swap race class**: the active character is captured
+     * before the first `await` and re-checked right before the write, the same
+     * guard `alchemy-session-import.js`'s viewers use — a change anywhere in
+     * that window (a confirm dialog can sit open indefinitely) cancels the
+     * import rather than merging a payload built for one character's panel
+     * into whatever history happens to be current when it finally lands.
+     *
+     * @param {string} text - The file's raw contents
+     * @returns {Promise<void>}
+     */
+    async importBackupText(text) {
+        // Captured before any further await — see the race note above
+        const charIdBefore = currentCharacter().id;
+
+        const parsed = parseDungeonRunsJson(text);
+        if (!parsed.ok) {
+            alert(`Import refused: ${parsed.error}`);
+            return;
+        }
+
+        const envelope = parsed.envelope;
+        const envelopeCheck = validateDungeonRunsEnvelope(envelope);
+        if (!envelopeCheck.ok) {
+            alert(`Import refused: ${envelopeCheck.error}`);
+            return;
+        }
+
+        if (envelope.characterId && envelope.characterId !== charIdBefore) {
+            const proceed = confirm(
+                `This backup was exported from a different character (${envelope.characterId}), ` +
+                    `not the current one (${charIdBefore}).\n\nImport it into the CURRENT character's history anyway?`
+            );
+            if (!proceed) return;
+        }
+
+        const { valid, rejected } = planDungeonRunImport(envelope.runs);
+
+        if (currentCharacter().id !== charIdBefore) {
+            alert('The active character changed during import — cancelled to avoid writing to the wrong character.');
+            return;
+        }
+
+        const confirmed = confirm(
+            `Import ${envelope.runs.length} run(s) from the backup:\n` +
+                `${valid.length} usable, ${rejected.length} rejected (bad or implausible).\n\nContinue?`
+        );
+        if (!confirmed) return;
+
+        if (currentCharacter().id !== charIdBefore) {
+            alert('The active character changed — import cancelled to avoid writing to the wrong character.');
+            return;
+        }
+
+        const { added, alreadyPresent, ok } = await dungeonTrackerStorage.importRuns(valid);
+        if (!ok) {
+            alert('Import failed: the stored history could not be read. Nothing was written.');
+            return;
+        }
+
+        if (this.onImportCallback) this.onImportCallback();
+
+        alert(
+            `Imported ${added} run(s), ${alreadyPresent} already present, ${rejected.length} rejected.` +
+                (rejected.length ? `\n\nRejected: ${rejected.map((entry) => entry.reason).join('; ')}` : '')
+        );
+    }
+
+    /**
+     * Set callback for when a backup import lands, so the panel redraws and
+     * recomputes stats from the merged history — the same refresh
+     * {@link onDelete}'s callback triggers.
+     * @param {Function} callback - Callback function
+     */
+    onImport(callback) {
+        this.onImportCallback = callback;
     }
 
     /**

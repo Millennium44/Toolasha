@@ -109,8 +109,10 @@ class DungeonTrackerUI {
             this.pricingChangeUnregisters.push(config.onSettingChange(key, () => this.updateRoiBoard()));
         }
 
-        // Set up history delete callback
+        // Set up history delete/import callbacks — both change the stored
+        // history out from under whatever is on screen, so both redraw it
         this.history.onDelete(() => this.refreshHistoryAndStats());
+        this.history.onImport(() => this.refreshHistoryAndStats());
 
         // Create UI elements
         this.createUI();
