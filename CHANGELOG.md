@@ -6,6 +6,8 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+- **Philo calculator own-use toggles**: "I own the inputs" costs loot you already hold at what selling it would net after tax (items with no sell price keep their usual cost), and "Keep the Philo" counts the stone at full price with no sales tax, for when you use it yourself.
+
 - **Dungeon shop planner after a reload**: a planner left open across a page reload no longer shows "no volume data" for every item with nothing planned; it measures volumes when it reappears.
 - **Solo zones vs party dungeons in one table**: with a party loaded, a new All Zones option sims you solo through every zone and your party through the dungeons, ranking both together with a Solo/Party column using your own share of each; the Bestiary planner can route through either. The All Zones table also keeps the player it measured, so a later tab click or price change no longer re-reads it for someone else.
 - **Sim yourself solo while in a party**: a Solo checkbox on the combat sim's Configure tab runs just the selected player, keeping the party roster and fetched loadouts for when you untick it; its history entries are labelled Solo. A fresh character's empty chat channel no longer triggers a false "Chat messages — selector missing" warning.
