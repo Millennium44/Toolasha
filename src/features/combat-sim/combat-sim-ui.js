@@ -5280,7 +5280,9 @@ class CombatSimUI {
             this._persistConsumableRates(simResult, trueSelfHrid, ownerId);
 
             // Generate label before displaying (display may re-render)
-            const historyLabel = this._editor?.generateSimLabel() || 'Current Gear';
+            // Diffed for the player actually simulated: a Solo run of another
+            // member is labelled from their edits, not the logged-in player's
+            const historyLabel = this._editor?.generateSimLabel(selfHrid) || 'Current Gear';
             const loadoutName = this._editor?.getSelectedLoadoutName?.() || null;
             // `historyLabel` is the loadout/"Current Gear" name with any diffed
             // changes appended — if it says more than that name alone, the
