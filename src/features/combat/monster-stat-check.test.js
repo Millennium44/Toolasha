@@ -75,6 +75,22 @@ describe('activeBuffNames', () => {
     });
 });
 
+describe('the timing, crit and regen buffs are attributed', () => {
+    test('a live buff of each new row type is named and gives its row leniency', () => {
+        const map = {
+            a: { typeHrid: '/buff_types/attack_speed', uniqueHrid: '/buff_uniques/a', ratioBoost: 0.1 },
+            b: { typeHrid: '/buff_types/cast_speed', uniqueHrid: '/buff_uniques/b', flatBoost: 0.1 },
+            c: { typeHrid: '/buff_types/critical_rate', uniqueHrid: '/buff_uniques/c', flatBoost: 0.05 },
+            d: { typeHrid: '/buff_types/critical_damage', uniqueHrid: '/buff_uniques/d', flatBoost: 0.1 },
+            e: { typeHrid: '/buff_types/hp_regen', uniqueHrid: '/buff_uniques/e', flatBoost: 0.01 },
+        };
+        expect([...buffedStatKeys(map, 'stab')].sort()).toEqual(
+            ['attackInterval', 'criticalDamage', 'criticalRate', 'hpRegenPer10', 'totalCastSpeed'].sort()
+        );
+        expect(combatEffectNames(map).length).toBe(5);
+    });
+});
+
 describe('compareStat', () => {
     test('deltaPct is the game relative to the sim baseline', () => {
         // game below baseline (a debuff shredded it) → negative

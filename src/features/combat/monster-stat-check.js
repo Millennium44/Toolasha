@@ -154,6 +154,12 @@ const BUFF_TYPE_TO_KEYS = {
     '/buff_types/water_resistance': () => ['totalWaterResistance'],
     '/buff_types/nature_resistance': () => ['totalNatureResistance'],
     '/buff_types/fire_resistance': () => ['totalFireResistance'],
+    // The timing, crit and regen rows: a live buff of these moves them the same way
+    '/buff_types/attack_speed': () => ['attackInterval'],
+    '/buff_types/cast_speed': () => ['totalCastSpeed'],
+    '/buff_types/critical_rate': () => ['criticalRate'],
+    '/buff_types/critical_damage': () => ['criticalDamage'],
+    '/buff_types/hp_regen': () => ['hpRegenPer10'],
 };
 
 /**
