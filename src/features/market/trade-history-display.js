@@ -238,6 +238,10 @@ class TradeHistoryDisplay {
 
         historyDiv.innerHTML = parts.join('');
 
+        // Our nowrap items made the row overrun a phone-width marketplace and squeezed the
+        // game's own buttons (fixed height, overflow: hidden) until their labels were cut off.
+        // Wrapping moves the overflow to a second line; a desktop row never needs one.
+        buttonContainer.style.flexWrap = 'wrap';
         // Append to button container
         buttonContainer.appendChild(historyDiv);
 

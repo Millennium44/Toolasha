@@ -56,6 +56,20 @@ describe('Last: buy/sell chip', () => {
         expect(chip.style.whiteSpace).toBe('nowrap');
     });
 
+    // On a phone-width marketplace our nowrap items overran the row and squeezed the game's own
+    // buttons until their labels were cut off (measured in Firefox, Chromium and WebKit); the row
+    // wraps instead. happy-dom does no layout, so this pins the declaration.
+    test('lets the row wrap rather than squeeze the game buttons', () => {
+        drawNavRow();
+        tradeHistoryDisplay.currentOrderBookData = {
+            orderBooks: [{ asks: [{ price: 100 }], bids: [{ price: 90 }] }],
+        };
+
+        tradeHistoryDisplay.updateDisplay(null, { buy: 90, sell: 100 });
+
+        expect(document.querySelector('.mwi-trade-history').parentElement.style.flexWrap).toBe('wrap');
+    });
+
     test('the tooltip says how old each recorded price is', () => {
         const now = 1_800_000_000_000;
         expect(tradePriceTitle('buy', now - 5 * 60_000, now)).toBe('Your last buy price — recorded 5m ago');
