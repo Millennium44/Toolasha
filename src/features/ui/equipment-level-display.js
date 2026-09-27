@@ -237,17 +237,31 @@ class EquipmentLevelDisplay {
             if (displayText) {
                 div.style.position = 'relative';
 
-                // A chest key's four zones are too wide for the bottom row, where they ran into
-                // the stack count; smaller and in the top-left corner, which keys leave empty
-                // (no enhancement level)
+                // A chest key's four zones (e.g. "5·7·8·10") are too wide for one line in
+                // either corner. Bottom-left (matching entry keys) looked right until a live
+                // check on the test server: chest key stacks routinely run 5 digits ("10000"),
+                // and that stack count sits bottom-right — "10·11" ran straight into it, the
+                // same collision this branch exists to fix (this is why ee1b0f9b put the label
+                // top-right in the first place). Entry keys never collide there because their
+                // stacks top out around "999K" and the label itself is only "D1"-"D4".
+                //
+                // So the compact label goes top-left instead, wrapped two-per-line: the ask/bid
+                // stack-value badge inventory-sort.js draws top-right is at most ~4 characters
+                // ("43M", "1.2B"), and two short lines of at most "10·11" stay clear of it. A
+                // max-width caps the label at just over half the tile as a second guard, in case
+                // a future key ever adds a wider zone number.
                 const compact = displayText.includes('·');
+                const html = compact ? this.wrapCompactZones(displayText) : displayText;
                 const position = compact
-                    ? 'top: 2px; left: 2px; text-align: left; font-size: 0.75em; letter-spacing: -0.5px;'
+                    ? 'top: 2px; left: 2px; text-align: left;'
                     : 'bottom: 2px; left: 2px; text-align: left;';
+                const fontStyle = compact
+                    ? 'font-size: 0.68em; letter-spacing: -0.5px; line-height: 1.05; max-width: 55%; overflow: hidden;'
+                    : '';
 
                 div.insertAdjacentHTML(
                     'beforeend',
-                    `<div class="script_itemLevel" style="z-index: 1; position: absolute; ${position} color: ${config.SCRIPT_COLOR_MAIN}; text-shadow: -1px -1px 0 #000, 1px -1px 0 #000, -1px 1px 0 #000, 1px 1px 0 #000, 0 0 3px #000;">${displayText}</div>`
+                    `<div class="script_itemLevel" style="z-index: 1; position: absolute; ${position} ${fontStyle} color: ${config.SCRIPT_COLOR_MAIN}; text-shadow: -1px -1px 0 #000, 1px -1px 0 #000, -1px 1px 0 #000, 1px 1px 0 #000, 0 0 3px #000;">${html}</div>`
                 );
             }
 
@@ -297,6 +311,22 @@ class EquipmentLevelDisplay {
         ]);
 
         return keyMap.get(itemHrid) || null;
+    }
+
+    /**
+     * Wrap a "·"-joined zone list two-per-line, as HTML with a <br> between rows.
+     * Keeps each line short enough to sit in the tile's top-left corner without a
+     * one-line render reaching the ask/bid stack-value badge, which sits top-right.
+     * @param {string} zonesText - e.g. "5·7·8·10"
+     * @returns {string} HTML with rows of at most two zones each
+     */
+    wrapCompactZones(zonesText) {
+        const zones = zonesText.split('·');
+        const rows = [];
+        for (let i = 0; i < zones.length; i += 2) {
+            rows.push(zones.slice(i, i + 2).join('·'));
+        }
+        return rows.join('<br>');
     }
 
     /**

@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Chest key zones no longer run into the stack value
+
+- The zone list on chest key icons ("5·7·8·10") ran straight into the item's stack value in the top-right corner. It now wraps onto two short lines in the top-left, clear of both the value and the item count.
+
 <!-- shipped in 3.61.1 -->
 
 ### House room dialog keeps its Build button on phones
