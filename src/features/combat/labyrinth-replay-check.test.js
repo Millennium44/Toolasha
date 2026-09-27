@@ -575,12 +575,10 @@ describe('compareLab verdicts and diagnosis', () => {
     test('a solo lab taken deviation inside its own margin reads consistent, not above', () => {
         // A measured 28-fight Pyre Hunter group: taken averages 10.525/s against
         // a 10/s prediction (+5.25%), with fight-to-fight spread that widens to a
-        // ±5.32% margin. The raw deviation sits inside that margin on its own —
-        // no downward-bias credit is needed or applied for a solo labyrinth fight
-        // (see the comment above `Z95` in labyrinth-replay-check.js), so this
-        // must read "consistent". A now-removed 3-point credit for a tick-merge
-        // undercount that does not occur in a solo fight used to push the judged
-        // deviation to +8.25%, past the margin, and call it "above".
+        // ±5.32% margin. The raw deviation sits inside that margin, so this must
+        // read "consistent". The heal-merge credit is one-sided: it used to be
+        // added to every deviation, pushing this one to +8.25%, past the margin,
+        // and calling it "above".
         const half = 14;
         const mean = 10.525;
         const spread = 1.375;
@@ -603,6 +601,27 @@ describe('compareLab verdicts and diagnosis', () => {
         expect(taken.deviationPct).toBeCloseTo(5.25, 1);
         expect(taken.marginPct).toBeCloseTo(5.32, 1);
         expect(taken.verdict).toBe('consistent');
+    });
+
+    test('the heal-merge credit pulls a low taken reading toward zero, never past it', () => {
+        // Heals landing in a hit's update can only hide damage, so a reading
+        // 7% low is judged 4% low (inside a ±5.32% margin), and one 20% low is
+        // still "below" — the credit narrows the gap, it never flips its side
+        const group = (mean) => ({
+            ...observed(),
+            fights: 28,
+            takenPerSecond: mean,
+            takenSamples: [
+                ...Array.from({ length: 14 }, () => mean + 1.375),
+                ...Array.from({ length: 14 }, () => mean - 1.375),
+            ],
+        });
+        const verdictFor = (mean) =>
+            compareLab(group(mean), predictedLike({ takenPerSecond: 10 })).metrics.find((m) => m.key === 'taken');
+
+        expect(verdictFor(9.3).deviationPct).toBeCloseTo(-7, 1);
+        expect(verdictFor(9.3).verdict).toBe('consistent');
+        expect(verdictFor(8).verdict).toBe('below');
     });
 });
 

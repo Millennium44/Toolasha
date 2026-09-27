@@ -61,6 +61,13 @@ function median(values) {
     return sorted.length % 2 ? sorted[mid] : Math.round((sorted[mid - 1] + sorted[mid]) / 2);
 }
 
+/**
+ * How far heals landing in the same 3 Hz update as a hit can pull the observed
+ * damage-taken rate below the truth, in percentage points. Applied one-sided in
+ * `compareMetric`: it only moves a below-prediction reading toward zero.
+ */
+const TAKEN_UNDERCOUNT_PCT = 3;
+
 /** The sim's own run-to-run wobble, folded into every margin so a within-noise call stays honest */
 const SIM_NOISE_FLOOR_PCT = 2;
 
@@ -990,7 +997,10 @@ function compareMetric(
     const dev = deviationPct(observed, predicted);
     // The verdict judges the bias-corrected deviation; the row still shows the
     // raw one, since the observed figure it displays is the real measured rate.
-    const judgedDev = dev === null ? null : dev + downwardBiasPct;
+    // One-sided: the bias can only hide damage (a heal landing in the same
+    // update as a hit), so it may pull a low reading back toward zero but never
+    // past it, and never lifts one that is already at or above the prediction.
+    const judgedDev = dev === null ? null : dev < 0 ? Math.min(0, dev + downwardBiasPct) : dev;
 
     let verdict;
     if (fights < MIN_LAB_FIGHTS || marginPct === null || judgedDev === null) {
@@ -1153,16 +1163,20 @@ export function compareLab(observed, predicted) {
         observed.dpsSamples,
         observed.fights
     );
-    // No downward-bias credit here: see the comment above `SIM_NOISE_FLOOR_PCT`
-    // — this module only ever compares solo labyrinth fights, where the 3 Hz
-    // tick-merge undercount this credit was built for does not occur.
+    // A one-sided credit: taken is summed from net HP drops between 3 Hz
+    // updates, so regen, food or life steal landing in the same update as a hit
+    // hides part of it and can only read low. A measured Pyre Hunter capture had
+    // no such merge in 166 hits, so the credit must not push an at-or-above
+    // reading further up (it once turned +5.25% ±5.32% into "above"); it only
+    // pulls a below-prediction reading back toward zero.
     const taken = compareMetric(
         'taken',
         'Monster damage / s',
         observed.takenPerSecond,
         predicted.takenPerSecond,
         observed.takenSamples,
-        observed.fights
+        observed.fights,
+        TAKEN_UNDERCOUNT_PCT
     );
     const clear = compareMetric(
         'clearRate',
