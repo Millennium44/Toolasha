@@ -95,8 +95,11 @@ vi.mock('./labyrinth-tick-capture.js', () => ({
     default: {
         captureStatus: () => ({ capturing: false, ticks: 0, seconds: 0, duplicatesDiscarded: 0, savedAt: null }),
         isCapturing: () => false,
+        unsavedTickCount: () => 0,
         startCapture: () => {},
         stopCapture: () => {},
+        forgetForCharacterSwitch: () => {},
+        loadAutosave: async () => false,
         clearCapture: () => {},
         captureFile: () => ({ ticks: [] }),
     },

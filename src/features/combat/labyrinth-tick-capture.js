@@ -23,11 +23,27 @@
 
 import webSocketHook from '../../core/websocket.js';
 import dataManager from '../../core/data-manager.js';
+import storage from '../../core/storage.js';
 import { FINGERPRINT_SPEC } from './labyrinth-recommendation.js';
 import { scriptVersion } from '../../utils/script-version.js';
 
 /** Ticks kept before the oldest fall off — far more than one fight, bounded so a tab can't grow forever */
 const MAX_TICKS = 8000;
+
+/**
+ * Where an unsaved capture is autosaved, scoped per character so a crash or a
+ * reload does not cost the ticks a Save dialog never confirmed.
+ */
+const AUTOSAVE_KEY = 'labyrinthTickCaptureAutosave';
+const AUTOSAVE_STORE = 'labyrinth';
+
+/**
+ * How often the tick loop writes the autosave while ticks are accumulating.
+ * `captureFile()` walks every retained tick for its gap stats, so writing it
+ * on every tick would cost real time on the socket handler; ten seconds bounds
+ * the loss to at most this long of ticks, which a reload recovers the rest of.
+ */
+const AUTOSAVE_INTERVAL_MS = 10_000;
 
 /**
  * A capture nobody stopped stops itself here, so an armed one is never left running.
@@ -69,13 +85,71 @@ let savedAt = null;
 let captureId = null;
 /** Ticks the ring buffer trimmed away — 0 means the file holds everything heard */
 let ticksDropped = 0;
-/** 'manual' | 'auto_max_duration' | 'left_monster', or null while running / before any stop */
+/**
+ * 'manual' | 'auto_max_duration' | 'left_monster' | 'page_reload' (recovered
+ * from the autosave, whichever way it really ended), or null while running /
+ * before any stop.
+ */
 let stoppedReason = null;
 /** Monotonic tail for captureId, so two starts in one millisecond still differ */
 let captureSeq = 0;
 /** The last capture written out as a file, for exports to pair against; survives clear/start */
 let lastSavedRef = null;
 let initialClientBuild = null;
+/**
+ * Which character the held ticks belong to, fixed at the moment the capture
+ * started — never re-read from `dataManager` while ticks are held, so a
+ * character switch mid-capture cannot move the autosave under the arriving
+ * character's key (the capture-identity-before-the-await bug class). Null
+ * when nothing is held.
+ */
+let autosaveOwnerId = null;
+/** `Date.now()` of the last autosave write, so the tick loop is not slowed by writing every tick */
+let lastAutosaveAt = 0;
+
+/** The autosave key for one character, mirroring `character-key.js`'s `${base}_${id}` idiom. */
+function autosaveKey(ownerId) {
+    return `${AUTOSAVE_KEY}_${ownerId || 'default'}`;
+}
+
+/**
+ * Persist the held ticks so a crash, a closed tab, or a Save dialog the user
+ * cancelled does not cost them. Fire-and-forget: a lost autosave write costs
+ * at most one interval of ticks, not the run, and the tick loop must not wait
+ * on IndexedDB.
+ *
+ * Kept regardless of `savedAt` — a click on Save is not proof the file landed
+ * (Firefox's Save dialog can be cancelled), so the autosave outlives it and is
+ * only ever cleared by an explicit Discard or a confirmed new capture.
+ */
+function writeAutosave() {
+    if (!ticks.length || !autosaveOwnerId) return;
+    // Recorders of bulky history stand down under quota pressure rather than
+    // spend every write failing the same way; this is that same convention.
+    if (storage.isQuotaExceeded?.()) return;
+    lastAutosaveAt = Date.now();
+    try {
+        Promise.resolve(storage.set(autosaveKey(autosaveOwnerId), captureFile(), AUTOSAVE_STORE)).catch((error) =>
+            console.error('[LabyrinthTickCapture] Autosaving the capture failed:', error)
+        );
+    } catch (error) {
+        console.error('[LabyrinthTickCapture] Autosaving the capture failed:', error);
+    }
+}
+
+/** Throttled autosave for the tick loop — at most once per {@link AUTOSAVE_INTERVAL_MS}. */
+function maybeAutosave() {
+    if (Date.now() - lastAutosaveAt < AUTOSAVE_INTERVAL_MS) return;
+    writeAutosave();
+}
+
+/** Drop one character's autosaved copy. Fire-and-forget, like {@link writeAutosave}. */
+function clearAutosave(ownerId) {
+    if (!ownerId) return;
+    Promise.resolve(storage.delete(autosaveKey(ownerId), AUTOSAVE_STORE)).catch((error) =>
+        console.error('[LabyrinthTickCapture] Clearing the autosaved capture failed:', error)
+    );
+}
 
 /** A detached, identity-free view of the build the client currently knows. */
 function clientBuild() {
@@ -102,6 +176,24 @@ function firstMonsterHrid(payload) {
 /** @returns {boolean} Whether a capture is running */
 export function isCapturing() {
     return capturing;
+}
+
+/**
+ * How many held ticks would be silently discarded if a fresh capture started
+ * right now — zero once they are saved (or none are held).
+ *
+ * Every path that can start or reset a capture (the harness rerun, the
+ * Capture button, anything future) must check this — or pass `force` to
+ * {@link startCapture} — before calling it, and route through Save/Discard
+ * when it is non-zero. This is *not* the same test as the autosave's: the
+ * autosave keeps backing up the ticks even after `savedAt` is set, because a
+ * click is not proof the file landed; this guard stops being non-zero right
+ * at that click, because requiring a Discard after every acknowledged save
+ * would be a needless second step for the ordinary case.
+ * @returns {number}
+ */
+export function unsavedTickCount() {
+    return savedAt === null ? ticks.length : 0;
 }
 
 /**
@@ -170,6 +262,7 @@ function push(type, payload, build = null) {
         ticksDropped += ticks.length - MAX_TICKS;
         ticks = ticks.slice(ticks.length - MAX_TICKS);
     }
+    maybeAutosave();
 }
 
 /**
@@ -185,9 +278,25 @@ function push(type, payload, build = null) {
  *   a different monster begins (so clearing the room doesn't record what comes
  *   after). Only applies when `ctx.monsterHrid` is set; a general capture with no
  *   target monster records until stopped.
+ * @param {boolean} [opts.force=false] - Start even while {@link unsavedTickCount}
+ *   is non-zero, discarding the held ticks. Only for a caller that has already
+ *   gotten the user's explicit go-ahead (e.g. its own Discard button) — never
+ *   the default for a path that would otherwise reset silently.
+ * @returns {{started: boolean, unsavedTicks?: number}} `started: false` means
+ *   nothing changed — the caller must not assume a capture is now running.
  */
-export function startCapture(ctx = null, { stopOnLeave = true } = {}) {
+export function startCapture(ctx = null, { stopOnLeave = true, force = false } = {}) {
+    if (!force) {
+        const heldTicks = unsavedTickCount();
+        if (heldTicks > 0) return { started: false, unsavedTicks: heldTicks };
+    }
+    // Stop first: `endCapture` below autosaves whatever the previous capture
+    // still held (a normal, harmless write — see `writeAutosave`). Clearing
+    // is ordered AFTER it so that write cannot resurrect what this start is
+    // about to replace: `storage.delete` cancels a same-key write still in
+    // its debounce window, but only if it runs after that write was queued.
     stopCapture();
+    if (autosaveOwnerId) clearAutosave(autosaveOwnerId);
     capturing = true;
     startedAt = Date.now();
     ticks = [];
@@ -200,6 +309,8 @@ export function startCapture(ctx = null, { stopOnLeave = true } = {}) {
     context = ctx || null;
     targetMonster = stopOnLeave ? ctx?.monsterHrid || null : null;
     initialClientBuild = clientBuild();
+    autosaveOwnerId = dataManager.getCurrentCharacterId() || 'default';
+    lastAutosaveAt = 0;
 
     // Both sides' health/mana/counters, and the message that names the units and
     // their abilities. `battle_updated` is trimmed to what a fight reads; the
@@ -229,12 +340,14 @@ export function startCapture(ctx = null, { stopOnLeave = true } = {}) {
     handlers = { onBattle, onNew, onItems, onAbilities };
 
     autoStopTimer = setTimeout(() => endCapture('auto_max_duration'), MAX_CAPTURE_MS);
+    return { started: true };
 }
 
 /**
  * The one stop path, so the file can say how the capture ended. Only a running
  * capture takes the reason — a redundant stop must not relabel a finished one.
  * @param {string} reason - 'manual' | 'auto_max_duration' | 'left_monster'
+ *   (never 'page_reload' — that reason is only ever set by {@link loadAutosave})
  */
 function endCapture(reason) {
     if (autoStopTimer) {
@@ -250,6 +363,11 @@ function endCapture(reason) {
     }
     if (capturing) stoppedReason = reason;
     capturing = false;
+    // Beyond the throttled per-tick writes: a stop is exactly the moment the
+    // held ticks stop changing and are least likely to be autosaved again
+    // soon, so it writes immediately rather than waiting for the next tick
+    // that may never come.
+    writeAutosave();
 }
 
 /** Stop recording. What was captured stays captured, for the file. */
@@ -257,9 +375,15 @@ export function stopCapture() {
     endCapture('manual');
 }
 
-/** Stop and throw away the captured ticks. The ref to the last saved file survives. */
-export function clearCapture() {
-    stopCapture();
+/**
+ * Forget the held capture in memory without touching its autosave — for a
+ * character switch, so the departing character's capture is not shown to
+ * whoever logs in next. The autosave `endCapture` just wrote (this always
+ * follows a `stopCapture`) is what lets that character find it again on
+ * their own next login; this only clears what a different character must
+ * never see.
+ */
+export function forgetForCharacterSwitch() {
     ticks = [];
     startedAt = 0;
     context = null;
@@ -271,6 +395,27 @@ export function clearCapture() {
     ticksDropped = 0;
     stoppedReason = null;
     initialClientBuild = null;
+    autosaveOwnerId = null;
+    lastAutosaveAt = 0;
+}
+
+/** Stop, throw away the captured ticks, and clear their autosave. The ref to the last saved file survives. */
+export function clearCapture() {
+    stopCapture();
+    if (autosaveOwnerId) clearAutosave(autosaveOwnerId);
+    ticks = [];
+    startedAt = 0;
+    context = null;
+    targetMonster = null;
+    duplicatesDiscarded = 0;
+    lastBattleKey = null;
+    savedAt = null;
+    captureId = null;
+    ticksDropped = 0;
+    stoppedReason = null;
+    initialClientBuild = null;
+    autosaveOwnerId = null;
+    lastAutosaveAt = 0;
 }
 
 /**
@@ -364,6 +509,12 @@ export function downloadCapture() {
             monsterHrid: context?.monsterHrid ?? null,
             roomLevel: context?.roomLevel ?? null,
         };
+        // Refresh the autosave with the now-stamped savedAt. Not proof the
+        // click actually landed on disk (the Save dialog can still be
+        // cancelled), so this does not stop the autosave — only Discard or a
+        // confirmed new capture does that — but the copy should carry the
+        // freshest state either way.
+        writeAutosave();
         return true;
     } catch (error) {
         console.error('[LabyrinthTickCapture] Writing the capture failed:', error);
@@ -383,11 +534,62 @@ export function lastCaptureRef() {
     return lastSavedRef ? { ...lastSavedRef } : null;
 }
 
+/**
+ * Restore an autosaved capture from a previous session, if this character has
+ * one held. Call once, from the room-log feature's `initialize()`, after the
+ * current character is known (the same timing as `labFightRecorder.load()`).
+ *
+ * A crash, a closed tab, or a Save dialog the user cancelled leaves ticks that
+ * were never written to a file, but the autosave still has them; this hands
+ * them back as a stopped, held capture — exactly the "Save capture" state a
+ * capture that stopped itself is already in — rather than losing them with
+ * the page. Never overwrites a capture already running or held in this
+ * session: this is page-load recovery, not a merge.
+ * @returns {Promise<boolean>} Whether a capture was recovered
+ */
+export async function loadAutosave() {
+    if (capturing || ticks.length) return false;
+    const ownerId = dataManager.getCurrentCharacterId() || 'default';
+    let stored;
+    try {
+        stored = await storage.get(autosaveKey(ownerId), AUTOSAVE_STORE, null);
+    } catch (error) {
+        console.error('[LabyrinthTickCapture] Reading the autosaved capture failed:', error);
+        return false;
+    }
+    // Nothing armed while the read was in flight — a page-load call, so this
+    // is defensive rather than a real race, but it is cheap to check.
+    if (capturing || ticks.length) return false;
+    if (!stored || !Array.isArray(stored.ticks) || !stored.ticks.length) return false;
+
+    ticks = stored.ticks;
+    context = stored.context || null;
+    captureId = stored.captureId || null;
+    startedAt = Number(stored.recordedAt) || 0;
+    duplicatesDiscarded = Number(stored.duplicatesDiscarded) || 0;
+    ticksDropped = Number(stored.ticksDropped) || 0;
+    // Always presented as unsaved: a stored `savedAt` is not proof the file
+    // actually reached disk (the Save dialog can be cancelled), so a
+    // recovered capture always asks again rather than risk staying silent.
+    savedAt = null;
+    stoppedReason = stored.stoppedReason || 'page_reload';
+    initialClientBuild = stored.initialClientBuild || null;
+    targetMonster = null;
+    lastBattleKey = null;
+    capturing = false;
+    autosaveOwnerId = ownerId;
+    lastAutosaveAt = Date.now();
+    return true;
+}
+
 export default {
     isCapturing,
+    unsavedTickCount,
     startCapture,
     stopCapture,
     clearCapture,
+    forgetForCharacterSwitch,
+    loadAutosave,
     captureStatus,
     captureFile,
     downloadCapture,
