@@ -231,6 +231,8 @@ export function calculateEnhancementPath(itemHrid, currentEnhancementLevel, conf
         });
 
         if (xpCalc && xpCalc.visitCounts && xpCalc.totalTime > 0) {
+            // The bench being quoted, Pro included, not whatever the character has on right now
+            const benchWisdom = (config.experienceBonus || 0) / 100;
             // Same XP formula the tracker and the XPH calculator use. The old inline copy read
             // itemDetails.level, which enhanceable equipment does not have, so it fell through
             // to a level-requirement lookup and produced a different number for the same item.
@@ -239,8 +241,8 @@ export function calculateEnhancementPath(itemHrid, currentEnhancementLevel, conf
                 const visits = xpCalc.visitCounts[i];
                 if (!visits) continue;
                 const successRate = xpCalc.successRates[i].actualRate / 100;
-                const successXP = calculateSuccessXP(i, itemHrid);
-                const failXP = calculateFailureXP(i, itemHrid);
+                const successXP = calculateSuccessXP(i, itemHrid, benchWisdom);
+                const failXP = calculateFailureXP(i, itemHrid, benchWisdom);
                 totalXP += visits * (successRate * successXP + (1 - successRate) * failXP);
             }
             xpPerHour = Math.round((totalXP / xpCalc.totalTime) * 3600);

@@ -510,6 +510,7 @@ function measureEnhancingRates() {
             });
             if (!run?.visitCounts || !(run.totalTime > 0)) continue;
 
+            const benchWisdom = (params.experienceBonus || 0) / 100;
             let totalXP = 0;
             for (let level = 0; level < ENHANCING_XP_TARGET_LEVEL; level += 1) {
                 const visits = run.visitCounts[level];
@@ -517,8 +518,8 @@ function measureEnhancingRates() {
                 const successRate = (run.successRates[level]?.actualRate ?? 0) / 100;
                 totalXP +=
                     visits *
-                    (successRate * calculateSuccessXP(level, hrid) +
-                        (1 - successRate) * calculateFailureXP(level, hrid));
+                    (successRate * calculateSuccessXP(level, hrid, benchWisdom) +
+                        (1 - successRate) * calculateFailureXP(level, hrid, benchWisdom));
             }
             if (!(totalXP > 0)) continue;
 
