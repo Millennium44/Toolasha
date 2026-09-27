@@ -513,7 +513,9 @@ class PredictionCalibration {
         const totals = await itemFlowRecorder.getRunGathering(id);
         if (!totals?.gained || Object.keys(totals.gained).length === 0) return false;
 
-        const durationSec = (totals.to - totals.from) / 1000;
+        // The time the run went on unwatched (tab closed, character offline) earned
+        // nothing `gained` holds, so it is not time the rate is over
+        const durationSec = (totals.to - totals.from - (Number(totals.unwatchedMs) || 0)) / 1000;
         if (!Number.isFinite(durationSec) || durationSec < MIN_DURATION_SEC) return false;
 
         if (!this.lootLogMath) this.lootLogMath = new LootLogStats();
