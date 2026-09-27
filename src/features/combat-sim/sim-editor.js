@@ -101,6 +101,9 @@ export class SimEditor {
         // `_originalDTOs` while a loadout is selected, so a loadout that
         // legitimately differs from current gear does not itself read as edited.
         this._loadoutBaselineDTOs = null;
+        // hrid → the loadout name that baseline was built from; the selection
+        // itself is panel-wide, so presence of a baseline cannot say which one
+        this._loadoutAppliedNames = null;
         // The party the loaded player list was built from, so a party that has
         // moved since can be said out loud rather than sat on. Null means the
         // list makes no claim to be a party (an import, an external DTO).
@@ -287,10 +290,8 @@ export class SimEditor {
      */
     getLoadoutNameFor(playerHrid) {
         if (!this._selectedLoadoutName) return '';
-        const applied = this._loadoutBaselineDTOs
-            ? Boolean(this._loadoutBaselineDTOs[playerHrid])
-            : playerHrid === (this._selfHrid || this._activeEditPlayer);
-        return applied ? this._selectedLoadoutName : '';
+        if (this._loadoutAppliedNames) return this._loadoutAppliedNames[playerHrid] || '';
+        return playerHrid === (this._selfHrid || this._activeEditPlayer) ? this._selectedLoadoutName : '';
     }
     getMissingMembers() {
         return this._missingMembers;
@@ -2977,6 +2978,8 @@ export class SimEditor {
             }
             if (!this._loadoutBaselineDTOs) this._loadoutBaselineDTOs = {};
             this._loadoutBaselineDTOs[this._activeEditPlayer] = baseline;
+            if (!this._loadoutAppliedNames) this._loadoutAppliedNames = {};
+            this._loadoutAppliedNames[this._activeEditPlayer] = loadoutName;
         }
         return applied;
     }

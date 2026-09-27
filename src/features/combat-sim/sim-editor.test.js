@@ -917,6 +917,29 @@ describe('the loadout selection is remembered', () => {
         expect(editor.generateSimLabel('player2')).not.toContain('Bruteforce');
     });
 
+    test('each player keeps the name of the loadout it actually wore', async () => {
+        // A applied on player1, then B on player2: the panel-wide selection
+        // says B, but player1's Solo run wore A
+        bridge.snapshots = [
+            { name: 'Alpha', actionTypeHrid: '/action_types/combat' },
+            { name: 'Bravo', actionTypeHrid: '/action_types/combat' },
+        ];
+        const { el, editor } = await openEditor();
+        const pick = async (name) => {
+            const select = el.querySelector('#mwi-csim-loadout-select');
+            select.value = name;
+            select.dispatchEvent(new Event('change'));
+            await Promise.resolve();
+        };
+
+        await pick('Alpha');
+        editor._activeEditPlayer = 'player2';
+        await pick('Bravo');
+
+        expect(editor.getLoadoutNameFor('player1')).toBe('Alpha');
+        expect(editor.getLoadoutNameFor('player2')).toBe('Bravo');
+    });
+
     test('an edit made before selecting a loadout, to a field it does not replace, still shows', async () => {
         // The loadout replaces the main hand; defense is a what-if edit the
         // loadout leaves alone, so it must not be absorbed into the baseline
