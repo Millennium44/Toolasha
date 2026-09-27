@@ -63,13 +63,15 @@ export function calculateItemXPH(itemHrid, itemDetails, maxLevel, protectFrom, p
 
     if (!calc?.visitCounts || calc.totalTime <= 0) return null;
 
+    // The bench being ranked, Pro included, not whatever the character has on right now
+    const benchWisdom = (params.experienceBonus || 0) / 100;
     let totalXP = 0;
     for (let i = 0; i < maxLevel; i++) {
         const visits = calc.visitCounts[i];
         if (!visits) continue;
         const successRate = (calc.successRates[i]?.actualRate ?? 0) / 100;
-        const successXP = calculateSuccessXP(i, itemHrid);
-        const failXP = calculateFailureXP(i, itemHrid);
+        const successXP = calculateSuccessXP(i, itemHrid, benchWisdom);
+        const failXP = calculateFailureXP(i, itemHrid, benchWisdom);
         totalXP += visits * (successRate * successXP + (1 - successRate) * failXP);
     }
 

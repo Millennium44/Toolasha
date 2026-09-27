@@ -58,8 +58,12 @@ vi.mock('../../utils/enhancement-calculator.js', () => ({
     calculateEnhancement: vi.fn(() => engineResult),
 }));
 
+const xpCalls = vi.hoisted(() => []);
 vi.mock('./enhancement-xp.js', () => ({
-    calculateSuccessXP: () => 10,
+    calculateSuccessXP: (...args) => {
+        xpCalls.push(args);
+        return 10;
+    },
     calculateFailureXP: () => 2,
 }));
 
@@ -143,6 +147,7 @@ beforeEach(() => {
     liquidityResult.capped = false;
     liquidityResult.limit = null;
     capCalls.length = 0;
+    xpCalls.length = 0;
 });
 
 describe('calculateItemXPH', () => {
@@ -315,5 +320,13 @@ describe('profitCellHTML', () => {
         const html = profitCellHTML({ profitPerHour: null, profitUnavailableReason: 'unpriced' });
 
         expect(html).toContain('unpriced');
+    });
+});
+
+describe('the wisdom a ranked row is computed with', () => {
+    test('is the bench being ranked, not the character as they stand', () => {
+        calculateItemXPH(ITEM, itemDetails, 5, 0, { ...params, experienceBonus: 12.5 });
+        expect(xpCalls.length).toBeGreaterThan(0);
+        for (const args of xpCalls) expect(args[2]).toBeCloseTo(0.125, 9);
     });
 });

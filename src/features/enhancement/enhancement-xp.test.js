@@ -102,3 +102,17 @@ describe('calculateEnhancementPredictions', () => {
         expect(calculateEnhancementPredictions('/items/test_sword', 0, 3, 0).benchEdited).toBe(true);
     });
 });
+
+describe('XP for a hypothetical bench', () => {
+    test('uses the wisdom it is handed, not the live MooPass, scroll or achievement buffs', () => {
+        state.characterData.mooPassActionTypeBuffsMap = enhancing([
+            { typeHrid: '/buff_types/wisdom', flatBoost: 0.05, ratioBoost: 0 },
+        ]);
+        state.personal['/buff_types/wisdom'] = 0.2;
+        state.achievement['/buff_types/wisdom'] = 0.02;
+        expect(calculateSuccessXP(2, '/items/test_sword', 0.1)).toBe(Math.floor(1.4 * 1.1 * 3 * 60));
+        expect(calculateSuccessXP(2, '/items/test_sword', 0)).toBe(Math.floor(1.4 * 3 * 60));
+        // Session tracking passes nothing and reads the character
+        expect(calculateSuccessXP(2, '/items/test_sword')).toBe(Math.floor(1.4 * 1.27 * 3 * 60));
+    });
+});

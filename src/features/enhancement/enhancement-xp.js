@@ -110,11 +110,15 @@ function getWisdomBuff() {
  * Formula: 1.4 × (1 + wisdom) × enhancementMultiplier × (10 + baseItemLevel)
  * @param {number} previousLevel - Enhancement level before success
  * @param {string} itemHrid - Item HRID
+ * @param {number} [wisdom] - Wisdom as a decimal for a hypothetical bench; omitted, the
+ *   character's live buffs are read (session tracking)
  * @returns {number} XP gained
  */
-export function calculateSuccessXP(previousLevel, itemHrid) {
+export function calculateSuccessXP(previousLevel, itemHrid, wisdom) {
     const baseLevel = getBaseItemLevel(itemHrid);
-    const wisdomBuff = getWisdomBuff();
+    // A hypothetical run (tooltip, XP/hr table, planner) passes the wisdom of the bench it is
+    // pricing; only a live session reads the character's buffs as they stand
+    const wisdomBuff = Number.isFinite(wisdom) ? wisdom : getWisdomBuff();
 
     // Special handling for enhancement level 0 (base items)
     const enhancementMultiplier =
@@ -130,10 +134,11 @@ export function calculateSuccessXP(previousLevel, itemHrid) {
  * Formula: 10% of success XP
  * @param {number} previousLevel - Enhancement level that failed
  * @param {string} itemHrid - Item HRID
+ * @param {number} [wisdom] - As for calculateSuccessXP
  * @returns {number} XP gained
  */
-export function calculateFailureXP(previousLevel, itemHrid) {
-    return Math.floor(calculateSuccessXP(previousLevel, itemHrid) * 0.1);
+export function calculateFailureXP(previousLevel, itemHrid, wisdom) {
+    return Math.floor(calculateSuccessXP(previousLevel, itemHrid, wisdom) * 0.1);
 }
 
 /**
