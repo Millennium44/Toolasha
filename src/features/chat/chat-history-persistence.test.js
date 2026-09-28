@@ -199,8 +199,8 @@ describe('chat history persistence', () => {
         navigateToMarketplace.mockClear();
     });
 
-    afterEach(() => {
-        chatHistoryExtender.disable();
+    afterEach(async () => {
+        await chatHistoryExtender.disable();
         chatHistoryPersistence.reset();
         document.body.innerHTML = '';
     });
@@ -221,8 +221,9 @@ describe('chat history persistence', () => {
         expect(db.settings[STORAGE_KEY]).toBeTruthy();
 
         // Reload: the module is torn down, the DOM is rebuilt from nothing, and
-        // only what reached storage can come back.
-        chatHistoryExtender.disable();
+        // only what reached storage can come back. The registry awaits a
+        // disable, and so does this: the next session reads after it lands.
+        await chatHistoryExtender.disable();
         chatHistoryPersistence.reset();
         const [reloaded] = buildChat(['General']);
         chatHistoryExtender.initialize();
@@ -243,7 +244,7 @@ describe('chat history persistence', () => {
         await evict(container, message);
         await chatHistoryPersistence.flush();
 
-        chatHistoryExtender.disable();
+        await chatHistoryExtender.disable();
         chatHistoryPersistence.reset();
         const [reloaded] = buildChat(['General']);
         chatHistoryExtender.initialize();
@@ -539,8 +540,8 @@ describe('tab identity is a name, never a position', () => {
         db.writes = 0;
     });
 
-    afterEach(() => {
-        chatHistoryExtender.disable();
+    afterEach(async () => {
+        await chatHistoryExtender.disable();
         chatHistoryPersistence.reset();
         document.body.innerHTML = '';
     });
@@ -659,7 +660,7 @@ describe('tab identity is a name, never a position', () => {
         expect(Object.keys(db.settings[STORAGE_KEY].tabs)).toEqual(['tab2:name:General']);
 
         // Reload onto the record the first run left behind: nothing more goes.
-        chatHistoryExtender.disable();
+        await chatHistoryExtender.disable();
         chatHistoryPersistence.reset();
         const [reloaded] = buildChat(['General']);
         chatHistoryExtender.initialize();
@@ -752,8 +753,8 @@ describe('a restored message’s sender name opens the profile', () => {
         openPlayerProfile.mockClear();
     });
 
-    afterEach(() => {
-        chatHistoryExtender.disable();
+    afterEach(async () => {
+        await chatHistoryExtender.disable();
         chatHistoryPersistence.reset();
         document.body.innerHTML = '';
     });
@@ -792,7 +793,7 @@ describe('a restored message’s sender name opens the profile', () => {
         await evict(container, message);
         await chatHistoryPersistence.flush();
 
-        chatHistoryExtender.disable();
+        await chatHistoryExtender.disable();
         chatHistoryPersistence.reset();
         const [reloaded] = buildChat(['General']);
         chatHistoryExtender.initialize();
@@ -872,8 +873,8 @@ describe('a chat tab is named by the tab that is open', () => {
         db.writes = 0;
     });
 
-    afterEach(() => {
-        chatHistoryExtender.disable();
+    afterEach(async () => {
+        await chatHistoryExtender.disable();
         chatHistoryPersistence.reset();
         document.body.innerHTML = '';
     });
@@ -1088,8 +1089,8 @@ describe('message identity: extractStoredMessageId and purgeMessageById', () => 
         db.writes = 0;
     });
 
-    afterEach(() => {
-        chatHistoryExtender.disable();
+    afterEach(async () => {
+        await chatHistoryExtender.disable();
         chatHistoryPersistence.reset();
     });
 
@@ -1253,8 +1254,8 @@ describe('messages that were only ever live survive a server restart', () => {
     const AFTER_RESTART = '[9/27 8:41:39 PM] Battle started: Sinister Circus';
 
     /** Tear the page down; only what reached storage comes back. */
-    function reload() {
-        chatHistoryExtender.disable();
+    async function reload() {
+        await chatHistoryExtender.disable();
         chatHistoryPersistence.reset();
     }
 
@@ -1275,8 +1276,8 @@ describe('messages that were only ever live survive a server restart', () => {
         storage.set.mockClear();
     });
 
-    afterEach(() => {
-        chatHistoryExtender.disable();
+    afterEach(async () => {
+        await chatHistoryExtender.disable();
         chatHistoryPersistence.reset();
         document.body.innerHTML = '';
     });
@@ -1300,7 +1301,7 @@ describe('messages that were only ever live survive a server restart', () => {
         expect(storage.set).toHaveBeenCalledWith(STORAGE_KEY, expect.any(Object), CHAT_HISTORY_STORE, true);
 
         // The page comes back with only what the restarted server has.
-        reload();
+        await reload();
         const restarted = buildPartyChat();
         restarted.appendChild(makeMessage(AFTER_RESTART));
         chatHistoryExtender.initialize();
@@ -1322,7 +1323,7 @@ describe('messages that were only ever live survive a server restart', () => {
         webSocketHook.emitSocketEvent('close', {}, null);
         await settle();
 
-        reload();
+        await reload();
         const restarted = buildPartyChat();
         chatHistoryExtender.initialize();
         await settle();
@@ -1342,7 +1343,7 @@ describe('messages that were only ever live survive a server restart', () => {
 
         // No restart this time: the server still has the lines and renders
         // them live again. One is already there when the handler attaches…
-        reload();
+        await reload();
         const reloaded = buildPartyChat();
         reloaded.appendChild(makeMessage(RUNS[0]));
         chatHistoryExtender.initialize();
@@ -1663,6 +1664,62 @@ describe('messages that were only ever live survive a server restart', () => {
             expect(queued.size).toBe(0);
             expect(storedTexts()).toEqual([OLD, JOINED, RUNS[0]]);
         } finally {
+            storage.set.mockReset();
+            storage.set.mockImplementation(async (key, value, store) => {
+                db.writes += 1;
+                db[store] = db[store] || {};
+                db[store][key] = JSON.parse(JSON.stringify(value));
+                return true;
+            });
+        }
+    });
+
+    test('a re-init waits for the final write of the session it replaces before it reads', async () => {
+        // A write that takes a while: it reaches `db` only when released, the
+        // way an IndexedDB transaction completes after the call that started it.
+        const inFlight = [];
+        storage.set.mockImplementation(async (key, value, store) => {
+            const copy = JSON.parse(JSON.stringify(value));
+            await new Promise((resolve) => inFlight.push(resolve));
+            db[store] = db[store] || {};
+            db[store][key] = copy;
+            return true;
+        });
+        const landWrites = async () => {
+            while (inFlight.length) {
+                inFlight.shift()();
+                await settle();
+            }
+        };
+        try {
+            const container = buildPartyChat();
+            chatHistoryExtender.initialize();
+            await settle();
+            container.appendChild(makeMessage(JOINED));
+            await settle();
+
+            // Toggled off and straight back on, same character, before the
+            // final write has landed.
+            const finalFlush = chatHistoryExtender.disable();
+            container.replaceChildren();
+            chatHistoryExtender.initialize();
+            await settle();
+            expect(inFlight).toHaveLength(1);
+
+            await landWrites();
+            await expect(finalFlush).resolves.toBe(true);
+
+            container.appendChild(makeMessage(RUNS[0]));
+            await settle();
+            const hidden = chatHistoryPersistence.flushPending();
+            await landWrites();
+            await hidden;
+
+            expect(storedTexts()).toEqual([OLD, JOINED, RUNS[0]]);
+            // The restore of the new session shows the line the old one saved.
+            expect(bufferTexts(container)).toEqual([OLD, JOINED]);
+        } finally {
+            await landWrites();
             storage.set.mockReset();
             storage.set.mockImplementation(async (key, value, store) => {
                 db.writes += 1;
