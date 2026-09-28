@@ -2217,6 +2217,10 @@ class CombatSimUI {
         this._unsubscribeSkipSkillingRooms = null;
         this._unsubscribeSoloMode?.();
         this._unsubscribeSoloMode = null;
+        // The Solo zones + party dungeons per-sweep loadout pickers, kept live
+        // while a loadout is renamed, reordered or deleted with this panel
+        // open — see buildPanel() and destroy()
+        this._loadoutUpdateHandler = null;
         // The Buy/Sell/Key pricing row above the results — see buildPanel() and
         // _subscribePricingQuickSettings()
         this._pricingQuickSettings = null;
@@ -2508,6 +2512,19 @@ class CombatSimUI {
         this._unsubscribeSoloMode = config.onSettingChange('combatSim_soloMode', (value) =>
             this._editor?.setSoloMode(value)
         );
+
+        // The per-sweep loadout pickers resolve fresh at simulate time (see
+        // _resolveSoloPartyLoadout), which already fails safe to Current Gear
+        // for a loadout deleted while this panel is open — but without this,
+        // the <select> itself kept showing/selecting the deleted (or
+        // renamed, or reordered) one until some unrelated redraw happened to
+        // repopulate it.
+        const loadoutStore = loadoutSnapshot();
+        if (loadoutStore) {
+            loadoutStore.offUpdate(this._loadoutUpdateHandler);
+            this._loadoutUpdateHandler = () => this._updateSoloPartyLoadoutPickers();
+            loadoutStore.onUpdate(this._loadoutUpdateHandler);
+        }
 
         configureContent.appendChild(controls);
         configureContent.appendChild(allZonesRow);
@@ -8351,6 +8368,10 @@ class CombatSimUI {
         this._unsubscribeSkipSkillingRooms = null;
         this._unsubscribeSoloMode?.();
         this._unsubscribeSoloMode = null;
+        if (this._loadoutUpdateHandler) {
+            loadoutSnapshot()?.offUpdate(this._loadoutUpdateHandler);
+            this._loadoutUpdateHandler = null;
+        }
         this._unsubscribePricingQuickSettings.forEach((unsubscribe) => unsubscribe());
         this._unsubscribePricingQuickSettings = [];
         this._pricingQuickSettings = null;
