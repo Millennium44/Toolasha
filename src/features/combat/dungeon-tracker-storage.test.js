@@ -13,6 +13,9 @@ const game = vi.hoisted(() => ({
     characterName: 'MarketCow',
     // Flipped to stand in for a dropped IndexedDB connection
     unreadable: false,
+    // Flipped to stand in for a write that drops or times out — the read
+    // half of the round trip still works, only the write fails
+    writeFails: false,
     // Every write, as [key, immediate]
     writes: [],
     // event name → handlers the store registered on the data manager
@@ -38,6 +41,7 @@ vi.mock('../../core/storage.js', () => ({
         getJSON: async (key, storeName, defaultValue) => game.saved[storeName]?.[key] ?? defaultValue,
         setJSON: async (key, value, storeName, immediate = false) => {
             game.writes.push([key, immediate]);
+            if (game.writeFails) return false;
             game.saved[storeName] = game.saved[storeName] || {};
             // What IndexedDB would hold: a copy, not the live array
             game.saved[storeName][key] = structuredClone(value);
@@ -90,6 +94,7 @@ function seedRuns(runs) {
 beforeEach(() => {
     game.onRead = null;
     game.unreadable = false;
+    game.writeFails = false;
     game.writes = [];
     dungeonTrackerStorage._resetCache();
 });
@@ -551,6 +556,84 @@ describe('importRuns', () => {
         expect(result).toEqual({ added: 0, alreadyPresent: 0, ok: false });
         game.unreadable = false;
         expect(await dungeonTrackerStorage.getAllRuns()).toEqual([]);
+    });
+
+    test('a write that fails is reported as ok: false, not a silent success', async () => {
+        seedRuns([]);
+        game.writeFails = true;
+
+        const result = await dungeonTrackerStorage.importRuns([importedRun()]);
+
+        expect(result).toEqual({ added: 1, alreadyPresent: 0, ok: false });
+    });
+
+    test(
+        'a failed write still keeps the merged run in memory — the next successful save retries it, ' +
+            'exactly as saveTeamRun leaves an unshifted run in memory without checking its own persist',
+        async () => {
+            seedRuns([]);
+            game.writeFails = true;
+            await dungeonTrackerStorage.importRuns([importedRun()]);
+
+            // Nothing reached the stored key while writes were failing —
+            // still the empty list `seedRuns` put there, not the merged run
+            expect(game.saved.unifiedRuns[RUNS_KEY]).toEqual([]);
+            // But memory has it, so a caller reading right back gets the run
+            expect(await dungeonTrackerStorage.getAllRuns()).toEqual([importedRun()]);
+
+            // The next save that can actually land — from any source — retries it
+            game.writeFails = false;
+            await dungeonTrackerStorage.saveTeamRun('C,D', { timestamp: '2026-02-01T00:00:00.000Z', duration: 100 });
+            await dungeonTrackerStorage.flushPendingSave();
+
+            const stored = game.saved.unifiedRuns[RUNS_KEY].map((r) => r.timestamp).sort();
+            expect(stored).toEqual(['2026-01-01T00:00:00.000Z', '2026-02-01T00:00:00.000Z']);
+        }
+    );
+
+    test('a run stamped at or before "delete all history" is left out, not resurrected', async () => {
+        vi.setSystemTime(Date.parse('2026-01-05T00:00:00.000Z'));
+        seedRuns([]);
+        await dungeonTrackerStorage.clearAllRuns();
+        expect(game.saved.unifiedRuns[RUNS_CLEARED_KEY]).toBe(Date.parse('2026-01-05T00:00:00.000Z'));
+
+        // An old backup — or an older peer's export — naming a run from
+        // before the clear
+        const result = await dungeonTrackerStorage.importRuns([importedRun({ timestamp: '2026-01-04T00:00:00.000Z' })]);
+
+        expect(result).toEqual({ added: 0, alreadyPresent: 1, ok: true });
+        expect(await dungeonTrackerStorage.getAllRuns()).toEqual([]);
+        vi.useRealTimers();
+    });
+
+    test('a run stamped exactly at the clear epoch is covered by it; one millisecond after is not', async () => {
+        const clearedAt = Date.parse('2026-01-05T00:00:00.000Z');
+        vi.setSystemTime(clearedAt);
+        seedRuns([]);
+        await dungeonTrackerStorage.clearAllRuns();
+
+        const atEpoch = await dungeonTrackerStorage.importRuns([
+            importedRun({ timestamp: new Date(clearedAt).toISOString() }),
+        ]);
+        expect(atEpoch).toEqual({ added: 0, alreadyPresent: 1, ok: true });
+
+        const afterEpoch = await dungeonTrackerStorage.importRuns([
+            importedRun({ timestamp: new Date(clearedAt + 1).toISOString() }),
+        ]);
+        expect(afterEpoch).toEqual({ added: 1, alreadyPresent: 0, ok: true });
+        vi.useRealTimers();
+    });
+
+    test('a run recorded after the clear imports normally — the epoch only covers what came before it', async () => {
+        vi.setSystemTime(Date.parse('2026-01-05T00:00:00.000Z'));
+        seedRuns([]);
+        await dungeonTrackerStorage.clearAllRuns();
+
+        const result = await dungeonTrackerStorage.importRuns([importedRun({ timestamp: '2026-01-06T00:00:00.000Z' })]);
+
+        expect(result).toEqual({ added: 1, alreadyPresent: 0, ok: true });
+        expect(await dungeonTrackerStorage.getAllRuns()).toHaveLength(1);
+        vi.useRealTimers();
     });
 });
 

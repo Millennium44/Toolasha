@@ -1223,14 +1223,36 @@ class DungeonTrackerStorage {
      * revived: an import restoring a run the user deliberately deleted would
      * make deletion pointless the moment anyone re-exported before deleting.
      *
+     * A run stamped at or before {@link DungeonTrackerStorage#clearedAt} is
+     * left out the same way, for the same reason {@link applyClearEpoch}
+     * drops such a run on every load and a sync pull folds it the same way:
+     * "delete all history" is a single watermark, not a tombstone per run, so
+     * nothing else here would otherwise recognize an old backup's runs as
+     * runs the clear already covers. Without this check, re-importing a
+     * backup taken before a "delete all history" — a stale file, an older
+     * peer's export — would look exactly like new history and undo the
+     * clear, one run at a time, the moment it lands.
+     *
+     * Persisting can fail — a dropped IndexedDB connection, a write that
+     * times out — and when it does, this returns `ok: false` so the caller
+     * can tell the user rather than reporting a success that a reload would
+     * quietly take back. The merged runs are left in memory regardless,
+     * exactly as {@link DungeonTrackerStorage#saveTeamRun} leaves an
+     * unshifted run in memory without checking its own `_persist` call:
+     * memory is the authoritative copy every reader goes through, and the
+     * next successful save — of anything, not just another import — reads
+     * storage fresh and merges memory into it, which is what retries this
+     * write rather than losing the runs outright.
+     *
      * @param {Array<Object>} runs - Runs already checked against the sanity
      *   rules (`dungeon-tracker-run-import.js`), unmerged, as the backup held
      *   them
      * @returns {Promise<{added: number, alreadyPresent: number, ok: boolean}>}
-     *   How many landed and how many were already accounted for (present or
-     *   deleted); `ok` is false only when the history could not be read at
-     *   all, in which case nothing was written and neither count means
-     *   anything
+     *   How many landed and how many were already accounted for (present,
+     *   deleted, or covered by a clear); `ok` is false when the history could
+     *   not be read at all (nothing was written, neither count means
+     *   anything) or when the write itself failed (the counts describe what
+     *   was merged into memory, but it may not have reached storage yet)
      */
     async importRuns(runs) {
         const incoming = Array.isArray(runs) ? runs : [];
@@ -1242,12 +1264,15 @@ class DungeonTrackerStorage {
             return { added: 0, alreadyPresent: 0, ok: false };
         }
 
+        const clearedAt = this._clearedAt;
         const known = new Set(allRuns.map(runIdentity));
         const toAdd = [];
         let alreadyPresent = 0;
         for (const run of incoming) {
             const id = runIdentity(run);
-            if (known.has(id) || this._deleted.has(id)) {
+            const at = runTime(run);
+            const coveredByClear = clearedAt > 0 && at !== null && at <= clearedAt;
+            if (known.has(id) || this._deleted.has(id) || coveredByClear) {
                 alreadyPresent++;
                 continue;
             }
@@ -1261,8 +1286,13 @@ class DungeonTrackerStorage {
         // adding a batch of historical runs (not necessarily newer than what
         // is already stored) needs
         this._index(mergeRuns(allRuns, toAdd, this._deleted));
-        await this._persist(true);
-        return { added: toAdd.length, alreadyPresent, ok: true };
+        const persisted = await this._persist(true);
+        if (!persisted) {
+            console.warn(
+                '[DungeonTrackerStorage] Import merged into memory but the write did not land; it will be retried on the next save.'
+            );
+        }
+        return { added: toAdd.length, alreadyPresent, ok: persisted };
     }
 
     /**

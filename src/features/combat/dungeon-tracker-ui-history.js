@@ -741,20 +741,32 @@ class DungeonTrackerUIHistory {
         }
 
         const { added, alreadyPresent, ok } = await dungeonTrackerStorage.importRuns(valid);
-        if (!ok) {
-            alert('Import failed: the stored history could not be read. Nothing was written.');
-            return;
+
+        // Runs land in memory before the write is even attempted (see
+        // `importRuns`), so the panel and chat have something new to show
+        // whenever `added` is positive — whether or not that write landed.
+        // Leaving the redraw out on a failed write would hide a merge that
+        // already happened and that `getAllRuns()` already reflects.
+        if (added > 0) {
+            // Chat annotation run numbers and cumulative averages are seeded
+            // from stored history at load time and never revisited on their
+            // own — the same reason Backfill and "Delete all history" both
+            // refresh them (dungeon-tracker-ui-interactions.js). Without
+            // this, the panel and storage would agree on the merged history
+            // while chat kept counting from before the import.
+            await dungeonTrackerChatAnnotations.refreshRunCounts();
+            if (this.onImportCallback) this.onImportCallback();
         }
 
-        // Chat annotation run numbers and cumulative averages are seeded from
-        // stored history at load time and never revisited on their own — the
-        // same reason Backfill and "Delete all history" both refresh them
-        // (dungeon-tracker-ui-interactions.js). Without this, the panel and
-        // storage would agree on the merged history while chat kept counting
-        // from before the import.
-        await dungeonTrackerChatAnnotations.refreshRunCounts();
-
-        if (this.onImportCallback) this.onImportCallback();
+        if (!ok) {
+            alert(
+                added > 0
+                    ? 'Import merged the runs, but the write to storage did not land — they may not survive a ' +
+                          'reload. Try importing again.'
+                    : 'Import failed: the stored history could not be read. Nothing was written.'
+            );
+            return;
+        }
 
         alert(
             `Imported ${added} run(s), ${alreadyPresent} already present, ${rejected.length} rejected.` +

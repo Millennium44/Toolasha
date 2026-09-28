@@ -482,6 +482,23 @@ describe('importBackupText', () => {
         await history.importBackupText(JSON.stringify(backupEnvelope([storedRun()])));
 
         expect(window.alert).toHaveBeenCalledWith(expect.stringContaining('Import failed'));
+        expect(dungeonTrackerChatAnnotations.refreshRunCounts).not.toHaveBeenCalled();
+    });
+
+    test('a write that failed after merging still redraws — the merge already happened in memory', async () => {
+        dungeonTrackerStorage.importRuns.mockResolvedValue({ added: 1, alreadyPresent: 0, ok: false });
+        const history = new DungeonTrackerUIHistory(freshState('team'), (ms) => `${ms}ms`);
+        const onImport = vi.fn();
+        history.onImport(onImport);
+
+        await history.importBackupText(JSON.stringify(backupEnvelope([storedRun()])));
+
+        // Not the generic "nothing was written" message — the merge did
+        // happen, only the write to storage did not land
+        expect(window.alert).toHaveBeenCalledWith(expect.stringContaining('did not land'));
+        expect(window.alert).not.toHaveBeenCalledWith(expect.stringContaining('Nothing was written'));
+        expect(dungeonTrackerChatAnnotations.refreshRunCounts).toHaveBeenCalledTimes(1);
+        expect(onImport).toHaveBeenCalledTimes(1);
     });
 
     test('a successful import redraws the panel through the onImport callback', async () => {
