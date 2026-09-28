@@ -445,6 +445,51 @@ describe('inventory with its own tab strip', () => {
         expect(fixture.order()[0]).toBe('toolasha');
     });
 
+    test('only our tab is a tab stop while the view is open; the native one gets its own back', async () => {
+        const { inventoryPanel } = buildCharacterPanel();
+        const fixture = buildNewInventory(inventoryPanel, CATEGORY_ICONS, 'inventory_all');
+        ui = await startUI();
+        const tab = fixture.tabList.querySelector(STRIP_TAB);
+        const allTab = fixture.tabFor('inventory_all');
+        expect(allTab.getAttribute('tabindex')).toBe('0');
+
+        tab.click();
+        await flush();
+        const stops = [...fixture.tabList.querySelectorAll('[role="tab"]')].filter(
+            (t) => t.getAttribute('tabindex') === '0'
+        );
+        expect(stops).toEqual([tab]);
+        expect(allTab.getAttribute('tabindex')).toBe('-1');
+
+        // Leaving by All (a no-op for the game) puts its selection and tab stop back
+        allTab.click();
+        await flush();
+        expect(allTab.getAttribute('tabindex')).toBe('0');
+        expect(allTab.getAttribute('aria-selected')).toBe('true');
+        expect(tab.getAttribute('tabindex')).toBe('-1');
+    });
+
+    test('a tablist React replaces inside the same tabs container gets our tab back', async () => {
+        const { inventoryPanel } = buildCharacterPanel();
+        const fixture = buildNewInventory(inventoryPanel, CATEGORY_ICONS, 'inventory_all');
+        ui = await startUI();
+        fixture.tabList.querySelector(STRIP_TAB).click();
+        await flush();
+
+        // No class-watcher pass: the tabs container stays mounted, only the tablist is new
+        const fresh = fixture.remountStrip();
+        await flush();
+
+        expect(fresh.querySelector(STRIP_TAB)).not.toBeNull();
+        expect(fixture.order()[0]).toBe('toolasha');
+        expect(fixture.marked()).toEqual([fresh.querySelector(STRIP_TAB)]);
+        // The capture listener follows too: a native click on the new tablist leaves the view
+        fixture.tabFor('item_category_food').click();
+        await flush();
+        expect(ui._isActive).toBe(false);
+        expect(fixture.gameSelected()).toBe('item_category_food');
+    });
+
     test('the strip stays visible in the view, with the native indicator hidden', async () => {
         document.head.appendChild(Object.assign(document.createElement('style'), { textContent: PANEL_CSS }));
         const { inventoryPanel } = buildCharacterPanel();
@@ -800,6 +845,33 @@ describe('inventory behind another character panel tab', () => {
         ui = new CustomTabsUI();
         await ui.initialize();
         expect(observer.classHandlers.has(DETACHED)).toBe(false);
+    });
+
+    test('an instance torn down before its config loads leaves the restorer in place', async () => {
+        const { characterTabList, contentContainer, inventoryPanel } = buildCharacterPanel();
+        const first = buildNewInventory(inventoryPanel, CATEGORY_ICONS, 'item_category_food');
+        ui = await startUI();
+        first.tabList.querySelector(STRIP_TAB).click();
+        await flush();
+        first.inv.remove();
+        showEquipment(characterTabList, contentContainer);
+        ui.cleanup();
+        ui = null;
+        expect(observer.classHandlers.has(DETACHED)).toBe(true);
+
+        // Enabled, then disabled again while loadConfig is still pending
+        const shortLived = new CustomTabsUI();
+        const init = shortLived.initialize();
+        shortLived.cleanup();
+        await init;
+        expect(observer.classHandlers.has(DETACHED)).toBe(true);
+
+        // ...so the saved tab still comes back when the inventory remounts
+        showInventory(characterTabList, contentContainer);
+        const fixture = buildNewInventory(inventoryPanel, CATEGORY_ICONS, 'inventory_all');
+        observer.classHandlers.get(DETACHED)(fixture.tabsContainer);
+        await flush();
+        expect(fixture.gameSelected()).toBe('item_category_food');
     });
 });
 
