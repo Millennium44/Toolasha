@@ -162,6 +162,12 @@ export const PANEL_CSS = `
     font-size: 12px;
 }
 .toolasha-ct-add-btn:hover { background: #555; }
+/* Expand/Collapse all: same look, icon-sized */
+.toolasha-ct-add-btn.toolasha-ct-icon-btn {
+    padding: 0 5px;
+    font-size: 14px;
+    line-height: 18px;
+}
 
 /* ---------- Accordion header (injected into Inventory_items) ---------- */
 .toolasha-ct-section-header {
@@ -1337,7 +1343,7 @@ export default class CustomTabsUI {
     }
 
     /**
-     * Make sure the strip holds exactly one Toolasha tab, after its last native tab, and that the
+     * Make sure the strip holds exactly one Toolasha tab, before its first native tab, and that the
      * strip is watched. Idempotent, so the observer can call it on every mutation it causes.
      * @param {HTMLElement} tabList
      */
@@ -1487,21 +1493,21 @@ export default class CustomTabsUI {
     }
 
     /**
-     * Put the Toolasha tab right after the last native tab, found by icon id rather than by
-     * position, so Favorites appearing or a category filling never lands after it for long.
+     * Put the Toolasha tab first, right before the first native tab (found by icon id rather than
+     * by position), so a tab React inserts ahead of it never keeps it out of first place for long.
      * @param {HTMLElement} tabList
      * @param {HTMLElement} btn
      */
     _placeStripTab(tabList, btn) {
         const { tabs } = this._nativeInventoryTabs(tabList);
         const iconTabs = tabs.filter((t, i) => !this._nativeInventoryTabKey(t, i).startsWith('index:'));
-        let anchor = iconTabs[iconTabs.length - 1];
+        let anchor = iconTabs[0];
         if (!anchor) return;
         // A tab wrapped by the game (e.g. a tooltip span) is placed by its wrapper
         while (anchor.parentElement && anchor.parentElement !== tabList) anchor = anchor.parentElement;
         if (anchor.parentElement !== tabList) return;
-        if (btn.parentElement === tabList && anchor.nextElementSibling === btn) return;
-        tabList.insertBefore(btn, anchor.nextSibling);
+        if (btn.parentElement === tabList && btn.nextElementSibling === anchor) return;
+        tabList.insertBefore(btn, anchor);
     }
 
     /**
@@ -2072,15 +2078,22 @@ export default class CustomTabsUI {
         actionsDiv.appendChild(exportBtn);
         actionsDiv.appendChild(importBtn);
 
+        // Compact icon buttons; the label lives in the tooltip and for screen readers
         const expandBtn = document.createElement('button');
-        expandBtn.className = 'toolasha-ct-add-btn';
-        expandBtn.textContent = 'Expand All';
+        expandBtn.className = 'toolasha-ct-add-btn toolasha-ct-icon-btn';
+        expandBtn.dataset.ctAction = 'expand-all';
+        expandBtn.textContent = '⊞';
+        expandBtn.title = 'Expand all tabs';
+        expandBtn.setAttribute('aria-label', 'Expand all tabs');
         expandBtn.addEventListener('click', () => this._onSetAllTabsOpen(true));
         actionsDiv.appendChild(expandBtn);
 
         const collapseBtn = document.createElement('button');
-        collapseBtn.className = 'toolasha-ct-add-btn';
-        collapseBtn.textContent = 'Collapse All';
+        collapseBtn.className = 'toolasha-ct-add-btn toolasha-ct-icon-btn';
+        collapseBtn.dataset.ctAction = 'collapse-all';
+        collapseBtn.textContent = '⊟';
+        collapseBtn.title = 'Collapse all tabs';
+        collapseBtn.setAttribute('aria-label', 'Collapse all tabs');
         collapseBtn.addEventListener('click', () => this._onSetAllTabsOpen(false));
         actionsDiv.appendChild(collapseBtn);
 

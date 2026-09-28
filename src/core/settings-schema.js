@@ -2165,7 +2165,7 @@ export const settingsGroups = {
                 label: 'Custom Inventory Tabs: Show Toolasha tab by default',
                 type: 'checkbox',
                 default: false,
-                help: 'Opens the inventory on the Toolasha tab. Where the inventory has its own tab row, the Toolasha tab sits at its end and nothing is hidden; otherwise this also hides the native Inventory tab in the character panel.',
+                help: 'Opens the inventory on the Toolasha tab. Where the inventory has its own tab row, the Toolasha tab sits first in it and nothing is hidden; otherwise this also hides the native Inventory tab in the character panel.',
             },
             inventoryTabs_tileGap: {
                 id: 'inventoryTabs_tileGap',
