@@ -7842,8 +7842,23 @@ describe('Solo zones + party dungeons: one ranked table', () => {
                 // would hand back
                 mocks.editorLoadoutNameFor = { player2: 'Main Build' };
                 mocks.editedDTOs.player2.appliedLoadout = { name: 'Main Build' };
+                mocks.editedDTOs.player2.debuffOnLevelGap = 0.3;
                 mocks.editorOriginalDTOs = {
-                    player2: { hrid: 'player2', equipment: {}, food: [null, null, null], gear: 'pre-loadout' },
+                    player2: {
+                        hrid: 'player2',
+                        equipment: { '/equipment_types/main_hand': { hrid: '/items/pre_loadout_sword' } },
+                        abilities: [null, null, null, null, null],
+                        food: [null, null, null],
+                        drinks: [null, null, null],
+                        // A regression fixture: the pre-loadout build's own
+                        // party-level-gap reading, deliberately different
+                        // from what the solo sweep zeroes it to below — a
+                        // wholesale swap for this DTO (instead of only the
+                        // fields a loadout owns) used to bring this back for
+                        // the solo sweep, applying a party-only penalty to a
+                        // solo run.
+                        debuffOnLevelGap: 0.4,
+                    },
                 };
                 mocks.loadoutStore = {
                     getAllSnapshots: () => [{ name: 'Dungeon Build', actionTypeHrid: '/action_types/combat' }],
@@ -7857,9 +7872,17 @@ describe('Solo zones + party dungeons: one ranked table', () => {
 
                 const [soloRun, partyRun] = mocks.allZonesArgsLog;
                 const soloPlayer2 = soloRun.playerDTOs.find((p) => p.hrid === 'player2');
-                // Reverted to the pre-loadout build — the main selection did not leak in
-                expect(soloPlayer2.appliedLoadout).toBeUndefined();
-                expect(soloPlayer2.gear).toBe('pre-loadout');
+                // Reverted to the pre-loadout build's gear — the main
+                // selection did not leak in. (`appliedLoadout` is a mock-only
+                // tracking field, not one of the fields a real loadout owns
+                // — see applyLoadoutSnapshotToDTO — so it is not itself part
+                // of what this revert is scoped to touch.)
+                expect(soloPlayer2.equipment).toEqual({
+                    '/equipment_types/main_hand': { hrid: '/items/pre_loadout_sword' },
+                });
+                // But the solo sweep's own zeroed party-level-gap survives —
+                // only equipment/abilities/food/drinks are loadout-owned
+                expect(soloPlayer2.debuffOnLevelGap).toBe(0);
 
                 // The dungeon sweep still runs its own pick, unaffected
                 const partyPlayer2 = partyRun.playerDTOs.find((p) => p.hrid === 'player2');
@@ -7867,13 +7890,18 @@ describe('Solo zones + party dungeons: one ranked table', () => {
 
                 // The editor's own DTOs are never mutated
                 expect(mocks.editedDTOs.player2.appliedLoadout).toEqual({ name: 'Main Build' });
+                expect(mocks.editedDTOs.player2.debuffOnLevelGap).toBe(0.3);
             });
 
             test('with no main Configure loadout selected, Current Gear on a picker is still a true no-op', async () => {
                 // No loadout applied by the main dropdown — getLoadoutNameFor
                 // has nothing to revert, so this is the same no-op as before
                 mocks.editorOriginalDTOs = {
-                    player2: { hrid: 'player2', equipment: {}, food: [null, null, null], gear: 'pre-loadout' },
+                    player2: {
+                        hrid: 'player2',
+                        equipment: { '/equipment_types/main_hand': { hrid: '/items/pre_loadout_sword' } },
+                        food: [null, null, null],
+                    },
                 };
 
                 await ui._onSimulateAllZones();
@@ -7881,7 +7909,7 @@ describe('Solo zones + party dungeons: one ranked table', () => {
                 const [soloRun] = mocks.allZonesArgsLog;
                 const soloPlayer2 = soloRun.playerDTOs.find((p) => p.hrid === 'player2');
                 // Untouched — not even swapped in for the (unused) original DTO
-                expect(soloPlayer2.gear).toBeUndefined();
+                expect(soloPlayer2.equipment).toEqual({});
                 expect(mocks.loadoutApplications).toEqual([]);
             });
 
