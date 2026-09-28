@@ -666,6 +666,8 @@ export default class CustomTabsUI {
         this._invTabList = null; // The strip it was placed in
         this._invStripObserver = null; // Re-inserts it when React rebuilds the strip
         this._invStripClickHandler = null; // Capture-phase listener: a native tab click leaves the view
+        this._invStripRoot = null; // The tabs container both of those are attached to
+        this._hiddenNativeTabindex = null; // The hidden tab's own tabindex, put back with its marks
         this._sawInventoryStrip = false; // Sticky: once seen, the character-panel button is never used
         this._hiddenNativeSelection = null; // The native tab the game has selected, visually cleared
         this._issuingNativeClick = false; // Our own .click() on a native tab is not the player's
@@ -692,13 +694,14 @@ export default class CustomTabsUI {
         // other site in this class self-heals on the next switch; this one is
         // the only leak that is permanent for the life of the tab, and it keeps
         // rewriting inventory DOM off a departed character's config.
-        // A restore left by a torn-down instance is this one's job now (it reads the stored choice)
-        cancelDetachedNativeRestore?.();
         const ticket = captureOwner(this);
         this._config = await loadConfig(charId);
         // Gates the whole tail — there is only one await in this body, and the
         // registrations below run in sequence off it.
         if (!stillOurs(ticket)) return;
+        // A restore left by a torn-down instance is this one's job now (it reads the stored
+        // choice). Only now: an instance torn down during the load above never takes over.
+        cancelDetachedNativeRestore?.();
         this._configCharId = charId;
         this._storedNativeTabPending = true;
 
@@ -1399,10 +1402,19 @@ export default class CustomTabsUI {
     _watchStrip(tabList) {
         this._unwatchStrip();
         this._invTabList = tabList;
-        this._invStripObserver = new MutationObserver(() => {
-            if (this._invTabList === tabList && tabList.isConnected) this._ensureStripTab(tabList);
+        // The tabs container outlives the tablist: React can replace the tablist inside it, and
+        // an observer on the old one would sit on a detached node while our tab is gone
+        const root = tabList.closest('[class*="TabsComponent_tabsContainer"]') || tabList;
+        this._invStripRoot = root;
+        const stripObserver = new MutationObserver(() => {
+            if (this._invStripObserver !== stripObserver || !root.isConnected) return;
+            const current = root.querySelector('[role="tablist"]');
+            if (!current) return;
+            // A replaced tablist re-attaches here (as a new strip) through _ensureStripTab
+            this._ensureStripTab(current);
         });
-        this._invStripObserver.observe(tabList, {
+        this._invStripObserver = stripObserver;
+        stripObserver.observe(root, {
             childList: true,
             subtree: true,
             attributes: true,
@@ -1411,19 +1423,20 @@ export default class CustomTabsUI {
         this._invStripClickHandler = (e) => {
             if (this._issuingNativeClick || !this._isActive) return;
             const tab = e.target?.closest?.('[role="tab"]');
-            if (!tab || tab.hasAttribute(STRIP_TAB_ATTR) || !tabList.contains(tab)) return;
+            if (!tab || tab.hasAttribute(STRIP_TAB_ATTR) || !this._invTabList?.contains(tab)) return;
             this._deactivatePanel(tab);
         };
-        tabList.addEventListener('click', this._invStripClickHandler, true);
+        root.addEventListener('click', this._invStripClickHandler, true);
     }
 
     _unwatchStrip() {
         this._invStripObserver?.disconnect();
         this._invStripObserver = null;
-        if (this._invTabList && this._invStripClickHandler) {
-            this._invTabList.removeEventListener('click', this._invStripClickHandler, true);
+        if (this._invStripRoot && this._invStripClickHandler) {
+            this._invStripRoot.removeEventListener('click', this._invStripClickHandler, true);
         }
         this._invStripClickHandler = null;
+        this._invStripRoot = null;
         this._invTabList?.closest('[class*="TabsComponent_tabsContainer"]')?.removeAttribute(STRIP_CONTAINER_ATTR);
         this._invTabList = null;
     }
@@ -1436,6 +1449,7 @@ export default class CustomTabsUI {
         this._invTabBtn?.remove();
         this._invTabBtn = null;
         this._hiddenNativeSelection = null;
+        this._hiddenNativeTabindex = null;
     }
 
     /**
@@ -1544,8 +1558,11 @@ export default class CustomTabsUI {
         for (const tab of this._nativeInventoryTabs(tabList).tabs) {
             if (!this._isNativeTabSelected(tab)) continue;
             this._hiddenNativeSelection = tab;
+            this._hiddenNativeTabindex = tab.getAttribute('tabindex');
             tab.classList.remove('Mui-selected');
             tab.setAttribute('aria-selected', 'false');
+            // Ours is the tab stop now (MUI gives only the selected tab tabindex 0)
+            tab.setAttribute('tabindex', '-1');
         }
     }
 
@@ -1555,12 +1572,16 @@ export default class CustomTabsUI {
      */
     _restoreHiddenNativeSelection() {
         const tab = this._hiddenNativeSelection;
+        const tabindex = this._hiddenNativeTabindex;
         this._hiddenNativeSelection = null;
+        this._hiddenNativeTabindex = null;
         if (!tab?.isConnected) return;
         const tabList = this._invTabList;
         if (tabList && this._nativeInventoryTabs(tabList).tabs.some((t) => this._isNativeTabSelected(t))) return;
         tab.classList.add('Mui-selected');
         tab.setAttribute('aria-selected', 'true');
+        if (tabindex === null) tab.removeAttribute('tabindex');
+        else tab.setAttribute('tabindex', tabindex);
     }
 
     /**
