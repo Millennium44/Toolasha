@@ -863,6 +863,59 @@ describe('a player DTO without the game data', () => {
 });
 
 /**
+ * A gearless player with a raised level in any of the seven combat skills is
+ * a real build, not a blank slot to discard.
+ *
+ * The "is this player actually blank" check used to look at only stamina and
+ * attack, so a gearless build raised in any of the other five (a mage
+ * leveled purely in magic/intelligence/defense, say) round-tripped through
+ * Export and then silently vanished on the next Import — indistinguishable
+ * from a genuinely empty slot.
+ */
+describe('a gearless player with any raised combat level is not treated as blank', () => {
+    beforeEach(() => {
+        mocks.clientData = { itemDetailMap: {}, abilityDetailMap: {} };
+    });
+
+    test.each([
+        ['intelligenceLevel', 'intelligenceLevel'],
+        ['meleeLevel', 'meleeLevel'],
+        ['defenseLevel', 'defenseLevel'],
+        ['rangedLevel', 'rangedLevel'],
+        ['magicLevel', 'magicLevel'],
+    ])('a raised %s alone keeps the player, with no gear at all', (_label, key) => {
+        const payload = JSON.stringify({
+            player: { attackLevel: 1, staminaLevel: 1, [key]: 50, equipment: [] },
+        });
+
+        const result = parseShykaiImport(payload);
+
+        expect(result).not.toBeNull();
+        expect(result.players).toHaveLength(1);
+        expect(result.players[0][key]).toBe(50);
+    });
+
+    test('a genuinely blank player (every level at 1, no equipment) is still dropped', () => {
+        const payload = JSON.stringify({ player: { attackLevel: 1, staminaLevel: 1, equipment: [] } });
+
+        expect(parseShykaiImport(payload)).toBeNull();
+    });
+
+    test('a multi-slot paste keeps a gearless, magic-only player alongside a normal one', () => {
+        const payload = JSON.stringify({
+            1: JSON.stringify({ player: { attackLevel: 80, equipment: [] } }),
+            2: JSON.stringify({ player: { attackLevel: 1, staminaLevel: 1, magicLevel: 90, equipment: [] } }),
+        });
+
+        const result = parseShykaiImport(payload);
+
+        expect(result.players).toHaveLength(2);
+        expect(result.players.map((p) => p.hrid)).toEqual(['player1', 'player2']);
+        expect(result.players[1].magicLevel).toBe(90);
+    });
+});
+
+/**
  * A Shykai import must land its equipment on the same keys the engine reads.
  *
  * The exported format (and the game's raw data) carries each piece under an

@@ -596,9 +596,21 @@ export function parseShykaiImport(jsonString) {
         const p = slotData.player;
         if (!p) continue;
 
-        // Skip blank/empty players (all levels at 1 and no equipment)
+        // Skip blank/empty players (all seven combat levels at 1 and no
+        // equipment) — every level, not just stamina and attack, since a
+        // gearless build raised in only e.g. magic/intelligence/defense (a
+        // mage with no gear yet, say) is exactly the kind of build this
+        // export/import exists to carry, not an empty slot to discard.
         const hasEquipment = Array.isArray(p.equipment) ? p.equipment.some((e) => e.itemHrid) : false;
-        const hasLevels = (p.staminaLevel || 1) > 1 || (p.attackLevel || 1) > 1;
+        const hasLevels = [
+            p.staminaLevel,
+            p.intelligenceLevel,
+            p.attackLevel,
+            p.meleeLevel,
+            p.defenseLevel,
+            p.rangedLevel,
+            p.magicLevel,
+        ].some((level) => (level || 1) > 1);
         if (!hasEquipment && !hasLevels) continue;
 
         const dto = {
