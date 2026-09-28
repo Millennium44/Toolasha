@@ -653,15 +653,18 @@ export class SimEditor {
     replacePlayer(hrid, dto, name, skipped = []) {
         if (!this._editedDTOs || !this._editedDTOs[hrid]) return false;
 
-        // getLoadoutNameFor() reads this before any of this function's own
-        // mutations — the panel-wide Loadout dropdown is applied to whichever
-        // player is self (or, with no self, the active tab), and a replace
-        // is always for that same tab, so replacing that player's build must
-        // not leave the dropdown still claiming they wear a loadout the new
-        // build never had. A replace of a *different* party member (self is
-        // someone else's slot) leaves the dropdown alone — it still
-        // describes self's own untouched build.
-        const wasLoadoutTarget = hrid === (this._selfHrid || this._activeEditPlayer);
+        // The panel-wide Loadout dropdown is applied to whichever player was
+        // `_activeEditPlayer` at the moment it was applied (see
+        // `_applyLoadoutToDTO`), which is not always self (or the currently
+        // active tab) — a self-loaded player can switch tabs to someone
+        // else's build, apply a loadout there, then switch back, leaving the
+        // selection targeting that other tab. `getLoadoutNameFor` already
+        // knows the real target: it reads `_loadoutAppliedNames`, the same
+        // map `_applyLoadoutToDTO` writes to, falling back to the self/active
+        // guess only when nothing has actually been applied yet. Read before
+        // any of this function's own mutations, since those are what would
+        // make that lookup stale.
+        const wasLoadoutTarget = Boolean(this.getLoadoutNameFor(hrid));
 
         dto.hrid = hrid;
         this._editedDTOs[hrid] = dto;
@@ -3072,13 +3075,13 @@ export class SimEditor {
                 const hrid = btn.dataset.removePlayer;
                 if (!this._editedDTOs) return;
                 // Captured before any of this handler's own mutations — see
-                // the identical comment on replacePlayer's own
-                // wasLoadoutTarget, which this reuses the same reasoning
-                // from: the panel-wide Loadout dropdown is applied to
-                // whichever player is self (or, with no self, the active
-                // tab), and removing that player must not leave it still
-                // claiming a build that no longer exists to wear it.
-                const wasLoadoutTarget = hrid === (this._selfHrid || this._activeEditPlayer);
+                // the identical comment and reasoning on replacePlayer's own
+                // wasLoadoutTarget: getLoadoutNameFor(hrid) is the real
+                // target (whoever `_applyLoadoutToDTO` last applied it to),
+                // not just self or the active tab, and removing that player
+                // must not leave the dropdown still claiming a build that no
+                // longer exists to wear it.
+                const wasLoadoutTarget = Boolean(this.getLoadoutNameFor(hrid));
                 delete this._editedDTOs[hrid];
                 if (this._originalDTOs) delete this._originalDTOs[hrid];
                 this._editedPlayerInfo = this._editedPlayerInfo.filter((p) => p.hrid !== hrid);
