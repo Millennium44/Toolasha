@@ -916,6 +916,154 @@ describe('a gearless player with any raised combat level is not treated as blank
 });
 
 /**
+ * A level-1, gearless player is not necessarily a blank slot either: a fresh
+ * character can have abilities, food/drinks, house rooms, guild shrines,
+ * achievement buffs or scroll buffs configured before their combat levels
+ * move at all, and the blank check used to look at only levels and
+ * equipment — dropping a slot like that and silently discarding everything
+ * else the export carried for them.
+ */
+describe('a level-1 gearless player is not blank when the export carries other setup', () => {
+    beforeEach(() => {
+        mocks.clientData = { itemDetailMap: {}, abilityDetailMap: {} };
+    });
+
+    test('abilities alone keep the player', () => {
+        const payload = JSON.stringify({
+            1: JSON.stringify({
+                player: { attackLevel: 1, staminaLevel: 1, equipment: [] },
+                abilities: [{ abilityHrid: '/abilities/fireball', level: 1 }],
+            }),
+        });
+
+        const result = parseShykaiImport(payload);
+
+        expect(result).not.toBeNull();
+        expect(result.players).toHaveLength(1);
+        expect(result.players[0].abilities.some((a) => a?.hrid === '/abilities/fireball')).toBe(true);
+    });
+
+    test('combat food alone keeps the player', () => {
+        const payload = JSON.stringify({
+            1: JSON.stringify({
+                player: { attackLevel: 1, staminaLevel: 1, equipment: [] },
+                food: { '/action_types/combat': [{ itemHrid: '/items/apple' }] },
+            }),
+        });
+
+        const result = parseShykaiImport(payload);
+
+        expect(result).not.toBeNull();
+        expect(result.players[0].food.some((f) => f?.hrid === '/items/apple')).toBe(true);
+    });
+
+    test('combat drinks alone keep the player', () => {
+        const payload = JSON.stringify({
+            1: JSON.stringify({
+                player: { attackLevel: 1, staminaLevel: 1, equipment: [] },
+                drinks: { '/action_types/combat': [{ itemHrid: '/items/tea' }] },
+            }),
+        });
+
+        const result = parseShykaiImport(payload);
+
+        expect(result).not.toBeNull();
+        expect(result.players[0].drinks.some((d) => d?.hrid === '/items/tea')).toBe(true);
+    });
+
+    test('a house room above level 0 alone keeps the player', () => {
+        const payload = JSON.stringify({
+            1: JSON.stringify({
+                player: { attackLevel: 1, staminaLevel: 1, equipment: [] },
+                houseRooms: { dojoRoom: 3 },
+            }),
+        });
+
+        const result = parseShykaiImport(payload);
+
+        expect(result).not.toBeNull();
+        expect(result.players[0].houseRooms).toEqual({ dojoRoom: 3 });
+    });
+
+    test('a guild shrine level above 0 alone keeps the player', () => {
+        const payload = JSON.stringify({
+            1: JSON.stringify({
+                player: { attackLevel: 1, staminaLevel: 1, equipment: [] },
+                guildCombatBuffLevels: { force: 5 },
+            }),
+        });
+
+        const result = parseShykaiImport(payload);
+
+        expect(result).not.toBeNull();
+        expect(result.players).toHaveLength(1);
+    });
+
+    test('achievement combat buffs alone keep the player', () => {
+        const payload = JSON.stringify({
+            1: JSON.stringify({
+                player: { attackLevel: 1, staminaLevel: 1, equipment: [] },
+                achievementCombatBuffs: [{ typeHrid: '/buff_types/damage', ratioBoost: 0.02 }],
+            }),
+        });
+
+        const result = parseShykaiImport(payload);
+
+        expect(result).not.toBeNull();
+        expect(result.players).toHaveLength(1);
+    });
+
+    test('completed achievements alone keep the player', () => {
+        const payload = JSON.stringify({
+            1: JSON.stringify({
+                player: { attackLevel: 1, staminaLevel: 1, equipment: [] },
+                achievements: { '/achievements/some_feat': true },
+            }),
+        });
+
+        const result = parseShykaiImport(payload);
+
+        expect(result).not.toBeNull();
+        expect(result.players).toHaveLength(1);
+    });
+
+    test('scroll buffs alone keep the player', () => {
+        // /buff_types/damage is one of the real combat scroll buff types
+        // (see utils/combat-scroll-buffs.js); the import filters against that
+        // known list, so a made-up type would be silently dropped here too.
+        const payload = JSON.stringify({
+            1: JSON.stringify({
+                player: { attackLevel: 1, staminaLevel: 1, equipment: [] },
+                scrollBuffs: ['/buff_types/damage'],
+            }),
+        });
+
+        const result = parseShykaiImport(payload);
+
+        expect(result).not.toBeNull();
+        expect(result.players).toHaveLength(1);
+        expect(result.players[0].scrollBuffs).toContain('/buff_types/damage');
+    });
+
+    test('a truly empty slot (level 1, no gear, no other setup) is still dropped', () => {
+        const payload = JSON.stringify({
+            1: JSON.stringify({
+                player: { attackLevel: 1, staminaLevel: 1, equipment: [] },
+                abilities: [null, null],
+                food: { '/action_types/combat': [null, null, null] },
+                drinks: { '/action_types/combat': [null, null, null] },
+                houseRooms: { dojoRoom: 0 },
+                guildCombatBuffLevels: { force: 0 },
+                achievements: {},
+                scrollBuffs: [],
+            }),
+        });
+
+        expect(parseShykaiImport(payload)).toBeNull();
+    });
+});
+
+/**
  * A Shykai import must land its equipment on the same keys the engine reads.
  *
  * The exported format (and the game's raw data) carries each piece under an
