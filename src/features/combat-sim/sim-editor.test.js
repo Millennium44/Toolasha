@@ -1850,3 +1850,76 @@ describe('Export/Replace are combat-only and hidden in skillingMode', () => {
         expect(el.querySelector('#mwi-csim-import-replace')).toBeTruthy();
     });
 });
+
+/**
+ * Every hrid this editor hands out must stay inside the 1-5 range Export
+ * Party and parseShykaiImport agree on — the parser's own multi-slot loop
+ * only ever reads keys "1" through "5", so a player landed on "6" (removing
+ * a lower slot, then adding one, used to always continue from max+1) was
+ * exported under a key re-import silently ignores, dropping that player.
+ */
+describe('imported players fill vacant slots, never past 5', () => {
+    test('removing a lower slot then adding a member reuses the vacant slot, not max+1', () => {
+        const el = document.createElement('div');
+        const editor = new SimEditor({ editorEl: el });
+        editor.importPlayers(
+            [emptyDTO('a'), emptyDTO('b'), emptyDTO('c'), emptyDTO('d'), emptyDTO('e')],
+            ['A', 'B', 'C', 'D', 'E']
+        );
+        el.querySelector('[data-remove-player="player1"]').click();
+        expect(editor._editedPlayerInfo.map((p) => p.hrid)).toEqual(['player2', 'player3', 'player4', 'player5']);
+
+        editor.importPlayers([emptyDTO('ignored')], ['Newcomer']);
+
+        // Lands on the vacant player1, not player6
+        expect(editor._editedPlayerInfo.map((p) => p.hrid)).toEqual([
+            'player2',
+            'player3',
+            'player4',
+            'player5',
+            'player1',
+        ]);
+        expect(editor._editedDTOs.player1.hrid).toBe('player1');
+        expect(editor._editedDTOs.player6).toBeUndefined();
+    });
+
+    test('a removed player’s notes do not resurface on a newcomer that reuses their slot', () => {
+        const el = document.createElement('div');
+        const editor = new SimEditor({ editorEl: el });
+        // Real parseShykaiImport output names each DTO player<slot> before
+        // importPlayers reassigns it — matched here so the skipped entry's
+        // slot number tags the right hrid, the same as production.
+        editor.importPlayers(
+            [emptyDTO('player1'), emptyDTO('player2')],
+            ['A', 'B'],
+            [{ slot: 1, itemHrid: '/items/old_gear', itemName: 'Old Gear', itemLocationHrid: null }]
+        );
+        expect(el.textContent).toContain('Old Gear');
+
+        el.querySelector('[data-remove-player="player1"]').click();
+        editor.importPlayers([emptyDTO('ignored')], ['Newcomer']); // reuses player1
+
+        expect(editor._editedPlayerInfo.find((p) => p.hrid === 'player1').name).toBe('Newcomer');
+        expect(el.textContent).not.toContain('Old Gear');
+    });
+
+    test('Export Party writes compacted 1..N keys even after a remove-then-add', async () => {
+        const writeText = vi.fn().mockResolvedValue(undefined);
+        Object.defineProperty(navigator, 'clipboard', { value: { writeText }, configurable: true });
+        const el = document.createElement('div');
+        const editor = new SimEditor({ editorEl: el });
+        editor.importPlayers(
+            [emptyDTO('a'), emptyDTO('b'), emptyDTO('c'), emptyDTO('d'), emptyDTO('e')],
+            ['A', 'B', 'C', 'D', 'E']
+        );
+        el.querySelector('[data-remove-player="player1"]').click();
+        editor.importPlayers([emptyDTO('ignored')], ['Newcomer']);
+        game.buildExport = (dto, name) => ({ name });
+
+        await editor._exportParty();
+
+        const payload = JSON.parse(writeText.mock.calls[0][0]);
+        expect(Object.keys(payload).sort()).toEqual(['1', '2', '3', '4', '5']);
+        delete navigator.clipboard;
+    });
+});
