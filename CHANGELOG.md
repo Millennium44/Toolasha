@@ -6,6 +6,8 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+<!-- shipped in 3.61.2 -->
+
 ### September market patch rules on the live server
 
 - The main server has taken the September 2026 market patch, so the 4% market tax and the finer price bins (with the 5x step for enhanced items) now apply on the live server too, not just the test server.
@@ -4073,6 +4075,37 @@ The marketplace layout change gave the price row its own "Max" button and put it
 ### Combat sim nets the market sale tax off drop revenue
 
 The simulator valued every drop at its gross market price, so profit ignored the sale tax entirely — which is why the rise to 5% never moved it. Every drop-revenue path now nets the tax off each non-coin drop, cowbell bags at their own 18%: the Results summary, the Drops table's Gold columns, and the comparison and upgrade rows. Coin drops stay whole.
+
+## [3.61.2](https://github.com/Millennium44/Toolasha/compare/v3.61.1...v3.61.2) (2026-09-28)
+
+### Bug Fixes
+
+- alchemy Best Items window fits a phone screen instead of hanging off both edges ([50ad890](https://github.com/Millennium44/Toolasha/commit/50ad89077042dc45a28f854b6effa8922af7ed09))
+- alchemy history windows fit a phone screen instead of hanging off both edges ([97f1915](https://github.com/Millennium44/Toolasha/commit/97f1915986b4c4143af59b0adf5471c0091c87ab))
+- chest key zone label no longer collides with the stack value ([f98fad7](https://github.com/Millennium44/Toolasha/commit/f98fad7b604c0fd78d52e0bcf20b130b3d9a4626))
+- dungeon tracker backfill files a run under the dungeon the party last started ([d54e8a4](https://github.com/Millennium44/Toolasha/commit/d54e8a4abe5246e9b5942151fab493d69bb18a5a))
+- dungeon tracker keeps a held party run's last wave across the next run's wave 1 ([da6bcf6](https://github.com/Millennium44/Toolasha/commit/da6bcf694e8004d5079c09073068670828e3fcb5))
+- dungeon tracker no longer starts a run from a day-old canceled key count ([053f33e](https://github.com/Millennium44/Toolasha/commit/053f33e669d2be07e907ae3862df858b01d6fcd8))
+- dungeon tracker refuses a saved run whose chat anchor is a day old ([24882a1](https://github.com/Millennium44/Toolasha/commit/24882a164a354f5ca6579c3f85a8575a4896dff8))
+- floating strip wraps its controls as a last resort on very narrow phones ([2ff7f5d](https://github.com/Millennium44/Toolasha/commit/2ff7f5dd9888e90223dc50589a8ad43e466fcf5d))
+- floating strips (Bulk Sell, reroll walk, consumables) fit a phone screen ([2f7671e](https://github.com/Millennium44/Toolasha/commit/2f7671ead9aa83995b8375877f6b9b26375353de))
+- inventory value badge prints whole units on its first draw ([ec63c71](https://github.com/Millennium44/Toolasha/commit/ec63c71b47e6c28f9f065b6b20214bb8cdbf07cf))
+- marketplace nav row wrap lives in a stylesheet and reverts with our last item ([eb4d7e5](https://github.com/Millennium44/Toolasha/commit/eb4d7e5a5724ca542231d3340bb1a14844925780))
+- marketplace nav row wraps on phones instead of crushing the game's buttons ([ef634fb](https://github.com/Millennium44/Toolasha/commit/ef634fb96f945ed111f4a70b108fbb5caec5fac8))
+- marketplace tab strip wrap lives in a stylesheet and reverts with our last tab ([528c05c](https://github.com/Millennium44/Toolasha/commit/528c05c098b1ec14c8ca1f82080d27c1fc9bef2d))
+- marketplace tab strip wraps on phones so Stale and Bulk Sell stay reachable ([24ee974](https://github.com/Millennium44/Toolasha/commit/24ee9749ffd1bb680f99a047ef86ab0166cb463e))
+- networth exclusion popup fits a phone screen ([5c813c8](https://github.com/Millennium44/Toolasha/commit/5c813c8ac331ff03493ca49501130804debe4a35))
+- open the September market patch gate on the live server ([9620e03](https://github.com/Millennium44/Toolasha/commit/9620e034c055fa9cf3d6ab279b3f22ad8817b984))
+- stale capital dialog fits a phone screen instead of hanging off both edges ([c905253](https://github.com/Millennium44/Toolasha/commit/c9052532adf753689bd768a33286d36bb8f46343))
+- task auto-reroll popup fits a phone screen ([c181274](https://github.com/Millennium44/Toolasha/commit/c181274d3e368737b313665971734a0668f5bc58))
+- task reroll protection popup fits a phone screen ([ee671d5](https://github.com/Millennium44/Toolasha/commit/ee671d51cddcbc56ca45bc58202b8ac011cbe0e4))
+- trade ledger dialog fits a phone screen instead of hanging off both edges ([4a76a02](https://github.com/Millennium44/Toolasha/commit/4a76a0207c58670311330749f79ad96a67b86e2f))
+
+### Documentation
+
+- changelog covers the badge first-draw and held dungeon run fixes ([f41f98f](https://github.com/Millennium44/Toolasha/commit/f41f98f048e355343117842dd06417ed5fdb2b08))
+- changelog for the dungeon tracker elapsed and backfill fixes ([896d8a6](https://github.com/Millennium44/Toolasha/commit/896d8a6250c057e2caa9f674d99e6188f86aa2d8))
+- changelog for the phone-width panel fixes ([1dea6d2](https://github.com/Millennium44/Toolasha/commit/1dea6d2a27800f9f850c289fd41db74c584cc0be))
 
 ## [3.61.1](https://github.com/Millennium44/Toolasha/compare/v3.61.0...v3.61.1) (2026-09-27)
 
