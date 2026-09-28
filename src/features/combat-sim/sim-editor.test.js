@@ -1062,6 +1062,65 @@ describe('replacing the loadout-selected player clears the panel-wide selection'
     });
 });
 
+/**
+ * The same panel-wide-selection hygiene replacePlayer got, for the ×
+ * remove-player button: removing whichever player the Loadout dropdown
+ * currently applies to (self, or the active tab with no self) must not
+ * leave the dropdown claiming a build that no longer exists to wear it.
+ */
+describe('removing the loadout-selected player clears the panel-wide selection', () => {
+    test('removing the self player who wears the selected loadout resets it to Current Gear', () => {
+        const el = document.createElement('div');
+        const editor = new SimEditor({ editorEl: el });
+        editor.resetToSelf(); // self = active = player1
+        editor.importPlayers([emptyDTO('player2')], ['B']); // a second player so the roster survives the removal
+        editor._selfHrid = 'player1';
+        editor._selectedLoadoutName = 'Bruteforce';
+        editor.renderEditor();
+
+        el.querySelector('[data-remove-player="player1"]').click();
+
+        expect(editor.getSelectedLoadoutName()).toBe('');
+    });
+
+    test('removing a different party member leaves the selection alone', () => {
+        const el = document.createElement('div');
+        const editor = new SimEditor({ editorEl: el });
+        editor.importPlayers([emptyDTO('player1'), emptyDTO('player2')], ['A', 'B']);
+        editor._selfHrid = 'player1';
+        editor._selectedLoadoutName = 'Bruteforce';
+        editor.renderEditor();
+
+        el.querySelector('[data-remove-player="player2"]').click();
+
+        expect(editor.getSelectedLoadoutName()).toBe('Bruteforce');
+    });
+
+    test('with no self player, removing the active tab (which the dropdown then applies to) clears it too', () => {
+        const el = document.createElement('div');
+        const editor = new SimEditor({ editorEl: el });
+        editor.importPlayers([emptyDTO('player1'), emptyDTO('player2')], ['A', 'B']);
+        expect(editor.getSelfHrid()).toBeNull();
+        expect(editor.getActiveEditPlayer()).toBe('player2');
+        editor._selectedLoadoutName = 'Bruteforce';
+
+        el.querySelector('[data-remove-player="player2"]').click();
+
+        expect(editor.getSelectedLoadoutName()).toBe('');
+    });
+
+    test('removing the last player (emptying the roster) also clears it', () => {
+        const el = document.createElement('div');
+        const editor = new SimEditor({ editorEl: el });
+        editor.resetToSelf(); // self = active = player1, the only player loaded
+        editor._selectedLoadoutName = 'Bruteforce';
+
+        el.querySelector('[data-remove-player="player1"]').click();
+
+        expect(editor.getSelectedLoadoutName()).toBe('');
+    });
+});
+
 describe('achievements section', () => {
     const damage = { typeHrid: '/buff_types/damage', ratioBoost: 0.02 };
     const wisdom = { typeHrid: '/buff_types/wisdom', flatBoost: 0.05 };
