@@ -109,24 +109,70 @@ function isPlainObject(value) {
 
 /**
  * A run's duration, normalized onto the `duration` field `runIdentity` and
- * every other reader here look at. A legacy websocket-recorded run states its
- * length as `totalTime` instead; a straight validation split between the two
- * fields would agree on "how long did this take" while disagreeing about
+ * every other reader here look at, and onto an actual `number` — not merely a
+ * value `Number()` can make sense of. A legacy websocket-recorded run states
+ * its length as `totalTime` instead; a straight validation split between the
+ * two fields would agree on "how long did this take" while disagreeing about
  * which property that answer lives on, and the run's identity — computed
  * downstream from `duration` alone — would come out different from what
  * validation checked. Normalizing first means both are answering about the
- * same field. Returns the original object untouched when `duration` is
- * already usable, and a shallow copy otherwise; never mutates the input.
+ * same field.
+ *
+ * The type matters as much as the field: a hand-edited or exported-elsewhere
+ * backup can spell a duration as the *string* `"300000"`, which
+ * `Number.isFinite(Number(...))` happily calls usable — every later reducer
+ * that sums a group's durations with `+=`, though, sees a `number` for every
+ * live run and this one string, and JavaScript's `+` concatenates rather than
+ * adds the moment either side is a string. One imported run with a numeric
+ * string for a duration would then silently poison every average and median
+ * `dungeon-tracker-storage.js` computes over its group. Returns the original
+ * object untouched only when `duration` is already a genuine `number`, and a
+ * shallow copy otherwise; never mutates the input.
  *
  * @param {Object} run - One entry from the backup's `runs` array
- * @returns {Object} `run`, or a copy of it with `duration` filled from `totalTime`
+ * @returns {Object} `run`, or a copy of it with `duration` coerced to a real
+ *   number (from itself or, failing that, from `totalTime`)
  */
 function normalizeImportedRunDuration(run) {
     if (!isPlainObject(run)) return run;
-    if (Number.isFinite(Number(run.duration))) return run;
+    const duration = Number(run.duration);
+    if (Number.isFinite(duration)) {
+        return typeof run.duration === 'number' ? run : { ...run, duration };
+    }
     const totalTime = Number(run.totalTime);
     if (!Number.isFinite(totalTime)) return run;
     return { ...run, duration: totalTime };
+}
+
+/**
+ * A validated run's timestamp, replaced with the canonical ISO string every
+ * live save stores (`new Date(...).toISOString()` — see `dungeon-tracker.js`,
+ * both recording routes stamp a run this way before calling `saveTeamRun`).
+ *
+ * `Date`'s legacy (non-ISO) parser is far more permissive than the shape it
+ * ever produces on write: a string carrying a parenthesized "timezone name"
+ * comment can embed arbitrary text — quotes, markup — and still parse to a
+ * valid instant. `validateImportedRun` only asks whether a timestamp names a
+ * real moment; it says nothing about the literal characters that moment was
+ * spelled with, and those are what the run history panel later writes into a
+ * `data-run-timestamp` HTML attribute. A run's own stamp was never a place a
+ * player expected to inject markup from a shared backup file, so this
+ * replaces it outright with what parsing it actually established, rather
+ * than trusting the original string past the point it was read.
+ *
+ * Only ever called on a run {@link validateImportedRun} already accepted, so
+ * the parse here cannot fail; call it before, and it hands back an untouched
+ * run for {@link validateImportedRun} to reject on its own terms.
+ *
+ * @param {Object} run - One entry, already duration-normalized
+ * @returns {Object} `run`, or a copy of it with `timestamp` canonicalized
+ */
+function canonicalizeImportedRunTimestamp(run) {
+    if (!isPlainObject(run)) return run;
+    const time = runTime(run);
+    if (time === null) return run;
+    const iso = new Date(time).toISOString();
+    return run.timestamp === iso ? run : { ...run, timestamp: iso };
 }
 
 /**
@@ -274,8 +320,12 @@ export function validateImportedRun(run, maxRunMs = MAX_PLAUSIBLE_RUN_MS, now = 
  * Normalizes each run's duration (see {@link normalizeImportedRunDuration})
  * before validating it, so a legacy `totalTime`-only run is judged — and, if
  * it passes, imported — with the same `duration` value its identity will be
- * computed from. A rejected entry still names the original, unnormalized run,
- * since nothing downstream will ever see it again.
+ * computed from. A run that passes validation also has its timestamp
+ * canonicalized (see {@link canonicalizeImportedRunTimestamp}) before it is
+ * admitted, so nothing past this function ever sees the original string a
+ * hostile or hand-edited file supplied — only what that string was found to
+ * mean. A rejected entry still names the original, unnormalized run, since
+ * nothing downstream will ever see it again.
  *
  * @param {Array<Object>} runs - The envelope's `runs` array
  * @param {number} [maxRunMs] - The longest a run may plausibly have taken
@@ -288,7 +338,7 @@ export function planDungeonRunImport(runs, maxRunMs = MAX_PLAUSIBLE_RUN_MS, now 
     for (const raw of Array.isArray(runs) ? runs : []) {
         const run = normalizeImportedRunDuration(raw);
         const result = validateImportedRun(run, maxRunMs, now);
-        if (result.ok) valid.push(run);
+        if (result.ok) valid.push(canonicalizeImportedRunTimestamp(run));
         else rejected.push({ run: raw, reason: result.reason });
     }
     return { valid, rejected };
