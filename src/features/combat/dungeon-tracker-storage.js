@@ -1177,8 +1177,14 @@ class DungeonTrackerStorage {
                 keyCountsMap: run.keyCountsMap || null, // Include key counts if available
             };
 
-            // Add to front of list (most recent first)
-            allRuns.unshift(unifiedRun);
+            // Add to front of the CURRENT list — `this._runs`, not the local
+            // `allRuns` captured before the await above. A concurrent
+            // `importRuns` cold-loading the very same read can resume first
+            // and replace `_runs` wholesale via `_index()`; unshifting onto
+            // the stale `allRuns` would then edit an array nothing reads or
+            // persists any more, and the completed run this call is trying
+            // to save is the thing that vanishes.
+            this._runs.unshift(unifiedRun);
             this._indexRun(unifiedRun);
             // A run recorded again after being deleted is wanted again
             this._revive(unifiedRun);
@@ -1258,14 +1264,21 @@ class DungeonTrackerStorage {
         const incoming = Array.isArray(runs) ? runs : [];
         if (incoming.length === 0) return { added: 0, alreadyPresent: 0, ok: true };
 
-        const allRuns = await this._loadRuns();
-        if (!allRuns) {
+        const loaded = await this._loadRuns();
+        if (!loaded) {
             console.warn('[DungeonTrackerStorage] Import refused: the stored history could not be read first');
             return { added: 0, alreadyPresent: 0, ok: false };
         }
 
+        // Read live, not the value `_loadRuns()` resolved to: two callers can
+        // both cold-load on the very same read (the failed-write test below
+        // exercises the sibling case, `saveTeamRun` vs `importRuns`), and
+        // whichever one's continuation runs first may already have replaced
+        // `_runs` with a brand new array before this one's synchronous work
+        // even starts. `loaded` above is only ever used to tell "the read
+        // failed" from "there is a list, possibly since swapped out" apart.
         const clearedAt = this._clearedAt;
-        const known = new Set(allRuns.map(runIdentity));
+        const known = new Set(this._runs.map(runIdentity));
         const toAdd = [];
         let alreadyPresent = 0;
         for (const run of incoming) {
@@ -1280,12 +1293,27 @@ class DungeonTrackerStorage {
             toAdd.push({ ...run });
         }
 
-        if (toAdd.length === 0) return { added: 0, alreadyPresent, ok: true };
+        if (toAdd.length === 0) {
+            // Nothing new merges in, but a *previous* write — this import's
+            // own retry, or any other mutator's — may never have reached
+            // storage; the runs it left behind are exactly what makes every
+            // one of these look like a duplicate now. Attempting the persist
+            // anyway, and reporting what it actually did, is what tells a
+            // retry after a dropped write from a retry that has nothing left
+            // to do — the cheap read-merge-write this costs when there
+            // genuinely is nothing new is not worth guessing which case this is.
+            const persisted = await this._persist(true);
+            if (!persisted) {
+                console.warn('[DungeonTrackerStorage] Import: nothing new to merge, and the write did not land.');
+            }
+            return { added: 0, alreadyPresent, ok: persisted };
+        }
 
         // mergeRuns folds by identity and re-sorts newest-first, exactly what
         // adding a batch of historical runs (not necessarily newer than what
-        // is already stored) needs
-        this._index(mergeRuns(allRuns, toAdd, this._deleted));
+        // is already stored) needs. `this._runs`, again, not a captured
+        // local — see the comment above `known`.
+        this._index(mergeRuns(this._runs, toAdd, this._deleted));
         const persisted = await this._persist(true);
         if (!persisted) {
             console.warn(
@@ -1301,10 +1329,15 @@ class DungeonTrackerStorage {
      * @returns {Promise<boolean>} Whether the write landed
      */
     async deleteRun(timestamp) {
-        const allRuns = await this._loadRuns();
-        if (!allRuns) return false;
+        const loaded = await this._loadRuns();
+        if (!loaded) return false;
+        // `this._runs`, not `loaded`: a concurrent mutator that also cold-
+        // loaded this same read can have already replaced `_runs` with a new
+        // array by the time this synchronous block runs (see the comment in
+        // `importRuns`) — building `kept` from a stale copy would silently
+        // drop whatever it added the moment this write lands.
         const kept = [];
-        for (const run of allRuns) {
+        for (const run of this._runs) {
             if (run.timestamp === timestamp) this._tombstone(run);
             else kept.push(run);
         }
@@ -1456,6 +1489,31 @@ class DungeonTrackerStorage {
     }
 
     /**
+     * Every run for one character, or null when the store could not be read.
+     *
+     * {@link getRunsForCharacter} turns an unreadable store into an empty
+     * array — exactly right for a display that has nothing better to show
+     * and must not crash over it. A backup export is the one caller for
+     * which that answer is wrong: turning "the store could not be read" into
+     * "it was read, and there is nothing" produces a valid-looking empty
+     * backup file, which is worse than refusing to export at all — it can
+     * silently overwrite a real backup on disk, and nothing about the file
+     * itself says the history it claims to hold was never actually seen.
+     *
+     * Same identity-before-read ordering as {@link getRunsForCharacter}, for
+     * the same reason.
+     *
+     * @param {string} [filterCharacter] - 'mine' (default) or 'all'
+     * @returns {Promise<Array<Object>|null>} The runs, or null on a failed read
+     */
+    async getRunsForCharacterOrNull(filterCharacter = 'mine') {
+        const asker = currentCharacter();
+        const runs = await this._loadRuns();
+        if (!runs) return null;
+        return filterRunsForCharacter(runs, filterCharacter, asker);
+    }
+
+    /**
      * Put right the runs a mm/dd-vs-dd/mm misread mangled, once and for all.
      *
      * For as long as the tracker had four copies of a parser that read a
@@ -1531,7 +1589,14 @@ class DungeonTrackerStorage {
      * @returns {Promise<number>} Number of runs removed
      */
     async scrubOutlierRuns() {
-        const allRuns = await this.getAllRuns();
+        const loaded = await this._loadRuns();
+        if (!loaded) return 0;
+        // `this._runs` live, not `getAllRuns()`'s copy: a concurrent mutator
+        // sharing this same cold load can replace `_runs` with a new array
+        // before this synchronous block runs (see the comment in
+        // `importRuns`), and a copy taken from the value this call's own
+        // `_loadRuns()` resolved to would not reflect that.
+        const allRuns = this._runs;
         if (allRuns.length === 0) return 0;
 
         // Group by dungeonName + teamKey

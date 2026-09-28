@@ -85,6 +85,31 @@ class DungeonTrackerUIHistory {
     constructor(state, formatTimeFunc) {
         this.state = state;
         this.formatTime = formatTimeFunc;
+        /** Set by dispose(); guards the hidden file-input's change handler against firing after teardown */
+        this.disposed = false;
+    }
+
+    /**
+     * Tear this section down: remove the hidden file-input it owns (and its
+     * listener with it) and stop any file already picked from importing.
+     *
+     * `triggerImportBackup` appends that `<input>` straight to `document.body`
+     * the first time Import is clicked, and nothing before this method ever
+     * removed it again — not on a character switch, which builds a fresh
+     * `DungeonTrackerUIHistory` for the arriving character
+     * (`dungeon-tracker-ui.js#cleanup`/`initialize`) and simply drops the old
+     * one. The old instance's input stayed in the document forever, and a
+     * file chosen through it — a slow picker dialog left open across a
+     * switch, say — still ran `importBackupText` against `this.state` and
+     * `this.onImportCallback`, which by then describe a character nobody is
+     * looking at any more.
+     */
+    dispose() {
+        this.disposed = true;
+        if (this.importInput) {
+            this.importInput.remove();
+            this.importInput = null;
+        }
     }
 
     /**
@@ -612,11 +637,22 @@ class DungeonTrackerUIHistory {
      * whole account: every character's runs in one file are already reachable
      * through Settings' full backup, which walks every store rather than one
      * character's slice of one.
+     *
+     * Refuses rather than downloading when the store could not be read:
+     * `getRunsForCharacterOrNull` — not the ordinary `getRunsForCharacter`,
+     * which turns that same failure into an empty array for a display that
+     * has nothing better to show — is what lets this tell "there is no
+     * history" from "the read failed" apart. A valid-looking empty backup
+     * downloaded from the second case is worse than no file at all.
      * @returns {Promise<void>}
      */
     async exportRunHistoryBackup() {
         const characterId = currentCharacter().id;
-        const runs = await dungeonTrackerStorage.getRunsForCharacter('mine');
+        const runs = await dungeonTrackerStorage.getRunsForCharacterOrNull('mine');
+        if (runs === null) {
+            alert('Export refused: the stored run history could not be read. Nothing was downloaded.');
+            return;
+        }
         const envelope = buildDungeonRunsBackupEnvelope({ characterId, runs });
         downloadFile(dungeonRunsBackupFilename(), JSON.stringify(envelope, null, 2), 'application/json;charset=utf-8;');
     }
@@ -626,7 +662,10 @@ class DungeonTrackerUIHistory {
      *
      * A single hidden `<input type="file">` is reused across openings rather
      * than recreated each time, and its value is cleared after every change so
-     * picking the same file twice in a row still fires `change`.
+     * picking the same file twice in a row still fires `change`. Removed by
+     * {@link dispose}, whose own doc comment says why that matters; the
+     * `change` handler checks `this.disposed` too, for the file already
+     * chosen through a picker dialog that was still open when teardown ran.
      */
     triggerImportBackup() {
         if (!this.importInput) {
@@ -637,7 +676,7 @@ class DungeonTrackerUIHistory {
             input.addEventListener('change', async (event) => {
                 const file = event.target.files?.[0];
                 input.value = '';
-                if (!file) return;
+                if (!file || this.disposed) return;
                 await this.importBackupFile(file);
             });
             document.body.appendChild(input);

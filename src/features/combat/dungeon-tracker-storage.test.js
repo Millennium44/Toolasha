@@ -33,7 +33,18 @@ vi.mock('../../core/storage.js', () => ({
             // the read is outstanding is not visible to it.
             const hold = game.onRead?.();
             if (game.unreadable) return null;
-            const value = game.saved[storeName]?.[key];
+            const raw = game.saved[storeName]?.[key];
+            // A clone, not the live object: `setJSON` below already clones on
+            // the way in ("what IndexedDB would hold: a copy, not the live
+            // array") for exactly this reason, and a read has to keep the
+            // same promise. Without it, a caller free to mutate its own
+            // in-memory snapshot in place — which is precisely what a stale
+            // pre-await reference does when it survives one — would be
+            // mutating this mock's own backing store by accident, letting a
+            // real bug in the app's array handling "fix itself" the moment
+            // anything reads storage again, the one thing a real IndexedDB
+            // could never do.
+            const value = raw == null ? raw : structuredClone(raw);
             const result = value == null ? { found: false, value: null } : { found: true, value };
             if (hold) await hold;
             return result;
@@ -265,6 +276,7 @@ describe('saveTeamRun', () => {
             duration: 700,
             dungeonName: 'Chimerical Den',
         });
+        await dungeonTrackerStorage.flushPendingSave();
 
         expect(saved).toBe(true);
         const allRuns = game.saved.unifiedRuns.allRuns;
@@ -451,6 +463,7 @@ describe('saveTeamRun', () => {
         expect(
             await dungeonTrackerStorage.saveTeamRun('C,D', { timestamp: '2026-01-02T00:00:00Z', duration: 700 })
         ).toBe(true);
+        await dungeonTrackerStorage.flushPendingSave();
         expect(game.saved.unifiedRuns.allRuns).toHaveLength(2);
     });
 
@@ -634,6 +647,147 @@ describe('importRuns', () => {
         expect(result).toEqual({ added: 1, alreadyPresent: 0, ok: true });
         expect(await dungeonTrackerStorage.getAllRuns()).toHaveLength(1);
         vi.useRealTimers();
+    });
+
+    test('a retry where everything is now a duplicate still attempts the persist, not a silent ok: true', async () => {
+        seedRuns([]);
+        game.writeFails = true;
+
+        const first = await dungeonTrackerStorage.importRuns([importedRun()]);
+        expect(first).toEqual({ added: 1, alreadyPresent: 0, ok: false });
+
+        // The same file, imported again while the write is still failing: the
+        // run is already `known` in memory, so there is nothing new to merge
+        // — but memory itself has never reached storage, and reporting
+        // success here is exactly what told the user their import was safe
+        // right before a reload lost it
+        const retryStillFailing = await dungeonTrackerStorage.importRuns([importedRun()]);
+        expect(retryStillFailing).toEqual({ added: 0, alreadyPresent: 1, ok: false });
+        // Still the empty list `seedRuns` put there — the write never landed
+        expect(game.saved.unifiedRuns[RUNS_KEY]).toEqual([]);
+
+        game.writeFails = false;
+        const retryOnceFixed = await dungeonTrackerStorage.importRuns([importedRun()]);
+        expect(retryOnceFixed).toEqual({ added: 0, alreadyPresent: 1, ok: true });
+        expect(game.saved.unifiedRuns[RUNS_KEY]).toEqual([importedRun()]);
+    });
+
+    test('a retry that genuinely has nothing new and already landed reports ok: true without re-adding anything', async () => {
+        seedRuns([]);
+        await dungeonTrackerStorage.importRuns([importedRun()]);
+
+        const writesBefore = game.writes.length;
+        const result = await dungeonTrackerStorage.importRuns([importedRun()]);
+
+        expect(result).toEqual({ added: 0, alreadyPresent: 1, ok: true });
+        // Still costs a read-merge-write — the whole point is that this path
+        // no longer trusts "nothing new" to mean "already saved" — but that
+        // write changes nothing on disk
+        expect(game.writes.length).toBeGreaterThan(writesBefore);
+        expect(game.saved.unifiedRuns[RUNS_KEY]).toEqual([importedRun()]);
+    });
+});
+
+describe('importRuns racing another mutator on the same cold load', () => {
+    function importedRun(overrides = {}) {
+        return {
+            teamKey: 'A,B',
+            team: ['A', 'B'],
+            dungeonName: 'Chimerical Den',
+            tier: 1,
+            duration: 300_000,
+            timestamp: '2026-01-01T00:00:00.000Z',
+            recordedBy: 'someoneElse',
+            ...overrides,
+        };
+    }
+
+    test('an import and a live completion that both land on the same held cold load lose neither run', async () => {
+        seedRuns([]);
+        let release;
+        const held = new Promise((resolve) => {
+            release = resolve;
+        });
+
+        // Both calls have to be registered on the SAME still-pending cold
+        // load before either one's synchronous merge logic runs — holding
+        // the very first read open (as `scrubOutlierRuns`'s own "a read
+        // still in flight" test does) is what makes that deterministic
+        // rather than a race against however fast the mock happens to
+        // resolve. `importRuns` is started first, so once the hold releases
+        // its continuation — which runs before an untouched `_loadRuns`
+        // would ever call storage again — resumes first: its own
+        // `_index()` swap of `_runs` is exactly what orphans `saveTeamRun`'s
+        // captured snapshot if `saveTeamRun` unshifts onto that snapshot
+        // instead of the live `_runs`.
+        game.onRead = () => held;
+        const imported = dungeonTrackerStorage.importRuns([importedRun()]);
+        const saved = dungeonTrackerStorage.saveTeamRun('C,D', {
+            timestamp: '2026-01-02T00:00:00.000Z',
+            duration: 700,
+        });
+        game.onRead = null;
+
+        release();
+        expect(await imported).toEqual({ added: 1, alreadyPresent: 0, ok: true });
+        expect(await saved).toBe(true);
+
+        // Read in memory, before any further persist round-trips it through
+        // the mock's `tryGet` — which hands back the very array object it
+        // was given, not a fresh copy the way real IndexedDB's structured
+        // clone would. That aliasing is exactly what would paper over this
+        // bug if the assertion went through storage instead: the orphaned
+        // array `saveTeamRun` would have unshifted onto, pre-fix, happens to
+        // be the mock's own backing object for the seeded empty list, so a
+        // later disk read would show the live run whether or not `_runs`
+        // itself ever held it. `_runs` — what every reader actually goes
+        // through — is the one place the loss cannot hide.
+        expect(await dungeonTrackerStorage.getAllRuns()).toHaveLength(2);
+
+        await dungeonTrackerStorage.flushPendingSave();
+        const stored = game.saved.unifiedRuns[RUNS_KEY].map((r) => r.timestamp).sort();
+        expect(stored).toEqual(['2026-01-01T00:00:00.000Z', '2026-01-02T00:00:00.000Z']);
+    });
+
+    test('the reverse order — a live completion started first — loses neither run either', async () => {
+        seedRuns([]);
+        let release;
+        const held = new Promise((resolve) => {
+            release = resolve;
+        });
+
+        game.onRead = () => held;
+        const saved = dungeonTrackerStorage.saveTeamRun('C,D', {
+            timestamp: '2026-01-02T00:00:00.000Z',
+            duration: 700,
+        });
+        const imported = dungeonTrackerStorage.importRuns([importedRun()]);
+        game.onRead = null;
+
+        release();
+        expect(await saved).toBe(true);
+        expect(await imported).toEqual({ added: 1, alreadyPresent: 0, ok: true });
+
+        // In memory first — see the comment in the previous test for why a
+        // disk round-trip alone cannot be trusted to catch this
+        expect(await dungeonTrackerStorage.getAllRuns()).toHaveLength(2);
+
+        await dungeonTrackerStorage.flushPendingSave();
+        const stored = game.saved.unifiedRuns[RUNS_KEY].map((r) => r.timestamp).sort();
+        expect(stored).toEqual(['2026-01-01T00:00:00.000Z', '2026-01-02T00:00:00.000Z']);
+    });
+
+    test('two imports racing the same cold load both land, not just whichever resumes last', async () => {
+        seedRuns([]);
+
+        const first = dungeonTrackerStorage.importRuns([importedRun()]);
+        const second = dungeonTrackerStorage.importRuns([importedRun({ timestamp: '2026-01-02T00:00:00.000Z' })]);
+
+        expect(await first).toEqual({ added: 1, alreadyPresent: 0, ok: true });
+        expect(await second).toEqual({ added: 1, alreadyPresent: 0, ok: true });
+
+        const stored = game.saved.unifiedRuns[RUNS_KEY].map((r) => r.timestamp).sort();
+        expect(stored).toEqual(['2026-01-01T00:00:00.000Z', '2026-01-02T00:00:00.000Z']);
     });
 });
 
