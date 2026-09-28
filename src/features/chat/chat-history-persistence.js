@@ -6,6 +6,24 @@
  * game has already thrown away. This module writes that markup to IndexedDB and
  * puts it back on the next load.
  *
+ * ## When a message is recorded
+ *
+ * On render, not only on eviction. This used to record a message only when the
+ * game pushed it out of the live list, on the theory that everything still in
+ * the live list would come back from the server on the next load. It does not
+ * always: a server restart (a game update, say) comes back with an empty or
+ * short channel history, and a reload takes the page's copy with it. Every
+ * message that was still on screen at that moment was lost — on a quiet
+ * channel like Party, that can be every message since the page was opened.
+ * So a message is recorded as soon as it is rendered, again (deduplicated —
+ * see {@link messageIdentity}) when it is evicted, and a restore leaves out
+ * whatever the game is already showing live.
+ *
+ * What cannot be saved is what this page never rendered: a message that
+ * arrived while its tab was not the open one and was pushed out of the game's
+ * own list before that tab was next opened, or anything sent while the page
+ * was closed or disconnected.
+ *
  * ## Why the markup, and why the links have to be rebuilt
  *
  * A live message is made clickable by reading its React fiber props at clone
@@ -588,6 +606,49 @@ export function extractStoredMessageId(html) {
 }
 
 /**
+ * What makes two stored messages the same message: their visible text, with
+ * the markup and whitespace runs taken out.
+ *
+ * A message is now recorded more than once over its life — when it is
+ * rendered (see `chat-history-extender.js`'s `_recordLive`), again when the
+ * game evicts it, and again whenever the game re-renders a tab's backlog. The
+ * markup differs between those sightings (an id stamped on one and not the
+ * other, a dungeon-tracker marker, a decorated player name), but the text a
+ * player reads — timestamp, sender and message — does not. Two genuinely
+ * different messages with the same text to the second from the same sender
+ * collapse into one; that is the price, and it is a small one next to showing
+ * every message twice.
+ *
+ * Always computed from {@link serializeMessage} output, never from a live
+ * node's `textContent`, so entity escaping is the same on both sides of any
+ * comparison.
+ *
+ * @param {string} html - One message, as {@link serializeMessage} produced it
+ * @returns {string|null} The identity, or null when the markup carries no text
+ */
+export function messageIdentity(html) {
+    if (typeof html !== 'string' || !html) return null;
+    // `record()` compares a new message against every one a tab holds, and a
+    // tab switch records a whole backlog at once; the same strings come round
+    // again and again, so they are only stripped once.
+    const cached = identityMemo.get(html);
+    if (cached !== undefined) return cached;
+    const text = html
+        .replace(/<[^>]*>/g, ' ')
+        .replace(/\s+/g, ' ')
+        .trim();
+    if (identityMemo.size >= IDENTITY_MEMO_MAX) identityMemo.clear();
+    identityMemo.set(html, text || null);
+    return text || null;
+}
+
+/** Bound on {@link messageIdentity}'s memo: a little over one full tab set's worth of messages. */
+const IDENTITY_MEMO_MAX = 4000;
+
+/** @type {Map<string, string|null>} */
+const identityMemo = new Map();
+
+/**
  * Apply the three caps to a `{tabKey: [html]}` map, oldest-first, in place.
  *
  * Per-tab count first (cheap, and the cap the user's setting talks about), then
@@ -719,6 +780,10 @@ class ChatHistoryPersistence {
             // than half-read; the cost is one session's history.
             const stored = record && record.v === RECORD_VERSION && record.tabs ? record.tabs : {};
             const loaded = applyCaps(dropForeignKeys(stored), this.getMaxHistory());
+            // Taken before the merge below, which writes into `loaded` itself —
+            // a snapshot taken after it held what was recorded during the read,
+            // and a restore rendered those a second time.
+            this.snapshot = Object.fromEntries(Object.entries(loaded).map(([key, list]) => [key, [...list]]));
 
             // Anything recorded while the read was in flight belongs after what
             // was on disk, not instead of it.
@@ -726,12 +791,14 @@ class ChatHistoryPersistence {
             this.tabs = loaded;
             if (pending) {
                 for (const [key, list] of Object.entries(pending)) {
-                    this.tabs[key] = [...(this.tabs[key] || []), ...list];
+                    // Through record()'s dedupe, not a blind append: a message
+                    // recorded live during the read may already be on disk from
+                    // the last session, which also recorded it live.
+                    for (const html of list) this.record(key, html);
                 }
                 applyCaps(this.tabs, this.getMaxHistory());
             }
 
-            this.snapshot = Object.fromEntries(Object.entries(loaded).map(([key, list]) => [key, [...list]]));
             return this.snapshot;
         })();
 
@@ -752,9 +819,44 @@ class ChatHistoryPersistence {
         if (!tabKey.startsWith(TAB_KEY_PREFIX)) return;
         if (!this.tabs) this.tabs = {};
         if (!this.tabs[tabKey]) this.tabs[tabKey] = [];
-        this.tabs[tabKey].push(html);
+        const list = this.tabs[tabKey];
+
+        // The same message is offered more than once — on render, again on
+        // eviction, again whenever the game re-renders a tab's backlog — so a
+        // message already held is updated in place rather than appended. The
+        // copy carrying the game's id is kept over one that lacks it: the id
+        // is what a later deletion finds it by.
+        const identity = messageIdentity(html);
+        if (identity) {
+            for (let i = list.length - 1; i >= 0; i -= 1) {
+                if (messageIdentity(list[i]) !== identity) continue;
+                if (list[i] === html) return;
+                if (extractStoredMessageId(list[i]) && !extractStoredMessageId(html)) return;
+                list[i] = html;
+                this._scheduleWrite();
+                return;
+            }
+        }
+
+        list.push(html);
         applyCaps(this.tabs, this.getMaxHistory());
         this._scheduleWrite();
+    }
+
+    /**
+     * Write now if a write is waiting, and otherwise do nothing.
+     *
+     * For the moments the page or the socket is going away: the coalescing
+     * timer in {@link _scheduleWrite} would otherwise take the last few
+     * seconds of chat down with the page. `immediate` because a page being
+     * hidden or unloaded is exactly when storage's own debounce cannot be
+     * relied on to get another turn.
+     *
+     * @returns {Promise<boolean>} Whether a write was attempted and accepted
+     */
+    flushPending() {
+        if (!this.writeTimer) return Promise.resolve(false);
+        return this.flush(true);
     }
 
     /** Coalesce the burst of evictions a busy channel produces into one write. */
@@ -768,9 +870,10 @@ class ChatHistoryPersistence {
 
     /**
      * Write the record now.
+     * @param {boolean} [immediate=false] - Skip storage's own write debounce
      * @returns {Promise<boolean>} Whether the write was attempted and accepted
      */
-    async flush() {
+    async flush(immediate = false) {
         if (!this.enabled || !this.tabs) return false;
         if (this.writeTimer) {
             clearTimeout(this.writeTimer);
@@ -787,7 +890,8 @@ class ChatHistoryPersistence {
             return await storage.set(
                 characterKey(CHAT_HISTORY_KEY_BASE),
                 { v: RECORD_VERSION, savedAt: Date.now(), tabs: this.tabs },
-                CHAT_HISTORY_STORE
+                CHAT_HISTORY_STORE,
+                immediate
             );
         } catch (error) {
             console.error('[ChatHistoryPersistence] Could not write chat history:', error);

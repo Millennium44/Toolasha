@@ -83,12 +83,15 @@ vi.mock('../../utils/profile-command.js', () => ({
     VALID_PLAYER_NAME_RE: /^[A-Za-z0-9_]+$/,
 }));
 
+import webSocketHook from '../../core/websocket.js';
+import storage from '../../core/storage.js';
 import chatHistoryExtender, { chatTabKey, tabKeyForChannel } from './chat-history-extender.js';
 import chatHistoryPersistence, {
     applyCaps,
     CHAT_HISTORY_KEY_BASE,
     CHAT_HISTORY_STORE,
     extractStoredMessageId,
+    messageIdentity,
     handleRestoredClick,
     MAX_MESSAGES_PER_TAB,
     MAX_TOTAL_CHARS,
@@ -1180,5 +1183,229 @@ describe('message identity: extractStoredMessageId and purgeMessageById', () => 
 
         await chatHistoryPersistence.flush();
         expect(db.settings[STORAGE_KEY].tabs[tabKey]).toBeUndefined();
+    });
+});
+
+/**
+ * The reported loss: on 9/27 a party's Sinister Circus runs between 12:52 PM
+ * and 8:41 PM never reached storage. Party chat is quiet, so none of those
+ * lines was ever pushed out of the game's live list, and only an eviction used
+ * to be recorded. The live server then restarted for a game update, the page
+ * came back with a short party history, and every line that had only ever
+ * been live was gone.
+ */
+describe('messages that were only ever live survive a server restart', () => {
+    const PARTY = '/chat_channel_types/party';
+    const PARTY_KEY = tabKeyForChannel(PARTY);
+
+    /** A chat pane showing one channel tab, the way the live client renders it. */
+    function buildPartyChat(openChannel = PARTY) {
+        document.body.innerHTML = '<div id="root"><div class="Chat_tabsComponentContainer__x"></div></div>';
+        const strip = document.querySelector('.Chat_tabsComponentContainer__x');
+        for (const channel of ['/chat_channel_types/trade', PARTY]) {
+            const button = document.createElement('button');
+            button.setAttribute('role', 'tab');
+            button.setAttribute('data-mention-channel', channel);
+            button.setAttribute('aria-selected', channel === openChannel ? 'true' : 'false');
+            button.textContent = channel.split('/').pop();
+            strip.appendChild(button);
+        }
+        const container = document.createElement('div');
+        container.className = 'ChatHistory_chatHistory__abc';
+        document.getElementById('root').appendChild(container);
+        return container;
+    }
+
+    function openTab(channel) {
+        for (const button of document.querySelectorAll('button[role="tab"]')) {
+            button.setAttribute(
+                'aria-selected',
+                button.getAttribute('data-mention-channel') === channel ? 'true' : 'false'
+            );
+        }
+    }
+
+    const liveNodes = (container) =>
+        [...container.children].filter((el) => el.className.includes('ChatMessage_chatMessage'));
+    const bufferTexts = (container) =>
+        [...container.querySelectorAll('.mwi-history-buffer [class*="ChatMessage_chatMessage"]')].map(
+            (el) => el.textContent
+        );
+    const liveTexts = (container) => liveNodes(container).map((el) => el.textContent);
+    const storedTexts = (key = PARTY_KEY) =>
+        (db.settings[STORAGE_KEY]?.tabs?.[key] || []).map((html) => parseStoredMessage(html).textContent);
+
+    const OLD = '[9/26 10:29:27 AM] Battle ended: Pirate Cove';
+    const JOINED = '[9/27 12:52:34 PM] Millennium44 has joined the party.';
+    const RUNS = [
+        '[9/27 1:14:02 PM] Key counts: [MrChilimby - 50]',
+        '[9/27 1:33:40 PM] Key counts: [MrChilimby - 48]',
+        '[9/27 7:58:11 PM] Key counts: [MrChilimby - 31]',
+    ];
+    const AFTER_RESTART = '[9/27 8:41:39 PM] Battle started: Sinister Circus';
+
+    /** Tear the page down; only what reached storage comes back. */
+    function reload() {
+        chatHistoryExtender.disable();
+        chatHistoryPersistence.reset();
+    }
+
+    beforeEach(() => {
+        settingValues.chatHistoryExtender = true;
+        settingValues.chatHistoryExtender_maxHistory = null;
+        observerReady.handlers = [];
+        observerReady.domReady = true;
+        db.settings = {
+            [STORAGE_KEY]: {
+                v: 1,
+                savedAt: 1,
+                tabs: { [PARTY_KEY]: [`<div class="ChatMessage_chatMessage__z">${OLD}</div>`] },
+            },
+        };
+        db.quota = false;
+        db.writes = 0;
+        storage.set.mockClear();
+    });
+
+    afterEach(() => {
+        chatHistoryExtender.disable();
+        chatHistoryPersistence.reset();
+        document.body.innerHTML = '';
+    });
+
+    test('lines that arrived while connected and were never evicted are still there after the restart', async () => {
+        // The session: the party chat already showing the join, then key
+        // counts arriving one by one. Nothing is ever evicted.
+        const container = buildPartyChat();
+        container.appendChild(makeMessage(JOINED));
+        chatHistoryExtender.initialize();
+        await settle();
+        for (const line of RUNS) {
+            container.appendChild(makeMessage(line));
+            await settle();
+        }
+
+        // The server goes down: the socket closes first, and the write that
+        // was waiting on its coalescing timer goes out now.
+        webSocketHook.emitSocketEvent('close', {}, null);
+        await settle();
+        expect(storage.set).toHaveBeenCalledWith(STORAGE_KEY, expect.any(Object), CHAT_HISTORY_STORE, true);
+
+        // The page comes back with only what the restarted server has.
+        reload();
+        const restarted = buildPartyChat();
+        restarted.appendChild(makeMessage(AFTER_RESTART));
+        chatHistoryExtender.initialize();
+        await settle();
+
+        expect(bufferTexts(restarted)).toEqual([OLD, JOINED, ...RUNS]);
+        expect(liveTexts(restarted)).toEqual([AFTER_RESTART]);
+
+        await chatHistoryPersistence.flush();
+        expect(storedTexts()).toEqual([OLD, JOINED, ...RUNS, AFTER_RESTART]);
+    });
+
+    test('an empty history from the reconnect keeps everything too', async () => {
+        const container = buildPartyChat();
+        chatHistoryExtender.initialize();
+        await settle();
+        container.appendChild(makeMessage(JOINED));
+        await settle();
+        webSocketHook.emitSocketEvent('close', {}, null);
+        await settle();
+
+        reload();
+        const restarted = buildPartyChat();
+        chatHistoryExtender.initialize();
+        await settle();
+
+        expect(bufferTexts(restarted)).toEqual([OLD, JOINED]);
+    });
+
+    test('a reload that brings the same lines back live shows each of them once', async () => {
+        const container = buildPartyChat();
+        chatHistoryExtender.initialize();
+        await settle();
+        for (const line of RUNS) {
+            container.appendChild(makeMessage(line));
+            await settle();
+        }
+        await chatHistoryPersistence.flush();
+
+        // No restart this time: the server still has the lines and renders
+        // them live again. One is already there when the handler attaches…
+        reload();
+        const reloaded = buildPartyChat();
+        reloaded.appendChild(makeMessage(RUNS[0]));
+        chatHistoryExtender.initialize();
+        await settle();
+        // …and the rest render after the restore has landed.
+        reloaded.appendChild(makeMessage(RUNS[1]));
+        reloaded.appendChild(makeMessage(RUNS[2]));
+        await settle();
+
+        expect(bufferTexts(reloaded)).toEqual([OLD]);
+        expect(liveTexts(reloaded)).toEqual(RUNS);
+
+        // Evicted later, each goes back to the buffer once and is stored once.
+        for (const node of liveNodes(reloaded)) await evict(reloaded, node);
+        await chatHistoryPersistence.flush();
+        expect(bufferTexts(reloaded)).toEqual([OLD, ...RUNS]);
+        expect(storedTexts()).toEqual([OLD, ...RUNS]);
+    });
+
+    test('a restored copy is taken out of the buffer when the game renders the same line live', async () => {
+        db.settings[STORAGE_KEY].tabs[PARTY_KEY].push(`<div class="ChatMessage_chatMessage__z">${RUNS[0]}</div>`);
+
+        const container = buildPartyChat();
+        chatHistoryExtender.initialize();
+        await settle();
+        expect(bufferTexts(container)).toEqual([OLD, RUNS[0]]);
+
+        container.appendChild(makeMessage(RUNS[0]));
+        await settle();
+        expect(bufferTexts(container)).toEqual([OLD]);
+        expect(liveTexts(container)).toEqual([RUNS[0]]);
+    });
+
+    test('party lines that arrived while another tab was open are saved when the party tab is opened', async () => {
+        const container = buildPartyChat('/chat_channel_types/trade');
+        chatHistoryExtender.initialize();
+        await settle();
+
+        // The game renders the party backlog into the same pane on the switch.
+        openTab(PARTY);
+        for (const line of RUNS) container.appendChild(makeMessage(line));
+        await settle();
+        await chatHistoryPersistence.flush();
+
+        expect(storedTexts()).toEqual([OLD, ...RUNS]);
+        expect(storedTexts(tabKeyForChannel('/chat_channel_types/trade'))).toEqual([]);
+    });
+
+    test('a page being hidden writes a waiting record at once, and nothing when none is waiting', async () => {
+        const container = buildPartyChat();
+        chatHistoryExtender.initialize();
+        await settle();
+
+        window.dispatchEvent(new Event('pagehide'));
+        await settle();
+        expect(storage.set).not.toHaveBeenCalled();
+
+        container.appendChild(makeMessage(JOINED));
+        await settle();
+        window.dispatchEvent(new Event('pagehide'));
+        await settle();
+        expect(storage.set).toHaveBeenCalledTimes(1);
+        expect(storage.set.mock.calls[0][3]).toBe(true);
+        expect(storedTexts()).toEqual([OLD, JOINED]);
+    });
+
+    test('messageIdentity ignores markup, so a re-rendered or id-stamped line is the same line', () => {
+        const plain = `<div class="ChatMessage_chatMessage__z"><span>${JOINED}</span></div>`;
+        const stamped = `<div class="ChatMessage_chatMessage__z" data-mwi-msg-id="42" data-processed="1"><span>${JOINED}</span></div>`;
+        expect(messageIdentity(plain)).toBe(messageIdentity(stamped));
+        expect(messageIdentity(plain)).not.toBe(messageIdentity(`<div>${RUNS[0]}</div>`));
+        expect(messageIdentity('<div></div>')).toBeNull();
     });
 });

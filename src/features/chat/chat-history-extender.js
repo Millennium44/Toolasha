@@ -1,7 +1,9 @@
 /**
  * Chat History Extender
  * Preserves chat messages that the game evicts from the live buffer,
- * keeping them visible in a history section above the live messages.
+ * keeping them visible in a history section above the live messages, and
+ * records every rendered message for chat-history-persistence.js — see that
+ * module's "When a message is recorded" section.
  * Based on the original script by SilkyPanda.
  */
 
@@ -14,6 +16,7 @@ import chatHistoryPersistence, {
     extractStoredMessageId,
     handleRestoredClick,
     itemHridFrom,
+    messageIdentity,
     parseStoredMessage,
     rewireRestoredMessage,
     SENDER_SELECTOR,
@@ -701,6 +704,8 @@ class ChatTabHandler {
         this.deletedIds = deletedIds;
         /** Whether a restore has already been fired for this tab; see {@link _resolveTabKey}. */
         this.restoreStarted = false;
+        /** @type {WeakMap<Element, string|null>} Buffered node → {@link messageIdentity}, computed once */
+        this.bufferIdentities = new WeakMap();
 
         this.bufferEl = document.createElement('div');
         this.bufferEl.className = 'mwi-history-buffer';
@@ -735,6 +740,75 @@ class ChatTabHandler {
      */
     _messageNodes() {
         return [...this.bufferEl.children].filter((el) => el.className?.includes?.('ChatMessage_chatMessage'));
+    }
+
+    /**
+     * The game's own live message nodes in this container — everything that
+     * is a message and not inside this script's buffer.
+     * @returns {Array<Element>}
+     */
+    _liveMessageNodes() {
+        return [...this.container.children].filter(
+            (el) => el !== this.bufferEl && el.className?.includes?.('ChatMessage_chatMessage')
+        );
+    }
+
+    /** @returns {Set<string>} {@link messageIdentity} of every live message */
+    _liveIdentities() {
+        const identities = new Set();
+        for (const node of this._liveMessageNodes()) {
+            const identity = messageIdentity(serializeMessage(node));
+            if (identity) identities.add(identity);
+        }
+        return identities;
+    }
+
+    /**
+     * Record a message the game is showing live, before anything can take it
+     * away — see chat-history-persistence.js, "When a message is recorded".
+     *
+     * Only a node still in this container is recorded: a node added and
+     * removed inside one mutation batch is either an eviction (recorded there)
+     * or the outgoing tab's line in a tab switch, which must not be filed
+     * under the incoming tab's key.
+     *
+     * @param {Element} node - A `ChatMessage_chatMessage` node
+     * @param {string|null} tabKey - This container's tab key
+     * @returns {string|null} The node's identity, when it was recorded
+     */
+    _recordLive(node, tabKey) {
+        if (!tabKey || !node.isConnected || node.parentNode !== this.container) return null;
+        if (node.dataset.mwiSkipStore === '1') return null;
+        if (node.dataset.mwiMsgId && this.deletedIds?.has(node.dataset.mwiMsgId)) return null;
+        const html = serializeMessage(node);
+        if (!html) return null;
+        chatHistoryPersistence.record(tabKey, html);
+        return messageIdentity(html);
+    }
+
+    /**
+     * Take out of the buffer any message the game has just rendered live again
+     * — a restored copy of a line that was still on screen when it was saved,
+     * which the game re-renders after a reload or when its tab is reopened.
+     * @param {Set<string>} identities - Of the messages just rendered live
+     */
+    _dropBufferedDuplicates(identities) {
+        if (!identities.size) return;
+        for (const node of this._messageNodes()) {
+            let identity = this.bufferIdentities.get(node);
+            if (identity === undefined) {
+                identity = messageIdentity(serializeMessage(node));
+                this.bufferIdentities.set(node, identity);
+            }
+            if (!identity || !identities.has(identity)) continue;
+            node.querySelectorAll('[data-mwi-uid]').forEach((u) => {
+                this.interactionCache.delete(u.getAttribute('data-mwi-uid'));
+            });
+            if (node.hasAttribute('data-mwi-uid')) {
+                this.interactionCache.delete(node.getAttribute('data-mwi-uid'));
+            }
+            node.remove();
+        }
     }
 
     /**
@@ -840,9 +914,14 @@ class ChatTabHandler {
         // The container may have been torn down while the read was in flight
         if (!this.bufferEl.isConnected) return 0;
 
+        // Messages are recorded while they are still live, so what is on disk
+        // overlaps what the game is showing right now. The live copy wins.
+        const live = this._liveIdentities();
+
         let restored = 0;
         for (const html of stored) {
             try {
+                if (live.has(messageIdentity(html))) continue;
                 // A deletion that arrived while the `load()` above was still
                 // in flight has already purged `chatHistoryPersistence.tabs`
                 // — a different in-memory object than the snapshot `stored`
@@ -1099,12 +1178,15 @@ class ChatTabHandler {
         // — straight back onto the incoming tab's scrollback and into its
         // record under the incoming tab's key.
         const switched = Boolean(previousKey) && Boolean(tabKey) && tabKey !== previousKey;
+        const renderedLive = new Set();
 
         mutations.forEach((mut) => {
             mut.addedNodes.forEach((node) => {
                 if (node.nodeType === 1 && node.className?.includes('ChatMessage_chatMessage')) {
                     this.hydrateMessage(node);
                     this._tagMessageId(node, tabKey);
+                    const identity = this._recordLive(node, tabKey);
+                    if (identity) renderedLive.add(identity);
                 }
             });
 
@@ -1160,6 +1242,8 @@ class ChatTabHandler {
             }
         });
 
+        this._dropBufferedDuplicates(renderedLive);
+
         if (isAtBottom) {
             this.container.scrollTop = this.container.scrollHeight;
         }
@@ -1191,6 +1275,8 @@ class ChatHistoryExtender {
         this.deletedIds = null;
         this._onChatMessageReceived = null;
         this._onChatMessageUpdated = null;
+        this._onPageLeaving = null;
+        this._onVisibilityChange = null;
     }
 
     initialize() {
@@ -1214,6 +1300,21 @@ class ChatHistoryExtender {
         this._onChatMessageUpdated = (data) => this._handleMessageUpdated(data?.message);
         webSocketHook.on('chat_message_updated', this._onChatMessageUpdated);
 
+        // Recording is coalesced for a few seconds; these are the moments that
+        // window has to be closed early. A socket closing is how a server
+        // restart announces itself, and whatever the reconnect renders may
+        // not include what was on screen before it.
+        this._onPageLeaving = () => {
+            chatHistoryPersistence.flushPending()?.catch?.(() => {});
+        };
+        this._onVisibilityChange = () => {
+            if (document.visibilityState === 'hidden') this._onPageLeaving();
+        };
+        window.addEventListener('pagehide', this._onPageLeaving);
+        window.addEventListener('beforeunload', this._onPageLeaving);
+        document.addEventListener('visibilitychange', this._onVisibilityChange);
+        webSocketHook.onSocketEvent?.('close', this._onPageLeaving);
+
         const attachHandler = (containerEl) => {
             if (this.tabHandlers.has(containerEl)) return;
             const handler = new ChatTabHandler(
@@ -1228,6 +1329,9 @@ class ChatHistoryExtender {
             this.activeHandlers.add(handler);
             containerEl.querySelectorAll('[class*="ChatMessage_chatMessage"]').forEach((msg) => {
                 handler.hydrateMessage(msg);
+                // Already on screen when the handler arrived, so no mutation
+                // will ever announce them — recorded here or not at all.
+                handler._recordLive(msg, handler.tabKey);
             });
             // Deliberately not awaited: the read is IndexedDB and chat must be
             // usable before it lands. A failure inside is logged, not thrown.
@@ -1370,6 +1474,16 @@ class ChatHistoryExtender {
             if (this._onChatMessageUpdated) {
                 webSocketHook.off('chat_message_updated', this._onChatMessageUpdated);
                 this._onChatMessageUpdated = null;
+            }
+            if (this._onPageLeaving) {
+                window.removeEventListener('pagehide', this._onPageLeaving);
+                window.removeEventListener('beforeunload', this._onPageLeaving);
+                webSocketHook.offSocketEvent?.('close', this._onPageLeaving);
+                this._onPageLeaving = null;
+            }
+            if (this._onVisibilityChange) {
+                document.removeEventListener('visibilitychange', this._onVisibilityChange);
+                this._onVisibilityChange = null;
             }
             this.messageIds?.clear();
             this.messageIds = null;
