@@ -227,6 +227,26 @@ describe('lazy websocket subscription', () => {
         expect(store.getAllSnapshots().map((s) => s.name)).toEqual(['Fighting']);
     });
 
+    // The server's own characterLoadoutID (the characterLoadoutMap key each
+    // loadout arrived under) is carried onto the snapshot itself, not just
+    // kept as `snapshots`'s own object key — a caller holding only
+    // `getAllSnapshots()`'s flat array (the Combat Simulator's per-sweep
+    // loadout pickers, say) needs a persistent identity two same-named
+    // loadouts don't offer, and an array index doesn't survive a reorder or
+    // another loadout's deletion.
+    test('a snapshot carries the server loadout id it arrived under', () => {
+        const store = new loadoutSnapshot.constructor();
+        const before = ws.onCalls.length;
+        store.getAllSnapshots();
+
+        ws.onCalls[before].handler({
+            characterLoadoutMap: { 42: { name: 'Fighting' }, 7: { name: 'Skilling' } },
+        });
+
+        const byName = Object.fromEntries(store.getAllSnapshots().map((s) => [s.name, s.id]));
+        expect(byName).toEqual({ Fighting: '42', Skilling: '7' });
+    });
+
     test('a read after disable() subscribes again', () => {
         const store = new loadoutSnapshot.constructor();
         store.getAllSnapshots();

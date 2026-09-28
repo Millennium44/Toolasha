@@ -7808,6 +7808,64 @@ describe('Solo zones + party dungeons: one ranked table', () => {
                 expect(player2.appliedLoadout?.marker).toBe('second');
             });
 
+            test('a picked loadout stays picked after another one is deleted while the sim is open', async () => {
+                // Real snapshots always carry the server's own
+                // characterLoadoutID (loadout-snapshot.js's buildSnapshot
+                // stamps it on) — an id, not an array position, is what
+                // survives another loadout vanishing out from under it.
+                mocks.loadoutStore = {
+                    getAllSnapshots: () => [
+                        { id: 'L1', name: 'First', actionTypeHrid: null },
+                        { id: 'L2', name: 'Second', actionTypeHrid: null },
+                    ],
+                };
+                ui._updateSoloPartyLoadoutPickers();
+                pick(soloSelect(), 'Second'); // sits at index 1 right now
+
+                // "First" is deleted elsewhere (another tab, say) while this
+                // panel stays open — "Second" shifts down to index 0
+                mocks.loadoutStore = {
+                    getAllSnapshots: () => [{ id: 'L2', name: 'Second', actionTypeHrid: null }],
+                };
+
+                await ui._onSimulateAllZones();
+
+                const [soloRun] = mocks.allZonesArgsLog;
+                const player2 = soloRun.playerDTOs.find((p) => p.hrid === 'player2');
+                // Still "Second" (by id) — an index-based id would have
+                // silently resolved to whatever now sits at position 1
+                // (nothing, here) instead.
+                expect(player2.appliedLoadout?.id).toBe('L2');
+            });
+
+            test('without a server id, a picked loadout that shifts position is treated as unresolved and clears', () => {
+                // The fallback path (a snapshot with no id, e.g. one cached
+                // from before loadout-snapshot.js stamped ids on): position
+                // plus name is the best available identity, and it must fail
+                // closed the moment either one no longer matches, rather than
+                // silently reattaching to whatever now sits at that position.
+                mocks.loadoutStore = {
+                    getAllSnapshots: () => [
+                        { name: 'First', actionTypeHrid: null },
+                        { name: 'Second', actionTypeHrid: null },
+                    ],
+                };
+                ui._updateSoloPartyLoadoutPickers();
+                pick(soloSelect(), 'Second'); // index 1, no id
+
+                // Reordered — "Second" is now at index 0
+                mocks.loadoutStore = {
+                    getAllSnapshots: () => [
+                        { name: 'Second', actionTypeHrid: null },
+                        { name: 'First', actionTypeHrid: null },
+                    ],
+                };
+                ui._updateSoloPartyLoadoutPickers();
+
+                expect(ui._soloZonesLoadoutName).toBeNull();
+                expect(soloSelect().value).toBe('');
+            });
+
             /**
              * Max-tier food substitutes into whatever food a DTO carries at
              * the moment it runs. Run before the per-sweep loadout, it would
