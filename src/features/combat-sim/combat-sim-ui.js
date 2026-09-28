@@ -5834,18 +5834,11 @@ class CombatSimUI {
         // build their DTOs separately and never see this.
         const useMaxTierFood = this._maxTierFoodEnabled && Boolean(this._allZonesMode);
         let foodSwaps = [];
-        if (useMaxTierFood) {
-            const substituted = applyMaxTierFood(playerDTOs, gameData);
-            playerDTOs = substituted.playerDTOs;
-            foodSwaps = substituted.swaps;
-        }
-        this._allZonesMaxTierFood = useMaxTierFood;
-        this._allZonesFoodSwaps = foodSwaps;
 
-        // One sweep for an ordinary run. Solo zones + party dungeons is two: the
-        // selected player alone through the ordinary zones, then the whole party
-        // through the dungeons — built after the food swap so both run on it.
-        let sweeps = [{ set: null, playerDTOs, zones: selectedZones }];
+        // One sweep for an ordinary run. Solo zones + party dungeons is two:
+        // the selected player alone through the ordinary zones, then the
+        // whole party through the dungeons, each on its own loadout.
+        let sweeps;
         if (soloVsParty) {
             const sets = soloVsPartySets(playerDTOs, this._activePlayerTab);
             // Each sweep can wear its own loadout — dungeon fights often need
@@ -5855,19 +5848,39 @@ class CombatSimUI {
             // gear untouched. '' (or unset) means current gear, a no-op.
             const soloLoadout = this._soloZonesLoadoutName || '';
             const dungeonLoadout = this._dungeonsLoadoutName || '';
+            let soloDTOs = this._applyBatchLoadout(sets.solo, sets.playerHrid, soloLoadout, gameData);
+            let partyDTOs = this._applyBatchLoadout(sets.party, sets.playerHrid, dungeonLoadout, gameData);
+            // Max-tier food substitutes into whatever food a DTO carries right
+            // now, so it must run after the loadout swap, not before — the
+            // loadout overwrites food/drinks wholesale
+            // (applyLoadoutSnapshotToDTO), and food chosen for the pre-loadout
+            // gear would otherwise be silently thrown away by it while the
+            // "max-tier food" label kept claiming it ran.
+            if (useMaxTierFood) {
+                const soloSub = applyMaxTierFood(soloDTOs, gameData);
+                soloDTOs = soloSub.playerDTOs;
+                const partySub = applyMaxTierFood(partyDTOs, gameData);
+                partyDTOs = partySub.playerDTOs;
+                foodSwaps = [...soloSub.swaps, ...partySub.swaps];
+            }
             sweeps = [
-                {
-                    set: 'solo',
-                    playerDTOs: this._applyBatchLoadout(sets.solo, sets.playerHrid, soloLoadout, gameData),
-                    zones: selectedZones.filter((z) => !dungeonIds.has(z.zoneHrid)),
-                },
+                { set: 'solo', playerDTOs: soloDTOs, zones: selectedZones.filter((z) => !dungeonIds.has(z.zoneHrid)) },
                 {
                     set: 'party',
-                    playerDTOs: this._applyBatchLoadout(sets.party, sets.playerHrid, dungeonLoadout, gameData),
+                    playerDTOs: partyDTOs,
                     zones: selectedZones.filter((z) => dungeonIds.has(z.zoneHrid)),
                 },
             ].filter((sweep) => sweep.zones.length);
+        } else {
+            if (useMaxTierFood) {
+                const substituted = applyMaxTierFood(playerDTOs, gameData);
+                playerDTOs = substituted.playerDTOs;
+                foodSwaps = substituted.swaps;
+            }
+            sweeps = [{ set: null, playerDTOs, zones: selectedZones }];
         }
+        this._allZonesMaxTierFood = useMaxTierFood;
+        this._allZonesFoodSwaps = foodSwaps;
 
         const communityBuffs = getCommunityBuffs();
 

@@ -112,6 +112,8 @@ const mocks = vi.hoisted(() => ({
     editorLoadoutName: '',
     /** Every `applyLoadoutSnapshotToDTO` call, in order: {hrid, snapshotName} */
     loadoutApplications: [],
+    /** Optional snapshotName → food array, so a mocked loadout application can carry its own food */
+    loadoutFood: null,
 }));
 
 vi.mock('../../core/config.js', () => ({
@@ -336,6 +338,11 @@ vi.mock('./combat-sim-adapter.js', () => ({
     applyLoadoutSnapshotToDTO: (dto, snapshotName) => {
         mocks.loadoutApplications.push({ hrid: dto?.hrid, snapshotName });
         dto.appliedLoadout = snapshotName;
+        // Real applyLoadoutSnapshotToDTO overwrites food/drinks wholesale;
+        // opted into per test via mocks.loadoutFood so the max-tier-food
+        // ordering tests can prove the substitution sees the loadout's own
+        // food, not whatever the DTO carried before the loadout ran.
+        if (mocks.loadoutFood?.[snapshotName]) dto.food = mocks.loadoutFood[snapshotName];
         return true;
     },
 }));
@@ -7767,6 +7774,65 @@ describe('Solo zones + party dungeons: one ranked table', () => {
                 ]);
                 // The editor's own DTOs are never mutated — only sim-only copies are
                 expect(mocks.editedDTOs.player2.appliedLoadout).toBeUndefined();
+            });
+
+            /**
+             * Max-tier food substitutes into whatever food a DTO carries at
+             * the moment it runs. Run before the per-sweep loadout, it would
+             * upgrade the player's pre-loadout food, which the loadout then
+             * immediately overwrites — leaving the sweep simulated on the
+             * loadout's own (un-upgraded) food while _allZonesMaxTierFood /
+             * _allZonesFoodSwaps still claimed a max-tier swap happened.
+             */
+            describe('with Max Tier Food also on', () => {
+                const FOOD_DATA = {
+                    itemDetailMap: {
+                        '/items/cheese': {
+                            name: 'Cheese',
+                            categoryHrid: '/item_categories/food',
+                            consumableDetail: { hitpointRestore: 50, manapointRestore: 0 },
+                        },
+                        '/items/marsberry_cake': {
+                            name: 'Marsberry Cake',
+                            categoryHrid: '/item_categories/food',
+                            consumableDetail: { hitpointRestore: 240, manapointRestore: 0 },
+                        },
+                    },
+                };
+
+                beforeEach(() => {
+                    mocks.gameData = FOOD_DATA;
+                    mocks.itemPrices = { '/items/cheese': 100, '/items/marsberry_cake': 400 };
+                    mocks.loadoutFood = { 'Solo Build': [{ hrid: '/items/cheese' }, null, null] };
+                    ui._maxTierFoodEnabled = true;
+                });
+
+                afterEach(() => {
+                    mocks.gameData = { itemDetailMap: {} };
+                    mocks.itemPrices = {};
+                    mocks.loadoutFood = null;
+                    ui._maxTierFoodEnabled = false;
+                });
+
+                test('the substitution upgrades the loadout’s own food, not whatever the player wore before it', async () => {
+                    mocks.loadoutStore = { getAllSnapshots: () => [{ name: 'Solo Build', actionTypeHrid: null }] };
+                    ui._updateSoloPartyLoadoutPickers();
+                    pick(soloSelect(), 'Solo Build');
+
+                    await ui._onSimulateAllZones();
+
+                    const [soloRun] = mocks.allZonesArgsLog;
+                    const player2 = soloRun.playerDTOs.find((p) => p.hrid === 'player2');
+                    expect(player2.appliedLoadout).toBe('Solo Build');
+                    // Cheese (the loadout's own food) got upgraded — proves the
+                    // substitution ran on the post-loadout DTO, not a
+                    // pre-loadout one the loadout would have overwritten anyway.
+                    expect(player2.food[0].hrid).toBe('/items/marsberry_cake');
+                    // The label matches what actually ran, not a swap computed
+                    // on food the loadout then threw away.
+                    expect(ui._allZonesMaxTierFood).toBe(true);
+                    expect(ui._allZonesFoodSwaps.some((swap) => swap.playerHrid === 'player2')).toBe(true);
+                });
             });
 
             test('picking one leaves the other at its own selection', async () => {
