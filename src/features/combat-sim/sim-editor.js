@@ -563,11 +563,25 @@ export class SimEditor {
             this._editedPlayerInfo = [];
         }
 
-        const existingSlots = this._editedPlayerInfo.map((p) => {
-            const match = p.hrid.match(/player(\d+)/);
-            return match ? parseInt(match[1]) : 0;
-        });
-        let nextSlot = existingSlots.length > 0 ? Math.max(...existingSlots) + 1 : 1;
+        // The lowest vacant slot, not always max+1: removing player1 and then
+        // adding a member used to land the newcomer on player6, which
+        // Export Party then wrote as key "6" — a key parseShykaiImport's own
+        // multi-slot loop never looks at (it only ever reads "1" through
+        // "5"), so that player silently vanished on the next Import. Filling
+        // gaps first keeps every hrid this editor ever hands out inside the
+        // 1-5 range Export Party and parseShykaiImport agree on, as long as
+        // the party itself never exceeds five (already enforced by callers).
+        const usedSlots = new Set(
+            this._editedPlayerInfo
+                .map((p) => parseInt(p.hrid.match(/player(\d+)/)?.[1], 10))
+                .filter((n) => Number.isFinite(n))
+        );
+        let candidateSlot = 1;
+        const allocateSlot = () => {
+            while (usedSlots.has(candidateSlot)) candidateSlot++;
+            usedSlots.add(candidateSlot);
+            return candidateSlot;
+        };
 
         // Each skipped entry is tagged by the pasted export's own slot number
         // (1-5, see parseShykaiImport), not the hrid it lands under here —
@@ -579,12 +593,12 @@ export class SimEditor {
         for (let i = 0; i < players.length; i++) {
             const dto = players[i];
             const originalSlot = parseInt(dto.hrid?.match(/player(\d+)/)?.[1], 10);
-            dto.hrid = `player${nextSlot}`;
+            const slot = allocateSlot();
+            dto.hrid = `player${slot}`;
             if (Number.isFinite(originalSlot)) originalSlotToNewHrid[originalSlot] = dto.hrid;
             this._editedDTOs[dto.hrid] = dto;
             this._originalDTOs[dto.hrid] = structuredClone(dto);
-            this._editedPlayerInfo.push({ hrid: dto.hrid, name: names[i] || `Player ${nextSlot}` });
-            nextSlot++;
+            this._editedPlayerInfo.push({ hrid: dto.hrid, name: names[i] || `Player ${slot}` });
         }
 
         this._activeEditPlayer = this._editedPlayerInfo[this._editedPlayerInfo.length - 1]?.hrid;
@@ -1219,13 +1233,19 @@ export class SimEditor {
         if (!info.length) return;
         // Synced the same way _exportActivePlayer is — see its comment.
         const editedDTOs = this.getEditedDTOs() || {};
+        // Compacted to 1..N in tab order rather than trusting each player's
+        // own hrid numeral: parseShykaiImport's multi-slot loop only ever
+        // reads keys "1" through "5", and a slot number here that ever
+        // landed outside that range (a stale hrid from before
+        // importPlayers started filling gaps, say) would otherwise write a
+        // key re-import silently ignores.
         const exportObj = {};
+        let slot = 1;
         for (const { hrid, name } of info) {
             const dto = editedDTOs[hrid];
             if (!dto) continue;
-            const match = hrid.match(/player(\d+)/);
-            const slot = match ? match[1] : '1';
-            exportObj[slot] = JSON.stringify(buildShykaiExportPlayer(dto, name));
+            exportObj[String(slot)] = JSON.stringify(buildShykaiExportPlayer(dto, name));
+            slot++;
         }
         await this._exportToClipboard(
             JSON.stringify(exportObj),
@@ -3042,6 +3062,14 @@ export class SimEditor {
                 if (this._activeEditPlayer === hrid) {
                     this._activeEditPlayer = this._editedPlayerInfo[0]?.hrid || null;
                 }
+                // A later import can now land a new, unrelated player on this
+                // same hrid (see importPlayers' lowest-vacant-slot
+                // allocation) — none of this removed player's own notes or
+                // "you" status may survive to be misread as theirs.
+                if (this._selfHrid === hrid) this._selfHrid = null;
+                this._profileStatus = (this._profileStatus || []).filter((entry) => entry.hrid !== hrid);
+                this._importSkipped = (this._importSkipped || []).filter((entry) => entry.hrid !== hrid);
+                this._forgetAppliedLoadouts(hrid);
                 if (Object.keys(this._editedDTOs).length === 0) {
                     this._editedDTOs = {};
                     this._originalDTOs = {};
