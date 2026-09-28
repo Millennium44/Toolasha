@@ -503,6 +503,32 @@ describe('an import redraws the header stats and the chart, not just the list', 
     });
 });
 
+describe('the delete/import callbacks are safe against firing after cleanup()', () => {
+    // A delete or import click can still be resolving its own await
+    // (deleteRun()/importRuns()) when a character switch runs cleanup():
+    // cleanup() nulls `ui.history` synchronously, but the old history
+    // instance's in-flight call can still reach the end of its method and
+    // fire the callback afterwards. The callbacks close over `this` (the
+    // panel), so `this.history` inside them reads null at that point — this
+    // is what stops `this.history.update()` from throwing against a
+    // torn-down panel, on either path.
+    test('a delete callback invoked after cleanup() does not throw', () => {
+        const onDeleteCallback = ui.history.onDelete.mock.calls.at(-1)[0];
+
+        ui.cleanup();
+
+        expect(() => onDeleteCallback()).not.toThrow();
+    });
+
+    test('an import callback invoked after cleanup() does not throw', () => {
+        const onImportCallback = ui.history.onImport.mock.calls.at(-1)[0];
+
+        ui.cleanup();
+
+        expect(() => onImportCallback()).not.toThrow();
+    });
+});
+
 describe('history filters auto-scope to the run being shown', () => {
     let state;
 
