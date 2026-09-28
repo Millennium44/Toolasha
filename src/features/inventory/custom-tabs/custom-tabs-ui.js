@@ -1367,6 +1367,10 @@ export default class CustomTabsUI {
         // A restore left by a torn-down instance is this one's job once it actually has a strip
         // to act on (it reads the stored choice). Not earlier: an instance that never sees one
         // before its own teardown would otherwise drop the only restorer.
+        // A new tabs container is a freshly mounted inventory; a tablist React replaced inside
+        // the container we already watch is not
+        const inventoryRoot = tabList.closest('[class*="TabsComponent_tabsContainer"]') || tabList;
+        const isNewInventory = inventoryRoot !== this._invStripRoot;
         if (isNewStrip) cancelDetachedNativeRestore?.();
         if (isNewStrip) this._watchStrip(tabList);
 
@@ -1391,8 +1395,9 @@ export default class CustomTabsUI {
         }
         if (this._isActive) this._hideNativeSelection(tabList);
 
-        // A freshly mounted inventory is where "open on the Toolasha tab" applies
-        if (isNewStrip) this._applyDefaultTabSetting();
+        // A freshly mounted inventory is where "open on the Toolasha tab" applies. Not a tablist
+        // swap: the player may just have left the view for a native tab.
+        if (isNewInventory) this._applyDefaultTabSetting();
     }
 
     /**

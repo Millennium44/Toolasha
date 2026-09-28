@@ -585,11 +585,45 @@ describe('inventory with its own tab strip', () => {
         await flush();
         expect(ui._isActive).toBe(false);
 
-        // ...and the next time the inventory mounts, it opens on our tab again
-        fixture.remountStrip();
+        // ...and while React replaces only the tablist inside the same tabs container
+        const fresh = fixture.remountStrip();
+        renderStrips();
+        await flush();
+        expect(ui._isActive).toBe(false);
+        expect(fixture.gameSelected()).toBe('item_category_food');
+        expect(fixture.marked()).toEqual([fixture.tabFor('item_category_food')]);
+        expect(fresh.querySelector(STRIP_TAB)).not.toBeNull();
+        expect(fixture.order()[0]).toBe('toolasha');
+
+        // The next time the inventory itself mounts, it opens on our tab again
+        fixture.inv.remove();
+        const remounted = buildNewInventory(inventoryPanel, CATEGORY_ICONS, 'item_category_food');
         renderStrips();
         await flush();
         expect(ui._isActive).toBe(true);
+        expect(remounted.gameSelected()).toBe('inventory_all');
+    });
+
+    test('with the default on, a tablist swap alone does not reopen the view after the player left', async () => {
+        // No class-watcher pass at all: only the strip observer sees the swap
+        game.settings.inventoryTabs_defaultTab = true;
+        const { inventoryPanel } = buildCharacterPanel();
+        const fixture = buildNewInventory(inventoryPanel, CATEGORY_ICONS, 'item_category_currency');
+        ui = await startUI();
+        expect(ui._isActive).toBe(true);
+
+        fixture.tabFor('item_category_resource').click();
+        await flush();
+        expect(ui._isActive).toBe(false);
+
+        const fresh = fixture.remountStrip();
+        await flush();
+
+        expect(ui._isActive).toBe(false);
+        expect(fixture.gameSelected()).toBe('item_category_resource');
+        expect(fixture.marked()).toEqual([fixture.tabFor('item_category_resource')]);
+        expect(fresh.querySelector(STRIP_TAB)).not.toBeNull();
+        expect(fixture.order()[0]).toBe('toolasha');
     });
 
     test('an inventory mounting after the character panel moves the tab into its strip', async () => {
