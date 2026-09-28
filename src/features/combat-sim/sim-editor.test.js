@@ -1121,6 +1121,67 @@ describe('removing the loadout-selected player clears the panel-wide selection',
     });
 });
 
+/**
+ * The self/active guess `wasLoadoutTarget` used to make is wrong once a
+ * self-loaded player has switched tabs, applied the loadout to a *different*
+ * party member's build there, and switched back — the dropdown then targets
+ * that other tab, not self. `getLoadoutNameFor` (backed by
+ * `_loadoutAppliedNames`, the map `_applyLoadoutToDTO` actually writes to)
+ * knows the real target regardless of which tab is active when the player
+ * is later replaced or removed.
+ */
+describe('the loadout target can be a non-self tab, even with self loaded', () => {
+    test('replacing the tab the loadout was actually applied to clears the selection', () => {
+        const el = document.createElement('div');
+        const editor = new SimEditor({ editorEl: el });
+        editor.importPlayers([emptyDTO('player1'), emptyDTO('player2')], ['A', 'B']);
+        editor._selfHrid = 'player1';
+        bridge.snapshots = [{ name: 'Bruteforce', actionTypeHrid: '/action_types/combat' }];
+        // Apply the loadout while player2's tab is active — self stays player1
+        editor._activeEditPlayer = 'player2';
+        editor.applyLoadoutByName('Bruteforce');
+        expect(editor.getLoadoutNameFor('player2')).toBe('Bruteforce');
+        // Switch back to self's own tab before replacing player2, as a user
+        // checking someone else's build then returning to their own would
+        editor._activeEditPlayer = 'player1';
+
+        editor.replacePlayer('player2', emptyDTO('ignored'), 'Fresh B');
+
+        expect(editor.getSelectedLoadoutName()).toBe('');
+    });
+
+    test('removing that same tab also clears the selection', () => {
+        const el = document.createElement('div');
+        const editor = new SimEditor({ editorEl: el });
+        editor.importPlayers([emptyDTO('player1'), emptyDTO('player2')], ['A', 'B']);
+        editor._selfHrid = 'player1';
+        bridge.snapshots = [{ name: 'Bruteforce', actionTypeHrid: '/action_types/combat' }];
+        editor._activeEditPlayer = 'player2';
+        editor.applyLoadoutByName('Bruteforce');
+        editor._activeEditPlayer = 'player1';
+        editor.renderEditor();
+
+        el.querySelector('[data-remove-player="player2"]').click();
+
+        expect(editor.getSelectedLoadoutName()).toBe('');
+    });
+
+    test('replacing self while the loadout targets the other tab leaves the selection alone', () => {
+        const el = document.createElement('div');
+        const editor = new SimEditor({ editorEl: el });
+        editor.importPlayers([emptyDTO('player1'), emptyDTO('player2')], ['A', 'B']);
+        editor._selfHrid = 'player1';
+        bridge.snapshots = [{ name: 'Bruteforce', actionTypeHrid: '/action_types/combat' }];
+        editor._activeEditPlayer = 'player2';
+        editor.applyLoadoutByName('Bruteforce');
+        editor._activeEditPlayer = 'player1';
+
+        editor.replacePlayer('player1', emptyDTO('ignored'), 'Fresh A');
+
+        expect(editor.getSelectedLoadoutName()).toBe('Bruteforce');
+    });
+});
+
 describe('achievements section', () => {
     const damage = { typeHrid: '/buff_types/damage', ratioBoost: 0.02 };
     const wisdom = { typeHrid: '/buff_types/wisdom', flatBoost: 0.05 };
