@@ -332,6 +332,7 @@ vi.mock('./combat-sim-adapter.js', () => ({
     guildBuffMaxLevel: (detail) => detail?.maxLevel ?? 20,
     parseShykaiImport: () => null,
     buildShykaiExportPlayer: () => ({}),
+    recomputeLevelGapDebuffs: () => {},
     // Stands in for the real loadout-applying mutation: tags the DTO with
     // which loadout was "applied" (and records the call) rather than
     // resolving real equipment, which these tests have no game data for.

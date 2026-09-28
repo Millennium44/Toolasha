@@ -18,6 +18,7 @@ import {
     readGuildShrineLevels,
     readGuildShrineCaps,
     readGuildShrineSnapshot,
+    recomputeLevelGapDebuffs,
 } from './combat-sim-adapter.js';
 import bundledLoadoutSnapshot from '../combat/loadout-snapshot.js';
 import { loadoutSnapshot } from '../../utils/bundle-bridge.js';
@@ -245,6 +246,31 @@ export class SimEditor {
             }
         }
     }
+
+    /**
+     * Recompute every loaded player's level-gap debuff for the roster as it
+     * stands right now.
+     *
+     * The debuff is measured against whoever in the roster is highest level
+     * (see `recomputeLevelGapDebuffs`), so replacing, adding or removing a
+     * player can change who that is — or whether there is a party to be
+     * penalized in at all — and every other member's `debuffOnLevelGap` left
+     * over from the *old* roster would pay, or dodge, a penalty that no
+     * longer applies, skewing every XP/drop/profit figure downstream of it.
+     *
+     * Run on `_editedDTOs` and `_originalDTOs` independently, not the same
+     * numbers copied across: a player whose skill levels were hand-edited
+     * away from their loaded build has a different combat level in each, and
+     * each map's own debuff must be measured against its own roster's own
+     * highest level. Not user-editable through this panel, so keeping the
+     * two in lockstep here never reads as "(edited)" — see `generateSimLabel`.
+     * @private
+     */
+    _recomputeLevelGapDebuffs() {
+        if (this._editedDTOs) recomputeLevelGapDebuffs(Object.values(this._editedDTOs));
+        if (this._originalDTOs) recomputeLevelGapDebuffs(Object.values(this._originalDTOs));
+    }
+
     /**
      * Adopt whatever the game has changed since the editor was built, and
      * redraw if anything moved.
@@ -581,6 +607,9 @@ export class SimEditor {
         this._editorInitialized = true;
         this._selectedLoadoutName = '';
         this._scenarioToken++;
+        // The imported players may have moved who is highest level, or turned
+        // a solo build into a party — see _recomputeLevelGapDebuffs.
+        this._recomputeLevelGapDebuffs();
 
         this.renderEditor();
     }
@@ -639,6 +668,11 @@ export class SimEditor {
         this._activeEditPlayer = hrid;
         this._editorInitialized = true;
         this._scenarioToken++;
+        // The replaced player may be a different level than whoever they took
+        // the slot from, which can move who in the roster is highest (or lift
+        // a solo build into a party for the first time) — every other
+        // member's stale, old-roster debuff must not survive that unchanged.
+        this._recomputeLevelGapDebuffs();
 
         this.renderEditor();
         return true;
@@ -3005,6 +3039,10 @@ export class SimEditor {
                     this.renderEditor();
                     return;
                 }
+                // The remaining roster may no longer have the same highest
+                // level (or may have dropped to a solo build entirely) —
+                // see _recomputeLevelGapDebuffs.
+                this._recomputeLevelGapDebuffs();
                 this.renderEditor();
             });
         });

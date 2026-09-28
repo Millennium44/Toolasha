@@ -14,6 +14,8 @@
  */
 
 import { describe, test, expect, beforeEach, afterEach, vi } from 'vitest';
+import { partyLevelGaps } from '../../utils/dungeon-level-gap.js';
+import { combatLevel } from '../../utils/combat-level.js';
 
 const game = vi.hoisted(() => ({
     charId: 'me',
@@ -96,6 +98,24 @@ vi.mock('./combat-sim-adapter.js', () => ({
     readGuildShrineLevels: () => ({ ...guild.levels }),
     readGuildShrineCaps: () => ({ ...guild.caps }),
     readGuildShrineSnapshot: () => ({ levels: { ...guild.levels }, ...guild.snapshot }),
+    // The real one, not a stand-in: the level-gap tests below care about the
+    // actual arithmetic, not just that some function got called.
+    recomputeLevelGapDebuffs: (players) => {
+        const list = Array.isArray(players) ? players.filter(Boolean) : [];
+        if (!list.length) return;
+        const levelOf = (p) =>
+            combatLevel({
+                stamina: p.staminaLevel,
+                intelligence: p.intelligenceLevel,
+                attack: p.attackLevel,
+                defense: p.defenseLevel,
+                melee: p.meleeLevel,
+                ranged: p.rangedLevel,
+                magic: p.magicLevel,
+            }).exact;
+        const gaps = partyLevelGaps(list.map(levelOf));
+        list.forEach((player, index) => (player.debuffOnLevelGap = gaps[index] ?? 0));
+    },
 }));
 
 // This bundle's own (direct-import) copy of the store. In the packaged build it
@@ -1582,13 +1602,16 @@ describe('replacing one party member via import', () => {
             .filter((hrid) => hrid !== 'player3')
             .map((hrid) => structuredClone(editor._editedDTOs[hrid]));
 
-        const ok = editor.replacePlayer('player3', { ...emptyDTO('ignored'), attackLevel: 999 }, 'Replacement', []);
+        // Same level as everyone else, so the replacement itself introduces no
+        // level-gap recompute for this test to have to account for — that is
+        // covered on its own in "level-gap debuffs follow the roster" below.
+        const ok = editor.replacePlayer('player3', { ...emptyDTO('ignored'), marker: 'new-build' }, 'Replacement', []);
 
         expect(ok).toBe(true);
         // Same five slots, same order
         expect(editor._editedPlayerInfo.map((p) => p.hrid)).toEqual(hridsBefore);
         expect(editor._editedPlayerInfo.find((p) => p.hrid === 'player3').name).toBe('Replacement');
-        expect(editor._editedDTOs.player3.attackLevel).toBe(999);
+        expect(editor._editedDTOs.player3.marker).toBe('new-build');
         expect(editor._editedDTOs.player3.hrid).toBe('player3'); // the imported DTO takes the slot's own hrid
 
         const othersAfter = hridsBefore.filter((hrid) => hrid !== 'player3').map((hrid) => editor._editedDTOs[hrid]);
@@ -1736,5 +1759,66 @@ describe('replacing one party member via import', () => {
 
         expect(editor._editedPlayerInfo.length).toBe(3);
         expect(el.querySelector('#mwi-csim-import-error').textContent).toContain('replace a member instead');
+    });
+});
+
+/**
+ * Level-gap debuffs follow the roster.
+ *
+ * The debuff is measured against whoever in the party is highest level, so
+ * replacing, adding or removing a player can move who that is — and every
+ * other member's `debuffOnLevelGap`, computed for the *old* roster, must not
+ * survive the change unchanged. This is also the fix for "Export Party →
+ * Import drops every penalty": the export carries no `debuffOnLevelGap` at
+ * all (parseShykaiImport always inits it to 0), and importPlayers recomputes
+ * it fresh from the actually-imported roster's own levels rather than
+ * carrying a stale — or, on straight import, entirely absent — value.
+ */
+describe('level-gap debuffs follow the roster', () => {
+    const highLevelDTO = (hrid) => ({ ...emptyDTO(hrid), attackLevel: 100, meleeLevel: 100 });
+
+    test('importing a party recomputes every member — the "Export Party → Import" round trip', () => {
+        const el = document.createElement('div');
+        const editor = new SimEditor({ editorEl: el });
+
+        // As a fresh import always arrives: parseShykaiImport never carries
+        // debuffOnLevelGap, so every DTO starts at 0 regardless of what the
+        // export (if any) said.
+        editor.importPlayers(
+            [
+                { ...emptyDTO('low'), debuffOnLevelGap: 0 },
+                { ...highLevelDTO('high'), debuffOnLevelGap: 0 },
+            ],
+            ['Low', 'High']
+        );
+
+        const low = editor._editedDTOs.player1;
+        const high = editor._editedDTOs.player2;
+        expect(low.debuffOnLevelGap).toBeLessThan(0);
+        expect(high.debuffOnLevelGap).toBe(0);
+    });
+
+    test('replacing a player with a much higher level one recomputes the rest of the party', () => {
+        const el = document.createElement('div');
+        const editor = new SimEditor({ editorEl: el });
+        editor.importPlayers([emptyDTO('a'), emptyDTO('b')], ['A', 'B']);
+        expect(editor._editedDTOs.player1.debuffOnLevelGap).toBe(0); // equal levels: no gap yet
+
+        editor.replacePlayer('player2', highLevelDTO('ignored'), 'Replacement');
+
+        // player1 is now far below the replacement — the penalty must show
+        // up on the untouched player, not just the one that was replaced.
+        expect(editor._editedDTOs.player1.debuffOnLevelGap).toBeLessThan(0);
+    });
+
+    test('removing the highest-level player lifts the penalty off whoever remains', () => {
+        const el = document.createElement('div');
+        const editor = new SimEditor({ editorEl: el });
+        editor.importPlayers([emptyDTO('low'), highLevelDTO('high')], ['Low', 'High']);
+        expect(editor._editedDTOs.player1.debuffOnLevelGap).toBeLessThan(0);
+
+        el.querySelector('[data-remove-player="player2"]').click();
+
+        expect(editor._editedDTOs.player1.debuffOnLevelGap).toBe(0);
     });
 });

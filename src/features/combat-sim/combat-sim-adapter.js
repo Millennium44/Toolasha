@@ -1220,6 +1220,26 @@ function calcCombatLevel(dto) {
 }
 
 /**
+ * Recompute every player's level-gap debuff for a roster, in place.
+ *
+ * This is the same arithmetic `buildAllPlayerDTOs()` applies below when it
+ * first builds a party — extracted here so the sim editor can re-run it
+ * after replacing, adding or removing a player. The debuff is measured
+ * against whoever in the roster is highest level, so any of those three
+ * changes can move who that is (or whether there even is anyone to be below
+ * any more); leaving every other member's `debuffOnLevelGap` at whatever it
+ * was for the *old* roster pays, or dodges, a penalty that no longer
+ * applies, and every XP/drop/profit figure downstream of it with it.
+ * @param {Array<Object>} players - Player DTOs, mutated in place; falsy entries are skipped
+ */
+export function recomputeLevelGapDebuffs(players) {
+    const list = Array.isArray(players) ? players.filter(Boolean) : [];
+    if (!list.length) return;
+    const gaps = partyLevelGaps(list.map((p) => calcCombatLevel(p)));
+    list.forEach((player, index) => (player.debuffOnLevelGap = gaps[index] ?? 0));
+}
+
+/**
  * Build player DTOs for all party members (or solo if not in a party).
  * Auto-detects party from characterData and loads cached profiles.
  *
@@ -1338,10 +1358,7 @@ export async function buildAllPlayerDTOs() {
     // in utils/dungeon-level-gap.js — kept in one place because the two used to
     // disagree about the same party, the sim predicting a fraction of the loot
     // and the panel afterwards calling that same player unlucky for it.
-    if (players.length > 1) {
-        const gaps = partyLevelGaps(players.map((p) => calcCombatLevel(p)));
-        players.forEach((player, index) => (player.debuffOnLevelGap = gaps[index] ?? 0));
-    }
+    recomputeLevelGapDebuffs(players);
 
     // Build playerInfo: hrid → name mapping in player order, for tab rendering
     const playerInfo = players.map((p, i) => ({ hrid: p.hrid, name: playerNames[i] }));

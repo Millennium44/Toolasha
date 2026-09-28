@@ -181,6 +181,7 @@ vi.mock('./combat-sim-adapter.js', () => ({
     },
     parseShykaiImport: () => null,
     buildShykaiExportPlayer: () => ({}),
+    recomputeLevelGapDebuffs: () => {},
 }));
 
 vi.mock('./combat-sim-runner.js', () => ({
