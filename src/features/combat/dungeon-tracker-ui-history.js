@@ -709,6 +709,13 @@ class DungeonTrackerUIHistory {
             alert(`Could not read the file: ${error.message}`);
             return;
         }
+        // Re-checked here, not just by the `change` handler that called this:
+        // `file.text()` is itself an await a teardown can land inside — a
+        // character switch mid-read disposes this section while a large file
+        // is still being decoded — and `this.state`/`this.onImportCallback`
+        // describe whoever the panel belongs to now, not whoever picked the
+        // file.
+        if (this.disposed) return;
         await this.importBackupText(text);
     }
 
@@ -955,7 +962,7 @@ class DungeonTrackerUIHistory {
                     padding: 4px 0;
                     border-bottom: 1px solid #333;
                     font-size: 10px;
-                " data-run-timestamp="${run.timestamp}">
+                " data-run-timestamp="${this.escapeHtml(run.timestamp)}">
                     <span style="color: #aaa; min-width: 25px;">#${runNumber}</span>
                     <span style="color: #fff; flex: 1; text-align: center;">
                         ${timeStr}${timeMark} <span style="color: #888; font-size: 9px;">(${dateTime})</span>

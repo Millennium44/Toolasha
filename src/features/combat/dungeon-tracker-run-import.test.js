@@ -238,6 +238,52 @@ describe('planDungeonRunImport', () => {
         const plan = planDungeonRunImport([good]);
         expect(plan.valid[0]).toBe(good);
     });
+
+    test('a numeric-string duration is converted to a real number, not kept as a string', () => {
+        const stringy = run({ duration: '300000' });
+
+        const plan = planDungeonRunImport([stringy]);
+
+        expect(plan.rejected).toEqual([]);
+        expect(plan.valid[0].duration).toBe(300_000);
+        expect(typeof plan.valid[0].duration).toBe('number');
+    });
+
+    test('a numeric-string duration would otherwise concatenate in a reducer — proof the type actually matters', () => {
+        const stringy = run({ duration: '300000' });
+        const plan = planDungeonRunImport([stringy]);
+
+        let total = 0;
+        total += plan.valid[0].duration;
+        total += 100_000;
+
+        expect(total).toBe(400_000);
+    });
+
+    test('a timestamp with a legacy-date "timezone comment" carrying markup is canonicalized to plain ISO', () => {
+        // V8's non-ISO Date parser ignores the parenthesized trailing
+        // comment's content entirely (it is free-form "timezone name" text),
+        // so this is a real, currently-shipping instant — 1970-01-01T00:00Z —
+        // spelled with an HTML/attribute-breaking payload riding along in a
+        // part of the string nothing checks.
+        const malicious = run({
+            timestamp: 'Thu Jan 01 1970 00:00:00 GMT+0000 ("><img src=x onerror=alert(1)>)',
+        });
+
+        const plan = planDungeonRunImport([malicious]);
+
+        expect(plan.rejected).toEqual([]);
+        expect(plan.valid[0].timestamp).toBe('1970-01-01T00:00:00.000Z');
+        expect(plan.valid[0].timestamp).not.toMatch(/[<>"]/);
+    });
+
+    test('a timestamp that cannot be parsed at all is rejected, not canonicalized to garbage', () => {
+        const bad = run({ timestamp: 'not a date' });
+        const plan = planDungeonRunImport([bad]);
+
+        expect(plan.valid).toEqual([]);
+        expect(plan.rejected).toEqual([{ run: bad, reason: 'missing or unusable timestamp' }]);
+    });
 });
 
 describe('dungeonRunsBackupFilename', () => {

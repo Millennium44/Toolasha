@@ -193,6 +193,25 @@ describe('team group headers', () => {
     });
 });
 
+describe('the run-timestamp attribute is escaped', () => {
+    test('a run timestamp carrying quotes and markup cannot break out of the data attribute', () => {
+        const history = new DungeonTrackerUIHistory(freshState('team'), (ms) => `${ms}ms`);
+        const malicious = run('Aster,Briar');
+        // What a shared/hand-edited backup's run.timestamp could hold if
+        // nothing canonicalized it on import (see dungeon-tracker-run-import.js) —
+        // the render sink has to refuse this on its own regardless
+        malicious.timestamp = '1970-01-01T00:00:00.000Z"><img src=x onerror=alert(1)>';
+
+        const runList = render(history, history.groupByTeam([malicious]));
+
+        // No stray element escaped into real markup
+        expect(runList.querySelector('img')).toBeNull();
+        // The attribute round-trips the exact original text — escaping, not truncation
+        const row = runList.querySelector('[data-run-timestamp]');
+        expect(row.dataset.runTimestamp).toBe(malicious.timestamp);
+    });
+});
+
 describe('the CSV export', () => {
     test('no runs is no rows, not a header-only file pretending otherwise', () => {
         expect(buildRunHistoryRows([])).toEqual([]);
@@ -622,6 +641,32 @@ describe('dispose', () => {
         await new Promise((resolve) => setTimeout(resolve, 0));
 
         expect(dungeonTrackerStorage.importRuns).toHaveBeenCalledWith([storedRun()]);
+    });
+
+    test('a change on the input after it was disposed while the file was still being read does not import', async () => {
+        const history = new DungeonTrackerUIHistory(freshState('team'), (ms) => `${ms}ms`);
+        history.triggerImportBackup();
+        const input = document.querySelector('input[type="file"]');
+
+        // The `change` handler's own guard passes (not disposed yet); dispose
+        // lands while `file.text()` is still resolving, the way a character
+        // switch mid-read would
+        let resolveText;
+        const file = {
+            text: () =>
+                new Promise((resolve) => {
+                    resolveText = resolve;
+                }),
+        };
+        Object.defineProperty(input, 'files', { value: [file], configurable: true });
+        input.dispatchEvent(new Event('change'));
+        await Promise.resolve();
+
+        history.dispose();
+        resolveText(JSON.stringify(backupEnvelope([storedRun()])));
+        await new Promise((resolve) => setTimeout(resolve, 0));
+
+        expect(dungeonTrackerStorage.importRuns).not.toHaveBeenCalled();
     });
 });
 
