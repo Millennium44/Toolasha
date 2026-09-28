@@ -93,6 +93,9 @@ const {
     AVERAGE_BASELINE_KEY,
     swapMonthDay,
     rederiveSwappedRun,
+    minMaxOf,
+    canonicalRunIdentity,
+    runIdentity,
 } = await import('./dungeon-tracker-storage.js');
 
 const { mergeForKey } = await import('../../utils/sync-merge-registry.js');
@@ -686,6 +689,48 @@ describe('importRuns', () => {
         expect(game.writes.length).toBeGreaterThan(writesBefore);
         expect(game.saved.unifiedRuns[RUNS_KEY]).toEqual([importedRun()]);
     });
+
+    describe('identity comparison is canonical on both sides', () => {
+        test('a stored run spelled without milliseconds is recognized as the same run as a canonical import', async () => {
+            // What an import written before timestamps were canonicalized on
+            // the way in could already have left sitting in storage — a
+            // technically-valid ISO string that is not the exact shape
+            // `new Date(...).toISOString()` always produces
+            const nonCanonical = importedRun({ timestamp: '2026-01-01T00:00:00Z' });
+            seedRuns([nonCanonical]);
+
+            // The same run, re-exported and re-imported today: canonical
+            const canonical = importedRun({ timestamp: '2026-01-01T00:00:00.000Z' });
+            const result = await dungeonTrackerStorage.importRuns([canonical]);
+
+            expect(result).toEqual({ added: 0, alreadyPresent: 1, ok: true });
+            expect(await dungeonTrackerStorage.getAllRuns()).toEqual([nonCanonical]);
+        });
+
+        test('a run deleted while stored non-canonically is not resurrected by a canonically-spelled re-import', async () => {
+            const nonCanonical = importedRun({ timestamp: '2026-01-01T00:00:00Z' });
+            seedRuns([nonCanonical]);
+            await dungeonTrackerStorage.deleteRun('2026-01-01T00:00:00Z');
+            expect(await dungeonTrackerStorage.getAllRuns()).toEqual([]);
+
+            const canonical = importedRun({ timestamp: '2026-01-01T00:00:00.000Z' });
+            const result = await dungeonTrackerStorage.importRuns([canonical]);
+
+            expect(result).toEqual({ added: 0, alreadyPresent: 1, ok: true });
+            expect(await dungeonTrackerStorage.getAllRuns()).toEqual([]);
+        });
+
+        test('a genuinely different run at a nearby but distinct instant still imports', async () => {
+            seedRuns([importedRun({ timestamp: '2026-01-01T00:00:00.000Z' })]);
+
+            const result = await dungeonTrackerStorage.importRuns([
+                importedRun({ timestamp: '2026-01-01T00:00:01.000Z' }),
+            ]);
+
+            expect(result).toEqual({ added: 1, alreadyPresent: 0, ok: true });
+            expect(await dungeonTrackerStorage.getAllRuns()).toHaveLength(2);
+        });
+    });
 });
 
 describe('importRuns racing another mutator on the same cold load', () => {
@@ -949,6 +994,43 @@ describe('mergeRuns', () => {
     });
 });
 
+describe('minMaxOf', () => {
+    test('finds the min and max without spreading — no RangeError on a huge list', () => {
+        const numbers = Array.from({ length: 150_000 }, (_, i) => i);
+        expect(minMaxOf(numbers)).toEqual({ min: 0, max: 149_999 });
+    });
+
+    test('a single-element list is both its own min and max', () => {
+        expect(minMaxOf([42])).toEqual({ min: 42, max: 42 });
+    });
+
+    test('matches Math.min/Math.max on an ordinary small list', () => {
+        const numbers = [5, 1, 9, 3, 7];
+        expect(minMaxOf(numbers)).toEqual({ min: Math.min(...numbers), max: Math.max(...numbers) });
+    });
+});
+
+describe('canonicalRunIdentity', () => {
+    test('two spellings of the same instant produce the same identity', () => {
+        const a = { teamKey: 'A,B', timestamp: '2026-01-01T00:00:00Z', duration: 500 };
+        const b = { teamKey: 'A,B', timestamp: '2026-01-01T00:00:00.000Z', duration: 500 };
+        expect(canonicalRunIdentity(a)).toBe(canonicalRunIdentity(b));
+    });
+
+    test('differs from runIdentity exactly when the spelling is non-canonical', () => {
+        const nonCanonical = { teamKey: 'A,B', timestamp: '2026-01-01T00:00:00Z', duration: 500 };
+        expect(canonicalRunIdentity(nonCanonical)).not.toBe(runIdentity(nonCanonical));
+
+        const canonical = { teamKey: 'A,B', timestamp: '2026-01-01T00:00:00.000Z', duration: 500 };
+        expect(canonicalRunIdentity(canonical)).toBe(runIdentity(canonical));
+    });
+
+    test('an unparsable timestamp falls back to the raw value, same as runIdentity', () => {
+        const run = { teamKey: 'A,B', timestamp: 'not a date', duration: 500 };
+        expect(canonicalRunIdentity(run)).toBe(runIdentity(run));
+    });
+});
+
 describe('getFilteredRuns', () => {
     beforeEach(() => {
         game.saved = {};
@@ -1013,6 +1095,36 @@ describe('getAllTeamStats', () => {
         expect(stats.avgTime).toBe(200);
         expect(stats.bestTime).toBe(100);
         expect(stats.worstTime).toBe(300);
+    });
+
+    test('a "__proto__" teamKey is its own group, not a crash or a leak onto Object.prototype', async () => {
+        seedRuns([
+            { teamKey: '__proto__', duration: 100 },
+            { teamKey: '__proto__', duration: 300 },
+            { teamKey: 'A,B', duration: 200 },
+        ]);
+
+        const stats = await dungeonTrackerStorage.getAllTeamStats();
+
+        expect(stats).toHaveLength(2);
+        const proto = stats.find((s) => s.teamKey === '__proto__');
+        expect(proto).toMatchObject({ runCount: 2, bestTime: 100, worstTime: 300 });
+        expect(Object.prototype.push).toBeUndefined();
+    });
+
+    test('a single team with a very large number of runs does not throw (min/max spread crash)', async () => {
+        const runs = Array.from({ length: 150_000 }, (_, i) => ({
+            teamKey: 'A,B',
+            duration: 1000 + (i % 500),
+        }));
+        seedRuns(runs);
+
+        const stats = await dungeonTrackerStorage.getAllTeamStats();
+
+        expect(stats).toHaveLength(1);
+        expect(stats[0].runCount).toBe(150_000);
+        expect(stats[0].bestTime).toBe(1000);
+        expect(stats[0].worstTime).toBe(1499);
     });
 });
 

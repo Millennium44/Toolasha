@@ -186,15 +186,60 @@ describe('validateImportedRun', () => {
         expect(validateImportedRun(run({ timestamp: 'not a date' })).ok).toBe(false);
     });
 
-    test('rejects a timestamp more than a day in the future', () => {
+    test('rejects a timestamp more than a few minutes in the future', () => {
         const now = Date.parse('2026-09-27T00:00:00.000Z');
-        const justUnder = new Date(now + MAX_FUTURE_TIMESTAMP_MS - 60_000).toISOString();
-        const justOver = new Date(now + MAX_FUTURE_TIMESTAMP_MS + 60_000).toISOString();
+        const justUnder = new Date(now + MAX_FUTURE_TIMESTAMP_MS - 10_000).toISOString();
+        const justOver = new Date(now + MAX_FUTURE_TIMESTAMP_MS + 10_000).toISOString();
 
         expect(validateImportedRun(run({ timestamp: justUnder }), MAX_PLAUSIBLE_RUN_MS, now).ok).toBe(true);
         const result = validateImportedRun(run({ timestamp: justOver }), MAX_PLAUSIBLE_RUN_MS, now);
         expect(result.ok).toBe(false);
         expect(result.reason).toMatch(/future/);
+    });
+
+    test('the future tolerance is ordinary clock skew, not a window to outrun "delete all history"', () => {
+        // A run stamped a day ahead used to sail through: it is always
+        // "newer" than a clear that just ran, however far in the past that
+        // clear is, so a backup with its timestamps shifted forward by hours
+        // could resurrect everything a clear removed the moment it was
+        // imported. Five minutes of tolerance cannot usefully do that.
+        expect(MAX_FUTURE_TIMESTAMP_MS).toBeLessThanOrEqual(5 * 60 * 1000);
+    });
+
+    test('rejects a non-integer tier — a run’s tier reaches an HTML attribute verbatim downstream', () => {
+        expect(validateImportedRun(run({ tier: '1' })).ok).toBe(false);
+        expect(validateImportedRun(run({ tier: 1.5 })).ok).toBe(false);
+        expect(validateImportedRun(run({ tier: '" onpointerover="alert(1)' })).ok).toBe(false);
+        expect(validateImportedRun(run({ tier: {} })).ok).toBe(false);
+    });
+
+    test('an integer tier, or no tier at all, both pass', () => {
+        expect(validateImportedRun(run({ tier: 0 })).ok).toBe(true);
+        expect(validateImportedRun(run({ tier: 2 })).ok).toBe(true);
+        expect(validateImportedRun(run({ tier: null })).ok).toBe(true);
+        expect(validateImportedRun(run({ tier: undefined })).ok).toBe(true);
+    });
+
+    test('rejects a non-string or empty teamKey', () => {
+        expect(validateImportedRun(run({ teamKey: 42 })).ok).toBe(false);
+        expect(validateImportedRun(run({ teamKey: ['Aster', 'Briar'] })).ok).toBe(false);
+        expect(validateImportedRun(run({ teamKey: {} })).ok).toBe(false);
+        expect(validateImportedRun(run({ teamKey: '' })).ok).toBe(false);
+        expect(validateImportedRun(run({ teamKey: '   ' })).ok).toBe(false);
+    });
+
+    test('a real teamKey, or no teamKey at all (a solo run), both pass', () => {
+        expect(validateImportedRun(run({ teamKey: 'Aster,Briar' })).ok).toBe(true);
+        expect(validateImportedRun(run({ teamKey: undefined })).ok).toBe(true);
+        expect(validateImportedRun(run({ teamKey: null })).ok).toBe(true);
+    });
+
+    test('"__proto__" is an unusual but perfectly valid teamKey string — not rejected here', () => {
+        // The structural fix (a Map, not a plain object, in groupByTeam and
+        // getAllTeamStats) is what makes this safe to group by; it is not
+        // this function's job to guess which strings a dictionary implementation
+        // elsewhere might mishandle.
+        expect(validateImportedRun(run({ teamKey: '__proto__' })).ok).toBe(true);
     });
 });
 

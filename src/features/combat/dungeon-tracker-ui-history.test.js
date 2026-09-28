@@ -26,6 +26,15 @@ vi.mock('./dungeon-tracker-storage.js', () => ({
     filterRunsForCharacter: (runs) => runs,
     currentCharacter: () => world.character,
     runIdentity: (run) => `${run?.teamKey ?? ''}|${run?.timestamp ?? ''}|${run?.duration ?? ''}`,
+    minMaxOf: (numbers) => {
+        let min = Infinity;
+        let max = -Infinity;
+        for (const value of numbers) {
+            if (value < min) min = value;
+            if (value > max) max = value;
+        }
+        return { min, max };
+    },
     runTime: (run) => {
         const time = new Date(run?.timestamp).getTime();
         return Number.isFinite(time) ? time : null;
@@ -209,6 +218,22 @@ describe('the run-timestamp attribute is escaped', () => {
         // The attribute round-trips the exact original text — escaping, not truncation
         const row = runList.querySelector('[data-run-timestamp]');
         expect(row.dataset.runTimestamp).toBe(malicious.timestamp);
+    });
+});
+
+describe('calculateStatsForRuns on a very large group', () => {
+    test('does not throw (Math.min/max spread would RangeError around six figures)', () => {
+        const history = new DungeonTrackerUIHistory(freshState('team'), (ms) => `${ms}ms`);
+        const runs = Array.from({ length: 150_000 }, (_, i) => ({ duration: 1000 + (i % 500) }));
+
+        let stats;
+        expect(() => {
+            stats = history.calculateStatsForRuns(runs);
+        }).not.toThrow();
+
+        expect(stats.totalRuns).toBe(150_000);
+        expect(stats.fastestTime).toBe(1000);
+        expect(stats.slowestTime).toBe(1499);
     });
 });
 
@@ -677,6 +702,78 @@ describe('dungeon group headers', () => {
 
         expect(runList.textContent).toContain('Pirate Cove');
         expect(runList.querySelector('.mwi-dt-player-name')).toBeNull();
+    });
+});
+
+describe('groupByTeam and groupByDungeon are safe against __proto__-shaped keys', () => {
+    test('a run whose teamKey is "__proto__" gets its own group, not Object.prototype', () => {
+        const history = new DungeonTrackerUIHistory(freshState('team'), (ms) => `${ms}ms`);
+
+        expect(() => history.groupByTeam([run('__proto__')])).not.toThrow();
+        const groups = history.groupByTeam([run('__proto__')]);
+
+        expect(groups).toHaveLength(1);
+        expect(groups[0].key).toBe('__proto__');
+        expect(groups[0].runs).toHaveLength(1);
+        // Nothing leaked onto the shared prototype for the next group built
+        expect(Object.prototype.runs).toBeUndefined();
+    });
+
+    test('a run whose dungeonName is "__proto__" gets its own group, not Object.prototype', () => {
+        const history = new DungeonTrackerUIHistory(freshState('dungeon'), (ms) => `${ms}ms`);
+
+        expect(() => history.groupByDungeon([run('Aster', '__proto__')])).not.toThrow();
+        const groups = history.groupByDungeon([run('Aster', '__proto__')]);
+
+        expect(groups).toHaveLength(1);
+        expect(groups[0].key).toBe('__proto__');
+        expect(Object.prototype.runs).toBeUndefined();
+    });
+
+    test('"constructor" and "toString" teamKeys are also ordinary groups', () => {
+        const history = new DungeonTrackerUIHistory(freshState('team'), (ms) => `${ms}ms`);
+        const runs = [run('constructor'), run('toString'), run('Aster,Briar')];
+
+        const groups = history.groupByTeam(runs);
+
+        expect(groups.map((g) => g.key).sort()).toEqual(['Aster,Briar', 'constructor', 'toString']);
+        expect(groups.every((g) => g.runs.length === 1)).toBe(true);
+    });
+});
+
+describe('the tier filter is built with DOM properties, not innerHTML', () => {
+    test('a malicious tier value cannot inject an attribute or element', async () => {
+        dungeonTrackerStorage.getAllRuns.mockResolvedValue([
+            run('Aster,Briar', 'Chimerical Den'),
+            { ...run('Aster,Briar', 'Chimerical Den'), tier: '"><img src=x onerror=alert(1)>' },
+        ]);
+        const history = new DungeonTrackerUIHistory(freshState('team'), (ms) => `${ms}ms`);
+        const container = buildFilterContainer();
+
+        await history.update(container);
+
+        const tierFilter = container.querySelector('#mwi-dt-filter-tier');
+        expect(tierFilter.querySelector('img')).toBeNull();
+        // The malicious value still becomes one ordinary option, whose text
+        // and value carry it verbatim rather than losing it to escaping
+        const injected = [...tierFilter.options].find((o) => o.value.includes('img'));
+        expect(injected).toBeDefined();
+        expect(injected.textContent).toBe('T"><img src=x onerror=alert(1)>');
+    });
+
+    test('an ordinary set of numeric tiers still renders the same options as before', async () => {
+        dungeonTrackerStorage.getAllRuns.mockResolvedValue([
+            { ...run('Aster,Briar', 'Chimerical Den'), tier: 0 },
+            { ...run('Aster,Briar', 'Chimerical Den'), tier: 2 },
+        ]);
+        const history = new DungeonTrackerUIHistory(freshState('team'), (ms) => `${ms}ms`);
+        const container = buildFilterContainer();
+
+        await history.update(container);
+
+        const tierFilter = container.querySelector('#mwi-dt-filter-tier');
+        const labels = [...tierFilter.options].map((o) => o.textContent);
+        expect(labels).toEqual(['All Tiers', 'T0', 'T2']);
     });
 });
 

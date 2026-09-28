@@ -85,6 +85,15 @@ vi.mock('./dungeon-tracker-storage.js', () => ({
     },
     filterRunsForCharacter: (runs) => runs,
     currentCharacter: () => ({ id: world.characterId, name: 'Marketcow' }),
+    minMaxOf: (numbers) => {
+        let min = Infinity;
+        let max = -Infinity;
+        for (const value of numbers) {
+            if (value < min) min = value;
+            if (value > max) max = value;
+        }
+        return { min, max };
+    },
 }));
 vi.mock('../../core/data-manager.js', () => ({
     default: {

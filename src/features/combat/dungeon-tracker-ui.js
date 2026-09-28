@@ -11,7 +11,11 @@ import DungeonTrackerUIChart from './dungeon-tracker-ui-chart.js';
 import DungeonTrackerUIHistory from './dungeon-tracker-ui-history.js';
 import DungeonTrackerUIInteractions from './dungeon-tracker-ui-interactions.js';
 import DungeonRoiBoardUI from './dungeon-roi-board-ui.js';
-import dungeonTrackerStorage, { filterRunsForCharacter, currentCharacter } from './dungeon-tracker-storage.js';
+import dungeonTrackerStorage, {
+    filterRunsForCharacter,
+    currentCharacter,
+    minMaxOf,
+} from './dungeon-tracker-storage.js';
 import {
     historyAvgWaveMs,
     historyCumulativeProfile,
@@ -952,14 +956,18 @@ class DungeonTrackerUI {
             // beside every run, and the two have to agree.
             const averaged = limitToAverageWindow(runHistory, averageLimits).map((r) => r.duration || r.totalTime || 0);
             const total = averaged.reduce((sum, d) => sum + d, 0);
+            // minMaxOf, not a spread into Math.min/max — see its own doc for
+            // why a large enough run history throws a RangeError instead of
+            // answering
+            const { min: fastestTime, max: slowestTime } = minMaxOf(durations);
 
             stats = {
                 totalRuns: runHistory.length,
                 // Nothing inside the window is no average at all, and the
                 // header blanks to '--:--' rather than claiming a run took 0s
                 avgTime: averaged.length > 0 ? Math.floor(total / averaged.length) : 0,
-                fastestTime: Math.min(...durations),
-                slowestTime: Math.max(...durations),
+                fastestTime,
+                slowestTime,
             };
 
             lastRunTime = durations[0]; // First run after sorting (most recent)

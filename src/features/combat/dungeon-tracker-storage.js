@@ -167,6 +167,67 @@ export function runIdentity(run) {
 }
 
 /**
+ * The same triple {@link runIdentity} builds, with the timestamp read through
+ * the canonical ISO shape every live save writes (`new Date(...).toISOString()`)
+ * rather than whatever string the run happens to carry.
+ *
+ * `runIdentity` is exact-string comparison everywhere it is actually used —
+ * the live save's own duplicate check, the sync fold, the tombstone system —
+ * and that is correct there because every run reaching those paths was
+ * always written in the one canonical shape to begin with, so comparing the
+ * raw strings already compares the instants. A JSON backup import breaks
+ * that assumption: nothing stops an old export, or one edited by hand, from
+ * spelling a real timestamp `2026-01-01T00:00:00Z` instead of the
+ * `...:00.000Z` every write here has always produced, and importing it
+ * (`DungeonTrackerStorage#importRuns`) alongside the run it already
+ * duplicates — spelled canonically because it went through a live save —
+ * would call them two different runs on the strength of a formatting
+ * difference alone, defeating the very duplicate check the identity exists
+ * to serve.
+ *
+ * Used only for that one comparison, on freshly-read values; nothing is
+ * written back through it, `runIdentity` itself is unchanged, and the sync
+ * fold — which only ever compares canonically-written runs to begin with —
+ * has no reason to use this instead.
+ *
+ * @param {Object} run - A run, stored or incoming
+ * @returns {string} The identity triple, timestamp canonicalized when it can be
+ */
+export function canonicalRunIdentity(run) {
+    const time = runTime(run);
+    const timestamp = time === null ? (run?.timestamp ?? '') : new Date(time).toISOString();
+    return `${run?.teamKey ?? ''}|${timestamp}|${run?.duration ?? ''}`;
+}
+
+/**
+ * A tombstone's identity string, with its timestamp segment canonicalized —
+ * {@link canonicalRunIdentity} for a run that no longer exists to read fields
+ * off directly.
+ *
+ * A tombstone is only ever `{id, at}`: the identity string `runIdentity` built
+ * at the moment of deletion, and that same run's own moment as an epoch
+ * (`at`) — kept apart from `id` precisely so a run's own moment could still be
+ * compared once nothing else about the run was kept. That epoch is exactly
+ * what lets this rebuild the canonical spelling without the original run: the
+ * identity's three `|`-joined fields are teamKey, timestamp and duration, in
+ * that fixed order and never containing a literal `|` themselves (a player
+ * name cannot, and neither can a duration), so splicing `new
+ * Date(at).toISOString()` into the middle position reproduces exactly what
+ * {@link canonicalRunIdentity} would have built from the original run.
+ *
+ * @param {string} id - A tombstone's identity string
+ * @param {number|null} at - That tombstone's own moment, or null when it could
+ *   not be placed in time
+ * @returns {string} The identity, timestamp canonicalized when `at` allows it
+ */
+function canonicalTombstoneIdentity(id, at) {
+    if (at === null || !Number.isFinite(at)) return id;
+    const parts = id.split('|');
+    if (parts.length !== 3) return id;
+    return `${parts[0]}|${new Date(at).toISOString()}|${parts[2]}`;
+}
+
+/**
  * Fold the stored list into the in-memory one.
  *
  * `allRuns` is one key for the whole account, so two tabs — or two characters
@@ -243,6 +304,30 @@ export function applyClearEpoch(runs, clearedAt) {
         return at === null || at > clearedAt;
     });
     return kept.length === list.length ? list : kept;
+}
+
+/**
+ * The smallest and largest of a list of numbers, without `Math.min(...list)`.
+ *
+ * Spreading a list into `Math.min`/`Math.max` passes every element as its own
+ * call argument, which blows the engine's argument-count limit (a RangeError,
+ * not a graceful answer) once a list gets into roughly six figures — exactly
+ * the size a single dungeon+team group's durations can reach with a large
+ * JSON backup import folded into years of live history. Assumes `numbers` is
+ * non-empty, as every caller here already checks before reaching for a
+ * fastest/slowest time.
+ *
+ * @param {Array<number>} numbers - A non-empty list
+ * @returns {{min: number, max: number}}
+ */
+export function minMaxOf(numbers) {
+    let min = Infinity;
+    let max = -Infinity;
+    for (const value of numbers) {
+        if (value < min) min = value;
+        if (value > max) max = value;
+    }
+    return { min, max };
 }
 
 /**
@@ -1009,8 +1094,7 @@ class DungeonTrackerStorage {
         const durations = runs.map((r) => r.duration || r.totalTime || 0);
         const totalTime = durations.reduce((sum, d) => sum + d, 0);
         const avgTime = totalTime / runs.length;
-        const fastestTime = Math.min(...durations);
-        const slowestTime = Math.max(...durations);
+        const { min: fastestTime, max: slowestTime } = minMaxOf(durations);
 
         const avgWaveTime = runs.reduce((sum, run) => sum + (run.avgWaveTime || 0), 0) / runs.length;
 
@@ -1277,15 +1361,26 @@ class DungeonTrackerStorage {
         // `_runs` with a brand new array before this one's synchronous work
         // even starts. `loaded` above is only ever used to tell "the read
         // failed" from "there is a list, possibly since swapped out" apart.
+        // Canonical identity, not `runIdentity`'s exact string, for this
+        // comparison specifically — see `canonicalRunIdentity`'s own doc for
+        // why an import has to compare instants rather than spellings, on
+        // both the stored side (`known`) and the incoming side (`id`). The
+        // tombstone set predates that distinction, so it is canonicalized the
+        // same way on its own terms — see `canonicalTombstoneIdentity` — using
+        // the moment each tombstone already carries, rather than checked
+        // as-is (which would only catch a tombstone lucky enough to have been
+        // written in the canonical spelling to begin with).
         const clearedAt = this._clearedAt;
-        const known = new Set(this._runs.map(runIdentity));
+        const known = new Set(this._runs.map(canonicalRunIdentity));
+        const canonicalDeleted = new Set();
+        for (const [tid, at] of this._deleted) canonicalDeleted.add(canonicalTombstoneIdentity(tid, at));
         const toAdd = [];
         let alreadyPresent = 0;
         for (const run of incoming) {
-            const id = runIdentity(run);
+            const id = canonicalRunIdentity(run);
             const at = runTime(run);
             const coveredByClear = clearedAt > 0 && at !== null && at <= clearedAt;
-            if (known.has(id) || this._deleted.has(id) || coveredByClear) {
+            if (known.has(id) || canonicalDeleted.has(id) || coveredByClear) {
                 alreadyPresent++;
                 continue;
             }
@@ -1680,24 +1775,27 @@ class DungeonTrackerStorage {
     async getAllTeamStats() {
         const allRuns = await this.getAllRuns();
 
-        // Group by teamKey
-        const teamGroups = {};
+        // Group by teamKey — a `Map`, not `{}`: `run.teamKey` can be anything
+        // a JSON backup import supplies, and a plain object keyed by
+        // `__proto__` reads/replaces something on `Object.prototype` instead
+        // of creating an own property, so `teamGroups[run.teamKey].push`
+        // throws the moment a run claims that teamKey.
+        const teamGroups = new Map();
         for (const run of allRuns) {
             if (!run.teamKey) continue; // Skip solo runs (no team)
 
-            if (!teamGroups[run.teamKey]) {
-                teamGroups[run.teamKey] = [];
+            if (!teamGroups.has(run.teamKey)) {
+                teamGroups.set(run.teamKey, []);
             }
-            teamGroups[run.teamKey].push(run);
+            teamGroups.get(run.teamKey).push(run);
         }
 
         // Calculate stats for each team
         const results = [];
-        for (const [teamKey, runs] of Object.entries(teamGroups)) {
+        for (const [teamKey, runs] of teamGroups) {
             const durations = runs.map((r) => r.duration);
             const avgTime = durations.reduce((a, b) => a + b, 0) / durations.length;
-            const bestTime = Math.min(...durations);
-            const worstTime = Math.max(...durations);
+            const { min: bestTime, max: worstTime } = minMaxOf(durations);
 
             results.push({
                 teamKey,

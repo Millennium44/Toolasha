@@ -38,6 +38,15 @@ vi.mock('./dungeon-tracker-storage.js', () => ({
         filterCharacter === 'mine' ? (runs || []).filter((run) => run.recordedBy === character?.id) : runs || [],
     currentCharacter: () => ({ id: world.characterId, name: world.characterId }),
     runIdentity: (run) => `${run?.teamKey ?? ''}|${run?.timestamp ?? ''}|${run?.duration ?? ''}`,
+    minMaxOf: (numbers) => {
+        let min = Infinity;
+        let max = -Infinity;
+        for (const value of numbers) {
+            if (value < min) min = value;
+            if (value > max) max = value;
+        }
+        return { min, max };
+    },
     runTime: (run) => {
         const time = new Date(run?.timestamp).getTime();
         return Number.isFinite(time) ? time : null;

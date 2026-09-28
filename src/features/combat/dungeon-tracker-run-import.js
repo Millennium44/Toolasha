@@ -76,12 +76,21 @@ export const MAX_PLAUSIBLE_RUN_MS = 3 * 60 * 60 * 1000;
 
 /**
  * How far a run's own timestamp may sit ahead of "now" and still be believed.
- * A run is a record of something that already happened; one dated tomorrow is
- * a hand-edited or corrupted field, not clock skew worth tolerating the way
- * {@link BASELINE_FUTURE_TOLERANCE_MS: dungeon-tracker-storage.js} tolerates a
- * few minutes of it for a baseline marker — a run has no marker's excuse.
+ *
+ * A run is a record of something that already happened, so this is ordinary
+ * clock-skew tolerance between two devices and nothing more — the same five
+ * minutes `BASELINE_FUTURE_TOLERANCE_MS` (`dungeon-tracker-storage.js`)
+ * allows a baseline marker for the same reason. It was a day for one
+ * revision of this check; that was too loose. `importRuns` drops a run whose
+ * own timestamp is at or before "delete all history"'s epoch, but has no
+ * equivalent check for the future — a run dated after that epoch reads as
+ * newer history the clear was never asked about, which is correct for a
+ * genuinely new run and is exactly the loophole a backup with its timestamps
+ * shifted forward by hours would use to sail past a clear that just ran. Five
+ * minutes of tolerance cannot usefully revive anything a clear removed;
+ * a day of it could revive most of a session's worth.
  */
-export const MAX_FUTURE_TIMESTAMP_MS = 24 * 60 * 60 * 1000;
+export const MAX_FUTURE_TIMESTAMP_MS = 5 * 60 * 1000;
 
 /**
  * A file bigger than this is refused before it is even read. No genuine
@@ -94,10 +103,20 @@ export const MAX_IMPORT_FILE_BYTES = 20 * 1024 * 1024;
 /**
  * A backup naming more runs than this is refused outright, checked by array
  * length before a single one is validated. No real account approaches it —
- * it exists so a hand-edited or corrupted file cannot make the browser tab
- * iterate an unbounded list.
+ * the busiest imaginable farming schedule run non-stop for years would not
+ * fill a fraction of it — it exists so a hand-edited or corrupted file
+ * cannot make the browser tab iterate an unbounded list.
+ *
+ * 50,000 rather than the 200,000 this started at: the stats path every
+ * imported run eventually reaches (`calculateStatsForRuns`,
+ * `getAllTeamStats`, chart building — anywhere a dungeon+team group's
+ * durations get summarized) now uses {@link minMaxOf: dungeon-tracker-storage.js}
+ * instead of spreading into `Math.min`/`Math.max`, which no longer crashes
+ * outright at six figures, but keeping the ceiling itself well under that
+ * range is the cheaper, harder guarantee — no single group can approach the
+ * point where iterating it, however cheaply, is worth doing at all.
  */
-export const MAX_IMPORT_RUNS = 200_000;
+export const MAX_IMPORT_RUNS = 50_000;
 
 /**
  * @param {*} value - Anything
@@ -293,6 +312,28 @@ export function validateImportedRun(run, maxRunMs = MAX_PLAUSIBLE_RUN_MS, now = 
 
     if (typeof run.dungeonName !== 'string' || run.dungeonName.trim() === '') {
         return { ok: false, reason: 'missing dungeon name' };
+    }
+
+    // Every live save writes `teamKey` as either a real (non-empty) string or
+    // omits it for a solo run — `groupByTeam` and friends already read a
+    // falsy teamKey as "Solo". Anything else — a number, an object, an
+    // explicit empty string a live run never produces — is accepted nowhere
+    // downstream and is rejected here rather than reaching a `.split(',')`
+    // or a stats grouping key that expects one of the two legitimate shapes.
+    if (run.teamKey !== undefined && run.teamKey !== null) {
+        if (typeof run.teamKey !== 'string' || run.teamKey.trim() === '') {
+            return { ok: false, reason: 'teamKey must be a non-empty string, or absent for a solo run' };
+        }
+    }
+
+    // Tier is only ever an integer (a known difficulty) or null/absent (not
+    // recorded) on a live-saved run — see `saveTeamRun`'s own
+    // `Number.isInteger(run.tier) ? run.tier : null`. It later reaches an
+    // HTML attribute value verbatim (the tier filter's `<option>`s), so
+    // admitting anything else here is the only thing standing between a
+    // hostile backup and markup injection at that sink.
+    if (run.tier !== undefined && run.tier !== null && !Number.isInteger(run.tier)) {
+        return { ok: false, reason: 'tier must be an integer, or absent' };
     }
 
     const duration = Number(run.duration);

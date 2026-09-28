@@ -3,7 +3,11 @@
  * Handles Chart.js rendering for dungeon run statistics
  */
 
-import dungeonTrackerStorage, { filterRunsForCharacter, currentCharacter } from './dungeon-tracker-storage.js';
+import dungeonTrackerStorage, {
+    filterRunsForCharacter,
+    currentCharacter,
+    minMaxOf,
+} from './dungeon-tracker-storage.js';
 import { PANEL_Z_CAP } from '../../utils/panel-z-index.js';
 
 class DungeonTrackerUIChart {
@@ -116,8 +120,10 @@ class DungeonTrackerUIChart {
 
         // Calculate stats
         const avgDuration = durations.reduce((a, b) => a + b, 0) / durations.length;
-        const fastestDuration = Math.min(...durations);
-        const slowestDuration = Math.max(...durations);
+        // minMaxOf, not a spread into Math.min/max — see its own doc for why a
+        // large enough run history (a JSON backup import folded into years of
+        // live history) makes the spread throw a RangeError instead
+        const { min: fastestDuration, max: slowestDuration } = minMaxOf(durations);
 
         // Create datasets
         const datasets = [
@@ -413,8 +419,10 @@ class DungeonTrackerUIChart {
         const durations = filteredRuns.map((r) => (r.duration || r.totalTime || 0) / 60000);
 
         const avgDuration = durations.reduce((a, b) => a + b, 0) / durations.length;
-        const fastestDuration = Math.min(...durations);
-        const slowestDuration = Math.max(...durations);
+        // minMaxOf, not a spread into Math.min/max — see its own doc for why a
+        // large enough run history (a JSON backup import folded into years of
+        // live history) makes the spread throw a RangeError instead
+        const { min: fastestDuration, max: slowestDuration } = minMaxOf(durations);
 
         const datasets = [
             {
