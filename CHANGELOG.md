@@ -8,7 +8,7 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ### The Toolasha tab moves into the inventory's own tab strip
 
-- With the game's new inventory tabs, the Toolasha tab is now an icon tab at the start of the inventory's own tab strip instead of a button in the character panel, which no longer loses its Inventory tab. On the older layout it stays where it was, and "Toolasha tab by default" now opens the inventory on the Toolasha tab.
+- With the game's new inventory tabs, the Toolasha tab is now an icon tab at the start of the inventory's own tab strip instead of a button in the character panel, which no longer loses its Inventory tab. On the older layout it stays where it was, and "Toolasha tab by default" now opens the inventory on the Toolasha tab. Expand All and Collapse All are now compact icon buttons.
 
 <!-- shipped in 3.61.2 -->
 
