@@ -3071,6 +3071,14 @@ export class SimEditor {
                 e.stopPropagation();
                 const hrid = btn.dataset.removePlayer;
                 if (!this._editedDTOs) return;
+                // Captured before any of this handler's own mutations — see
+                // the identical comment on replacePlayer's own
+                // wasLoadoutTarget, which this reuses the same reasoning
+                // from: the panel-wide Loadout dropdown is applied to
+                // whichever player is self (or, with no self, the active
+                // tab), and removing that player must not leave it still
+                // claiming a build that no longer exists to wear it.
+                const wasLoadoutTarget = hrid === (this._selfHrid || this._activeEditPlayer);
                 delete this._editedDTOs[hrid];
                 if (this._originalDTOs) delete this._originalDTOs[hrid];
                 this._editedPlayerInfo = this._editedPlayerInfo.filter((p) => p.hrid !== hrid);
@@ -3085,6 +3093,10 @@ export class SimEditor {
                 this._profileStatus = (this._profileStatus || []).filter((entry) => entry.hrid !== hrid);
                 this._importSkipped = (this._importSkipped || []).filter((entry) => entry.hrid !== hrid);
                 this._forgetAppliedLoadouts(hrid);
+                // The panel-wide Loadout selection no longer names anything
+                // a loaded player wears — cleared to "Current Gear" rather
+                // than left pointing at a build that is gone.
+                if (wasLoadoutTarget) this._selectedLoadoutName = '';
                 if (Object.keys(this._editedDTOs).length === 0) {
                     this._editedDTOs = {};
                     this._originalDTOs = {};
