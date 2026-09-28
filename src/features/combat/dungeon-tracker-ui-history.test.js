@@ -18,7 +18,7 @@ const world = vi.hoisted(() => ({
 vi.mock('./dungeon-tracker-storage.js', () => ({
     default: {
         getAllRuns: vi.fn(async () => []),
-        getRunsForCharacter: vi.fn(async () => []),
+        getRunsForCharacterOrNull: vi.fn(async () => []),
         importRuns: vi.fn(async () => ({ added: 0, alreadyPresent: 0, ok: true })),
         deleteRun: async () => true,
         getTeamKey: (names) => [...names].sort().join(','),
@@ -80,7 +80,7 @@ function render(history, groups) {
 beforeEach(() => {
     document.body.innerHTML = '<div class="Chat_chatInputContainer__c"><input /></div>';
     world.character = { id: 'market123', name: 'Marketcow' };
-    dungeonTrackerStorage.getRunsForCharacter.mockReset().mockResolvedValue([]);
+    dungeonTrackerStorage.getRunsForCharacterOrNull.mockReset().mockResolvedValue([]);
     dungeonTrackerStorage.importRuns.mockReset().mockResolvedValue({ added: 0, alreadyPresent: 0, ok: true });
     dungeonTrackerChatAnnotations.refreshRunCounts.mockReset().mockResolvedValue(undefined);
     downloadFile.mockReset();
@@ -298,12 +298,12 @@ describe('the JSON backup export/import bar', () => {
 describe('exportRunHistoryBackup', () => {
     test('downloads every run this character recorded, unfiltered, in an envelope', async () => {
         const runs = [storedRun(), storedRun({ timestamp: '2026-08-03T09:00:00.000Z' })];
-        dungeonTrackerStorage.getRunsForCharacter.mockResolvedValue(runs);
+        dungeonTrackerStorage.getRunsForCharacterOrNull.mockResolvedValue(runs);
         const history = new DungeonTrackerUIHistory(freshState('team'), (ms) => `${ms}ms`);
 
         await history.exportRunHistoryBackup();
 
-        expect(dungeonTrackerStorage.getRunsForCharacter).toHaveBeenCalledWith('mine');
+        expect(dungeonTrackerStorage.getRunsForCharacterOrNull).toHaveBeenCalledWith('mine');
         expect(downloadFile).toHaveBeenCalledTimes(1);
         const [filename, text, mime] = downloadFile.mock.calls[0];
         expect(filename).toMatch(/^toolasha-dungeon-runs-backup-\d{8}-\d{4}\.json$/);
@@ -315,6 +315,16 @@ describe('exportRunHistoryBackup', () => {
             exportedAt: expect.any(Number),
             runs,
         });
+    });
+
+    test('refuses to export, downloading nothing, when the store could not be read', async () => {
+        dungeonTrackerStorage.getRunsForCharacterOrNull.mockResolvedValue(null);
+        const history = new DungeonTrackerUIHistory(freshState('team'), (ms) => `${ms}ms`);
+
+        await history.exportRunHistoryBackup();
+
+        expect(downloadFile).not.toHaveBeenCalled();
+        expect(window.alert).toHaveBeenCalledWith(expect.stringContaining('Export refused'));
     });
 });
 
@@ -563,6 +573,55 @@ describe('importBackupText', () => {
         await history.importBackupText(JSON.stringify(backupEnvelope([storedRun()])));
 
         expect(dungeonTrackerChatAnnotations.refreshRunCounts).not.toHaveBeenCalled();
+    });
+});
+
+describe('dispose', () => {
+    test('removes the hidden file input from the document', () => {
+        const history = new DungeonTrackerUIHistory(freshState('team'), (ms) => `${ms}ms`);
+        history.triggerImportBackup();
+        expect(document.querySelector('input[type="file"]')).not.toBeNull();
+
+        history.dispose();
+
+        expect(document.querySelector('input[type="file"]')).toBeNull();
+        expect(history.importInput).toBeNull();
+    });
+
+    test('disposing before Import was ever clicked is a no-op, not a throw', () => {
+        const history = new DungeonTrackerUIHistory(freshState('team'), (ms) => `${ms}ms`);
+        expect(() => history.dispose()).not.toThrow();
+    });
+
+    test('a file picked through a stale input after teardown does not import', async () => {
+        const history = new DungeonTrackerUIHistory(freshState('team'), (ms) => `${ms}ms`);
+        history.triggerImportBackup();
+        // Captured before dispose — a picker dialog left open across a
+        // character switch resolves against exactly this detached element
+        const input = document.querySelector('input[type="file"]');
+
+        history.dispose();
+
+        const file = { text: async () => JSON.stringify(backupEnvelope([storedRun()])) };
+        Object.defineProperty(input, 'files', { value: [file], configurable: true });
+        input.dispatchEvent(new Event('change'));
+        await new Promise((resolve) => setTimeout(resolve, 0));
+
+        expect(dungeonTrackerStorage.importRuns).not.toHaveBeenCalled();
+    });
+
+    test('a change on a live (non-disposed) input still imports, for contrast', async () => {
+        dungeonTrackerStorage.importRuns.mockResolvedValue({ added: 1, alreadyPresent: 0, ok: true });
+        const history = new DungeonTrackerUIHistory(freshState('team'), (ms) => `${ms}ms`);
+        history.triggerImportBackup();
+        const input = document.querySelector('input[type="file"]');
+
+        const file = { text: async () => JSON.stringify(backupEnvelope([storedRun()])) };
+        Object.defineProperty(input, 'files', { value: [file], configurable: true });
+        input.dispatchEvent(new Event('change'));
+        await new Promise((resolve) => setTimeout(resolve, 0));
+
+        expect(dungeonTrackerStorage.importRuns).toHaveBeenCalledWith([storedRun()]);
     });
 });
 

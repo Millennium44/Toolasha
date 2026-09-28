@@ -65,6 +65,7 @@ const stubModule = vi.hoisted(() => () => ({
         applyInitialStates = vi.fn();
         onDelete = vi.fn();
         onImport = vi.fn();
+        dispose = vi.fn();
     },
 }));
 vi.mock('./dungeon-tracker-ui-chart.js', stubModule);
@@ -458,6 +459,17 @@ describe('the ROI board redraws on a pricing change made elsewhere', () => {
         expect(configListeners.profitCalc_patientTickBuy).toHaveLength(0);
         expect(configListeners.profitCalc_patientTickSell).toHaveLength(0);
         expect(configListeners.profitCalc_ironCowValuation).toHaveLength(0);
+    });
+});
+
+describe('cleanup disposes the history section', () => {
+    test('cleanup calls history.dispose(), which owns a hidden file-input nothing else on this path removes', () => {
+        const history = ui.history;
+
+        ui.cleanup();
+
+        expect(history.dispose).toHaveBeenCalledTimes(1);
+        expect(ui.history).toBeNull();
     });
 });
 

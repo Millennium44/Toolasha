@@ -1321,7 +1321,12 @@ class DungeonTrackerUI {
                 if (this.chart.dispose) this.chart.dispose();
                 this.chart = null;
             }
+            // Disposed for the same reason the chart section is above: it
+            // owns a hidden file-input appended straight to document.body
+            // (dungeon-tracker-ui-history.js#triggerImportBackup), which
+            // nothing else on this teardown path ever removes.
             if (this.history) {
+                if (this.history.dispose) this.history.dispose();
                 this.history = null;
             }
             if (this.interactions) {
