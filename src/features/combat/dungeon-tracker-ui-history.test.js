@@ -877,6 +877,42 @@ describe('dispose', () => {
 
         expect(dungeonTrackerStorage.importRuns).not.toHaveBeenCalled();
     });
+
+    test('dispose() nulls onDeleteCallback directly, belt and suspenders alongside the disposed check', () => {
+        const history = new DungeonTrackerUIHistory(freshState('team'), (ms) => `${ms}ms`);
+        const onDelete = vi.fn();
+        history.onDelete(onDelete);
+
+        history.dispose();
+
+        expect(history.onDeleteCallback).toBeNull();
+    });
+
+    test('a delete that resolves after dispose() does not fire onDeleteCallback', async () => {
+        // Mirrors the character-switch race the other disposed checks guard:
+        // the click handler's own deleteRun() await is in flight when cleanup
+        // tears this section down mid-flight.
+        let resolveDelete;
+        dungeonTrackerStorage.deleteRun.mockImplementation(
+            () =>
+                new Promise((resolve) => {
+                    resolveDelete = resolve;
+                })
+        );
+        const history = new DungeonTrackerUIHistory(freshState('team'), (ms) => `${ms}ms`);
+        const onDelete = vi.fn();
+        history.onDelete(onDelete);
+        const runList = render(history, history.groupByTeam([run('Aster,Briar')]));
+
+        runList.querySelector('.mwi-dt-delete-run').dispatchEvent(new Event('click', { bubbles: true }));
+        await Promise.resolve();
+
+        history.dispose();
+        resolveDelete();
+        await new Promise((resolve) => setTimeout(resolve, 0));
+
+        expect(onDelete).not.toHaveBeenCalled();
+    });
 });
 
 describe('dungeon group headers', () => {

@@ -114,9 +114,29 @@ class DungeonTrackerUI {
         }
 
         // Set up history delete/import callbacks — both change the stored
-        // history out from under whatever is on screen, so both redraw it
-        this.history.onDelete(() => this.refreshHistoryAndStats());
-        this.history.onImport(() => this.refreshAfterImport());
+        // history out from under whatever is on screen, so both redraw it.
+        //
+        // Both callbacks close over `this` (the panel), not the `this.history`
+        // instance that hands them out, so `this.history` below always reads
+        // whatever cleanup() currently holds. A delete/import that started
+        // before a character switch can still be resolving its own await when
+        // cleanup() runs: it nulls `this.history` synchronously, but the old
+        // history instance's in-flight call can still reach the end of its
+        // method and fire the callback afterwards. `this.history.dispose()`
+        // guards the import path against that on its own side (its stored
+        // `this.disposed` flag), but the delete path fires straight off an
+        // awaited `deleteRun()` with no such check — this null check is what
+        // stops that callback from calling back into a torn-down panel, on
+        // either path, regardless of which side of the call a future change
+        // forgets to guard.
+        this.history.onDelete(() => {
+            if (!this.history) return;
+            return this.refreshHistoryAndStats();
+        });
+        this.history.onImport(() => {
+            if (!this.history) return;
+            return this.refreshAfterImport();
+        });
 
         // Create UI elements
         this.createUI();

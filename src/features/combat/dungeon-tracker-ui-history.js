@@ -138,6 +138,7 @@ class DungeonTrackerUIHistory {
         // wrongly fire against the parent panel this section no longer
         // belongs to.
         this.onImportCallback = null;
+        this.onDeleteCallback = null;
         if (this.importInput) {
             this.importInput.remove();
             this.importInput = null;
@@ -1015,6 +1016,12 @@ class DungeonTrackerUIHistory {
 
                 // Delete the run from unified storage
                 await dungeonTrackerStorage.deleteRun(runTimestamp);
+
+                // A teardown landing inside that await has already disposed
+                // this section (and nulled onDeleteCallback below, belt and
+                // suspenders) — nothing left here should reach for the panel
+                // this section no longer belongs to.
+                if (this.disposed) return;
 
                 // Trigger refresh via callback
                 if (this.onDeleteCallback) {
