@@ -47,6 +47,14 @@ vi.mock('../../core/storage.js', () => ({
             const bucket = db[store] || {};
             return Object.prototype.hasOwnProperty.call(bucket, key) ? bucket[key] : fallback;
         }),
+        // The read chat history goes through: `null` when the database could
+        // not be read, `{found, value}` otherwise — the real `tryGet`'s shape.
+        tryGet: vi.fn(async (key, store) => {
+            const bucket = db[store] || {};
+            return Object.prototype.hasOwnProperty.call(bucket, key)
+                ? { found: true, value: JSON.parse(JSON.stringify(bucket[key])) }
+                : { found: false, value: null };
+        }),
         set: vi.fn(async (key, value, store) => {
             db.writes += 1;
             db[store] = db[store] || {};
@@ -1410,12 +1418,19 @@ describe('messages that were only ever live survive a server restart', () => {
         const gate = new Promise((resolve) => {
             release = resolve;
         });
-        storage.get.mockImplementationOnce(async (key, store, fallback = null) => {
+        storage.tryGet.mockImplementationOnce(async (key, store) => {
             await gate;
-            const bucket = db[store] || {};
-            return Object.prototype.hasOwnProperty.call(bucket, key) ? bucket[key] : fallback;
+            return readDb(key, store);
         });
         return () => release();
+    }
+
+    /** What the mocked `tryGet` answers when the read works. */
+    function readDb(key, store) {
+        const bucket = db[store] || {};
+        return Object.prototype.hasOwnProperty.call(bucket, key)
+            ? { found: true, value: JSON.parse(JSON.stringify(bucket[key])) }
+            : { found: false, value: null };
     }
 
     /** A second tab's history on disk, which a partial write would wipe out. */
@@ -1502,7 +1517,7 @@ describe('messages that were only ever live survive a server restart', () => {
 
     test('a read that never comes back never lets a write through', async () => {
         seedTradeHistory();
-        storage.get.mockImplementation(() => new Promise(() => {}));
+        storage.tryGet.mockImplementation(() => new Promise(() => {}));
         try {
             const container = buildPartyChat();
             container.appendChild(makeMessage(JOINED));
@@ -1517,12 +1532,96 @@ describe('messages that were only ever live survive a server restart', () => {
             expect(storedTexts()).toEqual([OLD]);
             expect(storedTexts(TRADE_KEY)).toEqual([TRADE_LINE]);
         } finally {
-            storage.get.mockReset();
-            storage.get.mockImplementation(async (key, store, fallback = null) => {
-                const bucket = db[store] || {};
-                return Object.prototype.hasOwnProperty.call(bucket, key) ? bucket[key] : fallback;
-            });
+            storage.tryGet.mockReset();
+            storage.tryGet.mockImplementation(async (key, store) => readDb(key, store));
         }
+    });
+
+    // `storage.get` answers a failed read, an aborted transaction or a missing
+    // connection with the default — indistinguishable from "nothing stored".
+    // `tryGet` answers those with null, and null has to mean "do not write".
+    test('an unreadable first read is not an empty record: nothing is written until a read works', async () => {
+        seedTradeHistory();
+        storage.tryGet.mockResolvedValue(null);
+        try {
+            const container = buildPartyChat();
+            container.appendChild(makeMessage(JOINED));
+            chatHistoryExtender.initialize();
+            await settle();
+            expect(chatHistoryPersistence.loaded).toBe(false);
+
+            // Every writer path: an explicit flush, a page hide, a socket close.
+            await chatHistoryPersistence.flush();
+            window.dispatchEvent(new Event('pagehide'));
+            webSocketHook.emitSocketEvent('close', {}, null);
+            await settle();
+            expect(storage.set).not.toHaveBeenCalled();
+            expect(storedTexts()).toEqual([OLD]);
+            expect(storedTexts(TRADE_KEY)).toEqual([TRADE_LINE]);
+        } finally {
+            storage.tryGet.mockReset();
+            storage.tryGet.mockImplementation(async (key, store) => readDb(key, store));
+        }
+
+        // Once the database answers again, the waiting lines merge with disk.
+        window.dispatchEvent(new Event('pagehide'));
+        await settle();
+        expect(storedTexts()).toEqual([OLD, JOINED]);
+        expect(storedTexts(TRADE_KEY)).toEqual([TRADE_LINE]);
+    });
+
+    test('an unreadable merge read writes nothing, even on the way out', async () => {
+        seedTradeHistory();
+        const release = holdNextRead();
+        storage.tryGet.mockResolvedValueOnce(null);
+
+        const container = buildPartyChat();
+        container.appendChild(makeMessage(JOINED));
+        chatHistoryExtender.initialize();
+        await settle();
+
+        chatHistoryExtender.disable();
+        await settle();
+        expect(storage.set).not.toHaveBeenCalled();
+
+        release();
+        await settle();
+        expect(storage.set).not.toHaveBeenCalled();
+        expect(storedTexts()).toEqual([OLD]);
+        expect(storedTexts(TRADE_KEY)).toEqual([TRADE_LINE]);
+    });
+
+    test('a write storage refuses leaves the record waiting, so the next flush retries it', async () => {
+        const container = buildPartyChat();
+        chatHistoryExtender.initialize();
+        await settle();
+        container.appendChild(makeMessage(JOINED));
+        await settle();
+
+        storage.set.mockResolvedValueOnce(false);
+        await expect(chatHistoryPersistence.flushPending()).resolves.toBe(false);
+        expect(storedTexts()).toEqual([OLD]);
+
+        await expect(chatHistoryPersistence.flushPending()).resolves.toBe(true);
+        expect(storedTexts()).toEqual([OLD, JOINED]);
+    });
+
+    test('a refused merge-and-write before the first read has merged is retried too', async () => {
+        const release = holdNextRead();
+        const container = buildPartyChat();
+        chatHistoryExtender.initialize();
+        await settle();
+        container.appendChild(makeMessage(JOINED));
+        await settle();
+
+        storage.set.mockResolvedValueOnce(false);
+        await expect(chatHistoryPersistence.flushPending()).resolves.toBe(false);
+        expect(storedTexts()).toEqual([OLD]);
+
+        await expect(chatHistoryPersistence.flushPending()).resolves.toBe(true);
+        expect(storedTexts()).toEqual([OLD, JOINED]);
+        release();
+        await settle();
     });
 
     test('messageIdentity ignores markup, so a re-rendered or id-stamped line is the same line', () => {

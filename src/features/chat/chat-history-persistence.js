@@ -736,6 +736,29 @@ function mergeMessage(list, html) {
 }
 
 /**
+ * Read the stored record, telling "nothing stored" apart from "could not read".
+ *
+ * `storage.get` answers a failed request, an aborted transaction and a missing
+ * connection with its default, which is exactly what "nothing stored" looks
+ * like — and a writer that takes one for the other replaces the history with
+ * whatever it holds. `storage.tryGet` answers those with `null`; so does a
+ * read that throws here.
+ *
+ * @param {string} key - The character's record key
+ * @returns {Promise<{ok: boolean, record: *}>} `ok` false when the read cannot be trusted
+ */
+async function readStoredRecord(key) {
+    try {
+        const read = await storage.tryGet(key, CHAT_HISTORY_STORE);
+        if (!read) return { ok: false, record: null };
+        return { ok: true, record: read.found ? read.value : null };
+    } catch (error) {
+        console.error('[ChatHistoryPersistence] Could not read stored chat history:', error);
+        return { ok: false, record: null };
+    }
+}
+
+/**
  * The tabs of a stored record this build can use, or an empty map.
  * @param {*} record - Whatever the read returned
  * @param {number} perTab - Message cap per tab
@@ -766,7 +789,8 @@ function tabsFromRecord(record, perTab) {
  * - an explicit flush (disable, character switch, page hide, socket close)
  *   reads the record itself, merges a copy of what this session recorded into
  *   it, and writes that — see {@link ChatHistoryPersistence#_mergeIntoStored};
- * - a read that fails or never returns means nothing is written at all. What
+ * - a read that fails, is unreadable (`storage.tryGet` answering null) or never
+ *   returns means nothing is written at all. What
  *   this session recorded stays in memory, where a later successful read
  *   still merges it; it is lost only if the page ends first, and the record on
  *   disk is untouched either way.
@@ -828,14 +852,7 @@ class ChatHistoryPersistence {
         // record for good.
         const ticket = captureOwner(this);
         this.loadPromise = (async () => {
-            let record = null;
-            let readOk = false;
-            try {
-                record = await storage.get(characterKey(CHAT_HISTORY_KEY_BASE), CHAT_HISTORY_STORE, null);
-                readOk = true;
-            } catch (error) {
-                console.error('[ChatHistoryPersistence] Could not read stored chat history:', error);
-            }
+            const read = await readStoredRecord(characterKey(CHAT_HISTORY_KEY_BASE));
             // Before the first thing this tail touches. The generation is what
             // catches the switch: `disable()` runs on `character_switching`,
             // which fires before `getCurrentCharacterId()` moves, so an id
@@ -844,8 +861,8 @@ class ChatHistoryPersistence {
             // A failed read is not an empty record. Treating it as one made
             // the next write replace whatever is on disk with this session's
             // lines; left unloaded, every write goes through a fresh read.
-            if (!readOk) return {};
-            const loaded = tabsFromRecord(record, this.getMaxHistory());
+            if (!read.ok) return {};
+            const loaded = tabsFromRecord(read.record, this.getMaxHistory());
             // Taken before the merge below, which writes into `loaded` itself —
             // a snapshot taken after it held what was recorded during the read,
             // and a restore rendered those a second time.
@@ -950,19 +967,25 @@ class ChatHistoryPersistence {
         if (!this.loaded) return this._mergeIntoStored(immediate);
 
         applyCaps(this.tabs, this.getMaxHistory());
+        // Cleared before the await so a line recorded while the write is in
+        // flight marks the record dirty again; restored if the write fails.
         this.dirty = false;
+        const ticket = captureOwner(this);
+        let accepted = false;
         try {
-            return await storage.set(
-                characterKey(CHAT_HISTORY_KEY_BASE),
-                { v: RECORD_VERSION, savedAt: Date.now(), tabs: this.tabs },
-                CHAT_HISTORY_STORE,
-                immediate
-            );
+            accepted =
+                (await storage.set(
+                    characterKey(CHAT_HISTORY_KEY_BASE),
+                    { v: RECORD_VERSION, savedAt: Date.now(), tabs: this.tabs },
+                    CHAT_HISTORY_STORE,
+                    immediate
+                )) === true;
         } catch (error) {
             console.error('[ChatHistoryPersistence] Could not write chat history:', error);
-            this.dirty = true;
-            return false;
         }
+        // `set` reports a refused write by resolving false, not by throwing.
+        if (!accepted && stillOurs(ticket)) this.dirty = true;
+        return accepted;
     }
 
     /**
@@ -983,16 +1006,18 @@ class ChatHistoryPersistence {
         const key = characterKey(CHAT_HISTORY_KEY_BASE);
         const perTab = this.getMaxHistory();
         const pending = Object.entries(this.tabs).map(([tabKey, list]) => [tabKey, [...list]]);
+        // `dirty` is deliberately left set on this path whatever happens: the
+        // working record is still unmerged, and the load that merges it is
+        // what schedules the write that clears it.
+        this.dirty = true;
 
-        let record;
-        try {
-            record = await storage.get(key, CHAT_HISTORY_STORE, null);
-        } catch (error) {
-            console.error('[ChatHistoryPersistence] Could not read chat history to merge into; not writing:', error);
+        const read = await readStoredRecord(key);
+        if (!read.ok) {
+            console.error('[ChatHistoryPersistence] Could not read chat history to merge into; not writing.');
             return false;
         }
 
-        const tabs = tabsFromRecord(record, perTab);
+        const tabs = tabsFromRecord(read.record, perTab);
         for (const [tabKey, list] of pending) {
             if (!tabs[tabKey]) tabs[tabKey] = [];
             for (const html of list) mergeMessage(tabs[tabKey], html);
@@ -1001,11 +1026,13 @@ class ChatHistoryPersistence {
         applyCaps(tabs, perTab);
 
         try {
-            return await storage.set(
-                key,
-                { v: RECORD_VERSION, savedAt: Date.now(), tabs },
-                CHAT_HISTORY_STORE,
-                immediate
+            return (
+                (await storage.set(
+                    key,
+                    { v: RECORD_VERSION, savedAt: Date.now(), tabs },
+                    CHAT_HISTORY_STORE,
+                    immediate
+                )) === true
             );
         } catch (error) {
             console.error('[ChatHistoryPersistence] Could not write chat history:', error);
