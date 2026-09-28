@@ -710,7 +710,66 @@ export function applyCaps(tabs, perTab = MAX_MESSAGES_PER_TAB) {
 }
 
 /**
+ * Put one message into a tab's list: update it in place when the list already
+ * holds it (see {@link messageIdentity}), append it otherwise.
+ *
+ * The copy carrying the game's id is kept over one that lacks it: the id is
+ * what a later deletion finds it by.
+ *
+ * @param {Array<string>} list - Mutated
+ * @param {string} html - As produced by {@link serializeMessage}
+ * @returns {'same'|'updated'|'appended'} What happened to the list
+ */
+function mergeMessage(list, html) {
+    const identity = messageIdentity(html);
+    if (identity) {
+        for (let i = list.length - 1; i >= 0; i -= 1) {
+            if (messageIdentity(list[i]) !== identity) continue;
+            if (list[i] === html) return 'same';
+            if (extractStoredMessageId(list[i]) && !extractStoredMessageId(html)) return 'same';
+            list[i] = html;
+            return 'updated';
+        }
+    }
+    list.push(html);
+    return 'appended';
+}
+
+/**
+ * The tabs of a stored record this build can use, or an empty map.
+ * @param {*} record - Whatever the read returned
+ * @param {number} perTab - Message cap per tab
+ * @returns {Record<string, Array<string>>}
+ */
+function tabsFromRecord(record, perTab) {
+    // A record from a version we do not understand is discarded rather than
+    // half-read; the cost is one session's history.
+    const stored = record && record.v === RECORD_VERSION && record.tabs ? record.tabs : {};
+    return applyCaps(dropForeignKeys(stored), perTab);
+}
+
+/**
  * The per-character record of preserved chat, and the reads and writes over it.
+ *
+ * ## The working record is not the record until the first read has merged
+ *
+ * Messages are recorded as soon as they render, which is before the read of
+ * what is already on disk comes back — the backlog a pane shows when its
+ * handler attaches is recorded synchronously, and the read never is. Until
+ * `load()` has folded that read in, {@link ChatHistoryPersistence#tabs} holds
+ * only this session's lines, and writing it would replace the character's
+ * whole record — every older message and every other tab — with them. So
+ * nothing writes `tabs` as the record until `loaded` is set:
+ *
+ * - the coalescing timer does nothing, and `load()` schedules the write once it
+ *   has merged;
+ * - an explicit flush (disable, character switch, page hide, socket close)
+ *   reads the record itself, merges a copy of what this session recorded into
+ *   it, and writes that — see {@link ChatHistoryPersistence#_mergeIntoStored};
+ * - a read that fails or never returns means nothing is written at all. What
+ *   this session recorded stays in memory, where a later successful read
+ *   still merges it; it is lost only if the page ends first, and the record on
+ *   disk is untouched either way.
  */
 class ChatHistoryPersistence {
     constructor() {
@@ -721,6 +780,10 @@ class ChatHistoryPersistence {
         this.enabled = false;
         this.writeTimer = null;
         this.loadPromise = null;
+        /** Whether `tabs` has had the stored record merged into it; see the class doc. */
+        this.loaded = false;
+        /** Whether `tabs` holds something no write has been issued for yet. */
+        this.dirty = false;
         this.getMaxHistory = () => MAX_MESSAGES_PER_TAB;
     }
 
@@ -766,8 +829,10 @@ class ChatHistoryPersistence {
         const ticket = captureOwner(this);
         this.loadPromise = (async () => {
             let record = null;
+            let readOk = false;
             try {
                 record = await storage.get(characterKey(CHAT_HISTORY_KEY_BASE), CHAT_HISTORY_STORE, null);
+                readOk = true;
             } catch (error) {
                 console.error('[ChatHistoryPersistence] Could not read stored chat history:', error);
             }
@@ -776,10 +841,11 @@ class ChatHistoryPersistence {
             // which fires before `getCurrentCharacterId()` moves, so an id
             // comparison alone would still read as this character's.
             if (!stillOurs(ticket)) return {};
-            // A record from a version we do not understand is discarded rather
-            // than half-read; the cost is one session's history.
-            const stored = record && record.v === RECORD_VERSION && record.tabs ? record.tabs : {};
-            const loaded = applyCaps(dropForeignKeys(stored), this.getMaxHistory());
+            // A failed read is not an empty record. Treating it as one made
+            // the next write replace whatever is on disk with this session's
+            // lines; left unloaded, every write goes through a fresh read.
+            if (!readOk) return {};
+            const loaded = tabsFromRecord(record, this.getMaxHistory());
             // Taken before the merge below, which writes into `loaded` itself —
             // a snapshot taken after it held what was recorded during the read,
             // and a restore rendered those a second time.
@@ -789,15 +855,21 @@ class ChatHistoryPersistence {
             // was on disk, not instead of it.
             const pending = this.tabs;
             this.tabs = loaded;
+            this.loaded = true;
             if (pending) {
                 for (const [key, list] of Object.entries(pending)) {
-                    // Through record()'s dedupe, not a blind append: a message
+                    // Through the dedupe, not a blind append: a message
                     // recorded live during the read may already be on disk from
                     // the last session, which also recorded it live.
-                    for (const html of list) this.record(key, html);
+                    if (!this.tabs[key]) this.tabs[key] = [];
+                    for (const html of list) mergeMessage(this.tabs[key], html);
+                    if (!this.tabs[key].length) delete this.tabs[key];
                 }
                 applyCaps(this.tabs, this.getMaxHistory());
             }
+            // The timer stood down while the read was open; this is the write
+            // it was holding back.
+            if (this.dirty) this._scheduleWrite();
 
             return this.snapshot;
         })();
@@ -819,27 +891,14 @@ class ChatHistoryPersistence {
         if (!tabKey.startsWith(TAB_KEY_PREFIX)) return;
         if (!this.tabs) this.tabs = {};
         if (!this.tabs[tabKey]) this.tabs[tabKey] = [];
-        const list = this.tabs[tabKey];
 
         // The same message is offered more than once — on render, again on
         // eviction, again whenever the game re-renders a tab's backlog — so a
-        // message already held is updated in place rather than appended. The
-        // copy carrying the game's id is kept over one that lacks it: the id
-        // is what a later deletion finds it by.
-        const identity = messageIdentity(html);
-        if (identity) {
-            for (let i = list.length - 1; i >= 0; i -= 1) {
-                if (messageIdentity(list[i]) !== identity) continue;
-                if (list[i] === html) return;
-                if (extractStoredMessageId(list[i]) && !extractStoredMessageId(html)) return;
-                list[i] = html;
-                this._scheduleWrite();
-                return;
-            }
-        }
-
-        list.push(html);
-        applyCaps(this.tabs, this.getMaxHistory());
+        // message already held is updated in place rather than appended.
+        const outcome = mergeMessage(this.tabs[tabKey], html);
+        if (outcome === 'same') return;
+        if (outcome === 'appended') applyCaps(this.tabs, this.getMaxHistory());
+        this.dirty = true;
         this._scheduleWrite();
     }
 
@@ -855,16 +914,19 @@ class ChatHistoryPersistence {
      * @returns {Promise<boolean>} Whether a write was attempted and accepted
      */
     flushPending() {
-        if (!this.writeTimer) return Promise.resolve(false);
+        if (!this.dirty) return Promise.resolve(false);
         return this.flush(true);
     }
 
-    /** Coalesce the burst of evictions a busy channel produces into one write. */
+    /**
+     * Coalesce the burst of evictions a busy channel produces into one write.
+     * Stands down until the first read has merged — `load()` reschedules.
+     */
     _scheduleWrite() {
         if (this.writeTimer) return;
         this.writeTimer = setTimeout(() => {
             this.writeTimer = null;
-            this.flush();
+            if (this.loaded) this.flush();
         }, WRITE_DEBOUNCE_MS);
     }
 
@@ -885,11 +947,63 @@ class ChatHistoryPersistence {
         // it stands down first.
         if (storage.isQuotaExceeded?.()) return false;
 
+        if (!this.loaded) return this._mergeIntoStored(immediate);
+
         applyCaps(this.tabs, this.getMaxHistory());
+        this.dirty = false;
         try {
             return await storage.set(
                 characterKey(CHAT_HISTORY_KEY_BASE),
                 { v: RECORD_VERSION, savedAt: Date.now(), tabs: this.tabs },
+                CHAT_HISTORY_STORE,
+                immediate
+            );
+        } catch (error) {
+            console.error('[ChatHistoryPersistence] Could not write chat history:', error);
+            this.dirty = true;
+            return false;
+        }
+    }
+
+    /**
+     * A flush that arrives before the first read has merged: read the record
+     * now, merge a copy of what this session recorded into it, and write that.
+     *
+     * Everything this needs is taken before the first await — the key, the
+     * lines, the cap — because the caller is usually `disable()`, which resets
+     * this instance on the very next line and, on a character switch, is
+     * followed by the id `characterKey()` reads moving on. A read that fails
+     * or never comes back writes nothing: the record on disk is never
+     * replaced by one that was not read first.
+     *
+     * @param {boolean} immediate - Skip storage's own write debounce
+     * @returns {Promise<boolean>} Whether the write was attempted and accepted
+     */
+    async _mergeIntoStored(immediate) {
+        const key = characterKey(CHAT_HISTORY_KEY_BASE);
+        const perTab = this.getMaxHistory();
+        const pending = Object.entries(this.tabs).map(([tabKey, list]) => [tabKey, [...list]]);
+
+        let record;
+        try {
+            record = await storage.get(key, CHAT_HISTORY_STORE, null);
+        } catch (error) {
+            console.error('[ChatHistoryPersistence] Could not read chat history to merge into; not writing:', error);
+            return false;
+        }
+
+        const tabs = tabsFromRecord(record, perTab);
+        for (const [tabKey, list] of pending) {
+            if (!tabs[tabKey]) tabs[tabKey] = [];
+            for (const html of list) mergeMessage(tabs[tabKey], html);
+            if (!tabs[tabKey].length) delete tabs[tabKey];
+        }
+        applyCaps(tabs, perTab);
+
+        try {
+            return await storage.set(
+                key,
+                { v: RECORD_VERSION, savedAt: Date.now(), tabs },
                 CHAT_HISTORY_STORE,
                 immediate
             );
@@ -939,6 +1053,7 @@ class ChatHistoryPersistence {
         if (this.tabs[tabKey].length === before) return false;
 
         if (!this.tabs[tabKey].length) delete this.tabs[tabKey];
+        this.dirty = true;
         this._scheduleWrite();
         return true;
     }
@@ -955,6 +1070,8 @@ class ChatHistoryPersistence {
         this.tabs = null;
         this.snapshot = null;
         this.loadPromise = null;
+        this.loaded = false;
+        this.dirty = false;
         this.enabled = false;
         this.getMaxHistory = () => MAX_MESSAGES_PER_TAB;
     }

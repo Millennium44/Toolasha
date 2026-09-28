@@ -1401,6 +1401,130 @@ describe('messages that were only ever live survive a server restart', () => {
         expect(storedTexts()).toEqual([OLD, JOINED]);
     });
 
+    /**
+     * Hold the next storage read open until the returned `release` is called.
+     * Every read after it answers straight away, from `db`.
+     */
+    function holdNextRead() {
+        let release;
+        const gate = new Promise((resolve) => {
+            release = resolve;
+        });
+        storage.get.mockImplementationOnce(async (key, store, fallback = null) => {
+            await gate;
+            const bucket = db[store] || {};
+            return Object.prototype.hasOwnProperty.call(bucket, key) ? bucket[key] : fallback;
+        });
+        return () => release();
+    }
+
+    /** A second tab's history on disk, which a partial write would wipe out. */
+    const TRADE_KEY = tabKeyForChannel('/chat_channel_types/trade');
+    const TRADE_LINE = '[9/26 9:00:00 AM] Bob: selling cheese';
+    function seedTradeHistory() {
+        db.settings[STORAGE_KEY].tabs[TRADE_KEY] = [`<div class="ChatMessage_chatMessage__z">${TRADE_LINE}</div>`];
+    }
+
+    test('a disable while the first read is still open never replaces the record with the live backlog', async () => {
+        seedTradeHistory();
+        const release = holdNextRead();
+
+        // The pane already shows lines when the handler attaches; they are
+        // recorded before the read of the older history has come back.
+        const container = buildPartyChat();
+        container.appendChild(makeMessage(JOINED));
+        container.appendChild(makeMessage(RUNS[0]));
+        chatHistoryExtender.initialize();
+        await settle();
+
+        // A character switch, the setting turned off, or the page going away.
+        chatHistoryExtender.disable();
+        await settle();
+
+        expect(storedTexts()).toEqual([OLD, JOINED, RUNS[0]]);
+        expect(storedTexts(TRADE_KEY)).toEqual([TRADE_LINE]);
+
+        // The held read finally lands on a torn-down instance: nothing changes.
+        release();
+        await settle();
+        expect(storedTexts()).toEqual([OLD, JOINED, RUNS[0]]);
+        expect(storedTexts(TRADE_KEY)).toEqual([TRADE_LINE]);
+    });
+
+    test('a page hide or socket close while the first read is open merges with disk, then the load merges too', async () => {
+        seedTradeHistory();
+        const release = holdNextRead();
+
+        const container = buildPartyChat();
+        chatHistoryExtender.initialize();
+        await settle();
+        container.appendChild(makeMessage(JOINED));
+        await settle();
+
+        webSocketHook.emitSocketEvent('close', {}, null);
+        await settle();
+        expect(storedTexts()).toEqual([OLD, JOINED]);
+        expect(storedTexts(TRADE_KEY)).toEqual([TRADE_LINE]);
+
+        container.appendChild(makeMessage(RUNS[0]));
+        await settle();
+        release();
+        await settle();
+        await chatHistoryPersistence.flush();
+        expect(storedTexts()).toEqual([OLD, JOINED, RUNS[0]]);
+        expect(storedTexts(TRADE_KEY)).toEqual([TRADE_LINE]);
+    });
+
+    test('the coalescing timer never writes before the first read has merged', async () => {
+        vi.useFakeTimers();
+        try {
+            seedTradeHistory();
+            const release = holdNextRead();
+
+            const container = buildPartyChat();
+            chatHistoryExtender.initialize();
+            await settle();
+            container.appendChild(makeMessage(JOINED));
+            await settle();
+
+            await vi.advanceTimersByTimeAsync(10000);
+            expect(storage.set).not.toHaveBeenCalled();
+
+            release();
+            await settle();
+            await vi.advanceTimersByTimeAsync(10000);
+            expect(storedTexts()).toEqual([OLD, JOINED]);
+            expect(storedTexts(TRADE_KEY)).toEqual([TRADE_LINE]);
+        } finally {
+            vi.useRealTimers();
+        }
+    });
+
+    test('a read that never comes back never lets a write through', async () => {
+        seedTradeHistory();
+        storage.get.mockImplementation(() => new Promise(() => {}));
+        try {
+            const container = buildPartyChat();
+            container.appendChild(makeMessage(JOINED));
+            chatHistoryExtender.initialize();
+            await settle();
+
+            window.dispatchEvent(new Event('pagehide'));
+            chatHistoryExtender.disable();
+            await settle();
+
+            expect(storage.set).not.toHaveBeenCalled();
+            expect(storedTexts()).toEqual([OLD]);
+            expect(storedTexts(TRADE_KEY)).toEqual([TRADE_LINE]);
+        } finally {
+            storage.get.mockReset();
+            storage.get.mockImplementation(async (key, store, fallback = null) => {
+                const bucket = db[store] || {};
+                return Object.prototype.hasOwnProperty.call(bucket, key) ? bucket[key] : fallback;
+            });
+        }
+    });
+
     test('messageIdentity ignores markup, so a re-rendered or id-stamped line is the same line', () => {
         const plain = `<div class="ChatMessage_chatMessage__z"><span>${JOINED}</span></div>`;
         const stamped = `<div class="ChatMessage_chatMessage__z" data-mwi-msg-id="42" data-processed="1"><span>${JOINED}</span></div>`;
