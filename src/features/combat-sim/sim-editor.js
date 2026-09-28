@@ -543,9 +543,18 @@ export class SimEditor {
         });
         let nextSlot = existingSlots.length > 0 ? Math.max(...existingSlots) + 1 : 1;
 
+        // Each skipped entry is tagged by the pasted export's own slot number
+        // (1-5, see parseShykaiImport), not the hrid it lands under here —
+        // this maps the former to the latter so replacePlayer can later tell
+        // which accumulated entries are this player's own (see its own
+        // comment on the same subject).
+        const originalSlotToNewHrid = {};
+
         for (let i = 0; i < players.length; i++) {
             const dto = players[i];
+            const originalSlot = parseInt(dto.hrid?.match(/player(\d+)/)?.[1], 10);
             dto.hrid = `player${nextSlot}`;
+            if (Number.isFinite(originalSlot)) originalSlotToNewHrid[originalSlot] = dto.hrid;
             this._editedDTOs[dto.hrid] = dto;
             this._originalDTOs[dto.hrid] = structuredClone(dto);
             this._editedPlayerInfo.push({ hrid: dto.hrid, name: names[i] || `Player ${nextSlot}` });
@@ -563,7 +572,11 @@ export class SimEditor {
         // first import's dropped gear while those players are still in the party
         // — the hole silently back, which is the whole thing the note is for.
         // The paths that genuinely replace the loaded players clear it outright.
-        this._importSkipped = [...(this._importSkipped || []), ...(Array.isArray(skipped) ? skipped : [])];
+        const taggedSkipped = (Array.isArray(skipped) ? skipped : []).map((entry) => ({
+            ...entry,
+            hrid: originalSlotToNewHrid[entry.slot] ?? null,
+        }));
+        this._importSkipped = [...(this._importSkipped || []), ...taggedSkipped];
         this._partyKeyAtLoad = null;
         this._editorInitialized = true;
         this._selectedLoadoutName = '';
@@ -609,7 +622,15 @@ export class SimEditor {
         // The replaced slot is no longer the party member (or profile) it was
         // loaded from, so any note about that loaded state no longer applies to it.
         this._profileStatus = (this._profileStatus || []).filter((entry) => entry.hrid !== hrid);
-        this._importSkipped = [...(this._importSkipped || []), ...(Array.isArray(skipped) ? skipped : [])];
+        // The replaced slot's own prior skipped-equipment entries (from the
+        // import that first put a player in this slot, or an earlier Replace
+        // of it) are dropped before the new ones are added — a replacement is
+        // a fresh build, and the old build's "not equipped" warning must not
+        // survive it once nothing here still wears that build. Entries tagged
+        // for a *different* slot (see importPlayers/this same tagging) are
+        // untouched, same as a second import never clearing another slot's note.
+        const taggedSkipped = (Array.isArray(skipped) ? skipped : []).map((entry) => ({ ...entry, hrid }));
+        this._importSkipped = [...(this._importSkipped || []).filter((entry) => entry.hrid !== hrid), ...taggedSkipped];
         // Replacing yourself means the slot is no longer "you" — the live
         // house-room/guild-shrine sync in getEditedDTOs targets `_selfHrid`
         // and must stop touching a slot that now holds an imported build.
@@ -1140,7 +1161,13 @@ export class SimEditor {
      */
     async _exportActivePlayer() {
         const hrid = this._activeEditPlayer;
-        const dto = this._editedDTOs?.[hrid];
+        // Not `_editedDTOs` directly: a live house-room or guild-shrine
+        // upgrade since the panel opened is only folded in by
+        // getEditedDTOs()'s sync (see _syncHouseRoomsFromGame /
+        // _syncGuildShrinesFromGame) — simulations already go through it, and
+        // an export must show the same numbers a run would use, not a
+        // snapshot from whenever the editor last happened to render.
+        const dto = this.getEditedDTOs()?.[hrid];
         if (!dto) return;
         const name = this._editedPlayerInfo?.find((p) => p.hrid === hrid)?.name || 'Player';
         const exportObj = buildShykaiExportPlayer(dto, name);
@@ -1156,9 +1183,11 @@ export class SimEditor {
     async _exportParty() {
         const info = this._editedPlayerInfo || [];
         if (!info.length) return;
+        // Synced the same way _exportActivePlayer is — see its comment.
+        const editedDTOs = this.getEditedDTOs() || {};
         const exportObj = {};
         for (const { hrid, name } of info) {
-            const dto = this._editedDTOs[hrid];
+            const dto = editedDTOs[hrid];
             if (!dto) continue;
             const match = hrid.match(/player(\d+)/);
             const slot = match ? match[1] : '1';
