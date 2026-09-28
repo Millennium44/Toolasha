@@ -227,7 +227,9 @@ function buildNewInventory(host, selectedIcon, { ignoreClicks = false } = {}) {
     select(selectedIcon);
 
     const tabFor = (icon) => tabs[NATIVE_TAB_ICONS.indexOf(icon)];
-    const selectedIcon_ = () => NATIVE_TAB_ICONS.find((icon) => tabFor(icon).getAttribute('aria-selected') === 'true');
+    // The game's own state: the panel it renders. The Toolasha tab in the strip clears the
+    // selected tab's marks visually while its view is open, so the marks are not the state.
+    const selectedIcon_ = () => NATIVE_TAB_ICONS.find((_icon, i) => !panels[i].className.includes('TabPanel_hidden'));
     return { inv, tabsComponent, tabsContainer, tabList, panelsContainer, panels, tabFor, selected: selectedIcon_ };
 }
 
@@ -290,7 +292,7 @@ afterEach(() => {
 });
 
 describe('native inventory tabs (post-patch DOM)', () => {
-    test('the Toolasha button goes into the character panel strip, never the inventory strip', () => {
+    test('the Toolasha tab goes into the inventory strip, which is never taken for the character panel strip', () => {
         const { characterTabList, inventoryPanel } = buildCharacterPanel();
         // The inventory strip comes first in document order here, and one of its tabs reads
         // "Inventory": the strip must still never be taken for the character panel's.
@@ -304,8 +306,11 @@ describe('native inventory tabs (post-patch DOM)', () => {
         ui._tryInjectTabButton();
 
         expect(ui._findCharacterTabList()).toBe(characterTabList);
-        expect(characterTabList.querySelector('.toolasha-inv-tab')).not.toBeNull();
-        expect(fixture.tabList.querySelector('.toolasha-inv-tab')).toBeNull();
+        // Since the strip has an "All" tab, the Toolasha tab lives there (see
+        // custom-tabs-inventory-strip-tab.test.js), not in the character panel
+        expect(characterTabList.querySelector('.toolasha-inv-tab')).toBeNull();
+        expect(fixture.tabList.querySelector('[data-mwi-toolasha-inv-tab]')).not.toBeNull();
+        ui.cleanup();
         expect(ui._findContentContainer()).toBe(inventoryPanel.parentElement);
         expect(ui._findNativeInventoryTabList(fixture.inv)).toBe(fixture.tabList);
     });

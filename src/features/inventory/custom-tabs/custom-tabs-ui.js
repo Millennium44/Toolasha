@@ -1,6 +1,7 @@
 /**
  * Custom Inventory Tabs — UI Module
- * Injects a "Toolasha" tab into the character panel tab bar. When active,
+ * Injects a "Toolasha" tab: into the inventory's own tab strip where the game has one
+ * (game patch 2026-09), otherwise into the character panel tab bar. When active,
  * uses CSS `display: contents` + `order` to visually reorganize game tiles
  * into accordion sections without moving them out of their React-managed container.
  *
@@ -64,6 +65,10 @@ const NATIVE_ALL_TAB_ICON = 'inventory_all';
 const NATIVE_TAB_STORAGE_PREFIX = 'toolasha_local_inventoryNativeTab_';
 /** Clicks on the native "All" tab per activation before the layout proceeds with what is rendered */
 const MAX_NATIVE_ALL_TAB_CLICKS = 2;
+/** Marks the Toolasha tab placed in the inventory's own tab strip */
+const STRIP_TAB_ATTR = 'data-mwi-toolasha-inv-tab';
+/** Marks the TabsComponent_tabsContainer holding that tab, so the view keeps the strip visible */
+const STRIP_CONTAINER_ATTR = 'data-mwi-toolasha-inv-strip';
 
 // ---------------------------------------------------------------------------
 // CSS
@@ -106,8 +111,19 @@ export const PANEL_CSS = `
 .toolasha-ct-active [class*="TabPanel_tabPanel"]:not([class*="TabPanel_hidden"]) > div > div {
     display: contents;
 }
-.toolasha-ct-active [class*="TabsComponent_tabsContainer"] {
+.toolasha-ct-active [class*="TabsComponent_tabsContainer"]:not([data-mwi-toolasha-inv-strip]) {
     display: none !important;
+}
+/* ...unless the Toolasha tab lives in it: then it is how the player leaves the view,
+   so it stays, as a full-width row above the layout. The selection indicator would sit
+   under the game's (visually cleared) tab, not ours. */
+.toolasha-ct-active [data-mwi-toolasha-inv-strip] {
+    order: -1;
+    flex: 0 0 100%;
+    max-width: 100%;
+}
+.toolasha-ct-active [data-mwi-toolasha-inv-strip] [class*="MuiTabs-indicator"] {
+    display: none;
 }
 
 /* Hide game category labels and buttons exposed by display:contents */
@@ -633,6 +649,14 @@ export default class CustomTabsUI {
         // A choice stored by an earlier page whose Toolasha view was still open at reload. Consumed
         // once, when the native strip first exists, unless the view opens first (its exit restores).
         this._storedNativeTabPending = false;
+        // Toolasha tab in the inventory's own strip (layouts with an "All" native tab)
+        this._invTabBtn = null;
+        this._invTabList = null; // The strip it was placed in
+        this._invStripObserver = null; // Re-inserts it when React rebuilds the strip
+        this._invStripClickHandler = null; // Capture-phase listener: a native tab click leaves the view
+        this._sawInventoryStrip = false; // Sticky: once seen, the character-panel button is never used
+        this._hiddenNativeSelection = null; // The native tab the game has selected, visually cleared
+        this._issuingNativeClick = false; // Our own .click() on a native tab is not the player's
     }
 
     // -----------------------------------------------------------------------
@@ -695,7 +719,7 @@ export default class CustomTabsUI {
                         retries++;
                         this._tryInjectTabButton();
                         this._consumeStoredNativeTab();
-                        if (this._tabBtn || retries >= 20) clearInterval(retryInterval);
+                        if (this._tabBtn || this._invTabBtn || retries >= 20) clearInterval(retryInterval);
                     }, 500);
                     this._unregisterHandlers.push(() => clearInterval(retryInterval));
                 }
@@ -780,6 +804,8 @@ export default class CustomTabsUI {
 
     cleanup() {
         noteTeardown(this);
+        // The game's own selection goes back before the restore below reads it
+        if (this._isActive && this._invTabBtn) this._restoreHiddenNativeSelection();
         // Memory-only: a stored choice is left for the next instance, which may be drawing a
         // different character by the time a storage read would return.
         if (this._isActive) {
@@ -793,6 +819,7 @@ export default class CustomTabsUI {
         }
 
         this._clearLayout();
+        this._removeStripTab();
 
         if (this._onItemsUpdated) {
             dataManager.off('items_updated', this._onItemsUpdated);
@@ -934,6 +961,18 @@ export default class CustomTabsUI {
 
     _tryInjectTabButton() {
         try {
+            // Inventory with its own tab strip: the Toolasha tab goes there instead
+            const strip = this._findInventoryStrip();
+            if (strip) {
+                const reopen = this._retireCharacterPanelTab();
+                this._ensureStripTab(strip);
+                if (reopen && !this._isActive) this._activatePanel();
+                return;
+            }
+            // Layouts do not change within a page: a strip that is merely unmounted right now
+            // (character panel on another tab) is not a reason to fall back.
+            if (this._sawInventoryStrip) return;
+
             const tabList = this._findCharacterTabList();
             if (!tabList) return;
             if (tabList.querySelector('.toolasha-inv-tab')) return;
@@ -986,6 +1025,12 @@ export default class CustomTabsUI {
      * Called when the tab button is first injected and on live setting changes.
      */
     _applyDefaultTabSetting() {
+        // Inventory strip: "by default" means the inventory opens on the Toolasha tab. Nothing
+        // is hidden; the player leaves through any native tab.
+        if (this._invTabBtn) {
+            if (config.getSetting('inventoryTabs_defaultTab') && !this._isActive) this._activatePanel();
+            return;
+        }
         if (!this._tabBtn) return;
         const enabled = config.getSetting('inventoryTabs_defaultTab');
         if (this._inventoryTabEl) {
@@ -1016,6 +1061,15 @@ export default class CustomTabsUI {
         // The stored choice is now this view's to restore on exit
         this._storedNativeTabPending = false;
 
+        if (this._invTabBtn) {
+            // Our tab takes the selection; the game's stays selected in its own state (it is
+            // forced to "All" below) and is only cleared visually. The character panel is left alone.
+            this._setStripTabSelected(true);
+            if (this._invTabList?.isConnected) this._hideNativeSelection(this._invTabList);
+            this._applyLayout();
+            return;
+        }
+
         if (this._tabBtn) this._tabBtn.classList.add('Mui-selected');
         const tabList = this._tabBtn?.parentElement;
         if (tabList) {
@@ -1033,6 +1087,10 @@ export default class CustomTabsUI {
 
     _deactivatePanel(clickedTab = null) {
         if (!this._isActive) return;
+        if (this._invTabBtn) {
+            this._deactivateStripView(clickedTab);
+            return;
+        }
         this._isActive = false;
         if (this._tabBtn) this._tabBtn.classList.remove('Mui-selected');
         this._clearLayout();
@@ -1133,7 +1191,7 @@ export default class CustomTabsUI {
      * @returns {{tabs: HTMLElement[], allTab: HTMLElement|undefined}}
      */
     _nativeInventoryTabs(tabList) {
-        const tabs = [...tabList.querySelectorAll('[role="tab"]')];
+        const tabs = [...tabList.querySelectorAll('[role="tab"]')].filter((t) => !t.hasAttribute(STRIP_TAB_ATTR));
         const allTab = tabs.find((t, i) => this._nativeInventoryTabKey(t, i) === NATIVE_ALL_TAB_ICON) || tabs[0];
         return { tabs, allTab };
     }
@@ -1150,10 +1208,11 @@ export default class CustomTabsUI {
         const tabList = this._findNativeInventoryTabList(invContainer);
         if (!tabList) return false;
         const { tabs, allTab } = this._nativeInventoryTabs(tabList);
-        if (!allTab || this._isNativeTabSelected(allTab)) return false;
+        const selected = this._selectedNativeTab(tabs);
+        if (!allTab || selected === allTab) return false;
         if (this._nativeAllTabClicks >= MAX_NATIVE_ALL_TAB_CLICKS) return false;
 
-        const selectedIndex = tabs.findIndex((t) => this._isNativeTabSelected(t));
+        const selectedIndex = selected ? tabs.indexOf(selected) : -1;
         const charId = dataManager.getCurrentCharacterId();
         if (selectedIndex >= 0 && !this._savedNativeInvTab && charId) {
             const key = this._nativeInventoryTabKey(tabs[selectedIndex], selectedIndex);
@@ -1162,7 +1221,7 @@ export default class CustomTabsUI {
         }
 
         this._nativeAllTabClicks++;
-        allTab.click();
+        this._clickNativeTab(allTab);
         return true;
     }
 
@@ -1228,9 +1287,324 @@ export default class CustomTabsUI {
         const tabList = this._findNativeInventoryTabList(this._findInvContainer());
         if (!tabList) return;
         const { tabs, allTab } = this._nativeInventoryTabs(tabList);
-        if (!allTab || !this._isNativeTabSelected(allTab)) return;
+        if (!allTab || this._selectedNativeTab(tabs) !== allTab) return;
         const target = tabs.find((t, i) => this._nativeInventoryTabKey(t, i) === key);
-        if (target && target !== allTab) target.click();
+        if (target && target !== allTab) this._clickNativeTab(target);
+    }
+
+    /**
+     * The native tab the game has selected: one still carrying its selected marks, else the one
+     * whose marks the Toolasha view cleared (the game's state never changed for it).
+     * @param {HTMLElement[]} tabs - Native tabs only
+     * @returns {HTMLElement|undefined}
+     */
+    _selectedNativeTab(tabs) {
+        const marked = tabs.find((t) => this._isNativeTabSelected(t));
+        if (marked) return marked;
+        const hidden = this._hiddenNativeSelection;
+        return hidden && tabs.includes(hidden) ? hidden : undefined;
+    }
+
+    /**
+     * Click a native tab on our own behalf. The strip's capture listener takes every other click
+     * on a native tab as the player leaving the Toolasha view.
+     * @param {HTMLElement} tab
+     */
+    _clickNativeTab(tab) {
+        this._issuingNativeClick = true;
+        try {
+            tab.click();
+        } finally {
+            this._issuingNativeClick = false;
+        }
+    }
+
+    // -----------------------------------------------------------------------
+    // Toolasha tab inside the inventory's own strip
+    // -----------------------------------------------------------------------
+
+    /**
+     * The inventory's native tab strip when it is the layout the Toolasha tab belongs in: one
+     * holding an "All" tab (identified by icon). Checked on every pass, never by server name.
+     * @returns {HTMLElement|null}
+     */
+    _findInventoryStrip() {
+        const tabList = this._findNativeInventoryTabList(this._findInvContainer());
+        if (!tabList) return null;
+        const { tabs } = this._nativeInventoryTabs(tabList);
+        const hasAll = tabs.some((t, i) => this._nativeInventoryTabKey(t, i) === NATIVE_ALL_TAB_ICON);
+        return hasAll ? tabList : null;
+    }
+
+    /**
+     * Make sure the strip holds exactly one Toolasha tab, after its last native tab, and that the
+     * strip is watched. Idempotent, so the observer can call it on every mutation it causes.
+     * @param {HTMLElement} tabList
+     */
+    _ensureStripTab(tabList) {
+        this._sawInventoryStrip = true;
+        const isNewStrip = tabList !== this._invTabList;
+        if (isNewStrip) this._watchStrip(tabList);
+
+        let btn = tabList.querySelector(`[${STRIP_TAB_ATTR}]`);
+        if (btn && btn !== this._invTabBtn) {
+            // Left behind by another instance: its click handler belongs to a dead UI
+            btn.remove();
+            btn = null;
+        }
+        if (!btn) {
+            btn = this._buildStripTab(tabList);
+            if (!btn) return;
+            this._invTabBtn?.remove();
+            this._invTabBtn = btn;
+            this._setStripTabSelected(this._isActive);
+        }
+        this._placeStripTab(tabList, btn);
+
+        const container = tabList.closest('[class*="TabsComponent_tabsContainer"]');
+        if (container && !container.hasAttribute(STRIP_CONTAINER_ATTR)) {
+            container.setAttribute(STRIP_CONTAINER_ATTR, 'true');
+        }
+        if (this._isActive) this._hideNativeSelection(tabList);
+
+        // A freshly mounted inventory is where "open on the Toolasha tab" applies
+        if (isNewStrip) this._applyDefaultTabSetting();
+    }
+
+    /**
+     * Observe a strip (React rebuilding its tabs, re-marking its selection) and take native tab
+     * clicks in the capture phase, before the game handles them. Drops the previous strip's.
+     * @param {HTMLElement} tabList
+     */
+    _watchStrip(tabList) {
+        this._unwatchStrip();
+        this._invTabList = tabList;
+        this._invStripObserver = new MutationObserver(() => {
+            if (this._invTabList === tabList && tabList.isConnected) this._ensureStripTab(tabList);
+        });
+        this._invStripObserver.observe(tabList, {
+            childList: true,
+            subtree: true,
+            attributes: true,
+            attributeFilter: ['class', 'aria-selected'],
+        });
+        this._invStripClickHandler = (e) => {
+            if (this._issuingNativeClick || !this._isActive) return;
+            const tab = e.target?.closest?.('[role="tab"]');
+            if (!tab || tab.hasAttribute(STRIP_TAB_ATTR) || !tabList.contains(tab)) return;
+            this._deactivatePanel(tab);
+        };
+        tabList.addEventListener('click', this._invStripClickHandler, true);
+    }
+
+    _unwatchStrip() {
+        this._invStripObserver?.disconnect();
+        this._invStripObserver = null;
+        if (this._invTabList && this._invStripClickHandler) {
+            this._invTabList.removeEventListener('click', this._invStripClickHandler, true);
+        }
+        this._invStripClickHandler = null;
+        this._invTabList?.closest('[class*="TabsComponent_tabsContainer"]')?.removeAttribute(STRIP_CONTAINER_ATTR);
+        this._invTabList = null;
+    }
+
+    /**
+     * Remove the strip tab and stop watching the strip (disable, character switch, feature off).
+     */
+    _removeStripTab() {
+        this._unwatchStrip();
+        this._invTabBtn?.remove();
+        this._invTabBtn = null;
+        this._hiddenNativeSelection = null;
+    }
+
+    /**
+     * The Toolasha tab, modelled on a native one: same classes (minus the selection), same
+     * wrapper structure, the icon swapped for ours and any copied text dropped.
+     * @param {HTMLElement} tabList
+     * @returns {HTMLElement|null}
+     */
+    _buildStripTab(tabList) {
+        const model = this._nativeInventoryTabs(tabList).tabs.find((t) => t.style.display !== 'none');
+        if (!model) return null;
+
+        const btn = model.cloneNode(true);
+        for (const attr of ['id', 'aria-controls', 'draggable']) btn.removeAttribute(attr);
+        btn.style.display = '';
+        btn.style.order = '';
+        btn.classList.remove('Mui-selected');
+        btn.classList.add('toolasha-inv-tab');
+        btn.setAttribute(STRIP_TAB_ATTR, 'true');
+        btn.setAttribute('role', 'tab');
+        btn.setAttribute('type', 'button');
+        btn.setAttribute('title', 'Toolasha');
+        btn.setAttribute('aria-label', 'Toolasha');
+
+        // A count or label copied from the model would be the model's
+        const walker = document.createTreeWalker(btn, NodeFilter.SHOW_TEXT);
+        const texts = [];
+        while (walker.nextNode()) texts.push(walker.currentNode);
+        for (const text of texts) text.textContent = '';
+
+        const modelIcon = btn.querySelector('svg');
+        const icon = this._buildStripTabIcon(modelIcon);
+        if (modelIcon) modelIcon.replaceWith(icon);
+        else btn.prepend(icon);
+
+        btn.addEventListener('click', (e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            this._activatePanel();
+        });
+        return btn;
+    }
+
+    /**
+     * A "T" glyph sized like the native tab icons (their class and size attributes carried over).
+     * @param {SVGElement|null} modelIcon
+     * @returns {SVGElement}
+     */
+    _buildStripTabIcon(modelIcon) {
+        const ns = 'http://www.w3.org/2000/svg';
+        const svg = document.createElementNS(ns, 'svg');
+        for (const attr of ['class', 'width', 'height']) {
+            const value = modelIcon?.getAttribute(attr);
+            if (value) svg.setAttribute(attr, value);
+        }
+        svg.setAttribute('viewBox', '0 0 24 24');
+        svg.setAttribute('aria-hidden', 'true');
+        const text = document.createElementNS(ns, 'text');
+        text.setAttribute('x', '12');
+        text.setAttribute('y', '18');
+        text.setAttribute('text-anchor', 'middle');
+        text.setAttribute('font-size', '18');
+        text.setAttribute('font-weight', '700');
+        text.setAttribute('font-family', 'sans-serif');
+        text.setAttribute('fill', 'currentColor');
+        text.textContent = 'T';
+        svg.appendChild(text);
+        return svg;
+    }
+
+    /**
+     * Put the Toolasha tab right after the last native tab, found by icon id rather than by
+     * position, so Favorites appearing or a category filling never lands after it for long.
+     * @param {HTMLElement} tabList
+     * @param {HTMLElement} btn
+     */
+    _placeStripTab(tabList, btn) {
+        const { tabs } = this._nativeInventoryTabs(tabList);
+        const iconTabs = tabs.filter((t, i) => !this._nativeInventoryTabKey(t, i).startsWith('index:'));
+        let anchor = iconTabs[iconTabs.length - 1];
+        if (!anchor) return;
+        // A tab wrapped by the game (e.g. a tooltip span) is placed by its wrapper
+        while (anchor.parentElement && anchor.parentElement !== tabList) anchor = anchor.parentElement;
+        if (anchor.parentElement !== tabList) return;
+        if (btn.parentElement === tabList && anchor.nextElementSibling === btn) return;
+        tabList.insertBefore(btn, anchor.nextSibling);
+    }
+
+    /**
+     * @param {boolean} selected
+     */
+    _setStripTabSelected(selected) {
+        const btn = this._invTabBtn;
+        if (!btn) return;
+        btn.classList.toggle('Mui-selected', selected);
+        btn.setAttribute('aria-selected', String(selected));
+        btn.setAttribute('tabindex', selected ? '0' : '-1');
+    }
+
+    /**
+     * Clear the game's selected tab visually while the Toolasha view is open, remembering which
+     * one it was. React re-marks a tab only when its selection changes, which the observer sees.
+     * @param {HTMLElement} tabList
+     */
+    _hideNativeSelection(tabList) {
+        for (const tab of this._nativeInventoryTabs(tabList).tabs) {
+            if (!this._isNativeTabSelected(tab)) continue;
+            this._hiddenNativeSelection = tab;
+            tab.classList.remove('Mui-selected');
+            tab.setAttribute('aria-selected', 'false');
+        }
+    }
+
+    /**
+     * Put the selection marks back on the tab the game still has selected, unless the game has
+     * marked another one since.
+     */
+    _restoreHiddenNativeSelection() {
+        const tab = this._hiddenNativeSelection;
+        this._hiddenNativeSelection = null;
+        if (!tab?.isConnected) return;
+        const tabList = this._invTabList;
+        if (tabList && this._nativeInventoryTabs(tabList).tabs.some((t) => this._isNativeTabSelected(t))) return;
+        tab.classList.add('Mui-selected');
+        tab.setAttribute('aria-selected', 'true');
+    }
+
+    /**
+     * Leave the Toolasha view in the inventory-strip layout. A native tab click is the player's
+     * own choice: the game handles it once this returns, so the choice saved on entry is dropped
+     * rather than clicked back. Any other exit hands the saved choice back.
+     * @param {HTMLElement|null} clickedTab
+     */
+    _deactivateStripView(clickedTab) {
+        // Character panel tabs do not leave the view here; it lives inside the Inventory panel
+        const clickedNative = !!clickedTab && !!this._invTabList?.contains(clickedTab);
+        if (clickedTab && !clickedNative) return;
+
+        this._isActive = false;
+        this._setStripTabSelected(false);
+        this._restoreHiddenNativeSelection();
+        this._clearLayout();
+        if (clickedNative) {
+            this._discardNativeTabChoice();
+        } else {
+            this._restoreNativeInventoryTab().catch((error) => {
+                console.error('[CustomTabs] Restoring the native inventory tab failed:', error);
+            });
+        }
+    }
+
+    /**
+     * Forget the native tab saved on entering the view, in memory and in storage.
+     */
+    _discardNativeTabChoice() {
+        this._savedNativeInvTab = null;
+        const charId = dataManager.getCurrentCharacterId();
+        if (charId) this._persistNativeTabChoice(`${NATIVE_TAB_STORAGE_PREFIX}${charId}`, null);
+    }
+
+    /**
+     * Undo the character-panel button once the inventory's own strip turns up (a page whose
+     * inventory mounted after the character panel). Returns whether its view was open, so the
+     * caller can reopen it from the strip.
+     * @returns {boolean}
+     */
+    _retireCharacterPanelTab() {
+        const btn = this._tabBtn;
+        if (!btn) return false;
+        const wasActive = this._isActive;
+        if (wasActive) {
+            this._isActive = false;
+            btn.classList.remove('Mui-selected');
+            this._clearLayout();
+            this._showGameContent();
+            if (this._inventoryTabEl) {
+                this._inventoryTabEl.classList.add('Mui-selected');
+                this._inventoryTabEl.setAttribute('aria-selected', 'true');
+            }
+        }
+        if (this._inventoryTabEl) {
+            this._inventoryTabEl.style.display = '';
+            this._inventoryTabEl = null;
+        }
+        const scroller = btn.parentElement?.parentElement;
+        if (scroller?.className?.includes?.('MuiTabs-scroller')) scroller.style.overflow = '';
+        btn.remove();
+        this._tabBtn = null;
+        return wasActive;
     }
 
     /**
@@ -1271,8 +1645,9 @@ export default class CustomTabsUI {
         invContainer.classList.add('toolasha-ct-active');
         this._applyTileGap(invContainer);
 
-        // Ensure the Inventory panel is visible
-        this._showInventoryPanel();
+        // Ensure the Inventory panel is visible. Not with the inventory's own strip: the view
+        // then lives inside the Inventory panel and the character panel is the game's.
+        if (!this._invTabBtn) this._showInventoryPanel();
 
         // Native inventory tabs render tiles for the selected tab only. Switch to "All" and let
         // the re-render drive the real pass, the same hand-off as the collapsed-category path.
@@ -1422,6 +1797,12 @@ export default class CustomTabsUI {
         // their items into sections that are not theirs. The reload triggered
         // by `character_initialized` redraws once the right config is in hand.
         if (!this._isConfigForCurrentCharacter()) return;
+
+        // React may have rebuilt the inventory strip since the observer last ran
+        if (this._sawInventoryStrip) {
+            const strip = this._findInventoryStrip();
+            if (strip) this._ensureStripTab(strip);
+        }
 
         // Guard against re-entry from inside the synchronous pass — defer and re-run after it
         if (this._isApplying) {
@@ -1623,8 +2004,8 @@ export default class CustomTabsUI {
             }
         }
 
-        // Restore content container panels visibility
-        const contentContainer = this._findContentContainer();
+        // Restore content container panels visibility (never touched with the inventory strip)
+        const contentContainer = this._invTabBtn ? null : this._findContentContainer();
         if (contentContainer) {
             for (const child of contentContainer.children) {
                 child.style.display = '';
