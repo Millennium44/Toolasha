@@ -1387,15 +1387,23 @@ export class SimEditor {
             background:rgba(255,255,255,0.04); border:1px solid #333; color:#888;
             padding:3px 8px; border-radius:5px; font-size:11px; cursor:pointer;
             font-family:inherit;" title="Import players from Shykai export string">+ Import</button>`;
-        html += `<button id="mwi-csim-export-btn" style="
-            background:rgba(255,255,255,0.04); border:1px solid #333; color:#888;
-            padding:3px 8px; border-radius:5px; font-size:11px; cursor:pointer;
-            font-family:inherit;" title="Copy the selected player's build in the same format + Import accepts">Export</button>`;
-        if (playerInfo.length > 1) {
-            html += `<button id="mwi-csim-export-party-btn" style="
+        // Combat-only: the export/import format (buildShykaiExportPlayer /
+        // parseShykaiImport) carries only combat fields — skill levels
+        // (beyond the 7 combat ones), token upgrades and community buff
+        // levels have no place in it. Offering Export here would silently
+        // drop them; the skilling editor's own player is exported another
+        // way entirely.
+        if (!this.skillingMode) {
+            html += `<button id="mwi-csim-export-btn" style="
                 background:rgba(255,255,255,0.04); border:1px solid #333; color:#888;
                 padding:3px 8px; border-radius:5px; font-size:11px; cursor:pointer;
-                font-family:inherit;" title="Copy every loaded player as a multi-slot export">Export Party</button>`;
+                font-family:inherit;" title="Copy the selected player's build in the same format + Import accepts">Export</button>`;
+            if (playerInfo.length > 1) {
+                html += `<button id="mwi-csim-export-party-btn" style="
+                    background:rgba(255,255,255,0.04); border:1px solid #333; color:#888;
+                    padding:3px 8px; border-radius:5px; font-size:11px; cursor:pointer;
+                    font-family:inherit;" title="Copy every loaded player as a multi-slot export">Export Party</button>`;
+            }
         }
         html += this._renderResetControls();
         // Combat mode only, and only once there is a party to sim solo out of —
@@ -1421,6 +1429,11 @@ export class SimEditor {
         // selected, importing offers a choice: replace that one slot in place,
         // or add the pasted build as a new member (capped at MAX_PARTY_SIZE).
         const activeName = playerInfo.find((p) => p.hrid === activePlayer)?.name || '';
+        // Combat-only: replacing a slot pastes a build parsed by
+        // parseShykaiImport, which carries no skilling skill levels, token
+        // upgrades or community buff levels for a skilling player to keep —
+        // same reason Export/Export Party are hidden in skillingMode, above.
+        const canReplace = Boolean(activeName) && !this.skillingMode;
         const atCap = playerInfo.length >= MAX_PARTY_SIZE;
         html += `<div id="mwi-csim-import-area" style="display:none; margin-bottom:10px;">
             <textarea id="mwi-csim-import-text" placeholder="Paste Shykai export JSON here..." style="
@@ -1429,7 +1442,7 @@ export class SimEditor {
                 box-sizing:border-box;"></textarea>
             <div style="display:flex; gap:6px; margin-top:4px; flex-wrap:wrap; align-items:center;">
                 ${
-                    activeName
+                    canReplace
                         ? `<button id="mwi-csim-import-replace" style="
                     background:${ACCENT_BTN_BG}; border:1px solid ${ACCENT_BTN_BORDER}; color:${ACCENT};
                     padding:3px 12px; border-radius:4px; font-size:11px; cursor:pointer; font-family:inherit;
@@ -1442,7 +1455,7 @@ export class SimEditor {
                     padding:3px 12px; border-radius:4px; font-size:11px; cursor:${atCap ? 'default' : 'pointer'};
                     font-family:inherit; font-weight:600;"${atCap ? ' disabled' : ''}
                     title="${atCap ? `A party has ${MAX_PARTY_SIZE} players already — replace one instead` : 'Add the pasted build as a new member'}"
-                    >${activeName ? 'Add as new member' : 'Import'}</button>
+                    >${canReplace ? 'Add as new member' : 'Import'}</button>
                 <button id="mwi-csim-import-cancel" style="
                     background:rgba(255,255,255,0.04); border:1px solid #333; color:#888;
                     padding:3px 12px; border-radius:4px; font-size:11px; cursor:pointer; font-family:inherit;">Cancel</button>

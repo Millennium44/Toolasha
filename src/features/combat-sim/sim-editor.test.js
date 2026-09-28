@@ -1822,3 +1822,31 @@ describe('level-gap debuffs follow the roster', () => {
         expect(editor._editedDTOs.player1.debuffOnLevelGap).toBe(0);
     });
 });
+
+/**
+ * Export, Export Party and the "Replace <name>" import option are all
+ * backed by parseShykaiImport / buildShykaiExportPlayer, which only round
+ * trips combat fields. The skilling editor's own player carries skilling
+ * skill levels, token upgrades and community buff levels that format has no
+ * room for — offering any of the three there would silently drop them.
+ */
+describe('Export/Replace are combat-only and hidden in skillingMode', () => {
+    test('the skilling editor offers no Export, Export Party or Replace, but still offers Import', () => {
+        const el = document.createElement('div');
+        const editor = new SimEditor({ editorEl: el, skillingMode: true });
+        editor.resetToSelf();
+
+        expect(el.querySelector('#mwi-csim-export-btn')).toBeNull();
+        expect(el.querySelector('#mwi-csim-export-party-btn')).toBeNull();
+        expect(el.querySelector('#mwi-csim-import-replace')).toBeNull();
+        expect(el.querySelector('#mwi-csim-import-btn')).toBeTruthy();
+    });
+
+    test('an ordinary combat editor still offers all three', () => {
+        const { el } = editorWithStrangers();
+
+        expect(el.querySelector('#mwi-csim-export-btn')).toBeTruthy();
+        expect(el.querySelector('#mwi-csim-export-party-btn')).toBeTruthy();
+        expect(el.querySelector('#mwi-csim-import-replace')).toBeTruthy();
+    });
+});
