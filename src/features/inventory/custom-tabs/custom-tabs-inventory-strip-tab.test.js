@@ -2,7 +2,7 @@
  * @vitest-environment happy-dom
  *
  * Where the inventory has its own tab strip (game patch 2026-09, test server first), the
- * Toolasha tab lives in that strip, after the last native tab, instead of in the character
+ * Toolasha tab lives in that strip, first, before All Items, instead of in the character
  * panel. The pre-patch layout keeps the character-panel button exactly as before.
  *
  * The inventory fixture mirrors the DOM measured on test.milkywayidle.com (see
@@ -359,12 +359,12 @@ afterEach(() => {
 });
 
 describe('inventory with its own tab strip', () => {
-    test('the Toolasha tab goes after the last category tab, modelled on a native tab', async () => {
+    test('the Toolasha tab goes first, before All Items, modelled on a native tab', async () => {
         const { characterTabList, characterScroller, contentContainer, inventoryPanel } = buildCharacterPanel();
         const fixture = buildNewInventory(inventoryPanel, CATEGORY_ICONS, 'item_category_food');
         ui = await startUI();
 
-        expect(fixture.order()).toEqual([...CATEGORY_ICONS, 'toolasha']);
+        expect(fixture.order()).toEqual(['toolasha', ...CATEGORY_ICONS]);
         const tab = fixture.tabList.querySelector(STRIP_TAB);
         expect(tab.getAttribute('role')).toBe('tab');
         expect(tab.getAttribute('title')).toBe('Toolasha');
@@ -388,7 +388,7 @@ describe('inventory with its own tab strip', () => {
         expect(ui._isActive).toBe(false);
     });
 
-    test('is put back after the last native tab whenever React rebuilds the strip', async () => {
+    test('stays first whenever React rebuilds the strip', async () => {
         const { inventoryPanel } = buildCharacterPanel();
         const fixture = buildNewInventory(inventoryPanel, CATEGORY_ICONS, 'inventory_all');
         ui = await startUI();
@@ -396,24 +396,29 @@ describe('inventory with its own tab strip', () => {
         // Favorites appears after All
         fixture.setTabs(['inventory_all', 'favorites_tab', ...CATEGORY_ICONS.slice(1)]);
         await flush();
-        expect(fixture.order()).toEqual(['inventory_all', 'favorites_tab', ...CATEGORY_ICONS.slice(1), 'toolasha']);
+        expect(fixture.order()).toEqual(['toolasha', 'inventory_all', 'favorites_tab', ...CATEGORY_ICONS.slice(1)]);
 
         // A category fills: React appends it, after our tab
         fixture.setTabs(['inventory_all', 'favorites_tab', ...CATEGORY_ICONS.slice(1), 'item_category_loot']);
         await flush();
-        expect(fixture.order().at(-1)).toBe('toolasha');
-        expect(fixture.order().at(-2)).toBe('item_category_loot');
+        expect(fixture.order()[0]).toBe('toolasha');
+        expect(fixture.order().at(-1)).toBe('item_category_loot');
+
+        // React moves a keyed tab to the front, ahead of ours
+        fixture.tabList.insertBefore(fixture.tabFor('inventory_all'), fixture.tabList.firstChild);
+        await flush();
+        expect(fixture.order().slice(0, 2)).toEqual(['toolasha', 'inventory_all']);
 
         // Favorites disappears and a category empties
         fixture.setTabs(['inventory_all', 'item_category_currency', 'item_category_loot']);
         await flush();
-        expect(fixture.order()).toEqual(['inventory_all', 'item_category_currency', 'item_category_loot', 'toolasha']);
+        expect(fixture.order()).toEqual(['toolasha', 'inventory_all', 'item_category_currency', 'item_category_loot']);
 
         // The whole strip is remounted: the class watcher sees the new container's strip
         fixture.remountStrip();
         renderStrips();
         await flush();
-        expect(fixture.order()).toEqual(['inventory_all', 'item_category_currency', 'item_category_loot', 'toolasha']);
+        expect(fixture.order()).toEqual(['toolasha', 'inventory_all', 'item_category_currency', 'item_category_loot']);
         expect(document.querySelectorAll(STRIP_TAB)).toHaveLength(1);
     });
 
@@ -437,7 +442,7 @@ describe('inventory with its own tab strip', () => {
         fixture.setTabs(['inventory_all', 'favorites_tab', ...CATEGORY_ICONS.slice(1)]);
         await flush();
         expect(fixture.marked()).toEqual([tab]);
-        expect(fixture.order().at(-1)).toBe('toolasha');
+        expect(fixture.order()[0]).toBe('toolasha');
     });
 
     test('the strip stays visible in the view, with the native indicator hidden', async () => {
@@ -476,7 +481,7 @@ describe('inventory with its own tab strip', () => {
         expect(ui._savedNativeInvTab).toBeNull();
         expect(storageMock.map.has('toolasha_local_inventoryNativeTab_char-1')).toBe(false);
         // Our tab stays in the strip for next time
-        expect(fixture.order().at(-1)).toBe('toolasha');
+        expect(fixture.order()[0]).toBe('toolasha');
     });
 
     test('clicking All, which the game already has selected, shows it selected again', async () => {
@@ -572,6 +577,42 @@ describe('inventory with its own tab strip', () => {
     });
 });
 
+describe('control row', () => {
+    /** @param {HTMLElement} root */
+    async function checkIconButtons(root) {
+        const expand = root.querySelector('[aria-label="Expand all tabs"]');
+        const collapse = root.querySelector('[aria-label="Collapse all tabs"]');
+        expect(expand.title).toBe('Expand all tabs');
+        expect(collapse.title).toBe('Collapse all tabs');
+        expect(expand.classList.contains('toolasha-ct-add-btn')).toBe(true);
+        expect(expand.textContent).not.toMatch(/Expand/i);
+        expect(collapse.textContent).not.toMatch(/Collapse/i);
+        const setAll = vi.spyOn(ui, '_onSetAllTabsOpen').mockImplementation(() => {});
+        collapse.click();
+        expand.click();
+        expect(setAll.mock.calls).toEqual([[false], [true]]);
+        setAll.mockRestore();
+    }
+
+    test('Expand/Collapse all are titled icon buttons with the same handlers, on the strip layout', async () => {
+        const { inventoryPanel } = buildCharacterPanel();
+        const fixture = buildNewInventory(inventoryPanel, CATEGORY_ICONS, 'inventory_all');
+        ui = await startUI();
+        fixture.tabList.querySelector(STRIP_TAB).click();
+        await flush();
+        await checkIconButtons(fixture.inv);
+    });
+
+    test('...and on the pre-patch layout', async () => {
+        const { characterTabList, inventoryPanel } = buildCharacterPanel();
+        const { inv } = buildOldInventory(inventoryPanel);
+        ui = await startUI();
+        characterTabList.querySelector('.toolasha-inv-tab').click();
+        await flush();
+        await checkIconButtons(inv);
+    });
+});
+
 describe('cleanup', () => {
     test('cleanup with the view open removes our tab and restores the native selection', async () => {
         const { inventoryPanel } = buildCharacterPanel();
@@ -622,7 +663,7 @@ describe('cleanup', () => {
         for (const fn of observer.readyHandlers) fn();
         await flush();
         expect(document.querySelectorAll(STRIP_TAB)).toHaveLength(1);
-        expect(fixture.order().at(-1)).toBe('toolasha');
+        expect(fixture.order()[0]).toBe('toolasha');
     });
 });
 
