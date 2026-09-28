@@ -5830,7 +5830,25 @@ class CombatSimUI {
             if (!this._editor?.getLoadoutNameFor?.(playerHrid)) return dtos;
             const original = this._editor.getOriginalDTO?.(playerHrid);
             if (!original) return dtos;
-            return dtos.map((dto) => (dto?.hrid === playerHrid ? structuredClone(original) : dto));
+            return dtos.map((dto) => {
+                if (dto?.hrid !== playerHrid) return dto;
+                const copy = structuredClone(dto);
+                // Only the fields a loadout actually owns (see
+                // applyLoadoutSnapshotToDTO: equipment, abilities and
+                // food/drinks with their triggers) are restored from the
+                // pre-loadout build — not the whole DTO. `dto` here is this
+                // sweep's own copy (see soloVsPartySets), which can carry
+                // sweep-specific fields the pre-loadout snapshot never had
+                // — a solo sweep's zeroed `debuffOnLevelGap`, say — and a
+                // wholesale swap for `original` was bringing back its
+                // party-level debuff, applying a party-only penalty to a
+                // solo run that had deliberately zeroed it.
+                copy.equipment = structuredClone(original.equipment);
+                copy.abilities = structuredClone(original.abilities);
+                copy.food = structuredClone(original.food);
+                copy.drinks = structuredClone(original.drinks);
+                return copy;
+            });
         }
         return dtos.map((dto) => {
             if (dto?.hrid !== playerHrid) return dto;
