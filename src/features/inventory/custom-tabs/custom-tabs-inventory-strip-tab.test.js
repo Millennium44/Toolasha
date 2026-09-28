@@ -667,6 +667,142 @@ describe('cleanup', () => {
     });
 });
 
+describe('inventory behind another character panel tab', () => {
+    /** Character panel on Equipment: the Inventory panel is hidden, its inventory still mounted */
+    function showEquipment(characterTabList, contentContainer) {
+        const [inventoryTab, equipmentTab] = characterTabList.querySelectorAll('[role="tab"]');
+        inventoryTab.classList.remove('Mui-selected');
+        inventoryTab.setAttribute('aria-selected', 'false');
+        equipmentTab.classList.add('Mui-selected');
+        equipmentTab.setAttribute('aria-selected', 'true');
+        contentContainer.children[0].className = 'TabPanel_tabPanel__tXMJF TabPanel_hidden__26UM3';
+        contentContainer.children[1].className = 'TabPanel_tabPanel__tXMJF';
+    }
+    function showInventory(characterTabList, contentContainer) {
+        const [inventoryTab, equipmentTab] = characterTabList.querySelectorAll('[role="tab"]');
+        equipmentTab.classList.remove('Mui-selected');
+        equipmentTab.setAttribute('aria-selected', 'false');
+        inventoryTab.classList.add('Mui-selected');
+        inventoryTab.setAttribute('aria-selected', 'true');
+        contentContainer.children[0].className = 'TabPanel_tabPanel__tXMJF';
+        contentContainer.children[1].className = 'TabPanel_tabPanel__tXMJF TabPanel_hidden__26UM3';
+    }
+    const DETACHED = 'CustomTabs_detachedRestore:TabsComponent_tabsContainer';
+
+    test('the default setting leaves the character panel alone and the inventory opens on Toolasha', async () => {
+        // The setting means: whenever the inventory is shown, it shows the Toolasha view. It
+        // never switches the character panel away from what the player has open.
+        game.settings.inventoryTabs_defaultTab = true;
+        const { characterTabList, contentContainer, inventoryPanel } = buildCharacterPanel();
+        showEquipment(characterTabList, contentContainer);
+        const fixture = buildNewInventory(inventoryPanel, CATEGORY_ICONS, 'item_category_food');
+        ui = await startUI();
+
+        const [inventoryTab, equipmentTab] = characterTabList.querySelectorAll('[role="tab"]');
+        expect(equipmentTab.classList.contains('Mui-selected')).toBe(true);
+        expect(inventoryTab.classList.contains('Mui-selected')).toBe(false);
+        expect(contentContainer.children[0].className).toContain('TabPanel_hidden');
+        for (const panel of contentContainer.children) expect(panel.getAttribute('style')).toBeNull();
+
+        // The player opens the inventory: it is already the Toolasha view
+        showInventory(characterTabList, contentContainer);
+        await flush();
+        expect(ui._isActive).toBe(true);
+        expect(fixture.marked()).toEqual([fixture.tabList.querySelector(STRIP_TAB)]);
+        expect(fixture.gameSelected()).toBe('inventory_all');
+        expect(visibleTiles(fixture.inv)).toEqual(['cheese', 'coin', 'milk']);
+    });
+
+    test('the same holds when the game remounts the inventory on showing it', async () => {
+        game.settings.inventoryTabs_defaultTab = true;
+        const { characterTabList, contentContainer, inventoryPanel } = buildCharacterPanel();
+        showEquipment(characterTabList, contentContainer);
+        const first = buildNewInventory(inventoryPanel, CATEGORY_ICONS, 'item_category_food');
+        ui = await startUI();
+        expect(ui._isActive).toBe(true);
+
+        first.inv.remove();
+        showInventory(characterTabList, contentContainer);
+        const fixture = buildNewInventory(inventoryPanel, CATEGORY_ICONS, 'inventory_all');
+        renderStrips();
+        await flush();
+
+        expect(ui._isActive).toBe(true);
+        expect(fixture.marked()).toEqual([fixture.tabList.querySelector(STRIP_TAB)]);
+        expect(visibleTiles(fixture.inv)).toEqual(['cheese', 'coin', 'milk']);
+    });
+
+    test('disabled while the inventory is unmounted, the saved tab comes back when it remounts', async () => {
+        const { characterTabList, contentContainer, inventoryPanel } = buildCharacterPanel();
+        const first = buildNewInventory(inventoryPanel, CATEGORY_ICONS, 'item_category_food');
+        ui = await startUI();
+        first.tabList.querySelector(STRIP_TAB).click();
+        await flush();
+        expect(first.gameSelected()).toBe('inventory_all');
+
+        // Equipment unmounts the inventory, then the feature is turned off
+        first.inv.remove();
+        showEquipment(characterTabList, contentContainer);
+        ui.cleanup();
+        ui = null;
+        await flush();
+        expect(storageMock.map.get('toolasha_local_inventoryNativeTab_char-1')).toBe('item_category_food');
+
+        // The game remounts the inventory on its remembered tab, the forced All
+        showInventory(characterTabList, contentContainer);
+        const fixture = buildNewInventory(inventoryPanel, CATEGORY_ICONS, 'inventory_all');
+        const restore = observer.classHandlers.get(DETACHED);
+        expect(restore).toBeTypeOf('function');
+        // The character panel strip is not the inventory's: ignored, still pending
+        restore(characterTabList.closest('[class*="TabsComponent_tabsContainer"]'));
+        expect(observer.classHandlers.has(DETACHED)).toBe(true);
+        restore(fixture.tabsContainer);
+        await flush();
+
+        expect(fixture.gameSelected()).toBe('item_category_food');
+        expect(storageMock.map.has('toolasha_local_inventoryNativeTab_char-1')).toBe(false);
+        // One-shot
+        expect(observer.classHandlers.has(DETACHED)).toBe(false);
+    });
+
+    test('the left-behind restore skips another character and yields to a new instance', async () => {
+        const { characterTabList, contentContainer, inventoryPanel } = buildCharacterPanel();
+        const first = buildNewInventory(inventoryPanel, CATEGORY_ICONS, 'item_category_food');
+        ui = await startUI();
+        first.tabList.querySelector(STRIP_TAB).click();
+        await flush();
+        first.inv.remove();
+        showEquipment(characterTabList, contentContainer);
+        ui.cleanup();
+        ui = null;
+
+        // Another character: no click, and the first character's stored choice stays
+        game.charId = 'char-2';
+        const fixture = buildNewInventory(inventoryPanel, CATEGORY_ICONS, 'inventory_all');
+        observer.classHandlers.get(DETACHED)(fixture.tabsContainer);
+        await flush();
+        expect(fixture.gameSelected()).toBe('inventory_all');
+        expect(storageMock.map.get('toolasha_local_inventoryNativeTab_char-1')).toBe('item_category_food');
+        expect(observer.classHandlers.has(DETACHED)).toBe(false);
+
+        // A new instance cancels a pending one (it restores from storage itself)
+        game.charId = 'char-1';
+        fixture.inv.remove();
+        const again = buildNewInventory(inventoryPanel, CATEGORY_ICONS, 'item_category_food');
+        observer.readyHandlers.length = 0; // the mock's onReady cannot unregister the dead instance's
+        ui = await startUI();
+        again.tabList.querySelector(STRIP_TAB).click();
+        await flush();
+        again.inv.remove();
+        ui.cleanup();
+        ui = null;
+        expect(observer.classHandlers.has(DETACHED)).toBe(true);
+        ui = new CustomTabsUI();
+        await ui.initialize();
+        expect(observer.classHandlers.has(DETACHED)).toBe(false);
+    });
+});
+
 describe('pre-patch layout (no native strip)', () => {
     test('keeps the character-panel button after Inventory, exactly as before', async () => {
         const { characterTabList, characterScroller, inventoryPanel } = buildCharacterPanel();
