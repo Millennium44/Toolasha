@@ -69,6 +69,12 @@ const MAX_NATIVE_ALL_TAB_CLICKS = 2;
 const STRIP_TAB_ATTR = 'data-mwi-toolasha-inv-tab';
 /** Marks the TabsComponent_tabsContainer holding that tab, so the view keeps the strip visible */
 const STRIP_CONTAINER_ATTR = 'data-mwi-toolasha-inv-strip';
+/**
+ * Unregisters a restore left behind by a UI torn down while its inventory was unmounted (see
+ * `_deferNativeTabRestore`). Module-level because it outlives the instance that made it.
+ * @type {Function|null}
+ */
+let cancelDetachedNativeRestore = null;
 
 // ---------------------------------------------------------------------------
 // CSS
@@ -686,6 +692,8 @@ export default class CustomTabsUI {
         // other site in this class self-heals on the next switch; this one is
         // the only leak that is permanent for the life of the tab, and it keeps
         // rewriting inventory DOM off a departed character's config.
+        // A restore left by a torn-down instance is this one's job now (it reads the stored choice)
+        cancelDetachedNativeRestore?.();
         const ticket = captureOwner(this);
         this._config = await loadConfig(charId);
         // Gates the whole tail — there is only one await in this body, and the
@@ -814,7 +822,13 @@ export default class CustomTabsUI {
         if (this._isActive && this._invTabBtn) this._restoreHiddenNativeSelection();
         // Memory-only: a stored choice is left for the next instance, which may be drawing a
         // different character by the time a storage read would return.
-        if (this._isActive) {
+        const held = this._savedNativeInvTab;
+        if (this._isActive && held && !this._findNativeInventoryTabList(this._findInvContainer())) {
+            // The inventory is unmounted (character panel on another tab): nothing to click now,
+            // and with the feature off no instance would ever hand the choice back
+            this._savedNativeInvTab = null;
+            this._deferNativeTabRestore(held);
+        } else if (this._isActive) {
             this._restoreNativeInventoryTab({ allowStored: false }).catch((error) => {
                 console.error('[CustomTabs] Restoring the native inventory tab failed:', error);
             });
@@ -1571,6 +1585,35 @@ export default class CustomTabsUI {
                 console.error('[CustomTabs] Restoring the native inventory tab failed:', error);
             });
         }
+    }
+
+    /**
+     * Hand a saved native tab back the next time the inventory strip mounts, after this instance
+     * is gone. One-shot: gives up on another character (its stored copy stays for that character),
+     * and is cancelled by the next instance's initialize(), which restores from storage itself.
+     * @param {{charId: string, key: string}} held
+     */
+    _deferNativeTabRestore(held) {
+        cancelDetachedNativeRestore?.();
+        const storageKey = `${NATIVE_TAB_STORAGE_PREFIX}${held.charId}`;
+        let unregister = null;
+        const finish = () => {
+            unregister?.();
+            if (cancelDetachedNativeRestore === finish) cancelDetachedNativeRestore = null;
+        };
+        unregister = domObserver.onClass('CustomTabs_detachedRestore', 'TabsComponent_tabsContainer', (el) => {
+            const invContainer = el?.closest?.('[class*="Inventory_items"]');
+            const tabList = invContainer && this._findNativeInventoryTabList(invContainer);
+            if (!tabList) return;
+            finish();
+            if (dataManager.getCurrentCharacterId() !== held.charId) return;
+            this._persistNativeTabChoice(storageKey, null);
+            const { tabs, allTab } = this._nativeInventoryTabs(tabList);
+            if (!allTab || this._selectedNativeTab(tabs) !== allTab) return;
+            const target = tabs.find((t, i) => this._nativeInventoryTabKey(t, i) === held.key);
+            if (target && target !== allTab) this._clickNativeTab(target);
+        });
+        cancelDetachedNativeRestore = finish;
     }
 
     /**
