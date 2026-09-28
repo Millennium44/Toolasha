@@ -12,7 +12,7 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ### Dungeon tracker no longer times a run from a canceled one a day earlier
 
-- A canceled party ready check left its time behind as the next run's start, so the next dungeon, even a day later with a different party, showed an elapsed time of over a day and banked it as the run's time. A new battle now starts the clock fresh, and a run longer than 3 hours is never banked or resumed.
+- A canceled party ready check left its time behind as the next run's start, so the next dungeon, even a day later with a different party, showed an elapsed time of over a day and banked it as the run's time. A new battle now starts the clock fresh, a run longer than 3 hours is never banked or resumed, and a party run that finishes just as the next one starts keeps its own final wave.
 - Backfill files each run under the dungeon the party last started, instead of the last one that ended, so a run after a canceled one no longer lands under the wrong dungeon. Delete a wrongly filed run and Backfill again to repair it.
 
 ### Marketplace and other panels fit a phone screen
@@ -22,7 +22,7 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ### Chest key zones no longer run into the stack value
 
-- The zone list on chest key icons ("5·7·8·10") ran straight into the item's stack value in the top-right corner. It now wraps onto two short lines in the top-left, clear of both the value and the item count.
+- The zone list on chest key icons ("5·7·8·10") ran straight into the item's stack value in the top-right corner. It now wraps onto two short lines in the top-left, clear of both the value and the item count, and value badges print whole units from their first draw.
 
 <!-- shipped in 3.61.1 -->
 
