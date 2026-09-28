@@ -596,11 +596,17 @@ export function parseShykaiImport(jsonString) {
         const p = slotData.player;
         if (!p) continue;
 
-        // Skip blank/empty players (all seven combat levels at 1 and no
-        // equipment) — every level, not just stamina and attack, since a
-        // gearless build raised in only e.g. magic/intelligence/defense (a
-        // mage with no gear yet, say) is exactly the kind of build this
-        // export/import exists to carry, not an empty slot to discard.
+        // Skip blank/empty players (all seven combat levels at 1 and
+        // nothing else carried for them) — every level, not just stamina
+        // and attack, since a gearless build raised in only e.g.
+        // magic/intelligence/defense (a mage with no gear yet, say) is
+        // exactly the kind of build this export/import exists to carry, not
+        // an empty slot to discard. Likewise a level-1 player is not blank
+        // if the export still carries abilities, food/drinks, house rooms,
+        // guild shrine levels, achievement buffs or scroll buffs for them —
+        // a fresh character can have every one of those set up before their
+        // combat levels move at all, and dropping the slot would silently
+        // discard that setup on the round trip.
         const hasEquipment = Array.isArray(p.equipment) ? p.equipment.some((e) => e.itemHrid) : false;
         const hasLevels = [
             p.staminaLevel,
@@ -611,7 +617,36 @@ export function parseShykaiImport(jsonString) {
             p.rangedLevel,
             p.magicLevel,
         ].some((level) => (level || 1) > 1);
-        if (!hasEquipment && !hasLevels) continue;
+        const hasAbilities = Array.isArray(slotData.abilities) ? slotData.abilities.some((a) => a?.abilityHrid) : false;
+        const hasFood = (slotData.food?.['/action_types/combat'] || []).some((slot) => slot?.itemHrid);
+        const hasDrinks = (slotData.drinks?.['/action_types/combat'] || []).some((slot) => slot?.itemHrid);
+        const hasHouseRooms =
+            slotData.houseRooms && typeof slotData.houseRooms === 'object'
+                ? Object.values(slotData.houseRooms).some((level) => level > 0)
+                : false;
+        const hasGuildLevels =
+            slotData.guildCombatBuffLevels && typeof slotData.guildCombatBuffLevels === 'object'
+                ? Object.values(slotData.guildCombatBuffLevels).some((level) => level > 0)
+                : false;
+        const hasAchievementBuffs =
+            (Array.isArray(slotData.achievementCombatBuffs) && slotData.achievementCombatBuffs.length > 0) ||
+            (slotData.achievements &&
+                typeof slotData.achievements === 'object' &&
+                Object.values(slotData.achievements).some(Boolean));
+        const hasScrollBuffs = Array.isArray(slotData.scrollBuffs) && slotData.scrollBuffs.length > 0;
+        if (
+            !hasEquipment &&
+            !hasLevels &&
+            !hasAbilities &&
+            !hasFood &&
+            !hasDrinks &&
+            !hasHouseRooms &&
+            !hasGuildLevels &&
+            !hasAchievementBuffs &&
+            !hasScrollBuffs
+        ) {
+            continue;
+        }
 
         const dto = {
             staminaLevel: p.staminaLevel || 1,
