@@ -842,9 +842,42 @@ describe('inventory behind another character panel tab', () => {
         ui.cleanup();
         ui = null;
         expect(observer.classHandlers.has(DETACHED)).toBe(true);
+        observer.readyHandlers.length = 0;
         ui = new CustomTabsUI();
         await ui.initialize();
+        // Not yet: this instance has no strip to act on
+        expect(observer.classHandlers.has(DETACHED)).toBe(true);
+        const mounted = buildNewInventory(inventoryPanel, CATEGORY_ICONS, 'inventory_all');
+        renderStrips();
+        await flush();
         expect(observer.classHandlers.has(DETACHED)).toBe(false);
+        // It restored through the stored choice itself
+        await vi.waitFor(() => expect(mounted.gameSelected()).toBe('item_category_food'));
+    });
+
+    test('an instance enabled and disabled while the inventory stays unmounted keeps the restorer', async () => {
+        const { characterTabList, contentContainer, inventoryPanel } = buildCharacterPanel();
+        const first = buildNewInventory(inventoryPanel, CATEGORY_ICONS, 'item_category_food');
+        ui = await startUI();
+        first.tabList.querySelector(STRIP_TAB).click();
+        await flush();
+        first.inv.remove();
+        showEquipment(characterTabList, contentContainer);
+        ui.cleanup();
+        ui = null;
+
+        // Enabled (its config loads) and disabled again, never seeing an inventory strip
+        observer.readyHandlers.length = 0;
+        const between = await startUI();
+        expect(between._invTabBtn).toBeNull();
+        between.cleanup();
+        expect(observer.classHandlers.has(DETACHED)).toBe(true);
+
+        showInventory(characterTabList, contentContainer);
+        const fixture = buildNewInventory(inventoryPanel, CATEGORY_ICONS, 'inventory_all');
+        observer.classHandlers.get(DETACHED)(fixture.tabsContainer);
+        await flush();
+        expect(fixture.gameSelected()).toBe('item_category_food');
     });
 
     test('an instance torn down before its config loads leaves the restorer in place', async () => {
