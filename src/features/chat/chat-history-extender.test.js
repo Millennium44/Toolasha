@@ -53,6 +53,14 @@ vi.mock('../../core/storage.js', () => ({
             const bucket = db[store] || {};
             return Object.prototype.hasOwnProperty.call(bucket, key) ? bucket[key] : fallback;
         }),
+        // The read chat history goes through: `null` when the database could
+        // not be read, `{found, value}` otherwise — the real `tryGet`'s shape.
+        tryGet: vi.fn(async (key, store) => {
+            const bucket = db[store] || {};
+            return Object.prototype.hasOwnProperty.call(bucket, key)
+                ? { found: true, value: JSON.parse(JSON.stringify(bucket[key])) }
+                : { found: false, value: null };
+        }),
         set: vi.fn(async (key, value, store) => {
             db[store] = db[store] || {};
             db[store][key] = JSON.parse(JSON.stringify(value));

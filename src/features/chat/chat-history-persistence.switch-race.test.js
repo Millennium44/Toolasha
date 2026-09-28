@@ -35,6 +35,12 @@ vi.mock('../../core/storage.js', () => ({
             if (storageMock.gate) await storageMock.gate;
             return key in storageMock.stored ? storageMock.stored[key] : fallback;
         },
+        tryGet: async (key) => {
+            if (storageMock.gate) await storageMock.gate;
+            return key in storageMock.stored
+                ? { found: true, value: JSON.parse(JSON.stringify(storageMock.stored[key])) }
+                : { found: false, value: null };
+        },
         set: async (key, value) => {
             storageMock.stored[key] = JSON.parse(JSON.stringify(value));
             return true;
