@@ -126,8 +126,8 @@ describe('chat-history-extender', () => {
         observerReady.domReady = true;
     });
 
-    afterEach(() => {
-        chatHistoryExtender.disable();
+    afterEach(async () => {
+        await chatHistoryExtender.disable();
         document.body.innerHTML = '';
     });
 
@@ -379,8 +379,8 @@ describe('chat-history-extender: message identity and deletion', () => {
         db.settings = {};
     });
 
-    afterEach(() => {
-        chatHistoryExtender.disable();
+    afterEach(async () => {
+        await chatHistoryExtender.disable();
         chatHistoryPersistence.reset();
         document.body.innerHTML = '';
     });
@@ -969,6 +969,67 @@ describe('chat-history-extender: message identity and deletion', () => {
         await chatHistoryPersistence.flush();
         const tabKey = tabKeyForChannel('/chat_channel_types/trade');
         expect(db.settings[Object.keys(db.settings)[0]].tabs[tabKey][0]).toContain('selling cheese');
+    });
+
+    test('a message already on screen when the handler attaches is stored with its id, and a deletion purges it', async () => {
+        // The shared observer is not ready yet, so initialize() registers the
+        // socket listeners but attaches to nothing: the id arrives first, and
+        // the node is already rendered when the catch-up attach runs.
+        observerReady.domReady = false;
+        const container = buildChannelChat('/chat_channel_types/trade');
+        chatHistoryExtender.initialize();
+        await settle();
+
+        wsHandlers.chat_message_received({
+            message: { id: 'msg-early', chan: '/chat_channel_types/trade', sName: 'Alice', m: 'selling cheese' },
+        });
+        const node = makeMessage('Alice', 'selling cheese');
+        container.appendChild(node);
+
+        for (const handler of observerReady.handlers) handler.callback();
+        await settle();
+        expect(node.dataset.mwiMsgId).toBe('msg-early');
+
+        await chatHistoryPersistence.flush();
+        const tabKey = tabKeyForChannel('/chat_channel_types/trade');
+        expect(db.settings[STORAGE_KEY].tabs[tabKey][0]).toContain('data-mwi-msg-id="msg-early"');
+
+        await wsHandlers.chat_message_updated({
+            message: { id: 'msg-early', chan: '/chat_channel_types/trade', isDeleted: true },
+        });
+        await chatHistoryPersistence.flush();
+        expect(db.settings[STORAGE_KEY].tabs[tabKey]).toBeUndefined();
+    });
+
+    test("a tab's backlog rendered on a switch is tagged with the ids queued while it was closed", async () => {
+        const container = buildChannelChat('/chat_channel_types/trade');
+        const strip = document.querySelector('.Chat_tabsComponentContainer__x');
+        const party = document.createElement('button');
+        party.setAttribute('role', 'tab');
+        party.setAttribute('data-mention-channel', '/chat_channel_types/party');
+        party.setAttribute('aria-selected', 'false');
+        party.textContent = 'party';
+        strip.appendChild(party);
+        chatHistoryExtender.initialize();
+        await settle();
+
+        wsHandlers.chat_message_received({
+            message: { id: 'msg-party', chan: '/chat_channel_types/party', sName: 'Alice', m: 'ready for the run' },
+        });
+
+        // Switch to Party: the game renders its backlog into the same pane.
+        strip
+            .querySelector('[data-mention-channel="/chat_channel_types/trade"]')
+            .setAttribute('aria-selected', 'false');
+        party.setAttribute('aria-selected', 'true');
+        const node = makeMessage('Alice', 'ready for the run');
+        container.appendChild(node);
+        await settle();
+
+        expect(node.dataset.mwiMsgId).toBe('msg-party');
+        await chatHistoryPersistence.flush();
+        const tabKey = tabKeyForChannel('/chat_channel_types/party');
+        expect(db.settings[STORAGE_KEY].tabs[tabKey][0]).toContain('data-mwi-msg-id="msg-party"');
     });
 
     test('a deletion for a message never seen (already off disk, or from before this build) does not throw', async () => {

@@ -787,6 +787,17 @@ class ChatTabHandler {
     }
 
     /**
+     * Drop the ids still queued for a tab's channel once its backlog has been
+     * tagged, so a channel whose tab is rarely opened does not accumulate
+     * entries against nothing.
+     * @param {string|null} tabKey
+     */
+    _discardQueuedIds(tabKey) {
+        const chan = channelFromTabKey(tabKey);
+        if (chan) this.messageIds?.discardChannel(chan);
+    }
+
+    /**
      * Take out of the buffer any message the game has just rendered live again
      * — a restored copy of a line that was still on screen when it was saved,
      * which the game re-renders after a reload or when its tab is reopened.
@@ -870,15 +881,11 @@ class ChatTabHandler {
             this.restoreStarted = false;
         }
 
-        // A tab becoming this container's key for the first time (attach,
-        // late naming, or a switch) is about to render that channel's whole
-        // visible backlog as one mutation batch — see PendingMessageIds'
-        // class doc for why a queue built up before this moment cannot be
-        // trusted against it.
-        if (key) {
-            const chan = channelFromTabKey(key);
-            if (chan) this.messageIds?.discardChannel(chan);
-        }
+        // The channel's queued ids are dropped once the batch that opens the
+        // tab has been tagged (`_onMutation`), not here, before it: that
+        // batch is the tab's backlog, and it is exactly the lines those ids
+        // belong to. `claim()` matches on exact content and claims nothing
+        // it cannot tell apart, which is what makes tagging a backlog safe.
 
         if (key && !this.restoreStarted) {
             this.restore(key).catch((error) => {
@@ -1243,6 +1250,10 @@ class ChatTabHandler {
         });
 
         this._dropBufferedDuplicates(renderedLive);
+        // A tab that just became this container's (a switch, late naming) has
+        // had its backlog tagged above; whatever is still queued for it
+        // matched nothing and never will.
+        if (tabKey && tabKey !== previousKey) this._discardQueuedIds(tabKey);
 
         if (isAtBottom) {
             this.container.scrollTop = this.container.scrollHeight;
@@ -1329,10 +1340,15 @@ class ChatHistoryExtender {
             this.activeHandlers.add(handler);
             containerEl.querySelectorAll('[class*="ChatMessage_chatMessage"]').forEach((msg) => {
                 handler.hydrateMessage(msg);
+                // Tagged before it is recorded, the same order `_onMutation`
+                // uses: the id rides inside the stored markup, and a line
+                // stored without it is one a later deletion cannot find.
+                handler._tagMessageId(msg, handler.tabKey);
                 // Already on screen when the handler arrived, so no mutation
                 // will ever announce them — recorded here or not at all.
                 handler._recordLive(msg, handler.tabKey);
             });
+            handler._discardQueuedIds(handler.tabKey);
             // Deliberately not awaited: the read is IndexedDB and chat must be
             // usable before it lands. A failure inside is logged, not thrown.
             handler.restore(handler.tabKey).catch((error) => {
@@ -1452,16 +1468,31 @@ class ChatHistoryExtender {
         }
     }
 
+    /**
+     * Tear the feature down, and answer with the final write of what it
+     * recorded.
+     *
+     * The teardown itself stays synchronous — handlers, listeners and the
+     * persistence state are gone when this returns, so nothing can record
+     * into a session that is ending and a caller may `initialize()` on the
+     * next line. The final write cannot be, and it does not need to be for
+     * correctness: `chatHistoryPersistence.flushForTeardown()` holds every
+     * later read of the record (the next session's `load()`, a merge-and-write)
+     * until it has landed, so a quick re-init for the same character cannot
+     * read the record from before it. The feature registry awaits the promise
+     * returned here on every disable path as well.
+     *
+     * @returns {Promise<boolean>} Whether the final write was accepted
+     */
     disable() {
+        let finalFlush = Promise.resolve(false);
         try {
             // Land what the session recorded before the state goes; a disable
             // is not a wipe, and the record on disk is left where it is.
-            // Immediate, not through storage's own write debounce: a re-init
-            // for the same character (the setting toggled back on) reads the
-            // record straight away, a read cannot see a write still queued,
-            // and that session's first write would then replace the queued
-            // one — taking this session's last lines with it.
-            chatHistoryPersistence.flush(true)?.catch?.(() => {});
+            // Immediate, not through storage's own write debounce: a read
+            // cannot see a write still queued there, and the next session's
+            // first write would replace it — taking these lines with it.
+            finalFlush = chatHistoryPersistence.flushForTeardown();
             chatHistoryPersistence.reset();
             for (const handler of this.activeHandlers) {
                 handler.destroy();
@@ -1501,6 +1532,7 @@ class ChatHistoryExtender {
         } finally {
             this.isInitialized = false;
         }
+        return finalFlush;
     }
 }
 

@@ -736,6 +736,20 @@ function mergeMessage(list, html) {
 }
 
 /**
+ * Wait for a promise to settle, whichever way, without letting it throw here.
+ * @param {Promise<*>|null} promise
+ * @returns {Promise<void>}
+ */
+async function settleQuietly(promise) {
+    if (!promise) return;
+    try {
+        await promise;
+    } catch {
+        // Its own caller reports it; a reader only needs it to have finished.
+    }
+}
+
+/**
  * Read the stored record, telling "nothing stored" apart from "could not read".
  *
  * `storage.get` answers a failed request, an aborted transaction and a missing
@@ -808,6 +822,12 @@ class ChatHistoryPersistence {
         this.loaded = false;
         /** Whether `tabs` holds something no write has been issued for yet. */
         this.dirty = false;
+        /**
+         * The last session's final write, while it is still landing. Survives
+         * `reset()` on purpose: it is the next session's reads that wait on it.
+         * @type {Promise<boolean>|null}
+         */
+        this.finalFlush = null;
         this.getMaxHistory = () => MAX_MESSAGES_PER_TAB;
     }
 
@@ -851,8 +871,13 @@ class ChatHistoryPersistence {
         // whispers included, rendered in another's tabs and written over their
         // record for good.
         const ticket = captureOwner(this);
+        // Taken now, synchronously: the key is this character's now, and the
+        // flush to wait for is the one that was in flight when this began.
+        const key = characterKey(CHAT_HISTORY_KEY_BASE);
+        const prior = this.finalFlush;
         this.loadPromise = (async () => {
-            const read = await readStoredRecord(characterKey(CHAT_HISTORY_KEY_BASE));
+            await settleQuietly(prior);
+            const read = await readStoredRecord(key);
             // Before the first thing this tail touches. The generation is what
             // catches the switch: `disable()` runs on `character_switching`,
             // which fires before `getCurrentCharacterId()` moves, so an id
@@ -936,6 +961,32 @@ class ChatHistoryPersistence {
     }
 
     /**
+     * The last write of a session that is ending, remembered so the next
+     * session's reads wait for it — see {@link ChatHistoryPersistence#finalFlush}.
+     *
+     * Called before `reset()`: whatever the write needs is taken synchronously
+     * inside {@link flush}, so the reset on the caller's next line cannot reach
+     * it. A write that is already waiting on an earlier final flush (a merge
+     * whose read waits behind it) is chained, not raced.
+     *
+     * @returns {Promise<boolean>} Whether the final write was accepted
+     */
+    flushForTeardown() {
+        const write = this.enabled && this.tabs ? this.flush(true) : Promise.resolve(false);
+        const tracked = (async () => {
+            try {
+                return await write;
+            } catch {
+                return false;
+            } finally {
+                if (this.finalFlush === tracked) this.finalFlush = null;
+            }
+        })();
+        this.finalFlush = tracked;
+        return tracked;
+    }
+
+    /**
      * Coalesce the burst of evictions a busy channel produces into one write.
      * Stands down until the first read has merged — `load()` reschedules.
      */
@@ -1006,11 +1057,15 @@ class ChatHistoryPersistence {
         const key = characterKey(CHAT_HISTORY_KEY_BASE);
         const perTab = this.getMaxHistory();
         const pending = Object.entries(this.tabs).map(([tabKey, list]) => [tabKey, [...list]]);
+        // An earlier session's final write, captured before this one's own
+        // flush is tracked — waiting on itself would never finish.
+        const prior = this.finalFlush;
         // `dirty` is deliberately left set on this path whatever happens: the
         // working record is still unmerged, and the load that merges it is
         // what schedules the write that clears it.
         this.dirty = true;
 
+        await settleQuietly(prior);
         const read = await readStoredRecord(key);
         if (!read.ok) {
             console.error('[ChatHistoryPersistence] Could not read chat history to merge into; not writing.');
