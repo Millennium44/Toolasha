@@ -20,7 +20,7 @@ vi.mock('./dungeon-tracker-storage.js', () => ({
         getAllRuns: vi.fn(async () => []),
         getRunsForCharacterOrNull: vi.fn(async () => []),
         importRuns: vi.fn(async () => ({ added: 0, alreadyPresent: 0, ok: true })),
-        deleteRun: async () => true,
+        deleteRun: vi.fn(async () => true),
         getTeamKey: (names) => [...names].sort().join(','),
     },
     filterRunsForCharacter: (runs) => runs,
@@ -295,6 +295,67 @@ describe('run rendering is capped per group', () => {
 
         expect(runList.querySelectorAll('[data-run-timestamp]')).toHaveLength(MAX_RENDERED_RUNS_PER_GROUP);
         expect(runList.textContent).not.toContain('Showing latest');
+    });
+
+    test('clicking "Show N more" reveals the next page instead of the cap staying final', () => {
+        const history = new DungeonTrackerUIHistory(freshState('team'), (ms) => `${ms}ms`);
+        const runs = Array.from({ length: 450 }, (_, i) => bigRun(i));
+        const runList = render(history, history.groupByTeam(runs));
+
+        expect(runList.querySelectorAll('[data-run-timestamp]')).toHaveLength(200);
+        const firstButton = runList.querySelector('.mwi-dt-show-more');
+        expect(firstButton.textContent).toBe('Show 200 more');
+
+        firstButton.dispatchEvent(new Event('click', { bubbles: true }));
+
+        expect(runList.querySelectorAll('[data-run-timestamp]')).toHaveLength(400);
+        expect(runList.textContent).toContain('Showing latest 400 of 450');
+
+        // The last page is smaller than a full batch — the button says so
+        const secondButton = runList.querySelector('.mwi-dt-show-more');
+        expect(secondButton.textContent).toBe('Show 50 more');
+        secondButton.dispatchEvent(new Event('click', { bubbles: true }));
+
+        // Every run is reachable now, and the control is gone — there is
+        // nothing left to show
+        expect(runList.querySelectorAll('[data-run-timestamp]')).toHaveLength(450);
+        expect(runList.querySelector('.mwi-dt-show-more')).toBeNull();
+        expect(runList.textContent).not.toContain('Showing latest');
+    });
+
+    test('a run only reachable after "Show more" is still deletable — the whole point of paging instead of capping', async () => {
+        const history = new DungeonTrackerUIHistory(freshState('team'), (ms) => `${ms}ms`);
+        const runs = Array.from({ length: 250 }, (_, i) => bigRun(i));
+        const runList = render(history, history.groupByTeam(runs));
+
+        // Run #1 (the oldest, last in the array) is past the initial 200-row
+        // cap and unreachable until "Show more" is clicked
+        expect(runList.querySelectorAll('[data-run-timestamp]')).toHaveLength(200);
+        runList.querySelector('.mwi-dt-show-more').dispatchEvent(new Event('click', { bubbles: true }));
+
+        const rows = runList.querySelectorAll('[data-run-timestamp]');
+        expect(rows).toHaveLength(250);
+        const oldestRow = rows[rows.length - 1];
+        const deleteButton = oldestRow.querySelector('.mwi-dt-delete-run');
+        expect(deleteButton).not.toBeNull();
+
+        deleteButton.dispatchEvent(new Event('click', { bubbles: true }));
+        await Promise.resolve();
+
+        expect(dungeonTrackerStorage.deleteRun).toHaveBeenCalledWith(runs[249].timestamp);
+    });
+
+    test('"Show more" state for one group does not affect a different group', () => {
+        const history = new DungeonTrackerUIHistory(freshState('team'), (ms) => `${ms}ms`);
+        const grownRuns = Array.from({ length: 450 }, (_, i) => bigRun(i));
+        const smallRuns = [run('Solo,Team')];
+
+        const runList = render(history, history.groupByTeam([...grownRuns, ...smallRuns]));
+        runList.querySelector('.mwi-dt-show-more').dispatchEvent(new Event('click', { bubbles: true }));
+
+        // The small group never had a cap to begin with, and growing the
+        // other one must not have touched it
+        expect(runList.querySelectorAll('.mwi-dt-show-more')).toHaveLength(1);
     });
 });
 
@@ -678,6 +739,68 @@ describe('importBackupText', () => {
         await history.importBackupText(JSON.stringify(backupEnvelope([storedRun()])));
 
         expect(dungeonTrackerChatAnnotations.refreshRunCounts).not.toHaveBeenCalled();
+    });
+
+    test('disposed while importRuns() is in flight — nothing fires afterward', async () => {
+        let resolveImport;
+        dungeonTrackerStorage.importRuns.mockImplementation(
+            () =>
+                new Promise((resolve) => {
+                    resolveImport = resolve;
+                })
+        );
+        const history = new DungeonTrackerUIHistory(freshState('team'), (ms) => `${ms}ms`);
+        const onImport = vi.fn();
+        history.onImport(onImport);
+
+        const importing = history.importBackupText(JSON.stringify(backupEnvelope([storedRun()])));
+        // A character switch tearing the panel down while the write is
+        // still in flight — the same window `saveTeamRun`'s own
+        // character-swap guard exists for, just on the import side
+        history.dispose();
+        resolveImport({ added: 1, alreadyPresent: 0, ok: true });
+        await importing;
+
+        expect(dungeonTrackerChatAnnotations.refreshRunCounts).not.toHaveBeenCalled();
+        expect(onImport).not.toHaveBeenCalled();
+        expect(window.alert).not.toHaveBeenCalledWith(expect.stringContaining('Imported'));
+    });
+
+    test('disposed while refreshRunCounts() is in flight — the callback never fires', async () => {
+        dungeonTrackerStorage.importRuns.mockResolvedValue({ added: 1, alreadyPresent: 0, ok: true });
+        let resolveRefresh;
+        dungeonTrackerChatAnnotations.refreshRunCounts.mockImplementation(
+            () =>
+                new Promise((resolve) => {
+                    resolveRefresh = resolve;
+                })
+        );
+        const history = new DungeonTrackerUIHistory(freshState('team'), (ms) => `${ms}ms`);
+        const onImport = vi.fn();
+        history.onImport(onImport);
+
+        const importing = history.importBackupText(JSON.stringify(backupEnvelope([storedRun()])));
+        // Let importRuns settle and refreshRunCounts actually start (a real
+        // timer flushes every pending microtask first) before disposing —
+        // otherwise this would just be the previous test again
+        await new Promise((resolve) => setTimeout(resolve, 0));
+        history.dispose();
+        resolveRefresh();
+        await importing;
+
+        expect(onImport).not.toHaveBeenCalled();
+        expect(window.alert).not.toHaveBeenCalledWith(expect.stringContaining('Imported'));
+    });
+
+    test('dispose() nulls onImportCallback directly, belt and suspenders alongside the disposed checks', () => {
+        const history = new DungeonTrackerUIHistory(freshState('team'), (ms) => `${ms}ms`);
+        const onImport = vi.fn();
+        history.onImport(onImport);
+        expect(history.onImportCallback).toBe(onImport);
+
+        history.dispose();
+
+        expect(history.onImportCallback).toBeNull();
     });
 });
 

@@ -482,6 +482,27 @@ describe('cleanup disposes the history section', () => {
     });
 });
 
+describe('an import redraws the header stats and the chart, not just the list', () => {
+    test('history.onImport is wired to refreshAfterImport, which redraws both unconditionally', async () => {
+        // The history stub has no `consumeFilterReset` at all, so
+        // `updateRunHistory()`'s own early return (`!consumeFilterReset?.()`)
+        // fires exactly as it would for a real import that touched no
+        // filter — the scenario this fix exists for, reproduced without any
+        // extra setup.
+        const drawHistoryStatsSpy = vi.spyOn(ui, 'drawHistoryStats');
+        const updateChartSpy = vi.spyOn(ui, 'updateChart');
+
+        const onImportCallback = ui.history.onImport.mock.calls.at(-1)[0];
+        await onImportCallback();
+
+        expect(drawHistoryStatsSpy).toHaveBeenCalled();
+        expect(updateChartSpy).toHaveBeenCalled();
+
+        drawHistoryStatsSpy.mockRestore();
+        updateChartSpy.mockRestore();
+    });
+});
+
 describe('history filters auto-scope to the run being shown', () => {
     let state;
 

@@ -116,7 +116,7 @@ class DungeonTrackerUI {
         // Set up history delete/import callbacks — both change the stored
         // history out from under whatever is on screen, so both redraw it
         this.history.onDelete(() => this.refreshHistoryAndStats());
-        this.history.onImport(() => this.refreshHistoryAndStats());
+        this.history.onImport(() => this.refreshAfterImport());
 
         // Create UI elements
         this.createUI();
@@ -1179,6 +1179,29 @@ class DungeonTrackerUI {
         } else {
             await this.updateRunHistory();
         }
+    }
+
+    /**
+     * Refresh after a JSON backup import specifically: the run list, and —
+     * unconditionally — the header's Last/Avg/Runs figures and an open chart.
+     *
+     * `refreshHistoryAndStats()` alone is not enough here. With a run active
+     * it calls `update()`, which always redraws those; but with none active
+     * it calls `updateRunHistory()`, which only redraws them when rebuilding
+     * the list also reset a stale dungeon/tier/team filter — the one thing an
+     * import never does on its own, however many runs it just merged in. Left
+     * to `refreshHistoryAndStats()` alone, the list below would show the
+     * import while the header above and any open chart kept showing whatever
+     * they held before it.
+     * @returns {Promise<void>}
+     */
+    async refreshAfterImport() {
+        await this.refreshHistoryAndStats();
+        const ticket = captureOwner(this);
+        if (!stillOurs(ticket)) return;
+        await this.drawHistoryStats(ticket, currentCharacter());
+        if (!stillOurs(ticket)) return;
+        await this.updateChart();
     }
 
     /**

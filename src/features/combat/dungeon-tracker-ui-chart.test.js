@@ -148,3 +148,98 @@ describe('the pop-out chart', () => {
         expect(chart.modalChartInstance).toBe(built[1]);
     });
 });
+
+/** `count` runs, oldest to newest, with a duration in minutes that climbs by one per run. */
+function manyRuns(count) {
+    const runs = [];
+    for (let i = 0; i < count; i++) {
+        runs.push({
+            recordedBy: 'char1',
+            teamKey: 'solo',
+            dungeonName: 'Chimerical Den',
+            tier: 1,
+            duration: (i + 1) * 60_000, // minutes: 1, 2, 3, ..., count
+            timestamp: new Date(2020, 0, 1 + i).toISOString(),
+        });
+    }
+    return runs;
+}
+
+describe('a run history large enough to make Chart.js lag gets its plotted points bounded', () => {
+    test('50k runs plot at most 1000 points on the inline chart, one dataset per stat line', async () => {
+        dungeonTrackerStorage.getAllRuns.mockResolvedValue(manyRuns(50_000));
+        const state = freshState();
+        const chart = new DungeonTrackerUIChart(state, (ms) => `${ms}ms`);
+
+        await chart.render(document.body);
+
+        expect(built).toHaveLength(1);
+        const { labels, datasets } = built[0].cfg.data;
+        expect(labels.length).toBeLessThanOrEqual(1000);
+        for (const dataset of datasets) {
+            expect(dataset.data.length).toBe(labels.length);
+        }
+    });
+
+    test('50k runs plot at most 1000 points on the pop-out chart too', async () => {
+        dungeonTrackerStorage.getAllRuns.mockResolvedValue(manyRuns(50_000));
+        const state = freshState();
+        const chart = new DungeonTrackerUIChart(state, (ms) => `${ms}ms`);
+        const canvas = document.createElement('canvas');
+        document.body.appendChild(canvas);
+
+        await chart.renderModalChart(canvas);
+
+        expect(built).toHaveLength(1);
+        const { labels, datasets } = built[0].cfg.data;
+        expect(labels.length).toBeLessThanOrEqual(1000);
+        for (const dataset of datasets) {
+            expect(dataset.data.length).toBe(labels.length);
+        }
+    });
+
+    test('decimation keeps the first and last run exact, not bucket-averaged', async () => {
+        dungeonTrackerStorage.getAllRuns.mockResolvedValue(manyRuns(50_000));
+        const state = freshState();
+        const chart = new DungeonTrackerUIChart(state, (ms) => `${ms}ms`);
+
+        await chart.render(document.body);
+
+        const { labels, datasets } = built[0].cfg.data;
+        const runTimes = datasets.find((d) => d.label === 'Run Times').data;
+        // Run 1 is 1 minute, Run 50000 is 50000 minutes — a bucket average
+        // would blur both toward their neighbors.
+        expect(labels[0]).toBe('Run 1');
+        expect(runTimes[0]).toBe(1);
+        expect(labels[labels.length - 1]).toBe('Run 50000');
+        expect(runTimes[runTimes.length - 1]).toBe(50_000);
+    });
+
+    test('the Average/Fastest/Slowest lines are computed from the full 50k runs, not the decimated plot', async () => {
+        dungeonTrackerStorage.getAllRuns.mockResolvedValue(manyRuns(50_000));
+        const state = freshState();
+        const chart = new DungeonTrackerUIChart(state, (ms) => `${ms}ms`);
+
+        await chart.render(document.body);
+
+        const { datasets } = built[0].cfg.data;
+        const fullDurations = Array.from({ length: 50_000 }, (_, i) => i + 1);
+        const expectedAvg = fullDurations.reduce((a, b) => a + b, 0) / fullDurations.length;
+
+        expect(datasets.find((d) => d.label === 'Average').data[0]).toBeCloseTo(expectedAvg);
+        expect(datasets.find((d) => d.label === 'Fastest').data[0]).toBe(1);
+        expect(datasets.find((d) => d.label === 'Slowest').data[0]).toBe(50_000);
+    });
+
+    test('a run history under the bound is not decimated at all', async () => {
+        dungeonTrackerStorage.getAllRuns.mockResolvedValue(manyRuns(500));
+        const state = freshState();
+        const chart = new DungeonTrackerUIChart(state, (ms) => `${ms}ms`);
+
+        await chart.render(document.body);
+
+        const { labels, datasets } = built[0].cfg.data;
+        expect(labels.length).toBe(500);
+        expect(datasets.find((d) => d.label === 'Run Times').data.length).toBe(500);
+    });
+});

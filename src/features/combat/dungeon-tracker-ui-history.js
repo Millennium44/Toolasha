@@ -103,6 +103,16 @@ class DungeonTrackerUIHistory {
         this.formatTime = formatTimeFunc;
         /** Set by dispose(); guards the hidden file-input's change handler against firing after teardown */
         this.disposed = false;
+        /**
+         * How many of each group's runs "Show N more" has revealed so far,
+         * keyed by `group.label`. Missing means the default,
+         * {@link MAX_RENDERED_RUNS_PER_GROUP} — every group starts capped,
+         * and a click grows only the one group clicked. Not part of the
+         * persisted panel state: it is exactly as ephemeral as which groups
+         * are expanded, and a fresh session showing every group capped again
+         * is the right default, not a regression.
+         */
+        this.visibleRunCounts = new Map();
     }
 
     /**
@@ -122,6 +132,12 @@ class DungeonTrackerUIHistory {
      */
     dispose() {
         this.disposed = true;
+        // Belt and suspenders alongside every `this.disposed` check
+        // `importBackupText` makes after its own awaits: even if one of
+        // those checks were ever missed, there would be no callback left to
+        // wrongly fire against the parent panel this section no longer
+        // belongs to.
+        this.onImportCallback = null;
         if (this.importInput) {
             this.importInput.remove();
             this.importInput = null;
@@ -832,6 +848,12 @@ class DungeonTrackerUIHistory {
         }
 
         const { added, alreadyPresent, ok } = await dungeonTrackerStorage.importRuns(valid);
+        // A character switch disposing this section can land inside either
+        // await above — this one, or the chat refresh below. Past this
+        // point, `this.state` and `this.onImportCallback` describe whoever
+        // the panel belongs to now, not whoever ran the import, and an alert
+        // describing it would be talking about a panel nobody is looking at.
+        if (this.disposed) return;
 
         // Runs land in memory before the write is even attempted (see
         // `importRuns`), so the panel and chat have something new to show
@@ -846,6 +868,7 @@ class DungeonTrackerUIHistory {
             // this, the panel and storage would agree on the merged history
             // while chat kept counting from before the import.
             await dungeonTrackerChatAnnotations.refreshRunCounts();
+            if (this.disposed) return;
             if (this.onImportCallback) this.onImportCallback();
         }
 
@@ -894,6 +917,14 @@ class DungeonTrackerUIHistory {
             const displayStyle = isExpanded ? 'block' : 'none';
             const toggleIcon = isExpanded ? '▲' : '▼';
 
+            // How many of this group's runs "Show N more" has revealed so
+            // far — capped to the group's own size so a group that shrank
+            // (a delete) never tries to slice past its own end.
+            const visibleCount = Math.min(
+                this.visibleRunCounts.get(group.label) ?? MAX_RENDERED_RUNS_PER_GROUP,
+                group.runs.length
+            );
+
             html += `
                 <div class="mwi-dt-group" style="
                     margin-bottom: 8px;
@@ -924,14 +955,30 @@ class DungeonTrackerUIHistory {
                         padding-top: 6px;
                         margin-top: 4px;
                     ">
-                        ${this.renderRunList(group.runs.slice(0, MAX_RENDERED_RUNS_PER_GROUP), deltas, group.runs.length)}
-                        ${this.renderTruncationNote(group.runs.length)}
+                        ${this.renderRunList(group.runs.slice(0, visibleCount), deltas, group.runs.length)}
+                        ${this.renderShowMoreControl(group.label, visibleCount, group.runs.length)}
                     </div>
                 </div>
             `;
         }
 
         runList.innerHTML = html;
+
+        // "Show N more": grows just the one group clicked and redraws with
+        // the same groups/deltas this call already has in scope — every run
+        // stays reachable (and its delete button with it), just not all
+        // rendered at once.
+        runList.querySelectorAll('.mwi-dt-show-more').forEach((btn) => {
+            btn.addEventListener('click', (event) => {
+                event.stopPropagation();
+                const label = btn.dataset.groupLabel;
+                const group = groups.find((g) => g.label === label);
+                if (!group) return;
+                const current = this.visibleRunCounts.get(label) ?? MAX_RENDERED_RUNS_PER_GROUP;
+                this.visibleRunCounts.set(label, Math.min(current + MAX_RENDERED_RUNS_PER_GROUP, group.runs.length));
+                this.renderGroupedRuns(runList, groups, deltas);
+            });
+        });
 
         // Attach toggle handlers
         runList.querySelectorAll('.mwi-dt-group-header').forEach((header) => {
@@ -1037,18 +1084,39 @@ class DungeonTrackerUIHistory {
     }
 
     /**
-     * The "showing latest N of M" note a group's run list carries when it
-     * holds more than {@link MAX_RENDERED_RUNS_PER_GROUP} runs. Empty string
-     * when it does not, so a normal-sized group renders nothing extra.
+     * The "showing latest N of M" note plus a "Show N more" button, for a
+     * group whose run list is not fully rendered yet. Empty string once
+     * `visibleCount` has caught up to `totalCount`, so a normal-sized group —
+     * or one paged all the way open — renders nothing extra. Every run stays
+     * reachable this way, delete button included, just not all rendered at
+     * once: the cap this replaces made anything past the first
+     * {@link MAX_RENDERED_RUNS_PER_GROUP} runs impossible to even see, let
+     * alone delete.
      *
+     * @param {string} groupLabel - The group this control belongs to, so its
+     *   click handler knows which group to grow
+     * @param {number} visibleCount - How many of the group's runs are
+     *   rendered right now
      * @param {number} totalCount - The group's true run count
-     * @returns {string} HTML for the note, or `''`
+     * @returns {string} HTML for the note and button, or `''`
      */
-    renderTruncationNote(totalCount) {
-        if (totalCount <= MAX_RENDERED_RUNS_PER_GROUP) return '';
+    renderShowMoreControl(groupLabel, visibleCount, totalCount) {
+        if (visibleCount >= totalCount) return '';
+        const nextBatch = Math.min(MAX_RENDERED_RUNS_PER_GROUP, totalCount - visibleCount);
         return `
-            <div style="color: #888; font-style: italic; font-size: 9px; text-align: center; padding: 6px 0;">
-                Showing latest ${MAX_RENDERED_RUNS_PER_GROUP} of ${totalCount} — Export for the full list
+            <div style="text-align: center; padding: 6px 0;">
+                <div style="color: #888; font-style: italic; font-size: 9px; margin-bottom: 4px;">
+                    Showing latest ${visibleCount} of ${totalCount} — Export for the full list
+                </div>
+                <button class="mwi-dt-show-more" data-group-label="${this.escapeHtml(groupLabel)}" style="
+                    background: none;
+                    border: 1px solid #555;
+                    color: #aaa;
+                    border-radius: 2px;
+                    font-size: 9px;
+                    padding: 2px 8px;
+                    cursor: pointer;
+                ">Show ${nextBatch} more</button>
             </div>
         `;
     }

@@ -10,6 +10,55 @@ import dungeonTrackerStorage, {
 } from './dungeon-tracker-storage.js';
 import { PANEL_Z_CAP } from '../../utils/panel-z-index.js';
 
+// Chart.js draws every point on every dataset every frame. A run history that
+// has years of live tracking behind it, or a JSON backup folded in on import,
+// can push the plotted point count into the tens of thousands, which turns
+// panning/zooming and even the initial draw janky. Stats (avg/fastest/
+// slowest) are still computed from the full, undecimated list — only what
+// gets handed to Chart.js is bounded.
+const MAX_CHART_POINTS = 1000;
+
+/**
+ * Bound the number of points hitting the chart's x-axis and "Run Times"
+ * dataset, without changing the run range the axis covers. Below the bound,
+ * the labels/durations pass through unchanged. Above it, buckets the full
+ * range into MAX_CHART_POINTS even-width slices and averages each slice's
+ * duration, then forces the very first and last points back to their exact
+ * values — a bucket average would otherwise soften the true fastest/first
+ * run and the true latest/last run, which is exactly the two runs a player
+ * looking at the chart's edges wants to trust.
+ * @param {Array<string>} labels - Run labels ("Run 1", "Run 2", ...), oldest first
+ * @param {Array<number>} durations - Run durations in minutes, same order as labels
+ * @returns {{ labels: Array<string>, durations: Array<number> }} Decimated for plotting only
+ */
+function decimateForChart(labels, durations) {
+    const total = durations.length;
+    if (total <= MAX_CHART_POINTS) {
+        return { labels, durations };
+    }
+
+    const outLabels = new Array(MAX_CHART_POINTS);
+    const outDurations = new Array(MAX_CHART_POINTS);
+    const bucketSize = total / MAX_CHART_POINTS;
+    for (let i = 0; i < MAX_CHART_POINTS; i++) {
+        const start = Math.floor(i * bucketSize);
+        const end = i === MAX_CHART_POINTS - 1 ? total : Math.max(start + 1, Math.floor((i + 1) * bucketSize));
+        let sum = 0;
+        for (let j = start; j < end; j++) {
+            sum += durations[j];
+        }
+        outDurations[i] = sum / (end - start);
+        outLabels[i] = labels[end - 1];
+    }
+    // Endpoints stay exact, not bucket averages — see doc comment above.
+    outLabels[0] = labels[0];
+    outDurations[0] = durations[0];
+    outLabels[MAX_CHART_POINTS - 1] = labels[total - 1];
+    outDurations[MAX_CHART_POINTS - 1] = durations[total - 1];
+
+    return { labels: outLabels, durations: outDurations };
+}
+
 class DungeonTrackerUIChart {
     constructor(state, formatTimeFunc) {
         this.state = state;
@@ -118,18 +167,21 @@ class DungeonTrackerUIChart {
         const labels = filteredRuns.map((_, i) => `Run ${i + 1}`);
         const durations = filteredRuns.map((r) => (r.duration || r.totalTime || 0) / 60000); // Convert to minutes
 
-        // Calculate stats
+        // Calculate stats over the FULL list, before any decimation for plotting
         const avgDuration = durations.reduce((a, b) => a + b, 0) / durations.length;
         // minMaxOf, not a spread into Math.min/max — see its own doc for why a
         // large enough run history (a JSON backup import folded into years of
         // live history) makes the spread throw a RangeError instead
         const { min: fastestDuration, max: slowestDuration } = minMaxOf(durations);
 
+        // Bound what actually reaches Chart.js — see decimateForChart's doc
+        const plotted = decimateForChart(labels, durations);
+
         // Create datasets
         const datasets = [
             {
                 label: 'Run Times',
-                data: durations,
+                data: plotted.durations,
                 borderColor: 'rgb(75, 192, 192)',
                 backgroundColor: 'rgba(75, 192, 192, 0.2)',
                 borderWidth: 2,
@@ -140,7 +192,7 @@ class DungeonTrackerUIChart {
             },
             {
                 label: 'Average',
-                data: new Array(durations.length).fill(avgDuration),
+                data: new Array(plotted.durations.length).fill(avgDuration),
                 borderColor: 'rgb(255, 159, 64)',
                 borderWidth: 2,
                 borderDash: [5, 5],
@@ -150,7 +202,7 @@ class DungeonTrackerUIChart {
             },
             {
                 label: 'Fastest',
-                data: new Array(durations.length).fill(fastestDuration),
+                data: new Array(plotted.durations.length).fill(fastestDuration),
                 borderColor: 'rgb(75, 192, 75)',
                 borderWidth: 2,
                 borderDash: [5, 5],
@@ -160,7 +212,7 @@ class DungeonTrackerUIChart {
             },
             {
                 label: 'Slowest',
-                data: new Array(durations.length).fill(slowestDuration),
+                data: new Array(plotted.durations.length).fill(slowestDuration),
                 borderColor: 'rgb(255, 99, 132)',
                 borderWidth: 2,
                 borderDash: [5, 5],
@@ -180,7 +232,7 @@ class DungeonTrackerUIChart {
         this.chartInstance = new Chart(ctx, {
             type: 'line',
             data: {
-                labels: labels,
+                labels: plotted.labels,
                 datasets: datasets,
             },
             options: {
@@ -424,10 +476,13 @@ class DungeonTrackerUIChart {
         // live history) makes the spread throw a RangeError instead
         const { min: fastestDuration, max: slowestDuration } = minMaxOf(durations);
 
+        // Bound what actually reaches Chart.js — see decimateForChart's doc
+        const plotted = decimateForChart(labels, durations);
+
         const datasets = [
             {
                 label: 'Run Times',
-                data: durations,
+                data: plotted.durations,
                 borderColor: 'rgb(75, 192, 192)',
                 backgroundColor: 'rgba(75, 192, 192, 0.2)',
                 borderWidth: 2,
@@ -438,7 +493,7 @@ class DungeonTrackerUIChart {
             },
             {
                 label: 'Average',
-                data: new Array(durations.length).fill(avgDuration),
+                data: new Array(plotted.durations.length).fill(avgDuration),
                 borderColor: 'rgb(255, 159, 64)',
                 borderWidth: 2,
                 borderDash: [5, 5],
@@ -448,7 +503,7 @@ class DungeonTrackerUIChart {
             },
             {
                 label: 'Fastest',
-                data: new Array(durations.length).fill(fastestDuration),
+                data: new Array(plotted.durations.length).fill(fastestDuration),
                 borderColor: 'rgb(75, 192, 75)',
                 borderWidth: 2,
                 borderDash: [5, 5],
@@ -458,7 +513,7 @@ class DungeonTrackerUIChart {
             },
             {
                 label: 'Slowest',
-                data: new Array(durations.length).fill(slowestDuration),
+                data: new Array(plotted.durations.length).fill(slowestDuration),
                 borderColor: 'rgb(255, 99, 132)',
                 borderWidth: 2,
                 borderDash: [5, 5],
@@ -473,7 +528,7 @@ class DungeonTrackerUIChart {
         this.modalChartInstance = new Chart(ctx, {
             type: 'line',
             data: {
-                labels: labels,
+                labels: plotted.labels,
                 datasets: datasets,
             },
             options: {
