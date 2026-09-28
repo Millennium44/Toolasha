@@ -343,7 +343,11 @@ vi.mock('./combat-sim-adapter.js', () => ({
         // opted into per test via mocks.loadoutFood so the max-tier-food
         // ordering tests can prove the substitution sees the loadout's own
         // food, not whatever the DTO carried before the loadout ran.
-        if (mocks.loadoutFood?.[snapshotName]) dto.food = mocks.loadoutFood[snapshotName];
+        // Keyed by name either way: the per-sweep pickers now hand this the
+        // actual snapshot object (see _resolveSoloPartyLoadout), not just its
+        // name, so a plain string key would never match one.
+        const foodKey = snapshotName && typeof snapshotName === 'object' ? snapshotName.name : snapshotName;
+        if (mocks.loadoutFood?.[foodKey]) dto.food = mocks.loadoutFood[foodKey];
         return true;
     },
 }));
@@ -7716,8 +7720,13 @@ describe('Solo zones + party dungeons: one ranked table', () => {
         describe('per-sweep loadouts', () => {
             const soloSelect = () => ui.panel.querySelector('#mwi-csim-soloparty-solo-loadout');
             const dungeonSelect = () => ui.panel.querySelector('#mwi-csim-soloparty-dungeon-loadout');
-            const pick = (select, name) => {
-                select.value = name;
+            // Picks by display name — the option's *value* is a synthetic id
+            // (this populate's own array index, see _resolveSoloPartyLoadout),
+            // not the name itself, so a caller wanting "the Nth option named
+            // X" passes `occurrence` (0 = first).
+            const pick = (select, name, occurrence = 0) => {
+                const matches = [...select.options].filter((o) => o.textContent === name);
+                select.value = matches[occurrence]?.value ?? '';
                 select.dispatchEvent(new Event('change'));
             };
 
@@ -7734,10 +7743,10 @@ describe('Solo zones + party dungeons: one ranked table', () => {
                 ui._dungeonsLoadoutName = null;
                 ui._updateSoloPartyLoadoutPickers();
 
-                expect(soloSelect().value).toBe('Everyday');
-                expect(dungeonSelect().value).toBe('Everyday');
-                expect(ui._soloZonesLoadoutName).toBe('Everyday');
-                expect(ui._dungeonsLoadoutName).toBe('Everyday');
+                expect(soloSelect().selectedOptions[0].textContent).toBe('Everyday');
+                expect(dungeonSelect().selectedOptions[0].textContent).toBe('Everyday');
+                expect(ui._resolveSoloPartyLoadout(ui._soloZonesLoadoutName).name).toBe('Everyday');
+                expect(ui._resolveSoloPartyLoadout(ui._dungeonsLoadoutName).name).toBe('Everyday');
             });
 
             test('left at Current Gear (the default with nothing selected), neither sweep touches gear', async () => {
@@ -7760,21 +7769,43 @@ describe('Solo zones + party dungeons: one ranked table', () => {
                 await ui._onSimulateAllZones();
 
                 const [soloRun, partyRun] = mocks.allZonesArgsLog;
-                expect(soloRun.playerDTOs.map((p) => ({ hrid: p.hrid, appliedLoadout: p.appliedLoadout }))).toEqual([
-                    { hrid: 'player2', appliedLoadout: 'Solo Build' },
-                ]);
-                const partyByHrid = Object.fromEntries(partyRun.playerDTOs.map((p) => [p.hrid, p.appliedLoadout]));
+                expect(
+                    soloRun.playerDTOs.map((p) => ({ hrid: p.hrid, appliedLoadout: p.appliedLoadout?.name }))
+                ).toEqual([{ hrid: 'player2', appliedLoadout: 'Solo Build' }]);
+                const partyByHrid = Object.fromEntries(
+                    partyRun.playerDTOs.map((p) => [p.hrid, p.appliedLoadout?.name])
+                );
                 expect(partyByHrid).toEqual({
                     player1: undefined, // another party member: untouched
                     player2: 'Dungeon Build', // the simulated player, this sweep's loadout
                     player3: undefined,
                 });
-                expect(mocks.loadoutApplications).toEqual([
-                    { hrid: 'player2', snapshotName: 'Solo Build' },
-                    { hrid: 'player2', snapshotName: 'Dungeon Build' },
+                // Handed the actual snapshot object, not its name — this is
+                // what lets two loadouts sharing a name resolve correctly
+                // (see the dedicated test below).
+                expect(mocks.loadoutApplications.map((a) => ({ hrid: a.hrid, name: a.snapshotName?.name }))).toEqual([
+                    { hrid: 'player2', name: 'Solo Build' },
+                    { hrid: 'player2', name: 'Dungeon Build' },
                 ]);
                 // The editor's own DTOs are never mutated — only sim-only copies are
                 expect(mocks.editedDTOs.player2.appliedLoadout).toBeUndefined();
+            });
+
+            test('two loadouts sharing a name resolve to the one actually picked, not always the first', async () => {
+                mocks.loadoutStore = {
+                    getAllSnapshots: () => [
+                        { name: 'Build', actionTypeHrid: null, marker: 'first' },
+                        { name: 'Build', actionTypeHrid: null, marker: 'second' },
+                    ],
+                };
+                ui._updateSoloPartyLoadoutPickers();
+                pick(soloSelect(), 'Build', 1); // the second of the two same-named options
+
+                await ui._onSimulateAllZones();
+
+                const [soloRun] = mocks.allZonesArgsLog;
+                const player2 = soloRun.playerDTOs.find((p) => p.hrid === 'player2');
+                expect(player2.appliedLoadout?.marker).toBe('second');
             });
 
             /**
@@ -7824,7 +7855,7 @@ describe('Solo zones + party dungeons: one ranked table', () => {
 
                     const [soloRun] = mocks.allZonesArgsLog;
                     const player2 = soloRun.playerDTOs.find((p) => p.hrid === 'player2');
-                    expect(player2.appliedLoadout).toBe('Solo Build');
+                    expect(player2.appliedLoadout?.name).toBe('Solo Build');
                     // Cheese (the loadout's own food) got upgraded — proves the
                     // substitution ran on the post-loadout DTO, not a
                     // pre-loadout one the loadout would have overwritten anyway.
@@ -7845,14 +7876,16 @@ describe('Solo zones + party dungeons: one ranked table', () => {
 
                 const [soloRun, partyRun] = mocks.allZonesArgsLog;
                 expect(soloRun.playerDTOs[0].appliedLoadout).toBeUndefined();
-                expect(partyRun.playerDTOs.find((p) => p.hrid === 'player2').appliedLoadout).toBe('Dungeon Build');
+                expect(partyRun.playerDTOs.find((p) => p.hrid === 'player2').appliedLoadout?.name).toBe(
+                    'Dungeon Build'
+                );
             });
 
             test('a picked loadout that later disappears resets to null, not just a blank-looking select', () => {
                 mocks.loadoutStore = { getAllSnapshots: () => [{ name: 'Solo Build', actionTypeHrid: null }] };
                 ui._updateSoloPartyLoadoutPickers();
                 pick(soloSelect(), 'Solo Build');
-                expect(ui._soloZonesLoadoutName).toBe('Solo Build');
+                expect(ui._resolveSoloPartyLoadout(ui._soloZonesLoadoutName).name).toBe('Solo Build');
 
                 // The loadout is deleted (or renamed) — the store no longer answers to it
                 mocks.loadoutStore = { getAllSnapshots: () => [] };
@@ -7871,7 +7904,7 @@ describe('Solo zones + party dungeons: one ranked table', () => {
                 mocks.editorLoadoutName = 'Everyday';
                 mocks.loadoutStore = { getAllSnapshots: () => [{ name: 'Everyday', actionTypeHrid: null }] };
                 ui._updateSoloPartyLoadoutPickers();
-                expect(ui._soloZonesLoadoutName).toBe('Everyday');
+                expect(ui._resolveSoloPartyLoadout(ui._soloZonesLoadoutName).name).toBe('Everyday');
             });
 
             /**
@@ -7887,8 +7920,8 @@ describe('Solo zones + party dungeons: one ranked table', () => {
                 ui._updateSoloPartyLoadoutPickers();
                 pick(soloSelect(), 'Solo Build');
                 pick(dungeonSelect(), 'Solo Build');
-                expect(ui._soloZonesLoadoutName).toBe('Solo Build');
-                expect(ui._dungeonsLoadoutName).toBe('Solo Build');
+                expect(ui._resolveSoloPartyLoadout(ui._soloZonesLoadoutName).name).toBe('Solo Build');
+                expect(ui._resolveSoloPartyLoadout(ui._dungeonsLoadoutName).name).toBe('Solo Build');
 
                 ui.destroy();
 
