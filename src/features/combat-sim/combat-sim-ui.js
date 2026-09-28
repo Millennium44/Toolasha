@@ -5808,14 +5808,30 @@ class CombatSimUI {
      * @param {Array<Object>} dtos - One sweep's player DTOs
      * @param {string} playerHrid - The simulated player's own hrid
      * @param {Object|string} loadout - A snapshot object (preferred — see
-     *   `_resolveSoloPartyLoadout`) or a name to apply, or '' for current
-     *   gear (no-op)
+     *   `_resolveSoloPartyLoadout`) or a name to apply, or '' for current gear
      * @param {Object} gameData - `buildGameDataPayload()` result
-     * @returns {Array<Object>} `dtos` unchanged when `loadout` is '' or resolves to nothing
+     * @returns {Array<Object>} `dtos` unchanged when `loadout` resolves to nothing to apply
+     *   and to nothing to revert either
      * @private
      */
     _applyBatchLoadout(dtos, playerHrid, loadout, gameData) {
-        if (!loadout) return dtos;
+        if (!loadout) {
+            // A per-sweep "Current Gear" pick. `dtos` came from the editor's
+            // `getEditedDTOs()`, which already carries whatever the
+            // Configure tab's own Loadout dropdown applied to this player —
+            // so if that main selection is itself a loadout, this sweep must
+            // not silently inherit it. Revert just this player's DTO to
+            // their pre-loadout build (`getOriginalDTO`, the same one the
+            // dropdown's own Current Gear option reverts to), leaving every
+            // other DTO in the batch — and the editor's own DTOs — untouched.
+            // When the Configure tab is already on Current Gear too, this
+            // player has no applied loadout to revert and `dtos` is already
+            // correct: a genuine no-op, as before.
+            if (!this._editor?.getLoadoutNameFor?.(playerHrid)) return dtos;
+            const original = this._editor.getOriginalDTO?.(playerHrid);
+            if (!original) return dtos;
+            return dtos.map((dto) => (dto?.hrid === playerHrid ? structuredClone(original) : dto));
+        }
         return dtos.map((dto) => {
             if (dto?.hrid !== playerHrid) return dto;
             const copy = structuredClone(dto);

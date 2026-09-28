@@ -110,6 +110,11 @@ const mocks = vi.hoisted(() => ({
     loadoutStore: null,
     /** What SimEditor#getSelectedLoadoutName() hands back */
     editorLoadoutName: '',
+    /** What SimEditor#getLoadoutNameFor(hrid) hands back, keyed by hrid */
+    editorLoadoutNameFor: {},
+    /** What SimEditor#getOriginalDTO(hrid) hands back — the pre-loadout, current-gear
+     *  DTO for that player — keyed by hrid */
+    editorOriginalDTOs: {},
     /** Every `applyLoadoutSnapshotToDTO` call, in order: {hrid, snapshotName} */
     loadoutApplications: [],
     /** Optional snapshotName → food array, so a mocked loadout application can carry its own food */
@@ -512,6 +517,12 @@ vi.mock('./sim-editor.js', () => ({
         }
         getSelectedLoadoutName() {
             return mocks.editorLoadoutName;
+        }
+        getLoadoutNameFor(playerHrid) {
+            return mocks.editorLoadoutNameFor?.[playerHrid] || '';
+        }
+        getOriginalDTO(playerHrid) {
+            return mocks.editorOriginalDTOs?.[playerHrid] || null;
         }
         getPlayerInfo() {
             return mocks.editedDTOs ? Object.keys(mocks.editedDTOs).map((hrid) => ({ hrid, name: hrid })) : [];
@@ -7457,6 +7468,8 @@ describe('Solo zones + party dungeons: one ranked table', () => {
         mocks.monsters = null;
         mocks.loadoutStore = null;
         mocks.editorLoadoutName = '';
+        mocks.editorLoadoutNameFor = {};
+        mocks.editorOriginalDTOs = {};
         mocks.loadoutApplications = [];
         mocks.loadoutUpdateListeners = [];
         ui.buildPanel();
@@ -7489,6 +7502,8 @@ describe('Solo zones + party dungeons: one ranked table', () => {
         mocks.zones = [];
         mocks.loadoutStore = null;
         mocks.editorLoadoutName = '';
+        mocks.editorLoadoutNameFor = {};
+        mocks.editorOriginalDTOs = {};
         mocks.loadoutApplications = [];
         mocks.loadoutUpdateListeners = [];
         vi.restoreAllMocks();
@@ -7810,6 +7825,64 @@ describe('Solo zones + party dungeons: one ranked table', () => {
                 ]);
                 // The editor's own DTOs are never mutated — only sim-only copies are
                 expect(mocks.editedDTOs.player2.appliedLoadout).toBeUndefined();
+            });
+
+            /**
+             * `getEditedDTOs()` (what `mocks.editedDTOs` stands in for) already
+             * carries whatever the Configure tab's own Loadout dropdown applied
+             * to the simulated player. A per-sweep picker left on "Current Gear"
+             * used to be a plain no-op, so with a main loadout selected it
+             * silently inherited that main loadout instead of actually running
+             * the player's own gear — indistinguishable, from this sweep's
+             * results, from having picked the main loadout on purpose.
+             */
+            test('with a main Configure loadout selected, a picker on Current Gear reverts just that sweep', async () => {
+                // The main dropdown's "Main Build" is already applied to
+                // player2's DTO, the same as the real editor's getEditedDTOs()
+                // would hand back
+                mocks.editorLoadoutNameFor = { player2: 'Main Build' };
+                mocks.editedDTOs.player2.appliedLoadout = { name: 'Main Build' };
+                mocks.editorOriginalDTOs = {
+                    player2: { hrid: 'player2', equipment: {}, food: [null, null, null], gear: 'pre-loadout' },
+                };
+                mocks.loadoutStore = {
+                    getAllSnapshots: () => [{ name: 'Dungeon Build', actionTypeHrid: '/action_types/combat' }],
+                };
+                ui._updateSoloPartyLoadoutPickers();
+                // Solo picker is left at Current Gear (the default); only the
+                // dungeon picker gets its own pick
+                pick(dungeonSelect(), 'Dungeon Build');
+
+                await ui._onSimulateAllZones();
+
+                const [soloRun, partyRun] = mocks.allZonesArgsLog;
+                const soloPlayer2 = soloRun.playerDTOs.find((p) => p.hrid === 'player2');
+                // Reverted to the pre-loadout build — the main selection did not leak in
+                expect(soloPlayer2.appliedLoadout).toBeUndefined();
+                expect(soloPlayer2.gear).toBe('pre-loadout');
+
+                // The dungeon sweep still runs its own pick, unaffected
+                const partyPlayer2 = partyRun.playerDTOs.find((p) => p.hrid === 'player2');
+                expect(partyPlayer2.appliedLoadout?.name).toBe('Dungeon Build');
+
+                // The editor's own DTOs are never mutated
+                expect(mocks.editedDTOs.player2.appliedLoadout).toEqual({ name: 'Main Build' });
+            });
+
+            test('with no main Configure loadout selected, Current Gear on a picker is still a true no-op', async () => {
+                // No loadout applied by the main dropdown — getLoadoutNameFor
+                // has nothing to revert, so this is the same no-op as before
+                mocks.editorOriginalDTOs = {
+                    player2: { hrid: 'player2', equipment: {}, food: [null, null, null], gear: 'pre-loadout' },
+                };
+
+                await ui._onSimulateAllZones();
+
+                const [soloRun] = mocks.allZonesArgsLog;
+                const soloPlayer2 = soloRun.playerDTOs.find((p) => p.hrid === 'player2');
+                // Untouched — not even swapped in for the (unused) original DTO
+                expect(soloPlayer2.gear).toBeUndefined();
+                expect(mocks.loadoutApplications).toEqual([]);
             });
 
             test('two loadouts sharing a name resolve to the one actually picked, not always the first', async () => {

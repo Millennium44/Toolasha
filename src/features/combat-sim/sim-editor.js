@@ -160,6 +160,21 @@ export class SimEditor {
     }
 
     /**
+     * A player's pre-loadout, current-gear DTO — the same one the Loadout
+     * dropdown's own "Current Gear" option reverts to (see the dropdown's
+     * change handler). `getEditedDTOs()` carries whatever loadout is
+     * currently selected for that player; this is what their build looked
+     * like before that selection was applied, for a caller (a per-sweep
+     * "Current Gear" pick, say) that needs to run that player's own gear
+     * regardless of what the Configure tab's dropdown currently shows.
+     * @param {string} playerHrid
+     * @returns {Object|null}
+     */
+    getOriginalDTO(playerHrid) {
+        return this._originalDTOs?.[playerHrid] || null;
+    }
+
+    /**
      * Bring the self player's house rooms up to what the game says now.
      *
      * The DTO is built once, when the editor opens, and a room upgraded in
