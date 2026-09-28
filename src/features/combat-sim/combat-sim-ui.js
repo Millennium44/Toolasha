@@ -2255,11 +2255,15 @@ class CombatSimUI {
         this._maxTierFoodEnabled = false; // sim all zones on the best food of each kind you run
         // Solo zones + party dungeons: independent loadout choices for its two
         // sweeps, since dungeon fights often need different gear than ordinary
-        // zones. null means "not yet set" — the first time the mode turns on,
-        // both default to whatever the single Loadout dropdown currently has
-        // selected, so a run that never touches these behaves exactly as
-        // before this feature existed. Applied only to the simulated player's
-        // own DTO; every other loaded party member keeps their own gear.
+        // zones. Despite the name, each holds an id (an index into
+        // `_soloPartyLoadoutOptions()`, resolved by `_resolveSoloPartyLoadout`),
+        // not a loadout name — two loadouts can share a name, which a name
+        // alone cannot tell apart. null means "not yet set" — the first time
+        // the mode turns on, both default to whatever the single Loadout
+        // dropdown currently has selected, so a run that never touches these
+        // behaves exactly as before this feature existed. Applied only to the
+        // simulated player's own DTO; every other loaded party member keeps
+        // their own gear.
         this._soloZonesLoadoutName = null;
         this._dungeonsLoadoutName = null;
         this._includeDungeons = false; // whether an all-zones run also simulates every dungeon
@@ -3189,6 +3193,42 @@ class CombatSimUI {
     }
 
     /**
+     * Whether a per-sweep picker's stored value names a real option in
+     * `options` (its own array index — see `_updateSoloPartyLoadoutPickers`).
+     * @param {string} id - '' or an index into `options`
+     * @param {Array<Object>} options - This populate's own `_soloPartyLoadoutOptions()`
+     * @returns {boolean}
+     * @private
+     */
+    _isValidSoloPartyLoadoutId(id, options) {
+        const index = parseInt(id, 10);
+        return Number.isInteger(index) && index >= 0 && index < options.length;
+    }
+
+    /**
+     * The actual snapshot object one of the per-sweep pickers' stored ids
+     * names right now, or '' for "Current Gear" (or an id that no longer
+     * resolves).
+     *
+     * Snapshots carry no id of their own (see `buildSnapshot()` in
+     * loadout-snapshot.js — only `name`, which two loadouts can share), so
+     * the id these pickers store is this method's own array index into
+     * `_soloPartyLoadoutOptions()`, resolved fresh here rather than from a
+     * reference cached at populate time. The object itself is what gets
+     * handed to `applyLoadoutSnapshotToDTO`, which accepts one directly and
+     * skips its own by-name lookup entirely — the lookup that silently
+     * always resolves a duplicate name to whichever snapshot comes first.
+     * @param {string} id - '' or an index into `_soloPartyLoadoutOptions()`
+     * @returns {Object|string} A snapshot object, or '' for no loadout
+     * @private
+     */
+    _resolveSoloPartyLoadout(id) {
+        if (!id) return '';
+        const options = this._soloPartyLoadoutOptions();
+        return this._isValidSoloPartyLoadoutId(id, options) ? options[parseInt(id, 10)] : '';
+    }
+
+    /**
      * Show/hide and (re)populate the Solo zones + party dungeons loadout
      * pickers ("Solo zones loadout" / "Dungeons loadout").
      *
@@ -3211,30 +3251,38 @@ class CombatSimUI {
         wrap.style.display = active ? 'flex' : 'none';
         if (!active) return;
 
+        const options = this._soloPartyLoadoutOptions();
+
         if (this._soloZonesLoadoutName === null || this._dungeonsLoadoutName === null) {
-            const current = this._editor?.getSelectedLoadoutName?.() || '';
-            this._soloZonesLoadoutName = current;
-            this._dungeonsLoadoutName = current;
+            // Seeded from the single Loadout dropdown's own selection by
+            // name — the only handle it has — resolved to this list's own
+            // id for whichever snapshot answers to that name first. Fine as
+            // a one-time default: it matches what the single dropdown itself
+            // would apply, ambiguity and all.
+            const currentName = this._editor?.getSelectedLoadoutName?.() || '';
+            const index = currentName ? options.findIndex((s) => s.name === currentName) : -1;
+            const currentId = index >= 0 ? String(index) : '';
+            if (this._soloZonesLoadoutName === null) this._soloZonesLoadoutName = currentId;
+            if (this._dungeonsLoadoutName === null) this._dungeonsLoadoutName = currentId;
         }
 
-        const options = this._soloPartyLoadoutOptions();
-        const validNames = new Set(options.map((s) => s.name));
-        // A previously picked loadout that no longer exists (deleted, or a
-        // character switch that left it naming a stranger's snapshot) resets
-        // to null, not merely to a blank-looking select — leaving the field
-        // itself at the stale name would silently re-select it the moment a
-        // loadout of that same name exists again, long after the picker last
-        // showed anything but "— Current Gear —".
-        if (this._soloZonesLoadoutName && !validNames.has(this._soloZonesLoadoutName)) {
+        // A previously picked id that no longer resolves against this
+        // populate's own options (deleted, reordered, or a character switch
+        // onto an unrelated store) resets to null, not merely to a
+        // blank-looking select — leaving the field at the stale id would
+        // silently resolve it against whatever now sits at that same
+        // position, long after the picker last showed anything but
+        // "— Current Gear —".
+        if (this._soloZonesLoadoutName && !this._isValidSoloPartyLoadoutId(this._soloZonesLoadoutName, options)) {
             this._soloZonesLoadoutName = null;
         }
-        if (this._dungeonsLoadoutName && !validNames.has(this._dungeonsLoadoutName)) {
+        if (this._dungeonsLoadoutName && !this._isValidSoloPartyLoadoutId(this._dungeonsLoadoutName, options)) {
             this._dungeonsLoadoutName = null;
         }
 
         const optionsHtml =
             '<option value="">— Current Gear —</option>' +
-            options.map((s) => `<option value="${s.name}">${s.name}</option>`).join('');
+            options.map((s, index) => `<option value="${index}">${s.name}</option>`).join('');
         for (const [select, value] of [
             [soloSelect, this._soloZonesLoadoutName],
             [dungeonSelect, this._dungeonsLoadoutName],
@@ -5696,17 +5744,19 @@ class CombatSimUI {
      *
      * @param {Array<Object>} dtos - One sweep's player DTOs
      * @param {string} playerHrid - The simulated player's own hrid
-     * @param {string} loadoutName - Snapshot name to apply, or '' for current gear (no-op)
+     * @param {Object|string} loadout - A snapshot object (preferred — see
+     *   `_resolveSoloPartyLoadout`) or a name to apply, or '' for current
+     *   gear (no-op)
      * @param {Object} gameData - `buildGameDataPayload()` result
-     * @returns {Array<Object>} `dtos` unchanged when `loadoutName` is '' or resolves to nothing
+     * @returns {Array<Object>} `dtos` unchanged when `loadout` is '' or resolves to nothing
      * @private
      */
-    _applyBatchLoadout(dtos, playerHrid, loadoutName, gameData) {
-        if (!loadoutName) return dtos;
+    _applyBatchLoadout(dtos, playerHrid, loadout, gameData) {
+        if (!loadout) return dtos;
         return dtos.map((dto) => {
             if (dto?.hrid !== playerHrid) return dto;
             const copy = structuredClone(dto);
-            applyLoadoutSnapshotToDTO(copy, loadoutName, gameData);
+            applyLoadoutSnapshotToDTO(copy, loadout, gameData);
             return copy;
         });
     }
@@ -5845,9 +5895,12 @@ class CombatSimUI {
             // different gear than ordinary zones — applied only to the
             // simulated player's own DTO; every other party member (the
             // dungeon sweep's other loaded members) keeps their own imported
-            // gear untouched. '' (or unset) means current gear, a no-op.
-            const soloLoadout = this._soloZonesLoadoutName || '';
-            const dungeonLoadout = this._dungeonsLoadoutName || '';
+            // gear untouched. '' (no loadout picked, or none resolved) means
+            // current gear, a no-op. Resolved to the actual snapshot object
+            // by id, not by name — see `_resolveSoloPartyLoadout` for why a
+            // name alone cannot tell two identically-named loadouts apart.
+            const soloLoadout = this._resolveSoloPartyLoadout(this._soloZonesLoadoutName);
+            const dungeonLoadout = this._resolveSoloPartyLoadout(this._dungeonsLoadoutName);
             let soloDTOs = this._applyBatchLoadout(sets.solo, sets.playerHrid, soloLoadout, gameData);
             let partyDTOs = this._applyBatchLoadout(sets.party, sets.playerHrid, dungeonLoadout, gameData);
             // Max-tier food substitutes into whatever food a DTO carries right
