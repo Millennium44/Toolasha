@@ -53,11 +53,12 @@ const {
     default: DungeonTrackerUIHistory,
     buildRunHistoryRows,
     DUNGEON_RUN_CSV_COLUMNS,
+    MAX_RENDERED_RUNS_PER_GROUP,
 } = await import('./dungeon-tracker-ui-history.js');
 const { default: dungeonTrackerStorage } = await import('./dungeon-tracker-storage.js');
 const { default: dungeonTrackerChatAnnotations } = await import('./dungeon-tracker-chat-annotations.js');
 const { downloadFile } = await import('../../utils/csv-export.js');
-const { DUNGEON_RUNS_BACKUP_FORMAT, DUNGEON_RUNS_BACKUP_VERSION, MAX_IMPORT_FILE_BYTES, MAX_FUTURE_TIMESTAMP_MS } =
+const { DUNGEON_RUNS_BACKUP_FORMAT, DUNGEON_RUNS_BACKUP_VERSION, MAX_IMPORT_FILE_BYTES } =
     await import('./dungeon-tracker-run-import.js');
 
 /** A fresh panel state, the shape dungeon-tracker-ui-state.js hands over. */
@@ -234,6 +235,66 @@ describe('calculateStatsForRuns on a very large group', () => {
         expect(stats.totalRuns).toBe(150_000);
         expect(stats.fastestTime).toBe(1000);
         expect(stats.slowestTime).toBe(1499);
+    });
+});
+
+describe('run rendering is capped per group', () => {
+    function bigRun(i) {
+        return {
+            teamKey: 'Aster,Briar',
+            dungeonName: 'Chimerical Den',
+            duration: 300_000,
+            // Newest first (index 0 = "now"), matching what `getAllRuns()`
+            // itself hands the panel — grouping preserves this order rather
+            // than re-sorting it.
+            timestamp: new Date(Date.now() - i * 1000).toISOString(),
+        };
+    }
+
+    test('a 50k-run group renders only the capped number of rows, with a note, and does not throw', () => {
+        const history = new DungeonTrackerUIHistory(freshState('team'), (ms) => `${ms}ms`);
+        const runs = Array.from({ length: 50_000 }, (_, i) => bigRun(i));
+
+        let runList;
+        expect(() => {
+            runList = render(history, history.groupByTeam(runs));
+        }).not.toThrow();
+
+        expect(runList.querySelectorAll('[data-run-timestamp]')).toHaveLength(MAX_RENDERED_RUNS_PER_GROUP);
+        expect(runList.textContent).toContain(`Showing latest ${MAX_RENDERED_RUNS_PER_GROUP} of 50000`);
+        // The stats line still reflects every run, not just the rendered slice
+        expect(runList.textContent).toContain('Runs: 50000');
+    });
+
+    test('rendered run numbers count down from the group’s true size, not the rendered slice', () => {
+        const history = new DungeonTrackerUIHistory(freshState('team'), (ms) => `${ms}ms`);
+        const runs = Array.from({ length: 300 }, (_, i) => bigRun(i));
+
+        const runList = render(history, history.groupByTeam(runs));
+
+        // The newest run (index 0) is #300; the last row actually rendered
+        // (the 200th, i.e. index 199) is #101 — never #200, which is what a
+        // slice-relative numbering would have printed instead
+        expect(runList.textContent).toContain('#300');
+        expect(runList.textContent).toContain('#101');
+        expect(runList.textContent).not.toContain('#100');
+    });
+
+    test('a group at or under the cap carries no truncation note', () => {
+        const history = new DungeonTrackerUIHistory(freshState('team'), (ms) => `${ms}ms`);
+        const runList = render(history, history.groupByTeam([run('Aster,Briar')]));
+
+        expect(runList.textContent).not.toContain('Showing latest');
+    });
+
+    test('a group exactly at the cap still carries no truncation note', () => {
+        const history = new DungeonTrackerUIHistory(freshState('team'), (ms) => `${ms}ms`);
+        const runs = Array.from({ length: MAX_RENDERED_RUNS_PER_GROUP }, (_, i) => bigRun(i));
+
+        const runList = render(history, history.groupByTeam(runs));
+
+        expect(runList.querySelectorAll('[data-run-timestamp]')).toHaveLength(MAX_RENDERED_RUNS_PER_GROUP);
+        expect(runList.textContent).not.toContain('Showing latest');
     });
 });
 
@@ -566,8 +627,8 @@ describe('importBackupText', () => {
         expect(onImport).toHaveBeenCalledTimes(1);
     });
 
-    test('a run timestamped more than a day in the future is rejected', async () => {
-        const future = new Date(Date.now() + MAX_FUTURE_TIMESTAMP_MS + 60_000).toISOString();
+    test('a run timestamped even slightly in the future is rejected — no tolerance', async () => {
+        const future = new Date(Date.now() + 60_000).toISOString();
         const good = storedRun();
         const tooFarAhead = storedRun({ timestamp: future });
         dungeonTrackerStorage.importRuns.mockResolvedValue({ added: 1, alreadyPresent: 0, ok: true });

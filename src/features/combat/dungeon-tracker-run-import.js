@@ -75,24 +75,6 @@ export const DUNGEON_RUNS_BACKUP_VERSION = 1;
 export const MAX_PLAUSIBLE_RUN_MS = 3 * 60 * 60 * 1000;
 
 /**
- * How far a run's own timestamp may sit ahead of "now" and still be believed.
- *
- * A run is a record of something that already happened, so this is ordinary
- * clock-skew tolerance between two devices and nothing more — the same five
- * minutes `BASELINE_FUTURE_TOLERANCE_MS` (`dungeon-tracker-storage.js`)
- * allows a baseline marker for the same reason. It was a day for one
- * revision of this check; that was too loose. `importRuns` drops a run whose
- * own timestamp is at or before "delete all history"'s epoch, but has no
- * equivalent check for the future — a run dated after that epoch reads as
- * newer history the clear was never asked about, which is correct for a
- * genuinely new run and is exactly the loophole a backup with its timestamps
- * shifted forward by hours would use to sail past a clear that just ran. Five
- * minutes of tolerance cannot usefully revive anything a clear removed;
- * a day of it could revive most of a session's worth.
- */
-export const MAX_FUTURE_TIMESTAMP_MS = 5 * 60 * 1000;
-
-/**
  * A file bigger than this is refused before it is even read. No genuine
  * export gets remotely close — a run is a few hundred bytes, so 20 MB is tens
  * of thousands of runs already, and reading a larger file into memory just to
@@ -348,8 +330,16 @@ export function validateImportedRun(run, maxRunMs = MAX_PLAUSIBLE_RUN_MS, now = 
     if (time === null) {
         return { ok: false, reason: 'missing or unusable timestamp' };
     }
-    if (time > now + MAX_FUTURE_TIMESTAMP_MS) {
-        return { ok: false, reason: 'timestamp is more than a day in the future' };
+    // No tolerance at all, unlike the marker-clock-skew allowance elsewhere in
+    // this codebase (`BASELINE_FUTURE_TOLERANCE_MS`) — importing is never
+    // live recording, so a run has no clock of its own to have skewed. Any
+    // slack here is exactly the loophole "delete all history" cannot close:
+    // the clear only drops what is at or before its own epoch, so a run
+    // dated even a few minutes ahead of it always reads as newer history the
+    // clear was never asked about, and a backup with its timestamps nudged
+    // forward by that much sails past a clear that just ran.
+    if (time > now) {
+        return { ok: false, reason: 'timestamp is in the future' };
     }
 
     return { ok: true };
@@ -407,7 +397,6 @@ export default {
     DUNGEON_RUNS_BACKUP_FORMAT,
     DUNGEON_RUNS_BACKUP_VERSION,
     MAX_PLAUSIBLE_RUN_MS,
-    MAX_FUTURE_TIMESTAMP_MS,
     MAX_IMPORT_FILE_BYTES,
     MAX_IMPORT_RUNS,
     buildDungeonRunsBackupEnvelope,
