@@ -1624,6 +1624,55 @@ describe('messages that were only ever live survive a server restart', () => {
         await settle();
     });
 
+    test('a disable and an immediate re-init for the same character does not read a record still being written', async () => {
+        // Model storage's own write debounce: a non-immediate write sits in a
+        // queue a read cannot see, the way `pendingWrites` does, and a later
+        // write to the same key replaces it there.
+        const queued = new Map();
+        storage.set.mockImplementation(async (key, value, store, immediate) => {
+            if (!immediate) {
+                queued.set(key, value);
+                return true;
+            }
+            queued.delete(key);
+            db[store] = db[store] || {};
+            db[store][key] = JSON.parse(JSON.stringify(value));
+            return true;
+        });
+        try {
+            const container = buildPartyChat();
+            chatHistoryExtender.initialize();
+            await settle();
+            container.appendChild(makeMessage(JOINED));
+            await settle();
+
+            // The setting toggled off and straight back on, same character.
+            chatHistoryExtender.disable();
+            await settle();
+            // The pane no longer shows the line, so the re-init cannot pick it
+            // up off the screen — only storage can bring it back.
+            container.replaceChildren();
+            chatHistoryExtender.initialize();
+            await settle();
+
+            container.appendChild(makeMessage(RUNS[0]));
+            await settle();
+            window.dispatchEvent(new Event('pagehide'));
+            await settle();
+
+            expect(queued.size).toBe(0);
+            expect(storedTexts()).toEqual([OLD, JOINED, RUNS[0]]);
+        } finally {
+            storage.set.mockReset();
+            storage.set.mockImplementation(async (key, value, store) => {
+                db.writes += 1;
+                db[store] = db[store] || {};
+                db[store][key] = JSON.parse(JSON.stringify(value));
+                return true;
+            });
+        }
+    });
+
     test('messageIdentity ignores markup, so a re-rendered or id-stamped line is the same line', () => {
         const plain = `<div class="ChatMessage_chatMessage__z"><span>${JOINED}</span></div>`;
         const stamped = `<div class="ChatMessage_chatMessage__z" data-mwi-msg-id="42" data-processed="1"><span>${JOINED}</span></div>`;

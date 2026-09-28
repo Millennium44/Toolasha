@@ -1456,7 +1456,12 @@ class ChatHistoryExtender {
         try {
             // Land what the session recorded before the state goes; a disable
             // is not a wipe, and the record on disk is left where it is.
-            chatHistoryPersistence.flush()?.catch?.(() => {});
+            // Immediate, not through storage's own write debounce: a re-init
+            // for the same character (the setting toggled back on) reads the
+            // record straight away, a read cannot see a write still queued,
+            // and that session's first write would then replace the queued
+            // one — taking this session's last lines with it.
+            chatHistoryPersistence.flush(true)?.catch?.(() => {});
             chatHistoryPersistence.reset();
             for (const handler of this.activeHandlers) {
                 handler.destroy();
