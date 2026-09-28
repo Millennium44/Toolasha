@@ -33,20 +33,21 @@ describe('isMarketplacePatchLive', () => {
 });
 
 describe('isSeptember2026MarketPatchLive', () => {
-    // Staged on the test server only until the main server takes the patch.
+    // The patch is live on both servers now, so the gate is open regardless of
+    // hostname — and still never throws where there is no location.
     test('true on the test server', () => {
         vi.stubGlobal('location', { hostname: 'test.milkywayidle.com' });
         expect(isSeptember2026MarketPatchLive()).toBe(true);
     });
 
-    test('false on the live server', () => {
+    test('true on the live server', () => {
         vi.stubGlobal('location', { hostname: 'www.milkywayidle.com' });
-        expect(isSeptember2026MarketPatchLive()).toBe(false);
+        expect(isSeptember2026MarketPatchLive()).toBe(true);
     });
 
-    test('false with no location at all, never throws', () => {
+    test('true with no location at all, never throws', () => {
         vi.stubGlobal('location', undefined);
         expect(() => isSeptember2026MarketPatchLive()).not.toThrow();
-        expect(isSeptember2026MarketPatchLive()).toBe(false);
+        expect(isSeptember2026MarketPatchLive()).toBe(true);
     });
 });

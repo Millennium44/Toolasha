@@ -36,7 +36,7 @@ describe('MARKET_TAX', () => {
     });
 });
 
-describe('MARKET_TAX follows the hostname through the real gate', () => {
+describe('MARKET_TAX is 4% on both servers through the real gate', () => {
     afterEach(() => {
         vi.unstubAllGlobals();
         vi.doUnmock('./server-gate.js');
@@ -44,7 +44,7 @@ describe('MARKET_TAX follows the hostname through the real gate', () => {
 
     test.each([
         ['test.milkywayidle.com', 0.04],
-        ['www.milkywayidle.com', 0.05],
+        ['www.milkywayidle.com', 0.04],
     ])('%s → %s', async (hostname, rate) => {
         vi.stubGlobal('location', { hostname });
         vi.resetModules();

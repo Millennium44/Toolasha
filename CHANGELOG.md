@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### September market patch rules on the live server
+
+- The main server has taken the September 2026 market patch, so the 4% market tax and the finer price bins (with the 5x step for enhanced items) now apply on the live server too, not just the test server.
+
 ### Dungeon tracker no longer times a run from a canceled one a day earlier
 
 - A canceled party ready check left its time behind as the next run's start, so the next dungeon, even a day later with a different party, showed an elapsed time of over a day and banked it as the run's time. A new battle now starts the clock fresh, and a run longer than 3 hours is never banked or resumed.
