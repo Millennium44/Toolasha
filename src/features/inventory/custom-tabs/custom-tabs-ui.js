@@ -699,9 +699,6 @@ export default class CustomTabsUI {
         // Gates the whole tail — there is only one await in this body, and the
         // registrations below run in sequence off it.
         if (!stillOurs(ticket)) return;
-        // A restore left by a torn-down instance is this one's job now (it reads the stored
-        // choice). Only now: an instance torn down during the load above never takes over.
-        cancelDetachedNativeRestore?.();
         this._configCharId = charId;
         this._storedNativeTabPending = true;
 
@@ -1367,6 +1364,10 @@ export default class CustomTabsUI {
     _ensureStripTab(tabList) {
         this._sawInventoryStrip = true;
         const isNewStrip = tabList !== this._invTabList;
+        // A restore left by a torn-down instance is this one's job once it actually has a strip
+        // to act on (it reads the stored choice). Not earlier: an instance that never sees one
+        // before its own teardown would otherwise drop the only restorer.
+        if (isNewStrip) cancelDetachedNativeRestore?.();
         if (isNewStrip) this._watchStrip(tabList);
 
         let btn = tabList.querySelector(`[${STRIP_TAB_ATTR}]`);
