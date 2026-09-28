@@ -2255,10 +2255,13 @@ class CombatSimUI {
         this._maxTierFoodEnabled = false; // sim all zones on the best food of each kind you run
         // Solo zones + party dungeons: independent loadout choices for its two
         // sweeps, since dungeon fights often need different gear than ordinary
-        // zones. Despite the name, each holds an id (an index into
-        // `_soloPartyLoadoutOptions()`, resolved by `_resolveSoloPartyLoadout`),
-        // not a loadout name — two loadouts can share a name, which a name
-        // alone cannot tell apart. null means "not yet set" — the first time
+        // zones. Despite the name, each holds an id (see
+        // `_soloPartyLoadoutIdFor`/`_resolveSoloPartyLoadout` — the server's
+        // own characterLoadoutID when the snapshot has one, else a
+        // list-position+name fallback), not a loadout name — two loadouts can
+        // share a name, which a name alone cannot tell apart, and an array
+        // index alone cannot survive a reorder or another loadout's deletion
+        // while the sim panel is open. null means "not yet set" — the first time
         // the mode turns on, both default to whatever the single Loadout
         // dropdown currently has selected, so a run that never touches these
         // behaves exactly as before this feature existed. Applied only to the
@@ -3193,39 +3196,80 @@ class CombatSimUI {
     }
 
     /**
-     * Whether a per-sweep picker's stored value names a real option in
-     * `options` (its own array index — see `_updateSoloPartyLoadoutPickers`).
-     * @param {string} id - '' or an index into `options`
+     * A stable id for one option in a `_soloPartyLoadoutOptions()` list: the
+     * server's own characterLoadoutID when the snapshot carries one (every
+     * snapshot loadout-snapshot.js builds does; only one cached from before
+     * that field existed would not), prefixed so it can never collide with
+     * the fallback below.
+     *
+     * The real id survives a reorder or another loadout being deleted while
+     * the sim panel is open — the bug this replaced an array-index id to fix
+     * (an index shifts under exactly those two events, silently pointing the
+     * picker at a different loadout). Without a real id, the fallback —
+     * this list's own position paired with the name at it — cannot survive
+     * either, but `_findSoloPartyLoadout` only ever treats it as a match
+     * when both still agree, so a shift is caught as "unresolved" rather
+     * than silently misattributed.
+     * @param {Object} snapshot
+     * @param {number} index - Its position in the options list this id is made from
+     * @returns {string}
+     * @private
+     */
+    _soloPartyLoadoutIdFor(snapshot, index) {
+        return snapshot.id ? `id:${snapshot.id}` : `ni:${index}:${snapshot.name}`;
+    }
+
+    /**
+     * The option in `options` a stored id names, or undefined if none does.
+     * @param {string} id - '' or a `_soloPartyLoadoutIdFor` id
+     * @param {Array<Object>} options - A `_soloPartyLoadoutOptions()` list
+     * @returns {Object|undefined}
+     * @private
+     */
+    _findSoloPartyLoadout(id, options) {
+        if (!id) return undefined;
+        if (id.startsWith('id:')) {
+            const wanted = id.slice(3);
+            return options.find((s) => s.id != null && String(s.id) === wanted);
+        }
+        if (id.startsWith('ni:')) {
+            const [, indexPart, ...nameParts] = id.split(':');
+            const index = parseInt(indexPart, 10);
+            const name = nameParts.join(':');
+            return options[index]?.name === name ? options[index] : undefined;
+        }
+        return undefined;
+    }
+
+    /**
+     * Whether a per-sweep picker's stored id names a real option in `options`.
+     * @param {string} id - '' or a `_soloPartyLoadoutIdFor` id
      * @param {Array<Object>} options - This populate's own `_soloPartyLoadoutOptions()`
      * @returns {boolean}
      * @private
      */
     _isValidSoloPartyLoadoutId(id, options) {
-        const index = parseInt(id, 10);
-        return Number.isInteger(index) && index >= 0 && index < options.length;
+        return Boolean(this._findSoloPartyLoadout(id, options));
     }
 
     /**
      * The actual snapshot object one of the per-sweep pickers' stored ids
      * names right now, or '' for "Current Gear" (or an id that no longer
-     * resolves).
+     * resolves — deleted, or a reorder/rename the fallback id can't survive).
      *
-     * Snapshots carry no id of their own (see `buildSnapshot()` in
-     * loadout-snapshot.js — only `name`, which two loadouts can share), so
-     * the id these pickers store is this method's own array index into
-     * `_soloPartyLoadoutOptions()`, resolved fresh here rather than from a
-     * reference cached at populate time. The object itself is what gets
-     * handed to `applyLoadoutSnapshotToDTO`, which accepts one directly and
-     * skips its own by-name lookup entirely — the lookup that silently
+     * Resolved fresh here against a freshly-read options list, not from a
+     * reference cached at populate time, so a loadout edited between picking
+     * it and running the sim is read as it is now. The object itself is what
+     * gets handed to `applyLoadoutSnapshotToDTO`, which accepts one directly
+     * and skips its own by-name lookup entirely — the lookup that silently
      * always resolves a duplicate name to whichever snapshot comes first.
-     * @param {string} id - '' or an index into `_soloPartyLoadoutOptions()`
+     * @param {string} id - '' or a `_soloPartyLoadoutIdFor` id
      * @returns {Object|string} A snapshot object, or '' for no loadout
      * @private
      */
     _resolveSoloPartyLoadout(id) {
         if (!id) return '';
-        const options = this._soloPartyLoadoutOptions();
-        return this._isValidSoloPartyLoadoutId(id, options) ? options[parseInt(id, 10)] : '';
+        return this._findSoloPartyLoadout(id, this._soloPartyLoadoutOptions()) || '';
     }
 
     /**
@@ -3261,7 +3305,7 @@ class CombatSimUI {
             // would apply, ambiguity and all.
             const currentName = this._editor?.getSelectedLoadoutName?.() || '';
             const index = currentName ? options.findIndex((s) => s.name === currentName) : -1;
-            const currentId = index >= 0 ? String(index) : '';
+            const currentId = index >= 0 ? this._soloPartyLoadoutIdFor(options[index], index) : '';
             if (this._soloZonesLoadoutName === null) this._soloZonesLoadoutName = currentId;
             if (this._dungeonsLoadoutName === null) this._dungeonsLoadoutName = currentId;
         }
@@ -3282,7 +3326,9 @@ class CombatSimUI {
 
         const optionsHtml =
             '<option value="">— Current Gear —</option>' +
-            options.map((s, index) => `<option value="${index}">${s.name}</option>`).join('');
+            options
+                .map((s, index) => `<option value="${this._soloPartyLoadoutIdFor(s, index)}">${s.name}</option>`)
+                .join('');
         for (const [select, value] of [
             [soloSelect, this._soloZonesLoadoutName],
             [dungeonSelect, this._dungeonsLoadoutName],

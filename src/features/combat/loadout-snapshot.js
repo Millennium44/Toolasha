@@ -65,9 +65,14 @@ function getStorageKey() {
 /**
  * Convert a server loadout object into our snapshot format.
  * @param {Object} loadout - A loadout entry from characterLoadoutMap
+ * @param {string} id - The server's own characterLoadoutID (the map key this
+ *   loadout arrived under) — carried onto the snapshot itself so a caller that
+ *   only has `getAllSnapshots()`'s flat array (not `this.snapshots`'s keys)
+ *   can still identify one persistently, e.g. across a reorder or a deletion
+ *   elsewhere that would otherwise shift its position in that array.
  * @returns {Object} snapshot
  */
-function buildSnapshot(loadout) {
+function buildSnapshot(loadout, id) {
     // Parse equipment from wearableMap
     const equipment = [];
     for (const [locationHrid, hash] of Object.entries(loadout.wearableMap || {})) {
@@ -92,6 +97,7 @@ function buildSnapshot(loadout) {
     }
 
     return {
+        id,
         name: loadout.name,
         actionTypeHrid: loadout.actionTypeHrid || '',
         isDefault: !!loadout.isDefault,
@@ -283,7 +289,7 @@ class LoadoutSnapshot {
         const newSnapshots = {};
         for (const [id, loadout] of Object.entries(loadoutMap)) {
             if (!loadout.name) continue;
-            newSnapshots[id] = buildSnapshot(loadout);
+            newSnapshots[id] = buildSnapshot(loadout, id);
         }
 
         this.snapshots = newSnapshots;
