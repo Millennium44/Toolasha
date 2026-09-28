@@ -7,6 +7,7 @@ import dungeonTrackerStorage, {
     filterRunsForCharacter,
     currentCharacter,
     runIdentity,
+    minMaxOf,
 } from './dungeon-tracker-storage.js';
 import dungeonTrackerChatAnnotations from './dungeon-tracker-chat-annotations.js';
 import {
@@ -133,22 +134,28 @@ class DungeonTrackerUIHistory {
      * @returns {Array} Grouped runs with stats
      */
     groupByTeam(runs) {
-        const groups = {};
+        // A `Map`, not `{}`: `run.teamKey` can be anything a JSON backup
+        // supplies, and a plain object keyed by `__proto__` (or `constructor`,
+        // `toString`, ...) does not create an own property at all — it reads
+        // or replaces something on `Object.prototype`, and `groups[key].runs.push`
+        // then throws because that inherited value is never the group object
+        // this loop just tried to build.
+        const groups = new Map();
 
         for (const run of runs) {
             const key = run.teamKey || 'Solo';
-            if (!groups[key]) {
-                groups[key] = {
+            if (!groups.has(key)) {
+                groups.set(key, {
                     key: key,
                     label: key === 'Solo' ? 'Solo Runs' : key,
                     runs: [],
-                };
+                });
             }
-            groups[key].runs.push(run);
+            groups.get(key).runs.push(run);
         }
 
         // Convert to array and calculate stats
-        return Object.values(groups).map((group) => ({
+        return [...groups.values()].map((group) => ({
             ...group,
             stats: this.calculateStatsForRuns(group.runs),
         }));
@@ -160,22 +167,25 @@ class DungeonTrackerUIHistory {
      * @returns {Array} Grouped runs with stats
      */
     groupByDungeon(runs) {
-        const groups = {};
+        // A `Map`, for the same reason `groupByTeam` uses one — `dungeonName`
+        // is validated to be a non-empty string on import, but nothing stops
+        // that string from being `__proto__`.
+        const groups = new Map();
 
         for (const run of runs) {
             const key = run.dungeonName || 'Unknown';
-            if (!groups[key]) {
-                groups[key] = {
+            if (!groups.has(key)) {
+                groups.set(key, {
                     key: key,
                     label: key,
                     runs: [],
-                };
+                });
             }
-            groups[key].runs.push(run);
+            groups.get(key).runs.push(run);
         }
 
         // Convert to array and calculate stats
-        return Object.values(groups).map((group) => ({
+        return [...groups.values()].map((group) => ({
             ...group,
             stats: this.calculateStatsForRuns(group.runs),
         }));
@@ -198,12 +208,19 @@ class DungeonTrackerUIHistory {
 
         const durations = runs.map((r) => r.duration || r.totalTime || 0);
         const total = durations.reduce((sum, d) => sum + d, 0);
+        // minMaxOf, not Math.min(...durations)/Math.max(...durations): a
+        // spread of ~125k+ arguments overflows the engine's call-stack
+        // argument limit and throws a RangeError instead of answering — a
+        // single dungeon+team group can reach that size once a JSON backup
+        // import (capped, but still large) and years of live history land in
+        // the same bucket.
+        const { min: fastestTime, max: slowestTime } = minMaxOf(durations);
 
         return {
             totalRuns: runs.length,
             avgTime: Math.floor(total / runs.length),
-            fastestTime: Math.min(...durations),
-            slowestTime: Math.max(...durations),
+            fastestTime,
+            slowestTime,
         };
     }
 
@@ -371,9 +388,22 @@ class DungeonTrackerUIHistory {
             const tierStrs = tiers.map(String);
             const options =
                 isAutoScoped && !tierStrs.includes(desired) ? [...tiers, Number(desired)].sort((a, b) => a - b) : tiers;
-            tierFilter.innerHTML =
-                '<option value="all">All Tiers</option>' +
-                options.map((tier) => `<option value="${tier}">T${tier}</option>`).join('');
+            // Built with DOM properties, not `innerHTML` — a tier is only
+            // ever supposed to be a small integer, but nothing here re-checks
+            // that a stored run actually kept to it, and `.value`/.textContent`
+            // can never be read back as markup the way a template-literal
+            // attribute string can.
+            tierFilter.replaceChildren();
+            const allTiersOption = document.createElement('option');
+            allTiersOption.value = 'all';
+            allTiersOption.textContent = 'All Tiers';
+            tierFilter.appendChild(allTiersOption);
+            for (const tier of options) {
+                const option = document.createElement('option');
+                option.value = String(tier);
+                option.textContent = `T${tier}`;
+                tierFilter.appendChild(option);
+            }
             if (desired === 'all' || options.map(String).includes(desired)) {
                 tierFilter.value = desired;
             } else {

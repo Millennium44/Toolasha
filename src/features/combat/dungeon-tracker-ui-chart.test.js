@@ -13,6 +13,15 @@ vi.mock('./dungeon-tracker-storage.js', () => ({
     default: { getAllRuns: vi.fn(async () => []) },
     filterRunsForCharacter: (runs) => runs,
     currentCharacter: () => ({ id: 'char1', name: 'Marketcow' }),
+    minMaxOf: (numbers) => {
+        let min = Infinity;
+        let max = -Infinity;
+        for (const value of numbers) {
+            if (value < min) min = value;
+            if (value > max) max = value;
+        }
+        return { min, max };
+    },
 }));
 vi.mock('../../utils/panel-z-index.js', () => ({ PANEL_Z_CAP: 100 }));
 
