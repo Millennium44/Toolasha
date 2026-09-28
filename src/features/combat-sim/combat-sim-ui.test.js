@@ -114,6 +114,8 @@ const mocks = vi.hoisted(() => ({
     loadoutApplications: [],
     /** Optional snapshotName → food array, so a mocked loadout application can carry its own food */
     loadoutFood: null,
+    /** Callbacks registered via the loadoutSnapshot() mock's onUpdate, so a test can fire one */
+    loadoutUpdateListeners: [],
 }));
 
 vi.mock('../../core/config.js', () => ({
@@ -270,7 +272,24 @@ vi.mock('../../utils/bundle-bridge.js', () => ({
     marketWatchTarget: () => (itemHrid, enhancementLevel, quote) =>
         mocks.saved.push({ itemHrid, enhancementLevel, quote }),
     marketWatchItem: () => (itemHrid, name, enhancementLevel) => mocks.watched.push({ itemHrid, enhancementLevel }),
-    loadoutSnapshot: () => mocks.loadoutStore,
+    // onUpdate/offUpdate default to no-ops so a test that only cares about
+    // getAllSnapshots (most of them) doesn't also have to stub the update
+    // subscription buildPanel()/destroy() now use; a test that does care
+    // (the live-update tests) overrides them explicitly.
+    // onUpdate/offUpdate default to a real (if minimal) subscription list —
+    // most tests never touch it (they only care about getAllSnapshots), but
+    // the live-update tests fire a captured listener to simulate the
+    // snapshot store emitting a change while the sim panel is open.
+    loadoutSnapshot: () =>
+        mocks.loadoutStore
+            ? {
+                  onUpdate: (fn) => mocks.loadoutUpdateListeners.push(fn),
+                  offUpdate: (fn) => {
+                      mocks.loadoutUpdateListeners = mocks.loadoutUpdateListeners.filter((l) => l !== fn);
+                  },
+                  ...mocks.loadoutStore,
+              }
+            : null,
 }));
 
 vi.mock('../../api/marketplace.js', () => ({
@@ -7439,6 +7458,7 @@ describe('Solo zones + party dungeons: one ranked table', () => {
         mocks.loadoutStore = null;
         mocks.editorLoadoutName = '';
         mocks.loadoutApplications = [];
+        mocks.loadoutUpdateListeners = [];
         ui.buildPanel();
         // An earlier describe leaves these set, and Simulate/All Zones read them
         ui._allZonesMode = null;
@@ -7470,6 +7490,7 @@ describe('Solo zones + party dungeons: one ranked table', () => {
         mocks.loadoutStore = null;
         mocks.editorLoadoutName = '';
         mocks.loadoutApplications = [];
+        mocks.loadoutUpdateListeners = [];
         vi.restoreAllMocks();
     });
 
@@ -7963,6 +7984,61 @@ describe('Solo zones + party dungeons: one ranked table', () => {
                 mocks.loadoutStore = { getAllSnapshots: () => [{ name: 'Everyday', actionTypeHrid: null }] };
                 ui._updateSoloPartyLoadoutPickers();
                 expect(ui._resolveSoloPartyLoadout(ui._soloZonesLoadoutName).name).toBe('Everyday');
+            });
+
+            /**
+             * `_resolveSoloPartyLoadout` already fails safe to Current Gear
+             * for a deleted loadout at simulate time — but without a live
+             * subscription to the snapshot store, the <select> itself kept
+             * showing/selecting the deleted one on screen until some
+             * unrelated redraw happened to repopulate it.
+             */
+            test('deleting the picked loadout while the sim is open updates the select immediately', () => {
+                // buildPanel() only builds once (`if (this.panel) return`);
+                // the outer beforeEach already built it with no loadout store
+                // fed yet, so a fresh destroy()+buildPanel() here is what
+                // actually (re)binds the subscription against a real store —
+                // the same as a character switch tearing down and rebuilding
+                // the panel after the combat bundle has since loaded one.
+                ui.destroy();
+                mocks.loadoutStore = {
+                    getAllSnapshots: () => [{ id: 'L1', name: 'Solo Build', actionTypeHrid: null }],
+                };
+                ui.buildPanel();
+                // _allZonesMode outlives destroy()/buildPanel() by design (a
+                // session preference, not character-scoped) and the earlier
+                // "the run" describe's own beforeEach already turned this
+                // mode on — clicking the checkbox here would toggle it back
+                // off, so the mode is set directly instead.
+                ui._allZonesMode = SOLO_VS_PARTY_MODE;
+                ui._updateAllZonesUI();
+                pick(soloSelect(), 'Solo Build');
+                expect(ui._resolveSoloPartyLoadout(ui._soloZonesLoadoutName).name).toBe('Solo Build');
+                expect(mocks.loadoutUpdateListeners.length).toBeGreaterThan(0);
+
+                // The loadout is deleted elsewhere while this panel stays open
+                mocks.loadoutStore = { getAllSnapshots: () => [] };
+                mocks.loadoutUpdateListeners.forEach((fn) => fn());
+
+                // No unrelated redraw or simulate click needed — the store's
+                // own onUpdate is what refreshed this
+                expect(soloSelect().value).toBe('');
+                expect(ui._soloZonesLoadoutName).toBeNull();
+            });
+
+            test('destroy() unsubscribes — an update after teardown does not touch the (rebuilt) panel', () => {
+                ui.destroy();
+                mocks.loadoutStore = {
+                    getAllSnapshots: () => [{ id: 'L1', name: 'Solo Build', actionTypeHrid: null }],
+                };
+                ui.buildPanel();
+                const listenersAfterFirstBuild = mocks.loadoutUpdateListeners.length;
+                expect(listenersAfterFirstBuild).toBeGreaterThan(0);
+
+                ui.destroy();
+                expect(mocks.loadoutUpdateListeners).toHaveLength(0);
+
+                ui.buildPanel(); // leave a panel standing for the outer afterEach's own destroy()
             });
 
             /**
