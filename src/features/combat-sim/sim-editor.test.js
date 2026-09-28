@@ -1015,6 +1015,53 @@ describe('the loadout selection is remembered', () => {
     });
 });
 
+/**
+ * The panel-wide Loadout dropdown is applied to whichever player is self
+ * (or, with no self, the active tab) — see getLoadoutNameFor(). Replacing
+ * that same player's build must not leave the dropdown still claiming they
+ * wear a loadout the fresh import never had; replacing someone else must
+ * leave it alone, since it still describes self's own untouched build.
+ */
+describe('replacing the loadout-selected player clears the panel-wide selection', () => {
+    test('replacing the self player who wears the selected loadout resets it to Current Gear', () => {
+        const el = document.createElement('div');
+        const editor = new SimEditor({ editorEl: el });
+        editor.resetToSelf(); // self = active = player1
+        editor._selectedLoadoutName = 'Bruteforce';
+
+        editor.replacePlayer('player1', emptyDTO('ignored'), 'Fresh Build');
+
+        expect(editor.getSelectedLoadoutName()).toBe('');
+    });
+
+    test('replacing a different party member leaves the selection alone', () => {
+        const el = document.createElement('div');
+        const editor = new SimEditor({ editorEl: el });
+        editor.importPlayers([emptyDTO('player1'), emptyDTO('player2')], ['A', 'B']);
+        editor._selfHrid = 'player1';
+        editor._selectedLoadoutName = 'Bruteforce';
+
+        editor.replacePlayer('player2', emptyDTO('ignored'), 'Fresh B');
+
+        expect(editor.getSelectedLoadoutName()).toBe('Bruteforce');
+    });
+
+    test('with no self player, replacing the active tab (which the dropdown then applies to) clears it too', () => {
+        const el = document.createElement('div');
+        const editor = new SimEditor({ editorEl: el });
+        editor.importPlayers([emptyDTO('player1'), emptyDTO('player2')], ['A', 'B']);
+        // No self — the dropdown applies to whichever tab is active, which
+        // importPlayers left on the last-added player
+        expect(editor.getSelfHrid()).toBeNull();
+        expect(editor.getActiveEditPlayer()).toBe('player2');
+        editor._selectedLoadoutName = 'Bruteforce';
+
+        editor.replacePlayer('player2', emptyDTO('ignored'), 'Fresh B');
+
+        expect(editor.getSelectedLoadoutName()).toBe('');
+    });
+});
+
 describe('achievements section', () => {
     const damage = { typeHrid: '/buff_types/damage', ratioBoost: 0.02 };
     const wisdom = { typeHrid: '/buff_types/wisdom', flatBoost: 0.05 };

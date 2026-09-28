@@ -653,6 +653,16 @@ export class SimEditor {
     replacePlayer(hrid, dto, name, skipped = []) {
         if (!this._editedDTOs || !this._editedDTOs[hrid]) return false;
 
+        // getLoadoutNameFor() reads this before any of this function's own
+        // mutations — the panel-wide Loadout dropdown is applied to whichever
+        // player is self (or, with no self, the active tab), and a replace
+        // is always for that same tab, so replacing that player's build must
+        // not leave the dropdown still claiming they wear a loadout the new
+        // build never had. A replace of a *different* party member (self is
+        // someone else's slot) leaves the dropdown alone — it still
+        // describes self's own untouched build.
+        const wasLoadoutTarget = hrid === (this._selfHrid || this._activeEditPlayer);
+
         dto.hrid = hrid;
         this._editedDTOs[hrid] = dto;
         this._originalDTOs[hrid] = structuredClone(dto);
@@ -679,6 +689,11 @@ export class SimEditor {
         // and must stop touching a slot that now holds an imported build.
         if (this._selfHrid === hrid) this._selfHrid = null;
         this._forgetAppliedLoadouts(hrid);
+        // The panel-wide Loadout selection (see the comment above
+        // `wasLoadoutTarget`) no longer names anything this replaced build
+        // wears — cleared to "Current Gear" rather than left pointing at a
+        // loadout the fresh import was never given.
+        if (wasLoadoutTarget) this._selectedLoadoutName = '';
         this._activeEditPlayer = hrid;
         this._editorInitialized = true;
         this._scenarioToken++;
