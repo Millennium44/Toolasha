@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Chat history keeps messages that were never pushed out of chat
+
+- Saved chat history only kept messages once the game pushed them out of its chat list, so on a quiet channel like party chat a server restart lost hours of messages that were still on screen. Messages are now saved as they appear, and a waiting save is written straight away when the connection drops or the page is hidden.
+
 ### Dungeon run history can be exported and imported
 
 - The dungeon tracker's run history has Export and Import buttons. Export saves every run this character recorded as a file, and Import merges such a file back in: it skips runs you already have or deliberately deleted, rejects impossible ones, and reports what it added.
