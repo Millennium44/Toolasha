@@ -1505,6 +1505,34 @@ describe('Export', () => {
         expect(JSON.parse(payload['2'])).toEqual({ marker: 'player2', name: 'Stranger B' });
     });
 
+    test('exports the synced build, not a stale _editedDTOs snapshot (a house room built after the panel opened)', async () => {
+        const { editor } = editorWithStrangers();
+        game.selfDTO.houseRooms = { '/house_rooms/dojo': 2 };
+        editor.resetToSelf();
+        // The House tab builds Dojo 3 while the panel is open — getEditedDTOs()
+        // folds this in (see the "house rooms follow the game" tests); Export
+        // must go through the same sync rather than reading `_editedDTOs` raw.
+        game.houseRooms = new Map([['/house_rooms/dojo', { houseRoomHrid: '/house_rooms/dojo', level: 3 }]]);
+        game.buildExport = (dto) => ({ houseRooms: dto.houseRooms });
+
+        await editor._exportActivePlayer();
+
+        expect(JSON.parse(writeText.mock.calls[0][0])).toEqual({ houseRooms: { '/house_rooms/dojo': 3 } });
+    });
+
+    test('Export Party also exports the synced build for every loaded player', async () => {
+        const { editor } = editorWithStrangers();
+        game.selfDTO.houseRooms = { '/house_rooms/dojo': 2 };
+        editor.resetToSelf();
+        game.houseRooms = new Map([['/house_rooms/dojo', { houseRoomHrid: '/house_rooms/dojo', level: 3 }]]);
+        game.buildExport = (dto) => ({ houseRooms: dto.houseRooms });
+
+        await editor._exportParty();
+
+        const payload = JSON.parse(writeText.mock.calls[0][0]);
+        expect(JSON.parse(payload['1'])).toEqual({ houseRooms: { '/house_rooms/dojo': 3 } });
+    });
+
     test('the Export Party button only appears once more than one player is loaded', () => {
         const el = document.createElement('div');
         const editor = new SimEditor({ editorEl: el });
@@ -1622,10 +1650,50 @@ describe('replacing one party member via import', () => {
 
         // Only the used slot's own skip is attributed to the replaced player;
         // slot 5's (never used here) must not show up as "not equipped" on
-        // a player who never carried it.
+        // a player who never carried it. Tagged with the editor's own hrid
+        // (player2, the replaced slot), not the pasted export's slot number.
         expect(editor._importSkipped).toEqual([
-            { slot: 3, itemHrid: '/items/used_slot_drop', itemName: 'Used Slot Drop', itemLocationHrid: null },
+            {
+                slot: 3,
+                itemHrid: '/items/used_slot_drop',
+                itemName: 'Used Slot Drop',
+                itemLocationHrid: null,
+                hrid: 'player2',
+            },
         ]);
+    });
+
+    test("replacing a slot drops that slot's own prior skipped-equipment note", () => {
+        const el = document.createElement('div');
+        const editor = new SimEditor({ editorEl: el });
+        editor.importPlayers(
+            [emptyDTO('player1'), emptyDTO('player2')],
+            ['A', 'B'],
+            [{ slot: 1, itemHrid: '/items/old_blade', itemName: 'Old Blade', itemLocationHrid: null }]
+        );
+        expect(el.textContent).toContain('Old Blade');
+
+        // A clean replacement of player1 (nothing skipped this time) must not
+        // still warn about the build it replaced.
+        editor.replacePlayer('player1', emptyDTO('ignored'), 'Fresh A', []);
+
+        expect(el.textContent).not.toContain('Old Blade');
+        expect(editor._importSkipped.some((entry) => entry.hrid === 'player1')).toBe(false);
+    });
+
+    test("replacing one slot leaves another slot's own skipped-equipment note alone", () => {
+        const el = document.createElement('div');
+        const editor = new SimEditor({ editorEl: el });
+        editor.importPlayers(
+            [emptyDTO('player1'), emptyDTO('player2')],
+            ['A', 'B'],
+            [{ slot: 2, itemHrid: '/items/kept_charm', itemName: 'Kept Charm', itemLocationHrid: null }]
+        );
+
+        editor.replacePlayer('player1', emptyDTO('ignored'), 'Fresh A', []);
+
+        expect(el.textContent).toContain('Kept Charm');
+        expect(editor._importSkipped.some((entry) => entry.hrid === 'player2')).toBe(true);
     });
 
     test('clicking "Add as new member" appends instead of replacing', () => {
