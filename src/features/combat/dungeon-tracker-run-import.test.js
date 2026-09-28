@@ -9,7 +9,6 @@ import {
     DUNGEON_RUNS_BACKUP_FORMAT,
     DUNGEON_RUNS_BACKUP_VERSION,
     MAX_PLAUSIBLE_RUN_MS,
-    MAX_FUTURE_TIMESTAMP_MS,
     MAX_IMPORT_RUNS,
     buildDungeonRunsBackupEnvelope,
     parseDungeonRunsJson,
@@ -186,24 +185,23 @@ describe('validateImportedRun', () => {
         expect(validateImportedRun(run({ timestamp: 'not a date' })).ok).toBe(false);
     });
 
-    test('rejects a timestamp more than a few minutes in the future', () => {
+    test('rejects any timestamp after "now", with no tolerance at all', () => {
+        // Importing is never live recording, so a run has no clock of its own
+        // that could have skewed — and any tolerance here is exactly the
+        // window a backup with its timestamps nudged forward would use to
+        // outrun a "delete all history" that just ran, since the clear only
+        // drops what is at or before its own epoch.
         const now = Date.parse('2026-09-27T00:00:00.000Z');
-        const justUnder = new Date(now + MAX_FUTURE_TIMESTAMP_MS - 10_000).toISOString();
-        const justOver = new Date(now + MAX_FUTURE_TIMESTAMP_MS + 10_000).toISOString();
+        const exactlyNow = new Date(now).toISOString();
+        const oneSecondAhead = new Date(now + 1000).toISOString();
+        const fiveMinutesAhead = new Date(now + 5 * 60 * 1000).toISOString();
 
-        expect(validateImportedRun(run({ timestamp: justUnder }), MAX_PLAUSIBLE_RUN_MS, now).ok).toBe(true);
-        const result = validateImportedRun(run({ timestamp: justOver }), MAX_PLAUSIBLE_RUN_MS, now);
-        expect(result.ok).toBe(false);
-        expect(result.reason).toMatch(/future/);
-    });
-
-    test('the future tolerance is ordinary clock skew, not a window to outrun "delete all history"', () => {
-        // A run stamped a day ahead used to sail through: it is always
-        // "newer" than a clear that just ran, however far in the past that
-        // clear is, so a backup with its timestamps shifted forward by hours
-        // could resurrect everything a clear removed the moment it was
-        // imported. Five minutes of tolerance cannot usefully do that.
-        expect(MAX_FUTURE_TIMESTAMP_MS).toBeLessThanOrEqual(5 * 60 * 1000);
+        expect(validateImportedRun(run({ timestamp: exactlyNow }), MAX_PLAUSIBLE_RUN_MS, now).ok).toBe(true);
+        for (const future of [oneSecondAhead, fiveMinutesAhead]) {
+            const result = validateImportedRun(run({ timestamp: future }), MAX_PLAUSIBLE_RUN_MS, now);
+            expect(result.ok).toBe(false);
+            expect(result.reason).toMatch(/future/);
+        }
     });
 
     test('rejects a non-integer tier — a run’s tier reaches an HTML attribute verbatim downstream', () => {

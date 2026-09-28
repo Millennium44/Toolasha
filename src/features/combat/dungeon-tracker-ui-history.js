@@ -23,6 +23,21 @@ import { toCsv, csvFilename, downloadCsv, downloadFile } from '../../utils/csv-e
 import { formatDateTime } from '../../utils/formatters.js';
 import { openPlayerProfile, VALID_PLAYER_NAME_RE } from '../../utils/profile-command.js';
 
+/**
+ * How many of a group's runs the list actually renders, most recent first.
+ *
+ * Every run in a group still counts toward that group's stats
+ * (`calculateStatsForRuns` runs over the whole, unsliced array) and the CSV
+ * and JSON exports still cover every run regardless of what is on screen —
+ * this bounds only the HTML the group's own expandable list builds. A single
+ * dungeon+team group can hold up to `MAX_IMPORT_RUNS` (50,000) after a JSON
+ * backup import, and building one `innerHTML` string with a row's worth of
+ * markup for every one of them — and rebuilding it on every filter change,
+ * every delete, every redraw — is real work with no reader behind most of
+ * it: nobody scrolls through tens of thousands of rows looking for one run.
+ */
+export const MAX_RENDERED_RUNS_PER_GROUP = 200;
+
 /** The run-history export, one row per run. */
 export const DUNGEON_RUN_CSV_COLUMNS = [
     { key: 'timestamp', label: 'Timestamp' },
@@ -909,7 +924,8 @@ class DungeonTrackerUIHistory {
                         padding-top: 6px;
                         margin-top: 4px;
                     ">
-                        ${this.renderRunList(group.runs, deltas)}
+                        ${this.renderRunList(group.runs.slice(0, MAX_RENDERED_RUNS_PER_GROUP), deltas, group.runs.length)}
+                        ${this.renderTruncationNote(group.runs.length)}
                     </div>
                 </div>
             `;
@@ -963,14 +979,19 @@ class DungeonTrackerUIHistory {
 
     /**
      * Render individual run list
-     * @param {Array} runs - Array of runs
+     * @param {Array} runs - The runs to render — possibly only the most
+     *   recent slice of a larger group, in which case `totalCount` says how
+     *   many the group actually holds
      * @param {Map<string, Object>} [deltas] - Per-run deltas, keyed by `runIdentity`
+     * @param {number} [totalCount] - The group's true run count, for
+     *   numbering; defaults to `runs.length` when the caller passed the
+     *   whole group
      * @returns {string} HTML for run list
      */
-    renderRunList(runs, deltas) {
+    renderRunList(runs, deltas, totalCount = runs.length) {
         let html = '';
         runs.forEach((run, index) => {
-            const runNumber = runs.length - index;
+            const runNumber = totalCount - index;
             const timeStr = this.formatTime(run.duration || run.totalTime || 0);
             // A solo run is timed by this client's clock rather than the server's
             // party timestamps. Marked, so the two are never read as equal evidence.
@@ -1013,6 +1034,23 @@ class DungeonTrackerUIHistory {
             `;
         });
         return html;
+    }
+
+    /**
+     * The "showing latest N of M" note a group's run list carries when it
+     * holds more than {@link MAX_RENDERED_RUNS_PER_GROUP} runs. Empty string
+     * when it does not, so a normal-sized group renders nothing extra.
+     *
+     * @param {number} totalCount - The group's true run count
+     * @returns {string} HTML for the note, or `''`
+     */
+    renderTruncationNote(totalCount) {
+        if (totalCount <= MAX_RENDERED_RUNS_PER_GROUP) return '';
+        return `
+            <div style="color: #888; font-style: italic; font-size: 9px; text-align: center; padding: 6px 0;">
+                Showing latest ${MAX_RENDERED_RUNS_PER_GROUP} of ${totalCount} — Export for the full list
+            </div>
+        `;
     }
 
     /**
