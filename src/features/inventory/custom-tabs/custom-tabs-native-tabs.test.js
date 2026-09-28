@@ -19,7 +19,7 @@ import { describe, test, expect, beforeEach, afterEach, vi } from 'vitest';
 
 const game = vi.hoisted(() => ({
     charId: 'char-1',
-    settings: { inventoryTabs_showUnorganized: true },
+    settings: { inventoryTabs_showUnorganized: true, inventoryTabs_iconRowTab: true },
     itemDetailMap: {
         '/items/cheese': { name: 'Cheese', categoryHrid: '/item_categories/food', sortIndex: 1 },
         '/items/milk': { name: 'Milk', categoryHrid: '/item_categories/resource', sortIndex: 2 },

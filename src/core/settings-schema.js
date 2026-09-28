@@ -2167,6 +2167,13 @@ export const settingsGroups = {
                 default: false,
                 help: 'Opens the inventory on the Toolasha tab. Where the inventory has its own tab row, the Toolasha tab sits first in it and nothing is hidden; otherwise this also hides the native Inventory tab in the character panel.',
             },
+            inventoryTabs_iconRowTab: {
+                id: 'inventoryTabs_iconRowTab',
+                label: "Custom Inventory Tabs: Toolasha tab in the inventory's icon row",
+                type: 'checkbox',
+                default: true,
+                help: 'Off keeps Toolasha as its own tab in the character panel (next to Inventory), which takes less space on small screens.',
+            },
             inventoryTabs_tileGap: {
                 id: 'inventoryTabs_tileGap',
                 label: 'Custom Inventory Tabs: Item spacing (px)',

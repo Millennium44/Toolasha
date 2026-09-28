@@ -746,6 +746,12 @@ export default class CustomTabsUI {
         });
         this._unregisterHandlers.push(unregisterDefaultTab);
 
+        // Live setting change for where the Toolasha tab goes
+        const unregisterPlacement = config.onSettingChange('inventoryTabs_iconRowTab', () => {
+            this._switchTabPlacement();
+        });
+        this._unregisterHandlers.push(unregisterPlacement);
+
         // Live setting change for tile gap
         const unregisterTileGap = config.onSettingChange('inventoryTabs_tileGap', () => {
             if (this._isActive) this._applyTileGap();
@@ -1349,6 +1355,8 @@ export default class CustomTabsUI {
      * @returns {HTMLElement|null}
      */
     _findInventoryStrip() {
+        // Off: the character-panel button on every layout (the view handles native tabs either way)
+        if (!config.getSetting('inventoryTabs_iconRowTab')) return null;
         const tabList = this._findNativeInventoryTabList(this._findInvContainer());
         if (!tabList) return null;
         const { tabs } = this._nativeInventoryTabs(tabList);
@@ -1450,6 +1458,23 @@ export default class CustomTabsUI {
     /**
      * Remove the strip tab and stop watching the strip (disable, character switch, feature off).
      */
+    /**
+     * Move the Toolasha tab between the inventory's icon row and the character panel after the
+     * setting changes: close the view (handing the native tab back), drop whichever placement is
+     * in use, then place it afresh.
+     */
+    _switchTabPlacement() {
+        try {
+            if (this._isActive) this._deactivatePanel();
+            this._retireCharacterPanelTab();
+            this._removeStripTab();
+            this._sawInventoryStrip = false;
+            this._tryInjectTabButton();
+        } catch (error) {
+            console.error('[CustomTabs] Moving the Toolasha tab failed:', error);
+        }
+    }
+
     _removeStripTab() {
         this._unwatchStrip();
         this._invTabBtn?.remove();

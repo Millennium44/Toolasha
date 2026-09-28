@@ -17,7 +17,12 @@ import { describe, test, expect, beforeEach, afterEach, vi } from 'vitest';
 
 const game = vi.hoisted(() => ({
     charId: 'char-1',
-    settings: { inventoryTabs: true, inventoryTabs_showUnorganized: true, inventoryTabs_defaultTab: false },
+    settings: {
+        inventoryTabs: true,
+        inventoryTabs_showUnorganized: true,
+        inventoryTabs_defaultTab: false,
+        inventoryTabs_iconRowTab: true,
+    },
     itemDetailMap: {
         '/items/cheese': { name: 'Cheese', categoryHrid: '/item_categories/food', sortIndex: 1 },
         '/items/milk': { name: 'Milk', categoryHrid: '/item_categories/resource', sortIndex: 2 },
@@ -48,12 +53,17 @@ const storageMock = vi.hoisted(() => {
 });
 
 const observer = vi.hoisted(() => ({ classHandlers: new Map(), readyHandlers: [] }));
+/** Live setting-change callbacks, so a test can flip a setting the way the settings panel does */
+const settingHandlers = vi.hoisted(() => new Map());
 
 vi.mock('../../../core/config.js', () => ({
     default: {
         getSetting: (key) => game.settings[key] ?? false,
         getSettingValue: (key, fallback = null) => game.settings[key] ?? fallback,
-        onSettingChange: () => () => {},
+        onSettingChange: (key, fn) => {
+            settingHandlers.set(key, fn);
+            return () => settingHandlers.delete(key);
+        },
     },
 }));
 vi.mock('../../../core/storage.js', () => ({ default: storageMock }));
@@ -347,6 +357,8 @@ beforeEach(() => {
     storageMock.delete.mockClear();
     game.charId = 'char-1';
     game.settings.inventoryTabs_defaultTab = false;
+    game.settings.inventoryTabs_iconRowTab = true;
+    settingHandlers.clear();
     observer.classHandlers.clear();
     observer.readyHandlers.length = 0;
     vi.stubGlobal('requestAnimationFrame', (fn) => setTimeout(fn, 0));
@@ -939,6 +951,70 @@ describe('inventory behind another character panel tab', () => {
         observer.classHandlers.get(DETACHED)(fixture.tabsContainer);
         await flush();
         expect(fixture.gameSelected()).toBe('item_category_food');
+    });
+});
+
+describe('"Toolasha tab in the inventory\'s icon row" setting', () => {
+    test('off: the character-panel button on the new layout, and the view still forces All', async () => {
+        game.settings.inventoryTabs_iconRowTab = false;
+        const { characterTabList, inventoryPanel } = buildCharacterPanel();
+        const fixture = buildNewInventory(inventoryPanel, CATEGORY_ICONS, 'item_category_food');
+        ui = await startUI();
+
+        expect(document.querySelector(STRIP_TAB)).toBeNull();
+        const tabs = [...characterTabList.querySelectorAll('[role="tab"]')];
+        expect(tabs.map((t) => t.textContent)).toEqual(['Inventory', 'Toolasha', 'Equipment']);
+
+        tabs[1].click();
+        await flush();
+        expect(ui._isActive).toBe(true);
+        expect(fixture.gameSelected()).toBe('inventory_all');
+        expect(visibleTiles(fixture.inv)).toEqual(['cheese', 'coin', 'milk']);
+        expect(document.querySelector(STRIP_TAB)).toBeNull();
+
+        // Leaving through the character panel hands the native tab back
+        tabs[2].click();
+        await flush();
+        expect(ui._isActive).toBe(false);
+        expect(fixture.gameSelected()).toBe('item_category_food');
+    });
+
+    test('on: the strip tab, and no character-panel button', async () => {
+        const { characterTabList, inventoryPanel } = buildCharacterPanel();
+        const fixture = buildNewInventory(inventoryPanel, CATEGORY_ICONS, 'inventory_all');
+        ui = await startUI();
+
+        expect(fixture.order()[0]).toBe('toolasha');
+        expect(characterTabList.querySelector('.toolasha-inv-tab')).toBeNull();
+    });
+
+    test('switching it live moves the tab, closing the view on the way', async () => {
+        const { characterTabList, characterScroller, inventoryPanel } = buildCharacterPanel();
+        const fixture = buildNewInventory(inventoryPanel, CATEGORY_ICONS, 'item_category_food');
+        ui = await startUI();
+        fixture.tabList.querySelector(STRIP_TAB).click();
+        await flush();
+        expect(ui._isActive).toBe(true);
+
+        // On → off
+        game.settings.inventoryTabs_iconRowTab = false;
+        settingHandlers.get('inventoryTabs_iconRowTab')();
+        await flush();
+        expect(ui._isActive).toBe(false);
+        expect(document.querySelector(STRIP_TAB)).toBeNull();
+        expect(fixture.tabsContainer.hasAttribute('data-mwi-toolasha-inv-strip')).toBe(false);
+        expect(fixture.gameSelected()).toBe('item_category_food');
+        expect(fixture.marked()).toEqual([fixture.tabFor('item_category_food')]);
+        expect(characterTabList.querySelector('.toolasha-inv-tab')).not.toBeNull();
+
+        // Off → on
+        game.settings.inventoryTabs_iconRowTab = true;
+        settingHandlers.get('inventoryTabs_iconRowTab')();
+        await flush();
+        expect(characterTabList.querySelector('.toolasha-inv-tab')).toBeNull();
+        expect(characterScroller.style.overflow).toBe('');
+        expect(fixture.order()[0]).toBe('toolasha');
+        expect(document.querySelectorAll(STRIP_TAB)).toHaveLength(1);
     });
 });
 

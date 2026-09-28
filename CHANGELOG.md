@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Setting to keep the Toolasha tab next to Inventory
+
+- A new setting, "Toolasha tab in the inventory's icon row" (on by default), can be turned off to keep Toolasha as its own tab next to Inventory in the character panel, which takes less space on small screens.
+
 ### Chat history keeps messages that were never pushed out of chat
 
 - Saved chat history only kept messages once the game pushed them out of its chat list, so on a quiet channel like party chat a server restart lost hours of messages that were still on screen. Messages are now saved as they appear, and a waiting save is written straight away when the connection drops or the page is hidden.
