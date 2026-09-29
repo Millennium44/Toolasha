@@ -286,6 +286,17 @@ describe('the results', () => {
         expect(game.sent[1].message).toBe('The guild trial has finished.');
     });
 
+    test('a phase that flickers after the results were told does not tell them again', () => {
+        guildTrialAlerts.noteTrialStatus({ phase: 'live', at: now });
+        guildTrialAlerts.notePayout({ guildPoints: 2880, eligibleTokens: 1320, participantTokens: 1980 });
+        guildTrialAlerts.noteTrialStatus({ phase: 'completed', at: now + 60_000 });
+        guildTrialAlerts.noteTrialStatus({ phase: 'live', at: now + 65_000 });
+        guildTrialAlerts.noteTrialStatus({ phase: 'completed', at: now + 70_000 });
+
+        expect(game.sent).toHaveLength(1);
+        expect(game.sent[0].message).toContain('2,880');
+    });
+
     test('a panel that was already showing completed announces nothing', () => {
         guildTrialAlerts.noteTrialStatus({ phase: 'completed', at: now });
         expect(game.sent).toEqual([]);
