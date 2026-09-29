@@ -670,6 +670,8 @@ export default class CustomTabsUI {
         this._sawInventoryStrip = false; // Sticky: once seen, the character-panel button is never used
         this._hiddenNativeSelection = null; // The native tab the game has selected, visually cleared
         this._issuingNativeClick = false; // Our own .click() on a native tab is not the player's
+        // Character-panel placement: the tab the game has selected there, visually cleared by the view
+        this._hiddenCharPanelSelection = null;
     }
 
     // -----------------------------------------------------------------------
@@ -825,6 +827,8 @@ export default class CustomTabsUI {
         noteTeardown(this);
         // The game's own selection goes back before the restore below reads it
         if (this._isActive && this._invTabBtn) this._restoreHiddenNativeSelection();
+        if (this._isActive && this._tabBtn) this._markCharPanelTab(this._hiddenCharPanelSelection);
+        this._hiddenCharPanelSelection = null;
         // Memory-only: a stored choice is left for the next instance, which may be drawing a
         // different character by the time a storage read would return.
         const held = this._savedNativeInvTab;
@@ -1099,6 +1103,9 @@ export default class CustomTabsUI {
         const tabList = this._tabBtn?.parentElement;
         if (tabList) {
             for (const tab of tabList.querySelectorAll('[role="tab"]:not(.toolasha-inv-tab)')) {
+                if (tab.classList.contains('Mui-selected') || tab.getAttribute('aria-selected') === 'true') {
+                    this._hiddenCharPanelSelection = tab;
+                }
                 tab.classList.remove('Mui-selected');
                 tab.setAttribute('aria-selected', 'false');
             }
@@ -1125,10 +1132,19 @@ export default class CustomTabsUI {
         });
         // Restore the selected state on the clicked native tab. React won't re-render because
         // MUI still thinks this tab was selected (we bypassed its state when activating Toolasha).
-        if (clickedTab) {
-            clickedTab.classList.add('Mui-selected');
-            clickedTab.setAttribute('aria-selected', 'true');
-        }
+        // Without a click (the placement setting moved the tab) the game's selection never changed.
+        this._markCharPanelTab(clickedTab || this._hiddenCharPanelSelection);
+        this._hiddenCharPanelSelection = null;
+    }
+
+    /**
+     * Put the selected marks back on a character-panel tab the view cleared them from.
+     * @param {HTMLElement|null} tab
+     */
+    _markCharPanelTab(tab) {
+        if (!tab?.isConnected) return;
+        tab.classList.add('Mui-selected');
+        tab.setAttribute('aria-selected', 'true');
     }
 
     /**
@@ -1697,11 +1713,9 @@ export default class CustomTabsUI {
             btn.classList.remove('Mui-selected');
             this._clearLayout();
             this._showGameContent();
-            if (this._inventoryTabEl) {
-                this._inventoryTabEl.classList.add('Mui-selected');
-                this._inventoryTabEl.setAttribute('aria-selected', 'true');
-            }
+            this._markCharPanelTab(this._hiddenCharPanelSelection || this._inventoryTabEl);
         }
+        this._hiddenCharPanelSelection = null;
         if (this._inventoryTabEl) {
             this._inventoryTabEl.style.display = '';
             this._inventoryTabEl = null;
