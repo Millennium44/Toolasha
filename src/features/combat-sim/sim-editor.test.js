@@ -884,6 +884,24 @@ describe('the loadout selection is remembered', () => {
         expect(editor.getSelectedLoadoutName()).toBe(odd);
     });
 
+    test('the picker stays when every combat loadout was deleted but one is still worn', async () => {
+        bridge.snapshots = [{ name: 'Alpha', actionTypeHrid: '/action_types/combat' }];
+        const { el, editor } = await openEditor();
+        editor.applyLoadoutByName('Alpha');
+        bridge.snapshots = [];
+        editor.renderEditor();
+
+        const select = el.querySelector('#mwi-csim-loadout-select');
+        expect(select).toBeTruthy();
+        expect(select.querySelector('option[selected]').textContent).toBe('Alpha (no longer saved)');
+
+        select.value = '';
+        select.dispatchEvent(new Event('change'));
+        await Promise.resolve();
+        expect(editor.getLoadoutNameFor('player1')).toBe('');
+        expect(el.querySelector('#mwi-csim-loadout-select')).toBeFalsy();
+    });
+
     test('going back to Current Gear is remembered too', async () => {
         settings.values.set('simEditorLoadoutName', 'Bruteforce');
         bridge.snapshots = [{ name: 'Bruteforce', actionTypeHrid: '/action_types/combat' }];
