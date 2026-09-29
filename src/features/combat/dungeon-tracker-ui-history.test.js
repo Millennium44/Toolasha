@@ -538,6 +538,33 @@ describe('exportRunHistoryBackup', () => {
         expect(window.alert).toHaveBeenCalledWith(expect.stringContaining('older 3 were left out'));
     });
 
+    test('realistic-size runs over the byte ceiling are trimmed to fit, oldest first, and reported', async () => {
+        const count = 35_000;
+        const runs = Array.from({ length: count }, (_, i) =>
+            storedRun({
+                timestamp: new Date(Date.UTC(2026, 0, 1) + i * 1000).toISOString(),
+                team: ['Aster', 'Briar', 'Cove', 'Dale', 'Elm'],
+                teamKey: 'Aster,Briar,Cove,Dale,Elm',
+                waveTimes: Array.from({ length: 50 }, (_, w) => 6000 + w * 13),
+                avgWaveTime: 6300,
+                keyCountsMap: { Aster: 2, Briar: 3, Cove: 1, Dale: 2, Elm: 4 },
+            })
+        );
+        dungeonTrackerStorage.getRunsForCharacterOrNull.mockResolvedValue(runs);
+        const history = new DungeonTrackerUIHistory(freshState('team'), (ms) => `${ms}ms`);
+
+        await history.exportRunHistoryBackup();
+
+        const text = downloadFile.mock.calls[0][1];
+        expect(new TextEncoder().encode(text).length).toBeLessThanOrEqual(MAX_IMPORT_FILE_BYTES);
+        const exported = JSON.parse(text).runs;
+        expect(exported.length).toBeLessThan(count);
+        expect(exported[0].timestamp).toBe(runs[count - 1].timestamp);
+        expect(window.alert).toHaveBeenCalledWith(
+            expect.stringContaining(`older ${(count - exported.length).toLocaleString()} were left out`)
+        );
+    });
+
     test('refuses to export, downloading nothing, when the store could not be read', async () => {
         dungeonTrackerStorage.getRunsForCharacterOrNull.mockResolvedValue(null);
         const history = new DungeonTrackerUIHistory(freshState('team'), (ms) => `${ms}ms`);

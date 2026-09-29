@@ -769,7 +769,8 @@ class DungeonTrackerUIHistory {
      */
     async importBackupFile(file) {
         // Refused by size alone, before a byte of it is read — a genuine
-        // export is a few hundred bytes per run, so a file this large is not
+        // export is roughly 0.7 KB per run compact (about 30,000 runs in the
+        // whole limit), so a file this large is not
         // one worth reading into memory just to reject afterwards.
         if (file.size > MAX_IMPORT_FILE_BYTES) {
             const limitMb = Math.round(MAX_IMPORT_FILE_BYTES / (1024 * 1024));

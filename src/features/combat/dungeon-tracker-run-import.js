@@ -76,8 +76,8 @@ export const MAX_PLAUSIBLE_RUN_MS = 3 * 60 * 60 * 1000;
 
 /**
  * A file bigger than this is refused before it is even read. No genuine
- * export gets remotely close — a run is a few hundred bytes, so 20 MB is tens
- * of thousands of runs already, and reading a larger file into memory just to
+ * export gets remotely close — a realistic run (team, waveTimes, keyCountsMap)
+ * is roughly 0.7 KB compact, so 20 MB is about 30,000 runs already, and reading a larger file into memory just to
  * reject it afterwards is the one cost this check exists to avoid paying.
  */
 export const MAX_IMPORT_FILE_BYTES = 20 * 1024 * 1024;
@@ -237,17 +237,20 @@ export function serializeBackupWithinLimits({
 }) {
     const all = Array.isArray(runs) ? runs : [];
     const encoder = new TextEncoder();
-    const write = (list) => JSON.stringify(buildDungeonRunsBackupEnvelope({ characterId, runs: list, now }), null, 2);
+    // Compact: pretty-printing put every team/waveTimes/keyCountsMap element
+    // on its own line and cost about half again the bytes for nothing.
+    const write = (list) => JSON.stringify(buildDungeonRunsBackupEnvelope({ characterId, runs: list, now }));
     const size = (text) => encoder.encode(text).length;
 
     let text = write(all);
     if (all.length <= maxRuns && size(text) <= maxBytes) return { text, omitted: 0 };
 
-    const stamp = (run) => {
-        const time = Date.parse(run?.timestamp);
-        return Number.isFinite(time) ? time : -Infinity;
-    };
-    const newestFirst = [...all].sort((a, b) => stamp(b) - stamp(a));
+    // Same parse as the store's own ordering; an unstamped run sorts oldest.
+    const stamp = (run) => runTime(run) ?? -Infinity;
+    const newestFirst = [...all].sort((a, b) => {
+        const [sa, sb] = [stamp(a), stamp(b)];
+        return sa === sb ? 0 : sb > sa ? 1 : -1;
+    });
 
     // Size scales with the run count, so aim just under the ceiling and shave
     // 5% at a time until the real serialized size agrees.
