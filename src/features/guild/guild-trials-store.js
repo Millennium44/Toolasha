@@ -61,6 +61,18 @@ const KEY_PREFIX = 'guildTrials';
 export const MAX_SAMPLES = 800;
 
 /**
+ * How long before a badge moved the card must last have been read for the move
+ * to count as *watched*.
+ *
+ * A badge that changed while the Trials tab was shut is first seen when it is
+ * reopened, and that moment is not when the tier banked — pairing it with the
+ * next clear measures a slice of the real interval, exactly as a first sighting
+ * would. Ninety seconds covers a background tab's once-a-minute timer, and is
+ * the most a stamp can then lag the clear it records.
+ */
+export const TIER_WATCH_GAP_MS = 90_000;
+
+/**
  * Storage key for a guild's trial record.
  *
  * By guild name where it is known, because trial state belongs to the guild and
@@ -438,11 +450,16 @@ export function recordTileSample(record, tile, at, characterId = null) {
     // a slice of the real interval and reports a rate several times too high.
     // So the first sighting only establishes where the card is, and the clock
     // starts at the next transition.
+    //
+    // The same holds for a badge that moved while nobody was looking: it is
+    // only a watched move when the card was read shortly before it.
     const tierSeenAt = { ...(existing.tierSeenAt || {}) };
+    const watched = Number.isFinite(existing.tierReadAt) && at - existing.tierReadAt <= TIER_WATCH_GAP_MS;
     if (
         Number.isFinite(tile?.tier) &&
         Number.isFinite(existing.tier) &&
         tile.tier > existing.tier &&
+        watched &&
         !Number.isFinite(tierSeenAt[tile.tier])
     ) {
         tierSeenAt[tile.tier] = at;
@@ -501,6 +518,11 @@ export function recordTileSample(record, tile, at, characterId = null) {
         signups: tile?.signups || existing.signups || null,
         pointsByTier,
         tierSeenAt,
+        // When a badge was last read off the card, whatever it said — what
+        // decides whether the next move of it was watched
+        tierReadAt: Number.isFinite(tile?.tier)
+            ? Math.max(at, Number.isFinite(existing.tierReadAt) ? existing.tierReadAt : at)
+            : existing.tierReadAt,
         samples: samples.slice(-MAX_SAMPLES),
         pointSamples: pointSamples.slice(-MAX_SAMPLES),
         tiers,
@@ -567,6 +589,17 @@ function mergeTierSeenAt(a, b) {
         }
     }
     return merged;
+}
+
+/**
+ * The later of two tiles' last badge reads, omitted when neither has one.
+ * @param {Object} a - One side's tile
+ * @param {Object} b - The other side's tile
+ * @returns {{tierReadAt?: number}} Spreadable
+ */
+function latestTierReadAt(a, b) {
+    const reads = [a?.tierReadAt, b?.tierReadAt].filter(Number.isFinite);
+    return reads.length ? { tierReadAt: Math.max(...reads) } : {};
 }
 
 /**
@@ -692,6 +725,8 @@ export function mergeTrialRecords(base, incoming) {
             // badge is the same clear seen again, and the first one is closest
             // to when it actually happened.
             tierSeenAt: mergeTierSeenAt(existing.tierSeenAt, tile.tierSeenAt),
+            // Latest wins: either side reading the badge is the card being watched
+            ...latestTierReadAt(existing, tile),
             samples,
             pointSamples,
             tiers,

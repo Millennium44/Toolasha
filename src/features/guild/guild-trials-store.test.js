@@ -186,7 +186,10 @@ describe('recording samples', () => {
         let record = recordTileSample(emptyRecord(thisWeek), carded(16, 2278), now);
         expect(record.tiles['skilling::milking'].tierSeenAt).toEqual({});
 
+        // Watched: the card is read every render while the tab is open
+        record = recordTileSample(record, carded(16, 2278), now + 240_000);
         record = recordTileSample(record, carded(17, 2412), now + 300_000);
+        record = recordTileSample(record, carded(17, 2412), now + 560_000);
         record = recordTileSample(record, carded(18, 2550), now + 620_000);
         expect(record.tiles['skilling::milking'].tierSeenAt).toEqual({
             17: now + 300_000,
@@ -196,6 +199,37 @@ describe('recording samples', () => {
         // A redraw restating the badge does not move the timestamp it already has
         record = recordTileSample(record, carded(18, 2550), now + 700_000);
         expect(record.tiles['skilling::milking'].tierSeenAt[18]).toBe(now + 620_000);
+    });
+
+    test('a badge that moved while the tab was shut is a sighting, not a clear', () => {
+        // T16 read, the tab shut, reopened twenty minutes later on T19. The
+        // reopen is not when T19 banked, and pairing it with the watched T20
+        // clear measured a slice of the interval — a rate several times too high
+        const carded = (tier, points) => ({ name: 'Milking', kind: 'skilling', tier, points });
+        let record = recordTileSample(emptyRecord(thisWeek), carded(15, 2150), now - 30_000);
+        record = recordTileSample(record, carded(16, 2278), now);
+        expect(record.tiles['skilling::milking'].tierSeenAt).toEqual({ 16: now });
+
+        record = recordTileSample(record, carded(19, 2700), now + 20 * 60_000);
+        expect(record.tiles['skilling::milking'].tierSeenAt).toEqual({ 16: now });
+
+        // …but it restarts the watch, so the next move is timed
+        record = recordTileSample(record, carded(20, 2850), now + 20 * 60_000 + 60_000);
+        expect(record.tiles['skilling::milking'].tierSeenAt).toEqual({ 16: now, 20: now + 21 * 60_000 });
+    });
+
+    test('the last badge read survives a merge, latest wins', () => {
+        const merged = mergeTrialRecords(
+            {
+                weekStart: thisWeek,
+                tiles: { 'skilling::milking': { name: 'Milking', kind: 'skilling', tierReadAt: 1000 } },
+            },
+            {
+                weekStart: thisWeek,
+                tiles: { 'skilling::milking': { name: 'Milking', kind: 'skilling', tierReadAt: 4000 } },
+            }
+        );
+        expect(merged.tiles['skilling::milking'].tierReadAt).toBe(4000);
     });
 
     test('a repeat at the same instant replaces rather than duplicates', () => {
