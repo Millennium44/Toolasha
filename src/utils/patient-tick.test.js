@@ -1,6 +1,6 @@
 import { describe, test, expect, vi, beforeEach } from 'vitest';
 
-const mocks = vi.hoisted(() => ({ tickBuy: true, tickSell: true, band: null, september: false }));
+const mocks = vi.hoisted(() => ({ tickBuy: true, tickSell: true, band: null }));
 
 vi.mock('../core/config.js', () => ({
     default: {
@@ -22,10 +22,6 @@ vi.mock('./market-values.js', async (importOriginal) => {
 });
 
 vi.mock('../core/data-manager.js', () => ({ default: {} }));
-vi.mock('./server-gate.js', () => ({
-    isMarketplacePatchLive: () => true,
-    isSeptember2026MarketPatchLive: () => mocks.september,
-}));
 
 import {
     patientTickPrice,
@@ -40,7 +36,6 @@ beforeEach(() => {
     mocks.tickBuy = true;
     mocks.tickSell = true;
     mocks.band = null;
-    mocks.september = false;
 });
 
 describe('the per-side tick settings', () => {
@@ -81,8 +76,8 @@ describe('the per-side tick settings', () => {
 
 describe('patientTickPrice', () => {
     test('a buy at the bid moves one tick up, a sell at the ask one tick down', () => {
-        expect(patientTickPrice(1000, 'buy', 'bid', { ask: 1100 })).toBe(1005);
-        expect(patientTickPrice(1000, 'sell', 'ask', { bid: 900 })).toBe(998);
+        expect(patientTickPrice(1000, 'buy', 'bid', { ask: 1100 })).toBe(1004);
+        expect(patientTickPrice(1000, 'sell', 'ask', { bid: 900 })).toBe(996);
     });
 
     test('instant sides and averages are untouched', () => {
@@ -100,28 +95,28 @@ describe('patientTickPrice', () => {
 
     test('the buy tick moves buys only, the sell tick sells only', () => {
         mocks.tickSell = false;
-        expect(patientTickPrice(1000, 'buy', 'bid', { ask: 1100 })).toBe(1005);
+        expect(patientTickPrice(1000, 'buy', 'bid', { ask: 1100 })).toBe(1004);
         expect(patientTickPrice(1000, 'sell', 'ask', { bid: 900 })).toBe(1000);
 
         mocks.tickBuy = false;
         mocks.tickSell = true;
         expect(patientTickPrice(1000, 'buy', 'bid', { ask: 1100 })).toBe(1000);
-        expect(patientTickPrice(1000, 'sell', 'ask', { bid: 900 })).toBe(998);
+        expect(patientTickPrice(1000, 'sell', 'ask', { bid: 900 })).toBe(996);
     });
 
     test('the tick never crosses the spread', () => {
-        // One tick above 1000 is 1005: equal to the ask would fill instantly
-        expect(patientTickPrice(1000, 'buy', 'bid', { ask: 1005 })).toBe(1000);
-        expect(patientTickPrice(1000, 'buy', 'bid', { ask: 1010 })).toBe(1005);
-        // One tick below 1000 is 998
-        expect(patientTickPrice(1000, 'sell', 'ask', { bid: 998 })).toBe(1000);
-        expect(patientTickPrice(1000, 'sell', 'ask', { bid: 996 })).toBe(998);
+        // One tick above 1000 is 1004: equal to the ask would fill instantly
+        expect(patientTickPrice(1000, 'buy', 'bid', { ask: 1004 })).toBe(1000);
+        expect(patientTickPrice(1000, 'buy', 'bid', { ask: 1010 })).toBe(1004);
+        // One tick below 1000 is 996
+        expect(patientTickPrice(1000, 'sell', 'ask', { bid: 996 })).toBe(1000);
+        expect(patientTickPrice(1000, 'sell', 'ask', { bid: 992 })).toBe(996);
     });
 
     test('a missing other side (absent, 0 or -1) is no bound', () => {
-        expect(patientTickPrice(1000, 'buy', 'bid', {})).toBe(1005);
-        expect(patientTickPrice(1000, 'buy', 'bid', { ask: -1 })).toBe(1005);
-        expect(patientTickPrice(1000, 'sell', 'ask', { bid: 0 })).toBe(998);
+        expect(patientTickPrice(1000, 'buy', 'bid', {})).toBe(1004);
+        expect(patientTickPrice(1000, 'buy', 'bid', { ask: -1 })).toBe(1004);
+        expect(patientTickPrice(1000, 'sell', 'ask', { bid: 0 })).toBe(996);
     });
 
     test('a sell at 1 has nowhere lower to go', () => {
@@ -134,7 +129,7 @@ describe('patientTickPrice', () => {
         mocks.band = { min: 1000, max: 1200 };
         expect(patientTickPrice(1000, 'sell', 'ask', { itemHrid: '/items/x' })).toBe(1000);
         // No hrid, no clamp
-        expect(patientTickPrice(1000, 'sell', 'ask', {})).toBe(998);
+        expect(patientTickPrice(1000, 'sell', 'ask', {})).toBe(996);
     });
 
     test('an unpriced quote passes straight through', () => {
@@ -143,9 +138,8 @@ describe('patientTickPrice', () => {
     });
 });
 
-describe('patientTickPrice under the September 2026 market patch', () => {
+describe('patientTickPrice with the September 2026 bins', () => {
     test('ticks by the new bin gap, five times wider for an enhanced item', () => {
-        mocks.september = true;
         expect(patientTickPrice(1000, 'buy', 'bid', { ask: 1100 })).toBe(1004);
         expect(patientTickPrice(1000, 'sell', 'ask', { bid: 900 })).toBe(996);
         expect(patientTickPrice(1000, 'buy', 'bid', { ask: 1100, itemHrid: '/items/x', enhancementLevel: 4 })).toBe(
@@ -157,7 +151,6 @@ describe('patientTickPrice under the September 2026 market patch', () => {
     });
 
     test('a wider enhanced tick that would reach the other side stays put', () => {
-        mocks.september = true;
         expect(patientTickPrice(1000, 'buy', 'bid', { ask: 1010, enhancementLevel: 2 })).toBe(1000);
         expect(patientTickPrice(1000, 'buy', 'bid', { ask: 1010 })).toBe(1004);
     });
@@ -165,14 +158,12 @@ describe('patientTickPrice under the September 2026 market patch', () => {
 
 describe('patientTickPrice against an off-grid book (pre-patch listings)', () => {
     test('ticks from an old-ladder price to the nearest new bin past it', () => {
-        mocks.september = true;
         expect(patientTickPrice(1005, 'sell', 'ask', { bid: 900 })).toBe(1004);
         expect(patientTickPrice(1005, 'buy', 'bid', { ask: 1100 })).toBe(1008);
         expect(patientTickPrice(1003, 'sell', 'ask', { bid: 900, enhancementLevel: 2 })).toBe(1000);
     });
 
     test('an off-grid other side one new bin away still blocks the cross', () => {
-        mocks.september = true;
         expect(patientTickPrice(1000, 'buy', 'bid', { ask: 1003 })).toBe(1000);
         expect(patientTickPrice(1005, 'sell', 'ask', { bid: 1004 })).toBe(1005);
     });

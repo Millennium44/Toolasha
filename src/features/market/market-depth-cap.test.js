@@ -14,6 +14,7 @@ vi.mock('../../utils/bundle-bridge.js', () => ({
 
 const { calculateDepthCap, default: marketDepthCap } = await import('./market-depth-cap.js');
 const { default: dataManager } = await import('../../core/data-manager.js');
+const { MARKET_TAX } = await import('../../utils/profit-constants.js');
 
 describe('order-book messages', () => {
     test('a burst of books is stashed at once and the widget repainted once, after the last', () => {
@@ -114,7 +115,12 @@ describe('calculateDepthCap', () => {
     test('defaults marketTax to the shared MARKET_TAX constant when omitted', () => {
         const bids = [{ price: 100, quantity: 10 }];
         const withDefault = calculateDepthCap({ bids, costPerAction: 100, quantityPerAction: 1 });
-        const withExplicit = calculateDepthCap({ bids, costPerAction: 100, quantityPerAction: 1, marketTax: 0.05 });
+        const withExplicit = calculateDepthCap({
+            bids,
+            costPerAction: 100,
+            quantityPerAction: 1,
+            marketTax: MARKET_TAX,
+        });
 
         expect(withDefault).toEqual(withExplicit);
     });

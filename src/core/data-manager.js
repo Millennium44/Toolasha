@@ -1035,7 +1035,7 @@ class DataManager {
      * Published since the 8/13/2026 update: an estimated value for every item and
      * enhancement level — the figure behind the inventory's "Total Market Value"
      * and the tradable range. Raw reader only; caching and band derivation live in
-     * utils/market-values.js. Absent on the live server until the patch lands, so
+     * utils/market-values.js. The util may be absent (before a character loads), so
      * a missing util is a normal no-data, not an error.
      * @returns {{marketValuesVersion: number, marketItemValues: Object}|null}
      */

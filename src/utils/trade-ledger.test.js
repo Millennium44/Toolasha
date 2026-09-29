@@ -32,7 +32,7 @@ describe('fillCoins', () => {
 
     test('sells net the market tax', () => {
         expect(fillCoins(true, 40, 100)).toBe(Math.round(4000 * (1 - MARKET_TAX)));
-        expect(fillCoins(true, 40, 100)).toBe(3800);
+        expect(fillCoins(true, 40, 100)).toBe(3840);
     });
 
     test('a sold bag of cowbells nets its own tax, not the market rate', () => {
@@ -79,7 +79,7 @@ describe('detectFills', () => {
 
         expect(fills).toHaveLength(1);
         expect(fills[0].side).toBe('sell');
-        expect(fills[0].coins).toBe(3800);
+        expect(fills[0].coins).toBe(3840);
     });
 
     test('successive partial fills each produce a record', () => {

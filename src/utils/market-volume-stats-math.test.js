@@ -1,15 +1,5 @@
-import { describe, test, expect, vi, afterEach } from 'vitest';
+import { describe, test, expect } from 'vitest';
 
-const gates = vi.hoisted(() => ({ september: false }));
-
-vi.mock('./server-gate.js', () => ({
-    isMarketplacePatchLive: () => true,
-    isSeptember2026MarketPatchLive: () => gates.september,
-}));
-
-afterEach(() => {
-    gates.september = false;
-});
 import {
     filterWindow,
     snapPriceTier,
@@ -259,10 +249,9 @@ describe('trimTrailingZeros', () => {
     });
 });
 
-describe('snapPriceTier under the September 2026 market patch', () => {
+describe('snapPriceTier on the September 2026 bins', () => {
     // getBinnedPrice(price, roundUp, enhLevel) from the test-server client
     test('snaps to the new bins, down or up, the way getBinnedPrice does', () => {
-        gates.september = true;
         expect(snapPriceTier(1003, 'down')).toBe(1000);
         expect(snapPriceTier(1003, 'up')).toBe(1004);
         expect(snapPriceTier(1004, 'up')).toBe(1004);
@@ -272,7 +261,6 @@ describe('snapPriceTier under the September 2026 market patch', () => {
     });
 
     test('an enhanced item snaps to its wider bins', () => {
-        gates.september = true;
         expect(snapPriceTier(1003, 'down', 3)).toBe(1000);
         expect(snapPriceTier(1003, 'up', 3)).toBe(1020);
         expect(snapPriceTier(123456, 'up', 1)).toBe(125000);
@@ -280,7 +268,6 @@ describe('snapPriceTier under the September 2026 market patch', () => {
     });
 
     test('computeAllWindows threads the level to the min/max snap', () => {
-        gates.september = true;
         const now = 10 * 86400 * 1000;
         const rows = [
             { time: 10 * 86400 - 60, p: 1003, v: 1, a: 1003, b: 1003 },
@@ -293,16 +280,10 @@ describe('snapPriceTier under the September 2026 market patch', () => {
         const [wide] = computeAllWindows([{ ...rows[0], p: 1021 }], now, 2);
         expect([wide.stats.minPrice, wide.stats.maxPrice]).toEqual([1020, 1040]);
     });
-
-    test('on live the level changes nothing', () => {
-        expect(snapPriceTier(1231, 'up', 5)).toBe(1235);
-        expect(snapPriceTier(1234, 'down', 5)).toBe(1230);
-    });
 });
 
 describe('snapPriceTier with off-grid (pre-patch) prices', () => {
     test('snaps an old-ladder price onto the new bins', () => {
-        gates.september = true;
         expect(snapPriceTier(1005, 'down')).toBe(1004);
         expect(snapPriceTier(1005, 'up')).toBe(1008);
         expect(snapPriceTier(44700, 'down')).toBe(44640);

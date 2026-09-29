@@ -1,53 +1,27 @@
-import { describe, test, expect, vi, afterEach } from 'vitest';
-
-// The global setup mocks this module patch-live for the rest of the suite; here
-// we test the real hostname logic, so use the actual implementation.
-vi.unmock('./server-gate.js');
-const { isMarketplacePatchLive, isSeptember2026MarketPatchLive } = await vi.importActual('./server-gate.js');
+import { describe, test, expect, afterEach, vi } from 'vitest';
+import { isTestServer } from './server-gate.js';
+import { isTestServer as gameServerIsTestServer } from './game-server.js';
 
 afterEach(() => {
     vi.unstubAllGlobals();
 });
 
-describe('isMarketplacePatchLive', () => {
-    // The patch is live on both servers now, so the gate is open regardless of
-    // hostname — and still never throws where there is no location.
-    test('true on the live server', () => {
-        vi.stubGlobal('location', { hostname: 'www.milkywayidle.com' });
-        expect(isMarketplacePatchLive()).toBe(true);
+describe('server-gate isTestServer', () => {
+    test('is the same helper game-server.js decides data-sharing with', () => {
+        expect(isTestServer).toBe(gameServerIsTestServer);
     });
 
-    test('true on the test server', () => {
+    test('true on the test server, false on the live server', () => {
         vi.stubGlobal('location', { hostname: 'test.milkywayidle.com' });
-        expect(isMarketplacePatchLive()).toBe(true);
-    });
+        expect(isTestServer()).toBe(true);
 
-    test('true even with no location at all (e.g. a worker blob), never throws', () => {
-        vi.stubGlobal('location', undefined);
-        expect(() => isMarketplacePatchLive()).not.toThrow();
-        expect(isMarketplacePatchLive()).toBe(true);
-
-        vi.stubGlobal('location', {});
-        expect(isMarketplacePatchLive()).toBe(true);
-    });
-});
-
-describe('isSeptember2026MarketPatchLive', () => {
-    // The patch is live on both servers now, so the gate is open regardless of
-    // hostname — and still never throws where there is no location.
-    test('true on the test server', () => {
-        vi.stubGlobal('location', { hostname: 'test.milkywayidle.com' });
-        expect(isSeptember2026MarketPatchLive()).toBe(true);
-    });
-
-    test('true on the live server', () => {
         vi.stubGlobal('location', { hostname: 'www.milkywayidle.com' });
-        expect(isSeptember2026MarketPatchLive()).toBe(true);
+        expect(isTestServer()).toBe(false);
     });
 
-    test('true with no location at all, never throws', () => {
+    test('false with no location at all (e.g. a worker blob), never throws', () => {
         vi.stubGlobal('location', undefined);
-        expect(() => isSeptember2026MarketPatchLive()).not.toThrow();
-        expect(isSeptember2026MarketPatchLive()).toBe(true);
+        expect(() => isTestServer()).not.toThrow();
+        expect(isTestServer()).toBe(false);
     });
 });

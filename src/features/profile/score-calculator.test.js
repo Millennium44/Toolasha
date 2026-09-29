@@ -13,7 +13,6 @@ import { describe, test, expect, vi, beforeEach } from 'vitest';
 
 const mocks = vi.hoisted(() => ({
     clientData: null,
-    patchLive: true,
     settings: {},
     enhancingParams: { teas: {} },
     workerTasks: [],
@@ -51,13 +50,6 @@ vi.mock('../enhancement/tooltip-enhancement.js', () => ({
     getRealisticBaseItemPrice: (hrid) => (hrid === '/items/philosophers_mirror' ? 1e12 : 0),
 }));
 vi.mock('../../utils/game-lookups.js', () => ({ getShopCoinCost: () => 0 }));
-// The shrine fold into the total is gated on the marketplace patch being live.
-// Default the gate on, so the folding assertions test the patched behaviour; a
-// single test flips it off to pin the pre-patch (comparable-score) rule.
-vi.mock('../../utils/server-gate.js', () => ({
-    isMarketplacePatchLive: () => mocks.patchLive,
-    isSeptember2026MarketPatchLive: () => false,
-}));
 vi.mock('../../utils/guild-credit-pricing.js', () => ({
     buildGoldPerCredit: () => ({ '/items/guild_credit_1': 750 }),
     priceGuildCreditCosts: (costs, { goldPerCredit }) => ({
@@ -75,7 +67,6 @@ const { calculateCombatScore } = await import('./score-calculator.js');
 const CREDIT = '/items/guild_credit_1';
 
 beforeEach(() => {
-    mocks.patchLive = true;
     mocks.settings = {};
     mocks.enhancingParams = { teas: {} };
     mocks.workerTasks = [];
@@ -140,20 +131,6 @@ describe('guild shrine score', () => {
         expect(score.guildShrineCombat).toBeGreaterThan(0);
         expect(score.total).toBeCloseTo(score.house + score.ability + score.equipment + score.guildShrineCombat, 10);
         expect(score.skillerTotal).toBeCloseTo(score.skillerEquipment + score.skillerGuildShrine, 10);
-    });
-
-    test('before the patch is live everywhere, the shrine stays out of the total', async () => {
-        // Gated on the server: on live (pre-patch) shrines are known only for your
-        // own character, so they are kept on their own line and the total stays
-        // comparable with everyone else's card.
-        mocks.patchLive = false;
-        const score = await calculateCombatScore(
-            profileWithShrines({ '/guild_buffs/force_combat': 3, '/guild_buffs/scholar_skilling': 1 })
-        );
-
-        expect(score.guildShrineCombat).toBeGreaterThan(0); // still computed and shown
-        expect(score.total).toBeCloseTo(score.house + score.ability + score.equipment, 10);
-        expect(score.skillerTotal).toBeCloseTo(score.skillerEquipment, 10);
     });
 
     test("reads a shared profile's guildBuffLevelMap (bare-number levels) the same as your own map", async () => {
