@@ -11,12 +11,13 @@ import dungeonTrackerStorage, {
 } from './dungeon-tracker-storage.js';
 import dungeonTrackerChatAnnotations from './dungeon-tracker-chat-annotations.js';
 import {
-    buildDungeonRunsBackupEnvelope,
+    serializeBackupWithinLimits,
     parseDungeonRunsJson,
     validateDungeonRunsEnvelope,
     planDungeonRunImport,
     dungeonRunsBackupFilename,
     MAX_IMPORT_FILE_BYTES,
+    MAX_IMPORT_RUNS,
 } from './dungeon-tracker-run-import.js';
 import { trendsFor, directionMarker, NOT_ENOUGH_RUNS, TREND_WINDOW } from './dungeon-tracker-trends.js';
 import { toCsv, csvFilename, downloadCsv, downloadFile } from '../../utils/csv-export.js';
@@ -721,8 +722,17 @@ class DungeonTrackerUIHistory {
             alert('Export refused: the stored run history could not be read. Nothing was downloaded.');
             return;
         }
-        const envelope = buildDungeonRunsBackupEnvelope({ characterId, runs });
-        downloadFile(dungeonRunsBackupFilename(), JSON.stringify(envelope, null, 2), 'application/json;charset=utf-8;');
+        // Import refuses a file over its run or byte ceiling, so the export
+        // stays inside both and says so when it had to leave the oldest out.
+        const { text, omitted } = serializeBackupWithinLimits({ characterId, runs });
+        downloadFile(dungeonRunsBackupFilename(), text, 'application/json;charset=utf-8;');
+        if (omitted > 0) {
+            alert(
+                `The backup holds your newest ${(runs.length - omitted).toLocaleString()} runs. The older ` +
+                    `${omitted.toLocaleString()} were left out because a backup can hold at most ` +
+                    `${MAX_IMPORT_RUNS.toLocaleString()} runs and ${Math.round(MAX_IMPORT_FILE_BYTES / (1024 * 1024))} MB.`
+            );
+        }
     }
 
     /**
