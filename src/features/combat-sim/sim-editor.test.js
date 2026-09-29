@@ -819,6 +819,56 @@ describe('the loadout selection is remembered', () => {
         expect(settings.values.get('simEditorLoadoutName')).toBeUndefined();
     });
 
+    test('a worn loadout that is no longer saved is shown, not passed off as Current Gear', async () => {
+        bridge.snapshots = [
+            { name: 'Alpha', actionTypeHrid: '/action_types/combat' },
+            { name: 'Bravo', actionTypeHrid: '/action_types/combat' },
+        ];
+        const { el, editor } = await openEditor();
+        const pick = async (name) => {
+            const select = el.querySelector('#mwi-csim-loadout-select');
+            select.value = name;
+            select.dispatchEvent(new Event('change'));
+            await Promise.resolve();
+        };
+        await pick('Alpha');
+
+        bridge.snapshots = [{ name: 'Bravo', actionTypeHrid: '/action_types/combat' }];
+        editor.renderEditor();
+
+        const select = el.querySelector('#mwi-csim-loadout-select');
+        expect(select.querySelector('option[selected]').value).toBe('Alpha');
+        expect(select.querySelector('option[selected]').textContent).toBe('Alpha (no longer saved)');
+        expect(editor.getLoadoutNameFor('player1')).toBe('Alpha');
+
+        // Another pick from there works as normal and drops the stale entry
+        await pick('Bravo');
+        expect(editor.getLoadoutNameFor('player1')).toBe('Bravo');
+        expect(el.querySelector('#mwi-csim-loadout-select').textContent).not.toContain('no longer saved');
+    });
+
+    test('the no-longer-saved entry escapes the name and Current Gear still reverts', async () => {
+        const odd = 'A"<b>x';
+        bridge.snapshots = [
+            { name: odd, actionTypeHrid: '/action_types/combat' },
+            { name: 'Bravo', actionTypeHrid: '/action_types/combat' },
+        ];
+        const { el, editor } = await openEditor();
+        editor.applyLoadoutByName(odd);
+        bridge.snapshots = [{ name: 'Bravo', actionTypeHrid: '/action_types/combat' }];
+        editor.renderEditor();
+
+        const select = el.querySelector('#mwi-csim-loadout-select');
+        expect(select.querySelector('option[selected]').value).toBe(odd);
+        expect(select.querySelector('b')).toBeNull();
+
+        select.value = '';
+        select.dispatchEvent(new Event('change'));
+        await Promise.resolve();
+        expect(editor.getLoadoutNameFor('player1')).toBe('');
+        expect(el.querySelector('#mwi-csim-loadout-select').value).toBe('');
+    });
+
     test('going back to Current Gear is remembered too', async () => {
         settings.values.set('simEditorLoadoutName', 'Bruteforce');
         bridge.snapshots = [{ name: 'Bruteforce', actionTypeHrid: '/action_types/combat' }];

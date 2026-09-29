@@ -1557,6 +1557,12 @@ export class SimEditor {
                     const selected = shownLoadout === snap.name ? ' selected' : '';
                     html += `<option value="${snap.name}"${selected}>${label}</option>`;
                 }
+                // A worn loadout whose snapshot was deleted or renamed matches no option, and the browser
+                // would show Current Gear while the DTO still wears that gear.
+                if (shownLoadout && !filteredSnapshots.some((snap) => snap.name === shownLoadout)) {
+                    const name = escapeHtml(shownLoadout);
+                    html += `<option value="${name}" selected>${name} (no longer saved)</option>`;
+                }
                 html += `</select>`;
             }
             html += `<button id="mwi-csim-reset" style="
