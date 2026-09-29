@@ -123,6 +123,25 @@ describe('archived once', () => {
         expect(bodyWrites()).toBe(1);
     });
 
+    test('two cycles of one encounter in a week are two entries, not one overwritten', async () => {
+        // The test server runs several cycles a week. The damage module states
+        // each new fight's own tier starts and restarts its watched clock
+        await Promise.all(sampleTrialHistory(T0 + 630_000, { breakdown: ended({ reported }) }));
+        const next = T0 + 3 * 3_600_000;
+        const second = ended({
+            reported,
+            seconds: 300,
+            tier: 2,
+            tierStarts: { 1: next, 2: next + 100_000 },
+            endedAt: next + 400_000,
+        });
+        await Promise.all(sampleTrialHistory(next + 430_000, { breakdown: second }));
+
+        const index = await loadHistoryIndex('trial', 'A');
+        expect(index).toHaveLength(2);
+        expect(index.map((entry) => entry.label).sort()).toEqual(['Badger T1–T2', 'Badger T1–T3']);
+    });
+
     test('without totals it is saved two minutes after the end, and totals arriving later replace it', async () => {
         await Promise.all(sampleTrialHistory(T0 + 700_000, { breakdown: ended() }));
         expect(bodyWrites()).toBe(0);
