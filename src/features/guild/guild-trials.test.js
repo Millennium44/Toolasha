@@ -308,7 +308,7 @@ const { CURRENT_TRIALS_DATA_SKILLING } = await import('./guild-trial-messages.fi
 const { forecastTrial } = await import('./guild-trial-forecast.js');
 const { tierTimingAsForecast, tierTimingForecast } = await import('./guild-trial-tier-timing.js');
 const { badgeText } = await import('./guild-trial-tier-badge.js');
-const { trialWeekStart } = await import('./guild-trials-math.js');
+const { tierPoolWork, trialWeekStart } = await import('./guild-trials-math.js');
 const { saveTrialRecord, tilePersonalStats } = await import('./guild-trials-store.js');
 
 const now = Date.parse('2026-08-04T12:00:00Z');
@@ -339,6 +339,8 @@ function resetTrialsSingleton() {
     guildTrials.awaitingCharacter = false;
     guildTrials.adopting = false;
     guildTrials.currentTrials = null;
+    guildTrials.serverTierClears = null;
+    guildTrials.serverClockOffsetMs = null;
     guildTrials.socketPhase = null;
     guildTrials.phase = null;
     guildTrials.lastForecast = null;
@@ -583,6 +585,83 @@ describe('analyseTrial', () => {
         expect(analysis.rate).toBeCloseTo(1, 9);
         expect(analysis.etaMs).toBeCloseTo(680_000, 6);
         expect(analysis.rateNote).toContain('watched only');
+    });
+
+    test('a stale reading of a tier since cleared anchors and paces nothing', () => {
+        // The bar was last read on T3; the guild payload has since stated eight
+        // banked. Pairing the fresh tier with the old pool priced T9's ladder off
+        // T3's target and walked the pace from a position the party left long ago
+        const base = 40_000;
+        const t3 = tierPoolWork({ baseWork: base, tier: 3, participants: 10 });
+        const read = now + 100_000;
+        const skilling = {
+            name: 'Milking',
+            kind: 'skilling',
+            samples: [
+                { t: now, readings: [{ current: 10_000, max: t3 }] },
+                { t: read, readings: [{ current: 20_000, max: t3 }] },
+            ],
+            tiers: [{ tier: 3, total: t3 }],
+            pointsByTier: {},
+            serverTier: 8,
+            serverTierAt: read + 9 * 60_000,
+        };
+        const later = read + 10 * 60_000;
+        const analysis = analyseTrial(skilling, {
+            participants: 10,
+            timeLeftMs: 30 * 60_000,
+            workBase: base,
+            phase: 'live',
+            now: later,
+        });
+
+        expect(analysis).toMatchObject({ tier: 9, tierSource: 'server', readingStale: true, readingSuperseded: true });
+        expect(analysis.pace).toBeNull();
+        // The next tier off the ladder's own rule from T3's observation, not T3's pool relabelled T9
+        expect(analysis.next.total).toBeCloseTo(tierPoolWork({ baseWork: base, tier: 10, participants: 10 }), 6);
+
+        // Fresh, the same record's reading is simply behind the payload for a
+        // moment, and is not second-guessed
+        expect(analyseTrial(skilling, { participants: 10, workBase: base, now: read }).readingSuperseded).toBe(false);
+    });
+
+    test('a tier banked after a stale reading supersedes it where the bar cannot place itself', () => {
+        const stale = record({
+            samples: [
+                { t: now, readings: [{ current: 200_000, max: 600_000 }] },
+                { t: now + 100_000, readings: [{ current: 100_000, max: 600_000 }] },
+            ],
+            tierSeenAt: { 6: now + 5 * 60_000 },
+        });
+        const later = now + 100_000 + 10 * 60_000;
+        const analysis = analyseTrial(stale, { participants: 20, timeLeftMs: 900_000, now: later });
+        expect(analysis.readingSuperseded).toBe(true);
+        expect(analysis.pace).toBeNull();
+    });
+
+    test('an alt’s stale rate on a trial this character did not join gives way to the clears', () => {
+        const stale = record({
+            name: 'Milking',
+            kind: 'skilling',
+            samples: [
+                { t: now, readings: [{ current: 10_000, max: 60_000 }] },
+                { t: now + 100_000, readings: [{ current: 20_000, max: 60_000 }] },
+            ],
+            tierSeenAt: { 5: now - 200_000, 6: now + 200_000 },
+        });
+        const later = now + 100_000 + 10 * 60_000;
+        const analysis = analyseTrial(stale, { participants: 10, timeLeftMs: 20 * 60_000, now: later });
+        const timing = tierTimingForecast(stale, { timeLeftMs: 20 * 60_000, now: later, bankedTiers: 6 });
+        expect(Number.isFinite(analysis.rate)).toBe(true);
+
+        const html = renderTrialBlock(analysis, 10, undefined, {
+            participating: false,
+            phase: 'live',
+            looseForecast: timing,
+            forecast: tierTimingAsForecast(timing),
+        });
+        expect(html).toContain('Next tier in');
+        expect(html).not.toContain('Fill rate');
     });
 
     test('an empty record analyses to nothing rather than throwing', () => {

@@ -431,6 +431,42 @@ describe('forecastTrial', () => {
         expect(withRate.source).toBe('measured');
     });
 
+    test('a stale skilling reading walks from where it stood, and one of a cleared tier not at all', () => {
+        const reading = {
+            kind: 'skilling',
+            tier: 5,
+            tiersClearedSoFar: 4,
+            rate: 0.05,
+            remaining: 30_000,
+            tiers: [{ tier: 5, total: 57_120 }],
+        };
+        // Ten minutes on the clock and five since the reading: it is walked with
+        // the fifteen that were left when it was taken, which fits the 600 s the
+        // tier still needed — the clock now alone would not
+        const fresh = forecastTrial({ analysis: analysis({ ...reading, timeLeftMs: 5 * 60_000 }), participants: 2 });
+        const stale = forecastTrial({
+            analysis: analysis({ ...reading, timeLeftMs: 5 * 60_000, readingStale: true, readingAgeMs: 10 * 60_000 }),
+            participants: 2,
+        });
+        expect(fresh.tiersCleared).toBe(4);
+        expect(stale.tiersCleared).toBeGreaterThanOrEqual(5);
+
+        const superseded = forecastTrial({
+            analysis: analysis({
+                ...reading,
+                tier: 9,
+                tiersClearedSoFar: 8,
+                timeLeftMs: 30 * 60_000,
+                readingStale: true,
+                readingSuperseded: true,
+                readingAgeMs: 10 * 60_000,
+            }),
+            participants: 2,
+        });
+        expect(superseded.tier).toBeNull();
+        expect(superseded.reason).toContain('since cleared');
+    });
+
     test('at a tier boundary the tier reached is the count, never one past it', () => {
         // Four banked, the fifth in progress and too big for the time left. The
         // tier the walk *enters* is five, but nothing more gets banked — so this

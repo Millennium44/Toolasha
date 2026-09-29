@@ -505,20 +505,29 @@ export function forecastTrial({
     // start), so a scheduled forecast is the combat estimate off captured
     // loadouts, priced from the game's own tier data.
     const tier = Number.isFinite(analysis?.tier) ? analysis.tier : scheduled ? 1 : null;
-    const timeLeftMs = Number.isFinite(analysis?.timeLeftMs)
-        ? analysis.timeLeftMs
-        : scheduled
-          ? TRIAL_DURATION_MS
-          : null;
+    const clockMs = Number.isFinite(analysis?.timeLeftMs) ? analysis.timeLeftMs : scheduled ? TRIAL_DURATION_MS : null;
     if (tier === null) return nothing('the tier is not known — open the Trials tab once');
-    if (timeLeftMs === null) return nothing('no clock on the tab, so there is no hour to spend');
+    if (clockMs === null) return nothing('no clock on the tab, so there is no hour to spend');
+
+    // A reading nothing is refreshing is walked as the analysis' pace walks it:
+    // from where it stood, with the time that was left when it was taken. One
+    // of a tier since cleared is not walked from at all — its pool is not the
+    // tier's, and a skilling walk has nothing else to stand on.
+    const stale = analysis?.readingStale === true;
+    const superseded = analysis?.readingSuperseded === true;
+    const readingAgeMs = Number.isFinite(analysis?.readingAgeMs) ? analysis.readingAgeMs : 0;
+    const timeLeftMs = stale && !superseded ? clockMs + readingAgeMs : clockMs;
+    if (stale && !superseded && timeLeftMs > TRIAL_DURATION_MS) {
+        return nothing('the last reading is older than the hour it could belong to');
+    }
+    const remainingInTier = superseded ? null : analysis.remaining;
 
     // The bar in hand anchors the ladder, exactly as the pace walk anchors it:
     // its tier label has been through the analysis' full rung ladder, where a
     // stored observation's label is a badge inference that goes stale. The
     // stored observations still serve a record with no live bar.
     const liveAnchor =
-        Number.isFinite(analysis.tier) && Number.isFinite(analysis.total) && analysis.total > 0
+        !superseded && Number.isFinite(analysis.tier) && Number.isFinite(analysis.total) && analysis.total > 0
             ? [{ tier: analysis.tier, total: analysis.total }]
             : null;
     const observations = liveAnchor || analysis.tiers || [];
@@ -526,13 +535,14 @@ export function forecastTrial({
     if (analysis.kind === 'skilling') {
         const rate = Number.isFinite(analysis.rate) ? analysis.rate * 1000 : null;
         if (!rate) return nothing('a skilling trial can only be projected from a measured fill rate');
+        if (superseded) return nothing('the last bar reading is of a tier that has since cleared');
 
         const walk = forecastSkillingTier({
             tier,
             rate,
             timeLeftMs,
             observations,
-            remainingInTier: analysis.remaining,
+            remainingInTier,
             participants,
             decline: successDecline(analysis.personalByTier),
         });
@@ -567,7 +577,7 @@ export function forecastTrial({
         dps,
         timeLeftMs,
         participants,
-        remainingInTier: analysis.remaining,
+        remainingInTier,
         // Only the tier actually in front of the party is "observed": a combat
         // record's stored observations mix the health and pool bars' ladders
         // under inferred labels, and a wrong total here prices a tier the walk
