@@ -118,7 +118,7 @@ export async function calculateItemValue(item, priceCache = null) {
  *     has one — the figure behind the inventory's Total Market Value.
  *   - orderBook: the live ask/bid, with a stale price clamped into the tradable
  *     range and an empty book filled from the value.
- * A pass-through to the raw order book until the marketplace patch is live.
+ * A pass-through to the raw order book when the item has no official value or pushed band.
  *
  * @param {string} itemHrid - Item HRID
  * @param {number} enhancementLevel - Enhancement level

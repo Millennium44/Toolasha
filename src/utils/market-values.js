@@ -243,7 +243,7 @@ const WIRE_BAND_TTL_MS = 60 * 60_000;
 /**
  * Record the bands a `market_item_order_books_updated` message carries.
  *
- * The patched server sends `priceBandMins`/`priceBandMaxs` keyed by enhancement
+ * The game sends `priceBandMins`/`priceBandMaxs` keyed by enhancement
  * level (as a string) beside the order books. A level whose bounds are missing,
  * non-positive or inverted is skipped rather than recorded.
  * @param {Object} data - `{ marketItemOrderBooks: { itemHrid, priceBandMins, priceBandMaxs } }`

@@ -76,7 +76,7 @@ const OVERRIDE_TITLE = 'Uses your custom price override';
 const getOverrideIndicatorHtml = (isOverridden) =>
     isOverridden ? `<sup title="${OVERRIDE_TITLE}" style="cursor: help;">✱</sup>` : '';
 
-// Same idea for the other kind of not-quite-a-market-price: since the marketplace patch an
+// Same idea for the other kind of not-quite-a-market-price: an
 // item whose order book is empty is still priced, from the game's official value map. That is
 // a real number and worth showing, but it is an estimate, not a quote anyone is standing behind.
 const ESTIMATED_TITLE = 'Estimated from the game’s market value — no live listing';
