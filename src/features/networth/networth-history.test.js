@@ -345,6 +345,19 @@ describe('the guild shrine total', () => {
     });
 });
 
+describe('a calculation that had nothing to price with', () => {
+    test('is not recorded as a zero net worth', async () => {
+        const data = fakeNetworthData();
+        Object.assign(data, { unavailable: true, totalNetworth: 0, coins: 0 });
+        networthHistory.networthFeature = { currentData: data };
+
+        await networthHistory.takeSnapshot();
+
+        expect(networthHistory.history).toEqual([]);
+        expect(networthHistory.detailHistory).toEqual([]);
+    });
+});
+
 describe('standing down when storage is full', () => {
     test('no snapshot is built or written once the quota has been hit', async () => {
         storageMock.isQuotaExceeded.mockImplementation(() => true);

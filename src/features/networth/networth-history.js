@@ -273,6 +273,10 @@ class NetworthHistory {
         if (storage.isQuotaExceeded()) return;
 
         const data = this.networthFeature.currentData;
+        // A calculation that had no market or game data to price with: a zero
+        // here would draw a cliff on the chart and a day's loss of everything
+        // on the calendar, and the next reading would book it all back as gain
+        if (data.unavailable) return;
 
         const snapshot = {
             t: Date.now(),
