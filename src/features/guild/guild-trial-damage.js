@@ -146,6 +146,7 @@ import {
     trialWeekStart,
 } from './guild-trials-math.js';
 import { loadTrialRoster, loadTrialStats, saveTrialRoster, saveTrialStats } from './guild-trials-store.js';
+import { INIT_PAYLOAD_FRESH_MS, initPayloadAgeMs, serverClockOffset } from './guild-trial-tier-timing.js';
 import {
     createLiveSessionPersister,
     isRestorable,
@@ -852,15 +853,18 @@ export function compareTrialStats({ reported, measured } = {}) {
  * taken, then any. The kind-level figure is the fallback for a payload that
  * states one there.
  *
- * `at` is receipt time, which overstates what is left by the time since that
- * party's last clear; `serverAt` keeps the party's own `tierStartedAtMs` (the
- * server's clock) for a reader that can correct for the offset between the two.
+ * `at` is when `remainingMs` held, on the client's clock: the party's own
+ * `tierStartedAtMs` moved by `offset` (see `serverClockOffset`), never later
+ * than receipt. Counting down from receipt would overstate what is left by the
+ * time since that party's last clear. Without the stamp or an offset it is
+ * receipt time. `serverAt` keeps the party's stamp on the server's clock.
  *
  * @param {Object|null} combat - `parseCurrentTrialsData(...).combat`
- * @param {number} at - When it arrived
+ * @param {number} receivedAt - When it arrived
+ * @param {number|null} [offset] - Client minus server clock, from `serverClockOffset`
  * @returns {{remainingMs: number, at: number, serverAt?: number|null}|null}
  */
-export function combatBudgetReading(combat, at) {
+export function combatBudgetReading(combat, receivedAt, offset = null) {
     const parties = Object.values(combat?.trials || {}).filter((party) => Number.isFinite(party?.budgetRemainingMs));
     const running = parties.filter((party) => !party.done);
     const stamp = (party) => (Number.isFinite(party?.tierStartedAtMs) ? party.tierStartedAtMs : -Infinity);
@@ -869,13 +873,13 @@ export function combatBudgetReading(combat, at) {
         null
     );
     if (newest) {
-        return {
-            remainingMs: newest.budgetRemainingMs,
-            at,
-            serverAt: Number.isFinite(newest.tierStartedAtMs) ? newest.tierStartedAtMs : null,
-        };
+        const serverAt = Number.isFinite(newest.tierStartedAtMs) ? newest.tierStartedAtMs : null;
+        const at = serverAt !== null && Number.isFinite(offset) ? Math.min(receivedAt, serverAt + offset) : receivedAt;
+        return { remainingMs: newest.budgetRemainingMs, at, serverAt };
     }
-    return Number.isFinite(combat?.budgetRemainingMs) ? { remainingMs: combat.budgetRemainingMs, at } : null;
+    return Number.isFinite(combat?.budgetRemainingMs)
+        ? { remainingMs: combat.budgetRemainingMs, at: receivedAt }
+        : null;
 }
 
 /**
@@ -933,6 +937,12 @@ class GuildTrialDamage {
          * fallback key before the guild is known. Set by {@link setGuildName}.
          */
         this.statsScope = { guildName: null, characterId: null };
+        /**
+         * Client minus server clock, from `serverClockOffset`: where a party's
+         * countdown held, on this client's clock. A property of the connection,
+         * not of one fight, so it survives {@link reset}.
+         */
+        this.serverClockOffsetMs = null;
         /** A saved live tally read back at startup, waiting for the stream to show the same fight */
         this.pendingLive = null;
         /** Bumped whenever a read of it in flight stops being wanted */
@@ -1208,7 +1218,7 @@ class GuildTrialDamage {
         this.onCharacterData = (data) => this._onCharacterData(data);
         webSocketHook.on('init_character_data', this.onCharacterData);
         // The script can start after the character's payload was delivered
-        this._seedGuildStatus(dataManager.characterData?.guild);
+        this._seedGuildStatus(dataManager.characterData);
     }
 
     /**
@@ -1218,11 +1228,21 @@ class GuildTrialDamage {
      * `guild_updated`, which during slow tiers may not arrive for minutes after
      * a reload. Never over a status a `guild_updated` has already stated.
      *
-     * @param {Object|null|undefined} guild - `init_character_data.guild`
+     * Not from a payload sent more than `INIT_PAYLOAD_FRESH_MS` ago: one read
+     * back by a late start may date from login, and would arm the ending on a
+     * trial long over and count its countdown from now. Its `currentTimestamp`
+     * bounds the clock offset as a stamp does. A payload without one is taken as
+     * just received, as before.
+     *
+     * @param {Object|null|undefined} payload - An `init_character_data` payload
      */
-    _seedGuildStatus(guild) {
+    _seedGuildStatus(payload) {
+        const guild = payload?.guild;
         if (!guild || this.combatBudget || this.combatInProgressSeen) return;
-        this._onGuildUpdated({ guild });
+        const now = Date.now();
+        const age = initPayloadAgeMs(payload, now, this.serverClockOffsetMs);
+        if (age !== null && age > INIT_PAYLOAD_FRESH_MS) return;
+        this._onGuildUpdated({ guild }, { serverNow: age === null ? null : Date.parse(payload.currentTimestamp) });
     }
 
     cleanup() {
@@ -1251,6 +1271,7 @@ class GuildTrialDamage {
         this.onEndGuildBattle = null;
         this.onTrialStats = null;
         this.onGuildUpdated = null;
+        this.serverClockOffsetMs = null;
         this.initialized = false;
         this.reset();
     }
@@ -1312,10 +1333,20 @@ class GuildTrialDamage {
      * `third-party/kikimeter/`.
      *
      * @param {Object} data - A `guild_updated` payload
+     * @param {Object} [options] - Options
+     * @param {number|null} [options.serverNow] - The server's clock when it was sent, where stated
      */
-    _onGuildUpdated(data) {
+    _onGuildUpdated(data, { serverNow = null } = {}) {
         try {
             const read = parseCurrentTrialsData(data?.guild?.currentTrialsData ?? data?.currentTrialsData);
+            const receivedAt = Date.now();
+            this.serverClockOffsetMs = serverClockOffset(read, receivedAt, this.serverClockOffsetMs);
+            if (Number.isFinite(serverNow)) {
+                const bound = receivedAt - serverNow;
+                this.serverClockOffsetMs = Number.isFinite(this.serverClockOffsetMs)
+                    ? Math.min(this.serverClockOffsetMs, bound)
+                    : bound;
+            }
             const combat = read?.combat;
             if (!combat) return;
 
@@ -1326,7 +1357,7 @@ class GuildTrialDamage {
                 // (see `trialFightSpan`). Not once the held fight has ended: the
                 // other parties keep the kind in progress, and a reading taken
                 // after the end is one `trialFightSpan` refuses
-                const budget = combatBudgetReading(combat, Date.now());
+                const budget = combatBudgetReading(combat, receivedAt, this.serverClockOffsetMs);
                 if (budget && !this.endedByGame) this.combatBudget = budget;
                 return;
             }
@@ -2982,7 +3013,7 @@ class GuildTrialDamage {
             const id = data?.character?.id ?? null;
             const own = this.statsScope.characterId ?? dataManager.getCurrentCharacterId?.() ?? null;
             if (id === null || own === null || String(id) !== String(own)) return;
-            this._seedGuildStatus(data?.guild);
+            this._seedGuildStatus(data);
             if (this.source !== 'spectated' || this.endedAt !== null || this.endedByGame) return;
             const lastAt = this.spectator.lastAt;
             if (!lastAt || Date.now() - lastAt > STALE_STREAM_MS) return;
