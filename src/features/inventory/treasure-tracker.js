@@ -63,6 +63,7 @@ import {
     mergeTally,
 } from '../../utils/chest-import.js';
 import { calculateDungeonTokenValue, labyrinthRewardValue, shopPurchasePrice } from '../../utils/token-valuation.js';
+import { COWBELL_BAG_TAX } from '../../utils/profit-constants.js';
 import { readScoped, writeScoped } from '../../utils/character-key.js';
 import { createPersistedRecord } from '../../utils/persisted-record.js';
 import { toCsv, csvFilename, downloadCsv } from '../../utils/csv-export.js';
@@ -164,8 +165,6 @@ const MIRROR_HRID = '/items/mirror_of_protection';
 const COWBELL_HRID = '/items/cowbell';
 const COWBELL_BAG_HRID = '/items/bag_of_10_cowbells';
 const COWBELLS_PER_BAG = 10;
-/** The bag's own market tax, which you pay to turn cowbells into coins */
-const COWBELL_BAG_TAX = 0.18;
 
 const DEFAULT_SETTINGS = {
     capeValue: 'token',

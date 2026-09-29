@@ -1382,8 +1382,8 @@ class BulkSellAssistant {
 
     /**
      * Vendor beats the market when its flat price matches or exceeds the
-     * cached market price net of the market tax (e.g. ask 100 → 95 net = 95
-     * vendor; a bag of cowbells is taxed 18% rather than 5%, so 100 → 82).
+     * cached market price net of the market tax (e.g. ask 100 → 96 net at the 4%
+     * tax, so a vendor paying 96 wins; a bag of cowbells is taxed 18%, so 100 → 82).
      * Cached prices are plenty accurate for this comparison and let the
      * decision happen without navigating the marketplace.
      * @returns {boolean} True when the vendor flow was opened
@@ -1408,8 +1408,8 @@ class BulkSellAssistant {
         const wouldInsta = minListingValue > 0 && stackValue < minListingValue;
         const referencePrice = (wouldInsta ? (bid ?? ask) : (ask ?? bid)) || 0;
         if (referencePrice <= 0) return false;
-        // Cowbell bags are taxed at 18%, everything else at 5% — a flat 5% here
-        // overstated the market side by 13% of the price and sent bags to the
+        // Cowbell bags are taxed at 18%, everything else at MARKET_TAX — a flat
+        // market rate here overstated the market side by 14% of the price and sent bags to the
         // market that the vendor actually beat
         const tax = this.current.itemHrid === COWBELL_BAG_HRID ? COWBELL_BAG_TAX : MARKET_TAX;
         const marketNet = Math.floor(referencePrice * (1 - tax));
