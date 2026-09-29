@@ -65,7 +65,7 @@ export function getItemPrice(itemHrid, options = {}) {
  * Price an item and say where the number came from.
  *
  * `getItemPrice` returns a bare number and always will — too much depends on
- * that shape. But since the marketplace patch an item with an empty order book
+ * that shape. But an item with an empty order book
  * is still priced, from the game's official value map, and a caller that cannot
  * tell that apart from a real listing quietly reports an estimate as a quote.
  * Everything that used to mean "no market data" (`missing`, `hasMissingPrices`,
@@ -115,7 +115,7 @@ export function getItemPriceInfo(itemHrid, options = {}) {
 
     // Get raw price data from API, reconciled against the official market value:
     // stale prices are clamped into the tradable range and an empty book is
-    // valued the way the game values it. A pass-through until the patch is live.
+    // valued the way the game values it.
     refreshMarketValues();
     const priceData = marketAPI.getPrice(itemHrid, enhancementLevel);
     const { ask, bid, askSource, bidSource } = reconcileBook(

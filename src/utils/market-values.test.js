@@ -45,7 +45,7 @@ afterEach(() => {
     vi.restoreAllMocks();
 });
 
-describe('priceIncrement under the September 2026 market patch (test server)', () => {
+describe('priceIncrement on the September 2026 bins', () => {
     // Every expected gap below is the client's binGap(price, enhLevel) from the
     // test-server bundle, evaluated on the same price.
     test.each([
@@ -95,7 +95,7 @@ describe('priceIncrement under the September 2026 market patch (test server)', (
     });
 });
 
-describe('nextPriceUp / nextPriceDown under the September 2026 market patch', () => {
+describe('nextPriceUp / nextPriceDown on the September 2026 bins', () => {
     test('steps by the new gap, snapping to a multiple like getBinnedPrice', () => {
         // getBinnedPrice(1003, roundUp) = 1004; getBinnedPrice(1003) = 1000
         expect(nextPriceUp(1003)).toBe(1004);
@@ -154,7 +154,7 @@ describe('nextPriceUp / nextPriceDown', () => {
     });
 });
 
-describe('bandFromValue under the September 2026 market patch', () => {
+describe('bandFromValue on the September 2026 bins', () => {
     test('snaps outward on the new ladder and widens by one of its steps', () => {
         // 1100: raw max 1210 (on a gap-5 bin) + 5; raw min 999.99... at gap 4 -> 996 - 4
         expect(bandFromValue(1100)).toEqual({ min: 992, max: 1215 });
@@ -502,7 +502,7 @@ describe('applyMarketValuesMessage', () => {
     });
 });
 
-describe('the band against the game on the test server (2026-09-25)', () => {
+describe('the band against the game (measured on the test server 2026-09-25)', () => {
     // [item, level, market value, vendor sell price, game priceBandMins, game priceBandMaxs],
     // read off market_item_order_books_updated payloads on test.milkywayidle.com
     test.each([
@@ -575,7 +575,7 @@ describe('the band pushed with an order book', () => {
     });
 });
 
-describe('books that mix old-grid and new-grid prices (test server)', () => {
+describe('books that mix old-grid and new-grid prices', () => {
     // Listings placed before the patch keep their prices, so a book can hold
     // prices that are not bins under the new rules.
     test('undercutting or outbidding an off-grid price lands on the nearest new bin past it', () => {
