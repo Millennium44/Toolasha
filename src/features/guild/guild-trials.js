@@ -3643,7 +3643,9 @@ class GuildTrials {
                               kind: analysis.kind,
                               participants,
                               workBase: this._timingBase(tile),
-                              timeLeftMs,
+                              // The page's countdown, else this party's own
+                              // deadline from the guild payload
+                              timeLeftMs: timeLeftMs ?? this._trialBudgetMs(analysis.kind, now, tile.name),
                               now,
                               bankedTiers: analysis.tiersClearedSoFar,
                               windowed: isTestServer(),
@@ -3757,19 +3759,22 @@ class GuildTrials {
             // A trial with no bar to walk — the mates' trials, whose points pay
             // every member the same as the reader's own — is paced from its tier
             // clears instead, as its card's Expected row is
-            const timing =
+            //
+            // Its clock is the page's countdown, else the party's own deadline
+            // from the guild payload. With neither, the walk stops at the banked
+            // tier, which is "no clock", not a projection of no more tiers.
+            const walked =
                 running && !pace
-                    ? tierTimingAsForecast(
-                          tierTimingForecast(record, {
-                              kind: analysis.kind,
-                              participants,
-                              timeLeftMs: analysis.timeLeftMs,
-                              now,
-                              bankedTiers: analysis.tiersClearedSoFar,
-                              windowed: isTestServer(),
-                          })
-                      )
+                    ? tierTimingForecast(record, {
+                          kind: analysis.kind,
+                          participants,
+                          timeLeftMs: analysis.timeLeftMs ?? this._trialBudgetMs(analysis.kind, now, record.name),
+                          now,
+                          bankedTiers: analysis.tiersClearedSoFar,
+                          windowed: isTestServer(),
+                      })
                     : null;
+            const timing = walked?.limitedBy === 'no-clock' ? null : tierTimingAsForecast(walked);
 
             trials.push({
                 name: record.name,

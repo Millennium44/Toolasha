@@ -6808,6 +6808,27 @@ describe('a mates’ trial timed from the guild payload', () => {
         expect(partway.partialFraction).toBeLessThan(1);
     });
 
+    test('with no countdown on the page, the payout paces a mates’ trial on its payload deadline', () => {
+        hear({ guild: { currentTrialsData: CURRENT_TRIALS_DATA_SKILLING } }, newestStamp);
+        hear(later(8, t8), t8);
+        hear(later(9, t9), t9);
+        const now = t9 + SKEW + 20_000;
+        vi.setSystemTime(now);
+
+        guildTrials.record = guildTrials._recordServerTiers(
+            { weekStart: 0, tiles: { 'skilling::milking': milkingTile() } },
+            now
+        );
+        // The Trials tab drew no parseable clock
+        const noClock = (_key, record, participants, phase) =>
+            analyseTrial(record, { participants, phase, timeLeftMs: null, now });
+        expect(guildTrials._trialBudgetMs('skilling', now, 'Milking')).toBeGreaterThan(0);
+
+        const [trial] = guildTrials._payoutTrials({ phase: null }, {}, noClock, now);
+        expect(trial.banked).toBe(9);
+        expect(trial.projected).toBeGreaterThan(9);
+    });
+
     test('a combat party the card cannot be matched to writes nothing', () => {
         // Keyed `/guild_combat/<boss>` on the wire, as the skilling parties are
         // keyed by skill: another boss's party is not this card's
