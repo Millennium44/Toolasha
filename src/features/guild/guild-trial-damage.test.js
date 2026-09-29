@@ -3123,6 +3123,14 @@ describe('the trial ends and its figures stop moving', () => {
         expect(later.totalDamage).toBeGreaterThan(stale.totalDamage);
     });
 
+    test('the spectated battle rides on the breakdown, for the board’s once-per-fight auto-open', () => {
+        // `guild-trials.js` returns early on a missing `guildBattleId`, so
+        // without it on the breakdown the board never auto-opened at all
+        expect(guildTrialDamage.breakdown().guildBattleId).toBeNull();
+        game.wsHandlers.new_guild_battle(opening(1));
+        expect(guildTrialDamage.breakdown().guildBattleId).toBe(1);
+    });
+
     test('the trial clock and the fight’s start ride on the breakdown, for a whole-fight rate', () => {
         const status = (combat) => ({ guild: { currentTrialsData: JSON.stringify({ combat }) } });
         game.wsHandlers.new_guild_battle({ ...opening(), combatStartTime: '2026-08-03T16:00:01.606Z' });
