@@ -1555,7 +1555,7 @@ export class SimEditor {
                 for (const snap of filteredSnapshots) {
                     const label = snap.name + (snap.actionTypeHrid ? '' : ' (All Skills)');
                     const selected = shownLoadout === snap.name ? ' selected' : '';
-                    html += `<option value="${snap.name}"${selected}>${label}</option>`;
+                    html += `<option value="${escapeHtml(snap.name)}"${selected}>${escapeHtml(label)}</option>`;
                 }
                 // A worn loadout whose snapshot was deleted or renamed matches no option, and the browser
                 // would show Current Gear while the DTO still wears that gear.
