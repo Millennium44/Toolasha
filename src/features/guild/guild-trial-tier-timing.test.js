@@ -310,6 +310,39 @@ describe('tierTimingForecast — a projection for a trial nobody here joined', (
         expect(timing.etaMsToNextTier).toBeGreaterThan(0);
     });
 
+    test('the clock running out part-way through a tier states how much of it was reached', () => {
+        // T4 banked 40 s after T3: 1.3 shares in 40 s, flat with one interval.
+        // T5 (1.4 shares) fits, and the clock ends half-way through T6 (1.5)
+        const rate = share(4) / 40_000;
+        const timing = tierTimingForecast(
+            { tierSeenAt: { 3: 0, 4: 40_000 } },
+            { timeLeftMs: (share(5) + 0.5 * share(6)) / rate, now: 40_000, windowed: false }
+        );
+        expect(timing.expectedTier).toBe(5);
+        expect(timing.partialFraction).toBeCloseTo(0.5, 9);
+        expect(tierTimingAsForecast(timing).partialFraction).toBeCloseTo(0.5, 9);
+    });
+
+    test('in the current tier, progress already made counts toward the fraction', () => {
+        // 0.7 of T5's 1.4 shares done since the T4 badge, and time for 0.35 more:
+        // three quarters of the tier, not a quarter of what was left of it
+        const rate = share(4) / 40_000;
+        const timing = tierTimingForecast(
+            { tierSeenAt: { 3: 0, 4: 40_000 } },
+            { timeLeftMs: 0.35 / rate, now: 40_000 + 0.7 / rate, windowed: false }
+        );
+        expect(timing.tiersBeforeEnd).toBe(0);
+        expect(timing.partialFraction).toBeCloseTo(0.75, 9);
+    });
+
+    test('a walk that finishes the ladder, or has no clock, has no partial tier', () => {
+        const flat = { tierSeenAt: { 19: 0, 20: 100_000 } };
+        const done = tierTimingForecast(flat, { timeLeftMs: 60 * 60_000, now: 100_000, windowed: false });
+        expect(done.limitedBy).toBe('ladder');
+        expect(done.partialFraction).toBe(0);
+        expect(tierTimingForecast(flat, { timeLeftMs: null, now: 100_000 }).partialFraction).toBe(0);
+    });
+
     test('with no clock there is a rate but no walk', () => {
         const timing = tierTimingForecast({ tierSeenAt: { 3: 0, 4: 50_000 } }, { timeLeftMs: null, now: 50_000 });
         expect(timing.sharePerMs).toBeGreaterThan(0);

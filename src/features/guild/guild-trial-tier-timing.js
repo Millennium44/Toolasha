@@ -367,9 +367,10 @@ function pricedPerSecond(sharePerMs, base, participants) {
  * @returns {{measured: number, currentTier: number, sharePerMs: number, workPerSecond: number|null,
  *   declinePerTier: number|null, lastTier?: number, lastTierMs?: number,
  *   etaMsToNextTier: number|null, tiersBeforeEnd: number|null,
- *   expectedTier: number|null, clears: Array<Object>, limitedBy: string, atLevelCap: boolean,
- *   atFinalTier: boolean, reason: string|null}|null} The model, or null when nothing has been
- *   watched. `atFinalTier` says the trial has banked {@link module:./guild-trials-math.TRIAL_MAX_TIER},
+ *   expectedTier: number|null, partialFraction: number, clears: Array<Object>, limitedBy: string,
+ *   atLevelCap: boolean, atFinalTier: boolean, reason: string|null}|null} The model, or null when
+ *   nothing has been watched. `partialFraction` is how much of the tier after `expectedTier` the
+ *   clock runs out in, 0..1, and 0 at the top of the ladder or with no clock. `atFinalTier` says the trial has banked {@link module:./guild-trials-math.TRIAL_MAX_TIER},
  *   the last tier there is — every next-tier field is then null because there is no next tier
  */
 export function tierTimingForecast(
@@ -395,6 +396,7 @@ export function tierTimingForecast(
             etaMsToNextTier: null,
             tiersBeforeEnd: null,
             expectedTier: null,
+            partialFraction: 0,
             clears: [],
             limitedBy: 'unmeasured',
             atLevelCap: false,
@@ -415,6 +417,7 @@ export function tierTimingForecast(
             etaMsToNextTier: null,
             tiersBeforeEnd: null,
             expectedTier: null,
+            partialFraction: 0,
             clears: [],
             limitedBy: 'unmeasured',
             atLevelCap: false,
@@ -451,6 +454,7 @@ export function tierTimingForecast(
             etaMsToNextTier: null,
             tiersBeforeEnd: null,
             expectedTier: TRIAL_MAX_TIER,
+            partialFraction: 0,
             clears: [],
             limitedBy: 'ladder',
             atLevelCap: true,
@@ -484,6 +488,9 @@ export function tierTimingForecast(
     // rate cannot do.
     const walked = [];
     let limitedBy = 'time';
+    // Of the whole tier the clock runs out in, not of what was left of it: the
+    // payout credits partial progress through a tier (see `partialTierCredit`)
+    let partialFraction = 0;
     if (Number.isFinite(timeLeftMs) && timeLeftMs >= 0 && Number.isFinite(remainingShare)) {
         let spentMs = 0;
         let tier = currentTier;
@@ -495,7 +502,12 @@ export function tierTimingForecast(
                 break;
             }
             const takesMs = need / rate;
-            if (spentMs + takesMs > timeLeftMs) break;
+            if (spentMs + takesMs > timeLeftMs) {
+                const whole = tier === currentTier ? needNow : need;
+                const reached = whole - need + (timeLeftMs - spentMs) * rate;
+                partialFraction = whole > 0 ? Math.min(1, Math.max(0, reached / whole)) : 0;
+                break;
+            }
 
             spentMs += takesMs;
             walked.push({ tier, atMs: spentMs, share: need });
@@ -528,6 +540,7 @@ export function tierTimingForecast(
         etaMsToNextTier,
         tiersBeforeEnd: Number.isFinite(timeLeftMs) ? walked.length : null,
         expectedTier: walked.length ? walked[walked.length - 1].tier : banked || null,
+        partialFraction,
         clears: walked,
         limitedBy,
         // Whether the walk crosses the level cap, where the decline flattens —
@@ -559,6 +572,7 @@ export function tierTimingAsForecast(timing) {
         tier: timing.expectedTier,
         tiersCleared: timing.expectedTier,
         finalTier: timing.expectedTier,
+        partialFraction: Number.isFinite(timing.partialFraction) ? timing.partialFraction : 0,
         clears: timing.clears,
         source: 'tier-timing',
         limitedBy: timing.limitedBy,
