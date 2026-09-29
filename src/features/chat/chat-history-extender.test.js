@@ -46,7 +46,7 @@ vi.mock('../../core/websocket.js', () => ({
 // tab), so id correlation and deletion can go all the way through
 // chat-history-persistence.js's storage calls — none of the fiber/hydration
 // tests above touch this.
-const db = vi.hoisted(() => ({ settings: {} }));
+const db = vi.hoisted(() => ({ settings: {}, failReads: false }));
 vi.mock('../../core/storage.js', () => ({
     default: {
         get: vi.fn(async (key, store, fallback = null) => {
@@ -56,6 +56,7 @@ vi.mock('../../core/storage.js', () => ({
         // The read chat history goes through: `null` when the database could
         // not be read, `{found, value}` otherwise — the real `tryGet`'s shape.
         tryGet: vi.fn(async (key, store) => {
+            if (db.failReads) return null;
             const bucket = db[store] || {};
             return Object.prototype.hasOwnProperty.call(bucket, key)
                 ? { found: true, value: JSON.parse(JSON.stringify(bucket[key])) }
@@ -378,6 +379,7 @@ describe('chat-history-extender: message identity and deletion', () => {
         observerReady.handlers = [];
         observerReady.domReady = true;
         db.settings = {};
+        db.failReads = false;
     });
 
     afterEach(async () => {
@@ -1051,5 +1053,142 @@ describe('chat-history-extender: message identity and deletion', () => {
 
         await expect(wsHandlers.chat_message_updated({})).resolves.not.toThrow();
         await expect(wsHandlers.chat_message_updated({ message: {} })).resolves.not.toThrow();
+    });
+});
+
+describe('chat-history-extender: refill after a failed read', () => {
+    const TRADE = '/chat_channel_types/trade';
+    const GLOBAL = '/chat_channel_types/general';
+    const tradeKey = tabKeyForChannel(TRADE);
+    const globalKey = tabKeyForChannel(GLOBAL);
+
+    /** Two chat panes, one per tab; `select` decides which tab the strip names. */
+    function buildTwoTabChat() {
+        document.body.innerHTML =
+            '<div id="root"><div class="Chat_tabsComponentContainer__x"></div>' +
+            '<div id="panel-trade"></div><div id="panel-general"></div></div>';
+        const strip = document.querySelector('.Chat_tabsComponentContainer__x');
+        const buttons = {};
+        for (const [chan, panel] of [
+            [TRADE, 'panel-trade'],
+            [GLOBAL, 'panel-general'],
+        ]) {
+            const button = document.createElement('button');
+            button.setAttribute('role', 'tab');
+            button.setAttribute('data-mention-channel', chan);
+            button.setAttribute('aria-controls', panel);
+            button.textContent = chan.split('/').pop();
+            strip.appendChild(button);
+            buttons[chan] = button;
+        }
+        const mount = (panel) => {
+            const container = document.createElement('div');
+            container.className = 'ChatHistory_chatHistory__abc';
+            document.getElementById(panel).appendChild(container);
+            return container;
+        };
+        const select = (chan) => {
+            for (const [c, b] of Object.entries(buttons)) b.setAttribute('aria-selected', String(c === chan));
+        };
+        return { mount, select };
+    }
+
+    const line = (id, text) => `<div class="ChatMessage_chatMessage__x" data-mwi-msg-id="${id}">${text}</div>`;
+
+    async function settle() {
+        for (let i = 0; i < 12; i += 1) await Promise.resolve();
+    }
+
+    /** Fire the observer callback for a newly mounted container, as the game's render would. */
+    function attach(container) {
+        observerReady.handlers.forEach((h) => h.callback());
+        return container;
+    }
+
+    beforeEach(() => {
+        settingValues.chatHistoryExtender = true;
+        settingValues.chatHistoryExtender_maxHistory = null;
+        observerReady.handlers = [];
+        observerReady.domReady = true;
+        db.settings = {
+            [STORAGE_KEY]: {
+                v: 1,
+                savedAt: 1,
+                tabs: { [tradeKey]: [line('t1', 'trade one')], [globalKey]: [line('g1', 'global one')] },
+            },
+        };
+        db.failReads = true;
+    });
+
+    afterEach(async () => {
+        await chatHistoryExtender.disable();
+        chatHistoryPersistence.reset();
+        db.failReads = false;
+        document.body.innerHTML = '';
+    });
+
+    const count = (container, text) => container.textContent.split(text).length - 1;
+
+    test('a tab mounted during an outage is filled, once, when a later tab reads successfully', async () => {
+        const { mount, select } = buildTwoTabChat();
+        select(TRADE);
+        const a = mount('panel-trade');
+        chatHistoryExtender.initialize();
+        attach(a);
+        await settle();
+        expect(a.textContent).not.toContain('trade one');
+
+        db.failReads = false;
+        select(GLOBAL);
+        const b = mount('panel-general');
+        attach(b);
+        await settle();
+
+        expect(count(b, 'global one')).toBe(1);
+        expect(count(a, 'trade one')).toBe(1);
+    });
+
+    test('a refilled tab does not duplicate a line it had already evicted into its buffer', async () => {
+        const { mount, select } = buildTwoTabChat();
+        select(TRADE);
+        const a = mount('panel-trade');
+        chatHistoryExtender.initialize();
+        attach(a);
+        await settle();
+        const live = document.createElement('div');
+        live.className = 'ChatMessage_chatMessage__x';
+        live.textContent = 'trade one';
+        a.appendChild(live);
+        await settle();
+        a.removeChild(live);
+        await settle();
+        expect(count(a, 'trade one')).toBe(1);
+
+        db.failReads = false;
+        select(GLOBAL);
+        attach(mount('panel-general'));
+        await settle();
+
+        expect(count(a, 'trade one')).toBe(1);
+    });
+
+    test('a refill that lands after teardown renders nothing', async () => {
+        const { mount, select } = buildTwoTabChat();
+        select(TRADE);
+        const a = mount('panel-trade');
+        chatHistoryExtender.initialize();
+        attach(a);
+        await settle();
+
+        db.failReads = false;
+        select(GLOBAL);
+        const b = mount('panel-general');
+        attach(b);
+        // B's read is in flight; the character switch tears everything down.
+        await chatHistoryExtender.disable();
+        await settle();
+
+        expect(a.textContent).not.toContain('trade one');
+        expect(b.textContent).not.toContain('global one');
     });
 });
