@@ -152,6 +152,7 @@ class GuildTrialAlerts {
         this.trials = [];
         /** The payout at the last live reading, for the results alert */
         this.lastPayout = null;
+        this.resultsAnnounced = false;
         /** Start instant currently armed (rounded to the minute), so a re-read does not re-arm */
         this.scheduledFor = null;
         /** The pending start-timer id, so it can be cleared and not double-armed */
@@ -203,6 +204,7 @@ class GuildTrialAlerts {
         this.announcedStartFor = null;
         this.trials = [];
         this.lastPayout = null;
+        this.resultsAnnounced = false;
         this._clearStartTimer();
     }
 
@@ -233,13 +235,22 @@ class GuildTrialAlerts {
             const previous = this.phase;
             if (phase) this.phase = phase;
 
-            if (phase === 'scheduled') return this._maybeAnnounceStart(startsInMs, at);
+            if (phase === 'scheduled') {
+                // A cycle that has not started yet has no results to have told
+                this.resultsAnnounced = false;
+                return this._maybeAnnounceStart(startsInMs, at);
+            }
             if (phase === 'live' && previous === 'scheduled') {
                 this._clearStartTimer();
                 return this._announceStarted();
             }
             if (phase === 'completed' && previous && previous !== 'completed') {
                 this._clearStartTimer();
+                // Once per cycle: a phase that flickers completed → live →
+                // completed would otherwise announce again, and with the payout
+                // spent below the second one no longer matches the first's key
+                if (this.resultsAnnounced) return null;
+                this.resultsAnnounced = true;
                 const announced = this._announceResults();
                 // Spent with the cycle it belonged to: kept, it was reported
                 // again as the next week's result whenever that cycle ran with
