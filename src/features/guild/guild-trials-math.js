@@ -219,10 +219,26 @@ export const TRIAL_BUDGET_MS = 3_600_000;
  * That this field exists at all, and what is inside it, is KikiMeter v3.32.1's
  * finding (ZhuLiMoon, MIT) — see `third-party/kikimeter/`.
  *
+ * ## Each party carries its own clock
+ *
+ * Read off the test server (2026-09-29, a skilling hour): `parties` is keyed by
+ * trial hrid, and the countdown lives **on each party**, beside the tier it has
+ * banked — not on the kind:
+ *
+ * ```
+ * "/guild_skilling/alchemy": {"highestTier":6, "budgetRemainingMs":3467059,
+ *   "tierStartedAtMs":1790715749189, "highestTierReachedAtMs":1790715749189, "done":false}
+ * ```
+ *
+ * Every party is on it, the ones this character did not join included. Each is
+ * returned under `trials`, keyed by the party's key as sent; the kind-level
+ * `budgetRemainingMs` is kept for a payload that states one there.
+ *
  * @param {string|Object} raw - `guild.currentTrialsData`, as it arrives
  * @returns {{combat: Object|null, skilling: Object|null}|null} Per kind:
- *   `{status, inProgress, allDone, parties, done, budgetRemainingMs}`; null when
- *   nothing usable could be read
+ *   `{status, inProgress, allDone, parties, done, budgetRemainingMs, trials}`, where `trials` maps a
+ *   party key to `{highestTier, budgetRemainingMs, tierStartedAtMs, done}`; null when nothing usable
+ *   could be read
  */
 export function parseCurrentTrialsData(raw) {
     let parsed = raw;
@@ -239,13 +255,32 @@ export function parseCurrentTrialsData(raw) {
     }
     if (!parsed || typeof parsed !== 'object') return null;
 
+    // Refused rather than clamped when it is not a countdown from the hour: a
+    // deadline that is wrong is worse than a deadline that is absent, because a
+    // guild plans around it
+    const countdown = (value) => {
+        const budget = Number(value);
+        return value !== null && Number.isFinite(budget) && budget >= 0 && budget <= TRIAL_BUDGET_MS ? budget : null;
+    };
+    const finite = (value) => (typeof value === 'number' && Number.isFinite(value) ? value : null);
+
     const read = (entry) => {
         if (!entry || typeof entry !== 'object') return null;
 
         const status = typeof entry.status === 'string' ? entry.status : null;
         const parties = entry.parties && typeof entry.parties === 'object' ? entry.parties : null;
         const values = parties ? Object.values(parties) : [];
-        const budget = Number(entry.budgetRemainingMs);
+
+        const trials = {};
+        for (const [key, party] of Object.entries(parties || {})) {
+            if (!party || typeof party !== 'object') continue;
+            trials[key] = {
+                highestTier: finite(party.highestTier),
+                budgetRemainingMs: countdown(party.budgetRemainingMs),
+                tierStartedAtMs: finite(party.tierStartedAtMs),
+                done: party.done === true,
+            };
+        }
 
         return {
             status,
@@ -256,10 +291,8 @@ export function parseCurrentTrialsData(raw) {
             // would end a trial the moment it was announced
             allDone: values.length > 0 && values.every((party) => party?.done === true),
             done: values.filter((party) => party?.done === true).length,
-            // Refused rather than clamped when it is not a countdown from the
-            // hour: a deadline that is wrong is worse than a deadline that is
-            // absent, because a guild plans around it
-            budgetRemainingMs: Number.isFinite(budget) && budget >= 0 && budget <= TRIAL_BUDGET_MS ? budget : null,
+            budgetRemainingMs: countdown(entry.budgetRemainingMs),
+            trials,
         };
     };
 

@@ -304,6 +304,7 @@ const guildTrialStatsModal = (await import('./guild-trial-stats-modal.js')).defa
 const guildMemberSkills = (await import('./guild-member-skills.js')).default;
 
 const { NOTICE_BOARD_NAME } = await import('./guild-notice-board.fixture.js');
+const { CURRENT_TRIALS_DATA_SKILLING } = await import('./guild-trial-messages.fixture.js');
 const { forecastTrial } = await import('./guild-trial-forecast.js');
 const { tierTimingAsForecast, tierTimingForecast } = await import('./guild-trial-tier-timing.js');
 const { badgeText } = await import('./guild-trial-tier-badge.js');
@@ -6112,6 +6113,19 @@ describe('the guild message says a trial is running', () => {
         guildTrials._noteCurrentTrials(message());
         guildTrials._noteCurrentTrials(message({ status: '' }));
         expect(guildTrials.socketPhase).toBe('scheduled');
+    });
+
+    test('a skilling trial’s deadline is its own party’s, as the game sends it', () => {
+        // The live payload carries no kind-level countdown at all: each party
+        // has its own, and reading only the kind drew no deadline for any trial
+        vi.setSystemTime(now);
+        guildTrials._noteCurrentTrials({ guild: { currentTrialsData: CURRENT_TRIALS_DATA_SKILLING } });
+
+        expect(guildTrials._trialBudgetMs('skilling', now + 60_000, 'Alchemy')).toBe(3_467_059 - 60_000);
+        expect(guildTrials._trialBudgetMs('skilling', now + 60_000, 'Brewing')).toBe(3_476_737 - 60_000);
+        // A trial with no party of its own on the payload has no countdown to borrow
+        expect(guildTrials._trialBudgetMs('skilling', now, 'Foraging')).toBeNull();
+        expect(guildTrials._trialBudgetMs('combat', now, 'Trial Badger')).toBeNull();
     });
 
     test('a malformed payload is survived and changes nothing', () => {

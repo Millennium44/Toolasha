@@ -2955,15 +2955,23 @@ class GuildTrials {
      * the time since it arrived is taken off it here rather than being drawn as
      * though it had stood still.
      *
+     * The countdown is the trial's own party's where the payload carries one —
+     * it does, per party, and not on the kind — and the kind's otherwise.
+     *
      * @param {string} kind - `combat` or `skilling`
      * @param {number} [now=Date.now()] - Clock
+     * @param {string|null} [name] - The card's trial name, for its own party's countdown
      * @returns {number|null} Milliseconds left, or null when nothing said
      */
-    _trialBudgetMs(kind, now = Date.now()) {
+    _trialBudgetMs(kind, now = Date.now(), name = null) {
         const held = this.currentTrials;
         const entry = held?.[kind === 'skilling' ? 'skilling' : 'combat'];
-        const stated = entry?.budgetRemainingMs;
-        if (!Number.isFinite(stated) || !entry?.inProgress) return null;
+        if (!entry?.inProgress) return null;
+        const partyKey = name ? matchTrialHrid(name, Object.keys(entry.trials || {})) : null;
+        const party = partyKey ? entry.trials[partyKey] : null;
+        if (party?.done) return null;
+        const stated = Number.isFinite(party?.budgetRemainingMs) ? party.budgetRemainingMs : entry.budgetRemainingMs;
+        if (!Number.isFinite(stated)) return null;
 
         const elapsed = Number.isFinite(held.at) ? Math.max(0, now - held.at) : 0;
         // Older than the budget it stated is a reading from a trial that has
@@ -3376,7 +3384,7 @@ class GuildTrials {
                         startsInMs: status?.startsInMs ?? null,
                         forecast: this._forecast(tile, analysis, participants, tilePhase, timing),
                         looseForecast: timing,
-                        deadlineMs: this._trialBudgetMs(tile.kind, now),
+                        deadlineMs: this._trialBudgetMs(tile.kind, now, tile.name),
                     }),
                     // Wide enough that a label and a figure fit on one line, and
                     // capped so it cannot stretch a whole panel — the reported
