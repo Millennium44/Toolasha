@@ -99,12 +99,15 @@ const {
     saveTrialStats,
     trialStatsStorageKey,
     tileKey,
+    archiveEarlierCycles,
 } = await import('./guild-trials-store.js');
 
 const { NOTICE_BOARD_KEY, NOTICE_BOARD_NAME, NOTICE_BOARD_PERSONAL, NOTICE_BOARD_SAMPLES } =
     await import('./guild-notice-board.fixture.js');
 
-const { TRIAL_MAX_TIER, trialWeekStart } = await import('./guild-trials-math.js');
+const { parseCurrentTrialsData, TRIAL_MAX_TIER, trialWeekStart } = await import('./guild-trials-math.js');
+const { tierTimingForecast } = await import('./guild-trial-tier-timing.js');
+const CLEARS = await import('./guild-trial-tier-clears.fixture.js');
 
 const now = Date.parse('2026-08-04T12:00:00Z');
 const thisWeek = trialWeekStart(now);
@@ -1409,5 +1412,109 @@ describe('recordServerTiers — the guild payload’s tier clears on a tile', ()
         });
         expect(mergeTrialRecords(finished, running).tiles['skilling::milking'].serverDone).toBe(true);
         expect(mergeTrialRecords(running, finished).tiles['skilling::milking'].serverDone).toBe(true);
+    });
+});
+
+describe('archiveEarlierCycles — a week with more than one cycle in it', () => {
+    // The live capture's skilling hour: every party's clear plus its countdown
+    // ends the hour at one instant
+    const read = (skillingStatus = 'in_progress', combat = { status: '', parties: null }) =>
+        parseCurrentTrialsData(
+            JSON.stringify({
+                skilling: { status: skillingStatus, parties: CLEARS.LAST_PAYLOAD_PARTIES },
+                combat,
+            })
+        );
+    const offset = CLEARS.SERVER_CLOCK_OFFSET_MS;
+    const lastCycle = CLEARS.TILES.cooking.tierSeenAt[20];
+    const record = () => ({
+        weekStart: 0,
+        tiles: {
+            // Cooking: this cycle's clears beside two of the last cycle's, and
+            // the last cycle's badge, points and finish
+            'skilling::cooking': {
+                name: 'Cooking',
+                kind: 'skilling',
+                ...CLEARS.TILES.cooking,
+                tier: 20,
+                completed: true,
+                pointsByTier: { 20: 2_880 },
+                tierReadAt: lastCycle + 5_000,
+                samples: [{ t: lastCycle - 60_000, readings: [{ current: 1, max: 2 }] }],
+            },
+            'skilling::milking': { name: 'Milking', kind: 'skilling', ...CLEARS.TILES.milking },
+            // The last cycle's combat hour, finished
+            'combat::trial badger': {
+                name: 'Trial Badger',
+                kind: 'combat',
+                tier: 9,
+                completed: true,
+                pointsByTier: { 9: 700 },
+                tierReadAt: lastCycle + 3_600_000,
+            },
+        },
+        history: [],
+    });
+
+    test('the last cycle is archived and this one’s clears stay', () => {
+        const held = record();
+        const next = archiveEarlierCycles(held, read(), { offset, at: CLEARS.CAPTURED_AT });
+
+        expect(next.history).toHaveLength(1);
+        expect(Object.keys(next.history[0].tiles).sort()).toEqual(['combat::trial badger', 'skilling::cooking']);
+        expect(next.history[0].tiles['skilling::cooking']).toBe(held.tiles['skilling::cooking']);
+
+        // Milking has nothing from before this hour, and is left alone
+        expect(next.tiles['skilling::milking']).toBe(held.tiles['skilling::milking']);
+        // The finished combat trial had nothing from this cycle at all
+        expect(next.tiles['combat::trial badger']).toBeUndefined();
+
+        const cooking = next.tiles['skilling::cooking'];
+        expect(Object.keys(cooking.tierSeenAt).map(Number)).toEqual([9, 10, 11, 12, 13, 14, 15, 16, 17]);
+        expect(cooking).toMatchObject({ completed: false, pointsByTier: {}, samples: [], serverTier: 17 });
+        // The last cycle's badge would outrank the payload's tier
+        expect(cooking.tier).toBeUndefined();
+
+        const timing = tierTimingForecast(cooking, {
+            timeLeftMs: CLEARS.TIME_LEFT_AT_RENDER_MS,
+            now: CLEARS.RENDERED_AT,
+            bankedTiers: 17,
+        });
+        expect(timing.currentTier).toBe(18);
+        expect(timing.intervals).toBe(8);
+    });
+
+    test('once cleaned it has nothing more to archive', () => {
+        const once = archiveEarlierCycles(record(), read(), { offset, at: CLEARS.CAPTURED_AT });
+        expect(archiveEarlierCycles(once, read(), { offset, at: CLEARS.CAPTURED_AT + 5_000 })).toBe(once);
+    });
+
+    test('with no hour running, or no clock offset, nothing is decided', () => {
+        const held = record();
+        expect(archiveEarlierCycles(held, read('completed'), { offset, at: CLEARS.CAPTURED_AT })).toBe(held);
+        expect(archiveEarlierCycles(held, read(), { offset: null, at: CLEARS.CAPTURED_AT })).toBe(held);
+    });
+
+    test('a combat hour archives the combat tiles before it and leaves its own cycle’s skilling', () => {
+        const combatStartedAt = CLEARS.CAPTURED_AT + 30 * 60_000;
+        const combat = {
+            status: 'in_progress',
+            parties: {
+                1: {
+                    highestTier: 0,
+                    budgetRemainingMs: 3_600_000,
+                    tierStartedAtMs: combatStartedAt - offset,
+                    done: false,
+                },
+            },
+        };
+        const held = record();
+        held.tiles['skilling::cooking'] = { ...held.tiles['skilling::cooking'], tierReadAt: CLEARS.CAPTURED_AT };
+        held.tiles['skilling::cooking'].samples = [];
+        held.tiles['skilling::cooking'].tierSeenAt = { 17: CLEARS.TILES.cooking.tierSeenAt[17] };
+        const next = archiveEarlierCycles(held, read('completed', combat), { offset, at: combatStartedAt });
+
+        expect(next.tiles['combat::trial badger']).toBeUndefined();
+        expect(next.tiles['skilling::cooking']).toBe(held.tiles['skilling::cooking']);
     });
 });

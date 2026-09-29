@@ -47,6 +47,7 @@ vi.mock('../../core/data-manager.js', () => ({
 // The roster persistence reaches IndexedDB through the store; here it is a
 // field on the fixture, so a test can seed "a previous session wrote this"
 vi.mock('./guild-trials-store.js', () => ({
+    archiveEarlierCycles: (record) => record,
     loadTrialRoster: async () => game.storedRoster,
     saveTrialRoster: async (entry) => {
         game.storedRoster = entry;

@@ -48,7 +48,10 @@ const game = vi.hoisted(() => ({
     skillingEnded: {},
     skillingResets: 0,
     traceStatus: null,
+    testServer: false,
 }));
+
+vi.mock('../../utils/game-server.js', () => ({ isTestServer: () => game.testServer === true }));
 
 vi.mock('../../core/config.js', () => ({
     default: {
@@ -308,7 +311,7 @@ const { CURRENT_TRIALS_DATA_SKILLING } = await import('./guild-trial-messages.fi
 const { forecastTrial } = await import('./guild-trial-forecast.js');
 const { tierTimingAsForecast, tierTimingForecast } = await import('./guild-trial-tier-timing.js');
 const { badgeText } = await import('./guild-trial-tier-badge.js');
-const { tierPoolWork, trialWeekStart } = await import('./guild-trials-math.js');
+const { parseCurrentTrialsData, tierPoolWork, trialWeekStart } = await import('./guild-trials-math.js');
 const { saveTrialRecord, tilePersonalStats } = await import('./guild-trials-store.js');
 
 const now = Date.parse('2026-08-04T12:00:00Z');
@@ -6555,6 +6558,74 @@ describe('a mates’ trial timed from the guild payload', () => {
         hear({ guild: { currentTrialsData: CURRENT_TRIALS_DATA_SKILLING } }, newestStamp);
         const record = { weekStart: 0, tiles: { 'skilling::milking': milkingTile() } };
         expect(guildTrials._recordServerTiers(record, newestStamp + SKEW + 61 * 60_000)).toBe(record);
+    });
+});
+
+describe('a week with more than one cycle in it', () => {
+    const cycleRecord = async () => {
+        const CLEARS = await import('./guild-trial-tier-clears.fixture.js');
+        return {
+            CLEARS,
+            record: {
+                weekStart: trialWeekStart(CLEARS.CAPTURED_AT),
+                tiles: {
+                    'skilling::cooking': {
+                        name: 'Cooking',
+                        kind: 'skilling',
+                        ...CLEARS.TILES.cooking,
+                        tier: 20,
+                        completed: true,
+                        pointsByTier: { 20: 2_880 },
+                        tierReadAt: CLEARS.TILES.cooking.tierSeenAt[20] + 5_000,
+                    },
+                    'skilling::milking': { name: 'Milking', kind: 'skilling', ...CLEARS.TILES.milking },
+                },
+                history: [],
+            },
+        };
+    };
+    const hold = (CLEARS, record) => {
+        guildTrials.record = record;
+        guildTrials.serverClockOffsetMs = CLEARS.SERVER_CLOCK_OFFSET_MS;
+        guildTrials.currentTrials = {
+            ...parseCurrentTrialsData(
+                JSON.stringify({
+                    skilling: { status: 'in_progress', parties: CLEARS.LAST_PAYLOAD_PARTIES },
+                    combat: { status: '', parties: null },
+                })
+            ),
+            at: CLEARS.LAST_GUILD_UPDATED_AT,
+        };
+    };
+
+    afterEach(() => {
+        game.testServer = false;
+        guildTrials.currentTrials = null;
+        guildTrials.serverClockOffsetMs = null;
+    });
+
+    test('live keeps the week’s record as it is', async () => {
+        const { CLEARS, record } = await cycleRecord();
+        hold(CLEARS, record);
+        guildTrials._archiveEarlierCycles(CLEARS.CAPTURED_AT);
+        expect(guildTrials.record).toBe(record);
+    });
+
+    test('the test server keeps the last cycle apart from this one', async () => {
+        game.testServer = true;
+        const { CLEARS, record } = await cycleRecord();
+        hold(CLEARS, record);
+        guildTrials._archiveEarlierCycles(CLEARS.CAPTURED_AT);
+
+        const cooking = guildTrials.record.tiles['skilling::cooking'];
+        expect(cooking.completed).toBe(false);
+        expect(cooking.pointsByTier).toEqual({});
+        expect(Object.keys(cooking.tierSeenAt)).not.toContain('20');
+        expect(guildTrials.record.history.at(-1).tiles['skilling::cooking'].completed).toBe(true);
+        expect(guildTrials.record.tiles['skilling::milking']).toBe(record.tiles['skilling::milking']);
+
+        const analysis = analyseTrial(cooking, { phase: 'live', now: CLEARS.RENDERED_AT });
+        expect(analysis.tiersClearedSoFar).toBe(17);
     });
 });
 

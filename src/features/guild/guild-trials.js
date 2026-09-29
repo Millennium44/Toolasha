@@ -106,6 +106,7 @@ import dataManager from '../../core/data-manager.js';
 import domObserver from '../../core/dom-observer.js';
 import webSocketHook from '../../core/websocket.js';
 import { formatKMB, formatWithSeparator } from '../../utils/formatters.js';
+import { isTestServer } from '../../utils/game-server.js';
 import { formatEta } from '../../utils/progress-eta.js';
 import { createTimerRegistry } from '../../utils/timer-registry.js';
 import { guildXPTracker } from './guild-xp-tracker.js';
@@ -180,6 +181,7 @@ import {
 } from './guild-trials-scrape.js';
 import {
     archiveCycle,
+    archiveEarlierCycles,
     emptyRecord,
     loadTrialRecord,
     loadWorkBases,
@@ -3300,6 +3302,7 @@ class GuildTrials {
             // sampled into and then archived — the sample would go with it.
             const status = readTrialStatus(root, panelLines);
             this._healStaleRecord(status, tiles, now);
+            this._archiveEarlierCycles(now);
             // Any card actually running counts, whichever kind the header names
             const anyLive = tiles.some(
                 (tile) => this._phaseFor(status, tile, this.record?.tiles?.[tileKey(tile)]) === 'live'
@@ -3928,6 +3931,39 @@ class GuildTrials {
             // The one write meant to lose tiles — they have just been archived,
             // and a merge would bring the stored copies back to life
             this._persistRecord({ overwrite: true });
+        }
+    }
+
+    /**
+     * On the test server, put away what an earlier cycle of this week left on the record.
+     *
+     * The test server runs several cycles in one trial week and the record is the
+     * week's, so a card carried the last cycle's `completed`, points, samples and
+     * clears. The guild payload states when the running hour started, and every
+     * tile stamped before it is archived ({@link archiveEarlierCycles}). Live runs
+     * one cycle a week, where `_healStaleRecord` already closes it, and is left
+     * exactly as it was.
+     *
+     * Runs before this pass samples the cards, or a sample of the new cycle
+     * would go into the archive with the old one.
+     *
+     * @param {number} now - Clock
+     */
+    _archiveEarlierCycles(now) {
+        try {
+            if (!isTestServer() || !this.record) return;
+            const held = this.currentTrials;
+            if (!held || !Number.isFinite(held.at) || now - held.at > TRIAL_ACTIVE_MS) return;
+
+            const next = archiveEarlierCycles(this.record, held, { offset: this.serverClockOffsetMs, at: now });
+            if (next === this.record) return;
+            this.record = next;
+            this.blockHtml.clear();
+            // The one write meant to lose tiles, as in `_healStaleRecord`: a
+            // merge would bring the stored copies back
+            this._persistRecord({ overwrite: true });
+        } catch (error) {
+            console.error('[GuildTrials] Archiving an earlier cycle failed:', error);
         }
     }
 

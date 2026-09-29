@@ -54,6 +54,7 @@ vi.mock('../../core/config.js', () => ({
     default: { getSetting: (key, fallback) => (key in game.settings ? game.settings[key] : fallback) },
 }));
 vi.mock('./guild-trials-store.js', () => ({
+    archiveEarlierCycles: (record) => record,
     loadTrialRoster: async () => game.storedRoster,
     saveTrialRoster: async (entry) => {
         game.storedRoster = entry;
