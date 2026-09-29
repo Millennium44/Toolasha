@@ -95,20 +95,23 @@ export const MAX_DECLINE_PER_TIER = 0.5;
  * A record is the week's, and a week can hold more than one cycle: a stamp older
  * than a trial's hour before `now` is another cycle's clear, and is dropped
  * rather than paired with this cycle's. A previous cycle's T20 stamp made a T8
- * card read "banked 20 → ~1 more tier, Expected ~T21".
+ * card read "banked 20 → ~1 more tier, Expected ~T21". Only the test server runs
+ * more than one cycle a week, so live callers pass `windowed: false` and read
+ * every stamp, as they always have.
  *
  * @param {Object} record - A tile record from the store
  * @param {Object} [options] - Options
  * @param {number|null} [options.now] - Clock; without it no stamp is too old
+ * @param {boolean} [options.windowed=true] - Drop stamps older than a trial's hour before `now`
  * @returns {Array<{tier: number, at: number}>} Ascending by tier
  */
-export function tierClearTimes(record, { now = null } = {}) {
+export function tierClearTimes(record, { now = null, windowed = true } = {}) {
     const seen = record?.tierSeenAt;
     if (!seen || typeof seen !== 'object') return [];
     return Object.entries(seen)
         .map(([tier, at]) => ({ tier: Number(tier), at: Number(at) }))
         .filter((entry) => Number.isFinite(entry.tier) && entry.tier >= 1 && Number.isFinite(entry.at))
-        .filter((entry) => !Number.isFinite(now) || now - entry.at <= TRIAL_ACTIVE_MS)
+        .filter((entry) => !windowed || !Number.isFinite(now) || now - entry.at <= TRIAL_ACTIVE_MS)
         .sort((a, b) => a.tier - b.tier);
 }
 
@@ -238,10 +241,11 @@ export function initPayloadAgeMs(payload, now, offset = null) {
  * @param {Object} [options] - Options
  * @param {'skilling'|'combat'} [options.kind] - Which ladder the pools sit on
  * @param {number|null} [options.now] - Clock, for {@link tierClearTimes}
+ * @param {boolean} [options.windowed=true] - For {@link tierClearTimes}
  * @returns {Array<{tier: number, sharePerMs: number, ms: number}>} One entry per usable interval
  */
-export function tierFillRates(record, { kind = 'skilling', now = null } = {}) {
-    const clears = tierClearTimes(record, { now });
+export function tierFillRates(record, { kind = 'skilling', now = null, windowed = true } = {}) {
+    const clears = tierClearTimes(record, { now, windowed });
     const rates = [];
     for (let i = 1; i < clears.length; i += 1) {
         const from = clears[i - 1];
@@ -359,6 +363,7 @@ function pricedPerSecond(sharePerMs, base, participants) {
  * @param {number|null} [options.timeLeftMs] - Active time left in the trial
  * @param {number} [options.now] - Clock, for how far into the current tier the guild is
  * @param {number|null} [options.bankedTiers] - Tiers banked, when the analysis knows better than the badges
+ * @param {boolean} [options.windowed=true] - For {@link tierClearTimes}
  * @returns {{measured: number, currentTier: number, sharePerMs: number, workPerSecond: number|null,
  *   declinePerTier: number|null, lastTier?: number, lastTierMs?: number,
  *   etaMsToNextTier: number|null, tiersBeforeEnd: number|null,
@@ -376,9 +381,10 @@ export function tierTimingForecast(
         timeLeftMs = null,
         now = Date.now(),
         bankedTiers = null,
+        windowed = true,
     } = {}
 ) {
-    const clears = tierClearTimes(record, { now });
+    const clears = tierClearTimes(record, { now, windowed });
     if (clears.length < MIN_TIER_CLEARS) {
         return {
             measured: clears.length,
@@ -397,7 +403,7 @@ export function tierTimingForecast(
         };
     }
 
-    const rates = tierFillRates(record, { kind, now });
+    const rates = tierFillRates(record, { kind, now, windowed });
     const fit = declineFit(rates);
     if (!fit) {
         return {
