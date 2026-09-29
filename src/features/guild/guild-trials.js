@@ -621,7 +621,11 @@ export function analyseTrial(
                 'this card are left out rather than counted as a slow fight.';
         }
     } else {
+        // The current tier's readings only, by its target: a pool reset is only
+        // seen as a fall when something was sampling across it, and a bar read
+        // again tiers later can sit above the old tier's last reading
         const series = samples
+            .filter((sample) => !Number.isFinite(total) || sample?.readings?.[index]?.max === total)
             .map((sample) => ({ t: sample?.t, value: sample?.readings?.[index]?.current }))
             .filter((point) => Number.isFinite(point.t) && Number.isFinite(point.value));
         rate = ratePerMs(series, direction);
