@@ -39,6 +39,7 @@
 
 import dataManager from '../../core/data-manager.js';
 import storage from '../../core/storage.js';
+import { isTestServer } from '../../utils/game-server.js';
 import { registerSyncMerge } from '../../utils/sync-merge-registry.js';
 import config from '../../core/config.js';
 import {
@@ -1424,20 +1425,77 @@ export function trialStatsStorageKey(guildName, characterId = null) {
 }
 
 /**
+ * How far apart two fights may start and still be one cycle's: a trial's hour
+ * plus a quarter. The same span the ledger groups fights into cycles by.
+ */
+const STATS_CYCLE_SPAN_MS = TRIAL_ACTIVE_MS + 15 * 60_000;
+
+/** Earlier cycles' comparisons kept beside the current one, on the test server */
+const MAX_EARLIER_STATS_CYCLES = MAX_ARCHIVED_CYCLES;
+
+/**
+ * The cycle a stats read or write is for, where cycles are kept apart at all.
+ *
+ * Live runs one cycle a week, so its blob is the week's and a cycle means
+ * nothing: null there, whatever was passed, and every key and shape stays as
+ * it always was. The test server runs several, and a later cycle's pair for
+ * the same encounter overwrote the earlier one's.
+ *
+ * @param {*} cycleAt - The caller's cycle anchor
+ * @returns {number|null} Client ms, or null
+ */
+function statsCycle(cycleAt) {
+    return isTestServer() && Number.isFinite(cycleAt) ? cycleAt : null;
+}
+
+/**
+ * The cycle a stored blob holds: its stamp, or for a blob written before there
+ * was one, its newest entry's arrival.
+ * @param {Object|null} blob - A stored blob
+ * @returns {number|null} Client ms, or null
+ */
+function storedStatsCycle(blob) {
+    if (Number.isFinite(blob?.cycleAt)) return blob.cycleAt;
+    const arrivals = Object.values(blob?.trials || {})
+        .map((entry) => entry?.at)
+        .filter(Number.isFinite);
+    return arrivals.length ? Math.max(...arrivals) : null;
+}
+
+/**
+ * Whether a stored blob is another cycle's than `cycle`.
+ * @param {Object|null} blob - A stored blob
+ * @param {number|null} cycle - From {@link statsCycle}
+ * @returns {boolean} True only when both are known and further apart than a cycle
+ */
+function otherStatsCycle(blob, cycle) {
+    const held = storedStatsCycle(blob);
+    return Number.isFinite(cycle) && Number.isFinite(held) && Math.abs(cycle - held) > STATS_CYCLE_SPAN_MS;
+}
+
+/**
  * Read the week's saved measured-vs-reported trial stats.
+ *
+ * With `scope.cycleAt` on the test server, a blob holding another cycle's
+ * comparisons reads as fresh: `trials` is always one cycle's.
+ *
  * @param {number} [now=Date.now()] - Clock, in ms
  * @param {Object} [scope] - Whose stats
  * @param {string|null} [scope.guildName] - Guild name, or null before it is known
  * @param {string|number|null} [scope.characterId] - The viewing character, for the fallback key
- * @returns {Promise<{weekStart: number, trials: Object}>} The blob, or a fresh one
+ * @param {number|null} [scope.cycleAt] - The cycle wanted: its fight's start, client ms. Ignored on live
+ * @returns {Promise<{weekStart: number, trials: Object, cycleAt?: number}>} The blob, or a fresh one
  */
-export async function loadTrialStats(now = Date.now(), { guildName = null, characterId = null } = {}) {
+export async function loadTrialStats(now = Date.now(), { guildName = null, characterId = null, cycleAt = null } = {}) {
     const weekStart = trialWeekStart(now);
-    const fresh = { weekStart, trials: {} };
+    const cycle = statsCycle(cycleAt);
+    const fresh = cycle === null ? { weekStart, trials: {} } : { weekStart, trials: {}, cycleAt: cycle };
     try {
         const held = await storage.get(trialStatsStorageKey(guildName, characterId), STORE_NAME, null);
         if (!held || typeof held !== 'object' || held.weekStart !== weekStart) return fresh;
-        return { weekStart, trials: held.trials && typeof held.trials === 'object' ? held.trials : {} };
+        if (otherStatsCycle(held, cycle)) return fresh;
+        const trials = held.trials && typeof held.trials === 'object' ? held.trials : {};
+        return cycle === null ? { weekStart, trials } : { weekStart, trials, cycleAt: storedStatsCycle(held) ?? cycle };
     } catch (error) {
         console.error('[GuildTrialsStore] Failed to load trial stats:', error);
         return fresh;
@@ -1446,20 +1504,42 @@ export async function loadTrialStats(now = Date.now(), { guildName = null, chara
 
 /**
  * Write the week's measured-vs-reported trial stats.
- * @param {{weekStart: number, trials: Object}} blob - The comparison, keyed by encounter
+ *
+ * With a cycle (`scope.cycleAt`, or the blob's own `cycleAt` from
+ * {@link loadTrialStats}) on the test server, a stored blob of another cycle is
+ * not unioned in: its comparisons move to `earlierCycles`, newest last, and
+ * this cycle's become `trials`.
+ *
+ * @param {{weekStart: number, trials: Object, cycleAt?: number}} blob - The comparison, keyed by encounter
  * @param {Object} [scope] - Whose stats; see {@link trialStatsStorageKey}
  * @param {string|null} [scope.guildName] - Guild name, or null before it is known
  * @param {string|number|null} [scope.characterId] - The viewing character, for the fallback key
+ * @param {number|null} [scope.cycleAt] - The cycle these are: its fight's start, client ms. Ignored on live
  * @returns {Promise<boolean>} True when the write was queued
  */
-export async function saveTrialStats(blob, { guildName = null, characterId = null } = {}) {
+export async function saveTrialStats(blob, { guildName = null, characterId = null, cycleAt = null } = {}) {
+    const cycle = statsCycle(cycleAt ?? blob?.cycleAt);
+    const memory = cycle === null ? blob : { ...blob, cycleAt: cycle };
     // Same week: the encounters are unioned, this copy's winning; another
     // week's stored blob is last week's trial and the new one replaces it
-    const fold = (stored, memory) =>
-        stored?.weekStart === memory?.weekStart
-            ? { ...stored, ...memory, trials: { ...(stored.trials || {}), ...(memory.trials || {}) } }
-            : memory;
-    return probeMergeWrite(trialStatsStorageKey(guildName, characterId), blob, fold);
+    const fold = (stored, held) => {
+        if (stored?.weekStart !== held?.weekStart) return held;
+        if (otherStatsCycle(stored, cycle)) {
+            const earlier = { cycleAt: storedStatsCycle(stored), trials: stored.trials || {} };
+            return {
+                ...held,
+                earlierCycles: [...(stored.earlierCycles || []), earlier].slice(-MAX_EARLIER_STATS_CYCLES),
+            };
+        }
+        const merged = { ...stored, ...held, trials: { ...(stored.trials || {}), ...(held.trials || {}) } };
+        // One cycle is anchored at its first fight, so the anchor cannot creep
+        // forward a fight at a time into the next cycle's
+        if (Number.isFinite(stored.cycleAt) && Number.isFinite(held.cycleAt)) {
+            merged.cycleAt = Math.min(stored.cycleAt, held.cycleAt);
+        }
+        return merged;
+    };
+    return probeMergeWrite(trialStatsStorageKey(guildName, characterId), memory, fold);
 }
 
 // ─── Building bonuses ───────────────────────────────────────────────────────
