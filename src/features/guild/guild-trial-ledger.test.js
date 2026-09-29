@@ -13,7 +13,7 @@
 
 import { describe, test, expect, beforeEach, vi } from 'vitest';
 
-const disk = vi.hoisted(() => ({ store: {}, failNextRead: false }));
+const disk = vi.hoisted(() => ({ store: {}, failNextRead: false, reads: 0 }));
 const server = vi.hoisted(() => ({ test: false }));
 
 vi.mock('../../utils/game-server.js', () => ({ isTestServer: () => server.test }));
@@ -21,6 +21,7 @@ vi.mock('../../utils/game-server.js', () => ({ isTestServer: () => server.test }
 vi.mock('../../core/storage.js', () => ({
     default: {
         get: async (key, _store, fallback) => {
+            disk.reads += 1;
             if (disk.failNextRead) {
                 disk.failNextRead = false;
                 throw new Error('IndexedDB is having a day');
@@ -219,6 +220,43 @@ describe('a test-server week runs an encounter more than once', () => {
         expect(window.map((cycle) => cycle.weekStart)).toEqual([WEEK, WEEK + WEEK_MS, WEEK + WEEK_MS]);
         expect(foldLedgerCycles(window).cycles).toBe(3);
         expect(await loadLedgerCycles('g')).toHaveLength(4);
+    });
+
+    test('the test server exposes at most the documented cap of cycles, and a window stops reading early', async () => {
+        const WEEK_MS = 7 * 24 * HOUR;
+        for (let i = 0; i < 15; i++) {
+            disk.store[ledgerCycleKey('g', WEEK + i * WEEK_MS)] = twoCycleWeek(WEEK + i * WEEK_MS);
+        }
+        server.test = true;
+
+        // 15 weeks of 2 cycles is 30 cycles held; only 26 are exposed, newest kept
+        const all = await loadLedgerCycles('g');
+        expect(all).toHaveLength(MAX_LEDGER_CYCLES);
+        expect(all.at(-1).weekStart).toBe(WEEK + 14 * WEEK_MS);
+
+        disk.reads = 0;
+        const recent = await loadLedgerCycles('g', null, { cycles: 4 });
+        expect(recent).toHaveLength(4);
+        expect(recent.map((cycle) => cycle.weekStart)).toEqual([
+            WEEK + 13 * WEEK_MS,
+            WEEK + 13 * WEEK_MS,
+            WEEK + 14 * WEEK_MS,
+            WEEK + 14 * WEEK_MS,
+        ]);
+        expect(disk.reads).toBe(2);
+
+        // A window past the cap is still the cap
+        expect(await loadLedgerCycles('g', null, { cycles: 100 })).toHaveLength(MAX_LEDGER_CYCLES);
+    });
+
+    test('live still reads one cycle per week', async () => {
+        const WEEK_MS = 7 * 24 * HOUR;
+        for (let i = 0; i < 5; i++) {
+            disk.store[ledgerCycleKey('g', WEEK + i * WEEK_MS)] = emptyLedgerCycle(WEEK + i * WEEK_MS, 'g');
+        }
+        server.test = false;
+        expect(await loadLedgerCycles('g')).toHaveLength(5);
+        expect(await loadLedgerCycles('g', null, { cycles: 2 })).toHaveLength(2);
     });
 
     test('an earlier cycle of the current week counts toward coverage', () => {

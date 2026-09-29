@@ -1126,20 +1126,34 @@ export async function loadLedgerCycles(guildName, characterId = null, { cycles =
     try {
         const keys = await storage.getAllKeys(LEDGER_STORE);
         const windowed = Number.isFinite(cycles) && cycles > 0;
-        // A test-server week can hold several cycles, so the window is taken
-        // after splitting and every week is read for it
         const perCycle = isTestServer();
         let stamps = ledgerCyclesInKeys(keys, scope);
         if (windowed && !perCycle) stamps = stamps.slice(-cycles);
 
-        const records = [];
-        for (const stamp of stamps) {
+        const readWeek = async (stamp) => {
             const record = await storage.get(ledgerCycleKey(scope, stamp), LEDGER_STORE, null);
-            if (record && typeof record === 'object') records.push(record);
+            return record && typeof record === 'object' ? record : null;
+        };
+        if (!perCycle) {
+            const records = [];
+            for (const stamp of stamps) {
+                const record = await readWeek(stamp);
+                if (record) records.push(record);
+            }
+            return records;
         }
-        if (!perCycle) return records;
-        const split = ledgerCyclesByAnchor(records, { perCycle });
-        return windowed ? split.slice(-cycles) : split;
+
+        // A test-server week can hold several cycles, so the window and the
+        // documented cap are applied to the split cycles, not to weeks. Weeks
+        // are read newest first and reading stops once enough cycles are in
+        // hand; splitting is per record, so this equals splitting them all.
+        const limit = windowed ? Math.min(cycles, MAX_LEDGER_CYCLES) : MAX_LEDGER_CYCLES;
+        let split = [];
+        for (let i = stamps.length - 1; i >= 0 && split.length < limit; i--) {
+            const record = await readWeek(stamps[i]);
+            if (record) split = [...ledgerCyclesByAnchor([record], { perCycle }), ...split];
+        }
+        return split.slice(-limit);
     } catch (error) {
         console.error('[GuildTrialLedger] Reading the ledger failed:', error);
         return [];
