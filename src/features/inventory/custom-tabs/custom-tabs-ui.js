@@ -49,7 +49,6 @@ import {
     findTab,
     getAssignedItemSet,
     addLoadoutBinding,
-    removeItemFromBindings,
     syncLoadoutBinding,
     cleanOrphanedBindings,
     getBaseHrid,
@@ -3641,11 +3640,9 @@ export default class CustomTabsUI {
             removeBtn.textContent = '×';
             removeBtn.title = 'Remove';
             removeBtn.addEventListener('click', () => {
+                // Bindings stay as they are: a binding is the loadout as last synced, and an item
+                // missing from it reads as newly added to the loadout, which puts it back
                 this._config = removeItemAtIndex(this._config, tabId, index);
-                // Clean item from loadout bindings so it won't be re-added on sync
-                if (hrid !== LINEBREAK_HRID) {
-                    this._config = removeItemFromBindings(this._config, tabId, hrid);
-                }
                 this._save();
                 this._renderAssignedItems(container, tabId);
                 if (this._isActive) this._applyLayout();

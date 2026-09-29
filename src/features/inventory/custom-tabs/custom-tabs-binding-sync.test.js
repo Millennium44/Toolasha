@@ -51,6 +51,7 @@ const dm = vi.hoisted(() => {
         getCurrentCharacterName: () => null,
         getCurrentCharacterGameMode: () => 'standard',
         getInitClientData: () => ({}),
+        getItemDetails: () => null,
         on: (event, fn) => {
             if (!listeners.has(event)) listeners.set(event, new Set());
             listeners.get(event).add(fn);
@@ -169,5 +170,37 @@ describe('binding enhancement sync vs equipped copies', () => {
 
         expect(loadoutSnapshotMock.updateEnhancementLevel).toHaveBeenCalledWith(SWORD, 7);
         expect(loadoutSnapshotMock.updateEnhancementLevel).not.toHaveBeenCalledWith(SWORD, 20);
+    });
+});
+
+describe('removing a loadout-bound item by hand', () => {
+    const SHIELD = '/items/shield';
+
+    beforeEach(async () => {
+        ui.cleanup();
+        storageMock.reset();
+        const config = boundConfig();
+        config.tabs[0].items = [`${SWORD}+5`, SHIELD];
+        config.tabs[0].loadoutBindings = { Boss: [`${SWORD}+5`, SHIELD] };
+        storageMock.storeFor('settings').set('char1_inventoryTabs_config', config);
+        loadoutSnapshotMock.snapshots.s1.equipment.push({ itemHrid: SHIELD, enhancementLevel: 0 });
+        ui = new CustomTabsUI();
+        await ui.initialize();
+    });
+
+    test('stays removed when the loadout snapshot next syncs', () => {
+        // The binding is the loadout as last seen, not the player's selection: dropping the item
+        // from it made the next sync read the shield as newly added to the loadout
+        const list = document.createElement('div');
+        document.body.appendChild(list);
+        ui._renderAssignedItems(list, 'gear');
+        const shieldRow = [...list.querySelectorAll('.toolasha-ct-assigned-item')][1];
+        shieldRow.querySelector('button[title="Remove"]').click();
+        expect(ui._config.tabs[0].items).toEqual([`${SWORD}+5`]);
+
+        ui._onLoadoutSnapshotUpdate();
+
+        expect(ui._config.tabs[0].items).toEqual([`${SWORD}+5`]);
+        list.remove();
     });
 });
