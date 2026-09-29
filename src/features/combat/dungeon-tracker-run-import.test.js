@@ -422,6 +422,22 @@ describe('serializeBackupWithinLimits', () => {
         }
     });
 
+    test('a newest-first list over the cap is sliced, not sorted; an unordered one still yields the newest', () => {
+        const ordered = Array.from({ length: 30 }, (_, i) => at(28 - (i % 28), { duration: 1000 + i }));
+        ordered.sort((a, b) => Date.parse(b.timestamp) - Date.parse(a.timestamp));
+        const spy = vi.spyOn(Array.prototype, 'sort');
+        try {
+            const { text } = serializeBackupWithinLimits({ characterId: 'c', runs: ordered, maxRuns: 5 });
+            expect(JSON.parse(text).runs).toEqual(ordered.slice(0, 5));
+            expect(spy.mock.contexts.every((list) => list.length <= 5)).toBe(true);
+        } finally {
+            spy.mockRestore();
+        }
+        const shuffled = [ordered[7], ordered[0], ordered[20], ordered[1], ordered[3], ordered[29]];
+        const { text } = serializeBackupWithinLimits({ characterId: 'c', runs: shuffled, maxRuns: 2 });
+        expect(JSON.parse(text).runs).toEqual([ordered[0], ordered[1]]);
+    });
+
     test('is compact: no indentation whitespace, and it parses back unchanged', () => {
         const runs = [at(1, { team: ['A', 'B'] })];
         const { text } = serializeBackupWithinLimits({ characterId: 'c', runs, now: 1 });
