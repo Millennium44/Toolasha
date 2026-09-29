@@ -4031,7 +4031,7 @@ export default class CustomTabsUI {
                         }
 
                         const result = syncLoadoutBinding(this._config, tab.id, loadoutName, newItems);
-                        if (result.changed) {
+                        if (result.changed || result.bindingChanged) {
                             this._config = result.config;
                             anyChanged = true;
                         }
