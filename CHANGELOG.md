@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Inventory icon row stays on one line on phones
+
+- With the Toolasha tab in the inventory's icon row, a narrow screen no longer pushes the icons onto a second row; they shrink to fit one row instead.
+
 ### Market patch gates removed now that both patches are live
 
 - The switches that held the 4% market tax and the finer price steps back until they reached the main server are gone, since both are live everywhere. Nothing changes in game, and the leftover help text that still quoted a 5% tax now says 4%.

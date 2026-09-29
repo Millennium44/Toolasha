@@ -234,6 +234,30 @@ export const PANEL_CSS = `
     flex-shrink: 0;
 }
 .toolasha-ct-section-header:hover .toolasha-ct-section-actions { display: flex; }
+/* ---------- Inventory icon strip with our tab in it ---------- */
+/* The game wraps this strip (!important) and sizes each tab at a fixed 36px, so our
+   extra tab pushes it onto a second row on a narrow screen. Keep one row and let the
+   tabs and their icons shrink instead; at full width nothing changes. */
+[class*="MuiTabs-flexContainer"]:has(> .toolasha-inv-tab) { flex-wrap: nowrap !important; }
+[class*="MuiTabs-flexContainer"]:has(> .toolasha-inv-tab) > [role="tab"] {
+    flex: 0 1 auto !important;
+    min-width: 0 !important;
+    padding-left: min(4px, 0.6vw) !important;
+    padding-right: min(4px, 0.6vw) !important;
+}
+[class*="MuiTabs-flexContainer"]:has(> .toolasha-inv-tab) > [role="tab"] > .MuiBadge-root,
+[class*="MuiTabs-flexContainer"]:has(> .toolasha-inv-tab) > [role="tab"] [class*="Inventory_tabIcon"] {
+    width: 28px !important;
+    max-width: 100% !important;
+    min-width: 0 !important;
+    height: auto !important;
+    aspect-ratio: 1 / 1;
+    flex-shrink: 1 !important;
+}
+[class*="MuiTabs-flexContainer"]:has(> .toolasha-inv-tab) > [role="tab"] svg {
+    width: 100% !important;
+    height: 100% !important;
+}
 /* No hover on a touchscreen — actions hidden behind it would not exist there */
 @media (pointer: coarse) {
     .toolasha-ct-section-actions { display: flex; }
