@@ -625,8 +625,9 @@ export function recordTileSample(record, tile, at, characterId = null) {
         tile.tier > existing.tier &&
         watched &&
         // A stamp from another cycle of the same week is not this clear, and
-        // must not stop it being written
-        !(Number.isFinite(tierSeenAt[tile.tier]) && at - tierSeenAt[tile.tier] <= TRIAL_ACTIVE_MS)
+        // must not stop it being written. Only the test server runs more than
+        // one cycle a week; live keeps the first stamp, as it always has
+        !(Number.isFinite(tierSeenAt[tile.tier]) && (!isTestServer() || at - tierSeenAt[tile.tier] <= TRIAL_ACTIVE_MS))
     ) {
         tierSeenAt[tile.tier] = at;
     }
@@ -804,7 +805,9 @@ function mergePersonalByCharacter(staler, fresher) {
 
 /**
  * Union two tier-clear timestamp maps, keeping the earlier sighting of each
- * clear — and, for a tier two cycles of one week both cleared, the later cycle's.
+ * clear — and, on the test server, for a tier two cycles of one week both
+ * cleared, the later cycle's. Live runs one cycle a week, where two stamps of
+ * one tier an hour apart are one clear and a late one is a bogus sighting.
  * @param {Object} [a] - One side's `tierSeenAt`
  * @param {Object} [b] - The other side's
  * @returns {Object} One map
@@ -816,11 +819,12 @@ function mergeTierSeenAt(a, b) {
             const when = Number(at);
             if (!Number.isFinite(when)) continue;
             const held = Number(merged[tier]);
-            // Two sightings of one clear keep the earlier; two more than a trial's
-            // hour apart are two cycles' clears, and the later cycle's is current
+            // Two sightings of one clear keep the earlier; on the test server,
+            // two more than a trial's hour apart are two cycles' clears, and the
+            // later cycle's is current
             merged[tier] = !Number.isFinite(held)
                 ? when
-                : Math.abs(held - when) > TRIAL_ACTIVE_MS
+                : Math.abs(held - when) > TRIAL_ACTIVE_MS && isTestServer()
                   ? Math.max(held, when)
                   : Math.min(held, when);
         }

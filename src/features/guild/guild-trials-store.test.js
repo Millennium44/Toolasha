@@ -231,6 +231,7 @@ describe('recording samples', () => {
         // watched, must be written — the old stamp used to block it for good —
         // and a read-merge-write against the stored copy must not bring the old
         // one back as the "earlier sighting"
+        game.testServer = true;
         const carded = (tier) => ({ name: 'Milking', kind: 'skilling', tier, points: 0 });
         const old = now - 2 * 24 * 3_600_000;
         let record = recordTileSample(emptyRecord(thisWeek), carded(16), now - 30_000);
@@ -244,6 +245,24 @@ describe('recording samples', () => {
         };
         expect(mergeTrialRecords(stored, record).tiles['skilling::milking'].tierSeenAt[17]).toBe(now);
         expect(mergeTrialRecords(record, stored).tiles['skilling::milking'].tierSeenAt[17]).toBe(now);
+    });
+
+    test('live keeps the earlier stamp of a tier, however far apart', () => {
+        // Live runs one cycle a week: two stamps of one tier are one clear, and
+        // a late one is a sighting that came late, never a newer cycle's
+        const carded = (tier) => ({ name: 'Milking', kind: 'skilling', tier, points: 0 });
+        const early = now - 2 * 3_600_000;
+        let record = recordTileSample(emptyRecord(thisWeek), carded(16), now - 30_000);
+        record.tiles['skilling::milking'].tierSeenAt = { 17: early };
+        record = recordTileSample(record, carded(17), now);
+        expect(record.tiles['skilling::milking'].tierSeenAt[17]).toBe(early);
+
+        const late = {
+            weekStart: thisWeek,
+            tiles: { 'skilling::milking': { name: 'Milking', kind: 'skilling', tierSeenAt: { 17: now } } },
+        };
+        expect(mergeTrialRecords(late, record).tiles['skilling::milking'].tierSeenAt[17]).toBe(early);
+        expect(mergeTrialRecords(record, late).tiles['skilling::milking'].tierSeenAt[17]).toBe(early);
     });
 
     test('the last badge read survives a merge, latest wins', () => {
