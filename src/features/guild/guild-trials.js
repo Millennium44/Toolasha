@@ -3030,18 +3030,24 @@ class GuildTrials {
     /**
      * How much of the trial's hour is left, as the server counts it.
      *
-     * Only for a combat trial in progress, and only while the reading is fresh
-     * enough to still be counting down — `budgetRemainingMs` is a snapshot, so
-     * the time since it arrived is taken off it here rather than being drawn as
-     * though it had stood still.
-     *
      * The countdown is the trial's own party's where the payload carries one —
      * it does, per party, and not on the kind — and the kind's otherwise.
+     *
+     * A party's `budgetRemainingMs` is not as of the message: it is as of that
+     * party's own last tier clear. `tierStartedAtMs + budgetRemainingMs` came to
+     * the same instant for all four parties of one live capture, to within a
+     * second, while their clears were ten seconds apart — so counting it down
+     * from when the message arrived drew each party's deadline late by however
+     * long ago that party last cleared. Its deadline is that sum, moved onto this
+     * client's clock by `serverClockOffset`.
+     *
+     * Without the stamp or an offset, and for a kind-level countdown, the
+     * snapshot is counted down from when it arrived, as before.
      *
      * @param {string} kind - `combat` or `skilling`
      * @param {number} [now=Date.now()] - Clock
      * @param {string|null} [name] - The card's trial name, for its own party's countdown
-     * @returns {number|null} Milliseconds left, or null when nothing said
+     * @returns {number|null} Milliseconds left, or null when nothing said or it has run out
      */
     _trialBudgetMs(kind, now = Date.now(), name = null) {
         const held = this.currentTrials;
@@ -3050,6 +3056,16 @@ class GuildTrials {
         const partyKey = name ? matchTrialHrid(name, Object.keys(entry.trials || {})) : null;
         const party = partyKey ? entry.trials[partyKey] : null;
         if (party?.done) return null;
+
+        if (
+            Number.isFinite(party?.budgetRemainingMs) &&
+            Number.isFinite(party?.tierStartedAtMs) &&
+            Number.isFinite(this.serverClockOffsetMs)
+        ) {
+            const left = party.tierStartedAtMs + party.budgetRemainingMs + this.serverClockOffsetMs - now;
+            return left > 0 ? left : null;
+        }
+
         const stated = Number.isFinite(party?.budgetRemainingMs) ? party.budgetRemainingMs : entry.budgetRemainingMs;
         if (!Number.isFinite(stated)) return null;
 
