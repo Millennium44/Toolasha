@@ -3185,9 +3185,10 @@ class GuildTrials {
      * The one writer of the record stays `_render`: this runs from it, off what
      * `_noteCurrentTrials` has held since the last pass. A kind the payload
      * does not have `in_progress`, or a payload older than a trial's hour, says
-     * nothing about this cycle and writes nothing. A combat party the name
-     * cannot be matched to (the combat hour's keys are not trial hrids in every
-     * shape seen) is skipped, which leaves that card on its watched badges.
+     * nothing about this cycle and writes nothing. Parties are keyed by trial
+     * hrid (`/guild_skilling/<skill>`, `/guild_combat/<boss>`); one the card's
+     * name cannot be matched to is skipped, which leaves that card on its
+     * watched badges.
      *
      * @param {Object} record - The week's record
      * @param {number} now - Clock

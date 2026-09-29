@@ -6230,7 +6230,7 @@ describe('the guild message says a trial is running', () => {
                 combat: {
                     status: 'in_progress',
                     budgetRemainingMs: 1_800_000,
-                    parties: { 1: { done: false } },
+                    parties: { '/guild_combat/badger': { done: false } },
                     ...over,
                 },
             }),
@@ -6266,7 +6266,7 @@ describe('the guild message says a trial is running', () => {
     test('every party done ends it, and so does the status leaving in_progress', () => {
         vi.setSystemTime(now);
         guildTrials._noteCurrentTrials(message());
-        guildTrials._noteCurrentTrials(message({ parties: { 1: { done: true } } }));
+        guildTrials._noteCurrentTrials(message({ parties: { '/guild_combat/badger': { done: true } } }));
         expect(guildTrials.socketPhase).toBe('completed');
 
         guildTrials.socketPhase = null;
@@ -6338,7 +6338,11 @@ describe('the guild message says a trial is running', () => {
                 currentTrialsData: JSON.stringify({
                     // The kind not running, in the shape the live payload gives it
                     skilling: { status: '', parties: null },
-                    combat: { status: 'in_progress', budgetRemainingMs: 1_800_000, parties: { 1: { done: false } } },
+                    combat: {
+                        status: 'in_progress',
+                        budgetRemainingMs: 1_800_000,
+                        parties: { '/guild_combat/badger': { done: false } },
+                    },
                 }),
             },
         });
@@ -6770,6 +6774,8 @@ describe('a mates’ trial timed from the guild payload', () => {
     });
 
     test('a combat party the card cannot be matched to writes nothing', () => {
+        // Keyed `/guild_combat/<boss>` on the wire, as the skilling parties are
+        // keyed by skill: another boss's party is not this card's
         vi.setSystemTime(newestStamp + SKEW);
         guildTrials._noteCurrentTrials({
             guild: {
@@ -6777,13 +6783,56 @@ describe('a mates’ trial timed from the guild payload', () => {
                     skilling: { status: '', parties: null },
                     combat: {
                         status: 'in_progress',
-                        parties: { 1: { highestTier: 4, tierStartedAtMs: newestStamp, done: false } },
+                        parties: {
+                            '/guild_combat/chameleon': { highestTier: 4, tierStartedAtMs: newestStamp, done: false },
+                        },
                     },
                 }),
             },
         });
         const record = { weekStart: 0, tiles: { 'combat::trial badger': { name: 'Trial Badger', kind: 'combat' } } };
         expect(guildTrials._recordServerTiers(record, newestStamp + SKEW)).toBe(record);
+    });
+
+    test('a combat party is written onto its card through the boss key', () => {
+        // "Trial Badger" ↔ `/guild_combat/badger`, "Trial Swarm" ↔ `/guild_combat/swarm`
+        const party = (highestTier, at) => ({
+            highestTier,
+            budgetRemainingMs: 1_800_000,
+            tierStartedAtMs: at,
+            highestTierReachedAtMs: at,
+            done: false,
+        });
+        vi.setSystemTime(newestStamp + SKEW);
+        guildTrials._noteCurrentTrials({
+            guild: {
+                currentTrialsData: JSON.stringify({
+                    skilling: { status: '', parties: null },
+                    combat: {
+                        status: 'in_progress',
+                        parties: {
+                            '/guild_combat/badger': party(4, newestStamp - 30_000),
+                            '/guild_combat/swarm': party(6, newestStamp),
+                        },
+                    },
+                }),
+            },
+        });
+        const record = guildTrials._recordServerTiers(
+            {
+                weekStart: 0,
+                tiles: {
+                    'combat::trial badger': { name: 'Trial Badger', kind: 'combat' },
+                    'combat::trial swarm': { name: 'Trial Swarm', kind: 'combat' },
+                },
+            },
+            newestStamp + SKEW
+        );
+        expect(record.tiles['combat::trial badger']).toMatchObject({
+            serverTier: 4,
+            serverTierAt: newestStamp - 30_000 + SKEW,
+        });
+        expect(record.tiles['combat::trial swarm']).toMatchObject({ serverTier: 6, serverTierAt: newestStamp + SKEW });
     });
 
     test('a payload older than a trial’s hour writes nothing', () => {
