@@ -888,6 +888,98 @@ export function sortLedgerRows(rows, sortKey = 'damageShare', direction = 'desc'
 }
 
 /**
+ * A week record's trials grouped into cycles by their {@link trialCycleAnchor}.
+ *
+ * A group is every trial within {@link TRIAL_CYCLE_SPAN_MS} of its earliest
+ * anchor. Trials with no anchor cannot be placed and join the earliest group,
+ * or form the week's one group when nothing is anchored — the one-cycle week
+ * the ledger has always assumed.
+ *
+ * @param {Array<Object>} trials - A record's trial entries
+ * @returns {Array<{cycleAt: number|null, trials: Array<Object>}>} Groups, oldest first
+ */
+function trialCycleGroups(trials) {
+    const groups = [];
+    const anchored = trials.filter((trial) => Number.isFinite(trial?.cycleAt));
+    for (const trial of [...anchored].sort((a, b) => a.cycleAt - b.cycleAt)) {
+        const last = groups[groups.length - 1];
+        if (last && sameTrialCycle(last.cycleAt, trial.cycleAt)) last.trials.add(trial);
+        else groups.push({ cycleAt: trial.cycleAt, trials: new Set([trial]) });
+    }
+    const loose = trials.filter((trial) => !Number.isFinite(trial?.cycleAt));
+    if (loose.length && !groups.length) groups.push({ cycleAt: null, trials: new Set() });
+    for (const trial of loose) groups[0].trials.add(trial);
+    // Each group keeps the record's own order
+    return groups.map((group) => ({ cycleAt: group.cycleAt, trials: trials.filter((t) => group.trials.has(t)) }));
+}
+
+/**
+ * Member tallies rebuilt from trial entries' per-member figures, as
+ * {@link accrueTrial} would have summed them.
+ * @param {Array<Object>} trials - Trial entries, each with `memberFigures`
+ * @returns {Object<string, Object>} Member key → tally
+ */
+function talliesFromTrials(trials) {
+    const members = {};
+    for (const trial of trials) {
+        for (const figures of trial.memberFigures) {
+            const key = memberKey(figures?.name);
+            if (!key) continue;
+            const tally = members[key] || emptyTally(figures.name);
+            tally.name = figures.name;
+            tally.trials += 1;
+            for (const field of MEMBER_FIGURES) tally[field] += Number(figures[field]) || 0;
+            tally.seconds += Number(trial.seconds) || 0;
+            if (Number.isFinite(trial.at)) {
+                tally.firstSeen = Number.isFinite(tally.firstSeen) ? Math.min(tally.firstSeen, trial.at) : trial.at;
+                tally.lastSeen = Number.isFinite(tally.lastSeen) ? Math.max(tally.lastSeen, trial.at) : trial.at;
+            }
+            members[key] = tally;
+        }
+    }
+    return members;
+}
+
+/**
+ * Week records as cycles, for windowing, counting and coverage.
+ *
+ * Live runs one cycle a week and the records are returned as they are. The
+ * test server runs several, which one week's record holds side by side
+ * ({@link heldTrialIndex}); each is split into one record per cycle
+ * ({@link trialCycleGroups}), carrying that cycle's `cycleAt`, its trials, and
+ * its members' tallies rebuilt from those trials. The week's sign-up rosters
+ * go with every one of them: a sign-up is for the week, and so for each of its
+ * cycles. A record holding an entry with no per-member figures cannot have its
+ * tallies divided and stays whole.
+ *
+ * @param {Array<Object>} records - Week records, oldest first
+ * @param {Object} [options] - Context
+ * @param {boolean} [options.perCycle] - Whether a week can hold more than one cycle; the test server, by default
+ * @returns {Array<Object>} Cycle records, oldest first
+ */
+export function ledgerCyclesByAnchor(records, { perCycle = isTestServer() } = {}) {
+    if (!perCycle) return records;
+    const cycles = [];
+    for (const record of records || []) {
+        const trials = Array.isArray(record?.trials) ? record.trials : [];
+        const groups = trialCycleGroups(trials);
+        if (groups.length <= 1 || !trials.every((trial) => Array.isArray(trial?.memberFigures))) {
+            cycles.push(record);
+            continue;
+        }
+        for (const group of groups) {
+            cycles.push({
+                ...record,
+                cycleAt: group.cycleAt,
+                trials: group.trials,
+                members: talliesFromTrials(group.trials),
+            });
+        }
+    }
+    return cycles;
+}
+
+/**
  * How much of the guild's trialling this ledger actually saw.
  *
  * A cycle is {@link TRIALS_PER_CYCLE} trials, so a window of N cycles is 2N
@@ -902,7 +994,9 @@ export function sortLedgerRows(rows, sortKey = 'damageShare', direction = 'desc'
  * it has seen was worse: that made the current week `seen of seen`, a perfect
  * score by construction, so a trial actually missed this week was invisible.
  * The week is therefore excluded and said to be excluded; `inProgress` is what
- * the view says it with.
+ * the view says it with. Where the week has been split into cycles
+ * ({@link ledgerCyclesByAnchor}), only its newest is in progress: a later cycle
+ * having started, the earlier ones are complete and are counted.
  *
  * Observed is clamped per cycle to what a cycle can hold, so a duplicate
  * recording cannot push the fraction above 1.
@@ -924,8 +1018,17 @@ export function observedCoverage(cycles, { trialsPerCycle = TRIALS_PER_CYCLE, no
     let counted = 0;
     let inProgress = false;
 
+    // One record per week unless split, so live's current week is always this one
+    const running = list
+        .filter((cycle) => cycle.weekStart === currentWeek)
+        .reduce(
+            (newest, cycle) =>
+                !newest || (cycle.cycleAt ?? -Infinity) >= (newest.cycleAt ?? -Infinity) ? cycle : newest,
+            null
+        );
+
     for (const cycle of list) {
-        if (cycle.weekStart === currentWeek) {
+        if (cycle === running) {
             inProgress = true;
             continue;
         }
@@ -1015,21 +1118,28 @@ export function ledgerCsvRows(rows, trialsRun) {
  * @param {string|number|null} [characterId] - The viewing character, for the fallback scope
  * @param {Object} [options] - Windowing
  * @param {number|null} [options.cycles] - How many of the most recent to read; null for all
- * @returns {Promise<Array<Object>>} Cycle records, oldest first
+ * @returns {Promise<Array<Object>>} Cycle records, oldest first: one per week on live, one per
+ *   cycle on the test server ({@link ledgerCyclesByAnchor})
  */
 export async function loadLedgerCycles(guildName, characterId = null, { cycles = null } = {}) {
     const scope = ledgerScope(guildName, characterId);
     try {
         const keys = await storage.getAllKeys(LEDGER_STORE);
+        const windowed = Number.isFinite(cycles) && cycles > 0;
+        // A test-server week can hold several cycles, so the window is taken
+        // after splitting and every week is read for it
+        const perCycle = isTestServer();
         let stamps = ledgerCyclesInKeys(keys, scope);
-        if (Number.isFinite(cycles) && cycles > 0) stamps = stamps.slice(-cycles);
+        if (windowed && !perCycle) stamps = stamps.slice(-cycles);
 
         const records = [];
         for (const stamp of stamps) {
             const record = await storage.get(ledgerCycleKey(scope, stamp), LEDGER_STORE, null);
             if (record && typeof record === 'object') records.push(record);
         }
-        return records;
+        if (!perCycle) return records;
+        const split = ledgerCyclesByAnchor(records, { perCycle });
+        return windowed ? split.slice(-cycles) : split;
     } catch (error) {
         console.error('[GuildTrialLedger] Reading the ledger failed:', error);
         return [];
