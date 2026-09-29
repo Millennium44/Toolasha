@@ -3248,6 +3248,36 @@ describe('the trial ends and its figures stop moving', () => {
         expect(guildTrialDamage.breakdown().combatBudget.at).toBe(at + 30_000);
     });
 
+    test('the trial clock is seeded from the character’s own payload after a reload', () => {
+        const party = (budgetRemainingMs, tierStartedAtMs) => ({
+            highestTier: 3,
+            budgetRemainingMs,
+            tierStartedAtMs,
+            highestTierReachedAtMs: tierStartedAtMs,
+            done: false,
+        });
+        const guild = (budget) => ({
+            currentTrialsData: JSON.stringify({
+                combat: { status: 'in_progress', parties: { '/guild_combat/badger': party(budget, at - 60_000) } },
+            }),
+        });
+        game.ownId = 7;
+        vi.setSystemTime(at + 10_000);
+        // Another character's payload is not this one's
+        game.wsHandlers.init_character_data({ character: { id: 8 }, guild: guild(2_000_000) });
+        expect(guildTrialDamage.breakdown().combatBudget).toBeNull();
+
+        game.wsHandlers.init_character_data({ character: { id: 7 }, guild: guild(2_000_000) });
+        expect(guildTrialDamage.breakdown().combatBudget).toMatchObject({ remainingMs: 2_000_000, at: at + 10_000 });
+
+        // A live status outranks the seed, and a later seed never replaces it
+        vi.setSystemTime(at + 20_000);
+        game.wsHandlers.guild_updated({ guild: guild(1_900_000) });
+        game.wsHandlers.init_character_data({ character: { id: 7 }, guild: guild(2_500_000) });
+        expect(guildTrialDamage.breakdown().combatBudget).toMatchObject({ remainingMs: 1_900_000, at: at + 20_000 });
+        game.ownId = null;
+    });
+
     test('the guild’s own trial status ends it too, but only once seen in progress', () => {
         const status = (combat) => ({ guild: { currentTrialsData: JSON.stringify({ combat }) } });
         game.wsHandlers.new_guild_battle(opening());

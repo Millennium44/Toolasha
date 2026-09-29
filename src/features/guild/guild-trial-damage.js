@@ -1207,6 +1207,22 @@ class GuildTrialDamage {
         webSocketHook.on('guild_updated', this.onGuildUpdated);
         this.onCharacterData = (data) => this._onCharacterData(data);
         webSocketHook.on('init_character_data', this.onCharacterData);
+        // The script can start after the character's payload was delivered
+        this._seedGuildStatus(dataManager.characterData?.guild);
+    }
+
+    /**
+     * Seed the combat status from the character's own payload.
+     *
+     * `init_character_data.guild` carries the same `currentTrialsData` as
+     * `guild_updated`, which during slow tiers may not arrive for minutes after
+     * a reload. Never over a status a `guild_updated` has already stated.
+     *
+     * @param {Object|null|undefined} guild - `init_character_data.guild`
+     */
+    _seedGuildStatus(guild) {
+        if (!guild || this.combatBudget || this.combatInProgressSeen) return;
+        this._onGuildUpdated({ guild });
     }
 
     cleanup() {
@@ -2966,6 +2982,7 @@ class GuildTrialDamage {
             const id = data?.character?.id ?? null;
             const own = this.statsScope.characterId ?? dataManager.getCurrentCharacterId?.() ?? null;
             if (id === null || own === null || String(id) !== String(own)) return;
+            this._seedGuildStatus(data?.guild);
             if (this.source !== 'spectated' || this.endedAt !== null || this.endedByGame) return;
             const lastAt = this.spectator.lastAt;
             if (!lastAt || Date.now() - lastAt > STALE_STREAM_MS) return;
