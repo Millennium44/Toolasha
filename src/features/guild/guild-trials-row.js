@@ -95,14 +95,18 @@ registerRow({
         if (!latest) return blank(container);
 
         const { tile, at } = latest;
-        const ageSeconds = Math.max(0, (Date.now() - at) / 1000);
-        const stale = Date.now() - at > STALE_MS;
+        const now = Date.now();
+        const ageSeconds = Math.max(0, (now - at) / 1000);
+        const stale = now - at > STALE_MS;
 
         // Without a clock on the tab there is no time left to spend, so the
         // ladder walk `projectPace` does is not available — the projection here
         // is the one that needs no deadline: when the tier in progress clears
-        // at the rate that was measured
-        const analysis = analyseTrial(tile, { characterId: guildTrials?.characterId ?? null });
+        // at the rate that was measured. With the clock, as the card has it: a
+        // reading nothing is refreshing times nothing, and a fresher tier rung
+        // outranks it, so the tile and the card say the same
+        const analysis = analyseTrial(tile, { characterId: guildTrials?.characterId ?? null, now });
+        const paused = !stale && analysis.readingStale === true;
         const tier = Number.isFinite(analysis.tier) ? analysis.tier : null;
         const level = tier === null ? null : levelFromTier(tier);
 
@@ -116,13 +120,15 @@ registerRow({
         const overdue = etaLeftMs !== null && etaLeftMs <= 0;
         const projection = stale
             ? { text: 'stale', color: ROW_COLORS.dim }
-            : measuring
-              ? { text: 'measuring…', color: ROW_COLORS.dim }
-              : analysis.etaMs === null
-                ? { text: '—', color: ROW_COLORS.dim }
-                : overdue
-                  ? { text: 'due', color: ROW_COLORS.dim }
-                  : { text: shortDuration(etaLeftMs / 1000), color: ROW_COLORS.accent };
+            : paused
+              ? { text: '—', color: ROW_COLORS.dim }
+              : measuring
+                ? { text: 'measuring…', color: ROW_COLORS.dim }
+                : analysis.etaMs === null
+                  ? { text: '—', color: ROW_COLORS.dim }
+                  : overdue
+                    ? { text: 'due', color: ROW_COLORS.dim }
+                    : { text: shortDuration(etaLeftMs / 1000), color: ROW_COLORS.accent };
 
         row(container, [
             { text: tier === null ? tile.name || 'Trial' : `T${tier}`, color: ROW_COLORS.gold, ellipsis: true },
@@ -138,13 +144,15 @@ registerRow({
             `${analysis.tiersClearedSoFar} banked.\n` +
             (stale
                 ? 'These readings are older than the hour a trial runs for, so no pace is projected from them.'
-                : measuring
-                  ? 'One reading so far — a rate needs a second one, taken while the tab is open.'
-                  : analysis.etaMs === null
-                    ? 'Not enough movement was seen to measure a rate.'
-                    : overdue
-                      ? 'At the rate last measured this tier should already have cleared; the reading is older than that.'
-                      : `At the rate last measured, this tier clears in ${shortDuration(etaLeftMs / 1000)}.`) +
+                : paused
+                  ? 'Nothing has read the bar for over a minute, so no time to clear is drawn from it.'
+                  : measuring
+                    ? 'One reading so far — a rate needs a second one, taken while the tab is open.'
+                    : analysis.etaMs === null
+                      ? 'Not enough movement was seen to measure a rate.'
+                      : overdue
+                        ? 'At the rate last measured this tier should already have cleared; the reading is older than that.'
+                        : `At the rate last measured, this tier clears in ${shortDuration(etaLeftMs / 1000)}.`) +
             `\nRead ${shortDuration(ageSeconds)} ago — open the guild In Progress tab to refresh ` +
             '(the Trials tab beside it has the tiers and sign-ups; the pool bar is only on In Progress).';
     },
