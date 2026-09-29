@@ -672,6 +672,7 @@ export default class CustomTabsUI {
         this._issuingNativeClick = false; // Our own .click() on a native tab is not the player's
         // Character-panel placement: the tab the game has selected there, visually cleared by the view
         this._hiddenCharPanelSelection = null;
+        this._hiddenCharPanelLabel = null; // Its label, to find React's replacement for it
     }
 
     // -----------------------------------------------------------------------
@@ -827,8 +828,11 @@ export default class CustomTabsUI {
         noteTeardown(this);
         // The game's own selection goes back before the restore below reads it
         if (this._isActive && this._invTabBtn) this._restoreHiddenNativeSelection();
-        if (this._isActive && this._tabBtn) this._markCharPanelTab(this._hiddenCharPanelSelection);
+        if (this._isActive && this._tabBtn) {
+            this._markCharPanelTab(this._hiddenCharPanelSelection, this._hiddenCharPanelLabel);
+        }
         this._hiddenCharPanelSelection = null;
+        this._hiddenCharPanelLabel = null;
         // Memory-only: a stored choice is left for the next instance, which may be drawing a
         // different character by the time a storage read would return.
         const held = this._savedNativeInvTab;
@@ -1109,6 +1113,7 @@ export default class CustomTabsUI {
             for (const tab of tabList.querySelectorAll('[role="tab"]:not(.toolasha-inv-tab)')) {
                 if (tab.classList.contains('Mui-selected') || tab.getAttribute('aria-selected') === 'true') {
                     this._hiddenCharPanelSelection = tab;
+                    this._hiddenCharPanelLabel = tab.textContent.trim();
                 }
                 tab.classList.remove('Mui-selected');
                 tab.setAttribute('aria-selected', 'false');
@@ -1137,17 +1142,31 @@ export default class CustomTabsUI {
         // Restore the selected state on the clicked native tab. React won't re-render because
         // MUI still thinks this tab was selected (we bypassed its state when activating Toolasha).
         // Without a click (the placement setting moved the tab) the game's selection never changed.
-        this._markCharPanelTab(clickedTab || this._hiddenCharPanelSelection);
+        if (clickedTab) this._markCharPanelTab(clickedTab);
+        else this._markCharPanelTab(this._hiddenCharPanelSelection, this._hiddenCharPanelLabel);
         this._hiddenCharPanelSelection = null;
+        this._hiddenCharPanelLabel = null;
     }
 
     /**
      * Put the selected marks back on a character-panel tab the view cleared them from, unless the
-     * game has marked another tab since (its selection moved while the view was open).
-     * @param {HTMLElement|null} tab
+     * game has marked another tab since (its selection moved while the view was open). A tab React
+     * has replaced meanwhile is found again in the live tablist by its label, else Inventory stands in.
+     * @param {HTMLElement|null} remembered
+     * @param {string|null} [label] - The remembered tab's label when it was captured
      */
-    _markCharPanelTab(tab) {
-        if (!tab?.isConnected) return;
+    _markCharPanelTab(remembered, label = null) {
+        if (!remembered) return;
+        let tab = remembered;
+        if (!tab.isConnected) {
+            const liveList = this._findCharacterTabList();
+            const live = liveList ? [...liveList.querySelectorAll('[role="tab"]:not(.toolasha-inv-tab)')] : [];
+            const name = label ?? remembered.textContent.trim();
+            tab =
+                live.find((t) => t.textContent.trim() === name) ||
+                live.find((t) => t.textContent.trim() === 'Inventory');
+            if (!tab) return;
+        }
         const tabList = tab.closest('[role="tablist"]');
         const others = tabList ? tabList.querySelectorAll('[role="tab"]:not(.toolasha-inv-tab)') : [];
         for (const other of others) {
@@ -1733,9 +1752,11 @@ export default class CustomTabsUI {
             this._clearLayout();
             this._showGameContent();
             const hidden = this._hiddenCharPanelSelection;
-            this._markCharPanelTab(hidden?.isConnected ? hidden : this._inventoryTabEl);
+            if (hidden) this._markCharPanelTab(hidden, this._hiddenCharPanelLabel);
+            else this._markCharPanelTab(this._inventoryTabEl);
         }
         this._hiddenCharPanelSelection = null;
+        this._hiddenCharPanelLabel = null;
         if (this._inventoryTabEl) {
             this._inventoryTabEl.style.display = '';
             this._inventoryTabEl = null;

@@ -697,7 +697,51 @@ describe('character panel marks on leaving the view without a click', () => {
         expect(markedLabels(characterTabList)).toEqual(['Equipment']);
     });
 
-    test('a late strip falls back to Inventory when the remembered tab was re-rendered away', async () => {
+    /** React replaces a character tab node with an unmarked copy; returns the live one */
+    const rerender = (tab) => {
+        const fresh = tab.cloneNode(true);
+        fresh.classList.remove('Mui-selected');
+        fresh.setAttribute('aria-selected', 'false');
+        tab.replaceWith(fresh);
+        return fresh;
+    };
+
+    test('cleanup marks the live copy of a remembered tab React replaced', async () => {
+        const { characterTabList, inventoryPanel } = buildCharacterPanel();
+        buildOldInventory(inventoryPanel);
+        ui = await startUI();
+        characterTabList.querySelector('.toolasha-inv-tab').click();
+        await flush();
+        rerender(byLabel(characterTabList, 'Inventory'));
+
+        ui.cleanup();
+        ui = null;
+        expect(markedLabels(characterTabList)).toEqual(['Inventory']);
+    });
+
+    test('a placement switch marks the live copy of a remembered tab React replaced', async () => {
+        game.settings.inventoryTabs_iconRowTab = false;
+        const { characterTabList, inventoryPanel } = buildCharacterPanel();
+        const inventory = byLabel(characterTabList, 'Inventory');
+        const equipment = byLabel(characterTabList, 'Equipment');
+        inventory.classList.remove('Mui-selected');
+        inventory.setAttribute('aria-selected', 'false');
+        equipment.classList.add('Mui-selected');
+        equipment.setAttribute('aria-selected', 'true');
+        buildNewInventory(inventoryPanel, CATEGORY_ICONS, 'inventory_all');
+        ui = await startUI();
+        characterTabList.querySelector('.toolasha-inv-tab').click();
+        await flush();
+        rerender(equipment);
+
+        game.settings.inventoryTabs_iconRowTab = true;
+        settingHandlers.get('inventoryTabs_iconRowTab')();
+        await flush();
+        expect(characterTabList.querySelector('.toolasha-inv-tab')).toBeNull();
+        expect(markedLabels(characterTabList)).toEqual(['Equipment']);
+    });
+
+    test('a late strip falls back to Inventory when the remembered tab is gone from the panel', async () => {
         const { characterTabList, inventoryPanel } = buildCharacterPanel();
         ui = await startUI();
         const inventory = byLabel(characterTabList, 'Inventory');
@@ -709,11 +753,8 @@ describe('character panel marks on leaving the view without a click', () => {
         characterTabList.querySelector('.toolasha-inv-tab').click();
         await flush();
 
-        // React rebuilds the Equipment tab: the remembered node is detached, the new one unmarked
-        const rebuilt = equipment.cloneNode(true);
-        rebuilt.classList.remove('Mui-selected');
-        rebuilt.setAttribute('aria-selected', 'false');
-        equipment.replaceWith(rebuilt);
+        // The game drops the Equipment tab: nothing live carries the remembered label
+        equipment.remove();
 
         buildNewInventory(inventoryPanel, CATEGORY_ICONS, 'inventory_all');
         renderStrips();
