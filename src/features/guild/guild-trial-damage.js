@@ -1735,6 +1735,23 @@ class GuildTrialDamage {
     }
 
     /**
+     * Which cycle of the trial week the stored stats belong to, for the test
+     * server's repeat cycles (the store ignores it on live).
+     *
+     * The same anchor the ledger keys a cycle on: the fight's game-stated start
+     * where a tier opening was seen, else when this client first saw the fight.
+     *
+     * @returns {number|undefined} Client ms, or undefined with no fight held
+     */
+    _statsCycleAt() {
+        // Mirrors `trialCycleAnchor` in guild-trial-ledger.js, inlined so this
+        // module does not import the ledger
+        if (Number.isFinite(this.fightStartMs) && this.fightStartMs > 0) return this.fightStartMs;
+        if (Number.isFinite(this.startedAt) && this.startedAt > 0) return this.startedAt;
+        return undefined;
+    }
+
+    /**
      * Merge the message's per-encounter comparisons into the week's saved blob
      * and write it back. Load-merge-save rather than saving the in-memory copy,
      * so a reset between trials cannot drop an earlier trial's entry from disk.
@@ -1746,7 +1763,7 @@ class GuildTrialDamage {
         // character switch or guild change landing during the read must neither
         // file them under the arriving scope nor put the departing scope's blob
         // back into memory
-        const scope = { ...this.statsScope };
+        const scope = { ...this.statsScope, cycleAt: this._statsCycleAt() };
         const scopeKey = statsScopeKey(scope);
         try {
             const blob = await loadTrialStats(Date.now(), scope);
@@ -1806,7 +1823,7 @@ class GuildTrialDamage {
      * encounter.
      */
     async _restoreStats() {
-        const scope = { ...this.statsScope };
+        const scope = { ...this.statsScope, cycleAt: this._statsCycleAt() };
         const scopeKey = statsScopeKey(scope);
         try {
             const blob = await loadTrialStats(Date.now(), scope);
