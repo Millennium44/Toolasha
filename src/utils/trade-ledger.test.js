@@ -121,6 +121,26 @@ describe('detectFills', () => {
         expect(states['1']).toEqual({ done: true });
     });
 
+    test('a listing placed and partly filled at once counts the crossing part when the event reports it', () => {
+        const placed = listing({ isSell: true, orderQuantity: 1000, filledQuantity: 300 });
+        const { fills, states } = detectFills({}, [placed], { now: 1, changedIds: new Set([1]) });
+
+        expect(fills).toHaveLength(1);
+        expect(fills[0]).toMatchObject({ side: 'sell', quantity: 300 });
+        // The rest fills later against that baseline, not from zero again
+        const later = detectFills(states, [{ ...placed, filledQuantity: 1000, status: FILLED }], { now: 2 });
+        expect(later.fills[0].quantity).toBe(700);
+    });
+
+    test('an unknown active listing the event did not report changed stays baseline-only', () => {
+        const { fills } = detectFills({}, [listing({ id: 2, filledQuantity: 300 })], {
+            now: 1,
+            changedIds: new Set([1]),
+        });
+
+        expect(fills).toEqual([]);
+    });
+
     test('claiming a counted listing does not count it again', () => {
         const first = detectFills({}, [listing({ filledQuantity: 100, status: FILLED })], { now: 1 });
         const { fills, changed } = detectFills(first.states, [listing({ filledQuantity: 100, status: FILLED })], {

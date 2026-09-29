@@ -95,6 +95,13 @@ function isDiffableListing(listing) {
  * sale out of the ledger. On a snapshot the same shape stays baseline-only,
  * because there it can be history from before the ledger was watching.
  *
+ * The same holds for a listing placed and only partly filled at once — the
+ * crossing part fills, the rest stays on the book — but a live listing that is
+ * still active is only trusted to be new when the caller names it in
+ * `changedIds` (the event's own `endMarketListings`). Every open listing gets a
+ * baseline from the snapshot pass, so an unknown id the event itself reports
+ * changed can only be one placed just now.
+ *
  * @param {Object<string, Object>} prevStates - Listing id → last observed
  *   `{filledQuantity, itemHrid, enhancementLevel, price, isSell}` (JSON-safe)
  * @param {Array<Object>} listings - Listing objects from the wire
@@ -103,12 +110,14 @@ function isDiffableListing(listing) {
  * @param {boolean} [options.snapshot] - Treat `listings` as the complete set of
  *   open listings: state entries absent from it ended while we were not looking,
  *   and their final fills are unknowable — dropped without inventing anything
+ * @param {Set<number|string>} [options.changedIds] - Ids this live event itself reported
+ *   changed; an unknown active listing among them counts its fills from zero
  * @returns {{fills: Array<Object>, states: Object<string, Object>, changed: boolean}}
  *   Fill records `{t, itemHrid, enhancementLevel, side, quantity, price, coins,
  *   listingId}`, the next state map, and whether the state map differs from `prevStates`
  */
 export function detectFills(prevStates, listings, options = {}) {
-    const { now = Date.now(), snapshot = false } = options;
+    const { now = Date.now(), snapshot = false, changedIds = null } = options;
     const states = { ...(prevStates || {}) };
     const fills = [];
     let changed = false;
@@ -131,9 +140,10 @@ export function detectFills(prevStates, listings, options = {}) {
         }
 
         const terminal = TERMINAL_STATUSES.has(listing.status);
-        // The baseline, or zero for a listing whose whole life happened inside
-        // this one live event (placed and instantly filled)
-        const basis = prev ? prev.filledQuantity : terminal && !snapshot ? 0 : null;
+        // The baseline, or zero for a listing placed inside this one live event
+        // (instantly filled, in full or in part)
+        const placedNow = !snapshot && (terminal || Boolean(changedIds?.has(listing.id)));
+        const basis = prev ? prev.filledQuantity : placedNow ? 0 : null;
 
         if (basis !== null && listing.filledQuantity > basis) {
             const quantity = listing.filledQuantity - basis;
