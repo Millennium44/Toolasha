@@ -59,6 +59,14 @@ export const DEFAULT_LEAD_MINUTES = 10;
 
 /** Event key prefixes, so the service's cooldown can tell the two apart */
 const START_KEY = 'guild-trial-start';
+
+/**
+ * How long after a results alert a further completion still counts as the
+ * same cycle. A phase flicker lands within minutes; the next cycle is a day
+ * away on the test server and a week away on live, and a tab can miss that
+ * cycle's scheduled phase entirely.
+ */
+const RESULTS_SAME_CYCLE_MS = 2 * 60 * 60_000;
 const RESULTS_KEY = 'guild-trial-results';
 
 /**
@@ -152,7 +160,7 @@ class GuildTrialAlerts {
         this.trials = [];
         /** The payout at the last live reading, for the results alert */
         this.lastPayout = null;
-        this.resultsAnnounced = false;
+        this.resultsAnnouncedAt = null;
         /** Start instant currently armed (rounded to the minute), so a re-read does not re-arm */
         this.scheduledFor = null;
         /** The pending start-timer id, so it can be cleared and not double-armed */
@@ -204,7 +212,7 @@ class GuildTrialAlerts {
         this.announcedStartFor = null;
         this.trials = [];
         this.lastPayout = null;
-        this.resultsAnnounced = false;
+        this.resultsAnnouncedAt = null;
         this._clearStartTimer();
     }
 
@@ -237,7 +245,7 @@ class GuildTrialAlerts {
 
             if (phase === 'scheduled') {
                 // A cycle that has not started yet has no results to have told
-                this.resultsAnnounced = false;
+                this.resultsAnnouncedAt = null;
                 return this._maybeAnnounceStart(startsInMs, at);
             }
             if (phase === 'live' && previous === 'scheduled') {
@@ -248,9 +256,13 @@ class GuildTrialAlerts {
                 this._clearStartTimer();
                 // Once per cycle: a phase that flickers completed → live →
                 // completed would otherwise announce again, and with the payout
-                // spent below the second one no longer matches the first's key
-                if (this.resultsAnnounced) return null;
-                this.resultsAnnounced = true;
+                // spent below the second one no longer matches the first's key.
+                // Re-armed by the next scheduled phase or, for a tab that never
+                // saw it, by the time a new cycle takes to come round
+                if (Number.isFinite(this.resultsAnnouncedAt) && at - this.resultsAnnouncedAt < RESULTS_SAME_CYCLE_MS) {
+                    return null;
+                }
+                this.resultsAnnouncedAt = at;
                 const announced = this._announceResults();
                 // Spent with the cycle it belonged to: kept, it was reported
                 // again as the next week's result whenever that cycle ran with
