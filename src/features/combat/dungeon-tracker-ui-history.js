@@ -1035,7 +1035,7 @@ class DungeonTrackerUIHistory {
 
                 // Full identity, not the timestamp: an imported partymate's
                 // record of the same run can share it and is a different run.
-                await dungeonTrackerStorage.deleteRun(row.dataset.runIdentity);
+                await dungeonTrackerStorage.deleteRun(this.decodeRunIdentity(row.dataset.runIdentity));
 
                 // A teardown landing inside that await has already disposed
                 // this section (and nulled onDeleteCallback below, belt and
@@ -1049,6 +1049,22 @@ class DungeonTrackerUIHistory {
                 }
             });
         });
+    }
+
+    /**
+     * Read back the identity a row carries. It is stored JSON-encoded because the
+     * HTML parser rewrites CR and NUL in an attribute value, which would make a
+     * raw identity stop equaling `runIdentity(run)`; JSON escapes them.
+     * @param {string} attribute - The row's `data-run-identity`
+     * @returns {string} The identity, or the attribute as-is if it is not JSON
+     */
+    decodeRunIdentity(attribute) {
+        try {
+            const value = JSON.parse(attribute);
+            return typeof value === 'string' ? value : attribute;
+        } catch {
+            return attribute;
+        }
     }
 
     /**
@@ -1087,7 +1103,7 @@ class DungeonTrackerUIHistory {
                     padding: 4px 0;
                     border-bottom: 1px solid #333;
                     font-size: 10px;
-                " data-run-timestamp="${this.escapeHtml(run.timestamp)}" data-run-identity="${this.escapeHtml(runIdentity(run))}">
+                " data-run-timestamp="${this.escapeHtml(run.timestamp)}" data-run-identity="${this.escapeHtml(JSON.stringify(runIdentity(run)))}">
                     <span style="color: #aaa; min-width: 25px;">#${runNumber}</span>
                     <span style="color: #fff; flex: 1; text-align: center;">
                         ${timeStr}${timeMark} <span style="color: #888; font-size: 9px;">(${dateTime})</span>

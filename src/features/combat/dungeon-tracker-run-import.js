@@ -115,6 +115,14 @@ export const MAX_DUNGEON_NAME_CHARS = 200;
 export const MAX_TEAM_KEY_CHARS = 300;
 
 /**
+ * Control characters (C0, DEL) never occur in a real dungeon name or team key
+ * (player names are `[A-Za-z0-9_]` joined by commas), and the HTML parser
+ * rewrites some of them, so a value carrying one cannot round-trip through the
+ * row markup.
+ */
+const CONTROL_CHARS_RE = /[\u0000-\u001f\u007f]/;
+
+/**
  * @param {*} value - Anything
  * @returns {boolean} Whether it is a plain object (not null, not an array)
  */
@@ -252,18 +260,18 @@ export function serializeBackupWithinLimits({
         return sa === sb ? 0 : sb > sa ? 1 : -1;
     });
 
-    // Size scales with the run count, so aim just under the ceiling and shave
-    // 5% at a time until the real serialized size agrees.
-    let keep = Math.min(newestFirst.length, maxRuns);
-    text = write(newestFirst.slice(0, keep));
-    if (size(text) > maxBytes) {
-        keep = Math.floor((keep * maxBytes) / size(text));
-        for (;;) {
-            text = write(newestFirst.slice(0, keep));
-            if (keep === 0 || size(text) <= maxBytes) break;
-            keep = Math.min(keep - 1, Math.floor(keep * 0.95));
-        }
+    // The largest newest-first prefix that fits. Size grows with every run
+    // added, so a binary search over the real serialized size finds it exactly,
+    // however unevenly the runs vary in size.
+    let low = 0;
+    let high = Math.min(newestFirst.length, maxRuns);
+    while (low < high) {
+        const mid = Math.ceil((low + high) / 2);
+        if (size(write(newestFirst.slice(0, mid))) <= maxBytes) low = mid;
+        else high = mid - 1;
     }
+    const keep = low;
+    text = write(newestFirst.slice(0, keep));
     return { text, omitted: all.length - keep };
 }
 
@@ -367,6 +375,9 @@ export function validateImportedRun(run, maxRunMs = MAX_PLAUSIBLE_RUN_MS, now = 
     if (typeof run.dungeonName !== 'string' || run.dungeonName.trim() === '') {
         return { ok: false, reason: 'missing dungeon name' };
     }
+    if (CONTROL_CHARS_RE.test(run.dungeonName)) {
+        return { ok: false, reason: 'dungeon name contains control characters' };
+    }
     if (run.dungeonName.length > MAX_DUNGEON_NAME_CHARS) {
         return { ok: false, reason: `dungeon name longer than ${MAX_DUNGEON_NAME_CHARS} characters` };
     }
@@ -380,6 +391,9 @@ export function validateImportedRun(run, maxRunMs = MAX_PLAUSIBLE_RUN_MS, now = 
     if (run.teamKey !== undefined && run.teamKey !== null) {
         if (typeof run.teamKey !== 'string' || run.teamKey.trim() === '') {
             return { ok: false, reason: 'teamKey must be a non-empty string, or absent for a solo run' };
+        }
+        if (CONTROL_CHARS_RE.test(run.teamKey)) {
+            return { ok: false, reason: 'teamKey contains control characters' };
         }
         if (run.teamKey.length > MAX_TEAM_KEY_CHARS) {
             return { ok: false, reason: `teamKey longer than ${MAX_TEAM_KEY_CHARS} characters` };

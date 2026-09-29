@@ -378,11 +378,29 @@ describe('run rendering is capped per group', () => {
         const runList = render(history, history.groupByTeam([first, second]));
         dungeonTrackerStorage.deleteRun.mockClear();
 
-        const row = runList.querySelector('[data-run-identity$="|301000"]');
+        const row = [...runList.querySelectorAll('[data-run-identity]')].find((r) =>
+            r.dataset.runIdentity.includes('|301000')
+        );
         row.querySelector('.mwi-dt-delete-run').dispatchEvent(new Event('click', { bubbles: true }));
         await Promise.resolve();
 
         expect(dungeonTrackerStorage.deleteRun).toHaveBeenCalledWith(`Aster,Briar|${second.timestamp}|301000`);
+    });
+
+    test('a team key the HTML parser would rewrite still deletes its own run', async () => {
+        const history = new DungeonTrackerUIHistory(freshState('team'), (ms) => `${ms}ms`);
+        const odd = { ...run('Aster\rBriar\u0000Cove'), timestamp: '2026-08-05T10:00:00.000Z' };
+        const runList = render(history, history.groupByTeam([odd]));
+        // What the real HTML parser would rewrite (CR to LF, NUL to U+FFFD) must never be in the attribute
+        const attribute = runList.querySelector('[data-run-identity]').getAttribute('data-run-identity');
+        expect(attribute).not.toMatch(/[\r\u0000]/);
+        expect(attribute).not.toContain(String.fromCharCode(10));
+        dungeonTrackerStorage.deleteRun.mockClear();
+
+        runList.querySelector('.mwi-dt-delete-run').dispatchEvent(new Event('click', { bubbles: true }));
+        await Promise.resolve();
+
+        expect(dungeonTrackerStorage.deleteRun).toHaveBeenCalledWith(`${odd.teamKey}|${odd.timestamp}|${odd.duration}`);
     });
 
     test('"Show more" state for one group does not affect a different group', () => {

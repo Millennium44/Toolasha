@@ -165,6 +165,12 @@ describe('validateImportedRun', () => {
         expect(validateImportedRun(run({ teamKey: 'x'.repeat(MAX_TEAM_KEY_CHARS) })).ok).toBe(true);
     });
 
+    test('rejects control characters in a dungeon name or team key', () => {
+        expect(validateImportedRun(run({ teamKey: 'Aster\rBriar' })).reason).toMatch(/control characters/);
+        expect(validateImportedRun(run({ teamKey: 'Aster\u0000' })).ok).toBe(false);
+        expect(validateImportedRun(run({ dungeonName: 'Den\n' })).reason).toMatch(/control characters/);
+    });
+
     test('rejects a non-positive duration', () => {
         expect(validateImportedRun(run({ duration: 0 })).ok).toBe(false);
         expect(validateImportedRun(run({ duration: -500 })).ok).toBe(false);
@@ -381,6 +387,25 @@ describe('serializeBackupWithinLimits', () => {
         const runs = [at(1), { ...at(2), timestamp: 'nope' }, at(9), { ...at(3), timestamp: null }, at(5)];
         const { text } = serializeBackupWithinLimits({ characterId: 'c', runs, maxRuns: 3 });
         expect(JSON.parse(text).runs.map((r) => r.timestamp.slice(8, 10))).toEqual(['09', '05', '01']);
+    });
+
+    test('keeps the true maximum prefix when the oldest runs are the big ones', () => {
+        const small = Array.from({ length: 40 }, (_, i) => at(20 + (i % 8), { duration: 1000 + i }));
+        const big = Array.from({ length: 10 }, (_, i) =>
+            at(1 + (i % 8), { duration: 2000 + i, note: 'x'.repeat(2000) })
+        );
+        const runs = [...big, ...small];
+        const maxBytes = 12_000;
+        const { text, omitted } = serializeBackupWithinLimits({ characterId: 'c', runs, maxBytes, now: 1 });
+        const kept = JSON.parse(text).runs.length;
+        expect(kept).toBe(runs.length - omitted);
+        const newest = [...runs].sort((a, b) => Date.parse(b.timestamp) - Date.parse(a.timestamp));
+        const sizeOf = (n) =>
+            new TextEncoder().encode(
+                JSON.stringify(buildDungeonRunsBackupEnvelope({ characterId: 'c', runs: newest.slice(0, n), now: 1 }))
+            ).length;
+        expect(sizeOf(kept)).toBeLessThanOrEqual(maxBytes);
+        expect(sizeOf(kept + 1)).toBeGreaterThan(maxBytes);
     });
 
     test('is compact: no indentation whitespace, and it parses back unchanged', () => {
