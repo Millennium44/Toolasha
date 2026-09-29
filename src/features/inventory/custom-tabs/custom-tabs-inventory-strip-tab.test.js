@@ -1085,6 +1085,32 @@ describe('inventory behind another character panel tab', () => {
         expect(ui._isActive).toBe(true);
     });
 
+    test('the icon-row setting turned off behind Equipment waits for the player to open the view', async () => {
+        // "Toolasha tab by default" must not blank the Equipment panel the player is looking at
+        game.settings.inventoryTabs_defaultTab = true;
+        const { characterTabList, contentContainer, inventoryPanel } = buildCharacterPanel();
+        showEquipment(characterTabList, contentContainer);
+        const first = buildNewInventory(inventoryPanel, CATEGORY_ICONS, 'item_category_food');
+        ui = await startUI();
+        first.inv.remove();
+
+        game.settings.inventoryTabs_iconRowTab = false;
+        settingHandlers.get('inventoryTabs_iconRowTab')();
+        await flush();
+
+        expect(ui._isActive).toBe(false);
+        expect(contentContainer.style.display).toBe('');
+        for (const panel of contentContainer.children) expect(panel.style.display).toBe('');
+        const byLabel = (label) =>
+            [...characterTabList.querySelectorAll('[role="tab"]')].find((t) => t.textContent === label);
+        expect(byLabel('Equipment').classList.contains('Mui-selected')).toBe(true);
+        // The default still replaces Inventory with our tab, which opens the view when clicked
+        expect(byLabel('Inventory').style.display).toBe('none');
+        byLabel('Toolasha').click();
+        await flush();
+        expect(ui._isActive).toBe(true);
+    });
+
     test('an instance torn down before its config loads leaves the restorer in place', async () => {
         const { characterTabList, contentContainer, inventoryPanel } = buildCharacterPanel();
         const first = buildNewInventory(inventoryPanel, CATEGORY_ICONS, 'item_category_food');
