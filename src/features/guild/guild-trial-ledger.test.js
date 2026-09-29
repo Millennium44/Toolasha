@@ -48,6 +48,7 @@ const {
     foldLedgerCycles,
     ledgerCsvRows,
     ledgerCycleKey,
+    ledgerCyclesByAnchor,
     ledgerCyclesInKeys,
     ledgerScope,
     ledgerTotalsRow,
@@ -167,6 +168,64 @@ describe('a test-server week runs an encounter more than once', () => {
         expect(trialsKnown).toBe(2);
         expect(rows.find((row) => row.name === 'Alice')).toMatchObject({ participated: 2, observable: 2 });
         expect(rows.find((row) => row.name === 'Bob')).toMatchObject({ participated: 2, observable: 2 });
+    });
+
+    /**
+     * A week record holding Monday's and Wednesday's cycles, as the test server writes it.
+     * @param {number} weekStart - The week
+     * @returns {Object} The record
+     */
+    function twoCycleWeek(weekStart) {
+        const shift = (contribution, at) => ({
+            ...contribution,
+            trialId: `${weekStart}:${at}`,
+            weekStart,
+            at,
+            cycleAt: at,
+        });
+        server.test = true;
+        const first = shift(monday, weekStart + 17 * HOUR);
+        const second = shift(wednesday, weekStart + 2 * 24 * HOUR + 17 * HOUR);
+        return accrueTrial(accrueTrial(emptyLedgerCycle(weekStart, 'g'), first), second);
+    }
+
+    test('on the test server, a week record reads as one record per cycle', () => {
+        const week = twoCycleWeek(WEEK);
+        const split = ledgerCyclesByAnchor([week], { perCycle: true });
+        expect(split).toHaveLength(2);
+        expect(split.map((cycle) => cycle.members.alice)).toMatchObject([
+            { trials: 1, damage: 900 },
+            { trials: 1, damage: 400 },
+        ]);
+        expect(split.map((cycle) => cycle.cycleAt)).toEqual(week.trials.map((trial) => trial.cycleAt));
+        expect(foldLedgerCycles(split).cycles).toBe(2);
+        // The same table either way, but for how many cycles it spans
+        expect(foldLedgerCycles(split).rows).toEqual(foldLedgerCycles([week]).rows);
+    });
+
+    test('on live, records are cycles already and are returned as they are', () => {
+        const records = [twoCycleWeek(WEEK)];
+        expect(ledgerCyclesByAnchor(records, { perCycle: false })).toBe(records);
+    });
+
+    test('the window counts cycles, not weeks', async () => {
+        const WEEK_MS = 7 * 24 * HOUR;
+        disk.store[ledgerCycleKey('g', WEEK)] = twoCycleWeek(WEEK);
+        disk.store[ledgerCycleKey('g', WEEK + WEEK_MS)] = twoCycleWeek(WEEK + WEEK_MS);
+        server.test = true;
+
+        const window = await loadLedgerCycles('g', null, { cycles: 3 });
+        expect(window).toHaveLength(3);
+        expect(window.map((cycle) => cycle.weekStart)).toEqual([WEEK, WEEK + WEEK_MS, WEEK + WEEK_MS]);
+        expect(foldLedgerCycles(window).cycles).toBe(3);
+        expect(await loadLedgerCycles('g')).toHaveLength(4);
+    });
+
+    test('an earlier cycle of the current week counts toward coverage', () => {
+        const now = WEEK + 3 * 24 * HOUR;
+        const week = twoCycleWeek(trialWeekStart(now));
+        const coverage = observedCoverage(ledgerCyclesByAnchor([week], { perCycle: true }), { now });
+        expect(coverage).toMatchObject({ observed: 1, expected: 2, cycles: 1, inProgress: true });
     });
 });
 
@@ -686,6 +745,19 @@ describe('observedCoverage', () => {
 
         expect(coverage.observed).toBe(2);
         expect(coverage.fraction).toBe(1);
+    });
+
+    test('of a week split into cycles, only the newest is in progress', () => {
+        const now = Date.parse('2026-08-23T12:00:00Z');
+        const thisWeek = trialWeekStart(now);
+        const coverage = observedCoverage(
+            [
+                { weekStart: thisWeek, cycleAt: thisWeek + 3_600_000, trials: [{ trialId: 'a' }, { trialId: 'b' }] },
+                { weekStart: thisWeek, cycleAt: thisWeek + 90_000_000, trials: [{ trialId: 'c' }] },
+            ],
+            { now }
+        );
+        expect(coverage).toEqual({ observed: 2, expected: 2, cycles: 1, inProgress: true, fraction: 1 });
     });
 
     test('no cycles is no fraction rather than zero', () => {
