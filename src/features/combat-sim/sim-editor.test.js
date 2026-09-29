@@ -967,6 +967,34 @@ describe('the loadout selection is remembered', () => {
         expect(editor.getLoadoutNameFor('player2')).toBe('Bravo');
     });
 
+    test('a Current Gear pick on another tab does not hide a loadout this player still wears', async () => {
+        // Alpha applied to player1, then player2's dropdown set to Current
+        // Gear: that clears the panel-wide selection but player1's DTO still
+        // wears Alpha, so a per-sweep Current Gear pick for player1 must see it
+        bridge.snapshots = [{ name: 'Alpha', actionTypeHrid: '/action_types/combat' }];
+        const { el, editor } = await openEditor();
+        const pick = async (name) => {
+            const select = el.querySelector('#mwi-csim-loadout-select');
+            select.value = name;
+            select.dispatchEvent(new Event('change'));
+            await Promise.resolve();
+        };
+
+        await pick('Alpha');
+        editor._activeEditPlayer = 'player2';
+        editor.renderEditor();
+        await pick('');
+
+        expect(editor.getSelectedLoadoutName()).toBe('');
+        expect(editor.getLoadoutNameFor('player1')).toBe('Alpha');
+        expect(editor.getLoadoutNameFor('player2')).toBe('');
+
+        // Back on player1's tab the dropdown shows what that tab wears
+        editor._activeEditPlayer = 'player1';
+        editor.renderEditor();
+        expect(el.querySelector('#mwi-csim-loadout-select').value).toBe('Alpha');
+    });
+
     test('a player reverted to current gear no longer claims the loadout it dropped', async () => {
         // player1 wears Alpha, goes back to Current Gear, then player2 takes
         // Bravo: the selection is non-empty again, but player1 wears nothing

@@ -348,16 +348,29 @@ export class SimEditor {
         if (this._editorInitialized) this.renderEditor();
     }
     /**
-     * The selected loadout's name if it was applied to this player, else ''. The
-     * selection is panel-wide but a loadout is applied to one player's DTO, so a
-     * Solo run of another member must not be labelled with it.
+     * The loadout a player's DTO was built from, else ''. The per-player applied
+     * record is what a DTO wears; the panel-wide selection is only the dropdown's
+     * state, so a Current Gear pick on another tab must not hide a loadout this
+     * player still wears. Only before anything has been applied does the
+     * selection stand in, for self (or the active tab).
      * @param {string} playerHrid
      * @returns {string}
      */
     getLoadoutNameFor(playerHrid) {
-        if (!this._selectedLoadoutName) return '';
         if (this._loadoutAppliedNames) return this._loadoutAppliedNames[playerHrid] || '';
+        if (!this._selectedLoadoutName) return '';
         return playerHrid === (this._selfHrid || this._activeEditPlayer) ? this._selectedLoadoutName : '';
+    }
+
+    /**
+     * What the Loadout dropdown shows for the active tab: the loadout that tab's
+     * DTO wears, so switching tabs never shows a build the tab is not wearing.
+     * @returns {string}
+     * @private
+     */
+    _dropdownLoadoutName() {
+        if (this._loadoutAppliedNames) return this._loadoutAppliedNames[this._activeEditPlayer] || '';
+        return this._selectedLoadoutName;
     }
     /**
      * Forget which loadout a player's DTO was built from, once that DTO no longer
@@ -1532,10 +1545,11 @@ export class SimEditor {
                 html += `<select class="toolasha-select" id="mwi-csim-loadout-select" style="
                     flex:1; min-width:0; background:#1a1a2e; color:#e0e0e0; border:1px solid #444;
                     border-radius:4px; padding:2px 6px; font-size:12px; font-family:inherit;">`;
-                html += `<option value=""${!this._selectedLoadoutName ? ' selected' : ''}>— Current Gear —</option>`;
+                const shownLoadout = this._dropdownLoadoutName();
+                html += `<option value=""${!shownLoadout ? ' selected' : ''}>— Current Gear —</option>`;
                 for (const snap of filteredSnapshots) {
                     const label = snap.name + (snap.actionTypeHrid ? '' : ' (All Skills)');
-                    const selected = this._selectedLoadoutName === snap.name ? ' selected' : '';
+                    const selected = shownLoadout === snap.name ? ' selected' : '';
                     html += `<option value="${snap.name}"${selected}>${label}</option>`;
                 }
                 html += `</select>`;
