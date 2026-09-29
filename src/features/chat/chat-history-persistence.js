@@ -818,6 +818,8 @@ class ChatHistoryPersistence {
         this.enabled = false;
         this.writeTimer = null;
         this.loadPromise = null;
+        /** @type {Set<() => void>} Called once per successful read; see {@link ChatHistoryPersistence#onLoaded} */
+        this.loadListeners = new Set();
         /** Whether `tabs` has had the stored record merged into it; see the class doc. */
         this.loaded = false;
         /** Whether `tabs` holds something no write has been issued for yet. */
@@ -838,6 +840,22 @@ class ChatHistoryPersistence {
     enable(getMaxHistory) {
         this.enabled = true;
         if (typeof getMaxHistory === 'function') this.getMaxHistory = getMaxHistory;
+    }
+
+    /**
+     * Be told when a read of the record succeeds.
+     *
+     * Fired from the owning session's read only — not for a failed read, and
+     * not for a stale tail after a teardown. It exists because a read can
+     * succeed for a caller (a deletion's purge) that has nothing to do with
+     * the tabs a failed read left empty.
+     *
+     * @param {() => void} fn
+     * @returns {() => void} Unsubscribe
+     */
+    onLoaded(fn) {
+        this.loadListeners.add(fn);
+        return () => this.loadListeners.delete(fn);
     }
 
     /**
@@ -923,6 +941,13 @@ class ChatHistoryPersistence {
             // it was holding back.
             if (this.dirty) this._scheduleWrite();
 
+            for (const fn of [...this.loadListeners]) {
+                try {
+                    fn();
+                } catch (error) {
+                    console.error('[ChatHistoryPersistence] Load listener failed:', error);
+                }
+            }
             return this.snapshot;
         })();
         this.loadPromise = loading;

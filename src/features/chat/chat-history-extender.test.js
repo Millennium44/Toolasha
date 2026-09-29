@@ -1148,6 +1148,27 @@ describe('chat-history-extender: refill after a failed read', () => {
         expect(count(a, 'trade one')).toBe(1);
     });
 
+    test('a read that succeeds for a deletion purge refills the tab, once', async () => {
+        const { mount, select } = buildTwoTabChat();
+        select(TRADE);
+        const a = mount('panel-trade');
+        chatHistoryExtender.initialize();
+        attach(a);
+        await settle();
+        expect(a.textContent).not.toContain('trade one');
+
+        db.failReads = false;
+        await chatHistoryPersistence.purgeMessageById(tradeKey, 'unrelated');
+        await settle();
+        expect(count(a, 'trade one')).toBe(1);
+
+        // A later successful read has nothing left to refill.
+        select(GLOBAL);
+        attach(mount('panel-general'));
+        await settle();
+        expect(count(a, 'trade one')).toBe(1);
+    });
+
     test('a refilled tab does not duplicate a line it had already evicted into its buffer', async () => {
         const { mount, select } = buildTwoTabChat();
         select(TRADE);
