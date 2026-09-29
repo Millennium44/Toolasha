@@ -47,7 +47,7 @@
  * Pure throughout: records in, numbers out, no DOM and no clock of its own.
  */
 
-import { tierPoolWork, tierWorkShape, TRIAL_MAX_TIER } from './guild-trials-math.js';
+import { tierPoolWork, tierWorkShape, TRIAL_ACTIVE_MS, TRIAL_MAX_TIER } from './guild-trials-math.js';
 
 /** Below this many timestamped tier badges there is no interval to measure. */
 export const MIN_TIER_CLEARS = 2;
@@ -71,15 +71,23 @@ export const RATE_FLOOR_FRACTION = 0.05;
  * reports a rate several times too high. `recordTileSample` therefore writes
  * `tierSeenAt` only when it sees the badge *move*, and this reads that.
  *
+ * A record is the week's, and a week can hold more than one cycle: a stamp older
+ * than a trial's hour before `now` is another cycle's clear, and is dropped
+ * rather than paired with this cycle's. A previous cycle's T20 stamp made a T8
+ * card read "banked 20 → ~1 more tier, Expected ~T21".
+ *
  * @param {Object} record - A tile record from the store
+ * @param {Object} [options] - Options
+ * @param {number|null} [options.now] - Clock; without it no stamp is too old
  * @returns {Array<{tier: number, at: number}>} Ascending by tier
  */
-export function tierClearTimes(record) {
+export function tierClearTimes(record, { now = null } = {}) {
     const seen = record?.tierSeenAt;
     if (!seen || typeof seen !== 'object') return [];
     return Object.entries(seen)
         .map(([tier, at]) => ({ tier: Number(tier), at: Number(at) }))
         .filter((entry) => Number.isFinite(entry.tier) && entry.tier >= 1 && Number.isFinite(entry.at))
+        .filter((entry) => !Number.isFinite(now) || now - entry.at <= TRIAL_ACTIVE_MS)
         .sort((a, b) => a.tier - b.tier);
 }
 
@@ -98,10 +106,11 @@ export function tierClearTimes(record) {
  * @param {Object} record - A tile record from the store
  * @param {Object} [options] - Options
  * @param {'skilling'|'combat'} [options.kind] - Which ladder the pools sit on
+ * @param {number|null} [options.now] - Clock, for {@link tierClearTimes}
  * @returns {Array<{tier: number, sharePerMs: number, ms: number}>} One entry per usable interval
  */
-export function tierFillRates(record, { kind = 'skilling' } = {}) {
-    const clears = tierClearTimes(record);
+export function tierFillRates(record, { kind = 'skilling', now = null } = {}) {
+    const clears = tierClearTimes(record, { now });
     const rates = [];
     for (let i = 1; i < clears.length; i += 1) {
         const from = clears[i - 1];
@@ -207,7 +216,7 @@ export function tierTimingForecast(
         bankedTiers = null,
     } = {}
 ) {
-    const clears = tierClearTimes(record);
+    const clears = tierClearTimes(record, { now });
     if (clears.length < MIN_TIER_CLEARS) {
         return {
             measured: clears.length,
@@ -226,7 +235,7 @@ export function tierTimingForecast(
         };
     }
 
-    const rates = tierFillRates(record, { kind });
+    const rates = tierFillRates(record, { kind, now });
     const fit = declineFit(rates);
     if (!fit) {
         return {

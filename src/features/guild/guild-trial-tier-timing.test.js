@@ -30,6 +30,37 @@ describe('tierClearTimes — only badges that were watched moving', () => {
     });
 });
 
+describe('another cycle of the same week', () => {
+    const HOUR = 3_600_000;
+    // Earlier this week the Cooking party reached T20; this cycle it has banked
+    // T8, watched clearing T7 and T8 forty seconds apart. The earlier cycle's
+    // stamps sat in the same week's record — observed live as a T8 card reading
+    // "~100 work/s · Next tier in ~a few seconds · ~1 more tier · Expected ~T21"
+    const now = 10 * 24 * HOUR;
+    const earlier = now - 2 * 24 * HOUR;
+    const record = {
+        tierSeenAt: {
+            ...Object.fromEntries(Array.from({ length: 12 }, (unused, i) => [9 + i, earlier + i * 300_000])),
+            7: now - 60_000,
+            8: now - 20_000,
+        },
+    };
+
+    test('only this hour’s clears are read', () => {
+        expect(tierClearTimes(record, { now }).map((clear) => clear.tier)).toEqual([7, 8]);
+    });
+
+    test('the forecast walks from this cycle’s tier at this cycle’s rate', () => {
+        const timing = tierTimingForecast(record, { timeLeftMs: 50 * 60_000, now, bankedTiers: 8 });
+
+        expect(timing.bankedTiers).toBe(8);
+        expect(timing.currentTier).toBe(9);
+        // T8's pool (1.7 shares) in 40 s
+        expect(timing.sharePerMs).toBeCloseTo(share(8) / 40_000, 12);
+        expect(timing.tiersBeforeEnd).toBeGreaterThan(1);
+    });
+});
+
 describe('tierFillRates — the work behind each interval', () => {
     test('two consecutive badges give one rate, in shares per millisecond', () => {
         // T16 banked at 0, T17 at 100s: the guild filled T17's pool, which is
