@@ -16,7 +16,7 @@
  *   ledger recorded. Sells with no recorded cost stay revenue, never profit.
  */
 
-import { MARKET_TAX } from './profit-constants.js';
+import { MARKET_TAX, COWBELL_BAG_HRID, COWBELL_BAG_TAX } from './profit-constants.js';
 
 /**
  * How many fill records are kept per character, oldest-out.
@@ -39,16 +39,19 @@ const TERMINAL_STATUSES = new Set([
  *
  * Buys spend the full `quantity × price` (the game taxes the seller, not the
  * buyer); sells receive `quantity × price` minus the market tax, rounded to
- * whole coins the way every other net-of-tax figure in this codebase is.
+ * whole coins the way every other net-of-tax figure in this codebase is. Bags
+ * of cowbells carry their own, higher tax.
  *
  * @param {boolean} isSell - Which side of the trade this fill is
  * @param {number} quantity - Units filled
  * @param {number} price - Coins per unit on the listing
+ * @param {string} [itemHrid] - What was traded, for the item-specific tax rate
  * @returns {number} Coins received (sell, after tax) or spent (buy)
  */
-export function fillCoins(isSell, quantity, price) {
+export function fillCoins(isSell, quantity, price, itemHrid = null) {
     const gross = quantity * price;
-    return isSell ? Math.round(gross * (1 - MARKET_TAX)) : gross;
+    const tax = itemHrid === COWBELL_BAG_HRID ? COWBELL_BAG_TAX : MARKET_TAX;
+    return isSell ? Math.round(gross * (1 - tax)) : gross;
 }
 
 /**
@@ -142,7 +145,7 @@ export function detectFills(prevStates, listings, options = {}) {
                 side: isSell ? 'sell' : 'buy',
                 quantity,
                 price: listing.price,
-                coins: fillCoins(isSell, quantity, listing.price),
+                coins: fillCoins(isSell, quantity, listing.price, listing.itemHrid),
                 listingId: listing.id,
             });
         }

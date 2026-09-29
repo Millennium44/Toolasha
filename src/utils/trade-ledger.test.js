@@ -4,7 +4,7 @@
 
 import { describe, test, expect } from 'vitest';
 import { detectFills, trimLedger, aggregateLedger, weekStartOf, fillCoins, LEDGER_RECORD_CAP } from './trade-ledger.js';
-import { MARKET_TAX } from './profit-constants.js';
+import { MARKET_TAX, COWBELL_BAG_TAX } from './profit-constants.js';
 
 const ACTIVE = '/market_listing_status/active';
 const CANCELLED = '/market_listing_status/cancelled';
@@ -33,6 +33,17 @@ describe('fillCoins', () => {
     test('sells net the market tax', () => {
         expect(fillCoins(true, 40, 100)).toBe(Math.round(4000 * (1 - MARKET_TAX)));
         expect(fillCoins(true, 40, 100)).toBe(3800);
+    });
+
+    test('a sold bag of cowbells nets its own tax, not the market rate', () => {
+        const bag = { itemHrid: '/items/bag_of_10_cowbells', isSell: true, price: 300000, orderQuantity: 10 };
+        const first = detectFills({}, [listing(bag)], { now: 1 });
+        const { fills } = detectFills(first.states, [listing({ ...bag, filledQuantity: 10, status: FILLED })], {
+            now: 2,
+        });
+
+        expect(fills[0].coins).toBe(Math.round(3_000_000 * (1 - COWBELL_BAG_TAX)));
+        expect(fillCoins(false, 10, 300000, '/items/bag_of_10_cowbells')).toBe(3_000_000);
     });
 });
 
