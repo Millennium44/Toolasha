@@ -33,9 +33,11 @@
  */
 
 import config from '../../core/config.js';
+import dataManager from '../../core/data-manager.js';
 import webSocketHook from '../../core/websocket.js';
 import notificationService from './notification-service.js';
 import { createTimerRegistry } from '../../utils/timer-registry.js';
+import { guildXpTracker } from '../../utils/bundle-bridge.js';
 import { timeReadable } from '../../utils/formatters.js';
 
 /** Master switch for the "a trial is about to start" alert */
@@ -43,6 +45,9 @@ export const START_SETTING = 'notifications_trialStarting';
 
 /** Master switch for the "the trial finished" alert */
 export const RESULTS_SETTING = 'notifications_trialResults';
+
+/** Whether the start alerts are for every guild trial (`guild`) or only ones this character joined (`signedUp`) */
+export const AUDIENCE_SETTING = 'notifications_trialAudience';
 
 /** How many minutes before the start to speak up */
 export const LEAD_MINUTES_SETTING = 'notifications_trialStartLeadMinutes';
@@ -103,6 +108,36 @@ export function resultsMessage(payout) {
 
     if (!parts.length) return 'The guild trial has finished.';
     return `Guild trial finished — ${parts.join(', ')}.`;
+}
+
+/**
+ * Whether the start alerts are for this character.
+ *
+ * Reads the same sign-up record the guild panel and the session briefing read
+ * (`getMemberMeta`, stamped with the week it was seen). Every "cannot tell"
+ * answers true: an alert that is silently dropped because the sheet was never
+ * on screen is worse than one that fires for a trial the player skipped.
+ *
+ * @param {Object} [deps] - Injectables, for tests
+ * @param {Function} [deps.read] - Settings reader
+ * @param {Object|null} [deps.tracker] - The guild XP tracker
+ * @param {string|number|null} [deps.characterId] - This character's id
+ * @returns {boolean} Whether to alert
+ */
+export function startAlertWanted({ read, tracker, characterId } = {}) {
+    const get = read || ((key, fallback) => config.getSettingValue?.(key, fallback) ?? fallback);
+    if (get(AUDIENCE_SETTING, 'guild') !== 'signedUp') return true;
+
+    const source = tracker === undefined ? guildXpTracker() : tracker;
+    const id = characterId ?? dataManager.getCurrentCharacterId?.() ?? null;
+    if (!source || id === null || id === undefined) return true;
+
+    const meta = source.getMemberMeta?.(id) || source.getMemberMeta?.(String(id)) || source.getMemberMeta?.(Number(id));
+    if (!meta) return true;
+
+    const weekStart = source.getCurrentWeekStartAt?.() || null;
+    if (weekStart && meta.signupWeekStartAt && meta.signupWeekStartAt !== weekStart) return false;
+    return Boolean(meta.signedUpSkillingTrialHrid || meta.signedUpCombatTrialHrid);
 }
 
 class GuildTrialAlerts {
@@ -289,6 +324,7 @@ class GuildTrialAlerts {
      */
     _announceStartSoon(startAt, now) {
         if (!config.getSetting(START_SETTING, false)) return null;
+        if (!startAlertWanted()) return null;
 
         const remainingMs = startAt - now;
         if (!(remainingMs > 0)) return null;
@@ -326,6 +362,7 @@ class GuildTrialAlerts {
      */
     _announceStarted(source = 'panel') {
         if (!config.getSetting(START_SETTING, false)) return null;
+        if (!startAlertWanted()) return null;
 
         const named = this.trials.length ? ` — ${this.trials.join(', ')}` : '';
         // One key for both sources, so whichever notices first is the one that
