@@ -10,6 +10,8 @@ import {
     DUNGEON_RUNS_BACKUP_VERSION,
     MAX_PLAUSIBLE_RUN_MS,
     MAX_IMPORT_RUNS,
+    MAX_DUNGEON_NAME_CHARS,
+    MAX_TEAM_KEY_CHARS,
     buildDungeonRunsBackupEnvelope,
     serializeBackupWithinLimits,
     parseDungeonRunsJson,
@@ -150,6 +152,17 @@ describe('validateImportedRun', () => {
         expect(validateImportedRun(run({ dungeonName: undefined })).ok).toBe(false);
         expect(validateImportedRun(run({ dungeonName: '' })).ok).toBe(false);
         expect(validateImportedRun(run({ dungeonName: '   ' })).ok).toBe(false);
+    });
+
+    test('rejects a dungeon name or team key past its length cap, and accepts one exactly at it', () => {
+        const longName = validateImportedRun(run({ dungeonName: 'x'.repeat(MAX_DUNGEON_NAME_CHARS + 1) }));
+        expect(longName.ok).toBe(false);
+        expect(longName.reason).toMatch(/dungeon name longer than/);
+        const longTeam = validateImportedRun(run({ teamKey: 'x'.repeat(MAX_TEAM_KEY_CHARS + 1) }));
+        expect(longTeam.ok).toBe(false);
+        expect(longTeam.reason).toMatch(/teamKey longer than/);
+        expect(validateImportedRun(run({ dungeonName: 'x'.repeat(MAX_DUNGEON_NAME_CHARS) })).ok).toBe(true);
+        expect(validateImportedRun(run({ teamKey: 'x'.repeat(MAX_TEAM_KEY_CHARS) })).ok).toBe(true);
     });
 
     test('rejects a non-positive duration', () => {
