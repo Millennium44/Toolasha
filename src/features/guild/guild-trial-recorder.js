@@ -52,8 +52,9 @@ import guildMemberSkills from './guild-member-skills.js';
 import { TRIAL_ACTIVE_MS, trialWeekStart } from './guild-trials-math.js';
 import { isPlaceholderName, isUnnamedRowName } from './guild-trial-units.js';
 import { loadTrialRecord } from './guild-trials-store.js';
-import { recordFinishedTrial, signupParticipation } from './guild-trial-ledger.js';
+import { recordFinishedTrial, sameTrialCycle, signupParticipation, trialCycleAnchor } from './guild-trial-ledger.js';
 import { guildXPTracker } from './guild-xp-tracker.js';
+import { isTestServer } from '../../utils/game-server.js';
 import { scriptVersion } from '../../utils/script-version.js';
 
 /** Object store sessions live in — shared with the rest of the guild history */
@@ -374,7 +375,7 @@ class GuildTrialRecorder {
         if (this.recording) return this.session;
 
         const weekStart = trialWeekStart(at);
-        const seeded = this._takePriorSnapshots(weekStart);
+        const seeded = this._takePriorSnapshots(weekStart, at);
 
         this.session = {
             startedAt: at,
@@ -387,6 +388,8 @@ class GuildTrialRecorder {
             // on so a refresh has something of its own to match the next
             // session against — see `_takePriorSnapshots`
             encounter: seeded?.encounter ?? null,
+            // Which cycle of that encounter, for the same reason — see `trialCycleAnchor`
+            cycleAt: seeded?.cycleAt ?? null,
             snapshots: seeded ? [...seeded.snapshots] : [],
         };
         this.lastActivityAt = at;
@@ -408,25 +411,32 @@ class GuildTrialRecorder {
      * Matched on the trial week and, once either side knows one, the
      * encounter — the same identity {@link _foldContext} uses for the ledger
      * fold — so a different trial in the same guild this week never lends its
-     * history to this one. Consumed once: `_priorSession` is cleared here
-     * whether or not it matched, so a second trial started this same page
+     * history to this one. On the test server, where a guild runs several
+     * cycles a week, the cycle must match too ({@link sameTrialCycle}): the
+     * fight held now, or failing that the moment of the new start, against
+     * the prior session's anchor. Consumed once: `_priorSession` is cleared
+     * here whether or not it matched, so a second trial started this same page
      * load gets nothing to seed from.
      *
      * @param {number} weekStart - The trial week the new session belongs to
-     * @returns {{snapshots: Array<Object>, encounter: string|null}|null}
+     * @param {number} [at] - When the new session starts
+     * @returns {{snapshots: Array<Object>, encounter: string|null, cycleAt: number|null}|null}
      */
-    _takePriorSnapshots(weekStart) {
+    _takePriorSnapshots(weekStart, at = Date.now()) {
         const prior = this._priorSession;
         this._priorSession = null;
         if (!prior || prior.endedAt) return null;
         if (!Number.isFinite(prior.weekStart) || prior.weekStart !== weekStart) return null;
 
-        const encounter = this._foldContext(this._breakdown(), { weekStart }).encounter;
+        const context = this._foldContext(this._breakdown(), { weekStart });
+        const encounter = context.encounter;
         if (prior.encounter && encounter && prior.encounter !== encounter) return null;
+        if (isTestServer() && !sameTrialCycle(prior.cycleAt, context.cycleAt ?? at)) return null;
 
         return {
             snapshots: Array.isArray(prior.snapshots) ? prior.snapshots : [],
             encounter: prior.encounter || encounter || null,
+            cycleAt: Number.isFinite(prior.cycleAt) ? prior.cycleAt : (context.cycleAt ?? null),
         };
     }
 
@@ -493,7 +503,12 @@ class GuildTrialRecorder {
      *
      * @param {Object} breakdown - `guildTrialDamage.breakdown()`
      * @param {Object} session - The session being folded
-     * @returns {{encounter: string|null, tier: number|null, roster: Array<string>, participants: number|null}}
+     * The cycle anchor (`cycleAt`, see `trialCycleAnchor`) is gated the same
+     * way: it is what tells a test-server week's second cycle of an encounter
+     * from its first, in the ledger and in {@link _takePriorSnapshots}.
+     *
+     * @returns {{encounter: string|null, tier: number|null, roster: Array<string>, participants: number|null,
+     *   cycleAt: number|null}}
      */
     _foldContext(breakdown, session) {
         const seen = [breakdown?.spectator?.lastAt, breakdown?.endedAt].find(
@@ -510,6 +525,7 @@ class GuildTrialRecorder {
                       .filter((name) => typeof name === 'string' && name)
                 : [],
             participants: thisWeek ? (breakdown?.participants ?? null) : null,
+            cycleAt: thisWeek ? trialCycleAnchor(breakdown) : null,
         };
     }
 
@@ -667,6 +683,9 @@ class GuildTrialRecorder {
                 guildName: fold.guildName,
                 characterId: fold.characterId,
                 ...fold.context,
+                // The session learned its cycle while the fight was held; the
+                // breakdown at the close may already describe nothing
+                cycleAt: fold.context?.cycleAt ?? fold.session.cycleAt ?? null,
                 participation: this._participation(breakdown, fold.session),
             });
         } catch (error) {
@@ -924,9 +943,12 @@ class GuildTrialRecorder {
         // this session's own identity now, for the next one to match itself
         // against if a reload cuts this one off before it is `stop()`-ped;
         // see `_takePriorSnapshots`
-        if (!this.session.encounter) {
-            const encounter = this._foldContext(breakdown, this.session).encounter;
-            if (encounter) this.session.encounter = encounter;
+        if (!this.session.encounter || !Number.isFinite(this.session.cycleAt)) {
+            const context = this._foldContext(breakdown, this.session);
+            if (!this.session.encounter && context.encounter) this.session.encounter = context.encounter;
+            if (!Number.isFinite(this.session.cycleAt) && Number.isFinite(context.cycleAt)) {
+                this.session.cycleAt = context.cycleAt;
+            }
         }
 
         if (!breakdown?.players?.length) return;

@@ -25,7 +25,11 @@ const game = vi.hoisted(() => ({
     members: [],
     /** The sign-up week the tracker would answer with */
     currentWeek: null,
+    /** Whether this is the test server, where a week runs several cycles */
+    testServer: false,
 }));
+
+vi.mock('../../utils/game-server.js', () => ({ isTestServer: () => game.testServer }));
 
 vi.mock('../../core/config.js', () => ({
     default: {
@@ -170,6 +174,7 @@ beforeEach(() => {
     game.accrued = [];
     game.members = [];
     game.currentWeek = null;
+    game.testServer = false;
     guildTrialRecorder.session = null;
     guildTrialRecorder.lastActivityAt = 0;
     guildTrialRecorder.phase = null;
@@ -1042,6 +1047,62 @@ describe('a trial cut short by a reload keeps its history', () => {
         guildTrialRecorder.noteActivity('trial-fight');
 
         expect(guildTrialRecorder.session.snapshots).toHaveLength(1);
+    });
+
+    describe('a test-server week runs an encounter more than once', () => {
+        const HOUR = 3_600_000;
+        /**
+         * Watch one fight of Trial Badger, then reload before it is stopped.
+         * @param {number} seenAt - When the fight was first seen
+         */
+        const watchThenReload = async (seenAt) => {
+            game.breakdown = breakdown({ encounter: 'badger', fightSeenAt: seenAt });
+            guildTrialRecorder.noteActivity('trial-fight');
+            game.breakdown = breakdown({ encounter: 'badger', fightSeenAt: seenAt, totalDamage: 600_000 });
+            vi.advanceTimersByTime(SNAPSHOT_MS);
+            expect(guildTrialRecorder.session.cycleAt).toBe(seenAt);
+            await reload();
+        };
+
+        test('on the test server, a later cycle of the encounter does not inherit the history', async () => {
+            game.testServer = true;
+            await watchThenReload(now);
+
+            const later = now + 3 * HOUR;
+            vi.setSystemTime(later);
+            game.breakdown = breakdown({ encounter: 'badger', fightSeenAt: later });
+            guildTrialRecorder.noteActivity('trial-fight', later);
+            expect(guildTrialRecorder.session.snapshots).toHaveLength(1);
+            expect(guildTrialRecorder.session.cycleAt).toBe(later);
+        });
+
+        test('on the test server, the same cycle reloaded keeps its history', async () => {
+            game.testServer = true;
+            await watchThenReload(now);
+
+            // The damage module has not restored its fight yet: the start itself is the anchor
+            game.breakdown = breakdown({ encounter: 'badger', totalDamage: 700_000 });
+            guildTrialRecorder.noteActivity('trial-fight', now + 20 * 60_000);
+            expect(guildTrialRecorder.session.snapshots.length).toBeGreaterThan(1);
+            expect(guildTrialRecorder.session.cycleAt).toBe(now);
+        });
+
+        test('on live, the encounter and week alone still decide it', async () => {
+            await watchThenReload(now);
+
+            const later = now + 3 * HOUR;
+            vi.setSystemTime(later);
+            game.breakdown = breakdown({ encounter: 'badger', fightSeenAt: later, totalDamage: 700_000 });
+            guildTrialRecorder.noteActivity('trial-fight', later);
+            expect(guildTrialRecorder.session.snapshots.length).toBeGreaterThan(1);
+        });
+
+        test('the ledger fold carries the cycle', () => {
+            game.breakdown = breakdown({ encounter: 'badger', fightStartMs: now - 60_000, fightSeenAt: now });
+            guildTrialRecorder.noteActivity('trial-fight');
+            guildTrialRecorder.stop('test');
+            expect(game.accrued.at(-1)).toMatchObject({ encounter: 'badger', cycleAt: now - 60_000 });
+        });
     });
 
     test('a different trial week does not inherit the history', async () => {

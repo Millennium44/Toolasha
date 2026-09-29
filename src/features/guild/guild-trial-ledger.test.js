@@ -14,6 +14,9 @@
 import { describe, test, expect, beforeEach, vi } from 'vitest';
 
 const disk = vi.hoisted(() => ({ store: {}, failNextRead: false }));
+const server = vi.hoisted(() => ({ test: false }));
+
+vi.mock('../../utils/game-server.js', () => ({ isTestServer: () => server.test }));
 
 vi.mock('../../core/storage.js', () => ({
     default: {
@@ -103,6 +106,68 @@ function session(snapshots, overrides = {}) {
 beforeEach(() => {
     disk.store = {};
     disk.failNextRead = false;
+    server.test = false;
+});
+
+describe('a test-server week runs an encounter more than once', () => {
+    const HOUR = 3_600_000;
+
+    /**
+     * A Trial Badger contribution from one cycle.
+     * @param {number} damage - Alice's damage
+     * @param {number|null} cycleAt - The fight's cycle anchor
+     * @param {Object} [overrides] - Session fields
+     * @param {string|null} [basis] - `game` to mark the snapshot reconciled
+     * @returns {Object} The contribution
+     */
+    function badgerCycle(damage, cycleAt, overrides = {}, basis = null) {
+        const finished = session([[player('Alice', { damage })]], { startedBy: 'trial-fight', ...overrides });
+        if (basis) finished.snapshots[0].basis = basis;
+        return sessionContribution(finished, { encounter: 'badger', cycleAt });
+    }
+    const monday = badgerCycle(900, WEEK + 17 * HOUR);
+    const wednesday = badgerCycle(400, WEEK + 2 * 24 * HOUR + 17 * HOUR, { startedAt: WEEK + 2 * 24 * HOUR });
+
+    test('on live, the week holds the encounter once, as it always has', () => {
+        const cycle = accrueTrial(accrueTrial(emptyLedgerCycle(WEEK, 'g'), monday), wednesday);
+        expect(cycle.trials).toHaveLength(1);
+        expect(cycle.members.alice).toMatchObject({ trials: 1, damage: 900 });
+    });
+
+    test('on the test server, a later cycle of the encounter is a trial of its own', () => {
+        server.test = true;
+        const cycle = accrueTrial(accrueTrial(emptyLedgerCycle(WEEK, 'g'), monday), wednesday);
+        expect(cycle.trials).toHaveLength(2);
+        expect(cycle.trials.map((trial) => trial.cycleAt)).toEqual([monday.cycleAt, wednesday.cycleAt]);
+        expect(cycle.members.alice).toMatchObject({ trials: 2, damage: 1300 });
+    });
+
+    test('on the test server, readings of one cycle are still one trial', () => {
+        server.test = true;
+        // The game's totals for Monday, anchored on its first sight half an hour in
+        const mondayGame = badgerCycle(1000, WEEK + 17.5 * HOUR, { startedAt: WEEK + 9 }, 'game');
+        const cycle = accrueTrial(accrueTrial(emptyLedgerCycle(WEEK, 'g'), monday), mondayGame);
+        expect(cycle.trials).toHaveLength(1);
+        expect(cycle.members.alice).toMatchObject({ trials: 1, damage: 1000 });
+    });
+
+    test('a reading with no cycle anchor cannot tell cycles apart, so it folds as one', () => {
+        server.test = true;
+        const cycle = accrueTrial(accrueTrial(emptyLedgerCycle(WEEK, 'g'), monday), badgerCycle(400, null));
+        expect(cycle.trials).toHaveLength(1);
+    });
+
+    test('a sign-up roster covering the encounter counts each cycle as a trial', () => {
+        server.test = true;
+        const participation = { badger: { names: ['Alice', 'Bob'], source: 'signup', at: WEEK } };
+        const cycle = accrueTrial(accrueTrial(emptyLedgerCycle(WEEK, 'g'), monday, { participation }), wednesday, {
+            participation,
+        });
+        const { rows, trialsKnown } = foldLedgerCycles([cycle]);
+        expect(trialsKnown).toBe(2);
+        expect(rows.find((row) => row.name === 'Alice')).toMatchObject({ participated: 2, observable: 2 });
+        expect(rows.find((row) => row.name === 'Bob')).toMatchObject({ participated: 2, observable: 2 });
+    });
 });
 
 describe('ledgerScope and its keys', () => {

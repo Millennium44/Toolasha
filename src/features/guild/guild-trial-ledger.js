@@ -76,8 +76,9 @@
  */
 
 import storage from '../../core/storage.js';
-import { trialFromHrid, trialWeekStart } from './guild-trials-math.js';
+import { TRIAL_ACTIVE_MS, trialFromHrid, trialWeekStart } from './guild-trials-math.js';
 import { isUnnamedRowName } from './guild-trial-units.js';
+import { isTestServer } from '../../utils/game-server.js';
 
 /** Object store the ledger lives in — shared with the rest of the guild history */
 export const LEDGER_STORE = 'guildHistory';
@@ -96,6 +97,47 @@ const CYCLE_SEPARATOR = '__';
  * records rather than an unbounded pile.
  */
 export const MAX_LEDGER_CYCLES = 26;
+
+/**
+ * How far apart two readings of one trial's start can lie.
+ *
+ * A trial's cycle is anchored on its fight start (see {@link trialCycleAnchor}),
+ * which is the game's `combatStartTime` where one was seen and this client's
+ * first sight of the fight otherwise — up to the trial's hour later. The quarter
+ * hour covers transitions and clock skew between the two.
+ */
+export const TRIAL_CYCLE_SPAN_MS = TRIAL_ACTIVE_MS + 15 * 60_000;
+
+/**
+ * When a watched fight started, as a cycle identity.
+ *
+ * The game's own `combatStartTime` (`fightStartMs`) where a tier opening was
+ * seen; otherwise when this client first saw the fight (`fightSeenAt`), which
+ * the damage module restamps for each new fight and carries through a reload.
+ *
+ * @param {Object|null} breakdown - `guildTrialDamage.breakdown()`
+ * @returns {number|null} Epoch ms, or null when no fight is held
+ */
+export function trialCycleAnchor(breakdown) {
+    if (Number.isFinite(breakdown?.fightStartMs) && breakdown.fightStartMs > 0) return breakdown.fightStartMs;
+    if (Number.isFinite(breakdown?.fightSeenAt) && breakdown.fightSeenAt > 0) return breakdown.fightSeenAt;
+    return null;
+}
+
+/**
+ * Whether two cycle anchors can be the same trial.
+ *
+ * An anchor missing on either side cannot tell two cycles apart, so it answers
+ * yes: the one-trial-per-encounter-per-week rule then applies as it always did.
+ *
+ * @param {number|null|undefined} a - A {@link trialCycleAnchor}
+ * @param {number|null|undefined} b - Another
+ * @returns {boolean}
+ */
+export function sameTrialCycle(a, b) {
+    if (!Number.isFinite(a) || !Number.isFinite(b)) return true;
+    return Math.abs(a - b) <= TRIAL_CYCLE_SPAN_MS;
+}
 
 /** The windows the table offers, in cycles. `null` is everything kept. */
 export const LEDGER_WINDOWS = [
@@ -258,11 +300,15 @@ export function memberKey(name) {
  * @param {number|null} [context.tier] - Highest tier the stream stated
  * @param {Array<string>} [context.roster] - Names the game stated for the party
  * @param {number|null} [context.participants] - Party size the game stated
+ * @param {number|null} [context.cycleAt] - The fight's {@link trialCycleAnchor}
  * @returns {{trialId: string, weekStart: number, at: number, encounter: string|null,
  *   tier: number|null, seconds: number, totals: Object, members: Array<Object>}|null}
  *   The contribution, or null when the session recorded nothing to fold
  */
-export function sessionContribution(session, { encounter = null, tier = null, roster = [], participants = null } = {}) {
+export function sessionContribution(
+    session,
+    { encounter = null, tier = null, roster = [], participants = null, cycleAt = null } = {}
+) {
     const snapshots = Array.isArray(session?.snapshots) ? session.snapshots : [];
     const last = snapshots[snapshots.length - 1] || null;
     const rosterNames = (roster || []).map((name) => String(name || '').trim()).filter(Boolean);
@@ -330,6 +376,7 @@ export function sessionContribution(session, { encounter = null, tier = null, ro
         basis: last?.basis === 'game' ? 'game' : 'stream',
         automatic: session?.startedBy !== 'button',
         encounter: encounter || null,
+        cycleAt: Number.isFinite(cycleAt) ? cycleAt : null,
         tier: Number.isFinite(tier) ? tier : null,
         seconds,
         participants: Number.isFinite(participants) ? participants : null,
@@ -360,14 +407,24 @@ const BASIS_RANK = { stream: 0, game: 1 };
  * finished fight's cumulative totals. Folding both would count every member's
  * whole trial again.
  *
+ * On the test server a guild runs several cycles a week, so there the same
+ * encounter is one trial only within one cycle ({@link sameTrialCycle}); a
+ * later cycle of it is a trial of its own.
+ *
  * @param {Array<Object>} trials - The cycle's trial entries
  * @param {Object} contribution - From {@link sessionContribution}
+ * @param {boolean} perCycle - Whether a week can hold the encounter more than once
  * @returns {number} The held entry's position, or -1
  */
-function heldTrialIndex(trials, contribution) {
+function heldTrialIndex(trials, contribution, perCycle) {
     const byId = trials.findIndex((trial) => trial?.trialId === contribution.trialId);
     if (byId !== -1 || !contribution.encounter) return byId;
-    return trials.findIndex((trial) => trial?.encounter && trial.encounter === contribution.encounter);
+    return trials.findIndex(
+        (trial) =>
+            trial?.encounter &&
+            trial.encounter === contribution.encounter &&
+            (!perCycle || sameTrialCycle(trial.cycleAt, contribution.cycleAt))
+    );
 }
 
 /**
@@ -410,13 +467,15 @@ function supersedes(held, contribution) {
  *   or the server's own per-encounter stats. Merged into the cycle, freshest
  *   roster per trial winning — a sign-up sheet read at the end of the cycle
  *   knows about members who joined after the first trial was folded.
+ * @param {boolean} [evidence.perCycle] - Whether one week can hold an encounter more than once;
+ *   the test server's several cycles a week, by default
  * @returns {Object} The updated cycle
  */
-export function accrueTrial(cycle, contribution, { participation = null } = {}) {
+export function accrueTrial(cycle, contribution, { participation = null, perCycle = isTestServer() } = {}) {
     if (!contribution?.trialId) return cycle;
 
     const trials = Array.isArray(cycle?.trials) ? cycle.trials : [];
-    const heldAt = heldTrialIndex(trials, contribution);
+    const heldAt = heldTrialIndex(trials, contribution, perCycle);
     const held = heldAt === -1 ? null : trials[heldAt];
     if (held && !supersedes(held, contribution)) return cycle;
 
@@ -464,6 +523,8 @@ export function accrueTrial(cycle, contribution, { participation = null } = {}) 
         basis: contribution.basis || 'stream',
         automatic: contribution.automatic !== false,
         encounter: contribution.encounter,
+        // Which cycle of the encounter, where a fight start was known. Additive
+        ...(Number.isFinite(contribution.cycleAt) ? { cycleAt: contribution.cycleAt } : {}),
         tier: contribution.tier,
         seconds: contribution.seconds,
         participants: contribution.participants,
@@ -570,6 +631,9 @@ export function cycleParticipation(cycle, key, tally = null) {
     // fight named and the sheet missed still counts as having taken part
     let known = rosterKeys.length;
     let observable = rosterKeys.length;
+    // Anchors of the covered fights seen so far, per encounter: a roster is one
+    // trial, and only a test-server week holds a later cycle of it beside it
+    const coveredCycles = {};
     for (const trial of trials) {
         const inFight = Array.isArray(trial?.memberKeys)
             ? trial.memberKeys.includes(key)
@@ -578,7 +642,22 @@ export function cycleParticipation(cycle, key, tally = null) {
               seenTrials > 0;
         const covered = trial?.encounter && rosters[trial.encounter];
         if (covered) {
-            if (inFight && !named(rosters[trial.encounter]?.names)) participated += 1;
+            const inRoster = named(rosters[trial.encounter]?.names);
+            const seen = (coveredCycles[trial.encounter] ||= []);
+            const another =
+                seen.length > 0 &&
+                Number.isFinite(trial.cycleAt) &&
+                seen.every((anchor) => !sameTrialCycle(anchor, trial.cycleAt));
+            seen.push(trial.cycleAt);
+            if (another) {
+                // A later cycle of a roster-covered encounter: a trial of its
+                // own, which the same week's sign-up sheet speaks for as well
+                known += 1;
+                observable += 1;
+                if (inFight || inRoster) participated += 1;
+                continue;
+            }
+            if (inFight && !inRoster) participated += 1;
             continue;
         }
         known += 1;
@@ -1016,6 +1095,7 @@ const ledgerWriteChains = new Map();
  * @param {number|null} [options.tier] - Highest tier the stream stated
  * @param {Array<string>} [options.roster] - Names the game stated for the party
  * @param {number|null} [options.participants] - Party size the game stated
+ * @param {number|null} [options.cycleAt] - The fight's {@link trialCycleAnchor}
  * @param {Object|null} [options.participation] - Trial key → roster, from
  *   {@link signupParticipation} and the server's own per-encounter stats. This
  *   is the only evidence the ledger ever gets about trials it did not watch,
@@ -1030,9 +1110,10 @@ export async function recordFinishedTrial({
     tier = null,
     roster = [],
     participants = null,
+    cycleAt = null,
     participation = null,
 } = {}) {
-    const contribution = sessionContribution(session, { encounter, tier, roster, participants });
+    const contribution = sessionContribution(session, { encounter, tier, roster, participants, cycleAt });
     if (!contribution) return null;
 
     const scope = ledgerScope(guildName, characterId);
