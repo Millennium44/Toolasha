@@ -869,6 +869,21 @@ describe('the loadout selection is remembered', () => {
         expect(el.querySelector('#mwi-csim-loadout-select').value).toBe('');
     });
 
+    test('a loadout whose name has a quote and a bracket can be selected and applied', async () => {
+        const odd = 'Q"<i>x';
+        bridge.snapshots = [{ name: odd, actionTypeHrid: '/action_types/combat' }];
+        const { el, editor } = await openEditor();
+
+        const select = el.querySelector('#mwi-csim-loadout-select');
+        expect(select.querySelector('i')).toBeNull();
+        select.value = odd;
+        select.dispatchEvent(new Event('change'));
+        await Promise.resolve();
+
+        expect(bridge.applied).toContain(odd);
+        expect(editor.getSelectedLoadoutName()).toBe(odd);
+    });
+
     test('going back to Current Gear is remembered too', async () => {
         settings.values.set('simEditorLoadoutName', 'Bruteforce');
         bridge.snapshots = [{ name: 'Bruteforce', actionTypeHrid: '/action_types/combat' }];
