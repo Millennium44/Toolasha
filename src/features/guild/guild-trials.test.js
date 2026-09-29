@@ -432,6 +432,30 @@ describe('analyseTrial', () => {
         expect(analysis.tiersClearedSoFar).toBe(2);
     });
 
+    test('a skilling bar read again tiers later is timed off its current tier only', () => {
+        // Left for forty minutes and back three tiers on: the new tier's pool
+        // happened to read higher than the old one's last, so nothing fell and
+        // the monotonic run reached back across the gap and every tier in it
+        const analysis = analyseTrial(
+            record({
+                name: 'Trial Milking',
+                kind: 'skilling',
+                level: 110,
+                tier: 2,
+                samples: [
+                    { t: now, readings: [{ current: 1_000_000, max: 4_000_000 }] },
+                    { t: now + 20_000, readings: [{ current: 1_400_000, max: 4_000_000 }] },
+                    { t: now + 2_420_000, readings: [{ current: 2_000_000, max: 5_200_000 }] },
+                    { t: now + 2_440_000, readings: [{ current: 2_400_000, max: 5_200_000 }] },
+                ],
+            }),
+            { timeLeftMs: 10 * 60_000 }
+        );
+
+        expect(analysis.rate).toBeCloseTo(20, 9); // 400,000 over 20s, this tier's
+        expect(analysis.remaining).toBe(2_800_000);
+    });
+
     test('one sample is not a rate', () => {
         const analysis = analyseTrial(
             record({ samples: [{ t: now, readings: [{ current: 618_000, max: 618_000 }] }] }),
