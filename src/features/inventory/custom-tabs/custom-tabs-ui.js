@@ -1293,8 +1293,14 @@ export default class CustomTabsUI {
         const charId = dataManager.getCurrentCharacterId();
         const held = this._savedNativeInvTab;
         this._savedNativeInvTab = null;
-        // Pre-patch DOM: nothing to restore, and no storage read on every exit
-        if (!charId || !this._findNativeInventoryTabList(this._findInvContainer())) return;
+        if (!charId) return;
+        if (!this._findNativeInventoryTabList(this._findInvContainer())) {
+            // Inventory unmounted (the view closed by a placement switch while the character panel
+            // shows another tab): the stored copy is handed back when the strip next mounts
+            if (held?.charId === charId) this._storedNativeTabPending = true;
+            // Pre-patch DOM: nothing to restore, and no storage read on every exit
+            return;
+        }
         const storageKey = `${NATIVE_TAB_STORAGE_PREFIX}${charId}`;
 
         let key = held?.charId === charId ? held.key : null;
