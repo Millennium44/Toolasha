@@ -40,7 +40,7 @@ vi.mock('../../core/dom-observer.js', () => ({
     },
 }));
 
-const db = vi.hoisted(() => ({ settings: {}, quota: false, writes: 0 }));
+const db = vi.hoisted(() => ({ settings: {}, quota: false, writes: 0, closing: false, teardown: new Set() }));
 vi.mock('../../core/storage.js', () => ({
     default: {
         get: vi.fn(async (key, store, fallback = null) => {
@@ -56,6 +56,9 @@ vi.mock('../../core/storage.js', () => ({
                 : { found: false, value: null };
         }),
         set: vi.fn(async (key, value, store) => {
+            // After `closeForTeardown()` the real `set` only queues, and on a
+            // page being destroyed the queue never lands.
+            if (db.closing) return true;
             db.writes += 1;
             db[store] = db[store] || {};
             // Round-trip through JSON, the way IndexedDB's structured clone
@@ -65,6 +68,16 @@ vi.mock('../../core/storage.js', () => ({
             return true;
         }),
         isQuotaExceeded: vi.fn(() => db.quota),
+        onBeforeTeardown: vi.fn((listener) => {
+            db.teardown.add(listener);
+            return () => db.teardown.delete(listener);
+        }),
+        // The real one's order: listeners, then the flag that turns writes
+        // into queued ones.
+        closeForTeardown: vi.fn(() => {
+            for (const listener of Array.from(db.teardown)) listener('pagehide');
+            db.closing = true;
+        }),
     },
 }));
 
@@ -1569,6 +1582,38 @@ describe('messages that were only ever live survive a server restart', () => {
         await settle();
         expect(storedTexts()).toEqual([OLD, JOINED]);
         expect(storedTexts(TRADE_KEY)).toEqual([TRADE_LINE]);
+    });
+
+    test('a page close lands the waiting lines before the teardown closes storage', async () => {
+        // The entrypoint's own `pagehide` listener is registered long before
+        // any feature's, so it runs first.
+        const entrypointPageHide = () => storage.closeForTeardown('pagehide');
+        window.addEventListener('pagehide', entrypointPageHide);
+        try {
+            const container = buildPartyChat();
+            chatHistoryExtender.initialize();
+            await settle();
+            expect(chatHistoryPersistence.loaded).toBe(true);
+            container.appendChild(makeMessage(JOINED));
+            await settle();
+
+            window.dispatchEvent(new Event('pagehide'));
+            await settle();
+            expect(storedTexts()).toEqual([OLD, JOINED]);
+        } finally {
+            window.removeEventListener('pagehide', entrypointPageHide);
+            db.closing = false;
+        }
+    });
+
+    test('a disable stops the pre-teardown flush', async () => {
+        buildPartyChat();
+        chatHistoryExtender.initialize();
+        await settle();
+        expect(db.teardown.size).toBe(1);
+
+        await chatHistoryExtender.disable();
+        expect(db.teardown.size).toBe(0);
     });
 
     test('a failed first read is not remembered: the next load reads again once storage answers', async () => {

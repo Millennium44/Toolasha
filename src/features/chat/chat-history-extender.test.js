@@ -67,6 +67,7 @@ vi.mock('../../core/storage.js', () => ({
             return true;
         }),
         isQuotaExceeded: vi.fn(() => false),
+        onBeforeTeardown: vi.fn(() => () => {}),
     },
 }));
 vi.mock('../../utils/character-key.js', () => ({ characterKey: (base) => `${base}_char1` }));

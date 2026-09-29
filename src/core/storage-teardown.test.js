@@ -227,6 +227,45 @@ describe('Storage on page teardown', () => {
         expect(storage.pendingWrites.get('settings:late')).toMatchObject({ value: 'value' });
     });
 
+    // A writer holding its own buffer, whose `pagehide` listener would run after
+    // the entrypoint's: its immediate write has to open on the live connection.
+    test('a pre-teardown listener writes before the connection closes', async () => {
+        const { db, log, data } = createRecordingDb();
+        storage.db = db;
+        storage.available = true;
+        const off = storage.onBeforeTeardown(() => {
+            storage.set('buffered', 'last lines', 'settings', true);
+        });
+        try {
+            await storage.closeForTeardown('pagehide');
+            await Promise.resolve();
+
+            expect(log).toEqual(['transaction:readwrite', 'close']);
+            await vi.waitFor(() => expect(data.get('buffered')).toBe('last lines'));
+            expect(storage.pendingWrites.size).toBe(0);
+        } finally {
+            off();
+        }
+    });
+
+    test('a throwing pre-teardown listener does not stop the teardown, and unsubscribing works', async () => {
+        const { db, log } = createRecordingDb();
+        storage.db = db;
+        const later = vi.fn();
+        const offThrowing = storage.onBeforeTeardown(() => {
+            throw new Error('boom');
+        });
+        const offLater = storage.onBeforeTeardown(later);
+        offLater();
+        try {
+            await storage.closeForTeardown('pagehide');
+            expect(log).toEqual(['close']);
+            expect(later).not.toHaveBeenCalled();
+        } finally {
+            offThrowing();
+        }
+    });
+
     test('closing twice closes once', async () => {
         const { db, log } = createRecordingDb();
         storage.db = db;
