@@ -1604,7 +1604,7 @@ export const settingsGroups = {
                 label: 'Market: Bulk sell to vendor when market is no better',
                 type: 'checkbox',
                 default: true,
-                help: 'When the game vendor pays at least as much per item as the market would net after market tax (e.g. vendor 96 vs ask 100 → 95 net at a 5% tax), the Bulk Sell Assistant opens the item\'s inventory menu with "All" selected so one click on "Sell For … Coins" vendors the whole stack instead. Only applies to unenhanced items.',
+                help: 'When the game vendor pays at least as much per item as the market would net after market tax (e.g. vendor 96 vs ask 100 → 96 net at a 4% tax), the Bulk Sell Assistant opens the item\'s inventory menu with "All" selected so one click on "Sell For … Coins" vendors the whole stack instead. Only applies to unenhanced items.',
             },
             market_bulkSellMinListingValue: {
                 id: 'market_bulkSellMinListingValue',

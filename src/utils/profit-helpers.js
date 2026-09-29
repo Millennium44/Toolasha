@@ -242,11 +242,11 @@ export function outputTaxRate(taxRate = MARKET_TAX) {
 /**
  * Calculate price after marketplace tax
  * @param {number} price - Price before tax
- * @param {number} [taxRate=MARKET_TAX] - Tax rate (e.g., 0.05 for 5%)
+ * @param {number} [taxRate=MARKET_TAX] - Tax rate (e.g., 0.04 for 4%)
  * @returns {number} Price after tax deduction
  *
  * @example
- * calculatePriceAfterTax(100) // Returns 95 (MARKET_TAX is 5% since the marketplace patch)
+ * calculatePriceAfterTax(100) // Returns 96 (MARKET_TAX is 4% since the September 2026 market patch)
  */
 export function calculatePriceAfterTax(price, taxRate = MARKET_TAX) {
     return price * (1 - outputTaxRate(taxRate));

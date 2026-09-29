@@ -11,7 +11,7 @@ import { getItemPrice } from '../../utils/market-data.js';
 import { getCustomPrice } from '../settings/custom-price-overrides.js';
 import { calculatePriceAfterTax } from '../../utils/profit-helpers.js';
 import { calculateEVBatch, terminateEVWorkerPool } from '../../utils/ev-worker-manager.js';
-import { MARKET_TAX } from '../../utils/profit-constants.js';
+import { MARKET_TAX, COWBELL_BAG_TAX } from '../../utils/profit-constants.js';
 import { PATIENT_TICK_SETTING_KEYS } from '../../utils/patient-tick.js';
 import { IRONCOW_VALUATION_SETTING, isIronCowCharacter } from '../../utils/ironcow-valuation.js';
 
@@ -456,7 +456,7 @@ class ExpectedValueCalculator {
             return { value: 1, source: 'coin', needsTax: false };
         }
 
-        // Special case: Cowbell (use bag price ÷ 10, with 18% tax)
+        // Special case: Cowbell (use bag price ÷ 10, taxed at the bag's own rate)
         if (itemHrid === this.COWBELL_HRID) {
             if (!config.getSetting('expectedValue_includeCowbells')) {
                 return { value: 0, source: 'cowbell', needsTax: false };
@@ -465,8 +465,12 @@ class ExpectedValueCalculator {
             const bagValue = getItemPrice(this.COWBELL_BAG_HRID, { context: 'profit', side: 'sell' }) || 0;
 
             if (bagValue > 0) {
-                // Apply 18% market tax (Cowbell Bag only), then divide by 10
-                return { value: calculatePriceAfterTax(bagValue, 0.18) / 10, source: 'cowbell', needsTax: false };
+                // Apply the Cowbell Bag's own market tax, then divide by 10
+                return {
+                    value: calculatePriceAfterTax(bagValue, COWBELL_BAG_TAX) / 10,
+                    source: 'cowbell',
+                    needsTax: false,
+                };
             }
             return null; // No bag price available
         }
