@@ -471,3 +471,26 @@ describe('the live four-party capture — trials timed from their clears alone',
         }
     );
 });
+
+describe('a combat trial timed from its clears', () => {
+    test('its damage rate is priced on the combat ladder, not the skilling pool', () => {
+        // Trial Badger: two 330,000-health Badgers a wave, 36 signed up, T7
+        // killed 30 s after T6. One interval, so the rate is held flat
+        const timing = tierTimingForecast(
+            { tierSeenAt: { 6: 0, 7: 30_000 } },
+            { kind: 'combat', participants: 36, workBase: 660_000, timeLeftMs: 57 * 60_000, now: 30_000 }
+        );
+        const waveT7 = 660_000 * ((100 + 10 * 7) / 110) * 1.36;
+        expect(timing.workPerSecond).toBeCloseTo(waveT7 / 30, 6);
+    });
+
+    test('with no wave health known it states the tier times and no rate', () => {
+        const timing = tierTimingForecast(
+            { tierSeenAt: { 6: 0, 7: 30_000 } },
+            { kind: 'combat', participants: 36, workBase: null, timeLeftMs: 57 * 60_000, now: 30_000 }
+        );
+        expect(timing.workPerSecond).toBeNull();
+        expect(timing.lastTierMs).toBe(30_000);
+        expect(timing.etaMsToNextTier).toBeGreaterThan(0);
+    });
+});

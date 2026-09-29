@@ -47,7 +47,7 @@
  * Pure throughout: records in, numbers out, no DOM and no clock of its own.
  */
 
-import { tierPoolWork, tierWorkShape, TRIAL_ACTIVE_MS, TRIAL_MAX_TIER } from './guild-trials-math.js';
+import { PARTICIPANT_SCALE_STEP, tierWorkShape, TRIAL_ACTIVE_MS, TRIAL_MAX_TIER } from './guild-trials-math.js';
 
 /** Below this many timestamped tier badges there is no interval to measure. */
 export const MIN_TIER_CLEARS = 2;
@@ -302,13 +302,33 @@ export function rateAtTier(fit, tier) {
 }
 
 /**
+ * A rate in shares of the first tier per millisecond, as work or damage a second.
+ *
+ * A share is the first tier's total before participants, on whichever ladder, so
+ * pricing one needs only that total and the 1%-per-participant scale. Pricing it
+ * through the skilling pool formula put a combat tier on the skilling ladder's
+ * shape, a few percent off by T8.
+ *
+ * @param {number|null} sharePerMs - Shares per millisecond
+ * @param {number|null} base - The first tier's total before participants
+ * @param {number} participants - Members signed up
+ * @returns {number|null} Per second, or null without a base
+ */
+function pricedPerSecond(sharePerMs, base, participants) {
+    if (!Number.isFinite(sharePerMs) || !Number.isFinite(base) || base <= 0) return null;
+    const party = 1 + PARTICIPANT_SCALE_STEP * Math.max(0, Number(participants) || 0);
+    return sharePerMs * base * party * 1000;
+}
+
+/**
  * Everything a card can say about a trial this character did not join.
  *
  * @param {Object} record - A tile record from the store
  * @param {Object} [options] - Context
  * @param {'skilling'|'combat'} [options.kind] - Which ladder the pools sit on
  * @param {number} [options.participants] - Members signed up, for printing a work rate
- * @param {number|null} [options.workBase] - The skill's first-tier work, for printing a work rate
+ * @param {number|null} [options.workBase] - The first tier's total before participants — a skill's work,
+ *   or a combat wave's health — for printing a rate
  * @param {number|null} [options.timeLeftMs] - Active time left in the trial
  * @param {number} [options.now] - Clock, for how far into the current tier the guild is
  * @param {number|null} [options.bankedTiers] - Tiers banked, when the analysis knows better than the badges
@@ -385,20 +405,13 @@ export function tierTimingForecast(
     const atFinalTier = banked >= TRIAL_MAX_TIER;
     if (atFinalTier) {
         const fitRate = rateAtTier(fit, TRIAL_MAX_TIER);
-        const need = tierWorkShape(kind, TRIAL_MAX_TIER);
-        const pool = Number.isFinite(workBase)
-            ? tierPoolWork({ baseWork: workBase, tier: TRIAL_MAX_TIER, participants })
-            : null;
         return {
             measured: clears.length,
             intervals: rates.length,
             currentTier: TRIAL_MAX_TIER,
             bankedTiers: banked,
             sharePerMs: fitRate,
-            workPerSecond:
-                Number.isFinite(pool) && Number.isFinite(need) && need > 0 && Number.isFinite(fitRate)
-                    ? (fitRate * pool * 1000) / need
-                    : null,
+            workPerSecond: pricedPerSecond(fitRate, workBase, participants),
             declinePerTier: Number.isFinite(fit.perTier) ? fit.perTier : null,
             lastTier: rates[rates.length - 1].tier,
             lastTierMs: rates[rates.length - 1].ms,
@@ -464,15 +477,9 @@ export function tierTimingForecast(
         limitedBy = 'no-clock';
     }
 
-    // Printed only where the skill's first-tier work is known. The walk above
-    // never needed it; a "12.4 work/s" caption does.
-    const poolNow = Number.isFinite(workBase)
-        ? tierPoolWork({ baseWork: workBase, tier: currentTier, participants })
-        : null;
-    const workPerSecond =
-        Number.isFinite(poolNow) && Number.isFinite(needNow) && needNow > 0 && Number.isFinite(shareNow)
-            ? (shareNow * poolNow * 1000) / needNow
-            : null;
+    // Printed only where the first tier's total is known. The walk above never
+    // needed it; a "12.4 work/s" caption does.
+    const workPerSecond = pricedPerSecond(shareNow, workBase, participants);
 
     return {
         measured: clears.length,
