@@ -3648,9 +3648,13 @@ class GuildTrialDamage {
             // The stream says the tier outright; nothing else on this client does
             tier: this.tier,
             // The spectated battle, which `guild-trials.js` pairs with
-            // `fightStartMs` to open the board once per fight. Always 1 on the
+            // `fightSeenAt` to open the board once per fight. Always 1 on the
             // wire so far, so it is never a fight identity on its own
             guildBattleId: this.guildBattleId,
+            // When this client first saw the fight held here, on its own clock:
+            // restamped for each new fight and steady across its tiers, where
+            // `fightStartMs` is still null until a tier opening is seen
+            fightSeenAt: this.startedAt || null,
             // The boss's own bar, per tick — the pool reading the panel scrapes
             // off the DOM, from the wire instead
             pool: this.pool ? { ...this.pool } : null,

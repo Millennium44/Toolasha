@@ -3870,6 +3870,7 @@ describe('the panel, end to end', () => {
                 pool: { current: 400_000, max: 600_000, tier: 2, at: now, encounter: 'chameleon' },
                 guildBattleId: 42,
                 fightStartMs: now,
+                fightSeenAt: now,
                 endedAt: null,
                 ...overrides,
             };
@@ -3910,10 +3911,28 @@ describe('the panel, end to end', () => {
             game.breakdown = watchedFight({
                 guildBattleId: 43,
                 fightStartMs: now + 60_000,
+                fightSeenAt: now + 60_000,
                 pool: { ...watchedFight().pool, at: now + 60_000, tier: 3 },
             });
             fire(buildTab([{ name: 'Trial Chameleon', level: 120, points: 800, bar: '' }]));
             expect(game.scoreboardOpens).toBe(2);
+        });
+
+        test('a fight first watched mid-tier does not reopen when its next tier states the start', () => {
+            // Ticks alone: no tier opening yet, so no `fightStartMs`
+            game.breakdown = watchedFight({ fightStartMs: null });
+            fire(buildTab([{ name: 'Trial Chameleon', level: 110, points: 400, bar: '' }]));
+            expect(game.scoreboardOpens).toBe(1);
+            game.scoreboardOpen = false;
+
+            vi.setSystemTime(now + 90_000);
+            game.breakdown = watchedFight({
+                fightStartMs: now + 85_000,
+                pool: { ...watchedFight().pool, at: now + 90_000, tier: 3 },
+            });
+            fire(buildTab([{ name: 'Trial Chameleon', level: 120, points: 800, bar: '' }]));
+            expect(game.scoreboardOpens).toBe(1);
+            expect(game.scoreboardOpen).toBe(false);
         });
 
         test('never opens it when the setting is off', () => {

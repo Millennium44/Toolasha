@@ -2512,7 +2512,7 @@ class GuildTrials {
         /** Whether that one-shot read has been made (or is in flight) */
         this.lastSessionChecked = false;
         /**
-         * The fight identity (`guildBattleId_fightStartMs`) the scoreboard has
+         * The fight identity (`guildBattleId_fightSeenAt`) the scoreboard has
          * already been auto-opened for — set once and never re-triggered for
          * the same fight, so closing it by hand does not pop it back open on
          * the next render pass. Reset on a character switch.
@@ -4793,8 +4793,8 @@ class GuildTrials {
      * watched, if the setting allows it.
      *
      * "Once per trial" is a fight identity — `guildBattleId` paired with
-     * `fightStartMs`, the same pair `guild-trial-damage.js` uses to tell one
-     * trial's fight from the next — not "once per render": `watched` goes
+     * `fightSeenAt`, which `guild-trial-damage.js` restamps for each new
+     * fight — not "once per render": `watched` goes
      * null between ticks whenever the pool reading goes stale for a moment,
      * and that must not read as a new fight starting. The key is recorded
      * whether or not the board is still open a moment later, so closing it by
@@ -4814,7 +4814,10 @@ class GuildTrials {
         if (breakdown.endedAt !== null && breakdown.endedAt !== undefined) return;
         if (breakdown.guildBattleId === null || breakdown.guildBattleId === undefined) return;
 
-        const key = `${breakdown.guildBattleId}_${breakdown.fightStartMs ?? ''}`;
+        // `fightSeenAt`, not `fightStartMs`: a fight first watched mid-tier has
+        // no start until its next tier opens, and the key changing then popped
+        // the board back open on a user who had closed it
+        const key = `${breakdown.guildBattleId}_${breakdown.fightSeenAt ?? ''}`;
         if (this._autoOpenedTrialKey === key) return;
         this._autoOpenedTrialKey = key;
 
