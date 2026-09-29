@@ -4033,6 +4033,17 @@ export const settingsGroups = {
                 max: 120,
                 help: 'How long before a scheduled guild trial to announce it.',
             },
+            notifications_trialAudience: {
+                id: 'notifications_trialAudience',
+                label: 'Guild trial start alerts: who they are for',
+                type: 'select',
+                default: 'guild',
+                options: [
+                    { value: 'guild', label: 'Every guild trial' },
+                    { value: 'signedUp', label: 'Only when I am signed up this week' },
+                ],
+                help: 'Applies to the “about to start” and “has started” alerts above; the results alert is unchanged. When the guild panel has not shown this character’s sign-up yet, the alert fires anyway rather than stay silent.',
+            },
             notifications_trialResults: {
                 id: 'notifications_trialResults',
                 label: 'Notify when a guild trial finishes, with what it paid',

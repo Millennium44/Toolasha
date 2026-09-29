@@ -13,7 +13,15 @@
 
 import { describe, test, expect, beforeEach, vi } from 'vitest';
 
-const game = vi.hoisted(() => ({ settings: {}, values: {}, sent: [], wsHandlers: {} }));
+const game = vi.hoisted(() => ({
+    settings: {},
+    values: {},
+    sent: [],
+    wsHandlers: {},
+    tracker: null,
+    meta: {},
+    week: 100,
+}));
 
 vi.mock('../../core/config.js', () => ({
     default: {
@@ -22,6 +30,8 @@ vi.mock('../../core/config.js', () => ({
         onSettingChange: () => {},
     },
 }));
+vi.mock('../../core/data-manager.js', () => ({ default: { getCurrentCharacterId: () => 7 } }));
+vi.mock('../../utils/bundle-bridge.js', () => ({ guildXpTracker: () => game.tracker }));
 vi.mock('../../core/websocket.js', () => ({
     default: {
         on: (type, handler) => {
@@ -49,8 +59,10 @@ const {
     leadMinutes,
     MAX_LEAD_MINUTES,
     MIN_LEAD_MINUTES,
+    AUDIENCE_SETTING,
     RESULTS_SETTING,
     resultsMessage,
+    startAlertWanted,
     START_SETTING,
 } = await import('./guild-trial-alerts.js');
 
@@ -61,6 +73,11 @@ beforeEach(() => {
     game.values = {};
     game.sent = [];
     game.wsHandlers = {};
+    game.tracker = {
+        getMemberMeta: (id) => game.meta[id] || null,
+        getCurrentWeekStartAt: () => game.week,
+    };
+    game.meta = {};
     notifyImpl = (eventKey, message, options) => {
         game.sent.push({ eventKey, message, options });
         return { fired: true, channels: ['toast'] };
@@ -329,5 +346,48 @@ describe('stopping the alerts', () => {
         guildTrialAlerts.initialize();
 
         expect(game.wsHandlers.chat_message_received).toBeTypeOf('function');
+    });
+});
+
+describe('who the start alerts are for', () => {
+    const soon = { phase: 'scheduled', startsInMs: 5 * 60_000, at: now };
+
+    test('guild-wide mode alerts whatever the sign-up says', () => {
+        game.meta = { 7: { signupWeekStartAt: 100 } };
+        guildTrialAlerts.noteTrialStatus(soon);
+        expect(game.sent).toHaveLength(1);
+    });
+
+    test('signed-up mode alerts a character signed up this week, for either kind', () => {
+        game.values[AUDIENCE_SETTING] = 'signedUp';
+        game.meta = { 7: { signupWeekStartAt: 100, signedUpCombatTrialHrid: '/guild_trials/x' } };
+        guildTrialAlerts.noteTrialStatus(soon);
+        guildTrialAlerts.noteChatLine('The guild trials have begun!');
+        expect(game.sent).toHaveLength(2);
+    });
+
+    test('signed-up mode stays quiet with no sign-up or a stale one, start and started alike', () => {
+        game.values[AUDIENCE_SETTING] = 'signedUp';
+        game.meta = { 7: { signupWeekStartAt: 100 } };
+        guildTrialAlerts.noteTrialStatus(soon);
+        guildTrialAlerts.noteChatLine('The guild trials have begun!');
+        game.meta = { 7: { signupWeekStartAt: 93, signedUpSkillingTrialHrid: '/guild_trials/y' } };
+        guildTrialAlerts.noteTrialStatus(soon);
+        expect(game.sent).toEqual([]);
+    });
+
+    test('signed-up mode still alerts when membership is unknown', () => {
+        game.values[AUDIENCE_SETTING] = 'signedUp';
+        expect(startAlertWanted()).toBe(true);
+        game.tracker = null;
+        expect(startAlertWanted()).toBe(true);
+    });
+
+    test('the results alert ignores the audience setting', () => {
+        game.values[AUDIENCE_SETTING] = 'signedUp';
+        guildTrialAlerts.noteTrialStatus({ phase: 'live' });
+        guildTrialAlerts.notePayout({ guildPoints: 500 });
+        guildTrialAlerts.noteTrialStatus({ phase: 'completed' });
+        expect(game.sent.some((entry) => entry.options.title === 'Guild trial finished')).toBe(true);
     });
 });
