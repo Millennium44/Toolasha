@@ -1248,9 +1248,28 @@ export function renderTrialBlock(
         // over a staircase. See `guild-trial-tier-timing.js`.
         const loose = looseForecast;
         if (loose && Number.isFinite(loose.sharePerMs)) {
-            const falling = Number.isFinite(loose.declinePerTier)
-                ? ` (falling ~${Math.abs(loose.declinePerTier * 100).toFixed(0)}%/tier)`
-                : '';
+            // A fraction of the rate lost per tier, 0..50% (`declineFit`); a
+            // rate that held or rose is walked flat and says nothing here
+            const falling =
+                Number.isFinite(loose.declinePerTier) && loose.declinePerTier > 0
+                    ? ` (falling ~${(loose.declinePerTier * 100).toFixed(0)}%/tier)`
+                    : '';
+            // The measurement itself, which every figure below is built on and
+            // which needs no work base to state
+            if (Number.isFinite(loose.lastTierMs) && Number.isFinite(loose.lastTier)) {
+                const rateFalling = Number.isFinite(loose.workPerSecond) ? '' : falling.replace('(', '(rate ');
+                rows.push(
+                    line(
+                        'Last tier',
+                        `T${loose.lastTier} took ${formatEta(loose.lastTierMs)}${rateFalling}`,
+                        Number.isFinite(loose.workPerSecond) ? DIM : ACCENT,
+                        `The time between the guild banking T${loose.lastTier - 1} and T${loose.lastTier}, as ` +
+                            'the guild’s own trial status states each clear. The tiers ahead are walked from it: ' +
+                            'each pool is a tenth of the first tier’s work larger, and the rate is fitted to fall ' +
+                            'by a fraction each tier across the last few timed, never by more than half.'
+                    )
+                );
+            }
             if (Number.isFinite(loose.workPerSecond)) {
                 rows.push(
                     line(
@@ -1265,7 +1284,7 @@ export function renderTrialBlock(
                             'for the trials you joined.' +
                             (falling
                                 ? '\nThe rate falls as the tiers climb because every participant’s success ' +
-                                  'rate does, fitted across the tiers timed so far.'
+                                  'rate does, fitted as a fraction lost per tier across the last few timed.'
                                 : '')
                     )
                 );

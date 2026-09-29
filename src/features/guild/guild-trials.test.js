@@ -826,6 +826,53 @@ describe('a trial you did not join, read off its tier-clear timings', () => {
         expect(html).toContain('Expected');
         expect(html).not.toContain('Final tier');
     });
+
+    test('the live Milking card: its last tier took 520 s, so the next is minutes away, not hours', async () => {
+        // Drawn as "Est. fill ~13 work/s (falling ~1925%/tier) · Next tier in
+        // ~2h 59m · Before it ends ~0 more tiers · Expected ~T18" with 26m51s left
+        const { RENDERED_AT, SIGNED_UP, TILES, TIME_LEFT_AT_RENDER_MS } =
+            await import('./guild-trial-tier-clears.fixture.js');
+        const record = carded({ level: 270, tier: 18, pointsByTier: {}, ...TILES.milking });
+        const options = { timeLeftMs: TIME_LEFT_AT_RENDER_MS, participants: SIGNED_UP.milking, now: RENDERED_AT };
+        const analysis = analyseTrial(record, options);
+        expect(analysis.tiersClearedSoFar).toBe(18);
+        const timing = tierTimingForecast(record, {
+            ...options,
+            workBase: 40_000,
+            bankedTiers: analysis.tiersClearedSoFar,
+        });
+        const html = renderTrialBlock(analysis, SIGNED_UP.milking, undefined, {
+            participating: false,
+            phase: 'live',
+            looseForecast: timing,
+            forecast: tierTimingAsForecast(timing),
+        });
+        const text = html.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ');
+
+        expect(text).toContain('Last tier T18 took 8m 45s');
+        expect(text).toMatch(/Next tier in ~1[12]m/);
+        expect(text).toContain('Before it ends ~1 more tier');
+        expect(text).toContain('~T19');
+        const falling = Number(text.match(/falling ~(\d+)%\/tier/)?.[1]);
+        expect(falling).toBeGreaterThan(0);
+        expect(falling).toBeLessThanOrEqual(50);
+        expect(text).not.toContain('2h');
+    });
+
+    test('a card whose rate has no work base to price it still states the tier it timed', () => {
+        const record = carded({ tierSeenAt: { 16: now, 17: now + 300_000, 18: now + 640_000 } });
+        const timing = tierTimingForecast(record, { timeLeftMs: 30 * 60_000, now: now + 640_000 });
+        expect(timing.workPerSecond).toBeNull();
+        const html = renderTrialBlock(analyseTrial(record, { timeLeftMs: 30 * 60_000 }), 40, undefined, {
+            participating: false,
+            phase: 'live',
+            looseForecast: timing,
+        });
+
+        expect(html).not.toContain('Est. fill');
+        expect(html).toContain('Last tier');
+        expect(html).toContain('T18 took 5m 45s (rate falling');
+    });
 });
 
 describe('the tier badge a card wears beside its level', () => {
