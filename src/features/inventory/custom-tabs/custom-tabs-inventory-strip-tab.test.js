@@ -1042,6 +1042,28 @@ describe('"Toolasha tab in the inventory\'s icon row" setting', () => {
         expect(fixture.order()[0]).toBe('toolasha');
         expect(document.querySelectorAll(STRIP_TAB)).toHaveLength(1);
     });
+    test('switched on from an open character-panel view, the character tab the game has is marked again', async () => {
+        game.settings.inventoryTabs_iconRowTab = false;
+        const { characterTabList, inventoryPanel } = buildCharacterPanel();
+        const fixture = buildNewInventory(inventoryPanel, CATEGORY_ICONS, 'item_category_food');
+        ui = await startUI();
+        characterTabList.querySelector('.toolasha-inv-tab').click();
+        await flush();
+        const inventoryTab = characterTabList.querySelector('[role="tab"]');
+        expect(inventoryTab.classList.contains('Mui-selected')).toBe(false);
+
+        game.settings.inventoryTabs_iconRowTab = true;
+        settingHandlers.get('inventoryTabs_iconRowTab')();
+        await flush();
+
+        expect(ui._isActive).toBe(false);
+        expect(characterTabList.querySelector('.toolasha-inv-tab')).toBeNull();
+        // The game never left Inventory; its tab shows that again
+        expect(inventoryTab.classList.contains('Mui-selected')).toBe(true);
+        expect(inventoryTab.getAttribute('aria-selected')).toBe('true');
+        expect(fixture.gameSelected()).toBe('item_category_food');
+        expect(fixture.order()[0]).toBe('toolasha');
+    });
 });
 
 describe('pre-patch layout (no native strip)', () => {
@@ -1084,5 +1106,20 @@ describe('pre-patch layout (no native strip)', () => {
         ui = null;
         expect(characterTabList.querySelector('[role="tab"]').style.display).toBe('');
         expect(characterTabList.querySelector('.toolasha-inv-tab')).toBeNull();
+    });
+
+    test('cleanup with the view open marks the character tab the game has again', async () => {
+        const { characterTabList, inventoryPanel } = buildCharacterPanel();
+        buildOldInventory(inventoryPanel);
+        ui = await startUI();
+        characterTabList.querySelector('.toolasha-inv-tab').click();
+        await flush();
+
+        ui.cleanup();
+        ui = null;
+
+        const inventoryTab = characterTabList.querySelector('[role="tab"]');
+        expect(inventoryTab.classList.contains('Mui-selected')).toBe(true);
+        expect(inventoryTab.getAttribute('aria-selected')).toBe('true');
     });
 });
