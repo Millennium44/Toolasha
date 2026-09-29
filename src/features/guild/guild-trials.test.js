@@ -6160,6 +6160,8 @@ describe('the guild message says a trial is running', () => {
 
     beforeEach(() => {
         guildTrials.currentTrials = null;
+        guildTrials.serverTierClears = null;
+        guildTrials.serverClockOffsetMs = null;
         guildTrials.socketPhase = null;
     });
 
@@ -6200,11 +6202,50 @@ describe('the guild message says a trial is running', () => {
         vi.setSystemTime(now);
         guildTrials._noteCurrentTrials({ guild: { currentTrialsData: CURRENT_TRIALS_DATA_SKILLING } });
 
+        // Alchemy cleared as the message went out, so its countdown is as of now
         expect(guildTrials._trialBudgetMs('skilling', now + 60_000, 'Alchemy')).toBe(3_467_059 - 60_000);
-        expect(guildTrials._trialBudgetMs('skilling', now + 60_000, 'Brewing')).toBe(3_476_737 - 60_000);
+        // Brewing's is as of its own clear, 9.5 s earlier — counted from the
+        // message it ran 9.5 s long
+        expect(guildTrials._trialBudgetMs('skilling', now + 60_000, 'Brewing')).toBe(
+            1_790_715_739_702 + 3_476_737 - 1_790_715_749_189 - 60_000
+        );
         // A trial with no party of its own on the payload has no countdown to borrow
         expect(guildTrials._trialBudgetMs('skilling', now, 'Foraging')).toBeNull();
         expect(guildTrials._trialBudgetMs('combat', now, 'Trial Badger')).toBeNull();
+    });
+
+    test('every party of the live capture runs out at the same moment', () => {
+        // The four parties' countdowns, each stamped at its own last clear, sum
+        // to one instant within 0.7 s. Counted from the message instead, they
+        // would spread across the ten seconds between their clears
+        vi.setSystemTime(now);
+        guildTrials._noteCurrentTrials({ guild: { currentTrialsData: CURRENT_TRIALS_DATA_SKILLING } });
+
+        const later = now + 5 * 60_000;
+        const left = ['Alchemy', 'Brewing', 'Cooking', 'Milking'].map((name) =>
+            guildTrials._trialBudgetMs('skilling', later, name)
+        );
+        expect(Math.max(...left) - Math.min(...left)).toBeLessThan(700);
+        // …and it is Alchemy's, the party that cleared as the message went out
+        for (const each of left) expect(Math.abs(each - (3_467_059 - 5 * 60_000))).toBeLessThan(700);
+
+        // Past the stated end there is nothing left to draw
+        expect(guildTrials._trialBudgetMs('skilling', now + 3_467_059 + 1_000, 'Alchemy')).toBeNull();
+    });
+
+    test('a party countdown with no stamp is counted from the message', () => {
+        vi.setSystemTime(now);
+        guildTrials._noteCurrentTrials({
+            guild: {
+                currentTrialsData: JSON.stringify({
+                    skilling: {
+                        status: 'in_progress',
+                        parties: { '/guild_skilling/alchemy': { highestTier: 3, budgetRemainingMs: 1_000_000 } },
+                    },
+                }),
+            },
+        });
+        expect(guildTrials._trialBudgetMs('skilling', now + 60_000, 'Alchemy')).toBe(940_000);
     });
 
     test('the payout paces only the trial that is running', () => {
