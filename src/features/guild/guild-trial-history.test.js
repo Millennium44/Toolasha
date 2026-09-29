@@ -86,6 +86,25 @@ describe('pastCycles', () => {
         expect(kept[1].reason).toBe(FOREIGN_CYCLE_REASON);
     });
 
+    test('test-server cycles of one week are each listed, this week’s earlier ones included', () => {
+        const thisWeek = trialWeekStart(now);
+        const HOUR = 3_600_000;
+        const earlier = (cycleFrom) =>
+            cycle({ weekStart: thisWeek, cycleFrom, reason: 'an earlier cycle of this week' });
+        const first = earlier(thisWeek + HOUR);
+        const second = earlier(thisWeek + 3 * HOUR);
+        const lastA = cycle({ cycleFrom: lastWeek + HOUR, reason: 'an earlier cycle of this week' });
+        const lastB = cycle({ cycleFrom: lastWeek + 3 * HOUR, reason: 'an earlier cycle of this week' });
+
+        expect(pastCycles([first, second, second], now)).toEqual([first, second]);
+        expect(pastCycles([lastA, lastB], now)).toEqual([lastA, lastB]);
+
+        // Told apart on the line by when each ended; live lines print as before
+        const lines = pastCycles([first, second], now).map((c) => pastWeekLine(summariseArchivedCycle(c, { now })));
+        expect(lines[0]).toMatch(/^This week \(ended .+\) · combat T5/);
+        expect(lines[0]).not.toBe(lines[1]);
+    });
+
     test('an archive written before cycles carried a week is never merged away', () => {
         const old = cycle({ weekStart: undefined, archivedAt: lastWeek });
         expect(pastCycles([old, old], now)).toHaveLength(2);

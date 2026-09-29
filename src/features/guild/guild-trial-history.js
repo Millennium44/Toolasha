@@ -146,6 +146,11 @@ export function statesAsMuch(candidate, held) {
  * not a past week. A cycle archived off another guild's record is kept either
  * way, and apart from this guild's own week.
  *
+ * An archive stamped with a `cycleFrom` is one of several cycles a test-server
+ * week runs: the live record has since moved on to a later cycle, so it is a
+ * past cycle even within the current week, and it is a cycle of its own rather
+ * than a copy of the week. Live archives carry no `cycleFrom` and keep the rules above.
+ *
  * @param {Array<Object>} history - `record.history`
  * @param {number} [now] - Clock, in ms
  * @returns {Array<Object>} The cycles to summarise
@@ -157,13 +162,17 @@ export function pastCycles(history, now = Date.now()) {
         if (!cycle || typeof cycle !== 'object') continue;
         const foreign = cycle.reason === FOREIGN_CYCLE_REASON;
         const week = Number.isFinite(cycle.weekStart) ? cycle.weekStart : null;
-        if (!foreign && week !== null && week >= thisWeek) continue;
+        const cycleFrom = Number.isFinite(cycle.cycleFrom) ? cycle.cycleFrom : null;
+        if (!foreign && week !== null && week >= thisWeek && cycleFrom === null) continue;
 
         const index =
             week === null
                 ? -1
                 : kept.findIndex(
-                      (held) => held.weekStart === week && (held.reason === FOREIGN_CYCLE_REASON) === foreign
+                      (held) =>
+                          held.weekStart === week &&
+                          (held.reason === FOREIGN_CYCLE_REASON) === foreign &&
+                          (Number.isFinite(held.cycleFrom) ? held.cycleFrom : null) === cycleFrom
                   );
         if (index === -1) kept.push(cycle);
         else if (statesAsMuch(cycle, kept[index])) kept[index] = cycle;
@@ -185,7 +194,7 @@ export function pastCycles(history, now = Date.now()) {
  * @param {number} [options.now] - Clock, in ms
  * @param {number|null} [options.buildersHallBonus] - Builders Hall bonus fraction, null when unknown
  * @param {number|null} [options.treasuryBonus] - Treasury bonus fraction, null when unknown
- * @returns {{when: string|null, combatTier: number|null, skillingTier: number|null,
+ * @returns {{when: string|null, endedAt: number|null, combatTier: number|null, skillingTier: number|null,
  *   points: number|null, tokens: number|null, foreign: boolean, reason: string|null}} The summary
  */
 export function summariseArchivedCycle(
@@ -217,6 +226,9 @@ export function summariseArchivedCycle(
 
     return {
         when: describeCycleAge(cycle, now),
+        // When the cycle ended, for a week's several cycles: only test-server
+        // archives carry it, and it is what tells their lines apart
+        endedAt: Number.isFinite(cycle?.cycleFrom) ? cycle.cycleFrom : null,
         combatTier: highest('combat'),
         skillingTier: highest('skilling'),
         points,
@@ -243,8 +255,12 @@ export function pastWeekLine(summary) {
     const tier = (value) => (Number.isFinite(value) ? `T${value}` : dash);
     const when = summary?.when ? summary.when.charAt(0).toUpperCase() + summary.when.slice(1) : dash;
 
+    const ended = Number.isFinite(summary?.endedAt)
+        ? ` (ended ${new Date(summary.endedAt).toLocaleString('en-US', { weekday: 'short', hour: 'numeric', minute: '2-digit' })})`
+        : '';
+
     const parts = [
-        when,
+        `${when}${ended}`,
         `combat ${tier(summary?.combatTier)}`,
         `skilling ${tier(summary?.skillingTier)}`,
         `${Number.isFinite(summary?.points) ? formatWithSeparator(Math.round(summary.points)) : dash} pts`,
