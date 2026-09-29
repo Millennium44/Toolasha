@@ -3173,6 +3173,15 @@ describe('the trial ends and its figures stop moving', () => {
         expect(guildTrialDamage.breakdown().guildBattleId).toBeNull();
         game.wsHandlers.new_guild_battle(opening(1));
         expect(guildTrialDamage.breakdown().guildBattleId).toBe(1);
+        expect(guildTrialDamage.breakdown().fightSeenAt).toBe(at);
+
+        // Steady across the fight's tiers, restamped for the next fight
+        vi.setSystemTime(at + 5 * 60_000);
+        game.wsHandlers.new_guild_battle({ ...opening(1), tier: 3 });
+        expect(guildTrialDamage.breakdown().fightSeenAt).toBe(at);
+        vi.setSystemTime(at + 3 * 60 * 60_000);
+        game.wsHandlers.new_guild_battle({ ...opening(1), tier: 4 });
+        expect(guildTrialDamage.breakdown().fightSeenAt).toBe(at + 3 * 60 * 60_000);
     });
 
     test('the trial clock and the fight’s start ride on the breakdown, for a whole-fight rate', () => {
