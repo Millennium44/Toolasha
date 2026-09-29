@@ -297,6 +297,17 @@ describe('the results', () => {
         expect(game.sent[0].message).toContain('2,880');
     });
 
+    test('a later cycle seen only while live still gets its results alert', () => {
+        guildTrialAlerts.noteTrialStatus({ phase: 'live', at: now });
+        guildTrialAlerts.noteTrialStatus({ phase: 'completed', at: now + 60_000 });
+
+        // The next day's cycle, with its scheduled phase never on screen
+        guildTrialAlerts.noteTrialStatus({ phase: 'live', at: now + 86_400_000 });
+        guildTrialAlerts.noteTrialStatus({ phase: 'completed', at: now + 86_400_000 + 3_600_000 });
+
+        expect(game.sent).toHaveLength(2);
+    });
+
     test('a panel that was already showing completed announces nothing', () => {
         guildTrialAlerts.noteTrialStatus({ phase: 'completed', at: now });
         expect(game.sent).toEqual([]);
