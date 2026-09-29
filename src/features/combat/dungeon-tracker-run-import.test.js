@@ -377,6 +377,19 @@ describe('serializeBackupWithinLimits', () => {
         expect(JSON.parse(text).runs).toHaveLength(200 - omitted);
     });
 
+    test('unparseable timestamps sort as oldest and never disturb the order of the rest', () => {
+        const runs = [at(1), { ...at(2), timestamp: 'nope' }, at(9), { ...at(3), timestamp: null }, at(5)];
+        const { text } = serializeBackupWithinLimits({ characterId: 'c', runs, maxRuns: 3 });
+        expect(JSON.parse(text).runs.map((r) => r.timestamp.slice(8, 10))).toEqual(['09', '05', '01']);
+    });
+
+    test('is compact: no indentation whitespace, and it parses back unchanged', () => {
+        const runs = [at(1, { team: ['A', 'B'] })];
+        const { text } = serializeBackupWithinLimits({ characterId: 'c', runs, now: 1 });
+        expect(text).not.toContain('\n');
+        expect(JSON.parse(text).runs).toEqual(runs);
+    });
+
     test('what it writes passes the envelope check import applies', () => {
         const runs = Array.from({ length: 5 }, (_, i) => at(1 + i));
         const { text } = serializeBackupWithinLimits({ characterId: 'c', runs, maxRuns: 3 });
