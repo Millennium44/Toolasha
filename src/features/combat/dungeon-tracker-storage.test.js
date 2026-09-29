@@ -542,6 +542,20 @@ describe('importRuns', () => {
         expect(await dungeonTrackerStorage.getAllRuns()).toEqual([]);
     });
 
+    test('deleting one of two runs that share a timestamp leaves the other, and re-import restores neither', async () => {
+        const mine = importedRun({ duration: 300_000 });
+        const partymates = importedRun({ duration: 301_000, recordedBy: 'partymate' });
+        seedRuns([mine, partymates]);
+
+        await dungeonTrackerStorage.deleteRun(runIdentity(mine));
+
+        expect((await dungeonTrackerStorage.getAllRuns()).map((r) => r.duration)).toEqual([301_000]);
+        // The tombstone deleteRun wrote is the one the import dedupe checks
+        const result = await dungeonTrackerStorage.importRuns([mine]);
+        expect(result).toEqual({ added: 0, alreadyPresent: 1, ok: true });
+        expect((await dungeonTrackerStorage.getAllRuns()).map((r) => r.duration)).toEqual([301_000]);
+    });
+
     test('an empty import list is a no-op that does not touch storage', async () => {
         seedRuns([importedRun()]);
         const writesBefore = game.writes.length;
