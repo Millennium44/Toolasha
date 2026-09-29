@@ -1485,7 +1485,11 @@ describe('archiveEarlierCycles — a week with more than one cycle in it', () =>
 
         expect(next.history).toHaveLength(1);
         expect(Object.keys(next.history[0].tiles).sort()).toEqual(['combat::trial badger', 'skilling::cooking']);
-        expect(next.history[0].tiles['skilling::cooking']).toBe(held.tiles['skilling::cooking']);
+        // Only the last cycle's part: this cycle's clears stay out of the archive
+        const archived = next.history[0].tiles['skilling::cooking'];
+        expect(Object.keys(archived.tierSeenAt).map(Number)).toEqual([18, 20]);
+        expect(archived).toMatchObject({ tier: 20, completed: true, pointsByTier: { 20: 2_880 } });
+        expect(archived.serverTier).toBeUndefined();
 
         // Milking has nothing from before this hour, and is left alone
         expect(next.tiles['skilling::milking']).toBe(held.tiles['skilling::milking']);
@@ -1505,6 +1509,75 @@ describe('archiveEarlierCycles — a week with more than one cycle in it', () =>
         });
         expect(timing.currentTier).toBe(18);
         expect(timing.intervals).toBe(8);
+    });
+
+    test('a tile holding both cycles is split at the boundary, not archived whole', () => {
+        const HOUR = 3_600_000;
+        const start = CLEARS.CAPTURED_AT;
+        const from = start - 60_000;
+        const hour = parseCurrentTrialsData(
+            JSON.stringify({
+                skilling: {
+                    status: 'in_progress',
+                    parties: {
+                        '/guild_skilling/milking': {
+                            highestTier: 1,
+                            tierStartedAtMs: start + 60_000,
+                            budgetRemainingMs: HOUR - 60_000,
+                            highestTierReachedAtMs: start + 60_000,
+                            done: false,
+                        },
+                    },
+                },
+            })
+        );
+        const sample = (t) => ({ t, readings: [{ current: 1, max: 2 }] });
+        const mixed = {
+            name: 'Milking',
+            kind: 'skilling',
+            level: 3,
+            tier: 4,
+            points: 500,
+            signups: 6,
+            tierReadAt: start + 5 * 60_000,
+            serverTier: 5,
+            serverTierAt: start + 6 * 60_000,
+            serverDone: false,
+            completed: true,
+            pointsByTier: { 4: 500 },
+            samples: [sample(start - 20 * 60_000), sample(start + 10 * 60_000)],
+            pointSamples: [
+                { t: start - 10 * 60_000, points: 1 },
+                { t: start + 12 * 60_000, points: 2 },
+            ],
+            tierSeenAt: { 3: start - 30 * 60_000, 4: start + 8 * 60_000 },
+        };
+        const next = archiveEarlierCycles({ weekStart: 0, tiles: { 'skilling::milking': mixed }, history: [] }, hour, {
+            offset: 0,
+            at: start,
+        });
+
+        const old = next.history[0].tiles['skilling::milking'];
+        const live = next.tiles['skilling::milking'];
+        const stamps = (tile) => [
+            ...tile.samples.map((s) => s.t),
+            ...tile.pointSamples.map((s) => s.t),
+            ...Object.values(tile.tierSeenAt),
+            ...[tile.tierReadAt, tile.serverTierAt].filter(Number.isFinite),
+        ];
+        expect(stamps(old).every((t) => t < from)).toBe(true);
+        expect(stamps(live).every((t) => t >= from)).toBe(true);
+        // The new cycle's badge and server statement are not the old cycle's
+        expect(old).toMatchObject({ completed: true, pointsByTier: { 4: 500 } });
+        for (const field of ['level', 'tier', 'points', 'signups', 'tierReadAt', 'serverTier']) {
+            expect(old[field]).toBeUndefined();
+        }
+        // Union of the timed entries is the original
+        const byTime = (a, b) => a - b;
+        expect([...stamps(old), ...stamps(live)].sort(byTime)).toEqual(stamps(mixed).sort(byTime));
+        expect(old.samples.length + live.samples.length).toBe(mixed.samples.length);
+        expect(old.pointSamples.length + live.pointSamples.length).toBe(mixed.pointSamples.length);
+        expect(live).toMatchObject({ tier: 4, points: 500, serverTier: 5, completed: false });
     });
 
     test('once cleaned it has nothing more to archive', () => {
