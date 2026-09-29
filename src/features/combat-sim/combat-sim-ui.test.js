@@ -7774,6 +7774,7 @@ describe('Solo zones + party dungeons: one ranked table', () => {
                 // place and null them out again to simulate turning the mode
                 // on fresh with one already chosen.
                 mocks.editorLoadoutName = 'Everyday';
+                mocks.editorLoadoutNameFor = { player1: 'Everyday' };
                 mocks.loadoutStore = { getAllSnapshots: () => [{ name: 'Everyday', actionTypeHrid: null }] };
                 ui._soloZonesLoadoutName = null;
                 ui._dungeonsLoadoutName = null;
@@ -7783,6 +7784,21 @@ describe('Solo zones + party dungeons: one ranked table', () => {
                 expect(dungeonSelect().selectedOptions[0].textContent).toBe('Everyday');
                 expect(ui._resolveSoloPartyLoadout(ui._soloZonesLoadoutName).name).toBe('Everyday');
                 expect(ui._resolveSoloPartyLoadout(ui._dungeonsLoadoutName).name).toBe('Everyday');
+            });
+
+            test('the pickers seed from the loadout the simulated player wears, not the panel-wide selection', () => {
+                // Alpha applied on player1, then player2's dropdown set to Current
+                // Gear: the panel-wide selection is '' but player1 still wears Alpha
+                mocks.editorLoadoutName = '';
+                mocks.editorLoadoutNameFor = { player1: 'Everyday' };
+                mocks.loadoutStore = { getAllSnapshots: () => [{ name: 'Everyday', actionTypeHrid: null }] };
+                ui._activePlayerTab = 'player1';
+                ui._soloZonesLoadoutName = null;
+                ui._dungeonsLoadoutName = null;
+                ui._updateSoloPartyLoadoutPickers();
+
+                expect(soloSelect().selectedOptions[0].textContent).toBe('Everyday');
+                expect(dungeonSelect().selectedOptions[0].textContent).toBe('Everyday');
             });
 
             test('left at Current Gear (the default with nothing selected), neither sweep touches gear', async () => {
@@ -8082,6 +8098,7 @@ describe('Solo zones + party dungeons: one ranked table', () => {
                 // Confirms it actually reseeds rather than staying stuck: with
                 // the field null again, the next populate re-defaults it.
                 mocks.editorLoadoutName = 'Everyday';
+                mocks.editorLoadoutNameFor = { player1: 'Everyday' };
                 mocks.loadoutStore = { getAllSnapshots: () => [{ name: 'Everyday', actionTypeHrid: null }] };
                 ui._updateSoloPartyLoadoutPickers();
                 expect(ui._resolveSoloPartyLoadout(ui._soloZonesLoadoutName).name).toBe('Everyday');
@@ -8248,6 +8265,18 @@ describe('Solo zones + party dungeons: one ranked table', () => {
             expect(headers()).not.toContain('set');
             expect(ui._allZonesResults.every((entry) => !('set' in entry))).toBe(true);
             expect(ui._allZonesSnapshotMeta).not.toBeNull();
+        });
+
+        test('Sim All Zones records the loadout the simulated player wears, not the panel-wide selection', async () => {
+            mocks.zones = [fly, den];
+            ui.panel.querySelector('#mwi-csim-allzones-group').click();
+            // player1 wears Alpha although another tab's Current Gear pick emptied the selection
+            mocks.editorLoadoutName = '';
+            mocks.editorLoadoutNameFor = { player1: 'Alpha' };
+
+            await ui._onSimulateAllZones();
+
+            expect(ui._allZonesSnapshotMeta.meta.loadout).toEqual({ source: 'loadout', name: 'Alpha' });
         });
 
         test('Sim All Zones: a re-price after another tab is clicked still reads the sweep’s own player', async () => {
