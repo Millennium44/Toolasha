@@ -1074,12 +1074,25 @@ export default class CustomTabsUI {
             this._inventoryTabEl.style.display = enabled ? 'none' : '';
         }
         if (enabled && !this._isActive) {
-            this._activatePanel();
+            // Only in place of an Inventory the character panel is showing: the button standing in
+            // for a hidden Inventory is what opens the view otherwise
+            if (this._characterPanelShowsInventory()) this._activatePanel();
         } else if (enabled && this._isActive) {
             // Tab bar was reconstructed by React; re-hide content and re-apply layout
             this._hideGameContent();
             this._applyLayout();
         }
+    }
+
+    /**
+     * Whether the character panel has its Inventory tab selected (true when that tab is unknown,
+     * the layout the default has always opened on).
+     * @returns {boolean}
+     */
+    _characterPanelShowsInventory() {
+        const tab = this._inventoryTabEl;
+        if (!tab) return true;
+        return tab.classList.contains('Mui-selected') || tab.getAttribute('aria-selected') === 'true';
     }
 
     /**
