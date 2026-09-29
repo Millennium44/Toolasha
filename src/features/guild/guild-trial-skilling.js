@@ -51,7 +51,7 @@
  */
 
 import webSocketHook from '../../core/websocket.js';
-import { trialFromHrid } from './guild-trials-math.js';
+import { trialFromHrid, trialWeekStart } from './guild-trials-math.js';
 
 /** Live pool and personal figures for a skilling trial */
 export const SKILLING_MESSAGE = 'guild_skilling_updated';
@@ -153,6 +153,16 @@ export function readSkillingUpdate(data, at = Date.now()) {
         actionCounter: Number(data?.actionCounter) || null,
         at,
     };
+}
+
+/**
+ * Whether a timestamp falls in the trial week `now` is in.
+ * @param {number} at - When something was heard
+ * @param {number} now - Clock
+ * @returns {boolean}
+ */
+function sameTrialWeek(at, now) {
+    return Number.isFinite(at) && trialWeekStart(at) === trialWeekStart(now);
 }
 
 class GuildTrialSkilling {
@@ -283,14 +293,22 @@ class GuildTrialSkilling {
 
     /**
      * Whether a trial has been declared over, and at what tier.
+     *
+     * Only this trial week's ending counts. Nothing else clears it short of a
+     * reset, and a tab left open into the next week handed next week's card of
+     * the same skill last week's "completed" and banked tier — both sticky once
+     * sampled into the new week's record.
+     *
      * @param {string} name - A trial's card name
+     * @param {number} [now] - Clock
      * @returns {{tier: number|null, at: number}|null} The ending, or null
      */
-    endedFor(name) {
+    endedFor(name, now = Date.now()) {
         const key = String(name || '')
             .trim()
             .toLowerCase();
-        return this.ended[key] || null;
+        const ended = this.ended[key];
+        return ended && sameTrialWeek(ended.at, now) ? ended : null;
     }
 
     /**
@@ -301,13 +319,17 @@ class GuildTrialSkilling {
      *
      * @param {string} name - A trial's card name
      * @param {number|string|null} characterId - Whose
+     * @param {number} [now] - Clock
      * @returns {boolean|null} In it, not in it, or not knowable from here
      */
-    participating(name, characterId) {
+    participating(name, characterId, now = Date.now()) {
         const key = String(name || '')
             .trim()
             .toLowerCase();
-        const ids = this.updates[key]?.participantIds;
+        // Last week's roster says nothing about this week's sign-ups
+        const update = this.updates[key];
+        if (!update || !sameTrialWeek(update.at, now)) return null;
+        const ids = update.participantIds;
         if (!Array.isArray(ids) || !ids.length) return null;
 
         const id = Number(characterId);
