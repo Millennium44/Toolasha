@@ -3290,6 +3290,20 @@ class CombatSimUI {
     }
 
     /**
+     * The player a Solo zones + party dungeons run simulates: the one Solo would
+     * narrow to (the editor's open tab), which is not `_activePlayerTab` — that
+     * follows the results tabs. The run and the loadout pickers both ask here so
+     * they cannot drift apart.
+     * @param {Object<string, Object>} [editedDTOs] - `editor.getEditedDTOs()`, read here when omitted
+     * @returns {string}
+     * @private
+     */
+    _soloPartySimulatedHrid(editedDTOs = this._editor?.getEditedDTOs()) {
+        if (!editedDTOs) return this._activePlayerTab || 'player1';
+        return resolveSimParty(this._editor, editedDTOs, { solo: true }).selfHrid;
+    }
+
+    /**
      * Show/hide and (re)populate the Solo zones + party dungeons loadout
      * pickers ("Solo zones loadout" / "Dungeons loadout").
      *
@@ -3315,14 +3329,14 @@ class CombatSimUI {
         const options = this._soloPartyLoadoutOptions();
 
         if (this._soloZonesLoadoutName === null || this._dungeonsLoadoutName === null) {
-            // Seeded from the loadout the pickers' own player wears (the active
-            // tab, the one a Solo + party run simulates) by name — the only
+            // Seeded from the loadout the pickers' own player wears (the one a
+            // Solo + party run simulates, `_soloPartySimulatedHrid`) by name — the only
             // handle the editor has — not the panel-wide dropdown selection,
             // which another tab's pick can have emptied. Resolved to this list's own
             // id for whichever snapshot answers to that name first. Fine as
             // a one-time default: it matches what the single dropdown itself
             // would apply, ambiguity and all.
-            const currentName = this._editor?.getLoadoutNameFor?.(this._activePlayerTab || 'player1') || '';
+            const currentName = this._editor?.getLoadoutNameFor?.(this._soloPartySimulatedHrid()) || '';
             const index = currentName ? options.findIndex((s) => s.name === currentName) : -1;
             const currentId = index >= 0 ? this._soloPartyLoadoutIdFor(options[index], index) : '';
             if (this._soloZonesLoadoutName === null) this._soloZonesLoadoutName = currentId;
@@ -5907,9 +5921,7 @@ class CombatSimUI {
                 // Solo checkbox says, and reads both sweeps for the player Solo
                 // would have narrowed to.
                 const resolved = resolveSimParty(this._editor, editedDTOs, soloVsParty ? { solo: false } : {});
-                const selectedHrid = soloVsParty
-                    ? resolveSimParty(this._editor, editedDTOs, { solo: true }).selfHrid
-                    : resolved.selfHrid;
+                const selectedHrid = soloVsParty ? this._soloPartySimulatedHrid(editedDTOs) : resolved.selfHrid;
                 playerDTOs = resolved.playerDTOs;
                 soloOtherMember = resolved.soloApplied && resolved.trueSelfHrid === null;
                 // The roster the bestiary pace matches recorded runs against (`runMatchesSimParty`);

@@ -7774,7 +7774,7 @@ describe('Solo zones + party dungeons: one ranked table', () => {
                 // place and null them out again to simulate turning the mode
                 // on fresh with one already chosen.
                 mocks.editorLoadoutName = 'Everyday';
-                mocks.editorLoadoutNameFor = { player1: 'Everyday' };
+                mocks.editorLoadoutNameFor = { player2: 'Everyday' };
                 mocks.loadoutStore = { getAllSnapshots: () => [{ name: 'Everyday', actionTypeHrid: null }] };
                 ui._soloZonesLoadoutName = null;
                 ui._dungeonsLoadoutName = null;
@@ -7787,11 +7787,31 @@ describe('Solo zones + party dungeons: one ranked table', () => {
             });
 
             test('the pickers seed from the loadout the simulated player wears, not the panel-wide selection', () => {
-                // Alpha applied on player1, then player2's dropdown set to Current
-                // Gear: the panel-wide selection is '' but player1 still wears Alpha
+                // Alpha applied on player2, then player1's dropdown set to Current
+                // Gear: the panel-wide selection is '' but player2 still wears Alpha
                 mocks.editorLoadoutName = '';
-                mocks.editorLoadoutNameFor = { player1: 'Everyday' };
+                mocks.editorLoadoutNameFor = { player2: 'Everyday' };
                 mocks.loadoutStore = { getAllSnapshots: () => [{ name: 'Everyday', actionTypeHrid: null }] };
+                ui._activePlayerTab = 'player1';
+                ui._soloZonesLoadoutName = null;
+                ui._dungeonsLoadoutName = null;
+                ui._updateSoloPartyLoadoutPickers();
+
+                expect(soloSelect().selectedOptions[0].textContent).toBe('Everyday');
+                expect(dungeonSelect().selectedOptions[0].textContent).toBe('Everyday');
+            });
+
+            test('the pickers seed for the editor’s open tab, not the results tab', () => {
+                // The run simulates the player the editor is open on; the results
+                // tab (`_activePlayerTab`) is a different thing and may sit elsewhere
+                mocks.editorActivePlayer = 'player2';
+                mocks.editorLoadoutNameFor = { player1: 'Other', player2: 'Everyday' };
+                mocks.loadoutStore = {
+                    getAllSnapshots: () => [
+                        { name: 'Other', actionTypeHrid: null },
+                        { name: 'Everyday', actionTypeHrid: null },
+                    ],
+                };
                 ui._activePlayerTab = 'player1';
                 ui._soloZonesLoadoutName = null;
                 ui._dungeonsLoadoutName = null;
@@ -8098,7 +8118,7 @@ describe('Solo zones + party dungeons: one ranked table', () => {
                 // Confirms it actually reseeds rather than staying stuck: with
                 // the field null again, the next populate re-defaults it.
                 mocks.editorLoadoutName = 'Everyday';
-                mocks.editorLoadoutNameFor = { player1: 'Everyday' };
+                mocks.editorLoadoutNameFor = { player2: 'Everyday' };
                 mocks.loadoutStore = { getAllSnapshots: () => [{ name: 'Everyday', actionTypeHrid: null }] };
                 ui._updateSoloPartyLoadoutPickers();
                 expect(ui._resolveSoloPartyLoadout(ui._soloZonesLoadoutName).name).toBe('Everyday');
