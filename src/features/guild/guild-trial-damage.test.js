@@ -3123,6 +3123,50 @@ describe('the trial ends and its figures stop moving', () => {
         expect(later.totalDamage).toBeGreaterThan(stale.totalDamage);
     });
 
+    test('a later trial first watched mid-tier, off ticks alone, is not folded into the last one', () => {
+        // battleId is 1 on every trial; the last one ended at tier 2 and this
+        // one's view is opened hours later at tier 5 with no opening message
+        game.wsHandlers.new_guild_battle({ ...opening(1), combatStartTime: new Date(at).toISOString() });
+        for (let step = 1; step <= 40; step += 1) tick(step * 250, 650_000 - step * 10_000, step, 1);
+        endTrial(11_000);
+        const first = guildTrialDamage.breakdown();
+        expect(first.tierStarts[2]).toBe(at);
+
+        const later = 3 * 60 * 60_000;
+        const laterTick = (offsetMs, bossHp, bossDmg) => {
+            vi.setSystemTime(at + later + offsetMs);
+            game.wsHandlers[GUILD_BATTLE_MESSAGE]({
+                battleId: 1,
+                tier: 5,
+                pMap: { 0: { cHP: 2000, mHP: 2000, cMP: 500, mMP: 500, atkCounter: bossDmg } },
+                mMap: { 0: { cHP: bossHp, mHP: 900_000, dmgCounter: bossDmg, critCounter: 0 } },
+            });
+        };
+        for (let step = 1; step <= 20; step += 1) laterTick(step * 250, 900_000 - step * 1_000, step);
+
+        const second = guildTrialDamage.breakdown();
+        expect(second.totalDamage).toBeLessThan(first.totalDamage);
+        expect(second.seconds).toBeLessThan(first.seconds);
+        // The last trial's tier 1 would time this one's whole-fight rate
+        expect(second.tierStarts).toEqual({});
+        expect(second.fightStartMs).toBeNull();
+    });
+
+    test('a later trial’s tier opening drops the last trial’s tier starts', () => {
+        game.wsHandlers.new_guild_battle({ ...opening(1), tier: 1, combatStartTime: new Date(at).toISOString() });
+        vi.setSystemTime(at + 5 * 60_000);
+        game.wsHandlers.new_guild_battle({ ...opening(1), combatStartTime: new Date(at + 5 * 60_000).toISOString() });
+        expect(Object.keys(guildTrialDamage.breakdown().tierStarts)).toEqual(['1', '2']);
+
+        // Three hours on, the next trial is first seen at its tier 3 opening
+        const next = at + 3 * 60 * 60_000;
+        vi.setSystemTime(next);
+        game.wsHandlers.new_guild_battle({ ...opening(1), tier: 3, combatStartTime: new Date(next).toISOString() });
+        const report = guildTrialDamage.breakdown();
+        expect(report.tierStarts).toEqual({ 3: next });
+        expect(report.fightStartMs).toBe(next);
+    });
+
     test('the spectated battle rides on the breakdown, for the board’s once-per-fight auto-open', () => {
         // `guild-trials.js` returns early on a missing `guildBattleId`, so
         // without it on the breakdown the board never auto-opened at all
