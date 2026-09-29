@@ -1545,12 +1545,13 @@ export class SimEditor {
             );
 
             html += `<div style="display:flex; align-items:center; gap:6px; margin-bottom:8px;">`;
-            if (filteredSnapshots.length > 0) {
+            const shownLoadout = this._dropdownLoadoutName();
+            // Still drawn with every combat loadout deleted while the DTO wears one, so that build stays visible.
+            if (filteredSnapshots.length > 0 || shownLoadout) {
                 html += `<label style="color:#888; font-size:11px; flex-shrink:0;">Loadout</label>`;
                 html += `<select class="toolasha-select" id="mwi-csim-loadout-select" style="
                     flex:1; min-width:0; background:#1a1a2e; color:#e0e0e0; border:1px solid #444;
                     border-radius:4px; padding:2px 6px; font-size:12px; font-family:inherit;">`;
-                const shownLoadout = this._dropdownLoadoutName();
                 html += `<option value=""${!shownLoadout ? ' selected' : ''}>— Current Gear —</option>`;
                 for (const snap of filteredSnapshots) {
                     const label = snap.name + (snap.actionTypeHrid ? '' : ' (All Skills)');
