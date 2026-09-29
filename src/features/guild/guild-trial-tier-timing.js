@@ -30,8 +30,8 @@
  *
  * - **Measured**: the time between consecutive tier badges, one rate per
  *   interval. Two badges give one rate; three or more give a rate *and* the
- *   per-tier decline, fitted by least squares exactly as the joined-side
- *   success-rate slowdown is ({@link module:./guild-trial-forecast.successDecline}).
+ *   per-tier decline, a fraction the rate loses each tier, fitted to the log of
+ *   the most recent rates ({@link declineFit}).
  * - **Walked**: everything ahead. The next tier's ETA is what is left of its
  *   pool over the rate projected *for that tier*, and the tiers before the hour
  *   ends are counted one at a time with the rate falling as it goes — never a
@@ -61,6 +61,24 @@ export const MIN_TIER_CLEARS = 2;
  * extrapolated a few tiers out produces a negative rate and an infinite ETA.
  */
 export const RATE_FLOOR_FRACTION = 0.05;
+
+/**
+ * How many of the most recent intervals the decline is fitted over.
+ *
+ * The guild's rate is a sum over members whose success rates fall to their floor
+ * at different tiers, so the decline steepens as the trial climbs: a fit across
+ * the whole hour reads the early, near-flat tiers as the trend.
+ */
+export const DECLINE_FIT_INTERVALS = 4;
+
+/**
+ * The steepest decline per tier a fit may report, as a fraction of the rate.
+ *
+ * Live parties' tier times grew 1.1-1.85x a tier, the tier's own 4% larger pool
+ * included, which is a rate falling up to ~45% a tier. Held to this, the tier in
+ * progress can take at most about twice as long as the last one did.
+ */
+export const MAX_DECLINE_PER_TIER = 0.5;
 
 /**
  * The tier badges this record has been *watched* changing to, with their times —
@@ -215,39 +233,49 @@ export function tierFillRates(record, { kind = 'skilling', now = null } = {}) {
 }
 
 /**
- * A straight line through the measured rates, tier against rate.
+ * The fraction of the fill rate lost per tier, fitted over the most recent intervals.
  *
- * The same shape as the joined side's success-rate fit, and for the same
- * reason: one interval is a reading, two or more are a trend. With a single
- * reading the caller is told to walk flat (`perTier: null`) rather than being
- * handed a slope invented from one point.
+ * Geometric, not a straight line: a line through rates that fell fast early
+ * has a slope larger than the newest rate itself, and extrapolated one tier it
+ * goes negative. A live Milking party whose last tier took 520 s was projected
+ * at the 5% floor as "falling ~1925%/tier, next tier in ~2h 59m". A least-squares
+ * line through the log of the rates is a constant fraction lost per tier, which
+ * can never cross zero; the fraction is held to `[0, MAX_DECLINE_PER_TIER]`, so a
+ * rate that rose is walked flat and a burst of slow tiers cannot promise one
+ * more than twice as slow.
+ *
+ * One interval is a reading, not a trend: the caller is told to walk flat
+ * (`perTier: null`) rather than being handed a decline invented from one point.
+ * The rate walked from is the newest measured one, not the fitted value.
  *
  * @param {Array<{tier: number, sharePerMs: number}>} rates - From {@link tierFillRates}
- * @returns {{atTier: number, rate: number, perTier: number|null, observations: number}|null} The fit
+ * @returns {{atTier: number, rate: number, perTier: number|null, observations: number}|null} The fit;
+ *   `perTier` is the fraction of the rate lost per tier, in `[0, MAX_DECLINE_PER_TIER]`
  */
 export function declineFit(rates) {
     const points = (rates || []).filter((point) => Number.isFinite(point?.tier) && point?.sharePerMs > 0);
     if (!points.length) return null;
 
-    const sorted = [...points].sort((a, b) => a.tier - b.tier);
+    const sorted = [...points].sort((a, b) => a.tier - b.tier).slice(-DECLINE_FIT_INTERVALS);
     const newest = sorted[sorted.length - 1];
     if (sorted.length < 2) {
         return { atTier: newest.tier, rate: newest.sharePerMs, perTier: null, observations: 1 };
     }
 
     const meanTier = sorted.reduce((sum, point) => sum + point.tier, 0) / sorted.length;
-    const meanRate = sorted.reduce((sum, point) => sum + point.sharePerMs, 0) / sorted.length;
+    const meanLog = sorted.reduce((sum, point) => sum + Math.log(point.sharePerMs), 0) / sorted.length;
     let top = 0;
     let bottom = 0;
     for (const point of sorted) {
-        top += (point.tier - meanTier) * (point.sharePerMs - meanRate);
+        top += (point.tier - meanTier) * (Math.log(point.sharePerMs) - meanLog);
         bottom += (point.tier - meanTier) ** 2;
     }
+    const lost = bottom > 0 ? 1 - Math.exp(top / bottom) : null;
 
     return {
         atTier: newest.tier,
         rate: newest.sharePerMs,
-        perTier: bottom > 0 ? top / bottom : null,
+        perTier: Number.isFinite(lost) ? Math.min(MAX_DECLINE_PER_TIER, Math.max(0, lost)) : null,
         observations: sorted.length,
     };
 }
@@ -255,10 +283,10 @@ export function declineFit(rates) {
 /**
  * The rate a tier is projected to run at, in shares per millisecond.
  *
- * Flat when only one interval was measured. Otherwise the fitted line, held
- * above its floor, and **held flat past the level cap**: the decline is the
- * party's success rate falling as the tier's level rises, and the level stops
- * rising at the top of the ladder.
+ * Flat when only one interval was measured. Otherwise the newest rate losing
+ * the fitted fraction each tier, held above its floor, and **held flat past the
+ * level cap**: the decline is the party's success rate falling as the tier's
+ * level rises, and the level stops rising at the top of the ladder.
  *
  * @param {Object|null} fit - From {@link declineFit}
  * @param {number} tier - The tier wanted
@@ -269,7 +297,7 @@ export function rateAtTier(fit, tier) {
     if (!Number.isFinite(fit.perTier)) return fit.rate;
 
     const capped = Math.min(tier, TRIAL_MAX_TIER);
-    const projected = fit.rate + fit.perTier * (capped - fit.atTier);
+    const projected = fit.rate * (1 - fit.perTier) ** (capped - fit.atTier);
     return Math.max(fit.rate * RATE_FLOOR_FRACTION, projected);
 }
 
@@ -285,7 +313,8 @@ export function rateAtTier(fit, tier) {
  * @param {number} [options.now] - Clock, for how far into the current tier the guild is
  * @param {number|null} [options.bankedTiers] - Tiers banked, when the analysis knows better than the badges
  * @returns {{measured: number, currentTier: number, sharePerMs: number, workPerSecond: number|null,
- *   declinePerTier: number|null, etaMsToNextTier: number|null, tiersBeforeEnd: number|null,
+ *   declinePerTier: number|null, lastTier?: number, lastTierMs?: number,
+ *   etaMsToNextTier: number|null, tiersBeforeEnd: number|null,
  *   expectedTier: number|null, clears: Array<Object>, limitedBy: string, atLevelCap: boolean,
  *   atFinalTier: boolean, reason: string|null}|null} The model, or null when nothing has been
  *   watched. `atFinalTier` says the trial has banked {@link module:./guild-trials-math.TRIAL_MAX_TIER},
@@ -370,8 +399,9 @@ export function tierTimingForecast(
                 Number.isFinite(pool) && Number.isFinite(need) && need > 0 && Number.isFinite(fitRate)
                     ? (fitRate * pool * 1000) / need
                     : null,
-            declinePerTier:
-                Number.isFinite(fit.perTier) && Number.isFinite(fitRate) && fitRate > 0 ? -fit.perTier / fitRate : null,
+            declinePerTier: Number.isFinite(fit.perTier) ? fit.perTier : null,
+            lastTier: rates[rates.length - 1].tier,
+            lastTierMs: rates[rates.length - 1].ms,
             etaMsToNextTier: null,
             tiersBeforeEnd: null,
             expectedTier: TRIAL_MAX_TIER,
@@ -444,11 +474,6 @@ export function tierTimingForecast(
             ? (shareNow * poolNow * 1000) / needNow
             : null;
 
-    // As a fraction of the rate this tier runs at, which is how a caption wants
-    // it: "falling ~7%/tier" rather than a slope in shares per millisecond.
-    const declinePerTier =
-        Number.isFinite(fit.perTier) && Number.isFinite(shareNow) && shareNow > 0 ? -fit.perTier / shareNow : null;
-
     return {
         measured: clears.length,
         intervals: rates.length,
@@ -456,7 +481,10 @@ export function tierTimingForecast(
         bankedTiers: banked,
         sharePerMs: shareNow,
         workPerSecond,
-        declinePerTier,
+        declinePerTier: Number.isFinite(fit.perTier) ? fit.perTier : null,
+        // The newest interval measured, for a card with no work base to price a rate in
+        lastTier: rates[rates.length - 1].tier,
+        lastTierMs: rates[rates.length - 1].ms,
         etaMsToNextTier,
         tiersBeforeEnd: Number.isFinite(timeLeftMs) ? walked.length : null,
         expectedTier: walked.length ? walked[walked.length - 1].tier : banked || null,

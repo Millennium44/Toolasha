@@ -1,8 +1,10 @@
 import { describe, expect, test } from 'vitest';
 
 import {
+    DECLINE_FIT_INTERVALS,
     declineFit,
     foldServerTierClears,
+    MAX_DECLINE_PER_TIER,
     MIN_TIER_CLEARS,
     RATE_FLOOR_FRACTION,
     rateAtTier,
@@ -13,6 +15,13 @@ import {
     tierTimingForecast,
 } from './guild-trial-tier-timing.js';
 import { CURRENT_TRIALS_DATA_SKILLING } from './guild-trial-messages.fixture.js';
+import {
+    RENDERED_AT,
+    SIGNED_UP,
+    TILES,
+    TIME_LEFT_AT_RENDER_MS,
+    WORK_BASES,
+} from './guild-trial-tier-clears.fixture.js';
 import {
     parseCurrentTrialsData,
     SKILLING_TIER_STEP,
@@ -98,24 +107,59 @@ describe('declineFit — one reading is not a trend', () => {
         expect(fit).toEqual({ atTier: 17, rate: 0.001, perTier: null, observations: 1 });
     });
 
-    test('three intervals fit a straight decline through them', () => {
+    test('three intervals fit the fraction of the rate lost per tier', () => {
         const fit = declineFit([
-            { tier: 15, sharePerMs: 0.003 },
-            { tier: 16, sharePerMs: 0.002 },
-            { tier: 17, sharePerMs: 0.001 },
+            { tier: 15, sharePerMs: 0.004 },
+            { tier: 16, sharePerMs: 0.003 },
+            { tier: 17, sharePerMs: 0.00225 },
         ]);
         expect(fit.atTier).toBe(17);
-        expect(fit.rate).toBeCloseTo(0.001, 12);
-        expect(fit.perTier).toBeCloseTo(-0.001, 12);
+        expect(fit.rate).toBeCloseTo(0.00225, 12);
+        expect(fit.perTier).toBeCloseTo(0.25, 12);
         expect(fit.observations).toBe(3);
+    });
+
+    test('a rate that fell fast early is not a line walked through zero', () => {
+        // Falling by more than the newest rate per tier: a straight line through
+        // these is negative one tier out, and was floored to a twentieth
+        const fit = declineFit([
+            { tier: 15, sharePerMs: 0.004 },
+            { tier: 16, sharePerMs: 0.0015 },
+            { tier: 17, sharePerMs: 0.001 },
+        ]);
+        expect(fit.perTier).toBeGreaterThan(0);
+        expect(fit.perTier).toBeLessThanOrEqual(MAX_DECLINE_PER_TIER);
+        expect(rateAtTier(fit, 18)).toBeGreaterThanOrEqual(0.001 * (1 - MAX_DECLINE_PER_TIER));
+    });
+
+    test('the steepest decline is capped and a rising rate is walked flat', () => {
+        const steep = declineFit([
+            { tier: 5, sharePerMs: 0.008 },
+            { tier: 6, sharePerMs: 0.001 },
+        ]);
+        expect(steep.perTier).toBe(MAX_DECLINE_PER_TIER);
+        const rising = declineFit([
+            { tier: 5, sharePerMs: 0.001 },
+            { tier: 6, sharePerMs: 0.002 },
+        ]);
+        expect(rising.perTier).toBe(0);
+    });
+
+    test('only the most recent intervals are fitted', () => {
+        const early = Array.from({ length: 6 }, (unused, i) => ({ tier: 2 + i, sharePerMs: 0.01 }));
+        const recent = [0, 1, 2, 3].map((i) => ({ tier: 8 + i, sharePerMs: 0.008 * 0.8 ** i }));
+        const fit = declineFit([...early, ...recent]);
+        expect(DECLINE_FIT_INTERVALS).toBe(4);
+        expect(fit.observations).toBe(4);
+        expect(fit.perTier).toBeCloseTo(0.2, 12);
     });
 });
 
 describe('rateAtTier — the decline flattens at the level cap', () => {
-    const fit = { atTier: 10, rate: 0.002, perTier: -0.0001, observations: 3 };
+    const fit = { atTier: 10, rate: 0.002, perTier: 0.1, observations: 3 };
 
-    test('walks the fitted line up the ladder', () => {
-        expect(rateAtTier(fit, 12)).toBeCloseTo(0.0018, 12);
+    test('walks the fitted decline up the ladder, a fraction a tier', () => {
+        expect(rateAtTier(fit, 12)).toBeCloseTo(0.002 * 0.9 * 0.9, 12);
     });
 
     test('past the top tier the rate stops falling, because the trial level stops rising', () => {
@@ -128,7 +172,7 @@ describe('rateAtTier — the decline flattens at the level cap', () => {
     });
 
     test('a steep fit is floored rather than walked to zero', () => {
-        const steep = { atTier: 2, rate: 0.002, perTier: -0.001, observations: 3 };
+        const steep = { atTier: 2, rate: 0.002, perTier: MAX_DECLINE_PER_TIER, observations: 3 };
         expect(rateAtTier(steep, TRIAL_MAX_TIER)).toBeCloseTo(0.002 * RATE_FLOOR_FRACTION, 12);
     });
 
@@ -352,4 +396,78 @@ describe('serverClockOffset — the client clock against the server’s', () => 
         expect(serverClockOffset(empty, newest, 5_300)).toBe(5_300);
         expect(serverClockOffset(empty, newest)).toBeNull();
     });
+});
+
+describe('the live four-party capture — trials timed from their clears alone', () => {
+    const timeLeftMs = TIME_LEFT_AT_RENDER_MS;
+    const now = RENDERED_AT;
+    const timed = (name) =>
+        tierTimingForecast(TILES[name], {
+            participants: SIGNED_UP[name],
+            workBase: WORK_BASES[name]?.baseWork ?? null,
+            timeLeftMs,
+            now,
+            bankedTiers: TILES[name].serverTier,
+        });
+    const lastIntervalMs = (name) => {
+        const rates = tierFillRates(TILES[name], { now });
+        return rates[rates.length - 1].ms;
+    };
+
+    test('another cycle’s Cooking stamps are left out of every figure', () => {
+        const timing = timed('cooking');
+        expect(tierClearTimes(TILES.cooking, { now }).map((clear) => clear.tier)).toEqual([
+            9, 10, 11, 12, 13, 14, 15, 16, 17,
+        ]);
+        expect(timing.bankedTiers).toBe(17);
+        expect(timing.currentTier).toBe(18);
+        expect(timing.lastTier).toBe(17);
+    });
+
+    test.each(['milking', 'cooking', 'brewing', 'alchemy'])('%s: a decline per tier that means something', (name) => {
+        const timing = timed(name);
+        expect(timing.declinePerTier).toBeGreaterThanOrEqual(0);
+        expect(timing.declinePerTier).toBeLessThanOrEqual(MAX_DECLINE_PER_TIER);
+    });
+
+    test.each(['milking', 'cooking', 'brewing', 'alchemy'])(
+        '%s: the tier in progress takes no more than the last one allowed its steepest decline',
+        (name) => {
+            const timing = timed(name);
+            const { currentTier } = timing;
+            const ceiling =
+                (lastIntervalMs(name) * share(currentTier)) / share(currentTier - 1) / (1 - MAX_DECLINE_PER_TIER);
+            const sinceLastClear = now - Math.max(...tierClearTimes(TILES[name], { now }).map((clear) => clear.at));
+            expect(timing.etaMsToNextTier + sinceLastClear).toBeLessThanOrEqual(ceiling);
+            // …and no less than the last tier took, since the rate is not rising
+            expect(timing.etaMsToNextTier + sinceLastClear).toBeGreaterThanOrEqual(lastIntervalMs(name));
+        }
+    );
+
+    test('Milking, 520 s for its last tier with 27 minutes left, clears at least one more', () => {
+        const timing = timed('milking');
+        expect(timing.lastTierMs).toBeCloseTo(1790717576497 - 1790717056528, 6);
+        expect(timing.etaMsToNextTier).toBeGreaterThan(8 * 60_000);
+        expect(timing.etaMsToNextTier).toBeLessThan(14 * 60_000);
+        expect(timing.tiersBeforeEnd).toBeGreaterThanOrEqual(1);
+        expect(timing.expectedTier).toBeGreaterThanOrEqual(19);
+    });
+
+    test.each(['milking', 'cooking', 'brewing'])(
+        '%s: Next tier in, Before it ends and Expected are one walk',
+        (name) => {
+            const timing = timed(name);
+            expect(timing.clears[0].atMs).toBeCloseTo(timing.etaMsToNextTier, 6);
+            expect(timing.tiersBeforeEnd).toBe(timing.clears.length);
+            expect(timing.expectedTier).toBe(timing.bankedTiers + timing.tiersBeforeEnd);
+            const lastAt = timing.clears[timing.clears.length - 1].atMs;
+            expect(lastAt).toBeLessThanOrEqual(timeLeftMs);
+            // The tier after the last one walked would not have fit
+            const next = timing.expectedTier + 1;
+            expect(
+                lastAt +
+                    tierWorkShape('skilling', next) / rateAtTier(declineFit(tierFillRates(TILES[name], { now })), next)
+            ).toBeGreaterThan(timeLeftMs);
+        }
+    );
 });
