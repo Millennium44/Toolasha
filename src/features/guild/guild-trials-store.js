@@ -886,6 +886,14 @@ function latestServerTier(a, b) {
  * last week's trials are a different ladder and splicing them together would
  * fit a growth curve across both.
  *
+ * Same week is not same cycle on the test server, and this does not tell them
+ * apart: a tab still holding an earlier cycle's tiles puts `completed` and its
+ * samples back over a record {@link archiveEarlierCycles} cleaned. That is left
+ * to heal rather than guarded here — the next pass that holds an hour in
+ * progress archives them again, under the same `cycleFrom` — because a merge
+ * has no per-kind cycle boundary to cut on: a combat hour's start would cut the
+ * same cycle's skilling tiles.
+ *
  * @param {Object|null} base - The stored record
  * @param {Object|null} incoming - The record in hand
  * @returns {Object} One record
