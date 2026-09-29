@@ -1616,6 +1616,25 @@ describe('messages that were only ever live survive a server restart', () => {
         expect(db.teardown.size).toBe(0);
     });
 
+    test('a disable that throws part-way still stops the pre-teardown flush', async () => {
+        buildPartyChat();
+        chatHistoryExtender.initialize();
+        await settle();
+        expect(db.teardown.size).toBe(1);
+
+        const spy = vi.spyOn(chatHistoryPersistence, 'flushForTeardown').mockImplementationOnce(() => {
+            throw new Error('boom');
+        });
+        const errors = vi.spyOn(console, 'error').mockImplementation(() => {});
+        try {
+            await chatHistoryExtender.disable();
+            expect(db.teardown.size).toBe(0);
+        } finally {
+            spy.mockRestore();
+            errors.mockRestore();
+        }
+    });
+
     test('a failed first read is not remembered: the next load reads again once storage answers', async () => {
         storage.tryGet.mockResolvedValueOnce(null);
         buildPartyChat();

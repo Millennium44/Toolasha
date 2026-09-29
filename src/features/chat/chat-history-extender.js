@@ -1496,6 +1496,12 @@ class ChatHistoryExtender {
     disable() {
         let finalFlush = Promise.resolve(false);
         try {
+            // First: storage outlives this feature, and a throw further down
+            // would leave it calling into a torn-down session on page close.
+            if (this._offBeforeTeardown) {
+                this._offBeforeTeardown();
+                this._offBeforeTeardown = null;
+            }
             // Land what the session recorded before the state goes; a disable
             // is not a wipe, and the record on disk is left where it is.
             // Immediate, not through storage's own write debounce: a read
@@ -1525,10 +1531,6 @@ class ChatHistoryExtender {
                 window.removeEventListener('beforeunload', this._onPageLeaving);
                 webSocketHook.offSocketEvent?.('close', this._onPageLeaving);
                 this._onPageLeaving = null;
-            }
-            if (this._offBeforeTeardown) {
-                this._offBeforeTeardown();
-                this._offBeforeTeardown = null;
             }
             if (this._onVisibilityChange) {
                 document.removeEventListener('visibilitychange', this._onVisibilityChange);

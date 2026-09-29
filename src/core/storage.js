@@ -357,6 +357,8 @@ class Storage {
          * @type {Set<Function>}
          */
         this._teardownListeners = new Set();
+        /** True while `closeForTeardown()` is calling those listeners. */
+        this._runningTeardownListeners = false;
         this._lastEstimate = null; // Cached navigator.storage.estimate() result
 
         /**
@@ -2452,16 +2454,24 @@ class Storage {
      */
     closeForTeardown(reason = 'pagehide') {
         if (this._closingForTeardown) return Promise.resolve();
+        // A listener that closes storage itself is inside the teardown already
+        // running; the outer call finishes it once the listeners are done.
+        if (this._runningTeardownListeners) return Promise.resolve();
         // Before the flag goes up: a writer's `set(…, true)` in here still
         // opens its transaction now, on the open connection, and a debounced
         // one is in `pendingWrites` before `flushAll()` takes its snapshot.
         // Once the flag is up either would only be queued behind the close.
-        for (const listener of Array.from(this._teardownListeners)) {
-            try {
-                listener(reason);
-            } catch (error) {
-                console.error('[Storage] A pre-teardown listener failed:', error);
+        this._runningTeardownListeners = true;
+        try {
+            for (const listener of Array.from(this._teardownListeners)) {
+                try {
+                    listener(reason);
+                } catch (error) {
+                    console.error('[Storage] A pre-teardown listener failed:', error);
+                }
             }
+        } finally {
+            this._runningTeardownListeners = false;
         }
         this._closingForTeardown = true;
 

@@ -889,7 +889,9 @@ class ChatHistoryPersistence {
             if (!read.ok) {
                 // Not cached: a tab mounted or a deletion purged after storage
                 // recovers has to read again, or history stays unrestored and
-                // the purge never reaches disk for the rest of the session.
+                // the purge never reaches disk for the rest of the session. A
+                // purge that arrives during the outage finds nothing loaded
+                // and is not remembered; only later ones reach disk.
                 // Only this read's own promise is dropped — a newer load
                 // already in `loadPromise` belongs to someone else.
                 if (this.loadPromise === loading) this.loadPromise = null;
