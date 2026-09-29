@@ -236,6 +236,17 @@ const FIRST_TIER = 1;
 const SPECTATED_POOL_FRESH_MS = 10_000;
 
 /**
+ * How old a trial's newest bar reading may be before it stops timing a kill.
+ *
+ * A card is sampled on every pass it carries a bar, so its newest sample is
+ * this pass's unless nothing on screen is reading it: a Trials card whose fight
+ * view has shut, or an In Progress card between tiers. A minute bridges the
+ * latter; past it, a time-to-clear off the last reading is a figure from
+ * whenever the view shut, redrawn unchanged on every pass.
+ */
+const READING_STALE_MS = 60_000;
+
+/**
  * How old a bar reading may be and still teach a skill's base work.
  *
  * The record's last target survives tab switches, and a tier that cleared
@@ -310,11 +321,13 @@ const DEFAULT_WORK_BASES = {
  * @param {string|null} [options.phase] - `scheduled`, `live` or `completed`, for the first-tier rule
  * @param {number|null} [options.workBase] - The skill's learned first-tier work, for the work-ladder tier rung
  * @param {string|number|null} [options.characterId] - Whose personal figures the analysis reports
+ * @param {number|null} [options.now] - The clock the time left was read at. Without it the newest
+ *   reading is taken as current; with it, a reading older than {@link READING_STALE_MS} times nothing
  * @returns {{kind: string, tier: number|null, level: number|null, tiersClearedSoFar: number,
  *   rate: number|null, rateNote: string|null, remaining: number|null, total: number|null,
  *   etaMs: number|null, growthPerTier: number|null, next: Object|null, pace: Object|null,
  *   samples: number, timeLeftMs: number|null, tiers: Array<{tier: number, total: number}>,
- *   personalByTier: Object}} Analysis
+ *   personalByTier: Object, readingAgeMs: number|null, readingStale: boolean}} Analysis
  */
 export function analyseTrial(
     record,
@@ -326,6 +339,7 @@ export function analyseTrial(
         workBase = null,
         liveTierFloor = null,
         characterId = null,
+        now = null,
     } = {}
 ) {
     const samples = Array.isArray(record?.samples) ? record.samples : [];
@@ -564,9 +578,15 @@ export function analyseTrial(
         // "no pace because no rate yet" — they read identically on screen and
         // only one of them is something the player can do anything about
         timeLeftMs: Number.isFinite(timeLeftMs) ? timeLeftMs : null,
+        readingAgeMs: null,
+        readingStale: false,
     };
 
     if (index === null) return base;
+
+    const newestAt = samples[samples.length - 1]?.t;
+    const readingAgeMs = Number.isFinite(now) && Number.isFinite(newestAt) ? Math.max(0, now - newestAt) : null;
+    const readingStale = readingAgeMs !== null && readingAgeMs > READING_STALE_MS;
 
     const growthPerTier = base.growthPerTier;
 
@@ -638,13 +658,21 @@ export function analyseTrial(
     // `limitedBy: 'unknown-next-tier'`, and "2 banked + the tier in hand" was
     // then presented as a time verdict — a live trial that cleared far past T3
     // had been captioned "On pace for 3 tiers → T3".
+    // A stale reading is walked from where it stood, with the time that was left
+    // when it was taken — the old position priced against the clock now would
+    // charge the party for the minutes nobody was reading it
+    const paceTimeLeftMs = Number.isFinite(timeLeftMs) && readingStale ? timeLeftMs + readingAgeMs : timeLeftMs;
     const pace =
-        Number.isFinite(tier) && Number.isFinite(remaining) && Number.isFinite(timeLeftMs)
+        Number.isFinite(tier) &&
+        Number.isFinite(remaining) &&
+        Number.isFinite(paceTimeLeftMs) &&
+        // …and not at all from a reading older than the hour it could belong to
+        !(readingStale && paceTimeLeftMs > TRIAL_ACTIVE_MS)
             ? projectPace({
                   currentTier: tier,
                   remainingInTier: remaining,
                   rate,
-                  timeLeftMs,
+                  timeLeftMs: paceTimeLeftMs,
                   totalForTier: (candidate) =>
                       exactTierTotal({ kind, anchors, tier: candidate }) ??
                       projectTierTotal({ observations, tier: candidate, growthPerTier }),
@@ -652,7 +680,19 @@ export function analyseTrial(
               })
             : null;
 
-    return { ...base, rate, rateNote, remaining, total, etaMs: etaMs(remaining, rate), next, pace };
+    return {
+        ...base,
+        rate,
+        rateNote,
+        remaining,
+        total,
+        // A time-to-clear is only as current as the reading it divides
+        etaMs: readingStale ? null : etaMs(remaining, rate),
+        next,
+        pace,
+        readingAgeMs,
+        readingStale,
+    };
 }
 
 /**
@@ -1206,12 +1246,16 @@ export function renderTrialBlock(
             analysis.kind === 'combat'
                 ? 'Measured from the boss bar on this card — the health one; the second bar is its mana.'
                 : 'Measured from the bar on this card, over its current tier only.';
+        const staleNote = analysis.readingStale
+            ? `Last read ${formatEta(analysis.readingAgeMs)} ago — nothing on screen is reading this trial ` +
+              'now. Open the In Progress fight view to measure it again.'
+            : null;
         rows.push(
             line(
                 analysis.kind === 'combat' ? 'Party DPS' : 'Fill rate',
                 `${num(perSecond)}\u00a0${unit}/s`,
-                ACCENT,
-                analysis.rateNote ? `${measuredFrom}\n${analysis.rateNote}` : measuredFrom
+                analysis.readingStale ? DIM : ACCENT,
+                [measuredFrom, analysis.rateNote, staleNote].filter(Boolean).join('\n')
             )
         );
 
@@ -1252,7 +1296,8 @@ export function renderTrialBlock(
                 GOOD,
                 `${formatWithSeparator(Math.round(analysis.remaining || 0))} of ${formatWithSeparator(
                     Math.round(analysis.total || 0)
-                )} left.`
+                )} left${analysis.readingStale ? ` as of ${formatEta(analysis.readingAgeMs)} ago` : ''}.` +
+                    (staleNote ? `\n${staleNote}` : '')
             )
         );
 
@@ -3237,6 +3282,7 @@ class GuildTrials {
                             workBase: this._workBase(record),
                             liveTierFloor,
                             characterId: this.characterId,
+                            now,
                         })
                     );
                 }

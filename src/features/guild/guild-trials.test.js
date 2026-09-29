@@ -507,6 +507,37 @@ describe('analyseTrial', () => {
         expect(analysis.total).toBe(10);
     });
 
+    test('a reading nothing has refreshed times no kill, and paces from where it stood', () => {
+        // Same fight as the pace test above, read ten minutes after its newest
+        // sample with 15 minutes on the clock: the ETA off that sample is a
+        // figure from ten minutes ago, and walking the old position against the
+        // clock now would leave out the ten minutes the party kept fighting
+        const stale = record({
+            samples: [
+                { t: now, readings: [{ current: 200_000, max: 600_000 }] },
+                { t: now + 100_000, readings: [{ current: 100_000, max: 600_000 }] },
+            ],
+            tiers: [
+                { tier: 4, total: 500_000 },
+                { tier: 5, total: 600_000 },
+            ],
+        });
+        const later = now + 100_000 + 10 * 60_000;
+        const analysis = analyseTrial(stale, { participants: 20, timeLeftMs: 900_000, now: later });
+
+        expect(analysis.readingStale).toBe(true);
+        expect(analysis.readingAgeMs).toBe(10 * 60_000);
+        expect(analysis.rate).toBeCloseTo(1, 9);
+        expect(analysis.etaMs).toBeNull();
+        // 25 minutes from the reading: 100s + 637.5s + 675s fit, T9's 712.5s does not
+        expect(analysis.pace.clears.map((clear) => clear.tier)).toEqual([6, 7, 8]);
+
+        const fresh = analyseTrial(stale, { participants: 20, timeLeftMs: 900_000, now: now + 100_000 });
+        expect(fresh.readingStale).toBe(false);
+        expect(fresh.etaMs).toBeCloseTo(100_000, 6);
+        expect(fresh.pace.clears.map((clear) => clear.tier)).toEqual([6, 7]);
+    });
+
     test('an empty record analyses to nothing rather than throwing', () => {
         const analysis = analyseTrial({}, {});
         expect(analysis.rate).toBeNull();
@@ -3171,6 +3202,32 @@ describe('the panel, end to end', () => {
 
         const record = guildTrials.record.tiles['combat::trial chameleon'];
         expect(record.samples).toHaveLength(0);
+    });
+
+    test('a watched fight whose view has shut stops projecting a kill time off its last reading', async () => {
+        // Watched for ten seconds, then the fight view shut: the Trials card has
+        // no bar, so the record's newest sample stays the last one the stream
+        // gave. Every later pass re-derived "Kill in ~54m" from it — the same
+        // figure ten minutes on, never counting down, on a fight that had moved
+        game.breakdown = { pool: { current: 454_807, max: 618_000, tier: 2, at: now, encounter: 'chameleon' } };
+        const root = buildTab([{ name: 'Trial Chameleon', level: 110, points: 400, bar: '' }]);
+        root.querySelector('[class*="ProgressBar_text"]').remove();
+        fire(root);
+
+        game.breakdown = {
+            pool: { current: 453_402, max: 618_000, tier: 2, at: now + 10_000, encounter: 'chameleon' },
+        };
+        vi.setSystemTime(now + 10_000);
+        fire(root);
+        expect(text()).toContain('Kill in');
+        expect(text()).toContain('54m');
+
+        vi.setSystemTime(now + 10 * 60_000);
+        fire(root);
+
+        expect(guildTrials.record.tiles['combat::trial chameleon'].samples).toHaveLength(2);
+        expect(text()).toContain('Kill in');
+        expect(text()).not.toContain('54m');
     });
 
     test('a card the game is drawing a bar on keeps its own numbers', async () => {
