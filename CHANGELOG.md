@@ -6,6 +6,11 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Simulator loadout dropdown and chat history follow-ups
+
+- The Loadout dropdown no longer shows Current Gear for a player still wearing a loadout that has since been deleted; it shows that loadout marked "(no longer saved)". A pick that fails to apply is no longer remembered, and loadout names with quotes work.
+- A chat tab opened while saved history couldn't be read now fills in once storage recovers, instead of staying empty until a reload.
+
 ### Combat Simulator: a per-sweep Current Gear pick really uses current gear
 
 - In "Solo zones + party dungeons", picking Current Gear for a player who had a loadout applied from another tab still simulated the loadout's gear. It now reverts to their current gear, and the Loadout dropdown, the per-sweep pickers and the run history all show the loadout each player is actually wearing.
