@@ -47,6 +47,7 @@ import {
     isTrialName,
     MAX_TRIAL_NAME_CHARS,
     TRIAL_ACTIVE_MS,
+    TRIAL_BUDGET_MS,
     trialWeekStart,
 } from './guild-trials-math.js';
 import { isPlausibleReading } from './guild-trials-scrape.js';
@@ -325,6 +326,155 @@ export function archiveCycle(record, reason, at = Date.now(), { accuracy = null 
 
 /** How many finished cycles are kept beside the live one */
 export const MAX_ARCHIVED_CYCLES = 4;
+
+/** The reason stamped on tiles archived by {@link archiveEarlierCycles} */
+const EARLIER_CYCLE_REASON = 'an earlier cycle of this week';
+
+/**
+ * How far before an hour's stated start a stamp may sit and still be that
+ * hour's: the start is derived through the client-server offset, which is an
+ * upper bound and can place it a trip late.
+ */
+const CYCLE_START_SLACK_MS = 60_000;
+
+/**
+ * When a trial hour started on this client's clock, as the guild payload states it.
+ *
+ * A party's `tierStartedAtMs + budgetRemainingMs` is the hour's end, the same
+ * instant for every party, so the start is that less the whole budget. Null
+ * unless the kind is `in_progress` and a party carries both stamps and the
+ * offset is known: a kind-level countdown is as of an unknown clear, and would
+ * place the start minutes late.
+ *
+ * @param {Object|null} entry - One kind from `parseCurrentTrialsData`
+ * @param {number|null} offset - From `serverClockOffset`
+ * @returns {number|null} Client ms
+ */
+function trialHourStartedAt(entry, offset) {
+    if (!entry?.inProgress || !Number.isFinite(offset)) return null;
+    const ends = Object.values(entry.trials || {})
+        .map((party) => party?.tierStartedAtMs + party?.budgetRemainingMs)
+        .filter(Number.isFinite)
+        .sort((a, b) => a - b);
+    if (!ends.length) return null;
+    return ends[Math.floor(ends.length / 2)] - TRIAL_BUDGET_MS + offset;
+}
+
+/**
+ * Whether a stamp is a finite moment at or after another.
+ * @param {*} stamp - A stored timestamp
+ * @param {number} from - Client ms
+ * @returns {boolean} True when it is
+ */
+function stampedSince(stamp, from) {
+    return stamp !== null && stamp !== undefined && Number.isFinite(Number(stamp)) && Number(stamp) >= from;
+}
+
+/**
+ * Whether a tile holds anything stamped before a moment.
+ * @param {Object} tile - A tile record
+ * @param {number} from - Client ms
+ * @returns {boolean} True when any sample, clear, badge read or server statement predates it
+ */
+function tileStampedBefore(tile, from) {
+    const stamps = [
+        ...(tile?.samples || []).map((sample) => sample?.t),
+        ...(tile?.pointSamples || []).map((sample) => sample?.t),
+        ...Object.values(tile?.tierSeenAt || {}),
+        tile?.tierReadAt,
+        tile?.serverTierAt,
+    ];
+    return stamps.some((stamp) => stamp !== null && Number.isFinite(Number(stamp)) && !stampedSince(stamp, from));
+}
+
+/**
+ * What of a tile belongs to the cycle that started at `from`.
+ *
+ * The timed parts are kept where they are stamped since: this cycle's clears
+ * and samples are the only history a mates' trial's timing has, and the guild
+ * payload restates just the newest clear. Nothing unstamped can be told apart,
+ * so `completed`, points per tier, ladder observations and the reader's stats
+ * start over; the card's badge, level, points and sign-ups are kept only when
+ * it was read this cycle, since a badge from the last one outranks the payload.
+ *
+ * @param {Object} tile - A tile record
+ * @param {number} from - Client ms
+ * @returns {Object|null} The tile's current part, or null when it has none
+ */
+function currentCyclePart(tile, from) {
+    const since = (stamp) => stampedSince(stamp, from);
+    const samples = (tile.samples || []).filter((sample) => since(sample?.t));
+    const pointSamples = (tile.pointSamples || []).filter((sample) => since(sample?.t));
+    const tierSeenAt = Object.fromEntries(Object.entries(tile.tierSeenAt || {}).filter(([, when]) => since(when)));
+    const read = since(tile.tierReadAt);
+    const stated = since(tile.serverTierAt);
+    if (!samples.length && !pointSamples.length && !Object.keys(tierSeenAt).length && !read && !stated) return null;
+
+    return {
+        name: tile.name,
+        kind: tile.kind,
+        ...(read
+            ? {
+                  level: tile.level,
+                  tier: tile.tier,
+                  points: tile.points,
+                  signups: tile.signups ?? null,
+                  tierReadAt: tile.tierReadAt,
+              }
+            : {}),
+        completed: false,
+        samples,
+        pointSamples,
+        tiers: [],
+        pointsByTier: {},
+        tierSeenAt,
+        ...(stated
+            ? { serverTier: tile.serverTier, serverTierAt: tile.serverTierAt, serverDone: Boolean(tile.serverDone) }
+            : {}),
+    };
+}
+
+/**
+ * Archive what an earlier cycle of this week left on the record.
+ *
+ * The record is the week's, and the test server runs several cycles in one:
+ * without a boundary, `completed` stayed set, and points, samples and clears
+ * carried into the next cycle's card. A cycle is a skilling hour then a combat
+ * hour, so once a skilling hour is under way anything stamped before it is an
+ * earlier cycle's; once a combat hour is, anything on a combat tile stamped
+ * before it is. Each such tile is archived whole through {@link archiveCycle}
+ * and replaced by its current part ({@link currentCyclePart}), or dropped when
+ * it has none, so the next sample starts it afresh.
+ *
+ * @param {Object} record - The week's record (not mutated)
+ * @param {Object|null} read - From `parseCurrentTrialsData`
+ * @param {Object} [options] - Context
+ * @param {number|null} [options.offset] - From `serverClockOffset`
+ * @param {number} [options.at] - Clock, for the archive entry
+ * @returns {Object} The record, the same object when nothing was earlier
+ */
+export function archiveEarlierCycles(record, read, { offset = null, at = Date.now() } = {}) {
+    const skillingStart = trialHourStartedAt(read?.skilling, offset);
+    const combatStart = trialHourStartedAt(read?.combat, offset);
+    if (!Number.isFinite(skillingStart) && !Number.isFinite(combatStart)) return record;
+
+    const earlier = {};
+    const tiles = {};
+    for (const [key, tile] of Object.entries(record?.tiles || {})) {
+        const starts = [skillingStart, tile?.kind === 'combat' ? combatStart : null].filter(Number.isFinite);
+        const from = starts.length ? Math.max(...starts) - CYCLE_START_SLACK_MS : null;
+        if (from === null || !tileStampedBefore(tile, from)) {
+            tiles[key] = tile;
+            continue;
+        }
+        earlier[key] = tile;
+        const current = currentCyclePart(tile, from);
+        if (current) tiles[key] = current;
+    }
+    if (!Object.keys(earlier).length) return record;
+
+    return { ...archiveCycle({ ...record, tiles: earlier }, EARLIER_CYCLE_REASON, at), tiles };
+}
 
 /**
  * The key a tile's history is stored under.
