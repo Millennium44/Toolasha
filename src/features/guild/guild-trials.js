@@ -633,7 +633,7 @@ export function analyseTrial(
     const readingSuperseded =
         readingStale &&
         ((barTier !== null && Number.isFinite(tier) && barTier < tier) ||
-            tierClearTimes(record, { now }).some((clear) => clear.at > newestAt));
+            tierClearTimes(record, { now, windowed: isTestServer() }).some((clear) => clear.at > newestAt));
 
     const growthPerTier = base.growthPerTier;
 
@@ -3640,6 +3640,7 @@ class GuildTrials {
                     timeLeftMs,
                     now,
                     bankedTiers: analysis.tiersClearedSoFar,
+                    windowed: isTestServer(),
                 });
 
                 // What the card itself is labelled with, published on the tile
@@ -3759,6 +3760,7 @@ class GuildTrials {
                               timeLeftMs: analysis.timeLeftMs,
                               now,
                               bankedTiers: analysis.tiersClearedSoFar,
+                              windowed: isTestServer(),
                           })
                       )
                     : null;

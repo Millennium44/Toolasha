@@ -69,6 +69,12 @@ describe('another cycle of the same week', () => {
         expect(tierClearTimes(record, { now }).map((clear) => clear.tier)).toEqual([7, 8]);
     });
 
+    test('unwindowed, as live reads it, every stamp is kept', () => {
+        // Live runs one cycle a week, and reads the week's stamps as it always has
+        expect(tierClearTimes(record, { now, windowed: false })).toHaveLength(14);
+        expect(tierTimingForecast(record, { now, bankedTiers: 8, windowed: false }).measured).toBe(14);
+    });
+
     test('the forecast walks from this cycle’s tier at this cycle’s rate', () => {
         const timing = tierTimingForecast(record, { timeLeftMs: 50 * 60_000, now, bankedTiers: 8 });
 
