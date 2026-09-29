@@ -259,10 +259,17 @@ export function serializeBackupWithinLimits({
 
     // Same parse as the store's own ordering; an unstamped run sorts oldest.
     const stamp = (run) => runTime(run) ?? -Infinity;
-    const newestFirst = [...all].sort((a, b) => {
-        const [sa, sb] = [stamp(a), stamp(b)];
-        return sa === sb ? 0 : sb > sa ? 1 : -1;
-    });
+    // The store keeps runs newest-first, so one O(n) pass usually confirms the
+    // order and only the newest `maxRuns` are ever copied; an unordered list
+    // (a hand-fed one) still falls back to sorting.
+    let ordered = true;
+    for (let i = 1; i < all.length && ordered; i++) ordered = stamp(all[i - 1]) >= stamp(all[i]);
+    const newestFirst = ordered
+        ? all.slice(0, maxRuns)
+        : [...all].sort((a, b) => {
+              const [sa, sb] = [stamp(a), stamp(b)];
+              return sa === sb ? 0 : sb > sa ? 1 : -1;
+          });
 
     // The largest newest-first prefix that fits. Size grows with every run
     // added, so a binary search over the real serialized size finds it exactly,
