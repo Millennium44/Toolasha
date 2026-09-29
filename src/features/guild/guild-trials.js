@@ -157,6 +157,7 @@ import { forecastTrial } from './guild-trial-forecast.js';
 import {
     foldServerTierClears,
     serverClockOffset,
+    tierClearTimes,
     tierTimingAsForecast,
     tierTimingForecast,
 } from './guild-trial-tier-timing.js';
@@ -333,7 +334,9 @@ const DEFAULT_WORK_BASES = {
  *   rate: number|null, rateNote: string|null, remaining: number|null, total: number|null,
  *   etaMs: number|null, growthPerTier: number|null, next: Object|null, pace: Object|null,
  *   samples: number, timeLeftMs: number|null, tiers: Array<{tier: number, total: number}>,
- *   personalByTier: Object, readingAgeMs: number|null, readingStale: boolean}} Analysis
+ *   personalByTier: Object, readingAgeMs: number|null, readingStale: boolean,
+ *   readingSuperseded: boolean}} Analysis. `readingSuperseded` is a stale reading known to be of a tier
+ *   since cleared
  */
 export function analyseTrial(
     record,
@@ -608,6 +611,7 @@ export function analyseTrial(
         timeLeftMs: Number.isFinite(timeLeftMs) ? timeLeftMs : null,
         readingAgeMs: null,
         readingStale: false,
+        readingSuperseded: false,
     };
 
     if (index === null) return base;
@@ -615,6 +619,18 @@ export function analyseTrial(
     const newestAt = samples[samples.length - 1]?.t;
     const readingAgeMs = Number.isFinite(now) && Number.isFinite(newestAt) ? Math.max(0, now - newestAt) : null;
     const readingStale = readingAgeMs !== null && readingAgeMs > READING_STALE_MS;
+    // A stale reading may not even be of the tier in progress: the tier comes
+    // from whichever rung is freshest — a badge re-read, the guild payload — and
+    // the bar from whenever something last read it. Paired, they price T9's
+    // ladder off T3's pool. It is known to be behind when the rungs read off the
+    // bar itself place it below the tier, or when a tier has banked since it
+    // was taken; a stale reading behind the tier anchors, paces and forecasts
+    // nothing, and the tier-clear timing speaks for the trial instead.
+    const barTier = fromWorkLadder ?? fromSocket;
+    const readingSuperseded =
+        readingStale &&
+        ((barTier !== null && Number.isFinite(tier) && barTier < tier) ||
+            tierClearTimes(record, { now }).some((clear) => clear.at > newestAt));
 
     const growthPerTier = base.growthPerTier;
 
@@ -670,7 +686,8 @@ export function analyseTrial(
     // that only climbs, priced downhill by a T9 target filed at T11. The
     // observations still anchor a record with no live bar, which is the case
     // they exist for.
-    const liveAnchor = Number.isFinite(tier) && Number.isFinite(total) && total > 0 ? { tier, total } : null;
+    const liveAnchor =
+        !readingSuperseded && Number.isFinite(tier) && Number.isFinite(total) && total > 0 ? { tier, total } : null;
     const anchors = liveAnchor ? [liveAnchor] : observations;
 
     // The next tier's size, off the exact ladder first — both kinds' curves are
@@ -701,6 +718,7 @@ export function analyseTrial(
     // charge the party for the minutes nobody was reading it
     const paceTimeLeftMs = Number.isFinite(timeLeftMs) && readingStale ? timeLeftMs + readingAgeMs : timeLeftMs;
     const pace =
+        !readingSuperseded &&
         Number.isFinite(tier) &&
         Number.isFinite(remaining) &&
         Number.isFinite(paceTimeLeftMs) &&
@@ -730,6 +748,7 @@ export function analyseTrial(
         pace,
         readingAgeMs,
         readingStale,
+        readingSuperseded,
     };
 }
 
@@ -1212,7 +1231,13 @@ export function renderTrialBlock(
     // A trial this character did not join sends nothing: the In Progress tab
     // carries only their own trials, so no reading for this card will ever
     // arrive. Saying "measuring…" there promises a number that cannot come.
-    const notMine = participating === false && !Number.isFinite(analysis.rate);
+    // A rate on its record is one an alt measured, and once nothing refreshes
+    // it that is no better than none. A card of your own is timed the same way
+    // once its reading is of a tier since cleared, where there is timing to say
+    // something instead.
+    const notMine =
+        (participating === false && (!Number.isFinite(analysis.rate) || analysis.readingStale)) ||
+        (analysis.readingSuperseded === true && Number.isFinite(looseForecast?.sharePerMs));
 
     if (notMine) {
         // A trial you did not join has exactly one measurable signal: the times
