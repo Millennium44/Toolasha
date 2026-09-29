@@ -3244,17 +3244,20 @@ export class SimEditor {
         if (loadoutSelect) {
             loadoutSelect.addEventListener('change', () => {
                 const selectedName = loadoutSelect.value;
-                this._selectedLoadoutName = selectedName;
                 if (!selectedName) {
+                    this._selectedLoadoutName = '';
                     const activePlayer = this._activeEditPlayer;
                     this._forgetAppliedLoadouts(activePlayer);
                     if (this._originalDTOs?.[activePlayer]) {
                         this._editedDTOs[activePlayer] = structuredClone(this._originalDTOs[activePlayer]);
                     }
-                } else {
-                    this._applyLoadoutToDTO(selectedName);
+                    this._saveLoadoutMemory();
+                } else if (this._applyLoadoutToDTO(selectedName)) {
+                    this._selectedLoadoutName = selectedName;
+                    this._saveLoadoutMemory();
                 }
-                this._saveLoadoutMemory();
+                // A failed apply (no game data, no DTO, snapshot gone) leaves the selection and the remembered
+                // name alone; the re-render snaps the dropdown back to what the DTO actually wears.
                 this.renderEditor();
             });
         }

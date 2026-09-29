@@ -803,6 +803,22 @@ describe('the loadout selection is remembered', () => {
         expect(editor.getSelectedLoadoutName()).toBe('');
     });
 
+    test('a pick whose snapshot is gone is not recorded or remembered', async () => {
+        bridge.snapshots = [{ name: 'Bruteforce', actionTypeHrid: '/action_types/combat' }];
+        const { el, editor } = await openEditor();
+        // Deleted between the render and the pick: the option is still in the DOM
+        bridge.snapshots = [];
+
+        const select = el.querySelector('#mwi-csim-loadout-select');
+        select.value = 'Bruteforce';
+        select.dispatchEvent(new Event('change'));
+        await Promise.resolve();
+
+        expect(editor.getSelectedLoadoutName()).toBe('');
+        expect(editor.getLoadoutNameFor('player1')).toBe('');
+        expect(settings.values.get('simEditorLoadoutName')).toBeUndefined();
+    });
+
     test('going back to Current Gear is remembered too', async () => {
         settings.values.set('simEditorLoadoutName', 'Bruteforce');
         bridge.snapshots = [{ name: 'Bruteforce', actionTypeHrid: '/action_types/combat' }];
