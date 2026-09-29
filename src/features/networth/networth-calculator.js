@@ -132,8 +132,11 @@ function resolveNetworthPrices(itemHrid, enhancementLevel, priceCache = null) {
         return { ask: ironCow.ask, bid: ironCow.bid, average: ironCow.ask };
     }
 
+    // A level marketplace.json has no entry for is left out of the batch cache
+    // altogether, and is as empty a book as one listed at -1/-1: it must reach
+    // the value fill below too, the way getItemPrices() fills it without a cache
     const raw = priceCache
-        ? priceCache.get(`${itemHrid}:${enhancementLevel}`)
+        ? (priceCache.get(`${itemHrid}:${enhancementLevel}`) ?? { ask: null, bid: null })
         : getItemPrices(itemHrid, enhancementLevel);
 
     refreshMarketValues();
