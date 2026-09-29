@@ -3,7 +3,7 @@
  * rules, and the split between the two.
  */
 
-import { describe, test, expect } from 'vitest';
+import { describe, test, expect, vi } from 'vitest';
 
 import {
     DUNGEON_RUNS_BACKUP_FORMAT,
@@ -406,6 +406,20 @@ describe('serializeBackupWithinLimits', () => {
             ).length;
         expect(sizeOf(kept)).toBeLessThanOrEqual(maxBytes);
         expect(sizeOf(kept + 1)).toBeGreaterThan(maxBytes);
+    });
+
+    test('over the run cap, never serializes more than the cap', () => {
+        const runs = Array.from({ length: 30 }, (_, i) => at(1 + (i % 28), { duration: 1000 + i }));
+        const spy = vi.spyOn(JSON, 'stringify');
+        try {
+            const { text, omitted } = serializeBackupWithinLimits({ characterId: 'c', runs, maxRuns: 5 });
+            expect(omitted).toBe(25);
+            expect(JSON.parse(text).runs).toHaveLength(5);
+            const largest = Math.max(...spy.mock.calls.map(([value]) => value.runs.length));
+            expect(largest).toBeLessThanOrEqual(5);
+        } finally {
+            spy.mockRestore();
+        }
     });
 
     test('is compact: no indentation whitespace, and it parses back unchanged', () => {
