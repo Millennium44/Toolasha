@@ -20,7 +20,8 @@ const game = vi.hoisted(() => ({
     wsHandlers: {},
     tracker: null,
     meta: {},
-    week: 100,
+    // The guild DTO's shape: an ISO string, compared as such
+    week: '2026-09-29T00:00:00Z',
 }));
 
 vi.mock('../../core/config.js', () => ({
@@ -375,14 +376,16 @@ describe('who the start alerts are for', () => {
     const soon = { phase: 'scheduled', startsInMs: 5 * 60_000, at: now };
 
     test('guild-wide mode alerts whatever the sign-up says', () => {
-        game.meta = { 7: { signupWeekStartAt: 100 } };
+        game.meta = { 7: { signupWeekStartAt: '2026-09-29T00:00:00Z' } };
         guildTrialAlerts.noteTrialStatus(soon);
         expect(game.sent).toHaveLength(1);
     });
 
     test('signed-up mode alerts a character signed up this week, for either kind', () => {
         game.values[AUDIENCE_SETTING] = 'signedUp';
-        game.meta = { 7: { signupWeekStartAt: 100, signedUpCombatTrialHrid: '/guild_trials/x' } };
+        game.meta = {
+            7: { signupWeekStartAt: '2026-09-29T00:00:00Z', signedUpCombatTrialHrid: '/guild_combat/swarm' },
+        };
         guildTrialAlerts.noteTrialStatus(soon);
         guildTrialAlerts.noteChatLine('The guild trials have begun!');
         expect(game.sent).toHaveLength(2);
@@ -390,10 +393,13 @@ describe('who the start alerts are for', () => {
 
     test('signed-up mode stays quiet with no sign-up or a stale one, start and started alike', () => {
         game.values[AUDIENCE_SETTING] = 'signedUp';
-        game.meta = { 7: { signupWeekStartAt: 100 } };
+        // What the tracker holds for a member with no sign-up at all
+        game.meta = { 7: { signupWeekStartAt: null, signedUpSkillingTrialHrid: '', signedUpCombatTrialHrid: '' } };
         guildTrialAlerts.noteTrialStatus(soon);
         guildTrialAlerts.noteChatLine('The guild trials have begun!');
-        game.meta = { 7: { signupWeekStartAt: 93, signedUpSkillingTrialHrid: '/guild_trials/y' } };
+        game.meta = {
+            7: { signupWeekStartAt: '2026-09-22T00:00:00Z', signedUpSkillingTrialHrid: '/guild_skilling/cooking' },
+        };
         guildTrialAlerts.noteTrialStatus(soon);
         expect(game.sent).toEqual([]);
     });
