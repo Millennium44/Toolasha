@@ -1298,28 +1298,6 @@ export function addLoadoutBinding(config, tabId, loadoutName, items) {
 }
 
 /**
- * Remove a specific item from all loadout bindings in a tab
- * Called when the user manually removes an item via the UI
- * @param {Object} config
- * @param {string} tabId
- * @param {string} itemHrid
- * @returns {Object} new config
- */
-export function removeItemFromBindings(config, tabId, itemHrid) {
-    const c = clone(config);
-    const result = _findNode(c.tabs, tabId);
-    if (!result || !result.tab.loadoutBindings) return c;
-    for (const [name, items] of Object.entries(result.tab.loadoutBindings)) {
-        result.tab.loadoutBindings[name] = items.filter((h) => h !== itemHrid);
-        // Clean up empty bindings
-        if (result.tab.loadoutBindings[name].length === 0) {
-            delete result.tab.loadoutBindings[name];
-        }
-    }
-    return c;
-}
-
-/**
  * Check whether any other loadout binding on the tab still references an item
  * @param {Object} tab
  * @param {string} excludeLoadoutName - Binding to skip (the one being synced)

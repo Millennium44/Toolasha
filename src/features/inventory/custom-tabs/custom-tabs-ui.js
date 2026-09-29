@@ -1142,11 +1142,18 @@ export default class CustomTabsUI {
     }
 
     /**
-     * Put the selected marks back on a character-panel tab the view cleared them from.
+     * Put the selected marks back on a character-panel tab the view cleared them from, unless the
+     * game has marked another tab since (its selection moved while the view was open).
      * @param {HTMLElement|null} tab
      */
     _markCharPanelTab(tab) {
         if (!tab?.isConnected) return;
+        const tabList = tab.closest('[role="tablist"]');
+        const others = tabList ? tabList.querySelectorAll('[role="tab"]:not(.toolasha-inv-tab)') : [];
+        for (const other of others) {
+            if (other === tab) continue;
+            if (other.classList.contains('Mui-selected') || other.getAttribute('aria-selected') === 'true') return;
+        }
         tab.classList.add('Mui-selected');
         tab.setAttribute('aria-selected', 'true');
     }
@@ -1725,7 +1732,8 @@ export default class CustomTabsUI {
             btn.classList.remove('Mui-selected');
             this._clearLayout();
             this._showGameContent();
-            this._markCharPanelTab(this._hiddenCharPanelSelection || this._inventoryTabEl);
+            const hidden = this._hiddenCharPanelSelection;
+            this._markCharPanelTab(hidden?.isConnected ? hidden : this._inventoryTabEl);
         }
         this._hiddenCharPanelSelection = null;
         if (this._inventoryTabEl) {
