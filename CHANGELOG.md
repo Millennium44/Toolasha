@@ -6,6 +6,11 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Guild trial alerts and the trials tile
+
+- A new setting lets guild trial start alerts fire only when you are signed up for a trial this week. The default stays "Every guild trial", so nothing changes until you pick it.
+- The guild trials tile no longer shows a tier ETA from an old reading as if it were fresh; it counts down from when it was read and says "due" once that has passed. The trial results alert no longer repeats an earlier cycle's payout.
+
 ### Inventory icon row stays on one line on phones
 
 - With the Toolasha tab in the inventory's icon row, a narrow screen no longer pushes the icons onto a second row; they shrink to fit one row instead.
