@@ -229,6 +229,11 @@ class GuildTrialAlerts {
      */
     notePayout(payout, at = Date.now()) {
         if (!payout) return;
+        // The panel draws the payout on every render, and while the next cycle
+        // is scheduled it is still the previous cycle's record: noted then, it
+        // undid the clear a scheduled phase makes and came back as the next
+        // cycle's result
+        if (this.phase === 'scheduled') return;
         if (Number.isFinite(payout.guildPoints) && payout.guildPoints > 0) {
             this.lastPayout = { ...payout };
             this.lastPayoutAt = at;
