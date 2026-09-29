@@ -11,6 +11,7 @@ import {
     MAX_PLAUSIBLE_RUN_MS,
     MAX_IMPORT_RUNS,
     buildDungeonRunsBackupEnvelope,
+    serializeBackupWithinLimits,
     parseDungeonRunsJson,
     validateDungeonRunsEnvelope,
     validateImportedRun,
@@ -333,5 +334,39 @@ describe('dungeonRunsBackupFilename', () => {
     test('names the file with the format stem and a timestamp, like the CSV export', () => {
         const name = dungeonRunsBackupFilename(new Date(2026, 7, 3, 22, 14));
         expect(name).toBe('toolasha-dungeon-runs-backup-20260803-2214.json');
+    });
+});
+
+describe('serializeBackupWithinLimits', () => {
+    const at = (day, extra = {}) =>
+        run({ timestamp: `2026-08-${String(day).padStart(2, '0')}T10:00:00.000Z`, ...extra });
+
+    test('under both limits, writes every run in the order given with nothing omitted', () => {
+        const runs = [at(2), at(5), at(1)];
+        const { text, omitted } = serializeBackupWithinLimits({ characterId: 'c', runs, now: 1 });
+        expect(omitted).toBe(0);
+        expect(JSON.parse(text).runs).toEqual(runs);
+    });
+
+    test('over the run cap, keeps the newest runs and reports how many older ones were left out', () => {
+        const runs = [at(2), at(9), at(1), at(7)];
+        const { text, omitted } = serializeBackupWithinLimits({ characterId: 'c', runs, maxRuns: 2 });
+        expect(omitted).toBe(2);
+        expect(JSON.parse(text).runs.map((r) => r.timestamp.slice(8, 10))).toEqual(['09', '07']);
+    });
+
+    test('over the byte ceiling, trims oldest runs until the written file fits it', () => {
+        const runs = Array.from({ length: 200 }, (_, i) => at(1 + (i % 28), { duration: 1000 + i }));
+        const maxBytes = 20_000;
+        const { text, omitted } = serializeBackupWithinLimits({ characterId: 'c', runs, maxBytes });
+        expect(omitted).toBeGreaterThan(0);
+        expect(new TextEncoder().encode(text).length).toBeLessThanOrEqual(maxBytes);
+        expect(JSON.parse(text).runs).toHaveLength(200 - omitted);
+    });
+
+    test('what it writes passes the envelope check import applies', () => {
+        const runs = Array.from({ length: 5 }, (_, i) => at(1 + i));
+        const { text } = serializeBackupWithinLimits({ characterId: 'c', runs, maxRuns: 3 });
+        expect(validateDungeonRunsEnvelope(JSON.parse(text))).toEqual({ ok: true });
     });
 });

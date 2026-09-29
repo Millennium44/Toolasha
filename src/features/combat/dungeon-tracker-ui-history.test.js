@@ -58,7 +58,7 @@ const {
 const { default: dungeonTrackerStorage } = await import('./dungeon-tracker-storage.js');
 const { default: dungeonTrackerChatAnnotations } = await import('./dungeon-tracker-chat-annotations.js');
 const { downloadFile } = await import('../../utils/csv-export.js');
-const { DUNGEON_RUNS_BACKUP_FORMAT, DUNGEON_RUNS_BACKUP_VERSION, MAX_IMPORT_FILE_BYTES } =
+const { DUNGEON_RUNS_BACKUP_FORMAT, DUNGEON_RUNS_BACKUP_VERSION, MAX_IMPORT_FILE_BYTES, MAX_IMPORT_RUNS } =
     await import('./dungeon-tracker-run-import.js');
 
 /** A fresh panel state, the shape dungeon-tracker-ui-state.js hands over. */
@@ -521,6 +521,21 @@ describe('exportRunHistoryBackup', () => {
             exportedAt: expect.any(Number),
             runs,
         });
+    });
+
+    test('over the import cap, exports the newest runs and tells the player what was left out', async () => {
+        const runs = Array.from({ length: MAX_IMPORT_RUNS + 3 }, (_, i) => ({
+            timestamp: new Date(Date.UTC(2026, 0, 1) + i * 1000).toISOString(),
+        }));
+        dungeonTrackerStorage.getRunsForCharacterOrNull.mockResolvedValue(runs);
+        const history = new DungeonTrackerUIHistory(freshState('team'), (ms) => `${ms}ms`);
+
+        await history.exportRunHistoryBackup();
+
+        const exported = JSON.parse(downloadFile.mock.calls[0][1]).runs;
+        expect(exported).toHaveLength(MAX_IMPORT_RUNS);
+        expect(exported[0].timestamp).toBe(runs[runs.length - 1].timestamp);
+        expect(window.alert).toHaveBeenCalledWith(expect.stringContaining('older 3 were left out'));
     });
 
     test('refuses to export, downloading nothing, when the store could not be read', async () => {

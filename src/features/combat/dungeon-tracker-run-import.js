@@ -196,6 +196,61 @@ export function buildDungeonRunsBackupEnvelope({ characterId, runs, now = Date.n
 }
 
 /**
+ * Serialize a backup that this copy's own import will accept.
+ *
+ * Import refuses a file over {@link MAX_IMPORT_FILE_BYTES} or naming more than
+ * {@link MAX_IMPORT_RUNS} runs, so an export that ignored both could write a
+ * file its own Import button rejects. When the runs exceed either limit, the
+ * NEWEST runs are kept (the oldest are the ones least worth carrying) and the
+ * count left out is reported so the caller can say so. Under both limits the
+ * runs are written in the order given, untouched.
+ *
+ * @param {Object} options
+ * @param {string|null} options.characterId - The character the runs were read for
+ * @param {Array<Object>} options.runs - The stored runs, every field
+ * @param {number} [options.now] - Timestamp, injectable for tests
+ * @param {number} [options.maxRuns] - Run-count ceiling, injectable for tests
+ * @param {number} [options.maxBytes] - File-size ceiling, injectable for tests
+ * @returns {{text: string, omitted: number}} The file contents, and how many of
+ *   the oldest runs were left out to fit (0 when nothing was)
+ */
+export function serializeBackupWithinLimits({
+    characterId,
+    runs,
+    now = Date.now(),
+    maxRuns = MAX_IMPORT_RUNS,
+    maxBytes = MAX_IMPORT_FILE_BYTES,
+}) {
+    const all = Array.isArray(runs) ? runs : [];
+    const encoder = new TextEncoder();
+    const write = (list) => JSON.stringify(buildDungeonRunsBackupEnvelope({ characterId, runs: list, now }), null, 2);
+    const size = (text) => encoder.encode(text).length;
+
+    let text = write(all);
+    if (all.length <= maxRuns && size(text) <= maxBytes) return { text, omitted: 0 };
+
+    const stamp = (run) => {
+        const time = Date.parse(run?.timestamp);
+        return Number.isFinite(time) ? time : -Infinity;
+    };
+    const newestFirst = [...all].sort((a, b) => stamp(b) - stamp(a));
+
+    // Size scales with the run count, so aim just under the ceiling and shave
+    // 5% at a time until the real serialized size agrees.
+    let keep = Math.min(newestFirst.length, maxRuns);
+    text = write(newestFirst.slice(0, keep));
+    if (size(text) > maxBytes) {
+        keep = Math.floor((keep * maxBytes) / size(text));
+        for (;;) {
+            text = write(newestFirst.slice(0, keep));
+            if (keep === 0 || size(text) <= maxBytes) break;
+            keep = Math.min(keep - 1, Math.floor(keep * 0.95));
+        }
+    }
+    return { text, omitted: all.length - keep };
+}
+
+/**
  * Parse the raw text of an uploaded file into an envelope-shaped object.
  *
  * Only checks that it IS an object — {@link validateDungeonRunsEnvelope} does
@@ -400,6 +455,7 @@ export default {
     MAX_IMPORT_FILE_BYTES,
     MAX_IMPORT_RUNS,
     buildDungeonRunsBackupEnvelope,
+    serializeBackupWithinLimits,
     parseDungeonRunsJson,
     validateDungeonRunsEnvelope,
     validateImportedRun,
