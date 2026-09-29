@@ -324,6 +324,23 @@ describe('the results', () => {
         expect(results[0].message).toBe('The guild trial has finished.');
     });
 
+    test('the previous cycle payout drawn while the next one is scheduled is not kept', () => {
+        guildTrialAlerts.noteTrialStatus({ phase: 'live', at: now });
+        guildTrialAlerts.notePayout({ guildPoints: 2880, eligibleTokens: 1320, participantTokens: 1980 }, now);
+        guildTrialAlerts.noteTrialStatus({ phase: 'completed', at: now + 60_000 });
+
+        // The panel's render order: the lifecycle first, then the payout block,
+        // which still draws the finished cycle's record
+        const next = now + 86_400_000;
+        guildTrialAlerts.noteTrialStatus({ phase: 'scheduled', at: next });
+        guildTrialAlerts.notePayout({ guildPoints: 2880, eligibleTokens: 1320, participantTokens: 1980 }, next);
+        guildTrialAlerts.noteTrialStatus({ phase: 'completed', at: next + 3_600_000 });
+
+        const results = game.sent.filter((sent) => sent.options.title === 'Guild trial finished');
+        expect(results).toHaveLength(2);
+        expect(results[1].message).toBe('The guild trial has finished.');
+    });
+
     test('a payout older than a cycle is dropped even when the scheduled phase was never seen', () => {
         guildTrialAlerts.noteTrialStatus({ phase: 'live', at: now });
         guildTrialAlerts.notePayout({ guildPoints: 2880, eligibleTokens: 1320, participantTokens: 1980 }, now);
