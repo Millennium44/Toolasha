@@ -1070,6 +1070,7 @@ export default class CustomTabsUI {
         }
         if (!this._tabBtn) return;
         const enabled = config.getSetting('inventoryTabs_defaultTab');
+        this._refreshInventoryTabEl();
         if (this._inventoryTabEl) {
             this._inventoryTabEl.style.display = enabled ? 'none' : '';
         }
@@ -1085,12 +1086,29 @@ export default class CustomTabsUI {
     }
 
     /**
+     * Point `_inventoryTabEl` at the live Inventory tab when React has replaced the one captured at
+     * injection (the injection does not run again while our button stands).
+     * @returns {HTMLElement|null} The live tab, or null when none can be found
+     */
+    _refreshInventoryTabEl() {
+        if (this._inventoryTabEl?.isConnected) return this._inventoryTabEl;
+        const tabList = this._findCharacterTabList();
+        const live = tabList
+            ? [...tabList.querySelectorAll('[role="tab"]:not(.toolasha-inv-tab)')].find(
+                  (t) => t.textContent.trim() === 'Inventory'
+              )
+            : null;
+        if (live) this._inventoryTabEl = live;
+        return live || null;
+    }
+
+    /**
      * Whether the character panel has its Inventory tab selected (true when that tab is unknown,
      * the layout the default has always opened on).
      * @returns {boolean}
      */
     _characterPanelShowsInventory() {
-        const tab = this._inventoryTabEl;
+        const tab = this._refreshInventoryTabEl();
         if (!tab) return true;
         return tab.classList.contains('Mui-selected') || tab.getAttribute('aria-selected') === 'true';
     }

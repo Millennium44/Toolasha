@@ -741,6 +741,27 @@ describe('character panel marks on leaving the view without a click', () => {
         expect(markedLabels(characterTabList)).toEqual(['Equipment']);
     });
 
+    test('"by default" reads and hides the live Inventory tab after React replaced it', async () => {
+        const { characterTabList, inventoryPanel } = buildCharacterPanel();
+        buildOldInventory(inventoryPanel);
+        ui = await startUI();
+
+        // React rebuilds Inventory (its old node still carries the old marks); the player is on Equipment
+        const inventory = byLabel(characterTabList, 'Inventory');
+        const live = rerender(inventory);
+        const equipment = byLabel(characterTabList, 'Equipment');
+        equipment.classList.add('Mui-selected');
+        equipment.setAttribute('aria-selected', 'true');
+
+        game.settings.inventoryTabs_defaultTab = true;
+        settingHandlers.get('inventoryTabs_defaultTab')();
+        await flush();
+
+        expect(ui._isActive).toBe(false);
+        expect(live.style.display).toBe('none');
+        expect(markedLabels(characterTabList)).toEqual(['Equipment']);
+    });
+
     test('a late strip falls back to Inventory when the remembered tab is gone from the panel', async () => {
         const { characterTabList, inventoryPanel } = buildCharacterPanel();
         ui = await startUI();
