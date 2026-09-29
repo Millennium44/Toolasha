@@ -182,6 +182,19 @@ describe('calculateItemValue', () => {
         expect(value).toBe(8400);
     });
 
+    test('an enhancement level missing from the batch cache is filled from the official value, not costed', async () => {
+        mocks.settings.networth_valueSource = 'orderBook';
+        mocks.settings.networth_pricingMode = 'ask';
+        mocks.enhancementPaths['/items/sword:7'] = 4200;
+        mocks.marketValues = { marketValuesVersion: 1, marketItemValues: { '/items/sword': { 7: 5000 } } };
+        // marketplace.json carries no +7 entry, so getPricesBatch leaves the key out entirely
+        const priceCache = new Map([['/items/sword:0', { ask: 1000, bid: 900 }]]);
+
+        // Without a cache, getItemPrices() reconciles the empty book to the value itself
+        const value = await calculateItemValue({ itemHrid: '/items/sword', enhancementLevel: 7, count: 1 }, priceCache);
+        expect(value).toBe(5000);
+    });
+
     test('high-enhancement items use enhancement cost even when a market price exists, once the setting is on', async () => {
         mocks.settings.networth_highEnhancementUseCost = true;
         mocks.settings.networth_highEnhancementMinLevel = 13;
