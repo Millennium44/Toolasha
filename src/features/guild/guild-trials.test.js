@@ -6415,6 +6415,123 @@ describe('the guild message says a trial is running', () => {
     });
 });
 
+describe('a combat trial only mates joined', () => {
+    // The live combat hour at 5:02 PM: Trial Badger, mates only, banked T7 with
+    // T7 taking 30 s; the card read "Est. fill ~28.7K dmg/s" and, from the
+    // loadout estimate, "On pace for 7 tiers → T7 · fully enraged" beside
+    // "Before it ends ~14 more tiers"
+    const now = 1_790_719_360_000;
+    const badger = () => ({
+        name: 'Trial Badger',
+        kind: 'combat',
+        level: 160,
+        tier: 7,
+        samples: [],
+        tiers: [],
+        pointsByTier: {},
+        tierSeenAt: { 5: now - 62_000, 6: now - 34_000, 7: now - 4_000 },
+        serverTier: 7,
+        serverTierAt: now - 4_000,
+        serverDone: false,
+    });
+    const clientData = {
+        guildTrialDetailMap: {
+            '/guild_combat/badger': {
+                name: 'Trial Badger',
+                monsterHrids: ['/monsters/trial_badger', '/monsters/trial_badger'],
+            },
+        },
+        combatMonsterDetailMap: {
+            '/monsters/trial_badger': { name: 'Trial Badger', combatDetails: { maxHitpoints: 330_000 } },
+        },
+    };
+
+    afterEach(() => {
+        game.clientData = {};
+        vi.restoreAllMocks();
+    });
+
+    test('its rate is a DPS priced on the whole wave’s health', () => {
+        game.clientData = clientData;
+        expect(guildTrials._timingBase({ kind: 'combat', name: 'Trial Badger' })).toBe(660_000);
+        game.clientData = {};
+        expect(guildTrials._timingBase({ kind: 'combat', name: 'Trial Badger' })).toBeNull();
+
+        const record = badger();
+        const analysis = analyseTrial(record, { phase: 'live', participants: 36, timeLeftMs: 57 * 60_000, now });
+        const priced = tierTimingForecast(record, {
+            kind: 'combat',
+            participants: 36,
+            workBase: 660_000,
+            timeLeftMs: 57 * 60_000,
+            now,
+        });
+        const html = renderTrialBlock(analysis, 36, undefined, {
+            participating: false,
+            phase: 'live',
+            looseForecast: priced,
+        });
+        expect(html).toContain('Est. DPS');
+        expect(html).not.toContain('Est. fill');
+        expect(html).toContain('dmg/s');
+
+        // No wave known: tier times only, never a damage rate priced on a guess
+        const unpriced = tierTimingForecast(record, { kind: 'combat', participants: 36, timeLeftMs: 57 * 60_000, now });
+        const bare = renderTrialBlock(analysis, 36, undefined, {
+            participating: false,
+            phase: 'live',
+            looseForecast: unpriced,
+        });
+        expect(bare).not.toContain('dmg/s');
+        expect(bare).toContain('Last tier');
+    });
+
+    test('a loadout estimate does not overrule the walk timed from its clears', async () => {
+        game.clientData = clientData;
+        const capture = (await import('./guild-loadout-capture.js')).default;
+        // A captured sheet whose auto-attack alone is a few hundred a second
+        vi.spyOn(capture, 'seen').mockReturnValue([
+            { name: 'Mate', stats: { attackInterval: 3_000_000_000, autoAttackDamage: 900 } },
+        ]);
+        const record = badger();
+        const analysis = analyseTrial(record, { phase: 'live', participants: 36, timeLeftMs: 57 * 60_000, now });
+        const timing = tierTimingForecast(record, {
+            kind: 'combat',
+            participants: 36,
+            workBase: 660_000,
+            timeLeftMs: 57 * 60_000,
+            now,
+            bankedTiers: 7,
+        });
+        const forecast = guildTrials._forecast({ name: 'Trial Badger', kind: 'combat' }, analysis, 36, 'live', timing);
+
+        // What the card drew before: the loadout guess, banked 7 and not one more
+        const guessed = forecastTrial({
+            analysis,
+            clientData,
+            name: 'Trial Badger',
+            participants: 36,
+            loadouts: capture.seen(),
+            measuredDps: null,
+        });
+        expect(guessed).toMatchObject({ source: 'estimated', tier: 7 });
+
+        expect(forecast.source).toBe('tier-timing');
+        expect(forecast.tier).toBe(timing.expectedTier);
+        expect(forecast.tier).toBe(7 + timing.tiersBeforeEnd);
+
+        const html = renderTrialBlock(analysis, 36, undefined, {
+            participating: false,
+            phase: 'live',
+            looseForecast: timing,
+            forecast,
+        });
+        expect(html).not.toContain('On pace for');
+        expect(html).toContain(`Expected`);
+        expect(html).toContain(`~T${timing.expectedTier}`);
+    });
+});
+
 describe('after a reload, before any guild message', () => {
     const SKEW = 3_000;
     const TRIP = 200;

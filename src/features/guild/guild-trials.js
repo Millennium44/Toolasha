@@ -154,7 +154,7 @@ import guildTrialTrace, { describeTraceStatus } from './guild-trial-trace.js';
 import guildTrialAbilities from './guild-trial-abilities.js';
 import guildTrialAbilitiesFeature, { openTrialAbilitiesPanel } from './guild-trial-abilities-ui.js';
 import { openTrialLedgerPanel } from './guild-trial-ledger-view.js';
-import { forecastTrial } from './guild-trial-forecast.js';
+import { forecastTrial, trialWave } from './guild-trial-forecast.js';
 import {
     foldServerTierClears,
     serverClockOffset,
@@ -1256,6 +1256,11 @@ export function renderTrialBlock(
                 Number.isFinite(loose.declinePerTier) && loose.declinePerTier > 0
                     ? ` (falling ~${(loose.declinePerTier * 100).toFixed(0)}%/tier)`
                     : '';
+            const combat = analysis.kind === 'combat';
+            // How each tier's total grows, in the words of its own ladder
+            const ladderRule = combat
+                ? 'each boss wave’s health scales with the tier’s level, as the game’s own monster data states it'
+                : 'each pool is a tenth of the first tier’s work larger';
             // The measurement itself, which every figure below is built on and
             // which needs no work base to state
             if (Number.isFinite(loose.lastTierMs) && Number.isFinite(loose.lastTier)) {
@@ -1267,20 +1272,30 @@ export function renderTrialBlock(
                         Number.isFinite(loose.workPerSecond) ? DIM : ACCENT,
                         `The time between the guild banking T${loose.lastTier - 1} and T${loose.lastTier}, as ` +
                             'the guild’s own trial status states each clear. The tiers ahead are walked from it: ' +
-                            'each pool is a tenth of the first tier’s work larger, and the rate is fitted to fall ' +
-                            'by a fraction each tier across the last few timed, never by more than half.'
+                            `${ladderRule}, and the rate is fitted to fall by a fraction each tier across the ` +
+                            'last few timed, never by more than half.' +
+                            (combat
+                                ? '\nThe walk ends at the hour or the top of the ladder. A wipe or a party ' +
+                                  'giving up is not modelled: the game ends a combat trial on its hour, and ' +
+                                  'enrage makes a long tier dangerous rather than impossible.'
+                                : '')
                     )
                 );
             }
             if (Number.isFinite(loose.workPerSecond)) {
                 rows.push(
                     line(
-                        'Est. fill',
+                        combat ? 'Est. DPS' : 'Est. fill',
                         `~${rateNum(loose.workPerSecond)}\u00a0${unit}/s${falling}`,
                         ACCENT,
-                        'The whole guild’s work rate on this trial, measured from how long they took to fill ' +
-                            `the last tier${loose.intervals > 1 ? 's' : ''} — the pool a tier needs is derived ` +
-                            'exactly, and when each tier banked is stated by the guild’s own trial status. ' +
+                        (combat
+                            ? 'The whole party’s damage per second on this trial, measured from how long it took ' +
+                              `to kill the last wave${loose.intervals > 1 ? 's' : ''} — each wave’s health is ` +
+                              'derived exactly from the game’s monster data, the tier’s level and the sign-ups, '
+                            : 'The whole guild’s work rate on this trial, measured from how long they took to fill ' +
+                              `the last tier${loose.intervals > 1 ? 's' : ''} — the pool a tier needs is derived ` +
+                              'exactly, ') +
+                            'and when each tier banked is stated by the guild’s own trial status. ' +
                             'Not your own ' +
                             'contribution, and not a bar reading: the live per-second bar only ever streams ' +
                             'for the trials you joined.' +
@@ -1297,10 +1312,9 @@ export function renderTrialBlock(
                         'Next tier in',
                         `~${formatEta(loose.etaMsToNextTier)}`,
                         GOOD,
-                        `What is left of T${loose.currentTier}’s pool at the rate projected for T` +
-                            `${loose.currentTier}. The pool is derived — each tier adds a tenth of the first ` +
-                            'tier’s work — and how much of it is already done is the time since the last tier ' +
-                            'banked, spent at that rate.'
+                        `What is left of T${loose.currentTier}’s ${combat ? 'wave' : 'pool'} at the rate ` +
+                            `projected for T${loose.currentTier}. It is derived — ${ladderRule} — and how much ` +
+                            'of it is already done is the time since the last tier banked, spent at that rate.'
                     )
                 );
             }
@@ -1525,8 +1539,8 @@ export function renderTrialBlock(
                     : `${cleared} tier${cleared === 1 ? '' : 's'}${cleared ? ` → T${cleared}` : ''}${margin}`,
                 forecast.source === 'estimated' ? WARN : GOOD,
                 timing
-                    ? 'Walked from the work each tier actually needs — each adds a tenth of the first tier’s ' +
-                          '— at the rate this guild is measured to be filling them, taken from the ' +
+                    ? 'Walked from what each tier actually needs — derived from the game’s own ladder ' +
+                          '— at the rate this guild is measured to be clearing them, taken from the ' +
                           `${forecast.measured} tier clears timed on this trial.` +
                           (forecast.decline
                               ? `\nThe rate falls about ${Math.abs(forecast.decline.perTier * 100).toFixed(0)}% ` +
@@ -3606,7 +3620,7 @@ class GuildTrials {
                 const timing = tierTimingForecast(record, {
                     kind: analysis.kind,
                     participants,
-                    workBase: this._workBase(tile),
+                    workBase: this._timingBase(tile),
                     timeLeftMs,
                     now,
                     bankedTiers: analysis.tiersClearedSoFar,
@@ -3864,7 +3878,12 @@ class GuildTrials {
             // cards had no expected tier while the joined Alchemy card did.
             // Tier-clear timing is what those cards *can* be projected from,
             // and it stands in wherever it has something to say.
-            if ((!forecast || forecast.tier === null) && timing) {
+            //
+            // A combat forecast with no measured damage is a guess from captured
+            // loadouts; beside a walk timed from the guild's own clears it was a
+            // second, contradicting verdict ("7 tiers → T7" over "~14 more tiers")
+            // on a trial only mates joined. The measured clears win.
+            if ((!forecast || forecast.tier === null || forecast.source !== 'measured') && timing) {
                 const fromTiming = tierTimingAsForecast(timing);
                 if (fromTiming) return fromTiming;
             }
@@ -5081,6 +5100,24 @@ class GuildTrials {
             .toLowerCase();
         const base = this.workBases[key]?.baseWork ?? DEFAULT_WORK_BASES[key];
         return Number.isFinite(base) && base > 0 ? base : null;
+    }
+
+    /**
+     * The first tier's total a tier-clear timing is priced in.
+     *
+     * A skill's first-tier work, learned or seeded. For combat, the wave's
+     * health from the game's monster data (every spawn summed: Trial Badger is
+     * two Badgers), not the learned card base, which is one boss bar. Null for
+     * an encounter the data does not describe, and the card then states tier
+     * times without a damage rate.
+     *
+     * @param {{kind: string, name: string}} tile - A card
+     * @returns {number|null} The base, before participants
+     */
+    _timingBase(tile) {
+        if (tile?.kind !== 'combat') return this._workBase(tile);
+        const wave = trialWave(tile.name, dataManager.getInitClientData?.() || null);
+        return Number.isFinite(wave?.baseHp) && wave.baseHp > 0 ? wave.baseHp : null;
     }
 
     /**
