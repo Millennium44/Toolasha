@@ -63,7 +63,10 @@ export const MIN_TIER_CLEARS = 2;
 export const RATE_FLOOR_FRACTION = 0.05;
 
 /**
- * The tier badges this record has been *watched* changing to, with their times.
+ * The tier badges this record has been *watched* changing to, with their times —
+ * or, where the guild payload stated it, when the server says the tier banked
+ * ({@link foldServerTierClears}), which `recordServerTiers` writes over a
+ * watched stamp.
  *
  * Only transitions count. A card first seen already badged T16 says nothing
  * about when T16 banked — it may have been an hour earlier — and pairing that
@@ -89,6 +92,89 @@ export function tierClearTimes(record, { now = null } = {}) {
         .filter((entry) => Number.isFinite(entry.tier) && entry.tier >= 1 && Number.isFinite(entry.at))
         .filter((entry) => !Number.isFinite(now) || now - entry.at <= TRIAL_ACTIVE_MS)
         .sort((a, b) => a.tier - b.tier);
+}
+
+/**
+ * When each party's tiers banked, as the guild payload states it, folded into
+ * what is already held.
+ *
+ * `guild_updated.currentTrialsData` covers every party — the ones this
+ * character did not join included — but each message states only the tier a
+ * party has banked *now* and when it banked (`highestTierReachedAtMs`, which is
+ * also when the next tier started). A panel opened mid-hour needs the earlier
+ * clears too, so they are kept here between messages: one stamp per tier, per
+ * party, on the server's clock.
+ *
+ * A party's clears are started over when a message shows it lower than
+ * something held — tiers only climb within a cycle — or a trial's hour past the
+ * oldest stamp held: either is the next cycle.
+ *
+ * @param {Object|null} held - `{[kind]: {[partyKey]: {[tier]: serverMs}}}`, from the last fold
+ * @param {Object|null} read - From `parseCurrentTrialsData`
+ * @returns {Object} The clears held after this message; `held` itself is not changed
+ */
+export function foldServerTierClears(held, read) {
+    const next = {};
+    for (const kind of ['skilling', 'combat']) {
+        const parties = { ...(held?.[kind] || {}) };
+        const entry = read?.[kind];
+        for (const [key, party] of Object.entries(entry?.trials || {})) {
+            const tier = party?.highestTier;
+            const at = Number.isFinite(party?.highestTierReachedAtMs)
+                ? party.highestTierReachedAtMs
+                : party?.tierStartedAtMs;
+            if (!Number.isFinite(tier) || !Number.isFinite(at)) continue;
+
+            const prior = parties[key] || {};
+            const stamps = Object.entries(prior).map(([heldTier, heldAt]) => ({ tier: Number(heldTier), at: heldAt }));
+            const nextCycle = stamps.some(
+                (stamp) => stamp.tier > tier || stamp.at > at || at - stamp.at > TRIAL_ACTIVE_MS
+            );
+            const clears = nextCycle ? {} : { ...prior };
+            // Tier 0 is the hour starting, not a clear
+            if (tier >= 1) clears[tier] = at;
+            parties[key] = clears;
+        }
+        if (Object.keys(parties).length) next[kind] = parties;
+    }
+    return next;
+}
+
+/**
+ * How far the client's clock runs ahead of the server's, from one guild message.
+ *
+ * The payload's stamps are the server's clock and a card's age is worked out on
+ * the client's, so a skew between the two would move every "banked N minutes
+ * ago" by the same amount. No message states the server's time, but none can
+ * carry a stamp from the server's future: the newest stamp in it is at or before
+ * the moment it was sent. So `receivedAt − newest stamp` is an upper bound on
+ * the skew (plus the trip), and the smallest bound seen is the best estimate.
+ * The message is sent because a tier banked often enough — every party's clear
+ * changes the payload — that the bound comes down to the trip within a tier or
+ * two.
+ *
+ * An overestimate only ever places a stamp *later* than the clear, never after
+ * the message that stated it, so an age derived from it is short rather than
+ * long. The differences between stamps, which is what a rate is, do not depend
+ * on it at all.
+ *
+ * @param {Object|null} read - From `parseCurrentTrialsData`
+ * @param {number} receivedAt - Client clock when the message arrived
+ * @param {number|null} [held] - The estimate so far
+ * @returns {number|null} Milliseconds to add to a server stamp, or `held` when the message carries none
+ */
+export function serverClockOffset(read, receivedAt, held = null) {
+    let newest = null;
+    for (const kind of ['skilling', 'combat']) {
+        for (const party of Object.values(read?.[kind]?.trials || {})) {
+            for (const stamp of [party?.highestTierReachedAtMs, party?.tierStartedAtMs]) {
+                if (Number.isFinite(stamp) && (newest === null || stamp > newest)) newest = stamp;
+            }
+        }
+    }
+    if (newest === null || !Number.isFinite(receivedAt)) return Number.isFinite(held) ? held : null;
+    const bound = receivedAt - newest;
+    return Number.isFinite(held) ? Math.min(held, bound) : bound;
 }
 
 /**

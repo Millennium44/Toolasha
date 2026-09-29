@@ -1684,6 +1684,7 @@ describe('parseCurrentTrialsData', () => {
             highestTier: 6,
             budgetRemainingMs: 3_467_059,
             tierStartedAtMs: 1_790_715_749_189,
+            highestTierReachedAtMs: 1_790_715_749_189,
             done: false,
         });
         expect(read.skilling.trials['/guild_skilling/brewing'].highestTier).toBe(4);

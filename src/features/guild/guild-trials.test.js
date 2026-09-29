@@ -6216,6 +6216,157 @@ describe('the guild message says a trial is running', () => {
     });
 });
 
+describe('a mates’ trial timed from the guild payload', () => {
+    // The live payload, as sent, and the same party's later messages: each one
+    // states only the tier banked now and when it banked, on the server's clock
+    const base = JSON.parse(CURRENT_TRIALS_DATA_SKILLING);
+    const milking = base.skilling.parties['/guild_skilling/milking'];
+    const newestStamp = base.skilling.parties['/guild_skilling/alchemy'].highestTierReachedAtMs;
+    // The client runs five seconds ahead of the server, and the trip is 300 ms
+    const SKEW = 5_000;
+    const TRIP = 300;
+
+    const later = (tier, bankedAt) => {
+        const payload = JSON.parse(CURRENT_TRIALS_DATA_SKILLING);
+        payload.skilling.parties['/guild_skilling/milking'] = {
+            ...milking,
+            highestTier: tier,
+            tierStartedAtMs: bankedAt,
+            highestTierReachedAtMs: bankedAt,
+            budgetRemainingMs: milking.budgetRemainingMs - (bankedAt - milking.tierStartedAtMs),
+        };
+        return { guild: { currentTrialsData: JSON.stringify(payload) } };
+    };
+    const t8 = milking.tierStartedAtMs + 45_000;
+    const t9 = t8 + 50_000;
+
+    /** A Trials-tab card seen once, badged T7, before the panel was shut */
+    const milkingTile = () => ({
+        name: 'Milking',
+        kind: 'skilling',
+        level: 170,
+        tier: 7,
+        samples: [],
+        tiers: [],
+        pointsByTier: {},
+        tierSeenAt: {},
+        tierReadAt: milking.tierStartedAtMs + 1_000,
+    });
+
+    const hear = (message, serverAt) => {
+        vi.setSystemTime(serverAt + SKEW + TRIP);
+        guildTrials._noteCurrentTrials(message);
+    };
+
+    beforeEach(() => {
+        guildTrials.currentTrials = null;
+        guildTrials.serverTierClears = null;
+        guildTrials.serverClockOffsetMs = null;
+        guildTrials.socketPhase = null;
+    });
+
+    afterEach(() => {
+        vi.useRealTimers();
+    });
+
+    test('clears heard with the panel shut are on the record the moment it opens', () => {
+        hear({ guild: { currentTrialsData: CURRENT_TRIALS_DATA_SKILLING } }, newestStamp);
+        hear(later(8, t8), t8);
+        hear(later(9, t9), t9);
+
+        const key = 'skilling::milking';
+        const now = t9 + SKEW + 20_000;
+        const record = guildTrials._recordServerTiers({ weekStart: 0, tiles: { [key]: milkingTile() } }, now);
+        const tile = record.tiles[key];
+
+        // Each tier at the server's own bank time, moved onto this clock by the
+        // bound the messages give: the skew plus the trip, never later than that
+        expect(tile.tierSeenAt).toEqual({
+            7: milking.highestTierReachedAtMs + SKEW + TRIP,
+            8: t8 + SKEW + TRIP,
+            9: t9 + SKEW + TRIP,
+        });
+        expect(tile).toMatchObject({ serverTier: 9, serverDone: false });
+
+        // The tier and the banked count come off the payload, not the stale badge
+        const analysis = analyseTrial(tile, { phase: 'live', participants: 12, timeLeftMs: 50 * 60_000, now });
+        expect(analysis).toMatchObject({ tier: 10, tierSource: 'server', tiersClearedSoFar: 9 });
+
+        const timing = tierTimingForecast(tile, {
+            kind: 'skilling',
+            participants: 12,
+            timeLeftMs: 50 * 60_000,
+            now,
+            bankedTiers: analysis.tiersClearedSoFar,
+        });
+        expect(timing.measured).toBe(3);
+        expect(timing.currentTier).toBe(10);
+        expect(timing.etaMsToNextTier).toBeGreaterThan(0);
+        expect(timing.expectedTier).toBeGreaterThan(10);
+
+        const html = renderTrialBlock(analysis, 12, undefined, {
+            participating: false,
+            phase: 'live',
+            looseForecast: timing,
+            forecast: tierTimingAsForecast(timing),
+        });
+        expect(html).toContain('Next tier in');
+        expect(html).toContain('Expected');
+        expect(html).not.toContain('needs two tier clears');
+    });
+
+    test('without the payload the same card is still measuring', () => {
+        // Today's behaviour, and the one this replaces: a badge seen once says
+        // nothing about when its tier banked
+        const now = t9 + SKEW + 20_000;
+        const timing = tierTimingForecast(milkingTile(), { kind: 'skilling', timeLeftMs: 50 * 60_000, now });
+        expect(timing.measured).toBe(0);
+        expect(analyseTrial(milkingTile(), { phase: 'live', now }).tiersClearedSoFar).toBeLessThan(9);
+    });
+
+    test('the payout paces a mates’ trial off its clears, whichever tab is open', () => {
+        hear({ guild: { currentTrialsData: CURRENT_TRIALS_DATA_SKILLING } }, newestStamp);
+        hear(later(8, t8), t8);
+        hear(later(9, t9), t9);
+        const now = t9 + SKEW + 20_000;
+        vi.setSystemTime(now);
+
+        guildTrials.record = guildTrials._recordServerTiers(
+            { weekStart: 0, tiles: { 'skilling::milking': milkingTile() } },
+            now
+        );
+        const analysisFor = (_key, record, participants, phase) =>
+            analyseTrial(record, { participants, phase, timeLeftMs: 50 * 60_000, now });
+
+        const [trial] = guildTrials._payoutTrials({ phase: null }, {}, analysisFor, now);
+        expect(trial.banked).toBe(9);
+        expect(trial.projected).toBeGreaterThan(9);
+    });
+
+    test('a combat party the card cannot be matched to writes nothing', () => {
+        vi.setSystemTime(newestStamp + SKEW);
+        guildTrials._noteCurrentTrials({
+            guild: {
+                currentTrialsData: JSON.stringify({
+                    skilling: { status: '', parties: null },
+                    combat: {
+                        status: 'in_progress',
+                        parties: { 1: { highestTier: 4, tierStartedAtMs: newestStamp, done: false } },
+                    },
+                }),
+            },
+        });
+        const record = { weekStart: 0, tiles: { 'combat::trial badger': { name: 'Trial Badger', kind: 'combat' } } };
+        expect(guildTrials._recordServerTiers(record, newestStamp + SKEW)).toBe(record);
+    });
+
+    test('a payload older than a trial’s hour writes nothing', () => {
+        hear({ guild: { currentTrialsData: CURRENT_TRIALS_DATA_SKILLING } }, newestStamp);
+        const record = { weekStart: 0, tiles: { 'skilling::milking': milkingTile() } };
+        expect(guildTrials._recordServerTiers(record, newestStamp + SKEW + 61 * 60_000)).toBe(record);
+    });
+});
+
 describe('the Trace button', () => {
     beforeEach(() => {
         game.settings.guildTrialDiagnosticTrace = true;

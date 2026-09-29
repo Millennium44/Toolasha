@@ -80,6 +80,7 @@ const {
     purgeJunkTiles,
     purgeLegacyTrialRecord,
     recordProvenance,
+    recordServerTiers,
     probeBuildingDetailMap,
     readBuildingBonus,
     readBuildingRules,
@@ -1345,5 +1346,55 @@ describe('the record cannot be wiped by a failed read or a stale copy', () => {
         expect(await saveTrialRoster({ battleId: 3, roster: {}, at: 3 })).toBe(false);
         expect(game.store.guildTrialsWorkBases.milking.baseWork).toBe(30_000);
         expect(game.store.guildTrialsRoster.battleId).toBe(2);
+    });
+});
+
+describe('recordServerTiers — the guild payload’s tier clears on a tile', () => {
+    const t0 = 1_790_715_740_155;
+    const tile = (over = {}) => ({
+        name: 'Milking',
+        kind: 'skilling',
+        tier: 7,
+        samples: [],
+        tiers: [],
+        tierSeenAt: { 6: t0 - 40_000, 7: t0 + 4_000 },
+        ...over,
+    });
+    const record = (over) => ({ weekStart: 0, tiles: { 'skilling::milking': tile(over) } });
+
+    test('a stated stamp is written over a watched one; unstated tiers keep theirs', () => {
+        const next = recordServerTiers(record(), 'skilling::milking', {
+            bankedTier: 8,
+            clears: { 7: t0, 8: t0 + 45_000 },
+            at: t0 + 46_000,
+        });
+        expect(next.tiles['skilling::milking'].tierSeenAt).toEqual({ 6: t0 - 40_000, 7: t0, 8: t0 + 45_000 });
+        expect(next.tiles['skilling::milking']).toMatchObject({
+            serverTier: 8,
+            serverTierAt: t0 + 46_000,
+            serverDone: false,
+        });
+    });
+
+    test('a tile the record does not have, or nothing new, leaves the record as it was', () => {
+        const held = record();
+        expect(recordServerTiers(held, 'skilling::brewing', { bankedTier: 4, at: t0 })).toBe(held);
+        const once = recordServerTiers(held, 'skilling::milking', { bankedTier: 7, clears: { 7: t0 }, at: t0 });
+        expect(recordServerTiers(once, 'skilling::milking', { bankedTier: 7, clears: { 7: t0 }, at: t0 })).toBe(once);
+    });
+
+    test('a card sample keeps the statement, and a merge keeps the newer one', () => {
+        const stated = recordServerTiers(record(), 'skilling::milking', { bankedTier: 8, at: t0 + 46_000 });
+        const sampled = recordTileSample(
+            stated,
+            { name: 'Milking', kind: 'skilling', tier: 8, readings: [] },
+            t0 + 50_000
+        );
+        expect(sampled.tiles['skilling::milking']).toMatchObject({ serverTier: 8, serverTierAt: t0 + 46_000 });
+
+        const older = recordServerTiers(record(), 'skilling::milking', { bankedTier: 7, at: t0 + 1_000 });
+        const merged = mergeTrialRecords(older, sampled);
+        expect(merged.tiles['skilling::milking']).toMatchObject({ serverTier: 8, serverTierAt: t0 + 46_000 });
+        expect(mergeTrialRecords(sampled, older).tiles['skilling::milking'].serverTier).toBe(8);
     });
 });

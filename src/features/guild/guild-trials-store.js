@@ -526,6 +526,8 @@ export function recordTileSample(record, tile, at, characterId = null) {
         tierReadAt: Number.isFinite(tile?.tier)
             ? Math.max(at, Number.isFinite(existing.tierReadAt) ? existing.tierReadAt : at)
             : existing.tierReadAt,
+        // Written by `recordServerTiers` only; a card sample says nothing about them
+        ...latestServerTier(existing, null),
         samples: samples.slice(-MAX_SAMPLES),
         pointSamples: pointSamples.slice(-MAX_SAMPLES),
         tiers,
@@ -535,6 +537,67 @@ export function recordTileSample(record, tile, at, characterId = null) {
     // the provenance stamp or the archived cycles off it, which is a thing this
     // returned-a-fresh-object shape did quietly for both
     return { ...(record || {}), weekStart, tiles };
+}
+
+/**
+ * Write what the guild payload says about one trial onto its tile.
+ *
+ * The payload states, for every party including the ones this character did not
+ * join, how many tiers it has banked and when each banked. That is what
+ * `tierSeenAt` otherwise has to learn by watching a badge move with the Trials
+ * tab open, and the server's stamp is the clear itself rather than when a
+ * render noticed it — so a stated stamp is written over a watched one. Tiers
+ * the payload does not state keep whatever was watched.
+ *
+ * `serverTier`/`serverTierAt` are the banked count and when it was stated, for
+ * the analysis to read as a tier rung on any tab: the card that carries the
+ * badge need not be on screen.
+ *
+ * Only a tile already on the record is written; the payload's keys are trial
+ * hrids and the record is keyed by what the cards are called.
+ *
+ * @param {Object} record - The week's record
+ * @param {string} key - The tile's key on it
+ * @param {Object} stated - What the payload says
+ * @param {number|null} stated.bankedTier - The party's `highestTier`
+ * @param {boolean} [stated.done] - The party is finished
+ * @param {Object} [stated.clears] - `{[tier]: clientMs}`, each tier's bank time on this client's clock
+ * @param {number} stated.at - When the payload stating it arrived
+ * @returns {Object} The record, unchanged when there was nothing to write
+ */
+export function recordServerTiers(record, key, { bankedTier = null, done = false, clears = {}, at } = {}) {
+    const existing = record?.tiles?.[key];
+    if (!existing || !Number.isFinite(at)) return record;
+
+    const tierSeenAt = { ...(existing.tierSeenAt || {}) };
+    let changed = false;
+    for (const [tier, when] of Object.entries(clears || {})) {
+        if (!(Number(tier) >= 1) || !Number.isFinite(when) || tierSeenAt[tier] === when) continue;
+        tierSeenAt[tier] = when;
+        changed = true;
+    }
+    const tierStated = Number.isFinite(bankedTier) && bankedTier >= 0;
+    if (
+        !changed &&
+        (!tierStated ||
+            (existing.serverTier === bankedTier &&
+                existing.serverTierAt === at &&
+                Boolean(existing.serverDone) === Boolean(done)))
+    ) {
+        return record;
+    }
+
+    return {
+        ...record,
+        tiles: {
+            ...record.tiles,
+            [key]: {
+                ...existing,
+                tierSeenAt,
+                ...(tierStated ? { serverTier: bankedTier, serverTierAt: at, serverDone: Boolean(done) } : {}),
+            },
+        },
+    };
 }
 
 /**
@@ -610,6 +673,23 @@ function mergeTierSeenAt(a, b) {
 function latestTierReadAt(a, b) {
     const reads = [a?.tierReadAt, b?.tierReadAt].filter(Number.isFinite);
     return reads.length ? { tierReadAt: Math.max(...reads) } : {};
+}
+
+/**
+ * The later of two tiles' guild-payload statements, omitted when neither has one.
+ * @param {Object} a - One side's tile
+ * @param {Object} b - The other side's tile
+ * @returns {{serverTier?: number, serverTierAt?: number, serverDone?: boolean}} Spreadable
+ */
+function latestServerTier(a, b) {
+    const stated = [a, b].filter((tile) => Number.isFinite(tile?.serverTier) && Number.isFinite(tile?.serverTierAt));
+    if (!stated.length) return {};
+    const newest = stated.reduce((best, tile) => (tile.serverTierAt > best.serverTierAt ? tile : best));
+    return {
+        serverTier: newest.serverTier,
+        serverTierAt: newest.serverTierAt,
+        serverDone: Boolean(newest.serverDone),
+    };
 }
 
 /**
@@ -737,6 +817,8 @@ export function mergeTrialRecords(base, incoming) {
             tierSeenAt: mergeTierSeenAt(existing.tierSeenAt, tile.tierSeenAt),
             // Latest wins: either side reading the badge is the card being watched
             ...latestTierReadAt(existing, tile),
+            // The newer statement of the guild payload, all three fields together
+            ...latestServerTier(existing, tile),
             samples,
             pointSamples,
             tiers,

@@ -1002,9 +1002,10 @@ export const TIER_BOUNDARIES = [
  * A JSON **string**, and the countdown is per party — keyed by trial hrid, every
  * party on it including the ones this character did not join — beside the tier
  * that party has banked. At the same instant `guild_skilling_updated` stated
- * Alchemy's tier in progress as 7: `highestTier` counts what is banked. The
- * Cooking and Milking parties were elided from the capture and are left out
- * here rather than invented; `points` is as sent.
+ * Alchemy's tier in progress as 7: `highestTier` counts what is banked. Every
+ * field is as sent. `tierStartedAtMs + budgetRemainingMs` is the same instant
+ * for every party to within a second, so each party's countdown is as of its
+ * own last tier clear, not as of the message.
  */
 export const CURRENT_TRIALS_DATA_SKILLING = JSON.stringify({
     points: {
@@ -1028,6 +1029,20 @@ export const CURRENT_TRIALS_DATA_SKILLING = JSON.stringify({
                 budgetRemainingMs: 3476737,
                 tierStartedAtMs: 1790715739702,
                 highestTierReachedAtMs: 1790715739702,
+                done: false,
+            },
+            '/guild_skilling/cooking': {
+                highestTier: 5,
+                budgetRemainingMs: 3471959,
+                tierStartedAtMs: 1790715744197,
+                highestTierReachedAtMs: 1790715744197,
+                done: false,
+            },
+            '/guild_skilling/milking': {
+                highestTier: 7,
+                budgetRemainingMs: 3476683,
+                tierStartedAtMs: 1790715740155,
+                highestTierReachedAtMs: 1790715740155,
                 done: false,
             },
         },
