@@ -137,6 +137,22 @@ describe('collectItemsAboveTab', () => {
 });
 
 describe('syncLoadoutBinding', () => {
+    test('reports a binding that moved on though the tab items did not', () => {
+        // The hat was removed from the tab by hand; the loadout now drops it too
+        const config = buildConfig({
+            id: 'tab1',
+            items: ['/items/sword'],
+            loadoutBindings: { Zone1: ['/items/sword', '/items/hat'] },
+        });
+
+        const result = syncLoadoutBinding(config, 'tab1', 'Zone1', ['/items/sword']);
+
+        expect(result.changed).toBe(false);
+        expect(result.bindingChanged).toBe(true);
+        expect(result.config.tabs[0].loadoutBindings.Zone1).toEqual(['/items/sword']);
+        expect(syncLoadoutBinding(result.config, 'tab1', 'Zone1', ['/items/sword']).bindingChanged).toBe(false);
+    });
+
     test('removes an item replaced in the loadout', () => {
         const config = buildConfig({
             id: 'tab1',

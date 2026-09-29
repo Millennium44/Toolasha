@@ -1316,17 +1316,22 @@ function isBoundElsewhere(tab, excludeLoadoutName, itemHrid) {
  * Sync a tab's loadout binding against a new snapshot.
  * Matches items by base HRID to detect enhancement level changes.
  * Items still referenced by another binding on the same tab are preserved.
+ *
+ * The binding is the loadout as last synced, and what the next sync diffs against, so it has to
+ * be kept even when the tab's items did not move (an item removed from the tab by hand and then
+ * dropped from the loadout): `bindingChanged` says it moved on and the config needs saving.
  * @param {Object} config
  * @param {string} tabId
  * @param {string} loadoutName
  * @param {string[]} newSnapshotItems - Current items from the loadout snapshot
- * @returns {{ config: Object, changed: boolean }}
+ * @returns {{ config: Object, changed: boolean, bindingChanged: boolean }} `changed`: the tab's
+ *   items changed
  */
 export function syncLoadoutBinding(config, tabId, loadoutName, newSnapshotItems) {
     const c = clone(config);
     const result = _findNode(c.tabs, tabId);
     if (!result || !result.tab.loadoutBindings?.[loadoutName]) {
-        return { config: c, changed: false };
+        return { config: c, changed: false, bindingChanged: false };
     }
 
     const tab = result.tab;
@@ -1385,8 +1390,10 @@ export function syncLoadoutBinding(config, tabId, loadoutName, newSnapshotItems)
     }
 
     // Update binding to reflect new state
+    const bindingChanged =
+        oldBound.length !== newSnapshotItems.length || oldBound.some((h, i) => h !== newSnapshotItems[i]);
     tab.loadoutBindings[loadoutName] = [...newSnapshotItems];
-    return { config: c, changed };
+    return { config: c, changed, bindingChanged };
 }
 
 /**

@@ -98,6 +98,7 @@ vi.mock('../../../utils/adoption-consent.js', () => ({
 }));
 
 const { default: CustomTabsUI } = await import('./custom-tabs-ui.js');
+const { addItem, removeItem, flushConfigWrites } = await import('./custom-tabs-data.js');
 
 const SWORD = '/items/sword';
 
@@ -202,5 +203,32 @@ describe('removing a loadout-bound item by hand', () => {
 
         expect(ui._config.tabs[0].items).toEqual([`${SWORD}+5`]);
         list.remove();
+    });
+
+    /** Remove the shield by hand, then have the loadout drop it too */
+    function removeByHandThenFromLoadout() {
+        ui._config = removeItem(ui._config, 'gear', SHIELD);
+        loadoutSnapshotMock.snapshots.s1.equipment = [{ itemHrid: SWORD, enhancementLevel: 5 }];
+        ui._onLoadoutSnapshotUpdate();
+    }
+
+    test('the loadout dropping a hand-removed item is remembered, so adding it back counts as new', async () => {
+        removeByHandThenFromLoadout();
+        expect(ui._config.tabs[0].loadoutBindings.Boss).toEqual([`${SWORD}+5`]);
+        await flushConfigWrites();
+        const stored = storageMock.storeFor('settings').get('char1_inventoryTabs_config');
+        expect(stored.tabs[0].loadoutBindings.Boss).toEqual([`${SWORD}+5`]);
+
+        loadoutSnapshotMock.snapshots.s1.equipment.push({ itemHrid: SHIELD, enhancementLevel: 0 });
+        ui._onLoadoutSnapshotUpdate();
+        expect(ui._config.tabs[0].items).toEqual([`${SWORD}+5`, SHIELD]);
+    });
+
+    test('an item added back by hand after the loadout dropped it stays', () => {
+        removeByHandThenFromLoadout();
+        ui._config = addItem(ui._config, 'gear', SHIELD);
+
+        ui._onLoadoutSnapshotUpdate();
+        expect(ui._config.tabs[0].items).toEqual([`${SWORD}+5`, SHIELD]);
     });
 });
