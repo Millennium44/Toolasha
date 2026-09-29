@@ -239,7 +239,7 @@ describe('calculateStatsForRuns on a very large group', () => {
 });
 
 describe('run rendering is capped per group', () => {
-    function bigRun(i) {
+    function bigRun(i, overrides = {}) {
         return {
             teamKey: 'Aster,Briar',
             dungeonName: 'Chimerical Den',
@@ -248,6 +248,7 @@ describe('run rendering is capped per group', () => {
             // itself hands the panel — grouping preserves this order rather
             // than re-sorting it.
             timestamp: new Date(Date.now() - i * 1000).toISOString(),
+            ...overrides,
         };
     }
 
@@ -401,6 +402,37 @@ describe('run rendering is capped per group', () => {
         await Promise.resolve();
 
         expect(dungeonTrackerStorage.deleteRun).toHaveBeenCalledWith(`${odd.teamKey}|${odd.timestamp}|${odd.duration}`);
+    });
+
+    test('a team literally named "Solo Runs" pages on its own, apart from the solo fallback group', () => {
+        const history = new DungeonTrackerUIHistory(freshState('team'), (ms) => `${ms}ms`);
+        const solo = Array.from({ length: 3 }, (_, i) => bigRun(i, { teamKey: undefined }));
+        const named = Array.from({ length: 450 }, (_, i) => bigRun(1000 + i, { teamKey: 'Solo Runs' }));
+        const groups = history.groupByTeam([...solo, ...named]);
+        expect(groups.map((g) => g.label)).toEqual(['Solo Runs', 'Solo Runs']);
+        const runList = render(history, groups);
+
+        runList.querySelectorAll('.mwi-dt-show-more')[0].dispatchEvent(new Event('click', { bubbles: true }));
+
+        const groupEls = runList.querySelectorAll('.mwi-dt-group');
+        expect(groupEls[0].querySelectorAll('[data-run-timestamp]')).toHaveLength(3);
+        expect(groupEls[1].querySelectorAll('[data-run-timestamp]')).toHaveLength(400);
+    });
+
+    test('a page count from one Group By mode does not carry onto a same-named group of the other', () => {
+        const history = new DungeonTrackerUIHistory(freshState('team'), (ms) => `${ms}ms`);
+        const runs = Array.from({ length: 450 }, (_, i) => bigRun(i, { teamKey: 'Chimerical Den' }));
+        const teamList = render(history, history.groupByTeam(runs));
+        teamList.querySelector('.mwi-dt-show-more').dispatchEvent(new Event('click', { bubbles: true }));
+        expect(teamList.querySelectorAll('[data-run-timestamp]')).toHaveLength(400);
+
+        history.state.groupBy = 'dungeon';
+        const dungeonList = render(
+            history,
+            history.groupByDungeon(runs.map((r) => ({ ...r, dungeonName: 'Chimerical Den' })))
+        );
+
+        expect(dungeonList.querySelectorAll('[data-run-timestamp]')).toHaveLength(200);
     });
 
     test('"Show more" state for one group does not affect a different group', () => {
