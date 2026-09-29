@@ -3634,15 +3634,20 @@ class GuildTrials {
                 // such a card gives. See
                 // `guild-trial-tier-timing.js` for why the stated points are
                 // not one.
-                const timing = tierTimingForecast(record, {
-                    kind: analysis.kind,
-                    participants,
-                    workBase: this._timingBase(tile),
-                    timeLeftMs,
-                    now,
-                    bankedTiers: analysis.tiersClearedSoFar,
-                    windowed: isTestServer(),
-                });
+                // Not for a scheduled trial: its record still holds the last
+                // cycle's clears, and the card owes a fresh tier-1 hour.
+                const timing =
+                    tilePhase === 'scheduled'
+                        ? null
+                        : tierTimingForecast(record, {
+                              kind: analysis.kind,
+                              participants,
+                              workBase: this._timingBase(tile),
+                              timeLeftMs,
+                              now,
+                              bankedTiers: analysis.tiersClearedSoFar,
+                              windowed: isTestServer(),
+                          });
 
                 // What the card itself is labelled with, published on the tile
                 // so the tab-wide badge injector can read it: past the level
@@ -3901,7 +3906,11 @@ class GuildTrials {
             // loadouts; beside a walk timed from the guild's own clears it was a
             // second, contradicting verdict ("7 tiers → T7" over "~14 more tiers")
             // on a trial only mates joined. The measured clears win.
-            if ((!forecast || forecast.tier === null || forecast.source !== 'measured') && timing) {
+            if (
+                (!forecast || forecast.tier === null || forecast.source !== 'measured') &&
+                timing &&
+                phase !== 'scheduled'
+            ) {
                 const fromTiming = tierTimingAsForecast(timing);
                 if (fromTiming) return fromTiming;
             }
