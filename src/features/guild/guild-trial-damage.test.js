@@ -3191,6 +3191,54 @@ describe('the trial ends and its figures stop moving', () => {
         expect(guildTrialDamage.breakdown().combatBudget).toBeNull();
     });
 
+    test('the trial clock is read off each party, where live payloads state it', () => {
+        // The party shape `CURRENT_TRIALS_DATA_SKILLING` captured, under the
+        // combat kind: no kind-level budget at all
+        const party = (budgetRemainingMs, tierStartedAtMs, done = false) => ({
+            highestTier: 3,
+            budgetRemainingMs,
+            tierStartedAtMs,
+            highestTierReachedAtMs: tierStartedAtMs,
+            done,
+        });
+        game.wsHandlers.new_guild_battle(opening());
+        vi.setSystemTime(at + 30_000);
+        game.wsHandlers.guild_updated({
+            guild: {
+                currentTrialsData: JSON.stringify({
+                    combat: {
+                        status: 'in_progress',
+                        parties: {
+                            '/guild_combat/chameleon': party(2_000_000, at - 60_000),
+                            '/guild_combat/badger': party(2_010_000, at - 70_000),
+                            '/guild_combat/hedgehog': party(1_500_000, at - 20_000, true),
+                        },
+                    },
+                }),
+            },
+        });
+        expect(guildTrialDamage.breakdown().combatBudget).toEqual({
+            remainingMs: 2_000_000,
+            at: at + 30_000,
+            serverAt: at - 60_000,
+        });
+
+        // A reading after the held fight ended keeps the one taken while it ran
+        endTrial(40_000);
+        vi.setSystemTime(at + 50_000);
+        game.wsHandlers.guild_updated({
+            guild: {
+                currentTrialsData: JSON.stringify({
+                    combat: {
+                        status: 'in_progress',
+                        parties: { '/guild_combat/badger': party(1_900_000, at + 45_000) },
+                    },
+                }),
+            },
+        });
+        expect(guildTrialDamage.breakdown().combatBudget.at).toBe(at + 30_000);
+    });
+
     test('the guild’s own trial status ends it too, but only once seen in progress', () => {
         const status = (combat) => ({ guild: { currentTrialsData: JSON.stringify({ combat }) } });
         game.wsHandlers.new_guild_battle(opening());

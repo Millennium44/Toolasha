@@ -842,6 +842,43 @@ export function compareTrialStats({ reported, measured } = {}) {
 }
 
 /**
+ * The combat trial's countdown, out of one parsed `currentTrialsData.combat`.
+ *
+ * Live payloads state `budgetRemainingMs` on each party (`trials`, as
+ * `parseCurrentTrialsData` returns them), not on the kind, and a party's
+ * figure is as of its last clear: `tierStartedAtMs + budgetRemainingMs` is the
+ * same deadline for every party to within a second. So any party answers for
+ * the held fight whichever it is — the newest-cleared one still running is
+ * taken, then any. The kind-level figure is the fallback for a payload that
+ * states one there.
+ *
+ * `at` is receipt time, which overstates what is left by the time since that
+ * party's last clear; `serverAt` keeps the party's own `tierStartedAtMs` (the
+ * server's clock) for a reader that can correct for the offset between the two.
+ *
+ * @param {Object|null} combat - `parseCurrentTrialsData(...).combat`
+ * @param {number} at - When it arrived
+ * @returns {{remainingMs: number, at: number, serverAt?: number|null}|null}
+ */
+export function combatBudgetReading(combat, at) {
+    const parties = Object.values(combat?.trials || {}).filter((party) => Number.isFinite(party?.budgetRemainingMs));
+    const running = parties.filter((party) => !party.done);
+    const stamp = (party) => (Number.isFinite(party?.tierStartedAtMs) ? party.tierStartedAtMs : -Infinity);
+    const newest = (running.length ? running : parties).reduce(
+        (best, party) => (!best || stamp(party) > stamp(best) ? party : best),
+        null
+    );
+    if (newest) {
+        return {
+            remainingMs: newest.budgetRemainingMs,
+            at,
+            serverAt: Number.isFinite(newest.tierStartedAtMs) ? newest.tierStartedAtMs : null,
+        };
+    }
+    return Number.isFinite(combat?.budgetRemainingMs) ? { remainingMs: combat.budgetRemainingMs, at } : null;
+}
+
+/**
  * Slot → `characterId`, from the raw `new_guild_battle.players[]`.
  *
  * The companion to {@link rosterFromBattle}, and deliberately not the same
@@ -1270,10 +1307,11 @@ class GuildTrialDamage {
                 this.combatInProgressSeen = true;
                 // What is left of the combat trial's hour, and when the server
                 // said so: how long the whole fight ran when tier 1 was not seen
-                // (see `trialFightSpan`)
-                if (Number.isFinite(combat.budgetRemainingMs)) {
-                    this.combatBudget = { remainingMs: combat.budgetRemainingMs, at: Date.now() };
-                }
+                // (see `trialFightSpan`). Not once the held fight has ended: the
+                // other parties keep the kind in progress, and a reading taken
+                // after the end is one `trialFightSpan` refuses
+                const budget = combatBudgetReading(combat, Date.now());
+                if (budget && !this.endedByGame) this.combatBudget = budget;
                 return;
             }
             if (!this.combatInProgressSeen) return;
@@ -3197,7 +3235,13 @@ class GuildTrialDamage {
         this.fightStartMs = finite(saved.fightStartMs);
         this.combatBudget =
             Number.isFinite(saved.combatBudget?.remainingMs) && Number.isFinite(saved.combatBudget?.at)
-                ? { remainingMs: saved.combatBudget.remainingMs, at: saved.combatBudget.at }
+                ? {
+                      remainingMs: saved.combatBudget.remainingMs,
+                      at: saved.combatBudget.at,
+                      ...(Number.isFinite(saved.combatBudget.serverAt)
+                          ? { serverAt: saved.combatBudget.serverAt }
+                          : {}),
+                  }
                 : null;
         this.active = Boolean(saved.active) && this.endedAt === null;
         this.encounter = saved.encounter ?? this.encounter;
