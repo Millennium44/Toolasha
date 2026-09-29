@@ -101,6 +101,20 @@ export const MAX_IMPORT_FILE_BYTES = 20 * 1024 * 1024;
 export const MAX_IMPORT_RUNS = 50_000;
 
 /**
+ * The longest `dungeonName` an imported run may carry. Real names are a few
+ * words; the value is copied into filter options, trend labels, group headers
+ * and every row, so an unbounded one freezes the tab.
+ */
+export const MAX_DUNGEON_NAME_CHARS = 200;
+
+/**
+ * The longest `teamKey` an imported run may carry. A live key is up to five
+ * player names joined by commas (`getTeamKey`); the repo bounds no name length,
+ * so this sits far above any plausible five-name key rather than at a guess.
+ */
+export const MAX_TEAM_KEY_CHARS = 300;
+
+/**
  * @param {*} value - Anything
  * @returns {boolean} Whether it is a plain object (not null, not an array)
  */
@@ -350,6 +364,9 @@ export function validateImportedRun(run, maxRunMs = MAX_PLAUSIBLE_RUN_MS, now = 
     if (typeof run.dungeonName !== 'string' || run.dungeonName.trim() === '') {
         return { ok: false, reason: 'missing dungeon name' };
     }
+    if (run.dungeonName.length > MAX_DUNGEON_NAME_CHARS) {
+        return { ok: false, reason: `dungeon name longer than ${MAX_DUNGEON_NAME_CHARS} characters` };
+    }
 
     // Every live save writes `teamKey` as either a real (non-empty) string or
     // omits it for a solo run — `groupByTeam` and friends already read a
@@ -360,6 +377,9 @@ export function validateImportedRun(run, maxRunMs = MAX_PLAUSIBLE_RUN_MS, now = 
     if (run.teamKey !== undefined && run.teamKey !== null) {
         if (typeof run.teamKey !== 'string' || run.teamKey.trim() === '') {
             return { ok: false, reason: 'teamKey must be a non-empty string, or absent for a solo run' };
+        }
+        if (run.teamKey.length > MAX_TEAM_KEY_CHARS) {
+            return { ok: false, reason: `teamKey longer than ${MAX_TEAM_KEY_CHARS} characters` };
         }
     }
 
@@ -454,6 +474,8 @@ export default {
     MAX_PLAUSIBLE_RUN_MS,
     MAX_IMPORT_FILE_BYTES,
     MAX_IMPORT_RUNS,
+    MAX_DUNGEON_NAME_CHARS,
+    MAX_TEAM_KEY_CHARS,
     buildDungeonRunsBackupEnvelope,
     serializeBackupWithinLimits,
     parseDungeonRunsJson,
