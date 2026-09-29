@@ -1511,6 +1511,12 @@ describe('archiveEarlierCycles — a week with more than one cycle in it', () =>
         expect(timing.intervals).toBe(8);
     });
 
+    test('the earlier cycle is archived with the accuracy it was given', () => {
+        const accuracy = { 'trial badger': { measured: 1, reported: 2 } };
+        const next = archiveEarlierCycles(record(), read(), { offset, at: CLEARS.CAPTURED_AT, accuracy });
+        expect(next.history.at(-1).accuracy).toEqual(accuracy);
+    });
+
     test('a current part with no bar samples survives the next ordinary save', () => {
         // Cooking's current part carries clears and a server statement and no
         // bar sample; judged by bar samples alone it read as older than its

@@ -4058,7 +4058,13 @@ class GuildTrials {
             const held = this.currentTrials;
             if (!held || !Number.isFinite(held.at) || now - held.at > TRIAL_ACTIVE_MS) return;
 
-            const next = archiveEarlierCycles(this.record, held, { offset: this.serverClockOffsetMs, at: now });
+            const next = archiveEarlierCycles(this.record, held, {
+                offset: this.serverClockOffsetMs,
+                at: now,
+                // The last point the damage module's summary still describes the
+                // cycle being archived: the next cycle's stats replace it
+                accuracy: guildTrialDamage.accuracySummary?.({ trace: guildTrialTrace.status?.() ?? null }) || null,
+            });
             if (next === this.record) return;
             this.record = next;
             this.blockHtml.clear();

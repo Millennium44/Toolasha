@@ -514,9 +514,10 @@ function earlierCyclePart(tile, from) {
  * @param {Object} [options] - Context
  * @param {number|null} [options.offset] - From `serverClockOffset`
  * @param {number} [options.at] - Clock, for the archive entry
+ * @param {Object|null} [options.accuracy] - The archived cycle's attribution accuracy, see {@link archiveCycle}
  * @returns {Object} The record, the same object when nothing was earlier
  */
-export function archiveEarlierCycles(record, read, { offset = null, at = Date.now() } = {}) {
+export function archiveEarlierCycles(record, read, { offset = null, at = Date.now(), accuracy = null } = {}) {
     const skillingStart = trialHourStartedAt(read?.skilling, offset);
     const combatStart = trialHourStartedAt(read?.combat, offset);
     if (!Number.isFinite(skillingStart) && !Number.isFinite(combatStart)) return record;
@@ -539,7 +540,7 @@ export function archiveEarlierCycles(record, read, { offset = null, at = Date.no
     // To the minute: the offset the start is derived through tightens by a trip
     // or so between messages, and one boundary must stay one archive
     const cycleFrom = Math.round(Math.max(...[skillingStart, combatStart].filter(Number.isFinite)) / 60_000) * 60_000;
-    return { ...archiveCycle({ ...record, tiles: earlier }, EARLIER_CYCLE_REASON, at, { cycleFrom }), tiles };
+    return { ...archiveCycle({ ...record, tiles: earlier }, EARLIER_CYCLE_REASON, at, { cycleFrom, accuracy }), tiles };
 }
 
 /**
