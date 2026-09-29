@@ -333,16 +333,27 @@ describe('scoreboardRows', () => {
 });
 
 describe('modalStatsForBreakdown', () => {
+    const capturedAt = 1_000_000;
     const modal = {
+        getStats: (name) => (name === 'Trial Swarm' ? { kind: 'combat', at: capturedAt } : null),
         getCombatStats: (name) =>
             name === 'Trial Swarm' ? [{ name: 'Estevao', damage: 1_052_000, healing: 0, damageTaken: 226_000 }] : null,
     };
 
     test('joins the breakdown encounter to the modal trial name', () => {
-        const bd = { encounter: 'swarm', trialNames: ['Trial Jellyfish', 'Trial Swarm'] };
+        const bd = { encounter: 'swarm', trialNames: ['Trial Jellyfish', 'Trial Swarm'], endedAt: capturedAt - 5000 };
         expect(modalStatsForBreakdown(bd, modal)).toEqual([
             { name: 'Estevao', damage: 1_052_000, healing: 0, damageTaken: 226_000 },
         ]);
+    });
+
+    test('a capture from before the fight ended is an earlier trial’s, not this one’s', () => {
+        // The game's Stats panel opened mid-fight shows the last finished trial
+        const running = { encounter: 'swarm', trialNames: ['Trial Swarm'], endedAt: null };
+        expect(modalStatsForBreakdown(running, modal)).toBeNull();
+        // …and one captured before this fight ended stays that trial's
+        const ended = { encounter: 'swarm', trialNames: ['Trial Swarm'], endedAt: capturedAt + 60_000 };
+        expect(modalStatsForBreakdown(ended, modal)).toBeNull();
     });
 
     test('is null when no encounter, or no modal captured for that trial', () => {
