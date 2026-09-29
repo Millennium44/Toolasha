@@ -695,14 +695,30 @@ class ChatTabHandler {
      * @param {string|null} tabKey - Persistence key for this tab, from {@link chatTabKey}
      * @param {PendingMessageIds} messageIds - Shared id correlator, from {@link ChatHistoryExtender}
      * @param {DeletedMessageIds} deletedIds - Shared deletion tombstone, from {@link ChatHistoryExtender}
+     * @param {Set<ChatTabHandler>|null} peers - The extender's live handlers, refilled once a read recovers
      */
-    constructor(containerEl, interactionCache, getMaxHistory, tabKey = null, messageIds = null, deletedIds = null) {
+    constructor(
+        containerEl,
+        interactionCache,
+        getMaxHistory,
+        tabKey = null,
+        messageIds = null,
+        deletedIds = null,
+        peers = null
+    ) {
         this.container = containerEl;
         this.interactionCache = interactionCache;
         this.getMaxHistory = getMaxHistory;
         this.tabKey = tabKey;
         this.messageIds = messageIds;
         this.deletedIds = deletedIds;
+        this.peers = peers;
+        /**
+         * Whether this tab's restore got nothing because the stored history
+         * could not be read, as opposed to there being none. Cleared by the
+         * next restore; read by {@link ChatTabHandler#_refillPeers}.
+         */
+        this.needsRefill = false;
         /** Whether a restore has already been fired for this tab; see {@link _resolveTabKey}. */
         this.restoreStarted = false;
         /** @type {WeakMap<Element, string|null>} Buffered node → {@link messageIdentity}, computed once */
@@ -910,21 +926,40 @@ class ChatTabHandler {
     async restore(tabKey) {
         if (!tabKey) return 0;
         this.restoreStarted = true;
+        this.needsRefill = false;
 
-        let stored;
+        let loaded;
         try {
-            stored = (await chatHistoryPersistence.load())[tabKey];
+            loaded = await chatHistoryPersistence.load();
         } catch (error) {
             console.error('[ChatHistoryExtender] Could not load stored history:', error);
+            this.needsRefill = true;
             return 0;
         }
-        if (!Array.isArray(stored) || !stored.length) return 0;
-        // The container may have been torn down while the read was in flight
+        // The container may have been torn down while the read was in flight —
+        // by a disable or a character switch. Nothing below may touch it, and
+        // a departed handler must not refill the arriving character's tabs.
         if (!this.bufferEl.isConnected) return 0;
+        // A failed read answers `{}`, the same as an empty record. Only a
+        // successful one is the persistence layer's own snapshot object.
+        if (!loaded || loaded !== chatHistoryPersistence.snapshot) {
+            this.needsRefill = true;
+            return 0;
+        }
+        this._refillPeers();
+
+        const stored = loaded[tabKey];
+        if (!Array.isArray(stored) || !stored.length) return 0;
 
         // Messages are recorded while they are still live, so what is on disk
-        // overlaps what the game is showing right now. The live copy wins.
+        // overlaps what the game is showing right now. The live copy wins, and
+        // so does a copy this tab already evicted into its buffer — a refill
+        // runs on a tab that has been taking evictions since it mounted.
         const live = this._liveIdentities();
+        for (const node of this._messageNodes()) {
+            const identity = messageIdentity(serializeMessage(node));
+            if (identity) live.add(identity);
+        }
 
         let restored = 0;
         for (const html of stored) {
@@ -951,6 +986,30 @@ class ChatTabHandler {
 
         this._trim(this.getMaxHistory());
         return restored;
+    }
+
+    /**
+     * Restore every mounted tab whose own restore found the store unreadable.
+     *
+     * Called when a read has just succeeded, so a tab mounted during an outage
+     * is not left empty for the session. Nothing retries on a timer; recovery
+     * is the next `load()` someone makes anyway. Goes through
+     * {@link ChatTabHandler#restore}, so the live/buffer dedupe and the deletion
+     * tombstone apply unchanged.
+     */
+    _refillPeers() {
+        if (!this.peers) return;
+        for (const peer of [...this.peers]) {
+            if (peer === this || !peer.needsRefill || !peer.tabKey || !peer.bufferEl.isConnected) continue;
+            // A container that has since become another tab restores that tab
+            // itself, from `_resolveTabKey`; this key would be the old one.
+            const current = chatTabKey(peer.container);
+            if (current && current !== peer.tabKey) continue;
+            peer.needsRefill = false;
+            peer.restore(peer.tabKey).catch((error) => {
+                console.error('[ChatHistoryExtender] Refill failed:', error);
+            });
+        }
     }
 
     /**
@@ -1343,7 +1402,8 @@ class ChatHistoryExtender {
                 getMaxHistory,
                 chatTabKey(containerEl),
                 this.messageIds,
-                this.deletedIds
+                this.deletedIds,
+                this.activeHandlers
             );
             this.tabHandlers.set(containerEl, handler);
             this.activeHandlers.add(handler);
