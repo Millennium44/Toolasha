@@ -387,14 +387,34 @@ function stampedSince(stamp, from) {
  * @returns {boolean} True when any sample, clear, badge read or server statement predates it
  */
 function tileStampedBefore(tile, from) {
-    const stamps = [
+    return tileStamps(tile).some((stamp) => !stampedSince(stamp, from));
+}
+
+/**
+ * Every finite moment a tile is stamped with: its samples, point samples, tier
+ * clears, badge read and server statement.
+ * @param {Object} tile - A tile record
+ * @returns {number[]} Client ms, unordered
+ */
+function tileStamps(tile) {
+    return [
         ...(tile?.samples || []).map((sample) => sample?.t),
         ...(tile?.pointSamples || []).map((sample) => sample?.t),
         ...Object.values(tile?.tierSeenAt || {}),
         tile?.tierReadAt,
         tile?.serverTierAt,
-    ];
-    return stamps.some((stamp) => stamp !== null && Number.isFinite(Number(stamp)) && !stampedSince(stamp, from));
+    ]
+        .filter((stamp) => stamp !== null && stamp !== undefined && Number.isFinite(Number(stamp)))
+        .map(Number);
+}
+
+/**
+ * A tile's newest stamp of any kind, 0 when it has none.
+ * @param {Object} tile - A tile record
+ * @returns {number} Client ms
+ */
+function newestTileStamp(tile) {
+    return tileStamps(tile).reduce((newest, stamp) => Math.max(newest, stamp), 0);
 }
 
 /**
@@ -1047,8 +1067,17 @@ export function mergeTrialRecords(base, incoming) {
     // before this side's archive landed. It is not brought back to life; the
     // archive holds it. Only a tile with nothing newer than its archived copy
     // is dropped, so a genuinely new trial under the same key survives.
-    const newestOf = (tile) => tile?.samples?.[tile.samples.length - 1]?.t ?? 0;
+    //
+    // Against an earlier cycle of this week (test server only, the one archive
+    // with a `cycleFrom`) every stamp counts: the current cycle's part of a
+    // mates' trial can hold clears, point samples, a badge read or a server
+    // statement and no bar sample. Against any other archive only bar samples
+    // count, as live has always had it: after a scheduled-phase archive the
+    // zeroed cards are read again, and a badge read of one must not carry a
+    // stale copy's tile back past its archive.
+    const newestSample = (tile) => tile?.samples?.[tile.samples.length - 1]?.t ?? 0;
     for (const cycle of provenance.history) {
+        const newestOf = Number.isFinite(cycle?.cycleFrom) ? newestTileStamp : newestSample;
         for (const [key, archived] of Object.entries(cycle?.tiles || {})) {
             if (tiles[key] && newestOf(tiles[key]) <= newestOf(archived)) delete tiles[key];
         }

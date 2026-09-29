@@ -1511,6 +1511,40 @@ describe('archiveEarlierCycles — a week with more than one cycle in it', () =>
         expect(timing.intervals).toBe(8);
     });
 
+    test('a current part with no bar samples survives the next ordinary save', () => {
+        // Cooking's current part carries clears and a server statement and no
+        // bar sample; judged by bar samples alone it read as older than its
+        // archived part and the merge deleted it
+        const next = archiveEarlierCycles(record(), read(), { offset, at: CLEARS.CAPTURED_AT });
+        expect(next.tiles['skilling::cooking'].samples).toEqual([]);
+
+        const merged = mergeTrialRecords(next, next);
+        expect(merged.tiles['skilling::cooking']).toMatchObject({ serverTier: 17 });
+        expect(Object.keys(merged.tiles['skilling::cooking'].tierSeenAt).map(Number)).toEqual([
+            9, 10, 11, 12, 13, 14, 15, 16, 17,
+        ]);
+    });
+
+    test('against an earlier cycle a tile newer by any stamp survives, and one with nothing newer does not', () => {
+        const archived = { name: 'Milking', kind: 'skilling', tierReadAt: 2_000, samples: [{ t: 1_000 }] };
+        const stale = { ...archived, pointSamples: [{ t: 1_500, points: 3 }] };
+        const entry = { archivedAt: 3_000, weekStart: 0, cycleFrom: 2_400_000, tiles: { m: archived } };
+        const held = { weekStart: 0, tiles: {}, history: [entry] };
+        expect(mergeTrialRecords(held, { weekStart: 0, tiles: { m: stale } }).tiles.m).toBeUndefined();
+        const read = { ...stale, tierReadAt: 2_500 };
+        expect(mergeTrialRecords(held, { weekStart: 0, tiles: { m: read } }).tiles.m).toBeDefined();
+    });
+
+    test('against any other archive only bar samples count, as on live', () => {
+        // A scheduled-phase archive: a zeroed card read afterwards must not
+        // carry a stale copy of the tile back
+        const archived = { name: 'Milking', kind: 'skilling', samples: [{ t: 1_000 }] };
+        const entry = { archivedAt: 3_000, weekStart: 0, reason: 'a new cycle is scheduled', tiles: { m: archived } };
+        const held = { weekStart: 0, tiles: {}, history: [entry] };
+        const read = { ...archived, tierReadAt: 2_500, pointSamples: [{ t: 2_500, points: 0 }] };
+        expect(mergeTrialRecords(held, { weekStart: 0, tiles: { m: read } }).tiles.m).toBeUndefined();
+    });
+
     test('a tile holding both cycles is split at the boundary, not archived whole', () => {
         const HOUR = 3_600_000;
         const start = CLEARS.CAPTURED_AT;
