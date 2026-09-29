@@ -184,6 +184,19 @@ describe('the live skilling tracker', () => {
         expect(guildTrialSkilling.endedFor('Crafting')).toBeNull();
     });
 
+    test('last week’s ending and roster do not carry into this week', () => {
+        // A tab left open across the Friday reset: next week's Crafting card was
+        // handed last week's "completed, 9 banked", which is sticky once sampled
+        game.wsHandlers[SKILLING_MESSAGE](GUILD_SKILLING_TICKS[0]);
+        game.wsHandlers[END_SKILLING_MESSAGE](END_GUILD_SKILLING);
+        const nextWeek = now + 7 * 24 * 3_600_000;
+
+        expect(guildTrialSkilling.endedFor('Crafting', now + 60_000)).toMatchObject({ tier: 9 });
+        expect(guildTrialSkilling.endedFor('Crafting', nextWeek)).toBeNull();
+        expect(guildTrialSkilling.participating('Crafting', 910007, now + 60_000)).toBe(true);
+        expect(guildTrialSkilling.participating('Crafting', 910007, nextWeek)).toBeNull();
+    });
+
     test('the opening message is read with the same parser, unobserved as it is', () => {
         // Nothing has ever been seen of `new_guild_skilling`. One carrying a pool
         // is used; one carrying nothing recognisable changes nothing
