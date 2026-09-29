@@ -14,21 +14,15 @@
  *    band would otherwise print an impossible profit or valuation.
  *
  * The range is computed the way the game computes it: ±10% of the value,
- * snapped outward to the price-increment ladder and widened by one increment
- * on each side (the 8/14/2026 hotfix — cheap items get a proportionally wider
- * range). The ladder is the game client's own `getBinnedPrice` tiering, read
- * out of its bundle and verified against live band bounds across nine decades
- * of price on 8/18/2026 — see {@link priceIncrement}. One caveat survives:
- * bands *recalibrate toward* the value at ≤1% per hourly pass, so right after
- * a value moves, the game's actual band lags what this computes from the new
- * value until the passes catch up.
- *
- * The September 2026 market patch replaces the ladder with finer bins and a
- * 5x step for enhanced items (see {@link priceIncrement}); it is staged per
- * server by {@link isSeptember2026MarketPatchLive}. Under that patch every pushed
- * order book also carries the game's own band (`priceBandMins`/`priceBandMaxs`
- * per level); while one is under an hour old it is used as is, and the band is
- * computed from the value only when none is at hand.
+ * snapped outward to the price-increment ladder and widened by one bin on each
+ * side. The ladder is the game client's own `binGap` tiering — finer bins than
+ * before the September 2026 market patch, and a 5x step for enhanced items; see
+ * {@link priceIncrement}. Every pushed order book also carries the game's own
+ * band (`priceBandMins`/`priceBandMaxs` per level); while one is under an hour
+ * old it is used as is, and the band is computed from the value only when none
+ * is at hand. One caveat: bands *recalibrate toward* the value at ≤1% per
+ * hourly pass, so right after a value moves, the game's actual band lags what
+ * this computes from the new value until the passes catch up.
  *
  * The map is reached through the game's own `localStorageUtil.getMarketItemValues()`
  * (via dataManager), which decompresses the localStorage blob for us — reading it
@@ -38,14 +32,9 @@
  * A pushed `market_item_values_updated` message swaps the cache directly —
  * see {@link applyMarketValuesMessage} — so a mid-session refresh does not wait
  * out the interval.
- *
- * All of this is gated behind {@link isMarketplacePatchLive}: the util does not
- * exist on the live server until the patch lands, so before then every helper
- * here is an inert pass-through and the plugin behaves exactly as it did.
  */
 
 import dataManager from '../core/data-manager.js';
-import { isMarketplacePatchLive, isSeptember2026MarketPatchLive } from './server-gate.js';
 
 /** The width of the tradable range either side of the value (~±10%). */
 export const BAND_FACTOR = 1.1;
@@ -69,12 +58,11 @@ let bandCache = new Map();
 /**
  * Re-read the value map through the game util, throttled and version-guarded so
  * the decompress happens at most once per interval and only swaps the cache when
- * the map actually changed. A no-op until the patch is live. Cheap to call often.
+ * the map actually changed. Cheap to call often.
  * @param {number} [now=Date.now()] - Injectable clock, for tests
  * @returns {Object|null} `{ itemHrid: { level: value } }`, or null before any read
  */
 export function refreshMarketValues(now = Date.now()) {
-    if (!isMarketplacePatchLive()) return cache.values;
     if (cache.values && now - lastRefresh < REFRESH_INTERVAL_MS) return cache.values;
     if (typeof dataManager.getMarketItemValues !== 'function') return cache.values;
     lastRefresh = now;
@@ -158,20 +146,10 @@ function binGap(whole, enhancementLevel) {
 
 /**
  * The marketplace's price increment at a price — the step of the game client's
- * `getBinnedPrice`.
- *
- * Under the September 2026 market patch ({@link isSeptember2026MarketPatchLive})
- * it is the client's `binGap`: 1,000-1,199 → 4, 1,200-1,499 → 5 … 9,000-11,999 →
- * 40, scaling ×10 per extra digit, and 5× for an enhanced item (own table below
- * 1,000). Otherwise it is the earlier ladder, by first digit and digit count,
- * which ignores enhancement level:
- *
- *   first digit 1-2 → 5×10^(digits−4)      (1,000-2,999: 5; 10,000-29,999: 50 …)
- *   first digit 3-4 → 10^(digits−3)        (300-499: 1; 3,000-4,999: 10 …)
- *   first digit 5-9 → 2×10^(digits−3)      (500-999: 2; 5,000-9,999: 20 …)
- *
- * with a floor of 1. On both ladders every tier boundary is a multiple of the
- * step just below it, which {@link nextPriceUp} relies on.
+ * `getBinnedPrice`, which is its `binGap`: 1,000-1,199 → 4, 1,200-1,499 → 5 …
+ * 9,000-11,999 → 40, scaling ×10 per extra digit, and 5× for an enhanced item
+ * (own table below 1,000). Every tier boundary is a multiple of the step just
+ * below it, which {@link nextPriceUp} relies on.
  * @param {number} price - Any price (fractions are floored, as the game does)
  * @param {number} [enhancementLevel=0] - Enhancement level of the item being priced
  * @returns {number} The increment the ladder assigns that price
@@ -179,13 +157,7 @@ function binGap(whole, enhancementLevel) {
 export function priceIncrement(price, enhancementLevel = 0) {
     const whole = Math.floor(price);
     if (!(whole > 0)) return 1;
-    if (isSeptember2026MarketPatchLive()) return binGap(whole, enhancementLevel);
-    const text = String(whole);
-    const digits = text.length;
-    const first = text[0];
-    if (first === '1' || first === '2') return digits >= 4 ? 5 * 10 ** (digits - 4) : 1;
-    if (first === '3' || first === '4') return digits >= 3 ? 10 ** (digits - 3) : 1;
-    return digits >= 3 ? 2 * 10 ** (digits - 3) : 1;
+    return binGap(whole, enhancementLevel);
 }
 
 /**
@@ -209,8 +181,8 @@ export function nextPriceUp(price, enhancementLevel = 0) {
  * The next price on the increment ladder strictly below `price`.
  *
  * The step is taken from one below `price`, so crossing down into a finer
- * tier uses the finer step: 1,000 goes to 998 on the earlier ladder (the 500-999
- * step of 2), not 995. Never goes below 1, the lowest price an order can carry.
+ * tier uses the finer step: 1,200 goes to 1,196 (the step at 1,199 is 4), not 1,195
+ * (the step at 1,200 is 5). Never goes below 1, the lowest price an order can carry.
  * @param {number} price - A price (fractions are rounded up first, so the result stays below it)
  * @param {number} [enhancementLevel=0] - Enhancement level of the item being priced
  * @returns {number} The next ladder price down, floored at 1
@@ -230,17 +202,14 @@ export function nextPriceDown(price, enhancementLevel = 0) {
  * sizes the step from its input, and keeps the float product (460 × 1.1 lands a
  * hair above 506 and snaps a step further out, which the game does too).
  *
- * The widening step differs by server. Under the September 2026 market patch it
- * is one bin from the snapped edge, sized by the gap of the price it reaches: an
- * enhanced min snapped to 300,000 widens to 295,000 by the 5,000 gap below
- * 300,000, not by the 6,000 gap at the raw figure. The min is also floored at the
- * item's vendor sell price. Both were measured against the game's own
- * `priceBandMins`/`priceBandMaxs` on the test server (2026-09-25). On live the
- * earlier rule stands — one step of the raw figure's size, no vendor floor — as
- * verified there on 8/18/2026; nothing measured on live says otherwise.
+ * The widening step is one bin from the snapped edge, sized by the gap of the
+ * price it reaches: an enhanced min snapped to 300,000 widens to 295,000 by the
+ * 5,000 gap below 300,000, not by the 6,000 gap at the raw figure. The min is
+ * also floored at the item's vendor sell price. Both were measured against the
+ * game's own `priceBandMins`/`priceBandMaxs` on the test server (2026-09-25).
  * @param {number|null} value - Market value
  * @param {number} [enhancementLevel=0] - Enhancement level the value is for
- * @param {number} [vendorPrice=0] - The item's shop sell price; floors the min on the patched server
+ * @param {number} [vendorPrice=0] - The item's shop sell price; floors the min
  * @returns {{min:number, max:number}|null}
  */
 export function bandFromValue(value, enhancementLevel = 0, vendorPrice = 0) {
@@ -251,9 +220,6 @@ export function bandFromValue(value, enhancementLevel = 0, vendorPrice = 0) {
     const rawMin = value / BAND_FACTOR;
     const minStep = priceIncrement(rawMin, enhancementLevel);
     const snappedMin = Math.floor(rawMin / minStep) * minStep;
-    if (!isSeptember2026MarketPatchLive()) {
-        return { min: Math.max(0, snappedMin - minStep), max: snappedMax + maxStep };
-    }
     const below = snappedMin - 1;
     let min = below > 0 ? below - (below % priceIncrement(below, enhancementLevel)) : 0;
     if (vendorPrice > 0 && min < vendorPrice) min = vendorPrice;
@@ -356,8 +322,7 @@ function bandFor(itemHrid, enhancementLevel) {
  * outside the band is pulled to the nearest edge (as far as an order could
  * actually reach); a missing price stays missing — this never invents a
  * price, so callers that treat null as "no market" keep that meaning.
- * Pass-through until the patch is live or when the item has no band (no pushed
- * band and no official value).
+ * Pass-through when the item has no band (no pushed band and no official value).
  *
  * @param {number|null} price - A raw ask or bid
  * @param {string} itemHrid - Item HRID
@@ -373,7 +338,6 @@ export function clampToBand(price, itemHrid, enhancementLevel = 0) {
     // or a negative up to it, would fabricate a price no order ever offered,
     // and letting a negative pass through unclamped is no better.
     if (price <= 0) return null;
-    if (!isMarketplacePatchLive()) return price;
     // Self-sufficient: direct order-book consumers call this without going
     // through getPrice, and a clamp against an empty cache would be a no-op.
     // The refresh is throttled and version-guarded, so this is cheap.
@@ -386,8 +350,8 @@ export function clampToBand(price, itemHrid, enhancementLevel = 0) {
 /**
  * Reconcile a raw order-book ask/bid pair against the official value.
  *
- * A pass-through until the patch is live or when the item has neither an official
- * value nor a pushed band. Otherwise each present side is clamped into the tradable range (a stale price
+ * A pass-through when the item has neither an official value nor a pushed band.
+ * Otherwise each present side is clamped into the tradable range (a stale price
  * parked outside it is pulled to the nearest edge, which is as far as an order
  * could actually reach), and a missing side is filled with the value itself — so
  * an item with an empty book is still priced the way the game prices it. With a
@@ -411,9 +375,6 @@ export function reconcileBook(ask, bid, itemHrid, enhancementLevel = 0) {
     // rather than clamped up to band.min, which would fabricate a price no
     // order ever offered.
     const sourceOf = (x) => (typeof x === 'number' && x > 0 ? 'book' : null);
-    if (!isMarketplacePatchLive()) {
-        return { ask, bid, askSource: sourceOf(ask), bidSource: sourceOf(bid) };
-    }
     const value = marketValueFor(itemHrid, enhancementLevel);
     const band = bandFor(itemHrid, enhancementLevel);
     if (!band) return { ask, bid, askSource: sourceOf(ask), bidSource: sourceOf(bid) };

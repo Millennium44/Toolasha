@@ -273,7 +273,7 @@ describe('calculatePriceAfterTax', () => {
     });
 
     test('handles fractional prices', () => {
-        expect(calculatePriceAfterTax(99.99)).toBeCloseTo(94.99, 2);
+        expect(calculatePriceAfterTax(99.99)).toBeCloseTo(95.9904, 4);
     });
 });
 

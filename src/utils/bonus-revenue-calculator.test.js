@@ -33,15 +33,11 @@ vi.mock('./house-efficiency.js', () => ({
 // bonus-revenue-calculator.js now prices non-openable drops through market-data.js's real
 // getItemPrice/getPricingMode, the same helper the main output price goes through — so the
 // module boundary is pushed down to config (the pricingMode setting) and marketAPI (the
-// ask/bid quote) instead of market-data.js itself. server-gate is pinned to "patch not live"
-// so reconcileBook is a pure ask/bid pass-through and this file doesn't need to wire up the
-// official-value-map machinery, which is not what this module is responsible for.
+// ask/bid quote) instead of market-data.js itself. No official value map is loaded, so
+// reconcileBook is a pure ask/bid pass-through and this file doesn't need to wire up the
+// value-map machinery, which is not what this module is responsible for.
 vi.mock('../core/config.js', () => ({
     default: { getSettingValue: (key) => settings.values[key] },
-}));
-vi.mock('./server-gate.js', () => ({
-    isMarketplacePatchLive: () => false,
-    isSeptember2026MarketPatchLive: () => false,
 }));
 vi.mock('../features/settings/custom-price-overrides.js', () => ({ getCustomPrice: () => null }));
 

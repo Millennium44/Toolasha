@@ -1,43 +1,25 @@
 /**
- * Marketplace-patch server gate (8/13/2026 update).
+ * Staging a change on the test server first.
  *
- * The 8/13/2026 marketplace update — 5% market tax, shrine levels shared on
- * profiles, and the rest — is now live on **both** servers, so the gate is open
- * everywhere and every patch-dependent behaviour uses the patched rule. It was
- * hostname-gated while the patch was live only on the test server; that window
- * has closed.
+ * The game ships a patch to its test server before the live one, and Toolasha
+ * sometimes has to run the new rule on one and the old rule on the other for a
+ * few days. Every earlier patch (the 8/13/2026 marketplace update, the September
+ * 2026 market patch) was staged this way and has since reached the live server,
+ * so no gate is in use today and nothing calls {@link isTestServer} yet.
  *
- * ## Kept as one line
+ * ## How to stage the next one
  *
- * The gate stays a function that every patch-dependent site reads, rather than
- * being deleted at each call, so there is still a single place to reason about
- * the patch — and a single place to re-gate the next server-staged change from,
- * by putting the hostname test back.
+ * Gate the call site on `isTestServer()` — new behaviour when it is true, the
+ * current behaviour otherwise — and read it at the point of use, not once at
+ * module load in a shared constant, so a test can drive both branches by
+ * stubbing `location`. When the patch reaches the live server, delete the gate
+ * and the old branch together; do not leave a function that always returns true.
+ * The vitest setup does not mock this module, so a test that needs the
+ * test-server rule stubs `globalThis.location` (or mocks this module itself).
+ *
+ * The hostname test itself lives in `game-server.js`, which decides where data
+ * may be sent; this module re-exports it under the name staging code reaches
+ * for rather than repeating the hostname list.
  */
 
-/**
- * Whether the 8/13/2026 marketplace patch is in effect on the current server.
- *
- * True everywhere now that the patch is live on `www` as well as `test`. Left as
- * a function so the call sites do not have to change when a future patch needs
- * staging again.
- *
- * @returns {boolean}
- */
-export function isMarketplacePatchLive() {
-    return true;
-}
-
-/**
- * Whether the September 2026 market patch (4% market tax, finer price bins with
- * a 5x step for enhanced items) is in effect on the current server.
- *
- * True everywhere now that the patch is live on `www` as well as `test`. It was
- * hostname-gated while the patch was on the test server only. Left as a function
- * so the next server-staged change can be gated from the same place.
- *
- * @returns {boolean}
- */
-export function isSeptember2026MarketPatchLive() {
-    return true;
-}
+export { isTestServer } from './game-server.js';

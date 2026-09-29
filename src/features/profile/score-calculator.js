@@ -17,7 +17,6 @@ import { applyMirrorOptimization } from '../../utils/enhancement-calculator.js';
 import { getCheapestProtectionPrice, getRealisticBaseItemPrice } from '../enhancement/tooltip-enhancement.js';
 import { getShopCoinCost } from '../../utils/game-lookups.js';
 import { buildGoldPerCredit, priceGuildCreditCosts } from '../../utils/guild-credit-pricing.js';
-import { isMarketplacePatchLive } from '../../utils/server-gate.js';
 import { TRAINEE_SHOP_PRICE } from '../../utils/enhancement-pricing.js';
 
 /**
@@ -146,20 +145,12 @@ export async function calculateCombatScore(profileData) {
         // 4. Calculate Skiller Equipment Score (async - runs after combat completes)
         const skillerEquipmentResult = await calculateEquipmentScore(profileData, 'skiller', pricingContext);
 
-        // Shrine levels are shared on every profile once the marketplace patch is
-        // live, so a shrine's value then belongs in the score the same way
-        // house/ability/equipment do — combat shrines in the combat total,
-        // skilling shrines in the skiller total. Before the patch is live
-        // everywhere, shrines are known only for your own character, so folding
-        // them in would make your score incomparable with everybody else's;
-        // gated on the server until then, and kept on their own line meanwhile.
-        const foldShrine = isMarketplacePatchLive();
+        // Shrine levels are shared on every profile, so a shrine's value belongs in
+        // the score the same way house/ability/equipment do — combat shrines in the
+        // combat total, skilling shrines in the skiller total.
         const combatTotalScore =
-            houseResult.score +
-            abilityResult.score +
-            combatEquipmentResult.score +
-            (foldShrine ? guildShrineResult.combat.score : 0);
-        const skillerTotalScore = skillerEquipmentResult.score + (foldShrine ? guildShrineResult.skilling.score : 0);
+            houseResult.score + abilityResult.score + combatEquipmentResult.score + guildShrineResult.combat.score;
+        const skillerTotalScore = skillerEquipmentResult.score + guildShrineResult.skilling.score;
 
         return {
             // Combat score (house + ability + combat equipment)

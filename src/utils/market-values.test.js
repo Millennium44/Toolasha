@@ -1,8 +1,6 @@
 import { describe, test, expect, vi, afterEach } from 'vitest';
 
 const mocks = vi.hoisted(() => ({
-    patchLive: true,
-    september: false,
     payload: null,
     throws: false,
     calls: 0,
@@ -20,10 +18,6 @@ vi.mock('../core/data-manager.js', () => ({
         on: (event, handler) => mocks.handlers.set(event, handler),
         getItemDetails: (hrid) => mocks.items[hrid] ?? null,
     },
-}));
-vi.mock('./server-gate.js', () => ({
-    isMarketplacePatchLive: () => mocks.patchLive,
-    isSeptember2026MarketPatchLive: () => mocks.september,
 }));
 
 import {
@@ -43,31 +37,12 @@ const payload = (version, values) => ({ marketValuesVersion: version, marketItem
 
 afterEach(() => {
     _resetMarketValues();
-    mocks.patchLive = true;
-    mocks.september = false;
     mocks.items = {};
     vi.useRealTimers();
     mocks.payload = null;
     mocks.throws = false;
     mocks.calls = 0;
     vi.restoreAllMocks();
-});
-
-describe('priceIncrement', () => {
-    test("the ladder matches the game's getBinnedPrice tiering", () => {
-        // first digit 1-2: 5x10^(d-4); 3-4: 10^(d-3); 5-9: 2x10^(d-3); floor 1
-        expect(priceIncrement(7)).toBe(1);
-        expect(priceIncrement(117)).toBe(1);
-        expect(priceIncrement(450)).toBe(1);
-        expect(priceIncrement(500)).toBe(2);
-        expect(priceIncrement(1000)).toBe(5);
-        expect(priceIncrement(2999)).toBe(5);
-        expect(priceIncrement(3000)).toBe(10);
-        expect(priceIncrement(5000)).toBe(20);
-        expect(priceIncrement(44671)).toBe(100);
-        expect(priceIncrement(339020)).toBe(1000);
-        expect(priceIncrement(33110000000)).toBe(100000000);
-    });
 });
 
 describe('priceIncrement under the September 2026 market patch (test server)', () => {
@@ -103,7 +78,6 @@ describe('priceIncrement under the September 2026 market patch (test server)', (
         [123456, 500, 2500],
         [1234567, 5000, 25000],
     ])('%i: gap %i unenhanced, %i enhanced', (price, plain, enhanced) => {
-        mocks.september = true;
         expect(priceIncrement(price)).toBe(plain);
         expect(priceIncrement(price, 0)).toBe(plain);
         expect(priceIncrement(price, 1)).toBe(enhanced);
@@ -111,27 +85,18 @@ describe('priceIncrement under the September 2026 market patch (test server)', (
     });
 
     test('three-digit enhanced prices use their own table, not 5x', () => {
-        mocks.september = true;
         expect([150, 250, 350, 450, 750, 850].map((p) => priceIncrement(p, 3))).toEqual([2, 5, 5, 10, 10, 20]);
     });
 
     test('fractions floor first, and the floor of 1 holds', () => {
-        mocks.september = true;
         expect(priceIncrement(1199.9)).toBe(4);
         expect(priceIncrement(0)).toBe(1);
         expect(priceIncrement(-3, 5)).toBe(1);
-    });
-
-    test('the earlier ladder ignores enhancement level on live', () => {
-        expect(priceIncrement(1000, 5)).toBe(5);
-        expect(priceIncrement(150, 5)).toBe(1);
-        expect(priceIncrement(44671, 12)).toBe(100);
     });
 });
 
 describe('nextPriceUp / nextPriceDown under the September 2026 market patch', () => {
     test('steps by the new gap, snapping to a multiple like getBinnedPrice', () => {
-        mocks.september = true;
         // getBinnedPrice(1003, roundUp) = 1004; getBinnedPrice(1003) = 1000
         expect(nextPriceUp(1003)).toBe(1004);
         expect(nextPriceDown(1003)).toBe(1000);
@@ -142,7 +107,6 @@ describe('nextPriceUp / nextPriceDown under the September 2026 market patch', ()
     });
 
     test('an enhanced item steps five times as far', () => {
-        mocks.september = true;
         expect(nextPriceUp(1000, 1)).toBe(1020);
         expect(nextPriceDown(1020, 1)).toBe(1000);
         expect(nextPriceUp(123456, 7)).toBe(125000);
@@ -150,7 +114,6 @@ describe('nextPriceUp / nextPriceDown under the September 2026 market patch', ()
     });
 
     test('tier boundaries are reached exactly from either side', () => {
-        mocks.september = true;
         expect(nextPriceUp(999)).toBe(1000);
         expect(nextPriceUp(1198)).toBe(1200);
         expect(nextPriceDown(1200)).toBe(1196);
@@ -164,7 +127,6 @@ describe('nextPriceUp / nextPriceDown under the September 2026 market patch', ()
     });
 
     test('every price a step lands on is a valid bin (price % gap === 0)', () => {
-        mocks.september = true;
         for (const level of [0, 1]) {
             let price = 2;
             while (price < 2_000_000) {
@@ -177,38 +139,6 @@ describe('nextPriceUp / nextPriceDown under the September 2026 market patch', ()
 });
 
 describe('nextPriceUp / nextPriceDown', () => {
-    test('one step along the ladder inside a tier', () => {
-        expect(nextPriceUp(1000)).toBe(1005);
-        expect(nextPriceDown(1005)).toBe(1000);
-        expect(nextPriceUp(44600)).toBe(44700);
-        expect(nextPriceDown(44700)).toBe(44600);
-        expect(nextPriceUp(600)).toBe(602);
-        expect(nextPriceDown(602)).toBe(600);
-    });
-
-    test('crossing up into a coarser tier lands on the boundary, not past it', () => {
-        expect(nextPriceUp(999)).toBe(1000);
-        expect(nextPriceUp(998)).toBe(1000);
-        expect(nextPriceUp(499)).toBe(500);
-        expect(nextPriceUp(2995)).toBe(3000);
-        expect(nextPriceUp(4990)).toBe(5000);
-        expect(nextPriceUp(9980)).toBe(10000);
-    });
-
-    test('crossing down into a finer tier uses the finer step', () => {
-        expect(nextPriceDown(1000)).toBe(998);
-        expect(nextPriceDown(500)).toBe(499);
-        expect(nextPriceDown(3000)).toBe(2995);
-        expect(nextPriceDown(5000)).toBe(4990);
-        expect(nextPriceDown(10000)).toBe(9980);
-    });
-
-    test('an off-ladder price snaps to the neighbouring ladder price', () => {
-        expect(nextPriceUp(1001)).toBe(1005);
-        expect(nextPriceDown(1003)).toBe(1000);
-        expect(nextPriceDown(999)).toBe(998);
-    });
-
     test('small prices step by one and never go below 1', () => {
         expect(nextPriceUp(1)).toBe(2);
         expect(nextPriceUp(7)).toBe(8);
@@ -226,7 +156,6 @@ describe('nextPriceUp / nextPriceDown', () => {
 
 describe('bandFromValue under the September 2026 market patch', () => {
     test('snaps outward on the new ladder and widens by one of its steps', () => {
-        mocks.september = true;
         // 1100: raw max 1210 (on a gap-5 bin) + 5; raw min 999.99... at gap 4 -> 996 - 4
         expect(bandFromValue(1100)).toEqual({ min: 992, max: 1215 });
         // enhanced: raw max 1210 at gap 25 -> 1225 + 25; raw min at gap 20 -> 980 - 20
@@ -234,7 +163,6 @@ describe('bandFromValue under the September 2026 market patch', () => {
     });
 
     test('the level reaches the band through clampToBand', () => {
-        mocks.september = true;
         mocks.payload = payload(1, { '/items/sword': { 0: 1100, 3: 1100 } });
         expect(clampToBand(2000, '/items/sword', 0)).toBe(1215);
         expect(clampToBand(2000, '/items/sword', 3)).toBe(1250);
@@ -242,23 +170,6 @@ describe('bandFromValue under the September 2026 market patch', () => {
 });
 
 describe('bandFromValue', () => {
-    test('reproduces the live band bounds measured across nine decades of price', () => {
-        // Exact bands read off the test server 8/18/2026, fully recalibrated
-        expect(bandFromValue(16)).toEqual({ min: 13, max: 19 }); // strawberry
-        expect(bandFromValue(107)).toEqual({ min: 96, max: 119 }); // burble cheese
-        expect(bandFromValue(40610)).toEqual({ min: 36800, max: 44800 }); // revive
-        expect(bandFromValue(308200)).toEqual({ min: 279500, max: 341000 }); // royal cloth
-        expect(bandFromValue(30100000000)).toEqual({ min: 27300000000, max: 33300000000 }); // umbral tunic
-        expect(bandFromValue(474200000000)).toEqual({ min: 430000000000, max: 524000000000 }); // adv. defense charm
-    });
-
-    test('one increment wider than the snapped-outward ten percent on each side', () => {
-        // 1100: raw max 1210 at step 5 -> 1215. The raw min is 1100/1.1 =
-        // 999.999... in floats, landing a ladder tier down (step 2) -> 996 —
-        // one coin narrower than exact-arithmetic 995, which errs safe
-        expect(bandFromValue(1100)).toEqual({ min: 996, max: 1215 });
-    });
-
     test('null for a missing or non-positive value', () => {
         expect(bandFromValue(0)).toBeNull();
         expect(bandFromValue(null)).toBeNull();
@@ -289,10 +200,6 @@ describe('bandFromValue', () => {
  * on the max side, where a too-narrow band would reject a price the game accepts.
  */
 describe('the band reproduces the game, floating point and all', () => {
-    test('a live-measured band matches on both ends', () => {
-        expect(bandFromValue(1821000)).toEqual({ min: 1650000, max: 2010000 });
-    });
-
     test('and exact arithmetic would disagree with the game on both', () => {
         // Stated so a future reader can see what the "correction" would produce
         const band = bandFromValue(1821000);
@@ -340,15 +247,6 @@ describe('reading the official value map', () => {
         expect(marketValueFor('/items/cheese')).toBe(800);
     });
 
-    test('is dormant until the patch is live', () => {
-        mocks.patchLive = false;
-        mocks.payload = payload(1, { '/items/cheese': { 0: 500 } });
-
-        expect(refreshMarketValues(0)).toBeNull();
-        expect(mocks.calls).toBe(0); // never even reads the util
-        expect(marketValueFor('/items/cheese')).toBeNull();
-    });
-
     test('keeps the last good map if a later read throws', () => {
         vi.spyOn(console, 'error').mockImplementation(() => {});
         mocks.payload = payload(1, { '/items/cheese': { 0: 500 } });
@@ -361,11 +259,6 @@ describe('reading the official value map', () => {
 });
 
 describe('clampToBand', () => {
-    test('passes through untouched until the patch is live', () => {
-        mocks.patchLive = false;
-        expect(clampToBand(5000, '/items/cheese')).toBe(5000);
-    });
-
     test('passes through when the item has no official value', () => {
         mocks.payload = payload(1, { '/items/cheese': { 0: 1000 } });
         refreshMarketValues(0);
@@ -375,9 +268,9 @@ describe('clampToBand', () => {
     test('clamps an out-of-band price to the nearest edge', () => {
         mocks.payload = payload(1, { '/items/cheese': { 0: 1000 } });
         refreshMarketValues(0);
-        // Value 1000 under the increment ladder: [906, 1105]
-        expect(clampToBand(5000, '/items/cheese')).toBe(1105);
-        expect(clampToBand(100, '/items/cheese')).toBe(906);
+        // Value 1000 under the increment ladder: [904, 1104]
+        expect(clampToBand(5000, '/items/cheese')).toBe(1104);
+        expect(clampToBand(100, '/items/cheese')).toBe(904);
     });
 
     test('leaves an in-band price alone and never invents one', () => {
@@ -392,8 +285,8 @@ describe('clampToBand', () => {
     test('a price of 0 reads as absent, not band.min — nothing trades at 0', () => {
         mocks.payload = payload(1, { '/items/cheese': { 0: 1000 } });
         refreshMarketValues(0);
-        // Value 1000 under the increment ladder: [906, 1105] — a naive clamp
-        // would pull 0 up to 906, a price no order ever offered.
+        // Value 1000 under the increment ladder: [904, 1104] — a naive clamp
+        // would pull 0 up to 904, a price no order ever offered.
         expect(clampToBand(0, '/items/cheese')).toBeNull();
     });
 
@@ -408,16 +301,6 @@ describe('clampToBand', () => {
 });
 
 describe('reconcileBook', () => {
-    test('passes through untouched until the patch is live', () => {
-        mocks.patchLive = false;
-        expect(reconcileBook(5000, 100, '/items/cheese')).toEqual({
-            ask: 5000,
-            bid: 100,
-            askSource: 'book',
-            bidSource: 'book',
-        });
-    });
-
     test('passes through when the item has no official value', () => {
         mocks.payload = payload(1, { '/items/cheese': { 0: 1000 } });
         refreshMarketValues(0);
@@ -434,8 +317,8 @@ describe('reconcileBook', () => {
         refreshMarketValues(0);
 
         const { ask, bid } = reconcileBook(5000, 100, '/items/cheese');
-        expect(ask).toBe(1105); // pulled down to band max
-        expect(bid).toBe(906); // pulled up to band min
+        expect(ask).toBe(1104); // pulled down to band max
+        expect(bid).toBe(904); // pulled up to band min
     });
 
     test('leaves an in-band price alone', () => {
@@ -520,7 +403,7 @@ describe('band memo', () => {
         });
         expect(spy.mock.calls.length).toBe(callsAfterFirst);
         // Another level is its own memo
-        expect(clampToBand(1, '/items/cheese', 2)).toBe(bandFromValue(5000).min);
+        expect(clampToBand(1, '/items/cheese', 2)).toBe(bandFromValue(5000, 2).min);
 
         // A new value map retires the memo: the band follows the new value
         mocks.payload = payload(2, { '/items/cheese': { 0: 2000 } });
@@ -633,26 +516,18 @@ describe('the band against the game on the test server (2026-09-25)', () => {
         ['holy_sword', 2, 857166.8, 0, 750000, 980000],
         ['star_fragment', 0, 100.55, 100, 100, 112],
     ])('%s +%i (value %d)', (item, level, value, vendor, min, max) => {
-        mocks.september = true;
         expect(bandFromValue(value, level, vendor)).toEqual({ min, max });
     });
 
     test('the min widens by the gap below the snapped edge, not the raw figure', () => {
-        mocks.september = true;
         // raw min 304,917 snaps to 300,000 on its 6,000 gap; one bin below is 295,000
         expect(bandFromValue(335409.52, 1).min).toBe(295000);
     });
 
     test('the vendor floor reaches clampToBand through the item data', () => {
-        mocks.september = true;
         mocks.items['/items/star_fragment'] = { sellPrice: 100 };
         mocks.payload = payload(1, { '/items/star_fragment': { 0: 100.55 } });
         expect(clampToBand(50, '/items/star_fragment')).toBe(100);
-    });
-
-    test('on live the earlier edge rule and no vendor floor stand', () => {
-        expect(bandFromValue(100.55, 0, 100)).toEqual({ min: 90, max: 112 });
-        expect(bandFromValue(1100)).toEqual({ min: 996, max: 1215 });
     });
 });
 
@@ -689,7 +564,7 @@ describe('the band pushed with an order book', () => {
         push('/items/cheese', { 0: 950 }, { 0: 1050 });
         expect(clampToBand(5000, '/items/cheese')).toBe(1050);
         vi.setSystemTime(1_000_000_000_000 + 61 * 60_000);
-        expect(clampToBand(5000, '/items/cheese')).toBe(1105);
+        expect(clampToBand(5000, '/items/cheese')).toBe(1104);
     });
 
     test('skips missing, non-positive or inverted bounds', () => {
@@ -704,7 +579,6 @@ describe('books that mix old-grid and new-grid prices (test server)', () => {
     // Listings placed before the patch keep their prices, so a book can hold
     // prices that are not bins under the new rules.
     test('undercutting or outbidding an off-grid price lands on the nearest new bin past it', () => {
-        mocks.september = true;
         expect(nextPriceDown(1003)).toBe(1000);
         expect(nextPriceUp(1003)).toBe(1004);
         expect(nextPriceDown(1005)).toBe(1004);
@@ -718,10 +592,19 @@ describe('books that mix old-grid and new-grid prices (test server)', () => {
     });
 
     test('from every old-ladder price, the step lands on the nearest valid new bin past it', () => {
-        mocks.september = false;
+        // The pre-patch ladder, which the game no longer uses but old listings still sit on
+        const oldStep = (price) => {
+            const digits = String(price).length;
+            const first = String(price)[0];
+            if (first === '1' || first === '2') return digits >= 4 ? 5 * 10 ** (digits - 4) : 1;
+            if (first === '3' || first === '4') return digits >= 3 ? 10 ** (digits - 3) : 1;
+            return digits >= 3 ? 2 * 10 ** (digits - 3) : 1;
+        };
         const oldLadder = [];
-        for (let price = 100; price < 200000; price = nextPriceUp(price)) oldLadder.push(price);
-        mocks.september = true;
+        for (let price = 100; price < 200000;) {
+            oldLadder.push(price);
+            price = (Math.floor(price / oldStep(price)) + 1) * oldStep(price);
+        }
         for (const level of [0, 3]) {
             for (const price of oldLadder) {
                 const up = nextPriceUp(price, level);
@@ -738,7 +621,6 @@ describe('books that mix old-grid and new-grid prices (test server)', () => {
     });
 
     test('clamping and reconciling leave an off-grid book price as it is', () => {
-        mocks.september = true;
         mocks.payload = payload(1, { '/items/cheese': { 0: 1000 } });
         expect(clampToBand(1003, '/items/cheese')).toBe(1003);
         expect(reconcileBook(1005, 995, '/items/cheese')).toMatchObject({ ask: 1005, bid: 995 });

@@ -330,8 +330,8 @@ describe('own-use make vs buy', () => {
     test('with the buy tick on, a bid buy is one tick up and an ask buy is unchanged', () => {
         settings.patientTickBuy = true;
         try {
-            // 45,000 is in the 30,000-49,999 tier, where one tick is 100
-            expect(ownUseCompare(data({ pricingMode: 'optimistic' })).buy).toBe(45_100);
+            // 45,000 sits in the 45,000-47,999 bin tier, where one tick is 160
+            expect(ownUseCompare(data({ pricingMode: 'optimistic' })).buy).toBe(45_120);
             expect(ownUseCompare(data({ pricingMode: 'hybrid' })).buy).toBe(50_000);
             // An estimated bid has no queue to jump
             const estimated = data({

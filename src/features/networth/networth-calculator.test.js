@@ -308,7 +308,7 @@ describe('calculateItemValue', () => {
         mocks.marketValues = { marketValuesVersion: 1, marketItemValues: { '/items/wood': { 0: 1000 } } };
 
         const value = await calculateItemValue({ itemHrid: '/items/wood', enhancementLevel: 0, count: 1 });
-        expect(value).toBe(1105); // band max for value 1000 under the increment ladder, not 5000
+        expect(value).toBe(1104); // band max for value 1000 under the increment ladder, not 5000
     });
 });
 
@@ -807,7 +807,7 @@ describe('the price map the worker batch is handed', () => {
         };
 
         const priceMap = await shippedPriceMap({ itemHrid: '/items/iron_sword', enhancementLevel: 14, count: 1 });
-        expect(priceMap['/items/iron_bar:0']).toBe(1105);
+        expect(priceMap['/items/iron_bar:0']).toBe(1104);
     });
 });
 
