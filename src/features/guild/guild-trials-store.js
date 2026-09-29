@@ -353,9 +353,10 @@ const CYCLE_START_SLACK_MS = 60_000;
  */
 function trialHourStartedAt(entry, offset) {
     if (!entry?.inProgress || !Number.isFinite(offset)) return null;
+    // Both stamps, each: the parse states a missing one as null, and null adds as 0
     const ends = Object.values(entry.trials || {})
-        .map((party) => party?.tierStartedAtMs + party?.budgetRemainingMs)
-        .filter(Number.isFinite)
+        .filter((party) => Number.isFinite(party?.tierStartedAtMs) && Number.isFinite(party?.budgetRemainingMs))
+        .map((party) => party.tierStartedAtMs + party.budgetRemainingMs)
         .sort((a, b) => a - b);
     if (!ends.length) return null;
     return ends[Math.floor(ends.length / 2)] - TRIAL_BUDGET_MS + offset;

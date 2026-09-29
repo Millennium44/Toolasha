@@ -1499,6 +1499,32 @@ describe('archiveEarlierCycles — a week with more than one cycle in it', () =>
         expect(archiveEarlierCycles(held, read(), { offset: null, at: CLEARS.CAPTURED_AT })).toBe(held);
     });
 
+    test('a party missing either stamp states no hour', () => {
+        // Parsed, a missing stamp is null, and null adds as 0: a party with no
+        // countdown put the hour's start at its clear less a whole hour, one
+        // with no clear at the epoch
+        const held = record();
+        const party = (tierStartedAtMs, budgetRemainingMs) => ({
+            highestTier: 3,
+            tierStartedAtMs,
+            budgetRemainingMs,
+            highestTierReachedAtMs: tierStartedAtMs,
+            done: false,
+        });
+        const partial = parseCurrentTrialsData(
+            JSON.stringify({
+                skilling: {
+                    status: 'in_progress',
+                    parties: {
+                        '/guild_skilling/milking': party(CLEARS.CAPTURED_AT - offset + 2 * 3_600_000, null),
+                        '/guild_skilling/cooking': party(null, 3_000_000),
+                    },
+                },
+            })
+        );
+        expect(archiveEarlierCycles(held, partial, { offset, at: CLEARS.CAPTURED_AT })).toBe(held);
+    });
+
     test('a combat hour archives the combat tiles before it and leaves its own cycle’s skilling', () => {
         const combatStartedAt = CLEARS.CAPTURED_AT + 30 * 60_000;
         const combat = {
