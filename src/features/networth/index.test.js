@@ -24,9 +24,8 @@ vi.mock('./networth-display.js', () => ({
     networthHeaderDisplay: displayMock.header,
     networthInventoryDisplay: displayMock.inventory,
 }));
-vi.mock('./networth-exclusion-popup.js', () => ({
-    default: { refresh: vi.fn(), close: vi.fn() },
-}));
+const popupMock = vi.hoisted(() => ({ refresh: vi.fn(), close: vi.fn() }));
+vi.mock('./networth-exclusion-popup.js', () => ({ default: popupMock }));
 const configMock = vi.hoisted(() => ({
     isFeatureEnabled: () => true,
     getSetting: () => false,
@@ -81,7 +80,36 @@ beforeEach(() => {
     calculatorMock.calculateNetworth.mockReset();
     displayMock.header.update.mockClear();
     displayMock.inventory.update.mockClear();
+    popupMock.refresh.mockClear();
     networthFeature.currentData = null;
+});
+
+describe('a calculation that had nothing to price with', () => {
+    const unavailable = { unavailable: true, totalNetworth: 0, coins: 0 };
+
+    test('leaves the last good figures published and on screen', async () => {
+        calculatorMock.calculateNetworth.mockResolvedValueOnce({ totalNetworth: 5_000_000, coins: 10 });
+        await networthFeature.recalculate();
+        displayMock.header.update.mockClear();
+        displayMock.inventory.update.mockClear();
+        popupMock.refresh.mockClear();
+
+        calculatorMock.calculateNetworth.mockResolvedValueOnce(unavailable);
+        await networthFeature.recalculate();
+
+        expect(networthFeature.currentData.totalNetworth).toBe(5_000_000);
+        expect(displayMock.header.update).not.toHaveBeenCalled();
+        expect(displayMock.inventory.update).not.toHaveBeenCalled();
+        expect(popupMock.refresh).not.toHaveBeenCalled();
+    });
+
+    test('publishes nothing when there was no earlier figure either', async () => {
+        calculatorMock.calculateNetworth.mockResolvedValueOnce(unavailable);
+        await networthFeature.recalculate();
+
+        expect(networthFeature.currentData).toBeNull();
+        expect(displayMock.header.update).not.toHaveBeenCalled();
+    });
 });
 
 describe('overlapping recalculations', () => {

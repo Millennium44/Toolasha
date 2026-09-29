@@ -249,6 +249,12 @@ class NetworthFeature {
             if (runId !== this.recalcSeq) {
                 return;
             }
+            // Nothing to price with (no game or market data): its zeros measure
+            // nothing. The last good figures stay published and on screen; with
+            // none yet, the displays keep their not-yet-calculated state.
+            if (networthData?.unavailable) {
+                return;
+            }
             this.currentData = networthData;
 
             // Update displays — measured apart from the calculation: the DOM
