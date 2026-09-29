@@ -6590,6 +6590,25 @@ describe('after a reload, before any guild message', () => {
         expect(guildTrials.currentTrials.at).toBe(receivedAt);
     });
 
+    test('a payload read back hours after login is dated when it was sent and bounds nothing', async () => {
+        // A late start reads the login payload off the data manager. Taken as
+        // received now, it bounded the offset at three hours and drew the
+        // deadline and server tier from a trial long over
+        const { INIT_CHARACTER_DATA, sentAt } = await load();
+        const now = sentAt + 3 * 60 * 60_000;
+        vi.setSystemTime(now);
+        guildTrials._noteInitialTrials(INIT_CHARACTER_DATA);
+
+        expect(guildTrials.serverClockOffsetMs).toBeNull();
+        expect(guildTrials.currentTrials.at).toBe(sentAt);
+        expect(guildTrials._trialBudgetMs('skilling', now, 'Alchemy')).toBeNull();
+        const record = {
+            weekStart: 0,
+            tiles: { 'skilling::alchemy': { name: 'Alchemy', kind: 'skilling', samples: [] } },
+        };
+        expect(guildTrials._recordServerTiers(record, now)).toBe(record);
+    });
+
     test('another character’s payload is not this one’s guild', async () => {
         const { INIT_CHARACTER_DATA } = await load();
         game.characterId = 111;
