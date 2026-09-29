@@ -445,6 +445,38 @@ function currentCyclePart(tile, from) {
 }
 
 /**
+ * What of a tile belongs to the cycles before the one that started at `from`.
+ *
+ * The complement of {@link currentCyclePart}: everything that part does not
+ * claim. Timed entries stay where they are stamped before `from`; everything
+ * unstamped (`completed`, ladder observations, points per tier, the reader's
+ * stats) is the earlier cycle's, since the current part starts it over. The
+ * card's badge, level, points and sign-ups and the server's tier statement go to
+ * the current part when read at or after `from`, and are left out here so a
+ * new cycle's badge is never archived as the old one's.
+ *
+ * @param {Object} tile - A tile record
+ * @param {number} from - Client ms
+ * @returns {Object} The tile's earlier part
+ */
+function earlierCyclePart(tile, from) {
+    const before = (stamp) => !stampedSince(stamp, from);
+    const part = {
+        ...tile,
+        samples: (tile.samples || []).filter((sample) => before(sample?.t)),
+        pointSamples: (tile.pointSamples || []).filter((sample) => before(sample?.t)),
+        tierSeenAt: Object.fromEntries(Object.entries(tile.tierSeenAt || {}).filter(([, when]) => before(when))),
+    };
+    if (stampedSince(tile.tierReadAt, from)) {
+        for (const field of ['level', 'tier', 'points', 'signups', 'tierReadAt']) delete part[field];
+    }
+    if (stampedSince(tile.serverTierAt, from)) {
+        for (const field of ['serverTier', 'serverTierAt', 'serverDone']) delete part[field];
+    }
+    return part;
+}
+
+/**
  * Archive what an earlier cycle of this week left on the record.
  *
  * The record is the week's, and the test server runs several cycles in one:
@@ -452,9 +484,10 @@ function currentCyclePart(tile, from) {
  * carried into the next cycle's card. A cycle is a skilling hour then a combat
  * hour, so once a skilling hour is under way anything stamped before it is an
  * earlier cycle's; once a combat hour is, anything on a combat tile stamped
- * before it is. Each such tile is archived whole through {@link archiveCycle}
- * and replaced by its current part ({@link currentCyclePart}), or dropped when
- * it has none, so the next sample starts it afresh.
+ * before it is. Each such tile is split at the boundary: its earlier part
+ * ({@link earlierCyclePart}) is archived through {@link archiveCycle} and it is
+ * replaced by its current part ({@link currentCyclePart}), or dropped when it
+ * has none, so the next sample starts it afresh.
  *
  * @param {Object} record - The week's record (not mutated)
  * @param {Object|null} read - From `parseCurrentTrialsData`
@@ -477,7 +510,7 @@ export function archiveEarlierCycles(record, read, { offset = null, at = Date.no
             tiles[key] = tile;
             continue;
         }
-        earlier[key] = tile;
+        earlier[key] = earlierCyclePart(tile, from);
         const current = currentCyclePart(tile, from);
         if (current) tiles[key] = current;
     }
@@ -922,7 +955,7 @@ export function mergeTrialRecords(base, incoming) {
     const seenCycles = new Set();
     for (const cycle of [...(base.history || []), ...(incoming.history || [])]) {
         if (!cycle) continue;
-        const mark = `${cycle.archivedAt ?? ''}:${cycle.weekStart ?? ''}:${cycle.reason ?? ''}`;
+        const mark = `${cycle.archivedAt ?? ''}:${cycle.weekStart ?? ''}:${cycle.reason ?? ''}:${cycle.cycleFrom ?? ''}`;
         if (seenCycles.has(mark)) continue;
         seenCycles.add(mark);
         history.push(cycle);
