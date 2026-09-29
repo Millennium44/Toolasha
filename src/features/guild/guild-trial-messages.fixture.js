@@ -994,3 +994,44 @@ export const TIER_BOUNDARIES = [
     { tier: 8, at: 1785775140153 },
     { tier: 9, at: 1785775765551 },
 ];
+
+/**
+ * `guild_updated.guild.currentTrialsData` mid skilling hour, off the test server
+ * (2026-09-29, a character signed up for Alchemy only).
+ *
+ * A JSON **string**, and the countdown is per party — keyed by trial hrid, every
+ * party on it including the ones this character did not join — beside the tier
+ * that party has banked. At the same instant `guild_skilling_updated` stated
+ * Alchemy's tier in progress as 7: `highestTier` counts what is banked. The
+ * Cooking and Milking parties were elided from the capture and are left out
+ * here rather than invented; `points` is as sent.
+ */
+export const CURRENT_TRIALS_DATA_SKILLING = JSON.stringify({
+    points: {
+        '/guild_skilling/alchemy': 980,
+        '/guild_skilling/brewing': 700,
+        '/guild_skilling/cooking': 840,
+        '/guild_skilling/milking': 1260,
+    },
+    skilling: {
+        status: 'in_progress',
+        parties: {
+            '/guild_skilling/alchemy': {
+                highestTier: 6,
+                budgetRemainingMs: 3467059,
+                tierStartedAtMs: 1790715749189,
+                highestTierReachedAtMs: 1790715749189,
+                done: false,
+            },
+            '/guild_skilling/brewing': {
+                highestTier: 4,
+                budgetRemainingMs: 3476737,
+                tierStartedAtMs: 1790715739702,
+                highestTierReachedAtMs: 1790715739702,
+                done: false,
+            },
+        },
+    },
+    combat: { status: '', parties: null },
+    cooperativeRewardGranted: false,
+});

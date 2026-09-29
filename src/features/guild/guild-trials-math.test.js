@@ -60,6 +60,7 @@ import {
     TRIAL_SPAN_SLACK_MS,
 } from './guild-trials-math.js';
 import { NOTICE_BOARD_NAME } from './guild-notice-board.fixture.js';
+import { CURRENT_TRIALS_DATA_SKILLING } from './guild-trial-messages.fixture.js';
 
 describe('trialFightSpan: how long the whole combat fight ran', () => {
     // The 2026-09-07 trace: tier 1 opened 5.9 s past 22:00 UTC
@@ -1673,6 +1674,22 @@ describe('parseCurrentTrialsData', () => {
         expect(parseCurrentTrialsData(blob({ budgetRemainingMs: TRIAL_BUDGET_MS })).combat.budgetRemainingMs).toBe(
             TRIAL_BUDGET_MS
         );
+    });
+
+    test('each party’s own tier and countdown are read, as the live payload carries them', () => {
+        const read = parseCurrentTrialsData(CURRENT_TRIALS_DATA_SKILLING);
+
+        expect(read.skilling.inProgress).toBe(true);
+        expect(read.skilling.trials['/guild_skilling/alchemy']).toEqual({
+            highestTier: 6,
+            budgetRemainingMs: 3_467_059,
+            tierStartedAtMs: 1_790_715_749_189,
+            done: false,
+        });
+        expect(read.skilling.trials['/guild_skilling/brewing'].highestTier).toBe(4);
+        // No countdown on the kind itself: it is per party
+        expect(read.skilling.budgetRemainingMs).toBeNull();
+        expect(read.combat.trials).toEqual({});
     });
 
     test('a broken or absent payload answers null rather than throwing', () => {
