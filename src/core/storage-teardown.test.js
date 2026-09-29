@@ -266,6 +266,21 @@ describe('Storage on page teardown', () => {
         }
     });
 
+    test('a pre-teardown listener that closes storage itself does not recurse, and the close still happens once', async () => {
+        const { db, log } = createRecordingDb();
+        storage.db = db;
+        const listener = vi.fn(() => storage.closeForTeardown('pagehide'));
+        const off = storage.onBeforeTeardown(listener);
+        try {
+            await storage.closeForTeardown('pagehide');
+            expect(listener).toHaveBeenCalledTimes(1);
+            expect(log.filter((entry) => entry === 'close')).toHaveLength(1);
+            expect(storage.diagnostics().closingForTeardown).toBe(true);
+        } finally {
+            off();
+        }
+    });
+
     test('closing twice closes once', async () => {
         const { db, log } = createRecordingDb();
         storage.db = db;
