@@ -815,6 +815,20 @@ class ChatTabHandler {
     }
 
     /**
+     * {@link messageIdentity} of a buffered node, computed once per node.
+     * @param {Element} node - A buffered message node
+     * @returns {string|null}
+     */
+    _bufferIdentity(node) {
+        let identity = this.bufferIdentities.get(node);
+        if (identity === undefined) {
+            identity = messageIdentity(serializeMessage(node));
+            this.bufferIdentities.set(node, identity);
+        }
+        return identity;
+    }
+
+    /**
      * Take out of the buffer any message the game has just rendered live again
      * — a restored copy of a line that was still on screen when it was saved,
      * which the game re-renders after a reload or when its tab is reopened.
@@ -823,11 +837,7 @@ class ChatTabHandler {
     _dropBufferedDuplicates(identities) {
         if (!identities.size) return;
         for (const node of this._messageNodes()) {
-            let identity = this.bufferIdentities.get(node);
-            if (identity === undefined) {
-                identity = messageIdentity(serializeMessage(node));
-                this.bufferIdentities.set(node, identity);
-            }
+            const identity = this._bufferIdentity(node);
             if (!identity || !identities.has(identity)) continue;
             node.querySelectorAll('[data-mwi-uid]').forEach((u) => {
                 this.interactionCache.delete(u.getAttribute('data-mwi-uid'));
@@ -957,7 +967,7 @@ class ChatTabHandler {
         // runs on a tab that has been taking evictions since it mounted.
         const live = this._liveIdentities();
         for (const node of this._messageNodes()) {
-            const identity = messageIdentity(serializeMessage(node));
+            const identity = this._bufferIdentity(node);
             if (identity) live.add(identity);
         }
 
