@@ -9,6 +9,7 @@
 
 import config from '../../core/config.js';
 import domObserver from '../../core/dom-observer.js';
+import storage from '../../core/storage.js';
 import webSocketHook from '../../core/websocket.js';
 import { addStyles, removeStyles } from '../../utils/dom.js';
 import { createTimerRegistry } from '../../utils/timer-registry.js';
@@ -1288,6 +1289,8 @@ class ChatHistoryExtender {
         this._onChatMessageUpdated = null;
         this._onPageLeaving = null;
         this._onVisibilityChange = null;
+        /** @type {Function|null} Unsubscribes the pre-teardown flush */
+        this._offBeforeTeardown = null;
     }
 
     initialize() {
@@ -1325,6 +1328,12 @@ class ChatHistoryExtender {
         window.addEventListener('beforeunload', this._onPageLeaving);
         document.addEventListener('visibilitychange', this._onVisibilityChange);
         webSocketHook.onSocketEvent?.('close', this._onPageLeaving);
+        // The `pagehide` listener above runs after the entrypoint's, which has
+        // already closed the connection: its write is only queued, and on a
+        // page being destroyed it never lands. This runs first. It saves only
+        // a record that is loaded — one that still needs its first read merges
+        // after an await, past the close, and that tail is lost with the page.
+        this._offBeforeTeardown = storage.onBeforeTeardown?.(this._onPageLeaving) ?? null;
 
         const attachHandler = (containerEl) => {
             if (this.tabHandlers.has(containerEl)) return;
@@ -1516,6 +1525,10 @@ class ChatHistoryExtender {
                 window.removeEventListener('beforeunload', this._onPageLeaving);
                 webSocketHook.offSocketEvent?.('close', this._onPageLeaving);
                 this._onPageLeaving = null;
+            }
+            if (this._offBeforeTeardown) {
+                this._offBeforeTeardown();
+                this._offBeforeTeardown = null;
             }
             if (this._onVisibilityChange) {
                 document.removeEventListener('visibilitychange', this._onVisibilityChange);

@@ -351,6 +351,12 @@ class Storage {
         this._quotaFailures = 0;
         this._lastQuotaTarget = null; // {key, storeName} of the write that failed
         this._quotaListeners = new Set();
+        /**
+         * Called synchronously at the top of `closeForTeardown()`, before its
+         * flush snapshots the queue — see `onBeforeTeardown()`.
+         * @type {Set<Function>}
+         */
+        this._teardownListeners = new Set();
         this._lastEstimate = null; // Cached navigator.storage.estimate() result
 
         /**
@@ -2446,6 +2452,17 @@ class Storage {
      */
     closeForTeardown(reason = 'pagehide') {
         if (this._closingForTeardown) return Promise.resolve();
+        // Before the flag goes up: a writer's `set(…, true)` in here still
+        // opens its transaction now, on the open connection, and a debounced
+        // one is in `pendingWrites` before `flushAll()` takes its snapshot.
+        // Once the flag is up either would only be queued behind the close.
+        for (const listener of Array.from(this._teardownListeners)) {
+            try {
+                listener(reason);
+            } catch (error) {
+                console.error('[Storage] A pre-teardown listener failed:', error);
+            }
+        }
         this._closingForTeardown = true;
 
         // Deliberately not awaited — see above. Its rejection is not anyone's to
@@ -2469,6 +2486,24 @@ class Storage {
             }
         }
         return flush;
+    }
+
+    /**
+     * Be called synchronously when the page is going away, before the teardown
+     * flush takes its snapshot and the connection is closed.
+     *
+     * For a writer that holds its own coalescing buffer: a `pagehide` listener
+     * of its own runs after the entrypoint's, by which point `set()` can only
+     * queue behind a closed connection and, on a page being destroyed, nothing
+     * lands. Only what the listener does before its first `await` counts —
+     * nothing after that runs before the close.
+     * @param {(reason: string) => void} listener - Called with the teardown reason
+     * @returns {Function} Unsubscribe
+     */
+    onBeforeTeardown(listener) {
+        if (typeof listener !== 'function') return () => {};
+        this._teardownListeners.add(listener);
+        return () => this._teardownListeners.delete(listener);
     }
 
     /**
