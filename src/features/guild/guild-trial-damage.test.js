@@ -3226,9 +3226,11 @@ describe('the trial ends and its figures stop moving', () => {
                 }),
             },
         });
+        // As of the chameleon's own clear, on this clock: the newest stamp
+        // (the hedgehog's, at − 20 s) bounds the offset at 50 s
         expect(guildTrialDamage.breakdown().combatBudget).toEqual({
             remainingMs: 2_000_000,
-            at: at + 30_000,
+            at: at - 10_000,
             serverAt: at - 60_000,
         });
 
@@ -3245,7 +3247,52 @@ describe('the trial ends and its figures stop moving', () => {
                 }),
             },
         });
-        expect(guildTrialDamage.breakdown().combatBudget.at).toBe(at + 30_000);
+        expect(guildTrialDamage.breakdown().combatBudget.at).toBe(at - 10_000);
+    });
+
+    test('the trial clock counts from the party’s own clear, not from when the message arrived', () => {
+        // Receipt is 10 minutes after the party's clear: a skilling party's
+        // bank a second before receipt pins the offset, and the budget holds
+        // from the combat party's clear. Counted from receipt, the fight's span
+        // came out 10 minutes short and every game-total rate 10 minutes high.
+        const status = {
+            guild: {
+                currentTrialsData: JSON.stringify({
+                    skilling: {
+                        status: 'in_progress',
+                        parties: {
+                            '/guild_skilling/milking': {
+                                highestTier: 2,
+                                budgetRemainingMs: 1_000_000,
+                                tierStartedAtMs: at + 599_000,
+                                highestTierReachedAtMs: at + 599_000,
+                                done: false,
+                            },
+                        },
+                    },
+                    combat: {
+                        status: 'in_progress',
+                        parties: {
+                            '/guild_combat/badger': {
+                                highestTier: 3,
+                                budgetRemainingMs: 2_000_000,
+                                tierStartedAtMs: at,
+                                highestTierReachedAtMs: at,
+                                done: false,
+                            },
+                        },
+                    },
+                }),
+            },
+        };
+        game.wsHandlers.new_guild_battle(opening());
+        vi.setSystemTime(at + 600_000);
+        game.wsHandlers.guild_updated(status);
+        expect(guildTrialDamage.breakdown().combatBudget).toEqual({
+            remainingMs: 2_000_000,
+            at: at + 1_000,
+            serverAt: at,
+        });
     });
 
     test('the trial clock is seeded from the character’s own payload after a reload', () => {
@@ -3270,11 +3317,45 @@ describe('the trial ends and its figures stop moving', () => {
         game.wsHandlers.init_character_data({ character: { id: 7 }, guild: guild(2_000_000) });
         expect(guildTrialDamage.breakdown().combatBudget).toMatchObject({ remainingMs: 2_000_000, at: at + 10_000 });
 
-        // A live status outranks the seed, and a later seed never replaces it
+        // A live status outranks the seed, and a later seed never replaces it.
+        // Its budget holds from the party's clear, which the first message's
+        // receipt bounded at 70 s after the stamp
         vi.setSystemTime(at + 20_000);
         game.wsHandlers.guild_updated({ guild: guild(1_900_000) });
         game.wsHandlers.init_character_data({ character: { id: 7 }, guild: guild(2_500_000) });
-        expect(guildTrialDamage.breakdown().combatBudget).toMatchObject({ remainingMs: 1_900_000, at: at + 20_000 });
+        expect(guildTrialDamage.breakdown().combatBudget).toMatchObject({ remainingMs: 1_900_000, at: at + 10_000 });
+        game.ownId = null;
+    });
+
+    test('a login payload read back long after it was sent seeds nothing', () => {
+        const guild = {
+            currentTrialsData: JSON.stringify({
+                combat: {
+                    status: 'in_progress',
+                    parties: {
+                        '/guild_combat/badger': {
+                            highestTier: 3,
+                            budgetRemainingMs: 2_000_000,
+                            tierStartedAtMs: at - 60_000,
+                            highestTierReachedAtMs: at - 60_000,
+                            done: false,
+                        },
+                    },
+                },
+            }),
+        };
+        game.ownId = 7;
+        // Sent three hours ago: the trial it describes is over
+        vi.setSystemTime(at + 3 * 60 * 60_000);
+        const stale = { character: { id: 7 }, currentTimestamp: new Date(at).toISOString(), guild };
+        game.wsHandlers.init_character_data(stale);
+        expect(guildTrialDamage.breakdown().combatBudget).toBeNull();
+
+        // Sent a second ago: its server clock bounds the offset at a second,
+        // tighter than the minute its stamp alone would
+        vi.setSystemTime(at + 1_000);
+        game.wsHandlers.init_character_data({ ...stale, currentTimestamp: new Date(at).toISOString() });
+        expect(guildTrialDamage.breakdown().combatBudget).toMatchObject({ remainingMs: 2_000_000, at: at - 59_000 });
         game.ownId = null;
     });
 

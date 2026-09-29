@@ -4,6 +4,7 @@ import {
     DECLINE_FIT_INTERVALS,
     declineFit,
     foldServerTierClears,
+    initPayloadAgeMs,
     MAX_DECLINE_PER_TIER,
     MIN_TIER_CLEARS,
     RATE_FLOOR_FRACTION,
@@ -395,6 +396,22 @@ describe('serverClockOffset — the client clock against the server’s', () => 
         const empty = parseCurrentTrialsData(JSON.stringify({ skilling: { status: '', parties: null } }));
         expect(serverClockOffset(empty, newest, 5_300)).toBe(5_300);
         expect(serverClockOffset(empty, newest)).toBeNull();
+    });
+});
+
+describe('initPayloadAgeMs — how old a login payload is', () => {
+    const sent = Date.parse('2026-09-29T12:00:00Z');
+    const payload = { currentTimestamp: '2026-09-29T12:00:00Z' };
+
+    test('counts from the server’s clock, moved by any known offset', () => {
+        expect(initPayloadAgeMs(payload, sent + 5_000)).toBe(5_000);
+        expect(initPayloadAgeMs(payload, sent + 5_000, 4_000)).toBe(1_000);
+    });
+
+    test('says nothing without a parsable server clock', () => {
+        expect(initPayloadAgeMs({}, sent)).toBeNull();
+        expect(initPayloadAgeMs({ currentTimestamp: 'soon' }, sent)).toBeNull();
+        expect(initPayloadAgeMs(null, sent)).toBeNull();
     });
 });
 

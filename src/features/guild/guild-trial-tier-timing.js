@@ -196,6 +196,33 @@ export function serverClockOffset(read, receivedAt, held = null) {
 }
 
 /**
+ * Older than this, a login payload read now is not one that just arrived.
+ *
+ * A feature that starts late reads `init_character_data` off the data manager,
+ * where it may have sat since login. Taken as received now, its countdowns run
+ * late by its age and its stamps bound the clock offset by hours.
+ */
+export const INIT_PAYLOAD_FRESH_MS = 2 * 60_000;
+
+/**
+ * How long ago a login payload was sent, on the client's clock.
+ *
+ * `currentTimestamp` is the server's clock when it was sent. Without a known
+ * offset the two clocks are taken to agree, so a client running ahead reads a
+ * fresh payload as older by the skew.
+ *
+ * @param {Object|null} payload - An `init_character_data` payload
+ * @param {number} now - Client clock
+ * @param {number|null} [offset] - From {@link serverClockOffset}
+ * @returns {number|null} Milliseconds, or null when the payload carries no parsable `currentTimestamp`
+ */
+export function initPayloadAgeMs(payload, now, offset = null) {
+    const serverNow = Date.parse(payload?.currentTimestamp ?? '');
+    if (!Number.isFinite(serverNow) || !Number.isFinite(now)) return null;
+    return now - serverNow - (Number.isFinite(offset) ? offset : 0);
+}
+
+/**
  * The guild's fill rate over each interval between consecutive tier badges.
  *
  * Between the badge that says "t tiers banked" and the one that says "t+1", the
