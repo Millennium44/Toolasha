@@ -19,6 +19,7 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 - An item removed from a custom tab with its "×" button came back after a reload or any loadout change if the tab was linked to a loadout. It now stays removed.
 - Moving the Toolasha tab between the inventory's icon row and the character panel while the inventory is hidden no longer loses your inventory tab, reopens the Toolasha view, or leaves no character-panel tab highlighted.
+- A loadout-linked tab now notices when an item you removed by hand later leaves the loadout, so adding it back works either way. "Toolasha tab by default" no longer blanks the Equipment view when the tab moves to the character panel while Equipment is open.
 
 ### Simulator loadout dropdown and chat history follow-ups
 
