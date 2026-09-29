@@ -6,6 +6,11 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Audit round: the trade ledger overstated cowbell sales and missed instant fills
+
+- The trade ledger took only the 4% market tax on bags of cowbells instead of their 18%, overstating their sale proceeds and profit. It also skipped the part of a listing that filled the moment it was placed. Sales recorded before this fix keep their old figures.
+- Net worth now values an enhanced item nobody has listed at that level from the game's own value, like the rest of Toolasha does. A moment with no market data no longer shows or records net worth as zero.
+
 ### Simulator loadout dropdown and chat history follow-ups
 
 - The Loadout dropdown no longer shows Current Gear for a player still wearing a loadout that has since been deleted; it shows that loadout marked "(no longer saved)". A pick that fails to apply is no longer remembered, and loadout names with quotes work.
