@@ -147,8 +147,23 @@ describe('the guild trials tile', () => {
         };
 
         const container = draw();
-        expect(container.textContent).toContain('1m');
+        // A minute at the newest sample, less the ten seconds since
+        expect(container.textContent).toContain('50s');
         expect(container.title).toContain('this tier clears in');
+    });
+
+    test('the projection is aged by the reading, and says due once it has passed', () => {
+        const now = Date.now();
+        // Rate implies about a minute left at the newest sample
+        game.record = {
+            weekStart: 0,
+            tiles: { a: tile({ name: 'Brewing', tier: 4, at: now - 20 * 60_000, values: [0, 5000], max: 10_000 }) },
+        };
+
+        const container = draw();
+        expect(container.textContent).toContain('due');
+        expect(container.textContent).not.toContain('1m');
+        expect(container.title).toContain('should already have cleared');
     });
 
     test('a reading older than the trial itself stops projecting, and says why', () => {
