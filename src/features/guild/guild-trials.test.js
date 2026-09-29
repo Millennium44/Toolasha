@@ -6482,6 +6482,30 @@ describe('a mates’ trial timed from the guild payload', () => {
         expect(html).not.toContain('needs two tier clears');
     });
 
+    test('serverTierAt is when the party banked, not when a message about another party arrived', () => {
+        // Live, all four parties carried the last message's receipt although
+        // each banked at a different instant (Cooking's T17 186 s earlier)
+        hear({ guild: { currentTrialsData: CURRENT_TRIALS_DATA_SKILLING } }, newestStamp);
+        const key = 'skilling::milking';
+        const now = newestStamp + SKEW + 20_000;
+        const once = guildTrials._recordServerTiers({ weekStart: 0, tiles: { [key]: milkingTile() } }, now);
+        const stamp = milking.highestTierReachedAtMs + SKEW + TRIP;
+        expect(once.tiles[key]).toMatchObject({ serverTier: 7, serverTierAt: stamp });
+        expect(once.tiles[key].serverTierAt).toBe(once.tiles[key].tierSeenAt[7]);
+
+        // Alchemy banks again; Milking's statement is unchanged and nothing is rewritten
+        const alchemy = base.skilling.parties['/guild_skilling/alchemy'];
+        const payload = JSON.parse(CURRENT_TRIALS_DATA_SKILLING);
+        payload.skilling.parties['/guild_skilling/alchemy'] = {
+            ...alchemy,
+            highestTier: 7,
+            tierStartedAtMs: newestStamp + 60_000,
+            highestTierReachedAtMs: newestStamp + 60_000,
+        };
+        hear({ guild: { currentTrialsData: JSON.stringify(payload) } }, newestStamp + 60_000);
+        expect(guildTrials._recordServerTiers(once, now + 60_000)).toBe(once);
+    });
+
     test('without the payload the same card is still measuring', () => {
         // Today's behaviour, and the one this replaces: a badge seen once says
         // nothing about when its tier banked

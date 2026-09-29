@@ -454,8 +454,8 @@ export function analyseTrial(
     // The guild payload's `highestTier` for this trial's party ('server'): tiers
     // banked, stated for every party whether this character joined or not, so
     // it places a mates' trial on the ladder on either tab. Believed only within
-    // a trial's hour of being stated — a week holds more than one cycle, and the
-    // last one's count is not this one's — and never without a clock to check
+    // a trial's hour of that tier banking — a week holds more than one cycle,
+    // and the last one's count is not this one's — and never without a clock to check
     // that against.
     const serverFresh =
         Number.isFinite(record?.serverTier) &&
@@ -3134,11 +3134,17 @@ class GuildTrials {
                         clears[tier] = serverAt + offset;
                     }
                 }
+                // The party's own bank time, as its `tierSeenAt` stamp is: a
+                // message arrives whenever *any* party banks, so its receipt is
+                // another party's clear as often as this one's
+                const partyAt = Number.isFinite(party.highestTierReachedAtMs)
+                    ? party.highestTierReachedAtMs
+                    : party.tierStartedAtMs;
                 next = recordServerTiers(next, key, {
                     bankedTier: party.highestTier,
                     done: party.done,
                     clears,
-                    at: held.at,
+                    at: offset !== null && Number.isFinite(partyAt) ? partyAt + offset : held.at,
                 });
             }
             return next;

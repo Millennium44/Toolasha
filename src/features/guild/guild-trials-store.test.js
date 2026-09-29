@@ -1397,4 +1397,17 @@ describe('recordServerTiers — the guild payload’s tier clears on a tile', ()
         expect(merged.tiles['skilling::milking']).toMatchObject({ serverTier: 8, serverTierAt: t0 + 46_000 });
         expect(mergeTrialRecords(sampled, older).tiles['skilling::milking'].serverTier).toBe(8);
     });
+
+    test('two statements of one clear merge to the one that says the party is done', () => {
+        // `serverTierAt` is the clear's own stamp, so a party that finished
+        // without banking again states the same instant with `done` flipped
+        const running = recordServerTiers(record(), 'skilling::milking', { bankedTier: 8, at: t0 + 45_000 });
+        const finished = recordServerTiers(record(), 'skilling::milking', {
+            bankedTier: 8,
+            done: true,
+            at: t0 + 45_000,
+        });
+        expect(mergeTrialRecords(finished, running).tiles['skilling::milking'].serverDone).toBe(true);
+        expect(mergeTrialRecords(running, finished).tiles['skilling::milking'].serverDone).toBe(true);
+    });
 });
