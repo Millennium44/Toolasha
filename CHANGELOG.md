@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Combat Simulator: a per-sweep Current Gear pick really uses current gear
+
+- In "Solo zones + party dungeons", picking Current Gear for a player who had a loadout applied from another tab still simulated the loadout's gear. It now reverts to their current gear, and the Loadout dropdown, the per-sweep pickers and the run history all show the loadout each player is actually wearing.
+
 ### Dungeon run history: paging, delete and backup fixes
 
 - "Show more" in the run history no longer makes the Export, Import and CSV buttons and the trends block disappear, and deleting a run no longer also deletes a different run recorded at the same moment.
