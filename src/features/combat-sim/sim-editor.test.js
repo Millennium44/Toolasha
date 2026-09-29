@@ -995,6 +995,23 @@ describe('the loadout selection is remembered', () => {
         expect(el.querySelector('#mwi-csim-loadout-select').value).toBe('Alpha');
     });
 
+    test('opening an external build forgets the previous scenario’s applied loadouts', async () => {
+        // A leftover record for player1 would label the unrelated external
+        // build with the old loadout
+        bridge.snapshots = [{ name: 'Alpha', actionTypeHrid: '/action_types/combat' }];
+        const { el, editor } = await openEditor();
+        const select = el.querySelector('#mwi-csim-loadout-select');
+        select.value = 'Alpha';
+        select.dispatchEvent(new Event('change'));
+        await Promise.resolve();
+        expect(editor.getLoadoutNameFor('player1')).toBe('Alpha');
+
+        editor.openWithExternalDTO(emptyDTO('them'), 'Stranger');
+
+        expect(editor.getSelectedLoadoutName()).toBe('');
+        expect(editor.getLoadoutNameFor('player1')).toBe('');
+    });
+
     test('a player reverted to current gear no longer claims the loadout it dropped', async () => {
         // player1 wears Alpha, goes back to Current Gear, then player2 takes
         // Bravo: the selection is non-empty again, but player1 wears nothing

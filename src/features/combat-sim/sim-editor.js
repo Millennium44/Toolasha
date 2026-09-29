@@ -573,6 +573,11 @@ export class SimEditor {
         this._partyKeyAtLoad = null;
         this._externalNote = note || '';
         this._loadoutFetchNote = '';
+        // The whole scenario is replaced, so no applied loadout belongs to the
+        // new player1. The selection is cleared but never saved: the external
+        // build must not overwrite the character's remembered loadout.
+        this._forgetAppliedLoadouts();
+        this._selectedLoadoutName = '';
         this._editorInitialized = true;
         this._scenarioToken++;
         this.renderEditor();
