@@ -69,6 +69,21 @@ describe('trialRates', () => {
         expect(rates.players.Abe).toEqual([100, 100]);
     });
 
+    test('the final snapshot restated in the game’s totals is not a reading of the stream', () => {
+        // Watched from partway: the stream saw 3,000 of Abe's 90,000. The
+        // recorder replaces its last snapshot with the game's totals, keeping
+        // the watched clock (`reconcileSnapshot`)
+        const reconciled = { ...snap(45, { Abe: 90_000 }), basis: 'game', streamTotalDamage: 4500 };
+        const rates = trialRates([snap(0, { Abe: 0 }), snap(15, { Abe: 1500 }), snap(30, { Abe: 3000 }), reconciled], {
+            seconds: 45,
+            fights: 1,
+            players: [{ name: 'Abe', damage: 4500 }],
+        });
+        expect(rates.xs).toEqual([15, 30, 45]);
+        expect(rates.players.Abe).toEqual([100, 100, 100]);
+        expect(Math.max(...rates.party)).toBe(100);
+    });
+
     test('a change in fight count is a boundary', () => {
         const rates = trialRates([snap(0, { Abe: 0 }, 1), snap(15, { Abe: 1500 }, 1), snap(30, { Abe: 3000 }, 2)]);
         expect(rates.boundaries).toEqual([15]);

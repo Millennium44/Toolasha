@@ -79,6 +79,11 @@ export function trialRates(snapshots, breakdown = null) {
     for (const snapshot of snapshots || []) {
         const seconds = Number(snapshot?.seconds);
         if (!Number.isFinite(seconds)) continue;
+        // The recorder's final snapshot restated in the game's whole-trial
+        // totals (`reconcileSnapshot`) keeps the watched clock but not the
+        // watched damage: diffed against the reading before it, a trial watched
+        // from partway through drew everything unwatched as one last spike
+        if (snapshot?.basis === 'game') continue;
         // A reading behind the one before it belongs to a trial that ended
         if (readings.length && seconds < readings[readings.length - 1].seconds) readings.length = 0;
         readings.push({ seconds, fights: snapshot.fights, players: snapshot.players || [] });
