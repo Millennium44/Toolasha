@@ -30,6 +30,7 @@ const game = vi.hoisted(() => ({
     storedStats: null,
     loadStats: null,
     statsSaves: [],
+    testServer: false,
     casts: [],
     // characterId → name, as `guildXPTracker.memberMeta` would answer it —
     // the whole-guild roster (and its trial sign-ups), kept regardless of
@@ -46,6 +47,7 @@ vi.mock('../../core/data-manager.js', () => ({
 }));
 // The roster persistence reaches IndexedDB through the store; here it is a
 // field on the fixture, so a test can seed "a previous session wrote this"
+vi.mock('../../utils/game-server.js', () => ({ isTestServer: () => game.testServer === true }));
 vi.mock('./guild-trials-store.js', () => ({
     archiveEarlierCycles: (record) => record,
     loadTrialRoster: async () => game.storedRoster,
@@ -2620,6 +2622,7 @@ describe('the week’s stats belong to one guild and character', () => {
         game.storedStats = null;
         game.loadStats = null;
         game.statsSaves = [];
+        game.testServer = false;
         game.guildMembers = { 910011: 'Tank' };
         guildTrialDamage.initialize();
         guildTrialDamage.reset();
@@ -2665,6 +2668,24 @@ describe('the week’s stats belong to one guild and character', () => {
         expect(game.statsSaves).toHaveLength(1);
         expect(game.statsSaves[0].scope).toEqual({ guildName: 'Milky Way', characterId: 111 });
         expect(guildTrialDamage.breakdown().storedStats).toEqual({});
+    });
+
+    test('on the test server, stats with no fight held are filed under their own arrival’s cycle', async () => {
+        // With no cycle the save was unioned into whichever cycle's blob was
+        // stored — the previous one's, on a week with several
+        game.testServer = true;
+        game.loadStats = async () => ({ weekStart: 0, trials: {} });
+        guildTrialDamage.setGuildName('Milky Way', 111);
+        await vi.advanceTimersByTimeAsync(0);
+        game.wsHandlers.guild_trial_stats_updated(tankStats);
+        await vi.advanceTimersByTimeAsync(0);
+        expect(game.statsSaves.at(-1).scope.cycleAt).toBe(at);
+
+        // Live files as it always has
+        game.testServer = false;
+        game.wsHandlers.guild_trial_stats_updated(tankStats);
+        await vi.advanceTimersByTimeAsync(0);
+        expect(game.statsSaves.at(-1).scope.cycleAt).toBeUndefined();
     });
 
     test('comparisons filed before the guild was known move onto the guild’s key', async () => {
