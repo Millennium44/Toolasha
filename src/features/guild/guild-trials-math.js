@@ -35,7 +35,8 @@
  *   100 for each additional tier; combat base points are 400 plus 200 each.
  *   Guild Points = Base × (1 + Builders Hall bonus). Every eligible member is
  *   paid 0.5 × TotalBasePoints × (1 + Treasury bonus) in tokens once all trials
- *   have finished, and a participant is paid a further 50% of that on top.
+ *   have finished — every trial's points, whoever ran it — and a member who took
+ *   part in at least one trial that week is paid a further 50% of that on top.
  *
  * ## What is derived rather than known
  *
@@ -237,8 +238,8 @@ export const TRIAL_BUDGET_MS = 3_600_000;
  * @param {string|Object} raw - `guild.currentTrialsData`, as it arrives
  * @returns {{combat: Object|null, skilling: Object|null}|null} Per kind:
  *   `{status, inProgress, allDone, parties, done, budgetRemainingMs, trials}`, where `trials` maps a
- *   party key to `{highestTier, budgetRemainingMs, tierStartedAtMs, done}`; null when nothing usable
- *   could be read
+ *   party key to `{highestTier, budgetRemainingMs, tierStartedAtMs, highestTierReachedAtMs, done}` (the
+ *   stamps on the server's clock); null when nothing usable could be read
  */
 export function parseCurrentTrialsData(raw) {
     let parsed = raw;
@@ -278,6 +279,7 @@ export function parseCurrentTrialsData(raw) {
                 highestTier: finite(party.highestTier),
                 budgetRemainingMs: countdown(party.budgetRemainingMs),
                 tierStartedAtMs: finite(party.tierStartedAtMs),
+                highestTierReachedAtMs: finite(party.highestTierReachedAtMs),
                 done: party.done === true,
             };
         }

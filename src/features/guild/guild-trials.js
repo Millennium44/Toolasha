@@ -154,7 +154,12 @@ import guildTrialAbilities from './guild-trial-abilities.js';
 import guildTrialAbilitiesFeature, { openTrialAbilitiesPanel } from './guild-trial-abilities-ui.js';
 import { openTrialLedgerPanel } from './guild-trial-ledger-view.js';
 import { forecastTrial } from './guild-trial-forecast.js';
-import { tierTimingAsForecast, tierTimingForecast } from './guild-trial-tier-timing.js';
+import {
+    foldServerTierClears,
+    serverClockOffset,
+    tierTimingAsForecast,
+    tierTimingForecast,
+} from './guild-trial-tier-timing.js';
 import { renderTierBadge } from './guild-trial-tier-badge.js';
 import guildTrialAlerts from '../notifications/guild-trial-alerts.js';
 import { describeGuildTokenGold } from './guild-token-value.js';
@@ -181,6 +186,7 @@ import {
     purgeLegacyTrialRecord,
     readPayoutBonuses,
     recordProvenance,
+    recordServerTiers,
     recordTileSample,
     saveTrialRecord,
     saveWorkBases,
@@ -442,6 +448,25 @@ export function analyseTrial(
     const socketStale = socketTarget !== null && Number.isFinite(total) && total !== socketTarget;
     const fromSocket = !completed && !socketStale && Number.isFinite(record?.liveTier) ? record.liveTier : null;
 
+    // The guild payload's `highestTier` for this trial's party ('server'): tiers
+    // banked, stated for every party whether this character joined or not, so
+    // it places a mates' trial on the ladder on either tab. Believed only within
+    // a trial's hour of being stated — a week holds more than one cycle, and the
+    // last one's count is not this one's — and never without a clock to check
+    // that against.
+    const serverFresh =
+        Number.isFinite(record?.serverTier) &&
+        Number.isFinite(record?.serverTierAt) &&
+        Number.isFinite(now) &&
+        now - record.serverTierAt <= TRIAL_ACTIVE_MS;
+    const serverBanked = serverFresh ? record.serverTier : null;
+    const fromServer =
+        serverBanked !== null && !completed
+            ? record.serverDone
+                ? Math.max(FIRST_TIER, serverBanked)
+                : Math.min(serverBanked + 1, TRIAL_MAX_TIER)
+            : null;
+
     // Only an observation above the first tier may seed the fallback base: a
     // tier-1 observation may be the first-tier rule's own filing, and a base
     // derived from it "confirms" tier 1 by construction — an assumption
@@ -479,6 +504,7 @@ export function analyseTrial(
     for (const [candidate, source] of [
         [fromBadge, 'card'],
         [fromSocket, 'socket'],
+        [fromServer, 'server'],
         [fromWorkLadder, 'work-ladder'],
     ]) {
         if (candidate === null || (tier !== null && candidate <= tier)) continue;
@@ -515,6 +541,8 @@ export function analyseTrial(
     if ((tierSource === 'socket' || tierSource === 'work-ladder') && Number.isFinite(tier)) {
         bankedTiers = Math.max(bankedTiers, tier - 1);
     }
+    // Stated as a count banked, so it is one whichever rung set the tier
+    if (serverBanked !== null) bankedTiers = Math.max(bankedTiers, serverBanked);
 
     // Everything downstream of the tier — what is banked, what the payout is
     // worth, whether a pace can be walked — is unavailable rather than zero when
@@ -986,6 +1014,12 @@ function tierProvenance(analysis) {
     if (analysis.tierSource === 'socket') {
         return ' The tier was stated outright by the game’s own trial update on the socket.';
     }
+    if (analysis.tierSource === 'server') {
+        return (
+            ' The tier was stated by the guild’s own trial status, which the game sends for every ' +
+            'party — the ones you did not join included — whichever tab is open.'
+        );
+    }
     if (analysis.tierSource === 'first-tier-rule') {
         return ' The tier is assumed: every trial starts at tier 1, and nothing has said otherwise.';
     }
@@ -1182,7 +1216,8 @@ export function renderTrialBlock(
 
     if (notMine) {
         // A trial you did not join has exactly one measurable signal: the times
-        // its tier badges were watched changing. The stated points cannot be
+        // its tiers banked, stated by the guild payload or else watched on the
+        // badge. The stated points cannot be
         // one — they are a step function, flat between tiers and jumping at
         // each, so the points-per-second this used to print was a regression
         // over a staircase. See `guild-trial-tier-timing.js`.
@@ -1199,7 +1234,8 @@ export function renderTrialBlock(
                         ACCENT,
                         'The whole guild’s work rate on this trial, measured from how long they took to fill ' +
                             `the last tier${loose.intervals > 1 ? 's' : ''} — the pool a tier needs is derived ` +
-                            'exactly, and the gap between two tier badges is watched. Not your own ' +
+                            'exactly, and when each tier banked is stated by the guild’s own trial status. ' +
+                            'Not your own ' +
                             'contribution, and not a bar reading: the live per-second bar only ever streams ' +
                             'for the trials you joined.' +
                             (falling
@@ -1217,8 +1253,8 @@ export function renderTrialBlock(
                         GOOD,
                         `What is left of T${loose.currentTier}’s pool at the rate projected for T` +
                             `${loose.currentTier}. The pool is derived — each tier adds a tenth of the first ` +
-                            'tier’s work — and how much of it is already done is the time since the badge ' +
-                            'moved, spent at that rate.'
+                            'tier’s work — and how much of it is already done is the time since the last tier ' +
+                            'banked, spent at that rate.'
                     )
                 );
             }
@@ -1241,10 +1277,11 @@ export function renderTrialBlock(
                     DIM,
                     'The live per-second bar only ever streams for the trials this character joined, so no ' +
                         'measured rate arrives for the others. What can be measured instead is how long the ' +
-                        'guild takes to clear a tier — so this waits until two tier badges have been watched ' +
-                        'appearing while the tab was open. A card’s first sighting does not count: it says ' +
-                        'nothing about when that tier actually banked.\nIts tier, points and sign-ups are ' +
-                        'read and shown below regardless.'
+                        'guild takes to clear a tier — so this waits until two tier clears are known. The ' +
+                        'guild’s own trial status states each one as it banks, on any screen, from the moment ' +
+                        'this page loaded; before that only a badge watched moving on the Trials tab counts, ' +
+                        'because a card’s first sighting says nothing about when that tier actually banked.' +
+                        '\nIts tier, points and sign-ups are read and shown below regardless.'
                 )
             );
         }
@@ -1444,7 +1481,7 @@ export function renderTrialBlock(
                 timing
                     ? 'Walked from the work each tier actually needs — each adds a tenth of the first tier’s ' +
                           '— at the rate this guild is measured to be filling them, taken from the ' +
-                          `${forecast.measured} tier badges watched appearing on this card.` +
+                          `${forecast.measured} tier clears timed on this trial.` +
                           (forecast.decline
                               ? `\nThe rate falls about ${Math.abs(forecast.decline.perTier * 100).toFixed(0)}% ` +
                                 'a tier as every participant’s success rate does, fitted across the ' +
@@ -2377,6 +2414,20 @@ class GuildTrials {
          * need the panel open; see {@link _noteCurrentTrials}.
          */
         this.currentTrials = null;
+        /**
+         * Every party's tier clears stated across the `guild_updated` messages
+         * of this trial, on the server's clock — `{[kind]: {[partyKey]: {[tier]:
+         * serverMs}}}`. Each message states only the tier banked now, and a
+         * panel opened mid-hour needs the ones before it; see
+         * `foldServerTierClears`.
+         */
+        this.serverTierClears = null;
+        /**
+         * Milliseconds to add to a server stamp to put it on this client's
+         * clock, the tightest bound seen so far; see `serverClockOffset`. A
+         * property of the two clocks, so it survives a character switch.
+         */
+        this.serverClockOffsetMs = null;
         /** The phase that message implies, used only where the page says nothing */
         this.socketPhase = null;
         /** The character whose record is in hand; a switch invalidates everything below it */
@@ -2763,6 +2814,8 @@ class GuildTrials {
             // same message implied, which `_noteLifecycle` falls back on
             // wherever the page says nothing.
             this.currentTrials = null;
+            // …and the tier clears it stated, which are the departing guild's parties
+            this.serverTierClears = null;
             this.socketPhase = null;
             // The forecast the per-player panel echoes, and the render state
             // that decides which card is allowed to replace it. Rebuilt every
@@ -2925,6 +2978,8 @@ class GuildTrials {
 
             const now = Date.now();
             this.currentTrials = { ...read, at: now };
+            this.serverTierClears = foldServerTierClears(this.serverTierClears, read);
+            this.serverClockOffsetMs = serverClockOffset(read, now, this.serverClockOffsetMs);
 
             const combat = read.combat;
             if (!combat) return;
@@ -2978,6 +3033,59 @@ class GuildTrials {
         // since ended, and counting down past zero says nothing
         if (elapsed >= stated) return null;
         return stated - elapsed;
+    }
+
+    /**
+     * Write each record tile's party from the guild payload onto it.
+     *
+     * The one writer of the record stays `_render`: this runs from it, off what
+     * `_noteCurrentTrials` has held since the last pass. A kind the payload
+     * does not have `in_progress`, or a payload older than a trial's hour, says
+     * nothing about this cycle and writes nothing. A combat party the name
+     * cannot be matched to (the combat hour's keys are not trial hrids in every
+     * shape seen) is skipped, which leaves that card on its watched badges.
+     *
+     * @param {Object} record - The week's record
+     * @param {number} now - Clock
+     * @returns {Object} The record
+     */
+    _recordServerTiers(record, now) {
+        try {
+            const held = this.currentTrials;
+            if (!record?.tiles || !held || !Number.isFinite(held.at) || now - held.at > TRIAL_ACTIVE_MS) {
+                return record;
+            }
+            const offset = Number.isFinite(this.serverClockOffsetMs) ? this.serverClockOffsetMs : null;
+
+            let next = record;
+            for (const [key, tile] of Object.entries(record.tiles)) {
+                const kind = tile?.kind === 'combat' ? 'combat' : 'skilling';
+                const entry = held[kind];
+                if (!entry?.inProgress || tile?.completed) continue;
+                const partyKey = matchTrialHrid(tile?.name, Object.keys(entry.trials || {}));
+                const party = partyKey ? entry.trials[partyKey] : null;
+                if (!party) continue;
+
+                // No offset means no stamp was ever readable, and then there
+                // are no clears to place either
+                const clears = {};
+                if (offset !== null) {
+                    for (const [tier, serverAt] of Object.entries(this.serverTierClears?.[kind]?.[partyKey] || {})) {
+                        clears[tier] = serverAt + offset;
+                    }
+                }
+                next = recordServerTiers(next, key, {
+                    bankedTier: party.highestTier,
+                    done: party.done,
+                    clears,
+                    at: held.at,
+                });
+            }
+            return next;
+        } catch (error) {
+            console.error('[GuildTrials] Recording the guild payload’s tier clears failed:', error);
+            return record;
+        }
     }
 
     /**
@@ -3252,6 +3360,10 @@ class GuildTrials {
 
                 this.record = recordTileSample(this.record, sampled, now, this.characterId);
             }
+            // Every trial the guild payload states, on screen or not — a mates'
+            // trial has no card on the In Progress tab, and its clears arrived
+            // while the panel was shut
+            this.record = this._recordServerTiers(this.record, now);
             // Persisted at the sampling cadence, never the render cadence: the
             // observer fires on every React burst and this used to write the
             // full record — hundreds of samples per tile — to IndexedDB on
@@ -3341,7 +3453,7 @@ class GuildTrials {
                 // archiving when the next cycle reads Scheduled. Render-only:
                 // the sampling loop above saw no tiles, so nothing was written.
                 if (this._renderLastTrial(root, counts, analysisFor, now)) drawn.add('last-trial');
-                if (this._renderPayout(root, this._payoutTrials(status, counts, analysisFor), null, bonuses)) {
+                if (this._renderPayout(root, this._payoutTrials(status, counts, analysisFor, now), null, bonuses)) {
                     drawn.add('payout');
                 }
                 // The archive still has last cycles' figures to show — a trial
@@ -3365,8 +3477,9 @@ class GuildTrials {
                 this._learnWorkBase(tile, record, analysis, participants, now);
 
                 // The guild's own fill rate on a trial nobody here joined,
-                // measured from when its tier badges were watched changing —
-                // the only honest signal such a card gives. See
+                // measured from when its tiers banked — stated by the guild
+                // payload, or watched on the badge — the only honest signal
+                // such a card gives. See
                 // `guild-trial-tier-timing.js` for why the stated points are
                 // not one.
                 const timing = tierTimingForecast(record, {
@@ -3437,7 +3550,7 @@ class GuildTrials {
             // they were read — the two tabs were otherwise drawing the same
             // "Trial payout" title over different totals, because each summed
             // only the cards it could see.
-            const trialsForPayout = this._payoutTrials(status, counts, analysisFor);
+            const trialsForPayout = this._payoutTrials(status, counts, analysisFor, now);
 
             if (this._renderPayout(root, trialsForPayout, tiles[0]?.element || null, bonuses)) {
                 drawn.add('payout');
@@ -3463,9 +3576,10 @@ class GuildTrials {
      * @param {Object} status - From `readTrialStatus`
      * @param {Object} counts - Sign-ups per trial hrid
      * @param {Function} analysisFor - The render pass's shared, memoised analyser
+     * @param {number} [now=Date.now()] - Clock
      * @returns {Array<Object>} One entry per trial the record knows
      */
-    _payoutTrials(status, counts, analysisFor) {
+    _payoutTrials(status, counts, analysisFor, now = Date.now()) {
         const trials = [];
 
         for (const [key, record] of Object.entries(this.record?.tiles || {})) {
@@ -3480,16 +3594,29 @@ class GuildTrials {
             // over while the combat clock counts down, its record never marked
             // completed because its card was not on screen when it ended — was
             // paced on the other trial's hour and paid for tiers it cannot reach.
-            const pace =
-                phase === 'completed' || phase === 'scheduled' || this._trialRunning(record) === false
-                    ? null
-                    : analysis.pace;
+            const running = !(phase === 'completed' || phase === 'scheduled' || this._trialRunning(record) === false);
+            const pace = running ? analysis.pace : null;
+            // A trial with no bar to walk — the mates' trials, whose points pay
+            // every member the same as the reader's own — is paced from its tier
+            // clears instead, as its card's Expected row is
+            const timing =
+                running && !pace
+                    ? tierTimingAsForecast(
+                          tierTimingForecast(record, {
+                              kind: analysis.kind,
+                              participants,
+                              timeLeftMs: analysis.timeLeftMs,
+                              now,
+                              bankedTiers: analysis.tiersClearedSoFar,
+                          })
+                      )
+                    : null;
 
             trials.push({
                 name: record.name,
                 type: record.kind,
                 banked: analysis.tiersClearedSoFar,
-                projected: pace?.tiersCleared ?? analysis.tiersClearedSoFar,
+                projected: pace?.tiersCleared ?? timing?.tiersCleared ?? analysis.tiersClearedSoFar,
                 // How far into the tier beyond `projected` the pace reaches by the
                 // hour's end, 0..1. Only meaningful under the test-server
                 // partial-tier rule, where that leftover progress pays out.

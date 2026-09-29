@@ -2,15 +2,24 @@ import { describe, expect, test } from 'vitest';
 
 import {
     declineFit,
+    foldServerTierClears,
     MIN_TIER_CLEARS,
     RATE_FLOOR_FRACTION,
     rateAtTier,
+    serverClockOffset,
     tierClearTimes,
     tierFillRates,
     tierTimingAsForecast,
     tierTimingForecast,
 } from './guild-trial-tier-timing.js';
-import { SKILLING_TIER_STEP, TRIAL_MAX_TIER, tierWorkShape } from './guild-trials-math.js';
+import { CURRENT_TRIALS_DATA_SKILLING } from './guild-trial-messages.fixture.js';
+import {
+    parseCurrentTrialsData,
+    SKILLING_TIER_STEP,
+    TRIAL_ACTIVE_MS,
+    TRIAL_MAX_TIER,
+    tierWorkShape,
+} from './guild-trials-math.js';
 
 /** A tier's share of the first tier's work, spelled out rather than imported into the expectation */
 const share = (tier) => 1 + SKILLING_TIER_STEP * (tier - 1);
@@ -276,5 +285,71 @@ describe('tierTimingAsForecast — the Expected row’s own shape', () => {
     test('nothing measured is nothing stated', () => {
         expect(tierTimingAsForecast(tierTimingForecast({}, { timeLeftMs: 60_000 }))).toBeNull();
         expect(tierTimingAsForecast(null)).toBeNull();
+    });
+});
+
+describe('foldServerTierClears — every party’s clears, kept between messages', () => {
+    const read = parseCurrentTrialsData(CURRENT_TRIALS_DATA_SKILLING);
+    const milking = read.skilling.trials['/guild_skilling/milking'];
+    const withMilking = (tier, at) => ({
+        ...read,
+        skilling: {
+            ...read.skilling,
+            trials: {
+                ...read.skilling.trials,
+                '/guild_skilling/milking': { ...milking, highestTier: tier, highestTierReachedAtMs: at },
+            },
+        },
+    });
+
+    test('each message adds the tier banked now to the ones held', () => {
+        let held = foldServerTierClears(null, read);
+        expect(held.skilling['/guild_skilling/alchemy']).toEqual({ 6: 1_790_715_749_189 });
+        expect(held.combat).toBeUndefined();
+
+        held = foldServerTierClears(held, withMilking(8, milking.highestTierReachedAtMs + 45_000));
+        expect(held.skilling['/guild_skilling/milking']).toEqual({
+            7: milking.highestTierReachedAtMs,
+            8: milking.highestTierReachedAtMs + 45_000,
+        });
+        // Nothing held is changed in place
+        const before = structuredClone(held);
+        foldServerTierClears(held, withMilking(2, milking.highestTierReachedAtMs + 90_000));
+        expect(held).toEqual(before);
+    });
+
+    test('a party lower than what is held, or an hour on, is the next cycle', () => {
+        const held = foldServerTierClears(null, read);
+        expect(
+            foldServerTierClears(held, withMilking(2, milking.highestTierReachedAtMs + 1_000)).skilling[
+                '/guild_skilling/milking'
+            ]
+        ).toEqual({ 2: milking.highestTierReachedAtMs + 1_000 });
+
+        const nextWeek = milking.highestTierReachedAtMs + TRIAL_ACTIVE_MS + 1;
+        expect(foldServerTierClears(held, withMilking(9, nextWeek)).skilling['/guild_skilling/milking']).toEqual({
+            9: nextWeek,
+        });
+        // Tier 0 is the hour starting, and clears what the last cycle left
+        expect(foldServerTierClears(held, withMilking(0, nextWeek)).skilling['/guild_skilling/milking']).toEqual({});
+    });
+});
+
+describe('serverClockOffset — the client clock against the server’s', () => {
+    const read = parseCurrentTrialsData(CURRENT_TRIALS_DATA_SKILLING);
+    const newest = 1_790_715_749_189;
+
+    test('a message bounds the offset by its newest stamp, and the tightest bound is kept', () => {
+        expect(serverClockOffset(read, newest + 5_300)).toBe(5_300);
+        expect(serverClockOffset(read, newest + 9_000, 5_300)).toBe(5_300);
+        expect(serverClockOffset(read, newest + 4_000, 5_300)).toBe(4_000);
+        // A client behind the server is a negative offset, not an error
+        expect(serverClockOffset(read, newest - 2_000)).toBe(-2_000);
+    });
+
+    test('a message with no stamps keeps what was held', () => {
+        const empty = parseCurrentTrialsData(JSON.stringify({ skilling: { status: '', parties: null } }));
+        expect(serverClockOffset(empty, newest, 5_300)).toBe(5_300);
+        expect(serverClockOffset(empty, newest)).toBeNull();
     });
 });
