@@ -348,8 +348,14 @@ class DungeonTrackerUIHistory {
             // redraw that changed nothing recomputes nothing.
             const { groups: trendGroups, deltas } = trendsFor(filteredRuns);
 
-            // Render grouped runs
-            this.renderGroupedRuns(runList, groups, deltas);
+            // The groups get a container of their own inside the list:
+            // "Show N more" redraws just that subtree, so the bars prepended
+            // below survive paging instead of being replaced with it.
+            const groupsEl = document.createElement('div');
+            groupsEl.className = 'mwi-dt-groups';
+            runList.innerHTML = '';
+            runList.appendChild(groupsEl);
+            this.renderGroupedRuns(groupsEl, groups, deltas);
 
             runList.prepend(this.trendsBlock(trendGroups));
 
@@ -901,7 +907,9 @@ class DungeonTrackerUIHistory {
 
     /**
      * Render grouped runs
-     * @param {HTMLElement} runList - Run list container
+     * @param {HTMLElement} runList - Container the groups are drawn into; its
+     *   whole content is replaced, so callers that keep sibling controls pass a
+     *   dedicated child rather than the list itself
      * @param {Array} groups - Grouped runs with stats
      * @param {Map<string, Object>} [deltas] - Per-run deltas, keyed by `runIdentity`
      */

@@ -345,6 +345,30 @@ describe('run rendering is capped per group', () => {
         expect(dungeonTrackerStorage.deleteRun).toHaveBeenCalledWith(runs[249].timestamp);
     });
 
+    test('"Show more" keeps the backup, CSV and trends bars in the list', async () => {
+        const runs = Array.from({ length: 250 }, (_, i) => bigRun(i));
+        dungeonTrackerStorage.getAllRuns.mockResolvedValue(runs);
+        const history = new DungeonTrackerUIHistory(freshState('team'), (ms) => `${ms}ms`);
+        const container = document.createElement('div');
+        container.innerHTML = '<div id="mwi-dt-run-list"></div>';
+        document.body.appendChild(container);
+        await history.update(container);
+        const runList = container.querySelector('#mwi-dt-run-list');
+        expect(runList.querySelector('[data-csv-export]')).not.toBeNull();
+        expect(runList.querySelector('[data-json-backup]')).not.toBeNull();
+        const barsBefore = [...runList.children].map((el) => el.className || el.dataset.csvExport || el.tagName);
+
+        runList.querySelector('.mwi-dt-show-more').dispatchEvent(new Event('click', { bubbles: true }));
+
+        expect(runList.querySelectorAll('[data-run-timestamp]')).toHaveLength(250);
+        expect(runList.querySelector('[data-csv-export]')).not.toBeNull();
+        expect(runList.querySelector('[data-json-backup]')).not.toBeNull();
+        expect([...runList.children].map((el) => el.className || el.dataset.csvExport || el.tagName)).toEqual(
+            barsBefore
+        );
+        dungeonTrackerStorage.getAllRuns.mockResolvedValue([]);
+    });
+
     test('"Show more" state for one group does not affect a different group', () => {
         const history = new DungeonTrackerUIHistory(freshState('team'), (ms) => `${ms}ms`);
         const grownRuns = Array.from({ length: 450 }, (_, i) => bigRun(i));
