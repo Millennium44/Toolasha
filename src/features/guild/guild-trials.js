@@ -2981,6 +2981,30 @@ class GuildTrials {
     }
 
     /**
+     * Whether the socket says a trial is still running.
+     *
+     * `false` only on the game's own word: an `end_guild_skilling` for it, its
+     * party marked done, or its kind's status out of `in_progress` on a guild
+     * payload from within the last hour. Anything less is `null`, not a no.
+     *
+     * @param {{kind: string, name: string}} record - A tile record
+     * @param {number} [now=Date.now()] - Clock
+     * @returns {boolean|null} Running, over, or not known
+     */
+    _trialRunning(record, now = Date.now()) {
+        const kind = record?.kind === 'combat' ? 'combat' : 'skilling';
+        if (kind === 'skilling' && guildTrialSkilling.endedFor?.(record?.name, now)) return false;
+
+        const held = this.currentTrials;
+        const entry = held?.[kind];
+        if (!entry || !Number.isFinite(held.at) || now - held.at > TRIAL_ACTIVE_MS) return null;
+        if (!entry.inProgress) return false;
+        const partyKey = matchTrialHrid(record?.name, Object.keys(entry.trials || {}));
+        if (partyKey && entry.trials[partyKey]?.done) return false;
+        return true;
+    }
+
+    /**
      * Move the record onto the real guild's key, once the guild is known.
      *
      * The key is resolved lazily rather than at startup because at startup it is
@@ -3449,17 +3473,27 @@ class GuildTrials {
 
             const hrid = matchTrialHrid(record.name, Object.keys(counts));
             const participants = record.signups?.signed ?? (hrid ? counts[hrid] : 0);
-            const analysis = analysisFor(key, record, participants, this._phaseFor(status, record));
+            const phase = this._phaseFor(status, record);
+            const analysis = analysisFor(key, record, participants, phase);
+            // The pace walks the one clock on the page, which is the running
+            // trial's. A trial that is not the one running — the skilling hour
+            // over while the combat clock counts down, its record never marked
+            // completed because its card was not on screen when it ended — was
+            // paced on the other trial's hour and paid for tiers it cannot reach.
+            const pace =
+                phase === 'completed' || phase === 'scheduled' || this._trialRunning(record) === false
+                    ? null
+                    : analysis.pace;
 
             trials.push({
                 name: record.name,
                 type: record.kind,
                 banked: analysis.tiersClearedSoFar,
-                projected: analysis.pace?.tiersCleared ?? analysis.tiersClearedSoFar,
+                projected: pace?.tiersCleared ?? analysis.tiersClearedSoFar,
                 // How far into the tier beyond `projected` the pace reaches by the
                 // hour's end, 0..1. Only meaningful under the test-server
                 // partial-tier rule, where that leftover progress pays out.
-                partialFraction: analysis.pace?.partialFraction ?? 0,
+                partialFraction: pace?.partialFraction ?? 0,
                 tierKnown: analysis.tierKnown,
                 points: analysis.points,
                 pointsByTier: analysis.pointsByTier,

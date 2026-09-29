@@ -6128,6 +6128,38 @@ describe('the guild message says a trial is running', () => {
         expect(guildTrials._trialBudgetMs('combat', now, 'Trial Badger')).toBeNull();
     });
 
+    test('the payout paces only the trial that is running', () => {
+        // The combat hour, on the In Progress tab (no header). The skilling
+        // trial ended an hour's clock ago but its card was never on screen to
+        // say Completed, so its record is not marked — and it was paced on the
+        // combat trial's clock and paid for tiers it can no longer reach
+        vi.setSystemTime(now);
+        guildTrials._noteCurrentTrials({
+            guild: {
+                currentTrialsData: JSON.stringify({
+                    // The kind not running, in the shape the live payload gives it
+                    skilling: { status: '', parties: null },
+                    combat: { status: 'in_progress', budgetRemainingMs: 1_800_000, parties: { 1: { done: false } } },
+                }),
+            },
+        });
+        guildTrials.record = {
+            weekStart: 0,
+            tiles: {
+                'skilling::alchemy': { name: 'Alchemy', kind: 'skilling', samples: [], tiers: [] },
+                'combat::trial badger': { name: 'Trial Badger', kind: 'combat', samples: [], tiers: [] },
+            },
+        };
+        const analysisFor = () => ({ tiersClearedSoFar: 8, pace: { tiersCleared: 12, partialFraction: 0.5 } });
+
+        const trials = guildTrials._payoutTrials({ phase: null }, {}, analysisFor);
+        const alchemy = trials.find((trial) => trial.name === 'Alchemy');
+        const badger = trials.find((trial) => trial.name === 'Trial Badger');
+
+        expect(alchemy).toMatchObject({ banked: 8, projected: 8, partialFraction: 0 });
+        expect(badger).toMatchObject({ banked: 8, projected: 12, partialFraction: 0.5 });
+    });
+
     test('a malformed payload is survived and changes nothing', () => {
         guildTrials._noteCurrentTrials({ guild: { currentTrialsData: '{broken' } });
         guildTrials._noteCurrentTrials({ guild: {} });
