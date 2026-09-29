@@ -926,6 +926,32 @@ describe('inventory behind another character panel tab', () => {
         expect(fixture.gameSelected()).toBe('item_category_food');
     });
 
+    test('the icon-row setting turned off meanwhile still hands the saved tab back on remount', async () => {
+        const { characterTabList, contentContainer, inventoryPanel } = buildCharacterPanel();
+        const first = buildNewInventory(inventoryPanel, CATEGORY_ICONS, 'item_category_food');
+        ui = await startUI();
+        first.tabList.querySelector(STRIP_TAB).click();
+        await flush();
+        expect(first.gameSelected()).toBe('inventory_all');
+
+        // Equipment unmounts the inventory; the tab moves to the character panel meanwhile
+        first.inv.remove();
+        showEquipment(characterTabList, contentContainer);
+        game.settings.inventoryTabs_iconRowTab = false;
+        settingHandlers.get('inventoryTabs_iconRowTab')();
+        await flush();
+        expect(ui._isActive).toBe(false);
+
+        // The game remounts the inventory on the forced All
+        showInventory(characterTabList, contentContainer);
+        const fixture = buildNewInventory(inventoryPanel, CATEGORY_ICONS, 'inventory_all');
+        renderStrips();
+        await flush();
+
+        expect(fixture.gameSelected()).toBe('item_category_food');
+        expect(storageMock.map.has('toolasha_local_inventoryNativeTab_char-1')).toBe(false);
+    });
+
     test('an instance torn down before its config loads leaves the restorer in place', async () => {
         const { characterTabList, contentContainer, inventoryPanel } = buildCharacterPanel();
         const first = buildNewInventory(inventoryPanel, CATEGORY_ICONS, 'item_category_food');
