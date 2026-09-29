@@ -152,17 +152,32 @@ describe('the guild trials tile', () => {
         expect(container.title).toContain('this tier clears in');
     });
 
-    test('the projection is aged by the reading, and says due once it has passed', () => {
+    test('a reading nothing is refreshing times nothing, as the card has it', () => {
+        // Five minutes old: inside the hour, but the card stopped timing a kill
+        // off it after a minute, and the tile went on printing the old figure
         const now = Date.now();
-        // Rate implies about a minute left at the newest sample
         game.record = {
             weekStart: 0,
-            tiles: { a: tile({ name: 'Brewing', tier: 4, at: now - 20 * 60_000, values: [0, 5000], max: 10_000 }) },
+            tiles: { a: tile({ name: 'Brewing', tier: 4, at: now - 5 * 60_000, values: [0, 5000], max: 10_000 }) },
+        };
+
+        const container = draw();
+        expect(container.textContent).toContain('T5');
+        expect(container.textContent).not.toContain('1m');
+        expect(container.title).toContain('Nothing has read the bar');
+    });
+
+    test('a projection that has run out while the reading is still fresh says due', () => {
+        const now = Date.now();
+        // About 26 s left at the newest sample, read 40 s ago: still inside the
+        // minute a reading is timed from, but already past its clear
+        game.record = {
+            weekStart: 0,
+            tiles: { a: tile({ name: 'Brewing', tier: 4, at: now - 40_000, values: [0, 7000], max: 10_000 }) },
         };
 
         const container = draw();
         expect(container.textContent).toContain('due');
-        expect(container.textContent).not.toContain('1m');
         expect(container.title).toContain('should already have cleared');
     });
 
