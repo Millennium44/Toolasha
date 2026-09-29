@@ -109,13 +109,20 @@ registerRow({
         // A tier with one reading behind it is a measurement in progress, not a
         // measurement that failed, and the two must not look alike
         const measuring = analysis.etaMs === null && analysis.samples < 2;
+        // `etaMs` is measured from the newest sample, so it is aged by how long
+        // ago that was. Shown raw beside "20m ago" it promised a clear 20 minutes
+        // from a reading that already was 20 minutes old
+        const etaLeftMs = analysis.etaMs === null ? null : analysis.etaMs - ageSeconds * 1000;
+        const overdue = etaLeftMs !== null && etaLeftMs <= 0;
         const projection = stale
             ? { text: 'stale', color: ROW_COLORS.dim }
             : measuring
               ? { text: 'measuring…', color: ROW_COLORS.dim }
               : analysis.etaMs === null
                 ? { text: '—', color: ROW_COLORS.dim }
-                : { text: shortDuration(analysis.etaMs / 1000), color: ROW_COLORS.accent };
+                : overdue
+                  ? { text: 'due', color: ROW_COLORS.dim }
+                  : { text: shortDuration(etaLeftMs / 1000), color: ROW_COLORS.accent };
 
         row(container, [
             { text: tier === null ? tile.name || 'Trial' : `T${tier}`, color: ROW_COLORS.gold, ellipsis: true },
@@ -135,7 +142,9 @@ registerRow({
                   ? 'One reading so far — a rate needs a second one, taken while the tab is open.'
                   : analysis.etaMs === null
                     ? 'Not enough movement was seen to measure a rate.'
-                    : `At the rate last measured, this tier clears in ${shortDuration(analysis.etaMs / 1000)}.`) +
+                    : overdue
+                      ? 'At the rate last measured this tier should already have cleared; the reading is older than that.'
+                      : `At the rate last measured, this tier clears in ${shortDuration(etaLeftMs / 1000)}.`) +
             `\nRead ${shortDuration(ageSeconds)} ago — open the guild In Progress tab to refresh ` +
             '(the Trials tab beside it has the tiers and sign-ups; the pool bar is only on In Progress).';
     },
