@@ -6948,6 +6948,21 @@ describe('a week with more than one cycle in it', () => {
         expect(guildTrials.record).toBe(record);
     });
 
+    test('the archived cycle keeps its attribution accuracy', async () => {
+        game.testServer = true;
+        const damage = (await import('./guild-trial-damage.js')).default;
+        const summary = { 'trial badger': { measured: 1_400_000, reported: 1_900_000 } };
+        damage.accuracySummary = () => summary;
+        try {
+            const { CLEARS, record } = await cycleRecord();
+            hold(CLEARS, record);
+            guildTrials._archiveEarlierCycles(CLEARS.CAPTURED_AT);
+            expect(guildTrials.record.history.at(-1).accuracy).toEqual(summary);
+        } finally {
+            delete damage.accuracySummary;
+        }
+    });
+
     test('the test server keeps the last cycle apart from this one', async () => {
         game.testServer = true;
         const { CLEARS, record } = await cycleRecord();
