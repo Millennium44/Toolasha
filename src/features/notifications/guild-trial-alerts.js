@@ -160,6 +160,7 @@ class GuildTrialAlerts {
         this.trials = [];
         /** The payout at the last live reading, for the results alert */
         this.lastPayout = null;
+        this.lastPayoutAt = null;
         this.resultsAnnouncedAt = null;
         /** Start instant currently armed (rounded to the minute), so a re-read does not re-arm */
         this.scheduledFor = null;
@@ -212,6 +213,7 @@ class GuildTrialAlerts {
         this.announcedStartFor = null;
         this.trials = [];
         this.lastPayout = null;
+        this.lastPayoutAt = null;
         this.resultsAnnouncedAt = null;
         this._clearStartTimer();
     }
@@ -225,9 +227,12 @@ class GuildTrialAlerts {
      *
      * @param {Object} payout - `{guildPoints, eligibleTokens, participantTokens}`
      */
-    notePayout(payout) {
+    notePayout(payout, at = Date.now()) {
         if (!payout) return;
-        if (Number.isFinite(payout.guildPoints) && payout.guildPoints > 0) this.lastPayout = { ...payout };
+        if (Number.isFinite(payout.guildPoints) && payout.guildPoints > 0) {
+            this.lastPayout = { ...payout };
+            this.lastPayoutAt = at;
+        }
     }
 
     /**
@@ -244,8 +249,10 @@ class GuildTrialAlerts {
             if (phase) this.phase = phase;
 
             if (phase === 'scheduled') {
-                // A cycle that has not started yet has no results to have told
+                // A cycle that has not started yet has no results to have told,
+                // and a payout read during an earlier one is not this one's
                 this.resultsAnnouncedAt = null;
+                this.lastPayout = null;
                 return this._maybeAnnounceStart(startsInMs, at);
             }
             if (phase === 'live' && previous === 'scheduled') {
@@ -263,6 +270,11 @@ class GuildTrialAlerts {
                     return null;
                 }
                 this.resultsAnnouncedAt = at;
+                // A payout read longer ago than a cycle lasts belongs to an
+                // earlier one, for a tab that never saw this cycle scheduled
+                if (Number.isFinite(this.lastPayoutAt) && at - this.lastPayoutAt > RESULTS_SAME_CYCLE_MS) {
+                    this.lastPayout = null;
+                }
                 const announced = this._announceResults();
                 // Spent with the cycle it belonged to: kept, it was reported
                 // again as the next week's result whenever that cycle ran with

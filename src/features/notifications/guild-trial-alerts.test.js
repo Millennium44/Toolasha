@@ -309,6 +309,32 @@ describe('the results', () => {
         expect(game.sent).toHaveLength(2);
     });
 
+    test('a payout read in a cycle whose end went unseen is not the next cycle result', () => {
+        guildTrialAlerts.noteTrialStatus({ phase: 'live', at: now });
+        guildTrialAlerts.notePayout({ guildPoints: 2880, eligibleTokens: 1320, participantTokens: 1980 }, now);
+
+        // The panel was shut through that cycle's end; the next one is seen from scheduled
+        guildTrialAlerts.noteTrialStatus({ phase: 'scheduled', at: now + 86_400_000 });
+        guildTrialAlerts.noteTrialStatus({ phase: 'live', at: now + 86_400_000 + 600_000 });
+        guildTrialAlerts.noteTrialStatus({ phase: 'completed', at: now + 86_400_000 + 3_600_000 });
+
+        // The started alert, then the results with no payout to report
+        const results = game.sent.filter((sent) => sent.options.title === 'Guild trial finished');
+        expect(results).toHaveLength(1);
+        expect(results[0].message).toBe('The guild trial has finished.');
+    });
+
+    test('a payout older than a cycle is dropped even when the scheduled phase was never seen', () => {
+        guildTrialAlerts.noteTrialStatus({ phase: 'live', at: now });
+        guildTrialAlerts.notePayout({ guildPoints: 2880, eligibleTokens: 1320, participantTokens: 1980 }, now);
+
+        guildTrialAlerts.noteTrialStatus({ phase: 'live', at: now + 86_400_000 });
+        guildTrialAlerts.noteTrialStatus({ phase: 'completed', at: now + 86_400_000 + 3_600_000 });
+
+        expect(game.sent).toHaveLength(1);
+        expect(game.sent[0].message).toBe('The guild trial has finished.');
+    });
+
     test('a panel that was already showing completed announces nothing', () => {
         guildTrialAlerts.noteTrialStatus({ phase: 'completed', at: now });
         expect(game.sent).toEqual([]);
