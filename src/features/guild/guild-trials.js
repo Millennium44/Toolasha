@@ -3771,10 +3771,9 @@ class GuildTrials {
                 type: record.kind,
                 banked: analysis.tiersClearedSoFar,
                 projected: pace?.tiersCleared ?? timing?.tiersCleared ?? analysis.tiersClearedSoFar,
-                // How far into the tier beyond `projected` the pace reaches by the
-                // hour's end, 0..1. Only meaningful under the test-server
-                // partial-tier rule, where that leftover progress pays out.
-                partialFraction: pace?.partialFraction ?? 0,
+                // How far into the tier beyond `projected` the forecast reaches by
+                // the hour's end, 0..1; that leftover progress pays out.
+                partialFraction: pace?.partialFraction ?? timing?.partialFraction ?? 0,
                 tierKnown: analysis.tierKnown,
                 points: analysis.points,
                 pointsByTier: analysis.pointsByTier,

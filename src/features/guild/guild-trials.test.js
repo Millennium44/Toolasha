@@ -6771,6 +6771,18 @@ describe('a mates’ trial timed from the guild payload', () => {
         const [trial] = guildTrials._payoutTrials({ phase: null }, {}, analysisFor, now);
         expect(trial.banked).toBe(9);
         expect(trial.projected).toBeGreaterThan(9);
+
+        // Fifty minutes walks this pace off the top of the ladder, with no tier
+        // left to be part-way into. Three leave it part-way up, and that
+        // progress is paid; it was always recorded as none for a trial with no bar
+        expect(trial.projected).toBe(21);
+        expect(trial.partialFraction).toBe(0);
+        const shortly = (_key, record, participants, phase) =>
+            analyseTrial(record, { participants, phase, timeLeftMs: 3 * 60_000, now });
+        const [partway] = guildTrials._payoutTrials({ phase: null }, {}, shortly, now);
+        expect(partway.projected).toBeLessThan(21);
+        expect(partway.partialFraction).toBeGreaterThan(0);
+        expect(partway.partialFraction).toBeLessThan(1);
     });
 
     test('a combat party the card cannot be matched to writes nothing', () => {
