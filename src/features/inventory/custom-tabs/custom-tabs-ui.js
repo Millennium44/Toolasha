@@ -990,17 +990,21 @@ export default class CustomTabsUI {
 
     _tryInjectTabButton() {
         try {
-            // Inventory with its own tab strip: the Toolasha tab goes there instead
-            const strip = this._findInventoryStrip();
-            if (strip) {
-                const reopen = this._retireCharacterPanelTab();
-                this._ensureStripTab(strip);
-                if (reopen && !this._isActive) this._activatePanel();
-                return;
+            // Recorded whatever the placement setting says, so switching it on later knows the layout
+            const strip = this._findIconRowLayoutStrip();
+            if (strip) this._sawInventoryStrip = true;
+            if (config.getSetting('inventoryTabs_iconRowTab')) {
+                // Inventory with its own tab strip: the Toolasha tab goes there instead
+                if (strip) {
+                    const reopen = this._retireCharacterPanelTab();
+                    this._ensureStripTab(strip);
+                    if (reopen && !this._isActive) this._activatePanel();
+                    return;
+                }
+                // Layouts do not change within a page: a strip that is merely unmounted right now
+                // (character panel on another tab) is not a reason to fall back.
+                if (this._sawInventoryStrip) return;
             }
-            // Layouts do not change within a page: a strip that is merely unmounted right now
-            // (character panel on another tab) is not a reason to fall back.
-            if (this._sawInventoryStrip) return;
 
             const tabList = this._findCharacterTabList();
             if (!tabList) return;
@@ -1378,6 +1382,15 @@ export default class CustomTabsUI {
     _findInventoryStrip() {
         // Off: the character-panel button on every layout (the view handles native tabs either way)
         if (!config.getSetting('inventoryTabs_iconRowTab')) return null;
+        return this._findIconRowLayoutStrip();
+    }
+
+    /**
+     * The inventory's native tab strip if the page has the icon-row layout, whatever the
+     * placement setting says.
+     * @returns {HTMLElement|null}
+     */
+    _findIconRowLayoutStrip() {
         const tabList = this._findNativeInventoryTabList(this._findInvContainer());
         if (!tabList) return null;
         const { tabs } = this._nativeInventoryTabs(tabList);
@@ -1489,7 +1502,6 @@ export default class CustomTabsUI {
             if (this._isActive) this._deactivatePanel();
             this._retireCharacterPanelTab();
             this._removeStripTab();
-            this._sawInventoryStrip = false;
             this._tryInjectTabButton();
         } catch (error) {
             console.error('[CustomTabs] Moving the Toolasha tab failed:', error);
