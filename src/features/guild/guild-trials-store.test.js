@@ -218,6 +218,26 @@ describe('recording samples', () => {
         expect(record.tiles['skilling::milking'].tierSeenAt).toEqual({ 16: now, 20: now + 21 * 60_000 });
     });
 
+    test('a tier another cycle this week already stamped is stamped again, and the merge keeps the new one', () => {
+        // An earlier cycle of the same week stamped T17. This cycle's T17 clear,
+        // watched, must be written — the old stamp used to block it for good —
+        // and a read-merge-write against the stored copy must not bring the old
+        // one back as the "earlier sighting"
+        const carded = (tier) => ({ name: 'Milking', kind: 'skilling', tier, points: 0 });
+        const old = now - 2 * 24 * 3_600_000;
+        let record = recordTileSample(emptyRecord(thisWeek), carded(16), now - 30_000);
+        record.tiles['skilling::milking'].tierSeenAt = { 17: old };
+        record = recordTileSample(record, carded(17), now);
+        expect(record.tiles['skilling::milking'].tierSeenAt[17]).toBe(now);
+
+        const stored = {
+            weekStart: thisWeek,
+            tiles: { 'skilling::milking': { name: 'Milking', kind: 'skilling', tierSeenAt: { 17: old } } },
+        };
+        expect(mergeTrialRecords(stored, record).tiles['skilling::milking'].tierSeenAt[17]).toBe(now);
+        expect(mergeTrialRecords(record, stored).tiles['skilling::milking'].tierSeenAt[17]).toBe(now);
+    });
+
     test('the last badge read survives a merge, latest wins', () => {
         const merged = mergeTrialRecords(
             {

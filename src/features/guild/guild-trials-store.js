@@ -46,6 +46,7 @@ import {
     GUILD_BUILDING_MAX_LEVEL,
     isTrialName,
     MAX_TRIAL_NAME_CHARS,
+    TRIAL_ACTIVE_MS,
     trialWeekStart,
 } from './guild-trials-math.js';
 import { isPlausibleReading } from './guild-trials-scrape.js';
@@ -460,7 +461,9 @@ export function recordTileSample(record, tile, at, characterId = null) {
         Number.isFinite(existing.tier) &&
         tile.tier > existing.tier &&
         watched &&
-        !Number.isFinite(tierSeenAt[tile.tier])
+        // A stamp from another cycle of the same week is not this clear, and
+        // must not stop it being written
+        !(Number.isFinite(tierSeenAt[tile.tier]) && at - tierSeenAt[tile.tier] <= TRIAL_ACTIVE_MS)
     ) {
         tierSeenAt[tile.tier] = at;
     }
@@ -573,7 +576,8 @@ function mergePersonalByCharacter(staler, fresher) {
 }
 
 /**
- * Union two tier-clear timestamp maps, keeping the earlier sighting of each.
+ * Union two tier-clear timestamp maps, keeping the earlier sighting of each
+ * clear — and, for a tier two cycles of one week both cleared, the later cycle's.
  * @param {Object} [a] - One side's `tierSeenAt`
  * @param {Object} [b] - The other side's
  * @returns {Object} One map
@@ -585,7 +589,13 @@ function mergeTierSeenAt(a, b) {
             const when = Number(at);
             if (!Number.isFinite(when)) continue;
             const held = Number(merged[tier]);
-            merged[tier] = Number.isFinite(held) ? Math.min(held, when) : when;
+            // Two sightings of one clear keep the earlier; two more than a trial's
+            // hour apart are two cycles' clears, and the later cycle's is current
+            merged[tier] = !Number.isFinite(held)
+                ? when
+                : Math.abs(held - when) > TRIAL_ACTIVE_MS
+                  ? Math.max(held, when)
+                  : Math.min(held, when);
         }
     }
     return merged;
