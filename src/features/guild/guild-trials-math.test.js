@@ -792,6 +792,52 @@ describe('combatDamageRate', () => {
         expect(measured.damage).toBe(10_000 + 169_500);
     });
 
+    test('an unwatched stretch that cleared several tiers is left out, not averaged in', () => {
+        // Watched two minutes at T3, the view shut for forty, watched again at
+        // T8. The boundary pair can only say what was left of the T3 boss and
+        // what is off the T8 one — the four bosses between went unseen — so
+        // counting it spread two minutes' damage over forty and read a party
+        // doing 1,000 dmg/s as ~320
+        const growth = 669_500 / 618_000;
+        const measured = combatDamageRate(
+            [
+                at(0, 600_000, 669_500),
+                at(120_000, 480_000, 669_500),
+                at(2_520_000, 800_000, 927_000),
+                at(2_640_000, 680_000, 927_000),
+            ],
+            { growthPerTier: growth }
+        );
+
+        expect(measured.damage).toBe(240_000);
+        expect(measured.spanMs).toBe(240_000);
+        expect(measured.rate).toBeCloseTo(1, 9);
+        expect(measured.unwatched).toBe(1);
+        // What was kept is exact, so it is no lower bound
+        expect(measured.multiTier).toBe(false);
+    });
+
+    test('an unwatched stretch inside one tier, or across one step, still counts', () => {
+        const growth = 669_500 / 618_000;
+        const sameTier = combatDamageRate([at(0, 600_000, 669_500), at(600_000, 300_000, 669_500)], {
+            growthPerTier: growth,
+        });
+        expect(sameTier.damage).toBe(300_000);
+        expect(sameTier.unwatched).toBe(0);
+
+        const oneStep = combatDamageRate([at(0, 100_000, 618_000), at(600_000, 400_000, 669_500)], {
+            growthPerTier: growth,
+        });
+        expect(oneStep.damage).toBe(100_000 + 269_500);
+        expect(oneStep.unwatched).toBe(0);
+
+        // With no fitted growth the jump cannot be shown to be several tiers,
+        // so it is kept and captioned as a lower bound, as before
+        const unknownStep = combatDamageRate([at(0, 100_000, 618_000), at(600_000, 400_000, 669_500)]);
+        expect(unknownStep.unwatched).toBe(0);
+        expect(unknownStep.multiTier).toBe(true);
+    });
+
     test('readings older than the hour a trial runs for are left out', () => {
         const hour = 60 * 60 * 1000;
         const measured = combatDamageRate([

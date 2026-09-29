@@ -1488,6 +1488,13 @@ export function etaMs(remaining, rate) {
 }
 
 /**
+ * How far apart two boss readings may be and still count as watched between.
+ * Samples land every five seconds while a bar is on screen; a minute bridges a
+ * redraw or a tier's gap between bars, and nothing longer is a watched fight.
+ */
+const UNWATCHED_GAP_MS = 60_000;
+
+/**
  * How much of a boss's health the party has taken off, per millisecond.
  *
  * Separate from {@link ratePerMs} because a combat trial's bar does not behave
@@ -1522,14 +1529,25 @@ export function etaMs(remaining, rate) {
  * expected to caption the figure as a lower bound rather than quietly under-report
  * a party's damage.
  *
+ * The exception is a pair more than `gapMs` apart: that is a stretch nobody was
+ * reading (the fight view shut, the tab left), and a boundary across it that the
+ * fitted growth shows to be several tiers — or a smaller boss, which is no step
+ * up at all — hides whole bosses. Its damage is unknown rather than small, so the pair
+ * is left out of both the damage and the time — counting it would spread the
+ * watched minutes' damage over the unwatched ones — and counted in `unwatched`.
+ *
  * @param {Array<{t: number, current: number, max: number}>} samples - Boss health readings, any order
  * @param {Object} [options] - Options
  * @param {number|null} [options.growthPerTier] - Fitted per-tier growth, for the single-step check
  * @param {number} [options.windowMs] - Ignore readings older than this before the newest
+ * @param {number} [options.gapMs] - A pair further apart than this was not watched in between
  * @returns {{rate: number|null, damage: number, spanMs: number, boundaries: number, multiTier: boolean,
- *   samples: number}} The measurement
+ *   unwatched: number, samples: number}} The measurement
  */
-export function combatDamageRate(samples, { growthPerTier = null, windowMs = TRIAL_ACTIVE_MS } = {}) {
+export function combatDamageRate(
+    samples,
+    { growthPerTier = null, windowMs = TRIAL_ACTIVE_MS, gapMs = UNWATCHED_GAP_MS } = {}
+) {
     const usable = (samples || [])
         .filter((sample) => Number.isFinite(sample?.t) && Number.isFinite(sample?.current) && Number(sample?.max) > 0)
         .sort((a, b) => a.t - b.t);
@@ -1539,16 +1557,27 @@ export function combatDamageRate(samples, { growthPerTier = null, windowMs = TRI
     const newest = usable.length ? usable[usable.length - 1].t : 0;
     const window = Number.isFinite(windowMs) ? usable.filter((sample) => newest - sample.t <= windowMs) : usable;
 
-    const nothing = { rate: null, damage: 0, spanMs: 0, boundaries: 0, multiTier: false, samples: window.length };
+    const nothing = {
+        rate: null,
+        damage: 0,
+        spanMs: 0,
+        boundaries: 0,
+        multiTier: false,
+        unwatched: 0,
+        samples: window.length,
+    };
     if (window.length < 2) return nothing;
 
     let damage = 0;
+    let spanMs = 0;
     let boundaries = 0;
     let multiTier = false;
+    let unwatched = 0;
 
     for (let index = 1; index < window.length; index += 1) {
         const before = window[index - 1];
         const after = window[index];
+        const pairMs = after.t - before.t;
         // Each trial tier increases the boss's maximum HP. A rising current HP
         // with the same maximum is a heal, not a new tier; treating it as a
         // boundary adds almost an entire boss bar to the measured damage.
@@ -1556,23 +1585,34 @@ export function combatDamageRate(samples, { growthPerTier = null, windowMs = TRI
 
         if (!cleared) {
             damage += Math.max(0, before.current - after.current);
+            spanMs += pairMs;
             continue;
         }
-
-        boundaries += 1;
-        damage += before.current + (after.max - after.current);
 
         // One step up the ladder, or several? Only a fitted growth factor can
         // answer that, and a boss *smaller* than the last one is not a step at all
         const ratio = after.max / before.max;
         const step = Number.isFinite(growthPerTier) && growthPerTier > 1 ? growthPerTier : null;
-        if (ratio < 1 || !step || ratio > Math.pow(step, 1.5)) multiTier = true;
+        const pairMultiTier = ratio < 1 || !step || ratio > Math.pow(step, 1.5);
+        // Only a jump *shown* to be more than one step is dropped: with no fitted
+        // growth a single tier cleared across the gap is as likely, and that pair
+        // is exact — the recorded 414 s pair across T2 → T3 is one
+        const shownMultiTier = ratio < 1 || (step !== null && ratio > Math.pow(step, 1.5));
+
+        if (shownMultiTier && Number.isFinite(gapMs) && pairMs > gapMs) {
+            unwatched += 1;
+            continue;
+        }
+
+        boundaries += 1;
+        damage += before.current + (after.max - after.current);
+        spanMs += pairMs;
+        if (pairMultiTier) multiTier = true;
     }
 
-    const spanMs = window[window.length - 1].t - window[0].t;
-    if (spanMs <= 0 || damage <= 0) return { ...nothing, damage, spanMs, boundaries, multiTier };
+    if (spanMs <= 0 || damage <= 0) return { ...nothing, damage, spanMs, boundaries, multiTier, unwatched };
 
-    return { rate: damage / spanMs, damage, spanMs, boundaries, multiTier, samples: window.length };
+    return { rate: damage / spanMs, damage, spanMs, boundaries, multiTier, unwatched, samples: window.length };
 }
 
 // ─── Pace ───────────────────────────────────────────────────────────────────

@@ -538,6 +538,28 @@ describe('analyseTrial', () => {
         expect(fresh.pace.clears.map((clear) => clear.tier)).toEqual([6, 7]);
     });
 
+    test('a fight watched, left, and watched again tiers later is timed off the watched stretches', () => {
+        const analysis = analyseTrial(
+            record({
+                samples: [
+                    { t: now, readings: [{ current: 600_000, max: 669_500 }] },
+                    { t: now + 120_000, readings: [{ current: 480_000, max: 669_500 }] },
+                    { t: now + 2_520_000, readings: [{ current: 800_000, max: 927_000 }] },
+                    { t: now + 2_640_000, readings: [{ current: 680_000, max: 927_000 }] },
+                ],
+                tiers: [
+                    { tier: 3, total: 669_500 },
+                    { tier: 4, total: 721_000 },
+                ],
+            }),
+            { participants: 3, timeLeftMs: 10 * 60_000, now: now + 2_640_000 }
+        );
+
+        expect(analysis.rate).toBeCloseTo(1, 9);
+        expect(analysis.etaMs).toBeCloseTo(680_000, 6);
+        expect(analysis.rateNote).toContain('watched only');
+    });
+
     test('an empty record analyses to nothing rather than throwing', () => {
         const analysis = analyseTrial({}, {});
         expect(analysis.rate).toBeNull();

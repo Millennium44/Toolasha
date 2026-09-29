@@ -614,6 +614,12 @@ export function analyseTrial(
         } else if (measured.boundaries > 0) {
             rateNote = 'Counted across a tier clear: what was left of the last boss plus what is off this one.';
         }
+        if (measured.unwatched > 0) {
+            rateNote =
+                (rateNote ? `${rateNote}\n` : '') +
+                'Measured over the stretches that were watched only: tiers cleared while nothing was reading ' +
+                'this card are left out rather than counted as a slow fight.';
+        }
     } else {
         const series = samples
             .map((sample) => ({ t: sample?.t, value: sample?.readings?.[index]?.current }))
