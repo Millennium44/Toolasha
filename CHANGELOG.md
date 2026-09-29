@@ -6,6 +6,14 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Audit round: guild trial ETAs for trials your guild mates are running
+
+- A trial only your guild mates are in now gets its tier, ETA and pace from the guild's own trial data, which arrives on every screen, instead of saying "measuring" until you watched two tier clears on the Trials tab. Its points also count toward the payout's on-pace total, since tokens are shared by everyone.
+- The tier-time model no longer extrapolates slow top tiers into hours per tier or "falling 1925%/tier". A mates' combat trial now shows one verdict and prices its DPS from the right wave, labelled "Est. DPS".
+- The Deadline row counts from each trial's own last clear and now appears right after a reload. A closed fight view no longer leaves a frozen "Kill in" or a DPS diluted by the time nobody was watching.
+- The trial damage board's auto-open now works on real traffic, once per fight. The DPS graph no longer spikes when the game's totals arrive, and a later trial watched in the same page is no longer merged into the previous one.
+- On the test server, a second trial cycle in the same week is kept apart from the first in the trial record, ledger, History and stored stats. Live behavior is unchanged.
+
 ### Trial ability checker works before the trial, per combat trial
 
 - Before a trial starts, the checker can now show each combat trial's signed-up members and compare their fetched trial loadouts against that trial's own section of the plan. A plan can hold both trials under headings like `== Trial Badger ==` and `== Trial Swarm ==`; a plan without headings applies to either.
