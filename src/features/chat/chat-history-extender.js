@@ -695,30 +695,22 @@ class ChatTabHandler {
      * @param {string|null} tabKey - Persistence key for this tab, from {@link chatTabKey}
      * @param {PendingMessageIds} messageIds - Shared id correlator, from {@link ChatHistoryExtender}
      * @param {DeletedMessageIds} deletedIds - Shared deletion tombstone, from {@link ChatHistoryExtender}
-     * @param {Set<ChatTabHandler>|null} peers - The extender's live handlers, refilled once a read recovers
      */
-    constructor(
-        containerEl,
-        interactionCache,
-        getMaxHistory,
-        tabKey = null,
-        messageIds = null,
-        deletedIds = null,
-        peers = null
-    ) {
+    constructor(containerEl, interactionCache, getMaxHistory, tabKey = null, messageIds = null, deletedIds = null) {
         this.container = containerEl;
         this.interactionCache = interactionCache;
         this.getMaxHistory = getMaxHistory;
         this.tabKey = tabKey;
         this.messageIds = messageIds;
         this.deletedIds = deletedIds;
-        this.peers = peers;
         /**
          * Whether this tab's restore got nothing because the stored history
          * could not be read, as opposed to there being none. Cleared by the
-         * next restore; read by {@link ChatTabHandler#_refillPeers}.
+         * next restore; read by {@link ChatTabHandler#refillIfNeeded}.
          */
         this.needsRefill = false;
+        /** Guards the one re-run of a restore whose failed answer raced a recovery. */
+        this._retriedRestore = false;
         /** Whether a restore has already been fired for this tab; see {@link _resolveTabKey}. */
         this.restoreStarted = false;
         /** @type {WeakMap<Element, string|null>} Buffered node → {@link messageIdentity}, computed once */
@@ -953,10 +945,20 @@ class ChatTabHandler {
         // A failed read answers `{}`, the same as an empty record. Only a
         // successful one is the persistence layer's own snapshot object.
         if (!loaded || loaded !== chatHistoryPersistence.snapshot) {
+            // A newer read may have succeeded while this answer was in flight,
+            // before this tab was flagged for the recovery event; take its
+            // snapshot rather than wait for an event that already fired.
+            if (chatHistoryPersistence.snapshot && !this._retriedRestore) {
+                this._retriedRestore = true;
+                try {
+                    return await this.restore(tabKey);
+                } finally {
+                    this._retriedRestore = false;
+                }
+            }
             this.needsRefill = true;
             return 0;
         }
-        this._refillPeers();
 
         const stored = loaded[tabKey];
         if (!Array.isArray(stored) || !stored.length) return 0;
@@ -999,27 +1001,25 @@ class ChatTabHandler {
     }
 
     /**
-     * Restore every mounted tab whose own restore found the store unreadable.
+     * Restore this tab now if its own restore found the store unreadable.
      *
-     * Called when a read has just succeeded, so a tab mounted during an outage
-     * is not left empty for the session. Nothing retries on a timer; recovery
-     * is the next `load()` someone makes anyway. Goes through
-     * {@link ChatTabHandler#restore}, so the live/buffer dedupe and the deletion
-     * tombstone apply unchanged.
+     * Called from the extender when the persistence layer reports a read has
+     * succeeded, wherever that read came from — so a tab mounted during an
+     * outage is not left empty for the session. Nothing retries on a timer.
+     * Goes through {@link ChatTabHandler#restore}, so the live/buffer dedupe
+     * and the deletion tombstone apply unchanged, and clears the flag first so
+     * one recovery restores a tab once.
      */
-    _refillPeers() {
-        if (!this.peers) return;
-        for (const peer of [...this.peers]) {
-            if (peer === this || !peer.needsRefill || !peer.tabKey || !peer.bufferEl.isConnected) continue;
-            // A container that has since become another tab restores that tab
-            // itself, from `_resolveTabKey`; this key would be the old one.
-            const current = chatTabKey(peer.container);
-            if (current && current !== peer.tabKey) continue;
-            peer.needsRefill = false;
-            peer.restore(peer.tabKey).catch((error) => {
-                console.error('[ChatHistoryExtender] Refill failed:', error);
-            });
-        }
+    refillIfNeeded() {
+        if (!this.needsRefill || !this.tabKey || !this.bufferEl.isConnected) return;
+        // A container that has since become another tab restores that tab
+        // itself, from `_resolveTabKey`; this key would be the old one.
+        const current = chatTabKey(this.container);
+        if (current && current !== this.tabKey) return;
+        this.needsRefill = false;
+        this.restore(this.tabKey).catch((error) => {
+            console.error('[ChatHistoryExtender] Refill failed:', error);
+        });
     }
 
     /**
@@ -1360,6 +1360,8 @@ class ChatHistoryExtender {
         this._onVisibilityChange = null;
         /** @type {Function|null} Unsubscribes the pre-teardown flush */
         this._offBeforeTeardown = null;
+        /** @type {Function|null} Unsubscribes the successful-read listener */
+        this._offLoaded = null;
     }
 
     initialize() {
@@ -1375,6 +1377,11 @@ class ChatHistoryExtender {
         };
 
         chatHistoryPersistence.enable(getMaxHistory);
+        // Any successful read — a tab's restore or a deletion's purge — refills
+        // the tabs mounted during an outage.
+        this._offLoaded = chatHistoryPersistence.onLoaded(() => {
+            for (const handler of [...this.activeHandlers]) handler.refillIfNeeded();
+        });
 
         this.messageIds = new PendingMessageIds();
         this.deletedIds = new DeletedMessageIds();
@@ -1412,8 +1419,7 @@ class ChatHistoryExtender {
                 getMaxHistory,
                 chatTabKey(containerEl),
                 this.messageIds,
-                this.deletedIds,
-                this.activeHandlers
+                this.deletedIds
             );
             this.tabHandlers.set(containerEl, handler);
             this.activeHandlers.add(handler);
@@ -1566,6 +1572,10 @@ class ChatHistoryExtender {
     disable() {
         let finalFlush = Promise.resolve(false);
         try {
+            if (this._offLoaded) {
+                this._offLoaded();
+                this._offLoaded = null;
+            }
             // First: storage outlives this feature, and a throw further down
             // would leave it calling into a torn-down session on page close.
             if (this._offBeforeTeardown) {
