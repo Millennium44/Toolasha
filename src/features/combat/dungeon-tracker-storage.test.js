@@ -534,7 +534,7 @@ describe('importRuns', () => {
 
     test('a run whose identity was deliberately deleted is not resurrected by an import', async () => {
         seedRuns([importedRun()]);
-        await dungeonTrackerStorage.deleteRun('2026-01-01T00:00:00.000Z');
+        await dungeonTrackerStorage.deleteRun('A,B|2026-01-01T00:00:00.000Z|300000');
 
         const result = await dungeonTrackerStorage.importRuns([importedRun()]);
 
@@ -724,7 +724,7 @@ describe('importRuns', () => {
         test('a run deleted while stored non-canonically is not resurrected by a canonically-spelled re-import', async () => {
             const nonCanonical = importedRun({ timestamp: '2026-01-01T00:00:00Z' });
             seedRuns([nonCanonical]);
-            await dungeonTrackerStorage.deleteRun('2026-01-01T00:00:00Z');
+            await dungeonTrackerStorage.deleteRun('A,B|2026-01-01T00:00:00Z|300000');
             expect(await dungeonTrackerStorage.getAllRuns()).toEqual([]);
 
             const canonical = importedRun({ timestamp: '2026-01-01T00:00:00.000Z' });
@@ -851,13 +851,13 @@ describe('importRuns racing another mutator on the same cold load', () => {
 });
 
 describe('deleting runs', () => {
-    test('deleteRun drops the run at a timestamp and writes at once', async () => {
+    test('deleteRun drops the run by identity and writes at once', async () => {
         seedRuns([
             { timestamp: '2026-01-02T00:00:00Z', teamKey: 'A,B', duration: 500 },
             { timestamp: '2026-01-01T00:00:00Z', teamKey: 'A,B', duration: 500 },
         ]);
 
-        await dungeonTrackerStorage.deleteRun('2026-01-01T00:00:00Z');
+        await dungeonTrackerStorage.deleteRun('A,B|2026-01-01T00:00:00Z|500');
 
         // The tombstone goes out first, so a crash between the two writes
         // leaves the removal recorded rather than the run gone with no reason
@@ -927,13 +927,24 @@ describe('a second tab writing the same account-wide key', () => {
         expect(game.saved.unifiedRuns.allRuns).toHaveLength(2);
     });
 
+    test('deleteRun with a bare timestamp removes nothing', async () => {
+        seedRuns([
+            { timestamp: '2026-01-01T00:00:00Z', teamKey: 'A,B', duration: 500 },
+            { timestamp: '2026-01-01T00:00:00Z', teamKey: 'C,D', duration: 700 },
+        ]);
+
+        await dungeonTrackerStorage.deleteRun('2026-01-01T00:00:00Z');
+
+        expect(await dungeonTrackerStorage.getAllRuns()).toHaveLength(2);
+    });
+
     test('a deleted run is not resurrected by a later merge', async () => {
         seedRuns([
             { timestamp: '2026-01-02T00:00:00Z', teamKey: 'A,B', duration: 500 },
             { timestamp: '2026-01-01T00:00:00Z', teamKey: 'A,B', duration: 500 },
         ]);
 
-        await dungeonTrackerStorage.deleteRun('2026-01-01T00:00:00Z');
+        await dungeonTrackerStorage.deleteRun('A,B|2026-01-01T00:00:00Z|500');
         // A copy written before the delete landed comes back — a slow tab, a sync pull
         otherTabAppends({ timestamp: '2026-01-01T00:00:00Z', teamKey: 'A,B', duration: 500 });
 
@@ -986,7 +997,7 @@ describe('a second tab writing the same account-wide key', () => {
         game.writes = [];
 
         game.unreadable = true;
-        expect(await dungeonTrackerStorage.deleteRun('2026-01-01T00:00:00Z')).toBe(false);
+        expect(await dungeonTrackerStorage.deleteRun('A,B|2026-01-01T00:00:00Z|500')).toBe(false);
         expect(game.writes).toEqual([]);
     });
 });
@@ -1860,7 +1871,7 @@ describe('removing one run survives a pull', () => {
         const peer = [run(1, '2026-01-04T00:00:00.000Z', 101), run(2, '2026-01-06T00:00:00.000Z', 102)];
         seedRuns(structuredClone(peer));
         await dungeonTrackerStorage.getAllRuns();
-        await dungeonTrackerStorage.deleteRun('2026-01-04T00:00:00.000Z');
+        await dungeonTrackerStorage.deleteRun('A,B|2026-01-04T00:00:00.000Z|101');
         expect(game.saved.unifiedRuns[RUNS_DELETED_KEY]).toEqual([
             { id: 'A,B|2026-01-04T00:00:00.000Z|101', at: Date.parse('2026-01-04T00:00:00.000Z') },
         ]);
@@ -1920,7 +1931,7 @@ describe('removing one run survives a pull', () => {
         const peer = [run(1, '2026-01-04T00:00:00.000Z', 101), run(2, '2026-01-06T00:00:00.000Z', 102)];
         seedRuns(structuredClone(peer));
         await dungeonTrackerStorage.getAllRuns();
-        await dungeonTrackerStorage.deleteRun('2026-01-04T00:00:00.000Z');
+        await dungeonTrackerStorage.deleteRun('A,B|2026-01-04T00:00:00.000Z|101');
         const tombstones = game.saved.unifiedRuns[RUNS_DELETED_KEY];
 
         dungeonTrackerStorage._resetCache();
@@ -1933,7 +1944,7 @@ describe('removing one run survives a pull', () => {
     test('a run recorded again after being deleted is kept, and stays kept', async () => {
         seedRuns([run(1, '2026-01-04T00:00:00.000Z', 101)]);
         await dungeonTrackerStorage.getAllRuns();
-        await dungeonTrackerStorage.deleteRun('2026-01-04T00:00:00.000Z');
+        await dungeonTrackerStorage.deleteRun('A,B|2026-01-04T00:00:00.000Z|101');
 
         expect(
             await dungeonTrackerStorage.saveTeamRun('A,B', { timestamp: '2026-01-04T00:00:00.000Z', duration: 101 })
@@ -1954,7 +1965,7 @@ describe('removing one run survives a pull', () => {
         // which is what stops every backfill undoing every delete.
         seedRuns([run(1, '2026-01-04T00:00:00.000Z', 101)]);
         await dungeonTrackerStorage.getAllRuns();
-        await dungeonTrackerStorage.deleteRun('2026-01-04T00:00:00.000Z');
+        await dungeonTrackerStorage.deleteRun('A,B|2026-01-04T00:00:00.000Z|101');
         await dungeonTrackerStorage.saveTeamRun('A,B', { timestamp: '2026-01-04T00:00:00.000Z', duration: 101 });
         await dungeonTrackerStorage.flushPendingSave();
 
@@ -2009,8 +2020,8 @@ describe('removing one run survives a pull', () => {
         vi.setSystemTime(Date.parse('2026-01-05T00:00:00.000Z'));
         seedRuns([run(1, '2026-01-04T00:00:00.000Z', 101), { id: 2, teamKey: 'A,B', timestamp: null, duration: 7 }]);
         await dungeonTrackerStorage.getAllRuns();
-        await dungeonTrackerStorage.deleteRun('2026-01-04T00:00:00.000Z');
-        await dungeonTrackerStorage.deleteRun(null);
+        await dungeonTrackerStorage.deleteRun('A,B|2026-01-04T00:00:00.000Z|101');
+        await dungeonTrackerStorage.deleteRun('A,B||7');
 
         await dungeonTrackerStorage.clearAllRuns();
 
@@ -2027,7 +2038,7 @@ describe('removing one run survives a pull', () => {
     test('a second tab’s removal is not undone by this one’s write', async () => {
         seedRuns([run(1, '2026-01-04T00:00:00.000Z', 101), run(2, '2026-01-06T00:00:00.000Z', 102)]);
         await dungeonTrackerStorage.getAllRuns();
-        await dungeonTrackerStorage.deleteRun('2026-01-04T00:00:00.000Z');
+        await dungeonTrackerStorage.deleteRun('A,B|2026-01-04T00:00:00.000Z|101');
 
         // What the other tab wrote while this one held its own copy
         game.saved.unifiedRuns[RUNS_DELETED_KEY] = [

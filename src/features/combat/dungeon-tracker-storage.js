@@ -1425,8 +1425,9 @@ class DungeonTrackerStorage {
      *
      * Identity, not timestamp: imported backups keep other characters' runs, and
      * two distinct runs (a partymate's record of the same run, timed differently)
-     * can share a timestamp. A bare timestamp (no `|`, which an identity always
-     * has) still removes every run at it, for callers that only hold that.
+     * can share a timestamp. Only a full identity matches: anything else (a bare
+     * timestamp, say) removes nothing, and the write still runs as it does for
+     * any identity that matches no stored run.
      * @param {string} identity - `teamKey|timestamp|duration`, as `runIdentity` builds it
      * @returns {Promise<boolean>} Whether the write landed
      */
@@ -1440,8 +1441,7 @@ class DungeonTrackerStorage {
         // drop whatever it added the moment this write lands.
         const kept = [];
         for (const run of this._runs) {
-            const matches = String(identity).includes('|') ? runIdentity(run) === identity : run.timestamp === identity;
-            if (matches) this._tombstone(run);
+            if (runIdentity(run) === identity) this._tombstone(run);
             else kept.push(run);
         }
         this._index(kept);
