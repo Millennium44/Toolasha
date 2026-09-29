@@ -933,7 +933,12 @@ class DungeonTrackerUIHistory {
             const worstTime = this.formatTime(group.stats.slowestTime);
 
             // Check if this group is expanded
-            const isExpanded = this.state.expandedGroups.has(group.label);
+            // Per-group state is keyed by grouping mode + the group's own key,
+            // never its display label: "Solo Runs" is the label of the solo
+            // fallback and also of a team literally so named, and a team and a
+            // dungeon can share a name across Group By modes.
+            const stateKey = this.groupStateKey(group);
+            const isExpanded = this.state.expandedGroups.has(stateKey);
             const displayStyle = isExpanded ? 'block' : 'none';
             const toggleIcon = isExpanded ? '▲' : '▼';
 
@@ -941,7 +946,7 @@ class DungeonTrackerUIHistory {
             // far — capped to the group's own size so a group that shrank
             // (a delete) never tries to slice past its own end.
             const visibleCount = Math.min(
-                this.visibleRunCounts.get(group.label) ?? MAX_RENDERED_RUNS_PER_GROUP,
+                this.visibleRunCounts.get(stateKey) ?? MAX_RENDERED_RUNS_PER_GROUP,
                 group.runs.length
             );
 
@@ -958,7 +963,7 @@ class DungeonTrackerUIHistory {
                         align-items: center;
                         margin-bottom: 6px;
                         cursor: pointer;
-                    " class="mwi-dt-group-header" data-group-label="${this.escapeHtml(group.label)}">
+                    " class="mwi-dt-group-header" data-group-key="${this.escapeHtml(JSON.stringify(stateKey))}">
                         <div style="flex: 1;">
                             <div style="font-weight: bold; color: #4a9eff; margin-bottom: 2px;">
                                 ${this.renderGroupLabel(group)}
@@ -976,7 +981,7 @@ class DungeonTrackerUIHistory {
                         margin-top: 4px;
                     ">
                         ${this.renderRunList(group.runs.slice(0, visibleCount), deltas, group.runs.length)}
-                        ${this.renderShowMoreControl(group.label, visibleCount, group.runs.length)}
+                        ${this.renderShowMoreControl(stateKey, visibleCount, group.runs.length)}
                     </div>
                 </div>
             `;
@@ -991,8 +996,8 @@ class DungeonTrackerUIHistory {
         runList.querySelectorAll('.mwi-dt-show-more').forEach((btn) => {
             btn.addEventListener('click', (event) => {
                 event.stopPropagation();
-                const label = btn.dataset.groupLabel;
-                const group = groups.find((g) => g.label === label);
+                const label = this.decodeGroupKey(btn.dataset.groupKey);
+                const group = groups.find((g) => this.groupStateKey(g) === label);
                 if (!group) return;
                 const current = this.visibleRunCounts.get(label) ?? MAX_RENDERED_RUNS_PER_GROUP;
                 this.visibleRunCounts.set(label, Math.min(current + MAX_RENDERED_RUNS_PER_GROUP, group.runs.length));
@@ -1003,7 +1008,7 @@ class DungeonTrackerUIHistory {
         // Attach toggle handlers
         runList.querySelectorAll('.mwi-dt-group-header').forEach((header) => {
             header.addEventListener('click', () => {
-                const groupLabel = header.dataset.groupLabel;
+                const groupLabel = this.decodeGroupKey(header.dataset.groupKey);
                 const runsDiv = header.nextElementSibling;
                 const toggle = header.querySelector('.mwi-dt-group-toggle');
 
@@ -1049,6 +1054,31 @@ class DungeonTrackerUIHistory {
                 }
             });
         });
+    }
+
+    /**
+     * The key one group's per-panel state (expanded, pages shown) lives under.
+     * Carries the grouping mode so a page count from one Group By mode never
+     * lands on a same-keyed group of the other.
+     * @param {{key: string}} group - A group from groupByTeam / groupByDungeon
+     * @returns {string} The state key
+     */
+    groupStateKey(group) {
+        return `${this.state.groupBy}:${group.key}`;
+    }
+
+    /**
+     * Read back a state key stored JSON-encoded in a data attribute.
+     * @param {string} attribute - `data-group-key`
+     * @returns {string} The key
+     */
+    decodeGroupKey(attribute) {
+        try {
+            const value = JSON.parse(attribute);
+            return typeof value === 'string' ? value : attribute;
+        } catch {
+            return attribute;
+        }
     }
 
     /**
@@ -1136,7 +1166,7 @@ class DungeonTrackerUIHistory {
      * {@link MAX_RENDERED_RUNS_PER_GROUP} runs impossible to even see, let
      * alone delete.
      *
-     * @param {string} groupLabel - The group this control belongs to, so its
+     * @param {string} groupLabel - The group's state key (see `groupStateKey`), so its
      *   click handler knows which group to grow
      * @param {number} visibleCount - How many of the group's runs are
      *   rendered right now
@@ -1151,7 +1181,7 @@ class DungeonTrackerUIHistory {
                 <div style="color: #888; font-style: italic; font-size: 9px; margin-bottom: 4px;">
                     Showing latest ${visibleCount} of ${totalCount} — Export for the full list
                 </div>
-                <button class="mwi-dt-show-more" data-group-label="${this.escapeHtml(groupLabel)}" style="
+                <button class="mwi-dt-show-more" data-group-key="${this.escapeHtml(JSON.stringify(groupLabel))}" style="
                     background: none;
                     border: 1px solid #555;
                     color: #aaa;
