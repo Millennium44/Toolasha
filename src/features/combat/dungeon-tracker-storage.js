@@ -1419,11 +1419,18 @@ class DungeonTrackerStorage {
     }
 
     /**
-     * Remove the run(s) recorded at a timestamp.
-     * @param {string} timestamp - The run's ISO timestamp, as stored
+     * Remove one run, by the {@link runIdentity} the tombstones and the import
+     * dedupe already use, so the tombstone this writes is the one that keeps the
+     * same run from coming back on re-import.
+     *
+     * Identity, not timestamp: imported backups keep other characters' runs, and
+     * two distinct runs (a partymate's record of the same run, timed differently)
+     * can share a timestamp. A bare timestamp (no `|`, which an identity always
+     * has) still removes every run at it, for callers that only hold that.
+     * @param {string} identity - `teamKey|timestamp|duration`, as `runIdentity` builds it
      * @returns {Promise<boolean>} Whether the write landed
      */
-    async deleteRun(timestamp) {
+    async deleteRun(identity) {
         const loaded = await this._loadRuns();
         if (!loaded) return false;
         // `this._runs`, not `loaded`: a concurrent mutator that also cold-
@@ -1433,7 +1440,8 @@ class DungeonTrackerStorage {
         // drop whatever it added the moment this write lands.
         const kept = [];
         for (const run of this._runs) {
-            if (run.timestamp === timestamp) this._tombstone(run);
+            const matches = String(identity).includes('|') ? runIdentity(run) === identity : run.timestamp === identity;
+            if (matches) this._tombstone(run);
             else kept.push(run);
         }
         this._index(kept);

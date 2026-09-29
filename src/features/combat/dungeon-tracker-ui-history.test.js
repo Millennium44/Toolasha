@@ -342,7 +342,9 @@ describe('run rendering is capped per group', () => {
         deleteButton.dispatchEvent(new Event('click', { bubbles: true }));
         await Promise.resolve();
 
-        expect(dungeonTrackerStorage.deleteRun).toHaveBeenCalledWith(runs[249].timestamp);
+        expect(dungeonTrackerStorage.deleteRun).toHaveBeenCalledWith(
+            `${runs[249].teamKey}|${runs[249].timestamp}|${runs[249].duration}`
+        );
     });
 
     test('"Show more" keeps the backup, CSV and trends bars in the list', async () => {
@@ -367,6 +369,20 @@ describe('run rendering is capped per group', () => {
             barsBefore
         );
         dungeonTrackerStorage.getAllRuns.mockResolvedValue([]);
+    });
+
+    test('delete passes the full run identity, so a same-timestamp run is not caught with it', async () => {
+        const history = new DungeonTrackerUIHistory(freshState('team'), (ms) => `${ms}ms`);
+        const first = run('Aster,Briar');
+        const second = { ...run('Aster,Briar'), duration: 301_000 };
+        const runList = render(history, history.groupByTeam([first, second]));
+        dungeonTrackerStorage.deleteRun.mockClear();
+
+        const row = runList.querySelector('[data-run-identity$="|301000"]');
+        row.querySelector('.mwi-dt-delete-run').dispatchEvent(new Event('click', { bubbles: true }));
+        await Promise.resolve();
+
+        expect(dungeonTrackerStorage.deleteRun).toHaveBeenCalledWith(`Aster,Briar|${second.timestamp}|301000`);
     });
 
     test('"Show more" state for one group does not affect a different group', () => {

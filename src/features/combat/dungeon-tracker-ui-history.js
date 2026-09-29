@@ -1020,10 +1020,11 @@ class DungeonTrackerUIHistory {
         // Attach delete handlers
         runList.querySelectorAll('.mwi-dt-delete-run').forEach((btn) => {
             btn.addEventListener('click', async (e) => {
-                const runTimestamp = e.target.closest('[data-run-timestamp]').dataset.runTimestamp;
+                const row = e.target.closest('[data-run-timestamp]');
 
-                // Delete the run from unified storage
-                await dungeonTrackerStorage.deleteRun(runTimestamp);
+                // Full identity, not the timestamp: an imported partymate's
+                // record of the same run can share it and is a different run.
+                await dungeonTrackerStorage.deleteRun(row.dataset.runIdentity);
 
                 // A teardown landing inside that await has already disposed
                 // this section (and nulled onDeleteCallback below, belt and
@@ -1075,7 +1076,7 @@ class DungeonTrackerUIHistory {
                     padding: 4px 0;
                     border-bottom: 1px solid #333;
                     font-size: 10px;
-                " data-run-timestamp="${this.escapeHtml(run.timestamp)}">
+                " data-run-timestamp="${this.escapeHtml(run.timestamp)}" data-run-identity="${this.escapeHtml(runIdentity(run))}">
                     <span style="color: #aaa; min-width: 25px;">#${runNumber}</span>
                     <span style="color: #fff; flex: 1; text-align: center;">
                         ${timeStr}${timeMark} <span style="color: #888; font-size: 9px;">(${dateTime})</span>
