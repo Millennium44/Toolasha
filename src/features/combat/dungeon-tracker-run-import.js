@@ -250,8 +250,12 @@ export function serializeBackupWithinLimits({
     const write = (list) => JSON.stringify(buildDungeonRunsBackupEnvelope({ characterId, runs: list, now }));
     const size = (text) => encoder.encode(text).length;
 
-    let text = write(all);
-    if (all.length <= maxRuns && size(text) <= maxBytes) return { text, omitted: 0 };
+    // Never serialize a list the run cap already rules out: the store has no
+    // global limit, and encoding a huge history whole would stall the tab.
+    if (all.length <= maxRuns) {
+        const text = write(all);
+        if (size(text) <= maxBytes) return { text, omitted: 0 };
+    }
 
     // Same parse as the store's own ordering; an unstamped run sorts oldest.
     const stamp = (run) => runTime(run) ?? -Infinity;
@@ -265,13 +269,14 @@ export function serializeBackupWithinLimits({
     // however unevenly the runs vary in size.
     let low = 0;
     let high = Math.min(newestFirst.length, maxRuns);
+    const candidates = newestFirst.slice(0, high);
     while (low < high) {
         const mid = Math.ceil((low + high) / 2);
-        if (size(write(newestFirst.slice(0, mid))) <= maxBytes) low = mid;
+        if (size(write(candidates.slice(0, mid))) <= maxBytes) low = mid;
         else high = mid - 1;
     }
     const keep = low;
-    text = write(newestFirst.slice(0, keep));
+    const text = write(candidates.slice(0, keep));
     return { text, omitted: all.length - keep };
 }
 
