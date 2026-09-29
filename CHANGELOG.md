@@ -6,6 +6,11 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Dungeon run history: paging, delete and backup fixes
+
+- "Show more" in the run history no longer makes the Export, Import and CSV buttons and the trends block disappear, and deleting a run no longer also deletes a different run recorded at the same moment.
+- A backup always fits what Import accepts: a very long history exports its newest runs and says how many older ones were left out. Import also rejects runs with absurdly long dungeon or team names that could freeze the panel.
+
 ### Chat history survives a storage hiccup and a closing tab
 
 - If saved chat history could not be read once, it was never tried again until a reload, so later tabs stayed empty. It now retries the next time a chat tab opens.
