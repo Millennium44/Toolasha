@@ -243,6 +243,29 @@ beforeEach(() => {
     vi.setSystemTime(DAY3);
 });
 
+describe('a listing placed and partly filled inside one event', () => {
+    test('records the part that crossed the book', () => {
+        memory([], {});
+        vi.setSystemTime(Date.UTC(2026, 8, 29, 12));
+        const placed = listing(9, 300, { orderQuantity: 1000 });
+
+        // The merged book already holds the new listing; the event's own copy is what says it just changed
+        tradeLedgerStore.handleMarketUpdate({ endMarketListings: [placed], myMarketListings: [placed] });
+
+        expect(tradeLedgerStore.getRecords()).toHaveLength(1);
+        expect(tradeLedgerStore.getRecords()[0]).toMatchObject({ listingId: 9, side: 'sell', quantity: 300 });
+    });
+
+    test('an open listing only the merged book mentions is not taken for a new one', () => {
+        memory([], {});
+        const other = listing(8, 50, { orderQuantity: 100 });
+
+        tradeLedgerStore.handleMarketUpdate({ endMarketListings: [listing(9, 0)], myMarketListings: [other] });
+
+        expect(tradeLedgerStore.getRecords()).toEqual([]);
+    });
+});
+
 describe('fill record identity', () => {
     test('fillKey is listing, time and quantity', () => {
         expect(fillKey(fill(7, 1000, { quantity: 3 }))).toBe('7|1000|3');

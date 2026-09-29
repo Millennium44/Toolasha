@@ -551,9 +551,11 @@ class TradeLedgerStore {
                 byId.set(listing.id, listing);
             }
         }
+        const changedIds = new Set();
         for (const listing of Array.isArray(data?.endMarketListings) ? data.endMarketListings : []) {
             if (listing && listing.id !== undefined && listing.id !== null) {
                 byId.set(listing.id, listing);
+                changedIds.add(listing.id);
             }
         }
 
@@ -561,20 +563,21 @@ class TradeLedgerStore {
             return;
         }
 
-        this.processListings([...byId.values()], false);
+        this.processListings([...byId.values()], false, changedIds);
     }
 
     /**
      * Diff a batch of listings against stored baselines, appending any fills.
      * @param {Array<Object>} listings - Listing objects from the wire
      * @param {boolean} snapshot - Whether `listings` is the complete set of open listings
+     * @param {Set<number|string>} [changedIds] - Ids the live event itself reported changed
      */
-    processListings(listings, snapshot) {
+    processListings(listings, snapshot, changedIds = null) {
         if (!this.isLoaded) {
             return;
         }
 
-        const { fills, states, changed } = detectFills(this.states, listings, { snapshot });
+        const { fills, states, changed } = detectFills(this.states, listings, { snapshot, changedIds });
         this.states = states;
 
         if (fills.length > 0) {
