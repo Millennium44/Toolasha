@@ -6534,6 +6534,29 @@ describe('a combat trial only mates joined', () => {
         expect(html).toContain(`Expected`);
         expect(html).toContain(`~T${timing.expectedTier}`);
     });
+
+    test('a scheduled trial is not forecast from the last cycle’s clears', () => {
+        game.clientData = clientData;
+        const record = badger();
+        const timing = tierTimingForecast(record, {
+            kind: 'combat',
+            participants: 36,
+            workBase: 660_000,
+            timeLeftMs: 57 * 60_000,
+            now,
+            bankedTiers: 7,
+        });
+        const tile = { name: 'Trial Badger', kind: 'combat' };
+        const scheduledAnalysis = analyseTrial(record, { phase: 'scheduled', participants: 36, now });
+
+        const withTiming = guildTrials._forecast(tile, scheduledAnalysis, 36, 'scheduled', timing);
+        const withoutTiming = guildTrials._forecast(tile, scheduledAnalysis, 36, 'scheduled', null);
+        expect(withTiming?.source).not.toBe('tier-timing');
+        expect(withTiming).toEqual(withoutTiming);
+
+        const liveAnalysis = analyseTrial(record, { phase: 'live', participants: 36, timeLeftMs: 57 * 60_000, now });
+        expect(guildTrials._forecast(tile, liveAnalysis, 36, 'live', timing).source).toBe('tier-timing');
+    });
 });
 
 describe('after a reload, before any guild message', () => {
