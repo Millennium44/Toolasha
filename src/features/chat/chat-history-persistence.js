@@ -875,7 +875,7 @@ class ChatHistoryPersistence {
         // flush to wait for is the one that was in flight when this began.
         const key = characterKey(CHAT_HISTORY_KEY_BASE);
         const prior = this.finalFlush;
-        this.loadPromise = (async () => {
+        const loading = (async () => {
             await settleQuietly(prior);
             const read = await readStoredRecord(key);
             // Before the first thing this tail touches. The generation is what
@@ -886,7 +886,15 @@ class ChatHistoryPersistence {
             // A failed read is not an empty record. Treating it as one made
             // the next write replace whatever is on disk with this session's
             // lines; left unloaded, every write goes through a fresh read.
-            if (!read.ok) return {};
+            if (!read.ok) {
+                // Not cached: a tab mounted or a deletion purged after storage
+                // recovers has to read again, or history stays unrestored and
+                // the purge never reaches disk for the rest of the session.
+                // Only this read's own promise is dropped — a newer load
+                // already in `loadPromise` belongs to someone else.
+                if (this.loadPromise === loading) this.loadPromise = null;
+                return {};
+            }
             const loaded = tabsFromRecord(read.record, this.getMaxHistory());
             // Taken before the merge below, which writes into `loaded` itself —
             // a snapshot taken after it held what was recorded during the read,
@@ -915,6 +923,7 @@ class ChatHistoryPersistence {
 
             return this.snapshot;
         })();
+        this.loadPromise = loading;
 
         return this.loadPromise;
     }

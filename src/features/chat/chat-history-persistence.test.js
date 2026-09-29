@@ -1571,6 +1571,59 @@ describe('messages that were only ever live survive a server restart', () => {
         expect(storedTexts(TRADE_KEY)).toEqual([TRADE_LINE]);
     });
 
+    test('a failed first read is not remembered: the next load reads again once storage answers', async () => {
+        storage.tryGet.mockResolvedValueOnce(null);
+        buildPartyChat();
+        chatHistoryExtender.initialize();
+        await settle();
+        expect(chatHistoryPersistence.loaded).toBe(false);
+
+        // A tab mounted later, after the database has recovered.
+        const stored = await chatHistoryPersistence.load();
+        expect((stored[PARTY_KEY] || []).map((html) => parseStoredMessage(html).textContent)).toEqual([OLD]);
+        expect(chatHistoryPersistence.loaded).toBe(true);
+    });
+
+    test('a deletion after a failed first read reaches disk once storage answers', async () => {
+        db.settings[STORAGE_KEY].tabs[PARTY_KEY].push(
+            '<div class="ChatMessage_chatMessage__z" data-mwi-msg-id="77">deleted later</div>'
+        );
+        storage.tryGet.mockResolvedValueOnce(null);
+        buildPartyChat();
+        chatHistoryExtender.initialize();
+        await settle();
+        expect(chatHistoryPersistence.loaded).toBe(false);
+
+        await expect(chatHistoryPersistence.purgeMessageById(PARTY_KEY, 77)).resolves.toBe(true);
+        await chatHistoryPersistence.flushPending();
+        expect(storedTexts()).toEqual([OLD]);
+    });
+
+    test('a failed read finishing late does not drop a newer load', async () => {
+        let failFirst;
+        storage.tryGet.mockImplementationOnce(
+            () =>
+                new Promise((resolve) => {
+                    failFirst = () => resolve(null);
+                })
+        );
+        chatHistoryPersistence.enable(() => MAX_MESSAGES_PER_TAB);
+        const first = chatHistoryPersistence.load();
+        await settle();
+
+        // A teardown and a fresh session start their own read meanwhile.
+        chatHistoryPersistence.reset();
+        chatHistoryPersistence.enable(() => MAX_MESSAGES_PER_TAB);
+        const second = chatHistoryPersistence.load();
+        const secondRead = chatHistoryPersistence.loadPromise;
+
+        failFirst();
+        await expect(first).resolves.toEqual({});
+        expect(chatHistoryPersistence.loadPromise).toBe(secondRead);
+        await second;
+        expect(chatHistoryPersistence.loaded).toBe(true);
+    });
+
     test('an unreadable merge read writes nothing, even on the way out', async () => {
         seedTradeHistory();
         const release = holdNextRead();
