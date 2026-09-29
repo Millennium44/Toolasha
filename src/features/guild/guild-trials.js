@@ -157,6 +157,7 @@ import { openTrialLedgerPanel } from './guild-trial-ledger-view.js';
 import { forecastTrial, trialWave } from './guild-trial-forecast.js';
 import {
     foldServerTierClears,
+    INIT_PAYLOAD_FRESH_MS,
     serverClockOffset,
     tierClearTimes,
     tierTimingAsForecast,
@@ -3052,6 +3053,17 @@ class GuildTrials {
             if (source === 'init' && this.currentTrials && this.currentTrials.source !== 'init') return;
 
             const now = Date.now();
+            // A login payload sent long ago (read back by a late start) is
+            // dated when it was sent, and neither it nor its stamps bound the
+            // offset: taken as received now, its countdowns ran late by its age
+            // and it passed every freshness check
+            const offset = Number.isFinite(this.serverClockOffsetMs) ? this.serverClockOffsetMs : 0;
+            const age = source === 'init' && Number.isFinite(serverNow) ? now - serverNow - offset : null;
+            if (age !== null && age > INIT_PAYLOAD_FRESH_MS) {
+                this.currentTrials = { ...read, at: now - age, source };
+                this.serverTierClears = foldServerTierClears(this.serverTierClears, read);
+                return;
+            }
             this.currentTrials = { ...read, at: now, source };
             this.serverTierClears = foldServerTierClears(this.serverTierClears, read);
             this.serverClockOffsetMs = serverClockOffset(read, now, this.serverClockOffsetMs);
@@ -3095,7 +3107,11 @@ class GuildTrials {
      * `currentTrialsData`, and its `currentTimestamp` is the server's clock when
      * it was sent — so the clock offset is bounded from it the same way.
      *
-     * Only the character now in the tab: a payload for another is ignored.
+     * Only the character now in the tab: a payload for another is ignored. One
+     * sent more than `INIT_PAYLOAD_FRESH_MS` ago — read back by a late start —
+     * is dated from its `currentTimestamp` and bounds nothing. Without a
+     * `currentTimestamp` it is taken as just received: its stamps still bound
+     * the offset from above, only more loosely the older it is.
      *
      * @param {Object|null} [data] - An `init_character_data` payload
      */
