@@ -2624,6 +2624,13 @@ class GuildTrials {
             })
         );
 
+        // The login payload's copy, until a `guild_updated` says otherwise —
+        // now, and for each character that arrives later in this tab
+        this._noteInitialTrials();
+        this._onCharacterInit = (data) => this._noteInitialTrials(data);
+        dataManager.on?.('character_initialized', this._onCharacterInit);
+        this.unregister.push(() => dataManager.off?.('character_initialized', this._onCharacterInit));
+
         this._refresh = (data) => {
             this._noteGuildName(data);
             this._noteCurrentTrials(data);
@@ -3015,17 +3022,34 @@ class GuildTrials {
      * the moment before. {@link _noteLifecycle} consults it only when the page
      * said nothing at all.
      *
+     * The character payload carries the same `currentTrialsData` as of login
+     * ({@link _noteInitialTrials}); a `guild_updated` always outranks it, and
+     * only the socket's copy arms anything.
+     *
      * @param {Object} [data] - A `guild_updated`-shaped payload
+     * @param {Object} [options] - Where it came from
+     * @param {'socket'|'init'} [options.source] - `guild_updated`, or `init_character_data`
+     * @param {number|null} [options.serverNow] - The server's own clock when it was sent, where stated
      */
-    _noteCurrentTrials(data) {
+    _noteCurrentTrials(data, { source = 'socket', serverNow = null } = {}) {
         try {
             const read = parseCurrentTrialsData(data?.guild?.currentTrialsData ?? data?.currentTrialsData);
             if (!read) return;
+            if (source === 'init' && this.currentTrials && this.currentTrials.source !== 'init') return;
 
             const now = Date.now();
-            this.currentTrials = { ...read, at: now };
+            this.currentTrials = { ...read, at: now, source };
             this.serverTierClears = foldServerTierClears(this.serverTierClears, read);
             this.serverClockOffsetMs = serverClockOffset(read, now, this.serverClockOffsetMs);
+            // A server clock reading is later than every stamp beside it, so it
+            // bounds the offset at least as tightly as they do
+            if (Number.isFinite(serverNow)) {
+                const bound = now - serverNow;
+                this.serverClockOffsetMs = Number.isFinite(this.serverClockOffsetMs)
+                    ? Math.min(this.serverClockOffsetMs, bound)
+                    : bound;
+            }
+            if (source !== 'socket') return;
 
             const combat = read.combat;
             if (!combat) return;
@@ -3045,6 +3069,34 @@ class GuildTrials {
             }
         } catch (error) {
             console.error('[GuildTrials] Reading the guild’s trial status failed:', error);
+        }
+    }
+
+    /**
+     * Seed the guild's trial status from the character payload.
+     *
+     * `guild_updated` is sent on guild events only, which at the top tiers is
+     * one every ten minutes or more, so after a reload the deadline and the
+     * server tier waited that long. `init_character_data.guild` carries the same
+     * `currentTrialsData`, and its `currentTimestamp` is the server's clock when
+     * it was sent — so the clock offset is bounded from it the same way.
+     *
+     * Only the character now in the tab: a payload for another is ignored.
+     *
+     * @param {Object|null} [data] - An `init_character_data` payload
+     */
+    _noteInitialTrials(data = dataManager.characterData) {
+        try {
+            const id = data?.character?.id ?? null;
+            const current = dataManager.getCurrentCharacterId?.() ?? this.characterId ?? null;
+            if (id !== null && current !== null && String(id) !== String(current)) return;
+            const serverNow = Date.parse(data?.currentTimestamp ?? '');
+            this._noteCurrentTrials(data, {
+                source: 'init',
+                serverNow: Number.isFinite(serverNow) ? serverNow : null,
+            });
+        } catch (error) {
+            console.error('[GuildTrials] Reading the login payload’s trial status failed:', error);
         }
     }
 

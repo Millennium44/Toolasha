@@ -1771,6 +1771,16 @@ describe('the panel, end to end', () => {
         document.body.innerHTML = '';
     });
 
+    test('the login payload seeds the trial status, and a character arriving later seeds its own', async () => {
+        const { INIT_CHARACTER_DATA } = await import('./guild-trial-tier-clears.fixture.js');
+        guildTrials.currentTrials = null;
+        game.characterId = 30404;
+        for (const handler of game.dmHandlers.character_initialized || []) handler(INIT_CHARACTER_DATA);
+        expect(guildTrials.currentTrials?.source).toBe('init');
+        expect(guildTrials.currentTrials.skilling.trials['/guild_skilling/alchemy'].highestTier).toBe(18);
+        game.characterId = null;
+    });
+
     test('draws a block on each card and a payout block above them', () => {
         const root = buildTab([{ name: 'Trial Chameleon', level: 140, bar: '618,000 / 618,000' }]);
         fire(root);
@@ -6402,6 +6412,73 @@ describe('the guild message says a trial is running', () => {
             deadlineMs: 1000,
         });
         expect(tight).toContain('does not clear in time');
+    });
+});
+
+describe('after a reload, before any guild message', () => {
+    const SKEW = 3_000;
+    const TRIP = 200;
+
+    beforeEach(() => {
+        guildTrials.currentTrials = null;
+        guildTrials.serverTierClears = null;
+        guildTrials.serverClockOffsetMs = null;
+        guildTrials.socketPhase = null;
+        game.characterId = 30404;
+    });
+
+    afterEach(() => {
+        game.characterId = null;
+        vi.useRealTimers();
+    });
+
+    const load = async () => {
+        const { INIT_CHARACTER_DATA } = await import('./guild-trial-tier-clears.fixture.js');
+        const sentAt = Date.parse(INIT_CHARACTER_DATA.currentTimestamp);
+        vi.useFakeTimers();
+        vi.setSystemTime(sentAt + SKEW + TRIP);
+        return { INIT_CHARACTER_DATA, sentAt, receivedAt: sentAt + SKEW + TRIP };
+    };
+
+    test('the login payload’s trial status draws the deadline and the server tier at once', async () => {
+        const { INIT_CHARACTER_DATA, receivedAt } = await load();
+        guildTrials._noteInitialTrials(INIT_CHARACTER_DATA);
+
+        // Bounded by the payload's own send time, not only its party stamps
+        expect(guildTrials.serverClockOffsetMs).toBe(SKEW + TRIP);
+        const deadline = 1790718710224 + 506121 + SKEW + TRIP;
+        expect(guildTrials._trialBudgetMs('skilling', receivedAt, 'Alchemy')).toBe(deadline - receivedAt);
+
+        const record = guildTrials._recordServerTiers(
+            { weekStart: 0, tiles: { 'skilling::alchemy': { name: 'Alchemy', kind: 'skilling', samples: [] } } },
+            receivedAt
+        );
+        expect(record.tiles['skilling::alchemy']).toMatchObject({
+            serverTier: 18,
+            serverTierAt: 1790718710224 + SKEW + TRIP,
+        });
+        // Seeding arms nothing: that is the live message's to do
+        expect(guildTrials.socketPhase).toBeNull();
+    });
+
+    test('a guild message outranks it, and it never replaces one', async () => {
+        const { INIT_CHARACTER_DATA, receivedAt } = await load();
+        guildTrials._noteInitialTrials(INIT_CHARACTER_DATA);
+        guildTrials._noteCurrentTrials({ guild: { currentTrialsData: CURRENT_TRIALS_DATA_SKILLING } });
+        expect(guildTrials.currentTrials.source).toBe('socket');
+
+        vi.setSystemTime(receivedAt + 1_000);
+        guildTrials._noteInitialTrials(INIT_CHARACTER_DATA);
+        expect(guildTrials.currentTrials.source).toBe('socket');
+        expect(guildTrials.currentTrials.at).toBe(receivedAt);
+    });
+
+    test('another character’s payload is not this one’s guild', async () => {
+        const { INIT_CHARACTER_DATA } = await load();
+        game.characterId = 111;
+        guildTrials._noteInitialTrials(INIT_CHARACTER_DATA);
+        expect(guildTrials.currentTrials).toBeNull();
+        expect(guildTrials.serverClockOffsetMs).toBeNull();
     });
 });
 

@@ -136,3 +136,34 @@ export const LAST_PAYLOAD_PARTIES = {
         done: false,
     },
 };
+
+/**
+ * The fields of `init_character_data` a reload seeds the trial status from, as
+ * observed live on the test server that afternoon: `guild.currentTrialsData`
+ * is the same JSON string `guild_updated` carries. Alchemy's party is as sent;
+ * `currentTimestamp` (the server's clock when the payload went out) is set 90 s
+ * after that clear for the test.
+ */
+export const INIT_CHARACTER_DATA = {
+    character: { id: 30404, name: 'Tester' },
+    currentTimestamp: new Date(1790718710224 + 90_000).toISOString(),
+    guild: {
+        name: 'SuperMoo',
+        currentTrialsData: JSON.stringify({
+            points: { '/guild_skilling/alchemy': 4000 },
+            skilling: {
+                status: 'in_progress',
+                parties: {
+                    '/guild_skilling/alchemy': {
+                        highestTier: 18,
+                        budgetRemainingMs: 506121,
+                        tierStartedAtMs: 1790718710224,
+                        highestTierReachedAtMs: 1790718710224,
+                        done: false,
+                    },
+                },
+            },
+            combat: { status: '', parties: null },
+        }),
+    },
+};
