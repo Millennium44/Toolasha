@@ -952,6 +952,42 @@ describe('inventory behind another character panel tab', () => {
         expect(storageMock.map.has('toolasha_local_inventoryNativeTab_char-1')).toBe(false);
     });
 
+    test('the icon-row setting turned on while the inventory is hidden waits for its strip', async () => {
+        // The page has shown the new layout: the character panel gets no stand-in button meanwhile,
+        // and "Toolasha tab by default" does not pull the character panel onto the view
+        game.settings.inventoryTabs_iconRowTab = false;
+        const { characterTabList, contentContainer, inventoryPanel } = buildCharacterPanel();
+        const first = buildNewInventory(inventoryPanel, CATEGORY_ICONS, 'item_category_food');
+        ui = await startUI();
+        expect(characterTabList.querySelector('.toolasha-inv-tab')).not.toBeNull();
+
+        first.inv.remove();
+        // Our button sits second in this strip, so the helper's positional pick does not apply
+        const byLabel = (label) =>
+            [...characterTabList.querySelectorAll('[role="tab"]')].find((t) => t.textContent === label);
+        byLabel('Inventory').classList.remove('Mui-selected');
+        byLabel('Inventory').setAttribute('aria-selected', 'false');
+        byLabel('Equipment').classList.add('Mui-selected');
+        byLabel('Equipment').setAttribute('aria-selected', 'true');
+        contentContainer.children[0].className = 'TabPanel_tabPanel__tXMJF TabPanel_hidden__26UM3';
+        contentContainer.children[1].className = 'TabPanel_tabPanel__tXMJF';
+        game.settings.inventoryTabs_defaultTab = true;
+        game.settings.inventoryTabs_iconRowTab = true;
+        settingHandlers.get('inventoryTabs_iconRowTab')();
+        await flush();
+
+        expect(characterTabList.querySelector('.toolasha-inv-tab')).toBeNull();
+        expect(ui._isActive).toBe(false);
+        expect(byLabel('Equipment').classList.contains('Mui-selected')).toBe(true);
+
+        showInventory(characterTabList, contentContainer);
+        const fixture = buildNewInventory(inventoryPanel, CATEGORY_ICONS, 'item_category_food');
+        renderStrips();
+        await flush();
+        expect(fixture.order()[0]).toBe('toolasha');
+        expect(ui._isActive).toBe(true);
+    });
+
     test('an instance torn down before its config loads leaves the restorer in place', async () => {
         const { characterTabList, contentContainer, inventoryPanel } = buildCharacterPanel();
         const first = buildNewInventory(inventoryPanel, CATEGORY_ICONS, 'item_category_food');
