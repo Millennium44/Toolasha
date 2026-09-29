@@ -19,7 +19,10 @@ const game = vi.hoisted(() => ({
     failNextRead: false,
     // A dropped IndexedDB connection: reads say they could not be made
     unavailable: false,
+    testServer: false,
 }));
+
+vi.mock('../../utils/game-server.js', () => ({ isTestServer: () => game.testServer === true }));
 
 vi.mock('../../core/storage.js', () => ({
     default: {
@@ -119,6 +122,7 @@ beforeEach(() => {
     game.settings = {};
     game.failNextRead = false;
     game.unavailable = false;
+    game.testServer = false;
 });
 
 describe('keys', () => {
@@ -1516,5 +1520,75 @@ describe('archiveEarlierCycles — a week with more than one cycle in it', () =>
 
         expect(next.tiles['combat::trial badger']).toBeUndefined();
         expect(next.tiles['skilling::cooking']).toBe(held.tiles['skilling::cooking']);
+    });
+});
+
+describe('trial stats — one cycle at a time on the test server', () => {
+    const scope = { guildName: 'Milky Way' };
+    const HOUR = 3_600_000;
+    const first = now - 3 * HOUR;
+    const second = now;
+    const pair = (at, reported) => ({ reported, measured: reported - 1, at });
+
+    test('live keeps the week’s blob as it always was, whatever cycle is passed', async () => {
+        await saveTrialStats(
+            { weekStart: thisWeek, trials: { badger: pair(first, 10) } },
+            { ...scope, cycleAt: first }
+        );
+        await saveTrialStats(
+            { weekStart: thisWeek, trials: { chameleon: pair(second, 20) } },
+            { ...scope, cycleAt: second }
+        );
+        const stored = game.store[trialStatsStorageKey('Milky Way')];
+        expect(stored).toEqual({
+            weekStart: thisWeek,
+            trials: { badger: pair(first, 10), chameleon: pair(second, 20) },
+        });
+        expect(await loadTrialStats(now, { ...scope, cycleAt: second })).toEqual({
+            weekStart: thisWeek,
+            trials: { badger: pair(first, 10), chameleon: pair(second, 20) },
+        });
+    });
+
+    test('a later cycle’s pair for the same boss no longer overwrites the earlier one', async () => {
+        game.testServer = true;
+        await saveTrialStats(
+            { weekStart: thisWeek, trials: { badger: pair(first, 10) } },
+            { ...scope, cycleAt: first }
+        );
+        // The damage module's load-merge-save: the load for the new cycle is fresh
+        const loaded = await loadTrialStats(now, { ...scope, cycleAt: second });
+        expect(loaded).toEqual({ weekStart: thisWeek, trials: {}, cycleAt: second });
+        loaded.trials.badger = pair(second, 30);
+        await saveTrialStats(loaded, scope);
+
+        const stored = game.store[trialStatsStorageKey('Milky Way')];
+        expect(stored.trials).toEqual({ badger: pair(second, 30) });
+        expect(stored.cycleAt).toBe(second);
+        expect(stored.earlierCycles).toEqual([{ cycleAt: first, trials: { badger: pair(first, 10) } }]);
+    });
+
+    test('two encounters of one cycle are unioned', async () => {
+        game.testServer = true;
+        await saveTrialStats(
+            { weekStart: thisWeek, trials: { badger: pair(first, 10) } },
+            { ...scope, cycleAt: first }
+        );
+        await saveTrialStats(
+            { weekStart: thisWeek, trials: { chameleon: pair(first + HOUR / 2, 20) } },
+            { ...scope, cycleAt: first + 20 * 60_000 }
+        );
+        const loaded = await loadTrialStats(now, { ...scope, cycleAt: first + 30 * 60_000 });
+        expect(Object.keys(loaded.trials).sort()).toEqual(['badger', 'chameleon']);
+        expect(loaded.cycleAt).toBe(first);
+    });
+
+    test('a blob written before cycles were stamped is placed by its newest entry', async () => {
+        game.testServer = true;
+        game.store[trialStatsStorageKey('Milky Way')] = { weekStart: thisWeek, trials: { badger: pair(first, 10) } };
+        expect((await loadTrialStats(now, { ...scope, cycleAt: second })).trials).toEqual({});
+        expect((await loadTrialStats(now, { ...scope, cycleAt: first })).trials).toEqual({ badger: pair(first, 10) });
+        // …and without a cycle to compare against, it reads as it always did
+        expect((await loadTrialStats(now, scope)).trials).toEqual({ badger: pair(first, 10) });
     });
 });
