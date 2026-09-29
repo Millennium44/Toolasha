@@ -549,8 +549,8 @@ export function recordTileSample(record, tile, at, characterId = null) {
  * render noticed it — so a stated stamp is written over a watched one. Tiers
  * the payload does not state keep whatever was watched.
  *
- * `serverTier`/`serverTierAt` are the banked count and when it was stated, for
- * the analysis to read as a tier rung on any tab: the card that carries the
+ * `serverTier`/`serverTierAt` are the banked count and when that tier banked,
+ * for the analysis to read as a tier rung on any tab: the card that carries the
  * badge need not be on screen.
  *
  * Only a tile already on the record is written; the payload's keys are trial
@@ -562,7 +562,8 @@ export function recordTileSample(record, tile, at, characterId = null) {
  * @param {number|null} stated.bankedTier - The party's `highestTier`
  * @param {boolean} [stated.done] - The party is finished
  * @param {Object} [stated.clears] - `{[tier]: clientMs}`, each tier's bank time on this client's clock
- * @param {number} stated.at - When the payload stating it arrived
+ * @param {number} stated.at - When the banked tier banked, on this client's clock; the payload's
+ *   arrival only where no server stamp can be placed
  * @returns {Object} The record, unchanged when there was nothing to write
  */
 export function recordServerTiers(record, key, { bankedTier = null, done = false, clears = {}, at } = {}) {
@@ -684,7 +685,15 @@ function latestTierReadAt(a, b) {
 function latestServerTier(a, b) {
     const stated = [a, b].filter((tile) => Number.isFinite(tile?.serverTier) && Number.isFinite(tile?.serverTierAt));
     if (!stated.length) return {};
-    const newest = stated.reduce((best, tile) => (tile.serverTierAt > best.serverTierAt ? tile : best));
+    // One clear stated twice ties; the later statement is the one that banked
+    // more or found the party done
+    const rank = (tile) => [tile.serverTierAt, tile.serverTier, tile.serverDone ? 1 : 0];
+    const newer = (x, y) => {
+        const [a, b] = [rank(x), rank(y)];
+        const at = a.findIndex((value, index) => value !== b[index]);
+        return at >= 0 && a[at] > b[at];
+    };
+    const newest = stated.reduce((best, tile) => (newer(tile, best) ? tile : best));
     return {
         serverTier: newest.serverTier,
         serverTierAt: newest.serverTierAt,
