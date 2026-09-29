@@ -294,9 +294,10 @@ export function recordProvenance(record, { guildId = null, guildName = null } = 
  * @param {number} [at] - Clock
  * @param {Object} [options] - Extras folded into the entry
  * @param {Object|null} [options.accuracy] - Compact per-trial accuracy, keyed by encounter
+ * @param {number|null} [options.cycleFrom] - Start of the cycle that closed this one, for a week with several
  * @returns {Object} The record with its tiles moved into `history`
  */
-export function archiveCycle(record, reason, at = Date.now(), { accuracy = null } = {}) {
+export function archiveCycle(record, reason, at = Date.now(), { accuracy = null, cycleFrom = null } = {}) {
     const tiles = record?.tiles && typeof record.tiles === 'object' ? record.tiles : {};
     const history = Array.isArray(record?.history) ? [...record.history] : [];
 
@@ -307,11 +308,18 @@ export function archiveCycle(record, reason, at = Date.now(), { accuracy = null 
         // than a cycle that attributed nothing. `archivedAccuracyTrend` keeps
         // those two apart and says "no accuracy data" for the former
         if (accuracy && typeof accuracy === 'object' && Object.keys(accuracy).length) entry.accuracy = accuracy;
-        // One entry per week and reason. Archiving a week already held keeps
-        // whichever copy states more: appending let a week archived over and
-        // over push every real week out of the capped history
+        if (Number.isFinite(cycleFrom)) entry.cycleFrom = cycleFrom;
+        // One entry per week, reason and cycle. Archiving a week already held
+        // keeps whichever copy states more: appending let a week archived over
+        // and over push every real week out of the capped history. A test-server
+        // week's cycles each get their own, or each replaced the last
         const same = Number.isFinite(entry.weekStart)
-            ? history.findIndex((held) => held?.weekStart === entry.weekStart && held?.reason === reason)
+            ? history.findIndex(
+                  (held) =>
+                      held?.weekStart === entry.weekStart &&
+                      held?.reason === reason &&
+                      (held?.cycleFrom ?? null) === (entry.cycleFrom ?? null)
+              )
             : -1;
         if (same === -1) history.push(entry);
         else if (statesAsMuch(entry, history[same])) history[same] = entry;
@@ -475,7 +483,10 @@ export function archiveEarlierCycles(record, read, { offset = null, at = Date.no
     }
     if (!Object.keys(earlier).length) return record;
 
-    return { ...archiveCycle({ ...record, tiles: earlier }, EARLIER_CYCLE_REASON, at), tiles };
+    // To the minute: the offset the start is derived through tightens by a trip
+    // or so between messages, and one boundary must stay one archive
+    const cycleFrom = Math.round(Math.max(...[skillingStart, combatStart].filter(Number.isFinite)) / 60_000) * 60_000;
+    return { ...archiveCycle({ ...record, tiles: earlier }, EARLIER_CYCLE_REASON, at, { cycleFrom }), tiles };
 }
 
 /**

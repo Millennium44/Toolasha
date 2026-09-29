@@ -1499,6 +1499,48 @@ describe('archiveEarlierCycles — a week with more than one cycle in it', () =>
         expect(archiveEarlierCycles(held, read(), { offset: null, at: CLEARS.CAPTURED_AT })).toBe(held);
     });
 
+    test('each earlier cycle of the week is its own archive', () => {
+        // Every earlier cycle went in under one week and reason, so cycle N
+        // replaced cycle N−1 and the history held one of them
+        const HOUR = 3_600_000;
+        const hour = (start) =>
+            parseCurrentTrialsData(
+                JSON.stringify({
+                    skilling: {
+                        status: 'in_progress',
+                        parties: {
+                            '/guild_skilling/milking': {
+                                highestTier: 1,
+                                tierStartedAtMs: start + 60_000,
+                                budgetRemainingMs: HOUR - 60_000,
+                                highestTierReachedAtMs: start + 60_000,
+                                done: false,
+                            },
+                        },
+                    },
+                })
+            );
+        const tile = (t) => ({
+            name: 'Milking',
+            kind: 'skilling',
+            samples: [{ t, readings: [{ current: 1, max: 2 }] }],
+            tierSeenAt: {},
+        });
+        const first = CLEARS.CAPTURED_AT;
+        const second = first + 3 * HOUR;
+        const held = { weekStart: 0, tiles: { 'skilling::milking': tile(first - 10 * 60_000) }, history: [] };
+        const once = archiveEarlierCycles(held, hour(first), { offset: 0, at: first });
+        expect(once.history).toHaveLength(1);
+
+        const later = { ...once, tiles: { 'skilling::milking': tile(first + 10 * 60_000) } };
+        const twice = archiveEarlierCycles(later, hour(second), { offset: 0, at: second });
+        expect(twice.history).toHaveLength(2);
+        expect(twice.history.map((entry) => entry.tiles['skilling::milking'].samples[0].t)).toEqual([
+            first - 10 * 60_000,
+            first + 10 * 60_000,
+        ]);
+    });
+
     test('a party missing either stamp states no hour', () => {
         // Parsed, a missing stamp is null, and null adds as 0: a party with no
         // countdown put the hour's start at its clear less a whole hour, one
