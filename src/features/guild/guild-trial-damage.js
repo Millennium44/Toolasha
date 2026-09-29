@@ -147,6 +147,7 @@ import {
 } from './guild-trials-math.js';
 import { loadTrialRoster, loadTrialStats, saveTrialRoster, saveTrialStats } from './guild-trials-store.js';
 import { INIT_PAYLOAD_FRESH_MS, initPayloadAgeMs, serverClockOffset } from './guild-trial-tier-timing.js';
+import { isTestServer } from '../../utils/game-server.js';
 import {
     createLiveSessionPersister,
     isRestorable,
@@ -1787,14 +1788,25 @@ class GuildTrialDamage {
      *
      * The same anchor the ledger keys a cycle on: the fight's game-stated start
      * where a tier opening was seen, else when this client first saw the fight.
+     * With no fight held, on the test server, the entries' own arrival: the
+     * stats come within a minute of the fight's end, inside its cycle's span,
+     * where a save with no cycle was unioned into whatever cycle's blob was
+     * stored.
      *
+     * @param {Object|null} [entries] - Encounter → `{at}`, being saved
      * @returns {number|undefined} Client ms, or undefined with no fight held
      */
-    _statsCycleAt() {
+    _statsCycleAt(entries = null) {
         // Mirrors `trialCycleAnchor` in guild-trial-ledger.js, inlined so this
         // module does not import the ledger
         if (Number.isFinite(this.fightStartMs) && this.fightStartMs > 0) return this.fightStartMs;
         if (Number.isFinite(this.startedAt) && this.startedAt > 0) return this.startedAt;
+        if (entries && isTestServer()) {
+            const arrivals = Object.values(entries)
+                .map((entry) => entry?.at)
+                .filter(Number.isFinite);
+            if (arrivals.length) return Math.max(...arrivals);
+        }
         return undefined;
     }
 
@@ -1810,7 +1822,7 @@ class GuildTrialDamage {
         // character switch or guild change landing during the read must neither
         // file them under the arriving scope nor put the departing scope's blob
         // back into memory
-        const scope = { ...this.statsScope, cycleAt: this._statsCycleAt() };
+        const scope = { ...this.statsScope, cycleAt: this._statsCycleAt(entries) };
         const scopeKey = statsScopeKey(scope);
         try {
             const blob = await loadTrialStats(Date.now(), scope);
