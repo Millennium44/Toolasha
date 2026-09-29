@@ -1321,10 +1321,16 @@ export async function calculateNetworth() {
 
 /**
  * Create empty networth data structure
+ *
+ * Returned when there was nothing to price with — no game data, or no market
+ * data at all. `unavailable` says so, because every figure in it is a zero
+ * that measures nothing and must not be recorded as a reading.
+ *
  * @returns {Object} Empty networth data
  */
 function createEmptyNetworthData() {
     return {
+        unavailable: true,
         totalNetworth: 0,
         coins: 0,
         countedCoins: 0,

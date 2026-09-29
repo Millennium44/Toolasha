@@ -1039,3 +1039,14 @@ describe('the coins reported to the history', () => {
         expect(result.currentAssets.inventory.value).toBe(0);
     });
 });
+
+describe('a sweep with nothing to price with', () => {
+    test('says so rather than handing back a plain zero', async () => {
+        mocks.combinedData = null;
+
+        const result = await calculateNetworth();
+
+        expect(result.totalNetworth).toBe(0);
+        expect(result.unavailable).toBe(true);
+    });
+});
