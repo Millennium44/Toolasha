@@ -1355,7 +1355,7 @@ class GuildTrialDamage {
             this._tryAdoptLive({ battleId, tier, startMs, encounter }, now);
 
             // The stated boundary, which is what this message is *for*
-            const newFight = this._isNewFight({ battleId, tier, startMs, encounter });
+            const newFight = this._isNewFight({ battleId, tier, startMs, encounter }, now);
             if (newFight || battleId !== this.guildBattleId || tier !== this.tier) {
                 this._newSpectatedWave(battleId, tier, now, { newFight, arriving: data.players });
                 // As the personal path does: the roster's combat stats say who
@@ -2071,7 +2071,12 @@ class GuildTrialDamage {
      * @param {boolean} [options.newFight] - Whether this is another trial; {@link _isNewFight} by default
      * @param {Array<Object>|null} [options.arriving] - The opening message's `players[]`, when one opened the wave
      */
-    _newSpectatedWave(battleId, tier, at, { newFight = this._isNewFight({ battleId, tier }), arriving = null } = {}) {
+    _newSpectatedWave(
+        battleId,
+        tier,
+        at,
+        { newFight = this._isNewFight({ battleId, tier }, at), arriving = null } = {}
+    ) {
         // The ending wave's last chance at names before it banks by them. A
         // page opened mid-tier never had this tier's roster; the next tier's
         // opening states every member's maximums, and a member's maximums are
@@ -2165,6 +2170,18 @@ class GuildTrialDamage {
                 // reported a DPS a fraction of the real one. `_unfreezeElapsed`
                 // below lets it run again; this is what it runs from.
                 this.seconds = 0;
+
+                // The fight's own clock and bookkeeping. `tierStarts[1]` left
+                // from the last trial made `trialFightSpan` time this one from
+                // that trial's tier 1, and the history entry's id and label read
+                // its tiers; `startedAt` is what a refresh's restore and
+                // `_isNewFight` measure this fight's age from. The callers stamp
+                // `startedAt` afresh straight after this returns
+                this.tierStarts = {};
+                this.startedAt = 0;
+                this.participants = null;
+                this.reconnects = 0;
+                this.restoredFrom = null;
             }
         }
 
@@ -2824,21 +2841,30 @@ class GuildTrialDamage {
      *   continues past its end nor climbs down;
      * - a tier opening further from the fight's first than {@link FIGHT_SPAN_MS};
      * - a tier opening whose monsters are a different encounter than the one
-     *   already identified.
+     *   already identified;
+     * - any wave arriving further than {@link FIGHT_SPAN_MS} after this client
+     *   first saw the fight (`startedAt`). The only test a
+     *   tick-only wave can meet: a later trial's view opened mid-tier states no
+     *   `combatStartTime`, and at a higher tier than the last trial ended on it
+     *   met none of the others.
      *
      * @param {Object} wave - What the boundary states
      * @param {*} wave.battleId - Its battle
      * @param {number|null} wave.tier - Its tier
      * @param {number|null} [wave.startMs] - Its `combatStartTime`, where a `new_guild_battle` carried one
      * @param {string|null} [wave.encounter] - Its monsters' encounter, where a `new_guild_battle` named them
+     * @param {number} [at] - When the wave arrived
      * @returns {boolean}
      */
-    _isNewFight({ battleId, tier, startMs = null, encounter = null }) {
+    _isNewFight({ battleId, tier, startMs = null, encounter = null }, at = Date.now()) {
         if (battleId !== this.guildBattleId) return true;
         if (this.endedByGame && Number.isFinite(tier) && Number.isFinite(this.tier) && tier < this.tier) return true;
         if (startMs !== null && this.fightStartMs !== null && Math.abs(startMs - this.fightStartMs) > FIGHT_SPAN_MS) {
             return true;
         }
+        // This client's clock on both sides: `fightStartMs` is the server's,
+        // and a machine clock set an hour out would split every trial
+        if (this.startedAt > 0 && Number.isFinite(at) && at - this.startedAt > FIGHT_SPAN_MS) return true;
         return Boolean(encounter && this.encounter && encounter !== this.encounter);
     }
 
