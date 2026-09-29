@@ -3315,12 +3315,14 @@ class CombatSimUI {
         const options = this._soloPartyLoadoutOptions();
 
         if (this._soloZonesLoadoutName === null || this._dungeonsLoadoutName === null) {
-            // Seeded from the single Loadout dropdown's own selection by
-            // name — the only handle it has — resolved to this list's own
+            // Seeded from the loadout the pickers' own player wears (the active
+            // tab, the one a Solo + party run simulates) by name — the only
+            // handle the editor has — not the panel-wide dropdown selection,
+            // which another tab's pick can have emptied. Resolved to this list's own
             // id for whichever snapshot answers to that name first. Fine as
             // a one-time default: it matches what the single dropdown itself
             // would apply, ambiguity and all.
-            const currentName = this._editor?.getSelectedLoadoutName?.() || '';
+            const currentName = this._editor?.getLoadoutNameFor?.(this._activePlayerTab || 'player1') || '';
             const index = currentName ? options.findIndex((s) => s.name === currentName) : -1;
             const currentId = index >= 0 ? this._soloPartyLoadoutIdFor(options[index], index) : '';
             if (this._soloZonesLoadoutName === null) this._soloZonesLoadoutName = currentId;
@@ -6189,8 +6191,8 @@ class CombatSimUI {
                     // keyed by name and drops the server's id.
                     loadout: editedDTOs
                         ? {
-                              source: this._editor?.getSelectedLoadoutName() ? 'loadout' : 'editor',
-                              name: this._editor?.getSelectedLoadoutName() || null,
+                              source: this._editor?.getLoadoutNameFor?.(playerHrid) ? 'loadout' : 'editor',
+                              name: this._editor?.getLoadoutNameFor?.(playerHrid) || null,
                           }
                         : { source: 'worn', name: null },
                 };
