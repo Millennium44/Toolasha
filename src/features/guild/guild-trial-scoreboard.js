@@ -472,7 +472,17 @@ export function modalStatsForBreakdown(breakdown, modal = guildTrialStatsModal) 
         }));
     }
     const trialName = (breakdown.trialNames || []).find((name) => encounterOf(name) === breakdown.encounter);
-    return trialName ? modal.getCombatStats?.(trialName) || null : null;
+    if (!trialName) return null;
+    // Only a capture taken once the fight held here had ended. The modal is
+    // keyed by trial name alone and its panel can be opened mid-fight, where it
+    // shows an earlier trial's totals — the reason the wire copy is refused
+    // then (`_reconcilable`); a capture from before the end would stand in for
+    // this fight's figures as the game's own
+    const capturedAt = modal.getStats?.(trialName)?.at;
+    if (!Number.isFinite(breakdown.endedAt) || !Number.isFinite(capturedAt) || capturedAt < breakdown.endedAt) {
+        return null;
+    }
+    return modal.getCombatStats?.(trialName) || null;
 }
 
 /**
