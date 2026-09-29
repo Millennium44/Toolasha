@@ -205,7 +205,12 @@ class GuildTrialAlerts {
             }
             if (phase === 'completed' && previous && previous !== 'completed') {
                 this._clearStartTimer();
-                return this._announceResults();
+                const announced = this._announceResults();
+                // Spent with the cycle it belonged to: kept, it was reported
+                // again as the next week's result whenever that cycle ran with
+                // no live payout ever noted (guild panel never open during it)
+                this.lastPayout = null;
+                return announced;
             }
             return null;
         } catch (error) {
