@@ -6808,6 +6808,29 @@ describe('a mates’ trial timed from the guild payload', () => {
         expect(partway.partialFraction).toBeLessThan(1);
     });
 
+    test('a page showing the trial live outranks an older payload that says it is not running', () => {
+        hear({ guild: { currentTrialsData: CURRENT_TRIALS_DATA_SKILLING } }, newestStamp);
+        hear(later(8, t8), t8);
+        hear(later(9, t9), t9);
+        const now = t9 + SKEW + 20_000;
+        vi.setSystemTime(now);
+        guildTrials.record = guildTrials._recordServerTiers(
+            { weekStart: 0, tiles: { 'skilling::milking': milkingTile() } },
+            now
+        );
+        const analysisFor = (_key, record, participants, phase) =>
+            analyseTrial(record, { participants, phase, timeLeftMs: 50 * 60_000, now });
+        const phaseFor = vi.spyOn(guildTrials, '_phaseFor').mockReturnValue('live');
+        const running = vi.spyOn(guildTrials, '_trialRunning').mockReturnValue(false);
+        try {
+            const [trial] = guildTrials._payoutTrials({ phase: 'live' }, {}, analysisFor, now);
+            expect(trial.projected).toBeGreaterThan(trial.banked);
+        } finally {
+            phaseFor.mockRestore();
+            running.mockRestore();
+        }
+    });
+
     test('with no countdown on the page, the payout paces a mates’ trial on its payload deadline', () => {
         hear({ guild: { currentTrialsData: CURRENT_TRIALS_DATA_SKILLING } }, newestStamp);
         hear(later(8, t8), t8);
