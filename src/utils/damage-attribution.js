@@ -115,7 +115,9 @@
  * order rather than by anything that happened. Above
  * {@link COLLISION_SPLIT_THRESHOLD} players present, the tick's damage is split
  * equally between them instead — imperfect, but bounded: nobody who acted reads
- * zero, and nobody collects a crowd's work.
+ * zero, and nobody collects a crowd's work. A rise a present player's own attack
+ * counter paid for is not part of the collision and stays with that player; see
+ * {@link attributeTick}.
  *
  * Equal rather than weighted by damage already confirmed. KikiMeter tried the
  * weighted version on real trial captures and abandoned it: players who never
@@ -684,10 +686,17 @@ function isSingleTarget(action, abilityDetailMap) {
  * those would pay the next bleed tick off as a hit.
  *
  * Ownership is the actor rungs' ({@link findActors}), with two refinements the
- * pool makes possible. In a tick small enough for the attack counter to be
- * authoritative ({@link COLLISION_SPLIT_THRESHOLD}), each paid swing goes to the
- * player whose swing paid it, so two players striking one monster on one tick
- * get a hit each rather than both going to the last swinger. And a
+ * pool makes possible. Each paid swing goes to the player whose swing paid it,
+ * whatever the crowd size, so two players striking one monster on one tick get
+ * a hit each rather than both going to the last swinger. A paid swing is a
+ * monster's `dmgCounter` rise matched to one present player's own `atkCounter`
+ * rise on the same tick, which is evidence about that swing and not merely
+ * about who moved — {@link COLLISION_SPLIT_THRESHOLD} does not gate it. Gating
+ * it split every Mana Spring among the ~50 party members its mana restore puts
+ * in the tick: on a 53-player Trial Swarm the casters read ~22% under the
+ * game's own totals and the rest of the roster 8–78% over; paid-to-swinger
+ * brought the damage-weighted error from 17.5% to 2.0% there, and lowered it
+ * on each of four single-boss trial traces checked beside it. And a
  * damage-over-time tick on a tick somebody swung goes to the one present player
  * who did not, when there is exactly one — the server groups a tick by actor,
  * and the swingers' swings are already paid for.
@@ -719,7 +728,6 @@ export function attributeTick(tick, state, options) {
     const abilityDetailMap = options?.abilityDetailMap;
     const reflecting = options?.reflecting;
     const emitUnattributed = options?.unattributed === true;
-    const collisionThreshold = options?.collisionThreshold ?? COLLISION_SPLIT_THRESHOLD;
     const monsterAttacks = (state.monstersAtk ||= {});
     const events = [];
     const weight = actors.length ? 1 / actors.length : 0;
@@ -750,7 +758,6 @@ export function attributeTick(tick, state, options) {
         }
         return null;
     };
-    const bySwinger = present.length <= collisionThreshold;
     const nonSwingers = present.filter((index) => !swung.has(index));
     const dotOwners =
         countersKnown && swung.size > 0 && nonSwingers.length === 1
@@ -887,8 +894,7 @@ export function attributeTick(tick, state, options) {
         // A bleed cannot crit, so a crit belongs to the last counted splat
         paid.forEach((swinger, n) => {
             const isCrit = crit && counted === 0 && n === paid.length - 1;
-            const owners = bySwinger ? [{ index: swinger, weight: 1 }] : tickOwners;
-            for (const owner of owners) events.push(swingEvent(owner, index, perSplat, isCrit));
+            events.push(swingEvent({ index: swinger, weight: 1 }, index, perSplat, isCrit));
         });
 
         if (isTick) {

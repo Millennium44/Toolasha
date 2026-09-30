@@ -3405,7 +3405,9 @@ describe('reflect and unattributed damage on the spectated stream', () => {
         expect(guildTrialDamage.support.lastHealAt).toEqual({});
 
         tick(4, crowd(), boss(650_000, 0), 500);
-        tick(4, crowd([0], { 0: { atkCounter: 2 } }), boss(645_000, 1), 1000);
+        // Nobody's counter moves against this wave's baseline: a swing of Ann's
+        // would be hers outright, which is not what this is about
+        tick(4, crowd([0]), boss(645_000, 1), 1000);
         // Ann was struck in the tank's old slot, and has no reflect of her own
         expect(totals().Ann).toBe(1000);
         expect(totals().Tank).toBe(1000);
