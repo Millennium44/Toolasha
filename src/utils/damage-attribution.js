@@ -749,16 +749,21 @@ export function attributeTick(tick, state, options) {
         [...swings].filter(([index]) => isSingleTarget(state.actions[index], abilityDetailMap)).map(([index]) => index)
     );
     const tickPending = new Map([...swings].filter(([index]) => singleTarget.has(index)));
+    // Returns the swing taken and the pool it was taken from: every swing that could still pay a rise on
+    // this monster at that moment, with what it has left
     const takeSwing = (monsterPending) => {
+        const pool = [];
+        let taken = null;
         for (const index of swings.keys()) {
             const pending = singleTarget.has(index) ? tickPending : monsterPending;
             const left = pending.get(index) || 0;
-            if (left > 0) {
-                pending.set(index, left - 1);
-                return index;
-            }
+            if (left <= 0) continue;
+            pool.push([index, left]);
+            if (taken === null) taken = { index, pending, left };
         }
-        return null;
+        if (taken === null) return null;
+        taken.pending.set(taken.index, taken.left - 1);
+        return { swinger: taken.index, pool };
     };
     // Who a paid swing belongs to. With one swinger in the tick the pairing is
     // exact whatever the crowd; in a small tick the swings pair off one by one.
@@ -767,15 +772,15 @@ export function attributeTick(tick, state, options) {
     // shared between the swingers — never the bystanders a party-wide mana
     // restore put in the tick.
     const collisionThreshold = options?.collisionThreshold ?? COLLISION_SPLIT_THRESHOLD;
-    // Shared by swing count: a counter up by 2 coalesced two attacks, and owns
-    // two of three splats against a counter up by 1
-    const swingTotal = [...swings.values()].reduce((sum, count) => sum + (count > 0 ? count : 0), 0);
-    const swingOwners = (swinger) =>
-        swings.size <= 1 || present.length <= collisionThreshold || swingTotal <= 0
+    // Shared by remaining swing count among the swingers who could still pay a rise on this monster: a
+    // counter up by 2 coalesced two attacks, and owns two of three splats against a counter up by 1. A
+    // single-target swing already spent on another monster is not a candidate here
+    const swingOwners = ({ swinger, pool }) => {
+        const total = pool.reduce((sum, [, left]) => sum + left, 0);
+        return swings.size <= 1 || present.length <= collisionThreshold || pool.length <= 1 || total <= 0
             ? [{ index: swinger, weight: 1 }]
-            : [...swings]
-                  .filter(([, count]) => count > 0)
-                  .map(([index, count]) => ({ index, weight: count / swingTotal }));
+            : pool.map(([index, left]) => ({ index, weight: left / total }));
+    };
     const nonSwingers = present.filter((index) => !swung.has(index));
     const dotOwners =
         countersKnown && swung.size > 0 && nonSwingers.length === 1
@@ -869,9 +874,8 @@ export function attributeTick(tick, state, options) {
         // Merging the two would lose every kill landed by a bleed, and a kill
         // counted only when a hit lands undercounts exactly the fights that
         // take longest, which are the ones worth measuring.
-        if (beforeHealth > 0 && health <= 0) {
-            events.push({ monsterIndex: index, isKill: true, killerIndex });
-        }
+        const killEvent = beforeHealth > 0 && health <= 0 ? { monsterIndex: index, isKill: true, killerIndex } : null;
+        if (killEvent) events.push(killEvent);
 
         const change = beforeHealth - health;
         const rises = beforeDamage !== undefined ? Math.max(0, damageCount - beforeDamage) : 0;
@@ -894,9 +898,9 @@ export function attributeTick(tick, state, options) {
         if (countersKnown) {
             const monsterPending = new Map([...swings].filter(([swinger]) => !singleTarget.has(swinger)));
             for (let n = 0; n < rises; n++) {
-                const swinger = takeSwing(monsterPending);
-                if (swinger === null) break;
-                paid.push(swinger);
+                const taken = takeSwing(monsterPending);
+                if (taken === null) break;
+                paid.push(taken);
             }
         }
         const unpaid = rises - paid.length;
@@ -910,9 +914,14 @@ export function attributeTick(tick, state, options) {
         const counted = isTick ? 0 : unpaid;
 
         // A bleed cannot crit, so a crit belongs to the last counted splat
-        paid.forEach((swinger, n) => {
+        paid.forEach((taken, n) => {
             const isCrit = crit && counted === 0 && n === paid.length - 1;
-            for (const owner of swingOwners(swinger)) events.push(swingEvent(owner, index, perSplat, isCrit));
+            const owners = swingOwners(taken);
+            // The killing splat is the last rise; when it was paid and has one owner the kill is theirs
+            if (killEvent && killEvent.killerIndex === null && unpaid === 0 && n === paid.length - 1) {
+                if (owners.length === 1) killEvent.killerIndex = owners[0].index;
+            }
+            for (const owner of owners) events.push(swingEvent(owner, index, perSplat, isCrit));
         });
 
         if (isTick) {
