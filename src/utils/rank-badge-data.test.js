@@ -121,6 +121,11 @@ describe('parseLocalBoard', () => {
         expect(parseLocalBoard(null, NOW)).toBeNull();
     });
 
+    test('ignores a cohort-filtered board so a partial top 100 cannot replace the global one', () => {
+        expect(parseLocalBoard(localMessage({ playerCohortFilter: 'steam' }), NOW)).toBeNull();
+        expect(parseLocalBoard(localMessage({ trialFilter: 'all' }), NOW)).not.toBeNull();
+    });
+
     test('drops out-of-range ranks and keeps the best rank of a duplicated name', () => {
         const rows = [
             { name: 'Alice', rank: 9 },

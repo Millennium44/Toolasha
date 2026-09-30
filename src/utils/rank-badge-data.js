@@ -182,6 +182,13 @@ export function parseLocalBoard(data, now) {
     // `gameModeFilter` on the tab filter the XP tracker already reads
     const type = normalizeBoardType(data.leaderboardType ?? board?.type ?? data.gameModeFilter);
     if (!type) return null;
+    // Badges mean global ranks: a cohort (Steam) or other narrowed view lists a partial top 100 that
+    // must not replace the complete snapshot. `gameModeFilter` is the type tab, not a narrowing.
+    for (const key of Object.keys(data)) {
+        if (key === 'gameModeFilter' || !/Filter$/.test(key)) continue;
+        const value = data[key];
+        if (typeof value === 'string' && value && value !== 'all') return null;
+    }
     const rows = readRows(board?.rows, (row) => row.name ?? row.characterName);
     if (!rows.length) return null;
     return { key: boardKey(type, category), board: { at: now, source: 'local', rows } };
