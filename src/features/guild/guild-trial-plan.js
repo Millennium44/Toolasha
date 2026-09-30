@@ -359,8 +359,9 @@ export function verdictFor(line, abilities, abilityDetailMap = {}) {
 /**
  * The unrecognised and ambiguous tokens a comparison should report.
  *
- * For a single trial these come from the selected lines only: a typo that sits
- * under another trial's heading is not a problem with this trial's check.
+ * For a single trial these come from the selected lines only — a typo under
+ * another trial's heading is not a problem with this trial's check — and from
+ * each player's effective line, after a later line has replaced an earlier one.
  *
  * @param {Object|null} plan - From {@link parsePlan}
  * @param {Array<Object>} lines - The lines being compared
@@ -371,9 +372,13 @@ function tokenDiagnostics(plan, lines, trialKey) {
     if (!trialKey) {
         return { unknownTokens: [...(plan?.unknownTokens || [])], ambiguousTokens: [...(plan?.ambiguousTokens || [])] };
     }
+    // Only each player's effective line: a later line for the same player replaces
+    // the earlier one, as it does for the verdicts, so an overridden typo is not reported
+    const effective = new Map();
+    lines.forEach((line, n) => effective.set(String(line.player || `#${n}`).toLowerCase(), line));
     const unknownTokens = [];
     const ambiguousTokens = [];
-    for (const line of lines) {
+    for (const line of effective.values()) {
         for (const token of line.unknown || []) {
             if (!unknownTokens.some((seen) => normalizeToken(seen) === normalizeToken(token)))
                 unknownTokens.push(token);
