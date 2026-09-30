@@ -4007,7 +4007,7 @@ describe('which metric the budget planner has to believe', () => {
         significant: true,
     });
 
-    test('shopping for profit passes over a row whose profit gain is noise while a measured one fits', () => {
+    test('shopping for profit plans a row whose profit gain is noise on its expected value, as an estimate', () => {
         const plan = planUpgradeBudget(
             [
                 mixed('Noisy ring', { slot: '/equipment_types/ring', cost: 100, profitGain: 90 }),
@@ -4017,10 +4017,11 @@ describe('which metric the budget planner has to believe', () => {
             { baseline: BASELINE, metricKey: 'profit' }
         );
 
-        // The bigger gain loses, because it is the one that was not measured
-        expect(plan.picks.map((p) => p.candidate.description)).toEqual(['Measured neck']);
-        expect(plan.provisional).toBe(false);
-        expect(plan.skipped.some((s) => s.reason.includes('noise'))).toBe(true);
+        // The noise check labels rather than gates: the bigger expected gain wins,
+        // marked as an estimate
+        expect(plan.picks.map((p) => p.candidate.description)).toEqual(['Noisy ring']);
+        expect(plan.picks[0].provisional).toBe(true);
+        expect(plan.provisional).toBe(true);
     });
 
     test('but when nothing on the axis clears the noise it plans on the estimates rather than planning nothing', () => {
@@ -4131,7 +4132,7 @@ describe('a budget the measured picks leave mostly unspent', () => {
         expect(plan.skipped.some((s) => s.result.candidate.description.startsWith('Frenzy'))).toBe(false);
     });
 
-    test('a refunding estimate stays out of a mixed plan, which never exceeds the budget', () => {
+    test('a refunding estimate is planned like any row, and the plan never exceeds the budget', () => {
         const row = (description, cost, xpPct, slot, cleared) => ({
             candidate: { upgradeHrid: `/items/${description}`, slot, description, cost },
             cost,
@@ -4154,11 +4155,13 @@ describe('a budget the measured picks leave mostly unspent', () => {
             { baseline: base, metricKey: 'xp' }
         );
         const names = plan.picks.map((p) => p.candidate.description);
-        expect(names).toEqual(['Necklace', 'Ring']);
+        expect(names).toContain('Necklace');
+        expect(names.filter((name) => name.startsWith('Body'))).toHaveLength(1);
+        expect(plan.picks.find((p) => p.candidate.description === 'Necklace').provisional).toBeUndefined();
         expect(plan.totalCost).toBeLessThanOrEqual(1e9);
     });
 
-    test('a measured pick keeps its slot: no estimate is bought beside it or in its place', () => {
+    test('one pick per slot: a bigger noisy gain in the same slot is chosen instead, as an estimate', () => {
         const withRival = [
             ...rows,
             {
@@ -4173,7 +4176,8 @@ describe('a budget the measured picks leave mostly unspent', () => {
         const plan = planUpgradeBudget(withRival, 1.6e9, { baseline: base, metricKey: 'xp' });
         const necks = plan.picks.filter((p) => p.candidate.slot === '/equipment_types/neck');
 
-        expect(necks.map((p) => p.candidate.description)).toEqual(["Necklace Of Speed +5 → Philosopher's Necklace +5"]);
+        expect(necks.map((p) => p.candidate.description)).toEqual(['Bigger noisy necklace']);
+        expect(necks[0].provisional).toBe(true);
     });
 
     test('Score, which never consults the error bar, plans the same way it did', () => {
