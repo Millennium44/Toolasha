@@ -6,6 +6,11 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Trial ability checker works before the trial, per combat trial
+
+- Before a trial starts, the checker can now show each combat trial's signed-up members and compare their fetched trial loadouts against that trial's own section of the plan. A plan can hold both trials under headings like `== Trial Badger ==` and `== Trial Swarm ==`; a plan without headings applies to either.
+- A skilling or kind-less loadout reply no longer replaces a player's fetched combat trial loadout.
+
 ### Equipment Watch list keeps its place
 
 - The Equipment Watch panel — and every other panel on the same shell — no longer jumps its list and body back to the top whenever it redraws, which happened on each price refresh and after clicking a level button, so picking an item to watch no longer means scrolling back down to it.
