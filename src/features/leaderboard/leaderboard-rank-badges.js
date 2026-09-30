@@ -133,19 +133,36 @@ function nameFrom(el) {
 }
 
 /**
- * The game's own control for a category: a tab (or menu entry) whose whole text is the category's name.
- * Looked up from the panel outward, because the tab strip is a sibling of the table, not a child.
- * @param {Element} host - The `LeaderboardPanel_content` element
+ * The sprite symbols a control's icons point at, e.g. `milking` from `.../skills_sprite.svg#milking`.
+ * @param {Element} el - A tab or menu entry
+ * @returns {string[]} Every symbol id its icons reference
+ */
+function iconSymbols(el) {
+    return [...el.querySelectorAll('use')]
+        .map((use) => (use.getAttribute('href') || use.getAttribute('xlink:href') || '').split('#')[1])
+        .filter(Boolean);
+}
+
+/**
+ * The game's own control for a category. The icon's sprite symbol is matched first because it does not
+ * depend on the UI language; the English label is the fallback for a control without an icon.
+ * Looked up from the anchor outward, because the tab strip is a sibling of the table, not a child.
+ * @param {Element} anchor - The `LeaderboardPanel_content` element, or anything beside it in the panel
  * @param {string} category - A category slug
  * @returns {Element|null} Null when the panel shows no such control
  */
-export function findCategoryTab(host, category) {
+export function findCategoryTab(anchor, category) {
+    const symbol = MISC_SYMBOLS[category] || category;
     const wanted = new Set([categoryLabel(category), ...(TAB_ALIASES[category] || [])].map((t) => t.toLowerCase()));
-    let scope = host;
+    let scope = anchor;
     for (let depth = 0; depth < 6 && scope; depth++, scope = scope.parentElement) {
         const tabs = [...scope.querySelectorAll(TAB_SELECTOR)].filter((el) => !el.closest(`[${BAR_ATTR}]`));
         if (!tabs.length) continue;
-        return tabs.find((el) => wanted.has((el.textContent || '').replace(/\s+/g, ' ').trim().toLowerCase())) || null;
+        return (
+            tabs.find((el) => iconSymbols(el).includes(symbol)) ||
+            tabs.find((el) => wanted.has((el.textContent || '').replace(/\s+/g, ' ').trim().toLowerCase())) ||
+            null
+        );
     }
     return null;
 }
@@ -266,8 +283,9 @@ class LeaderboardRankBadges {
         const note = document.createElement('span');
         note.style.opacity = '0.8';
         bar.append(button, status, note);
-        // One real click, one game click: no timer, no loop, nothing queued behind it
-        button.addEventListener('click', () => this.openNextBoard(host, note));
+        // One real click, one game click: no timer, no loop, nothing queued behind it. The bar is the search
+        // anchor: a re-render can replace the panel content while keeping the bar, so `host` may be detached
+        button.addEventListener('click', () => this.openNextBoard(bar, note));
         host.insertAdjacentElement('beforebegin', bar);
         this.refreshCycleBars();
     }
@@ -289,14 +307,14 @@ class LeaderboardRankBadges {
 
     /**
      * The single game click behind one press of the button.
-     * @param {Element} host - The panel content the bar belongs to
+     * @param {Element} anchor - The bar, which stays in the panel across content re-renders
      * @param {Element} note - Where a failure is said
      */
-    openNextBoard(host, note) {
+    openNextBoard(anchor, note) {
         const target = nextBoardCategory(this.boards, this.boardType, this.boardCategory);
         note.textContent = '';
         if (!target) return;
-        const tab = findCategoryTab(host, target);
+        const tab = findCategoryTab(anchor, target);
         if (!tab) {
             note.textContent = `Could not find the ${categoryLabel(target)} tab`;
             return;

@@ -385,6 +385,45 @@ describe('next board button', () => {
         expect(clicks).toEqual(['Total Level', 'Milking', 'Foraging']);
     });
 
+    test('finds a tab by its icon when the label is not English', async () => {
+        game.mode = 'local';
+        const { root, clicks } = buildPanel([]);
+        const strip = root.querySelector('[role="tablist"]');
+        for (const [label, symbol] of [
+            ['总等级', 'leaderboard'],
+            ['挤奶', 'milking'],
+        ]) {
+            const tab = document.createElement('button');
+            tab.setAttribute('role', 'tab');
+            tab.innerHTML = `<svg><use href="/static/media/skills_sprite.abc.svg#${symbol}"></use></svg>${label}`;
+            tab.addEventListener('click', () => clicks.push(symbol));
+            strip.appendChild(tab);
+        }
+        await leaderboardRankBadges.initialize();
+        const button = bar().querySelector('button');
+        button.click();
+        game.wsHandlers.leaderboard_updated(board('total_level'));
+        await flush();
+        button.click();
+        expect(clicks).toEqual(['leaderboard', 'milking']);
+    });
+
+    test('a re-render that replaces the panel content keeps the bar working against the new panel', async () => {
+        game.mode = 'local';
+        const { root, content, clicks } = buildPanel();
+        await leaderboardRankBadges.initialize();
+        const fresh = document.createElement('div');
+        fresh.className = 'LeaderboardPanel_content__y';
+        content.replaceWith(fresh);
+        for (const handler of game.classHandlers) handler(fresh);
+        expect(document.querySelectorAll('[data-toolasha-rank-cycle]')).toHaveLength(1);
+        expect(root.contains(bar())).toBe(true);
+
+        bar().querySelector('button').click();
+        expect(clicks).toEqual(['Total Level']);
+        expect(bar().textContent).not.toContain('Could not find');
+    });
+
     test('a missing tab leaves a note and does not throw or click anything', async () => {
         game.mode = 'local';
         const { clicks } = buildPanel(['Milking']);
