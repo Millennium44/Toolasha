@@ -564,13 +564,32 @@ export function planUpgradeBudget(rows, budget, { baseline = {}, metricKey = 'pr
         );
         const fill = planWithinBudget(fillRows, coins - measured.totalCost, { includeUnmeasured: true });
         const filled = new Set(fill.picks.map((pick) => pick.candidate));
-        const attemptsSaved = measured.attemptsSaved + fill.attemptsSaved;
+        // An estimated swap with a negative net cost refunds coins, which can
+        // make a measured row the first pass could not afford affordable after
+        // all: offer the proven rows the refund before it is left idle
+        let refund = { picks: [], totalCost: 0, attemptsSaved: 0 };
+        const left = coins - measured.totalCost - fill.totalCost;
+        if (fill.totalCost < 0 && left > 0) {
+            const taken = new Set([...held, ...fill.picks.flatMap((pick) => conflictKeys(pick.candidate))]);
+            const bought = new Set(measured.picks.map((pick) => pick.candidate));
+            const again = planRows.filter(
+                (row) =>
+                    row.significant !== false &&
+                    !bought.has(row.candidate) &&
+                    !conflictKeys(row.candidate).some((key) => taken.has(key))
+            );
+            refund = planWithinBudget(again, left);
+        }
+        const refunded = new Set(refund.picks.map((pick) => pick.candidate));
+        const attemptsSaved = measured.attemptsSaved + fill.attemptsSaved + refund.attemptsSaved;
         return {
-            picks: [...measured.picks, ...fill.picks.map((pick) => ({ ...pick, provisional: true }))],
-            totalCost: measured.totalCost + fill.totalCost,
+            picks: [...measured.picks, ...refund.picks, ...fill.picks.map((pick) => ({ ...pick, provisional: true }))],
+            totalCost: measured.totalCost + fill.totalCost + refund.totalCost,
             attemptsSaved,
             // "Within the noise" still explains a row the fill left out: it is why a measured pick outranked it
-            skipped: measured.skipped.filter((entry) => !filled.has(entry.result.candidate)),
+            skipped: measured.skipped.filter(
+                (entry) => !filled.has(entry.result.candidate) && !refunded.has(entry.result.candidate)
+            ),
             budget: measured.budget,
             gainTotal: attemptsSaved,
             metric,
