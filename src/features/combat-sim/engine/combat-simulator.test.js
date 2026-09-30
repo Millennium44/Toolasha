@@ -2346,22 +2346,44 @@ describe('casts refused for mana', () => {
         return { sim, player, ability };
     }
 
-    test('a starved stretch is one refusal however many times it is re-tested, and casts are counted', () => {
+    test('refusals are once per ability per cooldown period however often re-tested, and casts are counted', () => {
         const { sim, player, ability } = starvedFight();
+        ability.cooldownDuration = 10 * ONE_SECOND;
         player.combatDetails.currentManapoints = 4;
 
-        // checkTriggers re-tests after every event; three tests inside one dry stretch are one refusal
+        // checkTriggers re-tests after every event; three tests inside one period are one refusal
         for (let i = 0; i < 3; i++) expect(sim.canUseAbility(player, ability, true)).toBe(false);
         expect(sim.simResult.manaCastsRefused[player.hrid]).toBe(1);
 
-        // Mana returns: the cast goes through and closes the stretch
+        // Still starved once the cooldown has elapsed: the ability would have been cast again, so a second refusal
+        sim.simulationTime += 10 * ONE_SECOND;
+        expect(sim.canUseAbility(player, ability, true)).toBe(false);
+        expect(sim.simResult.manaCastsRefused[player.hrid]).toBe(2);
+
         player.combatDetails.currentManapoints = 10;
         expect(sim.tryUseAbility(player, ability)).toBe(true);
         expect(sim.simResult.manaCastsMade[player.hrid]).toBe(1);
-
-        // Spent again: a new stretch is a new refusal, and the dry time shows it ran out
-        expect(sim.canUseAbility(player, ability, true)).toBe(false);
-        expect(sim.simResult.manaCastsRefused[player.hrid]).toBe(2);
         expect(sim.simResult.playerRanOutOfMana[player.hrid]).toBe(true);
+    });
+
+    test('a permanently starved player reports the same refusals per hour from 1 chunk or 4', () => {
+        const hours = 4;
+        function refusalsOver(durationHours, eventGapSeconds) {
+            const { sim, player, ability } = starvedFight();
+            ability.cooldownDuration = 30 * ONE_SECOND;
+            player.combatDetails.currentManapoints = 0;
+            const end = sim.simulationTime + durationHours * 3600 * ONE_SECOND;
+            for (let t = sim.simulationTime; t < end; t += eventGapSeconds * ONE_SECOND) {
+                sim.simulationTime = t;
+                sim.canUseAbility(player, ability, true);
+            }
+            return sim.simResult.manaCastsRefused[player.hrid];
+        }
+
+        const oneChunk = refusalsOver(hours, 0.5) / hours;
+        const fourChunks = (4 * refusalsOver(hours / 4, 0.5)) / hours;
+        expect(Math.abs(fourChunks - oneChunk) / oneChunk).toBeLessThan(0.02);
+        // and density-independent
+        expect(refusalsOver(1, 0.5)).toBe(refusalsOver(1, 1.5));
     });
 });

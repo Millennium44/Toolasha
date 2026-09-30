@@ -1777,6 +1777,9 @@ class CombatSimulator {
         if (source.combatDetails.currentManapoints < ability.manaCost) {
             if (source.isPlayer && oomCheck) {
                 this.simResult.addRanOutOfManaCount(source, true, this.simulationTime);
+                const haste = source.combatDetails.combatStats.abilityHaste;
+                const period = haste > 0 ? (ability.cooldownDuration * 100) / (100 + haste) : ability.cooldownDuration;
+                this.simResult.addCastRefused(source, ability, this.simulationTime, period || 0);
             }
             return false;
         }

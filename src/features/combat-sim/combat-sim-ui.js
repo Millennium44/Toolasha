@@ -6698,7 +6698,7 @@ class CombatSimUI {
             const castsMade = simResult.manaCastsMade?.[activeTab] ?? 0;
             const refusedPerHr = castsRefused / (simResult.simulatedTime / 3.6e12);
             const refusedShare = (castsRefused / (castsRefused + castsMade)) * 100;
-            html += `<div style="${rowStyle}" title="Times a ready ability could not be cast for lack of mana, counted once per starved stretch">`;
+            html += `<div style="${rowStyle}" title="Times a ready ability could not be cast for lack of mana, counted once per ability per cooldown period while it stays blocked. Share is refused out of refused plus cast.">`;
             html += `<span style="${labelStyle}">Casts Refused/hr</span>`;
             html += `<span style="color:#ff6b6b; font-weight:600;">${formatRatePerHour(refusedPerHr)} (${refusedShare.toFixed(1)}%)</span>`;
             html += '</div>';
