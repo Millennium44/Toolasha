@@ -5,6 +5,7 @@
 
 import connectionState from '../core/connection-state.js';
 import storage from '../core/storage.js';
+import { gameOrigin } from '../utils/game-server.js';
 import networkAlert from '../features/market/network-alert.js';
 
 /**
@@ -25,7 +26,7 @@ function marketValues() {
 class MarketAPI {
     constructor() {
         // API endpoint
-        this.API_URL = 'https://www.milkywayidle.com/game_data/marketplace.json';
+        this.API_URL = `${gameOrigin()}/game_data/marketplace.json`;
 
         // Cache settings
         this.CACHE_DURATION = 15 * 60 * 1000; // 15 minutes in milliseconds

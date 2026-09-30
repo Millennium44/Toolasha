@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Runs on the CN mirror
+
+- Toolasha now runs on www.milkywayidlecn.com and its test server, reading market data and sprites from whichever site you are on. Market-history contributions stay .com-only.
+
 ### Leaderboard EXP/hr history kept
 
 - Leaderboard and guild leaderboard rates no longer go blank on boards you open less than weekly (the week prune now keeps the reading a rate needs), each weekly trial board keeps its own series, and the guild leaderboard shows a new reading on the same open instead of the next one. Guild leaderboard history is now kept for the whole account, so it survives having no guild or switching characters, and a one-time cleanup no longer deletes all-zero series on every reload.

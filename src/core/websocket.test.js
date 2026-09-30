@@ -51,6 +51,12 @@ describe('isGameSocket', () => {
         expect(webSocketHook.isGameSocket({ url: 'wss://api-test.milkywayidle.com/ws' })).toBe(true);
     });
 
+    test('recognizes the CN mirror API hosts', () => {
+        expect(webSocketHook.isGameSocket({ url: 'wss://api.milkywayidlecn.com/ws' })).toBe(true);
+        expect(webSocketHook.isGameSocket({ url: 'wss://api-test.milkywayidlecn.com/ws' })).toBe(true);
+        expect(webSocketHook.isGameSocket({ url: 'wss://api.milkywayidlecn.com/other' })).toBe(false);
+    });
+
     test('rejects unrelated sockets and missing url/socket', () => {
         expect(webSocketHook.isGameSocket({ url: 'wss://example.com/ws' })).toBe(false);
         expect(webSocketHook.isGameSocket(null)).toBe(false);
