@@ -242,10 +242,21 @@ describe('mergeBoards', () => {
         expect(Object.keys(merged)).toEqual(['standard|milking']);
     });
 
+    test('a synced board stamped in the future is capped, and a later genuine capture replaces it', () => {
+        const future = { 'standard|milking': board(NOW + 3 * 86_400_000, 'server', ['Stale', 1]) };
+        expect(sanitizeBoards(future, NOW)['standard|milking'].at).toBe(NOW);
+        const held = mergeBoards({}, future, NOW);
+        expect(held['standard|milking'].at).toBe(NOW);
+        const merged = mergeBoards(held, { 'standard|milking': board(NOW + 1000, 'local', ['Fresh', 1]) }, NOW + 1000);
+        expect(merged['standard|milking'].rows).toEqual([['Fresh', 1]]);
+    });
+
     test('sanitizeBoards survives garbage', () => {
         expect(sanitizeBoards(null)).toEqual({});
         expect(sanitizeBoards({ 'standard|milking': { at: 'x', rows: [] } })).toEqual({});
-        expect(sanitizeBoards({ 'standard|milking': { at: 5, rows: [['A', 1], 'bad', [7, 3], ['B', 500]] } })).toEqual({
+        expect(
+            sanitizeBoards({ 'standard|milking': { at: 5, rows: [['A', 1], 'bad', [7, 3], ['B', 500]] } }, NOW)
+        ).toEqual({
             'standard|milking': { at: 5, source: 'local', rows: [['A', 1]] },
         });
     });
