@@ -480,9 +480,10 @@ function currentCyclePart(tile, from) {
         completed: false,
         samples,
         pointSamples,
-        tiers: kept ? [...(tile.tiers || [])] : [],
+        // Accumulated across every sample, so they cannot be split by a read's
+        // time: the archive keeps them and the new cycle rebuilds its own
+        tiers: [],
         pointsByTier: Number.isFinite(badgePoints) ? { [tile.tier]: badgePoints } : {},
-        ...(kept && tile.personalByCharacter ? { personalByCharacter: tile.personalByCharacter } : {}),
         ...(kept && Number.isFinite(tile.liveTier)
             ? { liveTier: tile.liveTier, liveTierTarget: tile.liveTierTarget ?? null }
             : {}),
@@ -523,9 +524,9 @@ function earlierCyclePart(tile, from) {
         for (const field of ['serverTier', 'serverTierAt', 'serverDone']) delete part[field];
     }
     if (lastReadSince(tile, from)) {
-        // The current part took these; see currentCyclePart
-        part.tiers = [];
-        for (const field of ['personalByCharacter', 'liveTier', 'liveTierTarget']) delete part[field];
+        // The current part took these single values; see currentCyclePart. The
+        // accumulated ladder and personal stats stay with the archive
+        for (const field of ['liveTier', 'liveTierTarget']) delete part[field];
         if (stampedSince(tile.tierReadAt, from) && Number.isFinite(tile.tier)) {
             part.pointsByTier = Object.fromEntries(
                 Object.entries(tile.pointsByTier || {}).filter(([tier]) => Number(tier) !== tile.tier)
