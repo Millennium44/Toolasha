@@ -138,15 +138,17 @@ class RequiredMaterials {
                 if (materialIndex >= regularMaterials.length) return;
                 const material = regularMaterials[materialIndex];
 
-                // Create display element
+                // Wrap, never nowrap: a nowrap line sets the flex/grid item's min-content width to the whole
+                // string, so the container refuses to shrink and the panel scrolls sideways. Missing amounts
+                // matter, so they wrap rather than truncate.
                 const displaySpan = document.createElement('span');
                 displaySpan.className = 'mwi-required-materials';
                 displaySpan.style.cssText = `
                     display: block;
                     font-size: 0.85em;
-                    white-space: nowrap;
-                    overflow: hidden;
-                    text-overflow: ellipsis;
+                    white-space: normal;
+                    overflow-wrap: anywhere;
+                    min-width: 0;
                     margin-top: 2px;
                 `;
 
@@ -170,6 +172,8 @@ class RequiredMaterials {
                 }
 
                 displaySpan.textContent = text;
+
+                targetContainer.style.minWidth = '0';
 
                 // Append to target container
                 targetContainer.appendChild(displaySpan);
@@ -198,9 +202,9 @@ class RequiredMaterials {
             displaySpan.style.cssText = `
                 display: block;
                 font-size: 0.85em;
-                white-space: nowrap;
-                overflow: hidden;
-                text-overflow: ellipsis;
+                white-space: normal;
+                overflow-wrap: anywhere;
+                min-width: 0;
                 margin-top: 2px;
             `;
 

@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Action panel no longer scrolls sideways
+
+- The red Required/Missing line under an action's inputs now wraps instead of widening the panel, so a large missing amount no longer adds a horizontal scrollbar.
+
 ### Guild trial follow-ups
 
 - A crowded trial tick with an area attacker and a single-target attacker no longer credits the single-target player with a share of every monster's hit.
