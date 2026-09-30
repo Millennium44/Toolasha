@@ -66,6 +66,8 @@ const SVG_NS = 'http://www.w3.org/2000/svg';
 const TOOLTIP_ENTRIES = 5;
 const BAR_ATTR = 'data-toolasha-rank-cycle';
 const PANEL_CLASS = 'LeaderboardPanel_content';
+// Every category mounts its own TabPanel (and content) inside this one container, which persists across tabs
+const PANELS_CLASS = 'TabsComponent_tabPanelsContainer';
 
 /** Tab labels that differ from the category's display label; matched case-insensitively and exactly */
 const TAB_ALIASES = Object.freeze({
@@ -305,14 +307,24 @@ class LeaderboardRankBadges {
     }
 
     /**
-     * Put the "Next board" bar before the leaderboard panel's content. Idempotent: a re-render that
-     * keeps the bar is left alone. The guild panel reuses the same classes and is skipped.
+     * Put the "Next board" bar above the leaderboard's tab panels. Each category tab mounts its own panel
+     * content, so a bar beside the content would stay behind on the panel that was left; the panels
+     * container survives tab switches, so the one bar stays with whatever is visible. Without that
+     * container the bar falls back to sitting before the content. Idempotent. The guild panel is skipped.
      * @param {Element} host - A `LeaderboardPanel_content` element
      */
     insertCycleBar(host) {
         if (this.mode !== 'local' || !host?.isConnected || !host.matches?.(`[class*="${PANEL_CLASS}"]`)) return;
         if (host.closest('[class*="GuildPanel"]')) return;
-        if (host.previousElementSibling?.hasAttribute?.(BAR_ATTR)) return;
+        const container = host.closest(`[class*="${PANELS_CLASS}"]`);
+        if (container) {
+            if (container.firstElementChild?.hasAttribute?.(BAR_ATTR)) return;
+            // A bar left beside a panel content, from before the container existed or on another panel
+            for (const stale of document.querySelectorAll(`[${BAR_ATTR}]`)) {
+                if (stale.parentElement !== container) stale.remove();
+            }
+            if (container.querySelector(`:scope > [${BAR_ATTR}]`)) return;
+        } else if (host.previousElementSibling?.hasAttribute?.(BAR_ATTR)) return;
         const bar = document.createElement('div');
         bar.setAttribute(BAR_ATTR, '');
         bar.style.cssText = 'display:flex;flex-wrap:wrap;align-items:center;gap:8px;margin:4px 0;font-size:12px';
@@ -326,7 +338,8 @@ class LeaderboardRankBadges {
         // One real click, one game click: no timer, no loop, nothing queued behind it. The bar is the search
         // anchor: a re-render can replace the panel content while keeping the bar, so `host` may be detached
         button.addEventListener('click', () => this.openNextBoard(bar, note));
-        host.insertAdjacentElement('beforebegin', bar);
+        if (container) container.prepend(bar);
+        else host.insertAdjacentElement('beforebegin', bar);
         this.refreshCycleBars();
     }
 

@@ -494,6 +494,91 @@ describe('next board button', () => {
         expect(bar().textContent).not.toContain('Could not find');
     });
 
+    describe('category tab panels', () => {
+        // Mirrors the live tree: each category tab mounts its own TabPanel + content inside one panels container
+        const buildTabs = () => {
+            const outer = document.createElement('div');
+            outer.className = 'LeaderboardPanel_tabsComponentContainer__a';
+            const tabsComponent = document.createElement('div');
+            tabsComponent.className = 'TabsComponent_tabsComponent__b';
+            const clicks = [];
+            const strip = document.createElement('div');
+            strip.setAttribute('role', 'tablist');
+            for (const label of LABELS) {
+                const tab = document.createElement('button');
+                tab.setAttribute('role', 'tab');
+                tab.className = 'MuiTab-root';
+                tab.textContent = label;
+                tab.addEventListener('click', () => clicks.push(label));
+                strip.appendChild(tab);
+            }
+            const panels = document.createElement('div');
+            panels.className = 'TabsComponent_tabPanelsContainer__c';
+            tabsComponent.append(strip, panels);
+            outer.appendChild(tabsComponent);
+            document.body.appendChild(outer);
+            const mount = () => {
+                const panel = document.createElement('div');
+                panel.className = 'TabPanel_tabPanel__d';
+                const content = document.createElement('div');
+                content.className = 'LeaderboardPanel_content__y';
+                panel.appendChild(content);
+                panels.appendChild(panel);
+                return { panel, content };
+            };
+            return { panels, mount, clicks };
+        };
+        const notify = (content) => {
+            for (const handler of game.classHandlers) handler(content);
+        };
+
+        test('the single bar sits above the panels, so an unmounted panel takes nothing with it', async () => {
+            game.mode = 'local';
+            const { panels, mount, clicks } = buildTabs();
+            const first = mount();
+            await leaderboardRankBadges.initialize();
+            expect(document.querySelectorAll('[data-toolasha-rank-cycle]')).toHaveLength(1);
+            expect(panels.firstElementChild).toBe(bar());
+
+            first.panel.remove();
+            const second = mount();
+            notify(second.content);
+            expect(document.querySelectorAll('[data-toolasha-rank-cycle]')).toHaveLength(1);
+            expect(panels.firstElementChild).toBe(bar());
+            expect(bar().nextElementSibling).toBe(second.panel);
+
+            bar().querySelector('button').click();
+            expect(clicks).toEqual(['Total Level']);
+        });
+
+        test('with the old panel kept mounted but hidden there is still exactly one bar', async () => {
+            game.mode = 'local';
+            const { panels, mount } = buildTabs();
+            const first = mount();
+            await leaderboardRankBadges.initialize();
+            first.panel.hidden = true;
+            const second = mount();
+            notify(second.content);
+            notify(first.content);
+            expect(document.querySelectorAll('[data-toolasha-rank-cycle]')).toHaveLength(1);
+            expect(panels.firstElementChild).toBe(bar());
+            expect(first.panel.hidden).toBe(true);
+            expect(bar().nextElementSibling).toBe(first.panel);
+        });
+
+        test('a bar left beside an old panel content is replaced by the one above the panels', async () => {
+            game.mode = 'local';
+            const { panels, mount } = buildTabs();
+            const first = mount();
+            const stale = document.createElement('div');
+            stale.setAttribute('data-toolasha-rank-cycle', '');
+            first.content.before(stale);
+            await leaderboardRankBadges.initialize();
+            expect(document.querySelectorAll('[data-toolasha-rank-cycle]')).toHaveLength(1);
+            expect(panels.firstElementChild).toBe(bar());
+        });
+    });
+
     test('a missing tab leaves a note and does not throw or click anything', async () => {
         game.mode = 'local';
         const { clicks } = buildPanel(['Milking']);
