@@ -142,9 +142,21 @@ describe('buildMpCandidates max mana cap', () => {
         expect(yogurt.cappedAtMaxMana).toBe(false);
     });
 
-    test('an instant restore within the pool, and any over-time restore, is untouched', () => {
+    test('an instant restore within the pool, and an over-time one whose ticks fit, is untouched', () => {
         expect(only('/items/donut', 110).mpPerMinute).toBeCloseTo(60);
-        expect(only('/items/star_fruit_gummy', 110).mpPerMinute).toBeCloseTo(280);
+        expect(only('/items/star_fruit_gummy', 140).mpPerMinute).toBeCloseTo(280);
+        expect(only('/items/star_fruit_gummy', 140).cappedAtMaxMana).toBe(false);
+    });
+
+    test('an over-time restore is capped per tick: 280 over two 140 ticks in a 110 pool banks 220', () => {
+        const gummy = only('/items/star_fruit_gummy', 110);
+        expect(gummy.mpPerUse).toBe(220);
+        expect(gummy.mpPerMinute).toBeCloseTo(220);
+        expect(gummy.cappedAtMaxMana).toBe(true);
+    });
+
+    test('an over-time restore with no known max mana is uncapped', () => {
+        expect(only('/items/star_fruit_gummy', null).mpPerUse).toBe(280);
     });
 });
 

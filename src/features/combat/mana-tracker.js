@@ -237,7 +237,8 @@ export default {
             const characterName = dataManager.getCurrentCharacterName?.();
             const self = findOwnBattlePlayer(data, { characterId, characterName });
             const stats = self?.combatDetails?.combatStats;
-            const max = Number(self?.combatDetails?.maxManapoints);
+            // A live new_battle player carries max MP at the top level; combatDetails only has combatStats
+            const max = Number(self?.maxManapoints ?? self?.combatDetails?.maxManapoints);
             if (max > 0) maxMana = max;
             if (stats) {
                 haste = { foodHaste: stats.foodHaste || 0, drinkConcentration: stats.drinkConcentration || 0 };

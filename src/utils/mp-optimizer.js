@@ -42,6 +42,8 @@
 export const DEFAULT_MAX_SLOTS = { food: 3, drink: 3 };
 
 const NS_PER_SECOND = 1e9;
+// The simulator's HOT_TICK_INTERVAL (combat-simulator.js)
+const HOT_TICK_SECONDS = 5;
 
 /**
  * The slot type a consumable occupies — one item per type per group.
@@ -59,6 +61,30 @@ export function slotTypeOf(detail) {
 }
 
 /**
+ * The most MP one use can bank into a pool of `maxMana`. The simulator clamps every landing to the pool
+ * (`addManapoints`): an instant restore lands once, an over-time one lands in ticks every HOT_TICK_SECONDS, each
+ * tick a floored share of the total (`calculateTickValue`), so the ceiling is the sum of the per-tick amounts each
+ * capped at the pool. Null or absent `maxMana` leaves the restore uncapped.
+ * @param {number} restore - The item's total MP restore
+ * @param {number} recoveryDuration - Nanoseconds the restore is spread over; 0 for an instant restore
+ * @param {number|null} maxMana - The character's max MP
+ * @returns {number} Per-use MP ceiling
+ */
+function capPerUse(restore, recoveryDuration, maxMana) {
+    if (!(maxMana > 0)) return restore;
+    if (!(recoveryDuration > 0)) return Math.min(restore, maxMana);
+
+    const totalTicks = recoveryDuration / (HOT_TICK_SECONDS * NS_PER_SECOND);
+    // Ticks run 1..ceil(totalTicks); a share past totalTicks lands the whole floored total
+    const cumulative = (tick) => (tick > totalTicks ? Math.floor(restore) : Math.floor((tick * restore) / totalTicks));
+    let total = 0;
+    for (let tick = 1; tick <= Math.ceil(totalTicks); tick++) {
+        total += Math.min(cumulative(tick) - cumulative(tick - 1), maxMana);
+    }
+    return total;
+}
+
+/**
  * Every priced consumable that restores mana, with its steady rate and cost.
  *
  * @param {Object} itemDetailMap - The game's `itemDetailMap`
@@ -66,9 +92,9 @@ export function slotTypeOf(detail) {
  * @param {(hrid: string) => (number|null)} options.priceOf - Price to buy one; null or 0 leaves the item out
  * @param {number} [options.foodHaste] - The character's food haste, as a fraction
  * @param {number} [options.drinkConcentration] - The character's drink concentration, as a fraction
- * @param {number|null} [options.maxMana] - The character's max MP; an instant restore cannot bank more than the
- *   pool holds (the simulator's `addManapoints` clamps), so its per-use MP is capped. Over-time restores land a
- *   tick at a time and are not capped. Null or absent leaves every restore uncapped.
+ * @param {number|null} [options.maxMana] - The character's max MP; no landing can bank more than the pool
+ *   holds (the simulator's `addManapoints` clamps), so an instant restore, and each tick of an over-time one, is
+ *   capped. Null or absent leaves every restore uncapped.
  * @returns {Array<Object>} Candidates, best MP per coin first
  */
 export function buildMpCandidates(itemDetailMap, { priceOf, foodHaste = 0, drinkConcentration = 0, maxMana = null }) {
@@ -80,9 +106,8 @@ export function buildMpCandidates(itemDetailMap, { priceOf, foodHaste = 0, drink
 
         const restore = Number(detail.manapointRestore) || 0;
         if (restore <= 0) continue;
-        const instant = !((Number(detail.recoveryDuration) || 0) > 0);
-        const capped = instant && maxMana > 0 && restore > maxMana;
-        const mpPerUse = capped ? maxMana : restore;
+        const mpPerUse = capPerUse(restore, Number(detail.recoveryDuration) || 0, maxMana);
+        const capped = mpPerUse < restore;
 
         const category = item.categoryHrid || '';
         const kind = category.includes('drink') ? 'drink' : category.includes('food') ? 'food' : null;
