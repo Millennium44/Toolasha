@@ -1225,6 +1225,27 @@ describe('a paid swing in a crowd tick', () => {
         expect(tally['12'].byAbility['/abilities/mana_spring'].damage).toBe(8758);
     });
 
+    test('with two swingers in the crowd, the splats are shared between them and no bystander', () => {
+        // Slot 2's attack counter rises on the same tick, and every player
+        // carries its counter, as the stream does: which swing landed on which
+        // monster is unknowable, so neither swinger may take it all by slot order
+        const both = {
+            ...cast,
+            pMap: { ...cast.pMap, 2: unit(2202, 2400, 2638, 4, '/abilities/frost_surge', 1055578309, 0) },
+        };
+        const state = newAttributionState();
+        attributeTick(baseline, state, { soloFallback: false, unattributed: true });
+        noteActions(state, baseline.pMap);
+        const events = attributeTick(both, state, { soloFallback: false, unattributed: true }).filter(
+            (event) => !event.isKill
+        );
+
+        const tally = foldEvents({}, events, { filterNonDamaging: false });
+        for (const bystander of ['0', '1', '3', '4']) expect(tally[bystander]?.damage || 0).toBe(0);
+        expect(tally['2'].damage).toBeCloseTo(tally['12'].damage, 6);
+        expect(tally['2'].damage + tally['12'].damage).toBeCloseTo(8758, 6);
+    });
+
     test('leaves the tick’s total exactly what the monsters lost', () => {
         const team = foldTeam({}, replay());
         expect(team.damage).toBeCloseTo(8758, 6);
