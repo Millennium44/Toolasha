@@ -3928,6 +3928,16 @@ export const settingsGroups = {
                     'is a plain GET carrying only the board type (standard or ironcow) and sends nothing about you ' +
                     'or your character, but the host does see your IP address. Off runs nothing and contacts nobody.',
             },
+            leaderboardRankBadgesSteam: {
+                id: 'leaderboardRankBadgesSteam',
+                label: 'Rank badges: include Steam leaderboards (Local only)',
+                type: 'checkbox',
+                default: false,
+                help:
+                    'With Local only rank badges, Steam cohort boards you open also count toward badges. Their ' +
+                    'ranks are kept apart from the global boards and labelled Standard (Steam) or Ironcow (Steam) ' +
+                    'in the badge tooltip. Has no effect with the MWITools data server or with badges Off.',
+            },
         },
     },
 

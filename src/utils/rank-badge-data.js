@@ -44,6 +44,14 @@ export const RANK_CATEGORIES = Object.freeze([
 /** Board pairs, in tie-break order */
 export const RANK_BOARD_TYPES = Object.freeze(['standard', 'ironcow']);
 
+/** Steam-cohort slots: separate from the global boards, never merged into them */
+export const STEAM_BOARD_TYPES = Object.freeze(['standard_steam', 'ironcow_steam']);
+
+/** Every slot a cache may hold, in tie-break order */
+export const ALL_BOARD_TYPES = Object.freeze([...RANK_BOARD_TYPES, ...STEAM_BOARD_TYPES]);
+
+const STEAM_SUFFIX = '_steam';
+
 /** A response larger than this is dropped unread; a real one is a few hundred KB at most */
 export const MAX_SERVER_TEXT_LENGTH = 2_000_000;
 
@@ -78,8 +86,28 @@ export function normalizeBoardType(value) {
 }
 
 /**
+ * Readable name of a board slot.
+ * @param {string} type - `standard`, `ironcow`, or a Steam slot (`standard_steam`, `ironcow_steam`)
+ * @returns {string} `Standard`, `Ironcow`, `Standard (Steam)` or `Ironcow (Steam)`
+ */
+export function boardTypeLabel(type) {
+    const steam = isSteamBoardType(type);
+    const base = steam ? type.slice(0, -STEAM_SUFFIX.length) : type;
+    return `${base === 'ironcow' ? 'Ironcow' : 'Standard'}${steam ? ' (Steam)' : ''}`;
+}
+
+/**
+ * Whether a board slot is a Steam-cohort one.
+ * @param {*} type - A board slot
+ * @returns {boolean}
+ */
+export function isSteamBoardType(type) {
+    return typeof type === 'string' && type.endsWith(STEAM_SUFFIX);
+}
+
+/**
  * Cache key of one board.
- * @param {string} type - `standard` or `ironcow`
+ * @param {string} type - `standard`, `ironcow` or a Steam slot
  * @param {string} category - A category slug
  * @returns {string}
  */
@@ -116,7 +144,7 @@ export function categoryLabel(category) {
 /**
  * The board to open next when filling the cache by hand.
  * @param {Object} boards - The cache held
- * @param {'standard'|'ironcow'} type - The board pair on screen
+ * @param {string} type - The board slot on screen (a Steam view passes its own opened map as `boards`)
  * @param {string|null} current - The category on screen, when known
  * @returns {string|null} The first category after `current` (in {@link RANK_CATEGORIES} order, wrapping) with no
  *   cached board; when every board is cached, the one cached longest ago. Never `current` itself.
@@ -183,13 +211,48 @@ export function isNarrowedBoard(data) {
 }
 
 /**
+ * Whether a narrowed message is a Steam cohort view and nothing else. Only the value `steam` is mapped; a
+ * message narrowed by anything else (or by several things) is not a Steam board.
+ * @param {Object} data - `leaderboard_updated` message
+ * @returns {boolean}
+ */
+export function isSteamCohortBoard(data) {
+    if (!isNarrowedBoard(data)) return false;
+    const values = [];
+    for (const key of Object.keys(data)) {
+        if (key === 'gameModeFilter' || !/Filter$/.test(key)) continue;
+        const value = data[key];
+        if (typeof value === 'string' && value && value !== 'all') values.push(value.toLowerCase());
+    }
+    return values.length > 0 && values.every((value) => value === 'steam');
+}
+
+/**
+ * The board slot a player-category message shows, Steam views included.
+ * @param {Object} data - `leaderboard_updated` message
+ * @returns {string|null} `standard`, `ironcow`, `standard_steam`, `ironcow_steam`; null for a guild or unknown
+ *   category, an unattributable type, or any other narrowing
+ */
+export function boardViewOf(data) {
+    if (!data || typeof data !== 'object') return null;
+    const category = data.leaderboardCategory ?? data.leaderboard?.category;
+    if (typeof category !== 'string' || !CATEGORY_SET.has(category)) return null;
+    const type = normalizeBoardType(data.leaderboardType ?? data.leaderboard?.type ?? data.gameModeFilter);
+    if (!type) return null;
+    if (!isNarrowedBoard(data)) return type;
+    return isSteamCohortBoard(data) ? `${type}${STEAM_SUFFIX}` : null;
+}
+
+/**
  * A board the player opened, from the game's `leaderboard_updated` message.
  * @param {Object} data - The message
  * @param {number} now - Timestamp to stamp the board with
+ * @param {{includeSteam?: boolean}} [options] - `includeSteam` files a Steam cohort board under its own slot
  * @returns {{key: string, board: {at: number, source: 'local', rows: Array<[string, number]>}}|null}
- *   Null for a guild board, an unknown category, an unattributable board type, or no usable rows
+ *   Null for a guild board, an unknown category, an unattributable board type, or no usable rows; also for any
+ *   narrowed view unless it is a Steam cohort and `includeSteam` is set
  */
-export function parseLocalBoard(data, now) {
+export function parseLocalBoard(data, now, { includeSteam = false } = {}) {
     if (!data || typeof data !== 'object') return null;
     const board = data.leaderboard;
     const category = data.leaderboardCategory ?? board?.category;
@@ -198,12 +261,16 @@ export function parseLocalBoard(data, now) {
     // `gameModeFilter` on the tab filter the XP tracker already reads
     const type = normalizeBoardType(data.leaderboardType ?? board?.type ?? data.gameModeFilter);
     if (!type) return null;
-    // Badges mean global ranks: a cohort (Steam) or other narrowed view lists a partial top 100 that
-    // must not replace the complete snapshot
-    if (isNarrowedBoard(data)) return null;
+    // Badges mean global ranks: a narrowed view lists a partial top 100 that must not replace the complete
+    // snapshot. A Steam cohort gets a slot of its own when asked for; any other narrowing stays out.
+    let slot = type;
+    if (isNarrowedBoard(data)) {
+        if (!includeSteam || !isSteamCohortBoard(data)) return null;
+        slot = `${type}${STEAM_SUFFIX}`;
+    }
     const rows = readRows(board?.rows, (row) => row.name ?? row.characterName);
     if (!rows.length) return null;
-    return { key: boardKey(type, category), board: { at: now, source: 'local', rows } };
+    return { key: boardKey(slot, category), board: { at: now, source: 'local', rows } };
 }
 
 /**
@@ -276,7 +343,7 @@ export function parseServerText(text, type, now) {
 export function sanitizeBoards(value, now = Date.now()) {
     const out = {};
     if (!value || typeof value !== 'object') return out;
-    for (const type of RANK_BOARD_TYPES) {
+    for (const type of ALL_BOARD_TYPES) {
         for (const category of RANK_CATEGORIES) {
             const key = boardKey(type, category);
             if (!Object.hasOwn(value, key)) continue;
@@ -319,13 +386,14 @@ export function mergeBoards(base, incoming, now = Date.now()) {
 /**
  * Every ranked entry per player, best first.
  * @param {Object} boards - The merged cache
+ * @param {{includeSteam?: boolean}} [options] - Steam slots are skipped unless `includeSteam`; they stay cached
  * @returns {Map<string, Array<{type: string, category: string, rank: number, at: number, source: string}>>}
  *   Keyed by normalized name; each list sorted by rank, then category order, then board type
  */
-export function buildNameIndex(boards) {
+export function buildNameIndex(boards, { includeSteam = false } = {}) {
     const index = new Map();
     const categoryOrder = new Map(RANK_CATEGORIES.map((category, position) => [category, position]));
-    for (const type of RANK_BOARD_TYPES) {
+    for (const type of includeSteam ? ALL_BOARD_TYPES : RANK_BOARD_TYPES) {
         for (const category of RANK_CATEGORIES) {
             const board = boards?.[boardKey(type, category)];
             if (!board) continue;
@@ -343,7 +411,7 @@ export function buildNameIndex(boards) {
             (a, b) =>
                 a.rank - b.rank ||
                 categoryOrder.get(a.category) - categoryOrder.get(b.category) ||
-                RANK_BOARD_TYPES.indexOf(a.type) - RANK_BOARD_TYPES.indexOf(b.type)
+                ALL_BOARD_TYPES.indexOf(a.type) - ALL_BOARD_TYPES.indexOf(b.type)
         );
     }
     return index;

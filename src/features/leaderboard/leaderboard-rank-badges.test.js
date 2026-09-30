@@ -3,6 +3,7 @@ import { describe, test, expect, beforeEach, afterEach, vi } from 'vitest';
 
 const game = vi.hoisted(() => ({
     mode: 'off',
+    steam: false,
     saved: {},
     wsHandlers: {},
     settingWatchers: [],
@@ -23,7 +24,7 @@ vi.mock('../../core/websocket.js', () => ({
 }));
 vi.mock('../../core/config.js', () => ({
     default: {
-        getSettingValue: () => game.mode,
+        getSettingValue: (key) => (key === 'leaderboardRankBadgesSteam' ? game.steam : game.mode),
         onSettingChange: (key, callback) => {
             game.settingWatchers.push(callback);
             return () => {
@@ -90,6 +91,7 @@ describe('leaderboard rank badges', () => {
         vi.useFakeTimers();
         vi.setSystemTime(new Date('2026-09-30T12:00:00Z'));
         game.mode = 'off';
+        game.steam = false;
         game.saved = {};
         game.wsHandlers = {};
         game.settingWatchers = [];
@@ -116,7 +118,7 @@ describe('leaderboard rank badges', () => {
         expect(badges()).toHaveLength(0);
         expect(document.getElementById('toolasha-rank-badge-style')).toBeNull();
         // Only the setting watch exists, so switching the select can start it live
-        expect(game.settingWatchers).toHaveLength(1);
+        expect(game.settingWatchers).toHaveLength(2);
     });
 
     test('a reused name element that switches player gets the new player badge, or none', async () => {
@@ -372,6 +374,7 @@ describe('next board button', () => {
     beforeEach(() => {
         vi.useFakeTimers();
         vi.setSystemTime(new Date('2026-09-30T12:00:00Z'));
+        game.steam = false;
         game.saved = {};
         game.wsHandlers = {};
         game.settingWatchers = [];
@@ -426,18 +429,67 @@ describe('next board button', () => {
         expect(bar().style.display).toBe('flex');
     });
 
-    test('is hidden on a Steam cohort tab, whose boards never feed the global cache', async () => {
+    test('shows on a Steam cohort tab, counting Steam boards opened, and stays hidden on Guilds', async () => {
         game.mode = 'local';
         buildPanel();
         await leaderboardRankBadges.initialize();
 
         game.wsHandlers.leaderboard_updated({ ...board('total_level'), playerCohortFilter: 'steam' });
         await flush();
+        expect(bar().style.display).toBe('flex');
+        expect(bar().textContent).toContain('1/21 Steam boards opened');
+        expect(bar().textContent).toContain('Next board ▸ Milking');
+
+        game.wsHandlers.leaderboard_updated({
+            leaderboardCategory: 'guild_points',
+            playerCohortFilter: 'steam',
+            leaderboard: { rows: [{ name: 'Some Guild', rank: 1 }] },
+        });
+        await flush();
         expect(bar().style.display).toBe('none');
 
         game.wsHandlers.leaderboard_updated(board('total_level'));
         await flush();
         expect(bar().style.display).toBe('flex');
+        expect(bar().textContent).toContain('boards cached');
+    });
+
+    test('is hidden on a view narrowed by something other than Steam', async () => {
+        game.mode = 'local';
+        buildPanel();
+        await leaderboardRankBadges.initialize();
+        game.wsHandlers.leaderboard_updated({ ...board('total_level'), playerCohortFilter: 'other' });
+        await flush();
+        expect(bar().style.display).toBe('none');
+    });
+
+    test('Next on a Steam tab follows the Steam view opened map, not the global cache', async () => {
+        game.mode = 'local';
+        const { clicks } = buildPanel();
+        await leaderboardRankBadges.initialize();
+        const button = bar().querySelector('button');
+        // Global boards known for total level and milking; the Steam view has opened only total level
+        game.wsHandlers.leaderboard_updated(board('total_level'));
+        game.wsHandlers.leaderboard_updated(board('milking'));
+        game.wsHandlers.leaderboard_updated({ ...board('total_level'), playerCohortFilter: 'steam' });
+        await flush();
+        expect(button.textContent).toContain('Milking');
+
+        button.click();
+        expect(clicks).toEqual(['Milking']);
+        game.wsHandlers.leaderboard_updated({ ...board('milking'), playerCohortFilter: 'steam' });
+        await flush();
+        expect(bar().textContent).toContain('2/21 Steam boards opened');
+        expect(button.textContent).toContain('Foraging');
+
+        // Ironcow (Steam) is its own view
+        game.wsHandlers.leaderboard_updated({
+            ...board('total_level'),
+            gameModeFilter: 'ironcow',
+            playerCohortFilter: 'steam',
+        });
+        await flush();
+        expect(bar().textContent).toContain('1/21 Steam boards opened');
     });
 
     test('insertion is idempotent across re-renders', async () => {
@@ -617,5 +669,90 @@ describe('next board button', () => {
         expect(bar()).not.toBeNull();
         leaderboardRankBadges.cleanup();
         expect(bar()).toBeNull();
+    });
+});
+
+describe('Steam boards in badges', () => {
+    const steamBoard = (rows, extra = {}) => ({
+        leaderboardCategory: 'milking',
+        gameModeFilter: 'standard',
+        playerCohortFilter: 'steam',
+        leaderboard: { rows },
+        ...extra,
+    });
+
+    beforeEach(() => {
+        vi.useFakeTimers();
+        vi.setSystemTime(new Date('2026-09-30T12:00:00Z'));
+        game.mode = 'local';
+        game.steam = false;
+        game.saved = {};
+        game.wsHandlers = {};
+        game.settingWatchers = [];
+        game.classHandlers = [];
+        document.body.innerHTML = '';
+        document.head.innerHTML = '';
+    });
+
+    afterEach(() => {
+        leaderboardRankBadges.cleanup();
+        vi.useRealTimers();
+    });
+
+    test('with the option off a Steam board message changes no badge and stores nothing', async () => {
+        nameEl('Alice');
+        await leaderboardRankBadges.initialize();
+        game.wsHandlers.leaderboard_updated(steamBoard([{ name: 'Alice', rank: 2 }]));
+        await flush();
+        expect(badges()).toHaveLength(0);
+        expect(game.saved.rankBoards).toBeUndefined();
+    });
+
+    test('with it on the Steam rank is labelled Steam and leaves the global slot alone', async () => {
+        game.steam = true;
+        nameEl('Alice');
+        await leaderboardRankBadges.initialize();
+        game.wsHandlers.leaderboard_updated({
+            leaderboardCategory: 'milking',
+            gameModeFilter: 'standard',
+            leaderboard: { rows: [{ name: 'Alice', rank: 40 }] },
+        });
+        game.wsHandlers.leaderboard_updated(steamBoard([{ name: 'Alice', rank: 2 }]));
+        await flush();
+
+        expect(badges()[0].textContent).toContain('2');
+        expect(badges()[0].title).toContain('Standard (Steam) rank 2');
+        expect(badges()[0].title).toContain('Standard rank 40');
+        expect(game.saved.rankBoards['standard|milking'].rows).toEqual([['Alice', 40]]);
+        expect(game.saved.rankBoards['standard_steam|milking'].rows).toEqual([['Alice', 2]]);
+    });
+
+    test('another kind of narrowing stays out even with the option on', async () => {
+        game.steam = true;
+        nameEl('Alice');
+        await leaderboardRankBadges.initialize();
+        game.wsHandlers.leaderboard_updated(steamBoard([{ name: 'Alice', rank: 2 }], { playerCohortFilter: 'other' }));
+        await flush();
+        expect(badges()).toHaveLength(0);
+    });
+
+    test('toggling the setting re-renders: stored Steam ranks hide when off and return when on', async () => {
+        game.steam = true;
+        nameEl('Alice');
+        await leaderboardRankBadges.initialize();
+        game.wsHandlers.leaderboard_updated(steamBoard([{ name: 'Alice', rank: 2 }]));
+        await flush();
+        expect(badges()).toHaveLength(1);
+
+        game.steam = false;
+        for (const callback of game.settingWatchers) callback();
+        await vi.advanceTimersByTimeAsync(0);
+        expect(badges()).toHaveLength(0);
+        expect(game.saved.rankBoards['standard_steam|milking']).toBeDefined();
+
+        game.steam = true;
+        for (const callback of game.settingWatchers) callback();
+        await vi.advanceTimersByTimeAsync(0);
+        expect(badges()).toHaveLength(1);
     });
 });

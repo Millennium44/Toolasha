@@ -21,7 +21,11 @@
  * In local mode the game's leaderboard panel also gets a "Next board" button: each real click
  * makes exactly one click on the game's own tab for the next uncached category (on the standard/
  * ironcow board already showing), so the cache can be filled by pressing it repeatedly. Nothing
- * advances on its own.
+ * advances on its own. On a Steam cohort tab the button cycles that Steam board's categories instead,
+ * judged by which ones were opened this session (the leaderboard XP tracker records them for EXP history).
+ *
+ * A second setting, `leaderboardRankBadgesSteam` (default off, Local only), files Steam cohort boards
+ * under their own slots (`standard_steam`, `ironcow_steam`) and lets badges use them, labelled Steam.
  *
  * The badge shows one entry per player: their best rank across every board.
  * The tooltip lists up to five, each with the age of its snapshot.
@@ -41,9 +45,13 @@ import {
     RANK_CATEGORIES,
     bestEntry,
     boardKey,
+    boardTypeLabel,
+    boardViewOf,
     buildNameIndex,
     categoryLabel,
     isNarrowedBoard,
+    isSteamBoardType,
+    isSteamCohortBoard,
     mergeBoards,
     nextBoardCategory,
     normalizeName,
@@ -54,6 +62,7 @@ import {
 } from '../../utils/rank-badge-data.js';
 
 const SETTING_KEY = 'leaderboardRankBadges';
+const STEAM_SETTING_KEY = 'leaderboardRankBadgesSteam';
 const STORE_NAME = 'leaderboardHistory';
 const STORAGE_KEY = 'rankBoards';
 
@@ -111,7 +120,7 @@ export function describeEntries(entries, now) {
     return entries
         .slice(0, TOOLTIP_ENTRIES)
         .map((entry) => {
-            const board = entry.type === 'ironcow' ? 'Ironcow' : 'Standard';
+            const board = boardTypeLabel(entry.type);
             const age = formatRelativeTime(Math.max(0, now - entry.at));
             const when = age === 'Just now' ? 'as of just now' : `as of ${age} ago`;
             return `${categoryLabel(entry.category)} · ${board} rank ${entry.rank} (${when})`;
@@ -177,6 +186,9 @@ class LeaderboardRankBadges {
         this.boardCategory = null;
         // False once the open board is one the skill categories do not cover (the Guilds tab's boards)
         this.playerBoardOpen = true;
+        // Categories opened per Steam view this session, keyed like boards ("standard_steam|milking" -> {at})
+        this.opened = {};
+        this.includeSteam = false;
         this.runId = 0;
         this.mode = 'off';
         this.boards = {};
@@ -227,9 +239,14 @@ class LeaderboardRankBadges {
      */
     async initialize() {
         this.unwatchSetting?.();
-        this.unwatchSetting = config.onSettingChange(SETTING_KEY, () => {
+        const onChange = () => {
             this.restart().catch((error) => console.error('[LeaderboardRankBadges] Restart failed:', error));
-        });
+        };
+        const unwatch = [
+            config.onSettingChange(SETTING_KEY, onChange),
+            config.onSettingChange(STEAM_SETTING_KEY, onChange),
+        ];
+        this.unwatchSetting = () => unwatch.forEach((undo) => undo?.());
         await this.restart();
     }
 
@@ -242,6 +259,7 @@ class LeaderboardRankBadges {
     async restart() {
         this.stop();
         this.mode = this.readMode();
+        this.includeSteam = this.mode === 'local' && config.getSettingValue(STEAM_SETTING_KEY, false) === true;
         if (this.mode === 'off') return;
         const runId = ++this.runId;
 
@@ -297,13 +315,22 @@ class LeaderboardRankBadges {
     onLocalBoard(data) {
         // Judged before parsing: a guild board never parses, yet it is what decides whether the bar applies
         if (typeof data?.leaderboardCategory === 'string') {
-            // A Steam cohort tab never feeds the global cache, so cycling it would fill nothing
-            this.playerBoardOpen = RANK_CATEGORIES.includes(data.leaderboardCategory) && !isNarrowedBoard(data);
+            // The view covers Standard/Ironcow and their Steam cohorts; other narrowing has no tab to cycle
+            const view = boardViewOf(data);
+            this.playerBoardOpen =
+                RANK_CATEGORIES.includes(data.leaderboardCategory) &&
+                (!isNarrowedBoard(data) || isSteamCohortBoard(data));
+            if (view) {
+                this.boardType = view;
+                this.boardCategory = data.leaderboardCategory;
+                if (isSteamBoardType(view)) {
+                    this.opened[boardKey(view, data.leaderboardCategory)] = { at: Date.now() };
+                }
+            }
             this.refreshCycleBars();
         }
-        const parsed = parseLocalBoard(data, Date.now());
+        const parsed = parseLocalBoard(data, Date.now(), { includeSteam: this.includeSteam });
         if (!parsed) return;
-        [this.boardType, this.boardCategory] = parsed.key.split('|');
         this.adopt({ [parsed.key]: parsed.board });
         this.refreshCycleBars();
     }
@@ -345,16 +372,34 @@ class LeaderboardRankBadges {
         this.refreshCycleBars();
     }
 
+    /**
+     * What "next board" is judged against: the badge cache on a global view, but the session's opened map on a
+     * Steam view (Steam boards feed EXP history, not the global cache).
+     * @returns {Object} Boards keyed "type|category" with an `at`
+     */
+    cycleSource() {
+        return isSteamBoardType(this.boardType) ? this.opened : this.boards;
+    }
+
     /** Redraw the label and the cached count of every bar. */
     refreshCycleBars() {
-        const target = nextBoardCategory(this.boards, this.boardType, this.boardCategory);
-        const cached = RANK_CATEGORIES.filter((c) => this.boards[boardKey(this.boardType, c)]);
-        const oldest = Math.min(...cached.map((c) => this.boards[boardKey(this.boardType, c)].at));
+        const source = this.cycleSource();
+        const steam = isSteamBoardType(this.boardType);
+        const target = nextBoardCategory(source, this.boardType, this.boardCategory);
+        const cached = RANK_CATEGORIES.filter((c) => source[boardKey(this.boardType, c)]);
+        const oldest = Math.min(...cached.map((c) => source[boardKey(this.boardType, c)].at));
         for (const bar of document.querySelectorAll(`[${BAR_ATTR}]`)) {
             // Player skill boards do not exist on the Guilds tab, so the button would hunt for a missing tab
             bar.style.display = this.playerBoardOpen ? 'flex' : 'none';
             const [button, status] = bar.children;
             button.textContent = `Next board ▸ ${target ? categoryLabel(target) : '-'}`;
+            if (steam) {
+                status.textContent = `${cached.length}/${RANK_CATEGORIES.length} Steam boards opened`;
+                status.title =
+                    `${boardTypeLabel(this.boardType)} boards opened since the game loaded. Each one you open is ` +
+                    'recorded by the leaderboard XP tracker, so this feeds EXP history.';
+                continue;
+            }
             status.textContent = `${cached.length}/${RANK_CATEGORIES.length} boards cached`;
             status.title = cached.length
                 ? `Oldest ${this.boardType} board: ${formatRelativeTime(Math.max(0, Date.now() - oldest))} ago`
@@ -368,7 +413,7 @@ class LeaderboardRankBadges {
      * @param {Element} note - Where a failure is said
      */
     openNextBoard(anchor, note) {
-        const target = nextBoardCategory(this.boards, this.boardType, this.boardCategory);
+        const target = nextBoardCategory(this.cycleSource(), this.boardType, this.boardCategory);
         note.textContent = '';
         if (!target) return;
         const tab = findCategoryTab(anchor, target);
@@ -430,7 +475,7 @@ class LeaderboardRankBadges {
     }
 
     rebuildIndex() {
-        this.index = buildNameIndex(this.boards);
+        this.index = buildNameIndex(this.boards, { includeSteam: this.includeSteam });
     }
 
     installStyle() {
@@ -537,6 +582,7 @@ class LeaderboardRankBadges {
         this.unwatchSetting?.();
         this.unwatchSetting = null;
         this.stop();
+        this.opened = {};
         this.mode = 'off';
     }
 }
