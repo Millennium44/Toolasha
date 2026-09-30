@@ -46,6 +46,8 @@ let lastEventAt = null;
 
 /** The character's own food haste and drink concentration, from the last `new_battle` */
 let haste = { foodHaste: 0, drinkConcentration: 0 };
+/** The character's own consumable slots, from `new_battle`; null until seen (the planner then assumes 3 + 3) */
+let slots = null;
 
 /** What the MP optimizer panel section was last asked for; null until typed, so the measured rate fills it */
 let optimTarget = null;
@@ -58,6 +60,16 @@ let optimTarget = null;
  * impossible to measure a long one.
  */
 let tally = newManaTally();
+
+/**
+ * Forget the supply planner's per-character state: the typed target, haste and slots.
+ * Called on a character switch, and by tests between cases.
+ */
+export function resetMpPlanner() {
+    haste = { foodHaste: 0, drinkConcentration: 0 };
+    slots = null;
+    optimTarget = null;
+}
 
 /** Start the count again from here */
 export function resetManaTally() {
@@ -99,9 +111,11 @@ export function mpSupplyPlan(targetMpPerMinute) {
         priceOf: (hrid) => resolveItemPrice(hrid, { side: 'buy' }).price,
         ...haste,
     });
+    // A character without a maxed pouch may hold a single food: a plan that needs two must not be offered
+    const options = slots ? { maxSlots: slots } : {};
     return {
-        best: findBestOptimAllocation(candidates, targetMpPerMinute),
-        max: findMaxMpAllocation(candidates),
+        best: findBestOptimAllocation(candidates, targetMpPerMinute, options),
+        max: findMaxMpAllocation(candidates, options),
         candidates: candidates.length,
     };
 }
@@ -155,6 +169,9 @@ export default {
             const stats = self?.combatDetails?.combatStats;
             if (stats) {
                 haste = { foodHaste: stats.foodHaste || 0, drinkConcentration: stats.drinkConcentration || 0 };
+                if (Number.isFinite(stats.foodSlots) && Number.isFinite(stats.drinkSlots)) {
+                    slots = { food: stats.foodSlots, drink: stats.drinkSlots };
+                }
             }
         };
         onAbility = (data) => {
@@ -182,8 +199,7 @@ export default {
         onCharacterSwitching = () => {
             resetManaTally();
             // Another character's haste would price this one's items wrongly
-            haste = { foodHaste: 0, drinkConcentration: 0 };
-            optimTarget = null;
+            resetMpPlanner();
         };
 
         webSocketHook.on('new_battle', onNewBattle);
