@@ -1229,6 +1229,21 @@ describe('confirming from the strip', () => {
             expect(confirmBtn().disabled).toBe(true);
         });
 
+        test('the player pressing the armed game button during the wait is the only sale', async () => {
+            // The menu stays open with the armed label until the server answers
+            const menu = openMenu();
+            vendorRun();
+
+            confirmBtn().click();
+            menu.querySelector('.Button_sell__x').click();
+            await vi.advanceTimersByTimeAsync(1200);
+
+            expect(armClicks).toBe(1);
+            expect(gameClicks).toBe(1);
+            expect(bulkSell._confirmSent()).toBe(false);
+            expect(bulkSell.confirmNote).toMatch(/clicked while Confirm waited/);
+        });
+
         test('the walk still advances only when the game closes the menu', async () => {
             const menu = openMenu();
             vendorRun();
