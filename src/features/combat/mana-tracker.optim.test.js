@@ -146,6 +146,51 @@ describe('measured spend', () => {
     });
 });
 
+describe('measured spend gaps', () => {
+    test('is withheld while an observed ability has no stated cost', () => {
+        spendSteadily();
+        expect(manaPerMinuteMeasured()).toBe(600);
+        game.handlers['battle_consumable_ability_updated']({ ability: '/abilities/mystery' });
+
+        expect(manaPerMinuteMeasured()).toBe(null);
+    });
+
+    test('the card says why and leaves the target to the user', () => {
+        spendSteadily();
+        game.handlers['battle_consumable_ability_updated']({ ability: '/abilities/mystery' });
+        manaPanel.show();
+
+        expect(text()).toContain('unknown ability costs');
+        expect(manaPanel.panel.querySelector('[data-mp-target]').value).toBe('');
+        expect(text()).not.toContain('could not be drawn');
+    });
+
+    test('time the tracker was disabled is not part of the rate', () => {
+        spendSteadily();
+        manaTracker.cleanup();
+        vi.advanceTimersByTime(2 * 60 * 60_000);
+        manaTracker.initialize();
+        expect(manaPerMinuteMeasured()).toBe(600);
+
+        // The next cast opens a fresh stretch and is its baseline; 60 s more of casts adds 6 x 100 mana
+        for (let i = 0; i < 7; i++) {
+            game.handlers['battle_consumable_ability_updated']({ ability: '/abilities/fireball' });
+            if (i < 6) vi.advanceTimersByTime(10_000);
+        }
+        // 120 s + 60 s observed, 1,200 + 600 mana
+        expect(manaPerMinuteMeasured()).toBe(600);
+    });
+
+    test('a reset clears the banked time too', () => {
+        spendSteadily();
+        manaTracker.cleanup();
+        resetManaTally();
+        manaTracker.initialize();
+
+        expect(manaPerMinuteMeasured()).toBe(null);
+    });
+});
+
 describe('the MP supply section', () => {
     test('with nothing measured it asks for a target and still draws without failing', () => {
         manaPanel.show();

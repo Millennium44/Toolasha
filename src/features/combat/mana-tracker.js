@@ -45,9 +45,16 @@ const MIN_RATE_SPAN_MS = 60_000;
 let firstEventAt = null;
 let lastEventAt = null;
 /**
+ * Observed time banked from earlier stretches of the tally. The tracker being disabled pauses the clock:
+ * `cleanup()` banks the stretch so far and clears `firstEventAt`, and the next event opens a new one, so
+ * the disabled interval never reaches the rate's denominator.
+ */
+let bankedMs = 0;
+/**
  * Mana already counted when the clock started. A cast that opens the span (tracking began mid-fight, with
  * no `new_battle` before it) marks the start of the interval rather than filling it, so it stays out of
- * the rate's numerator; a `new_battle` starts the clock with none.
+ * the rate's numerator; a `new_battle` starts the clock with none. A stretch resumed after a pause adds its
+ * opening cast here the same way.
  */
 let baselineMana = 0;
 
@@ -83,7 +90,15 @@ export function resetManaTally() {
     tally = newManaTally();
     firstEventAt = null;
     lastEventAt = null;
+    bankedMs = 0;
     baselineMana = 0;
+}
+
+/** Pause the span clock: bank the stretch observed so far; the next event opens a new one */
+function pauseSpan() {
+    if (firstEventAt === null) return;
+    bankedMs += lastEventAt - firstEventAt;
+    firstEventAt = null;
 }
 
 /**
@@ -94,21 +109,25 @@ export function resetManaTally() {
 function markEvent(openingMana = 0, now = Date.now()) {
     if (firstEventAt === null) {
         firstEventAt = now;
-        baselineMana = openingMana;
+        baselineMana += openingMana;
     }
     lastEventAt = now;
 }
 
 /**
- * Mana spent per minute of wall-clock time between the first and last counted
- * event, idle gaps between fights included — the rate consumables must sustain.
- * @returns {number|null} Null until a minute has been observed
+ * Mana spent per minute of observed wall-clock time, from the first counted event to the last, idle gaps
+ * between fights included and time the tracker was disabled excluded — the rate consumables must sustain.
+ * @returns {number|null} Null until a minute has been observed, and while any observed ability has no
+ *   stated cost: its casts add no mana, so the known subtotal would understate the spend
  */
 export function manaPerMinuteMeasured() {
-    if (firstEventAt === null || lastEventAt - firstEventAt < MIN_RATE_SPAN_MS) return null;
-    const mana = manaSpend().mana - baselineMana;
+    const observedMs = bankedMs + (firstEventAt === null ? 0 : lastEventAt - firstEventAt);
+    if (observedMs < MIN_RATE_SPAN_MS) return null;
+    const summary = manaSpend();
+    if (summary.incomplete) return null;
+    const mana = summary.mana - baselineMana;
     if (!(mana > 0)) return null;
-    return (mana / (lastEventAt - firstEventAt)) * 60_000;
+    return (mana / observedMs) * 60_000;
 }
 
 /**
@@ -228,6 +247,7 @@ export default {
         onNewBattle = null;
         onAbility = null;
         onCharacterSwitching = null;
+        pauseSpan();
     },
 };
 
@@ -314,6 +334,10 @@ function drawMpSupply(body) {
     controls.append(label, input, go);
     card.appendChild(controls);
 
+    const unknownCosts = measured === null && manaSpend().incomplete;
+    if (unknownCosts) {
+        card.appendChild(panelNote('Measured spend unavailable: unknown ability costs. Enter a target to plan for.'));
+    }
     if (measured !== null) {
         card.appendChild(
             panelLine(
@@ -330,7 +354,7 @@ function drawMpSupply(body) {
         card.appendChild(panelNote('No priced mana food or drink to choose from yet. Open the market to load prices.'));
         return;
     }
-    if (target === null) {
+    if (target === null && !unknownCosts) {
         card.appendChild(panelNote('Enter a target, or fight for a minute so the measured spend can fill it in.'));
     } else if (plan.best) {
         drawAllocation(card, plan.best);
