@@ -767,11 +767,15 @@ export function attributeTick(tick, state, options) {
     // shared between the swingers — never the bystanders a party-wide mana
     // restore put in the tick.
     const collisionThreshold = options?.collisionThreshold ?? COLLISION_SPLIT_THRESHOLD;
-    const swingerShare = swings.size > 0 ? 1 / swings.size : 0;
+    // Shared by swing count: a counter up by 2 coalesced two attacks, and owns
+    // two of three splats against a counter up by 1
+    const swingTotal = [...swings.values()].reduce((sum, count) => sum + (count > 0 ? count : 0), 0);
     const swingOwners = (swinger) =>
-        swings.size <= 1 || present.length <= collisionThreshold
+        swings.size <= 1 || present.length <= collisionThreshold || swingTotal <= 0
             ? [{ index: swinger, weight: 1 }]
-            : [...swings.keys()].map((index) => ({ index, weight: swingerShare }));
+            : [...swings]
+                  .filter(([, count]) => count > 0)
+                  .map(([index, count]) => ({ index, weight: count / swingTotal }));
     const nonSwingers = present.filter((index) => !swung.has(index));
     const dotOwners =
         countersKnown && swung.size > 0 && nonSwingers.length === 1
