@@ -967,6 +967,12 @@ export function attributeTick(tick, state, options) {
             }
             spendShared(owners);
             for (const owner of owners) events.push(swingEvent(owner, index, perSplat, isCrit));
+            // A capped splat's owners can sum to under one: the rise was paid, so the remainder belongs to no
+            // swing and no hit, but the health it took is real and stays in the team total
+            if (owners.length > 1 && perSplat > 0) {
+                const owned = owners.reduce((sum, owner) => sum + owner.weight, 0);
+                unattributed(index, perSplat * Math.max(0, 1 - owned), false, false);
+            }
         });
 
         if (isTick) {
