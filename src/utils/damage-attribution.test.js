@@ -1246,6 +1246,23 @@ describe('a paid swing in a crowd tick', () => {
         expect(tally['2'].damage + tally['12'].damage).toBeCloseTo(8758, 6);
     });
 
+    test('a counter up by two coalesced two attacks and takes two shares to one', () => {
+        const both = {
+            ...cast,
+            pMap: { ...cast.pMap, 2: unit(2202, 2400, 2638, 5, '/abilities/frost_surge', 1055578309, 0) },
+        };
+        const state = newAttributionState();
+        attributeTick(baseline, state, { soloFallback: false, unattributed: true });
+        noteActions(state, baseline.pMap);
+        const events = attributeTick(both, state, { soloFallback: false, unattributed: true }).filter(
+            (event) => !event.isKill
+        );
+
+        const tally = foldEvents({}, events, { filterNonDamaging: false });
+        expect(tally['2'].damage).toBeCloseTo(2 * tally['12'].damage, 6);
+        expect(tally['2'].damage + tally['12'].damage).toBeCloseTo(8758, 6);
+    });
+
     test('leaves the tick’s total exactly what the monsters lost', () => {
         const team = foldTeam({}, replay());
         expect(team.damage).toBeCloseTo(8758, 6);
