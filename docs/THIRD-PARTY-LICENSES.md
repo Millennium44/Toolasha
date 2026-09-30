@@ -147,7 +147,7 @@ IndexedDB layer, and the WebSocket interception dropped in favour of Toolasha's 
 hook — but the market history API, the volume-split estimate, and the shape of the price
 panel are Q7's work.
 
-<https://greasyfork.org/scripts/531109>
+<https://greasyfork.org/scripts/569362>
 
 ```text
 MIT License
