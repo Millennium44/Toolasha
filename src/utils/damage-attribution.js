@@ -916,7 +916,9 @@ export function attributeTick(tick, state, options) {
         // A bleed cannot crit, so a crit belongs to the last counted splat
         paid.forEach((taken, n) => {
             const isCrit = crit && counted === 0 && n === paid.length - 1;
-            const owners = swingOwners(taken);
+            // The pool as it stood before this monster's first rise: consuming a swing per rise must not shift
+            // the shares between the monster's own splats
+            const owners = swingOwners({ swinger: taken.swinger, pool: paid[0].pool });
             // The killing splat is the last rise; when it was paid and has one owner the kill is theirs
             if (killEvent && killEvent.killerIndex === null && unpaid === 0 && n === paid.length - 1) {
                 if (owners.length === 1) killEvent.killerIndex = owners[0].index;
