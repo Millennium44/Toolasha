@@ -362,8 +362,13 @@ class LeaderboardXPTracker {
                 purged = true;
             }
         }
-        if (purged) this.history.save({ overwrite: true });
-        if (purgeDue) storage.set(LEGACY_PURGE_DONE_KEY, true, STORE_NAME);
+        // The flag is spent only once the cleaned record is on disk: a failed
+        // overwrite with a landed flag would leave the junk unpurgeable forever.
+        if (purgeDue) {
+            const cleanedWritten = purged ? await this.history.save({ overwrite: true }) : true;
+            if (!stillOurs(ticket)) return;
+            if (cleanedWritten) await storage.set(LEGACY_PURGE_DONE_KEY, true, STORE_NAME);
+        }
 
         this._boundOnLeaderboardUpdated = (data) => this._onLeaderboardUpdated(data);
         webSocketHook.on('leaderboard_updated', this._boundOnLeaderboardUpdated);
