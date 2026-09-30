@@ -119,6 +119,37 @@ describe('leaderboard rank badges', () => {
         expect(game.settingWatchers).toHaveLength(1);
     });
 
+    test('a reused name element that switches player gets the new player badge, or none', async () => {
+        game.mode = 'local';
+        await leaderboardRankBadges.initialize();
+        const el = nameEl('Alice');
+        game.wsHandlers.leaderboard_updated({
+            leaderboardCategory: 'milking',
+            gameModeFilter: 'standard',
+            leaderboard: {
+                rows: [
+                    { name: 'Alice', rank: 7 },
+                    { name: 'Bob', rank: 40 },
+                ],
+            },
+        });
+        await flush();
+        expect(el.nextElementSibling.textContent).toContain('7');
+
+        el.setAttribute('data-name', 'Bob');
+        el.textContent = 'Bob';
+        await flush();
+        await vi.advanceTimersByTimeAsync(10);
+        expect(badges()).toHaveLength(1);
+        expect(el.nextElementSibling.textContent).toContain('40');
+
+        el.setAttribute('data-name', 'Nobody');
+        el.textContent = 'Nobody';
+        await flush();
+        await vi.advanceTimersByTimeAsync(10);
+        expect(badges()).toHaveLength(0);
+    });
+
     test('Local only draws a badge from a board the player opens, and never fetches', async () => {
         game.mode = 'local';
         await leaderboardRankBadges.initialize();

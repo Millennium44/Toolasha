@@ -180,6 +180,38 @@ class LeaderboardRankBadges {
         this.teardown = [];
         this.unwatchSetting = null;
         this.fetching = false;
+        this.nameWatcher = null;
+    }
+
+    /**
+     * Watch one decorated name element. React reuses these elements across players (a profile switching
+     * characters rewrites the text or `data-name` in place), and the class observer only sees insertions.
+     * One shared observer, scoped to the name elements themselves.
+     * @param {Element} nameEl - A `CharacterName_name` element
+     */
+    watchName(nameEl) {
+        if (typeof MutationObserver === 'undefined') return;
+        if (!this.nameWatcher) {
+            this.nameWatcher = new MutationObserver((records) => {
+                const seen = new Set();
+                for (const record of records) {
+                    const target = record.target.nodeType === 1 ? record.target : record.target.parentElement;
+                    const el = target?.closest?.(NAME_SELECTOR);
+                    if (el && !seen.has(el)) {
+                        seen.add(el);
+                        this.decorate(el);
+                    }
+                }
+            });
+        }
+        // Re-observing an element already watched just replaces its options
+        this.nameWatcher.observe(nameEl, {
+            characterData: true,
+            childList: true,
+            subtree: true,
+            attributes: true,
+            attributeFilter: ['data-name'],
+        });
     }
 
     /**
@@ -402,6 +434,7 @@ class LeaderboardRankBadges {
             existing?.remove();
             return;
         }
+        this.watchName(nameEl);
         const name = nameFrom(nameEl);
         if (!name) {
             existing?.remove();
@@ -465,6 +498,8 @@ class LeaderboardRankBadges {
         for (const undo of this.teardown) undo();
         this.teardown = [];
         this.fetching = false;
+        this.nameWatcher?.disconnect();
+        this.nameWatcher = null;
         document.querySelectorAll(`[${BADGE_ATTR}], [${BAR_ATTR}]`).forEach((el) => el.remove());
         this.boardType = 'standard';
         this.boardCategory = null;
