@@ -220,6 +220,7 @@ describe('leaderboard rank badges', () => {
             'https://mwi-guild.43.167.210.211.sslip.io/api/v1/leaderboards?leaderboardType=ironcow',
         ]);
         expect(game.requests.every((r) => r.method === 'GET' && !r.body && !r.headers)).toBe(true);
+        expect(game.requests.every((r) => r.anonymous === true)).toBe(true);
 
         await vi.advanceTimersByTimeAsync(RANK_SERVER_INTERVAL_MS);
         expect(game.requests).toHaveLength(4);

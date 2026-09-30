@@ -340,6 +340,8 @@ class LeaderboardRankBadges {
                     const response = await httpRequest({
                         method: 'GET',
                         url: `${RANK_SERVER_URL}?leaderboardType=${encodeURIComponent(type)}`,
+                        // Third-party host: it must not set or receive cookies on the poll
+                        anonymous: true,
                     });
                     if (response.status < 200 || response.status >= 300) continue;
                     text = response.text;

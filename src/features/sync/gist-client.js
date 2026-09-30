@@ -109,16 +109,17 @@ function getGMRequest() {
  * @param {string} options.url - Absolute URL
  * @param {Record<string, string>} [options.headers] - Request headers
  * @param {string} [options.body] - Request body
+ * @param {boolean} [options.anonymous] - Send and store no cookies (GM `anonymous`, fetch `credentials: 'omit'`)
  * @returns {Promise<{status: number, text: string, headers: Record<string, string>}>} Response
  */
-export async function httpRequest({ method, url, headers = {}, body }) {
+export async function httpRequest({ method, url, headers = {}, body, anonymous = false }) {
     const gmRequest = getGMRequest();
 
     if (!gmRequest) {
         // No userscript manager (tests, or a bare page). `fetch` is subject to
         // the page's CSP, so this path can fail where the GM one would not.
         try {
-            const response = await fetch(url, { method, headers, body });
+            const response = await fetch(url, { method, headers, body, ...(anonymous ? { credentials: 'omit' } : {}) });
             const text = await response.text();
             const collected = {};
             response.headers?.forEach?.((value, name) => {
@@ -146,6 +147,7 @@ export async function httpRequest({ method, url, headers = {}, body }) {
             url,
             headers,
             data: body,
+            ...(anonymous ? { anonymous: true } : {}),
             timeout: REQUEST_TIMEOUT_MS,
             onload: (response) =>
                 finish(resolve, {
