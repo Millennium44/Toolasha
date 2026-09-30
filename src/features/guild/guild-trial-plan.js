@@ -380,7 +380,10 @@ function tokenDiagnostics(plan, lines, trialKey, rows = []) {
     // name matcher accepts for one member (a truncated one, say) are one player
     lines.forEach((line, n) => {
         const row = matchPlanName(line.player, rows);
-        effective.set(String(row?.name || line.player || `#${n}`).toLowerCase(), line);
+        // An absent member resolves against the names already seen, as the
+        // roster would resolve them, so another spelling of them replaces too
+        const seen = row ? null : [...effective.keys()].find((name) => matchPlanName(line.player, [{ name }]));
+        effective.set(seen || String(row?.name || line.player || `#${n}`).toLowerCase(), line);
     });
     const unknownTokens = [];
     const ambiguousTokens = [];
@@ -422,8 +425,9 @@ export function comparePlan(plan, participants = [], abilityDetailMap = {}, tria
         if (!row) {
             // A later line for the same absent player replaces the earlier one, as it
             // does for a matched player, so one person is reported once
-            const absent = String(line.player || '').toLowerCase();
-            const held = notInTrial.findIndex((name) => String(name).toLowerCase() === absent);
+            // Matched as the roster matches names, so a truncated and a full
+            // spelling of one absent member are one person
+            const held = notInTrial.findIndex((name) => matchPlanName(line.player, [{ name }]));
             if (held >= 0) notInTrial[held] = line.player;
             else notInTrial.push(line.player);
             continue;

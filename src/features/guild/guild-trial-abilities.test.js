@@ -503,6 +503,20 @@ describe('the guild name arrives after the module does', () => {
         expect(next.state(GAME).capturedCount).toBe(1);
     });
 
+    test('the trial the session was compared as survives a reload', async () => {
+        const first = new GuildTrialAbilities();
+        await first.initialize('Cats');
+        first.setRoster(['Alice', 'Bob']);
+        first.setLiveTrial('Trial Badger');
+        first.recordCapture(snap('Alice', 1, []), { at: NOW });
+        expect(disk.keys[CATS].trialKey).toBe('badger');
+
+        // Reloaded with trial tracking off: nothing but the stored copy names the trial
+        const next = new GuildTrialAbilities();
+        await next.initialize('Cats');
+        expect(next._liveTrialKey()).toBe('badger');
+    });
+
     test('a name arriving over a session in hand merges rather than strands it', async () => {
         disk.keys[CATS] = onDisk(NOW - 5 * 60_000, { 'id:2': stored(2, 'Bob', NOW - 4 * 60_000) });
 
