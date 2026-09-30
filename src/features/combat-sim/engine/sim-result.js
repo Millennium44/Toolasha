@@ -25,10 +25,12 @@ class SimResult {
         };
         this.playerRanOutOfManaTime = {};
         // Per player: ability casts that went through, and refusals - a triggered ability the unit could not
-        // afford. A refusal is counted once per starved stretch (until the next affordable check), because
-        // checkTriggers re-tests after every event and a per-check count would scale with event density.
+        // afford. A refusal is counted once per ability per cooldown period (see addCastRefused), because
+        // checkTriggers re-tests after every event and a per-check count would scale with event density, and a
+        // per-stretch count would scale with the number of worker chunks, each of which starts at full mana.
         this.manaCastsMade = {};
         this.manaCastsRefused = {};
+        this.manaRefusalNextAt = {};
         this.manaUsed = {};
         this.timeSpentAlive = [];
         // Per dungeon wave: how long after the wave spawned the party first
@@ -338,6 +340,19 @@ class SimResult {
         this.manaCastsMade[unit.hrid] = (this.manaCastsMade[unit.hrid] || 0) + 1;
     }
 
+    /**
+     * Counts one refused cast per ability per cooldown period, however often checkTriggers re-tests it, so the
+     * count is density-independent and adds across worker chunks. A floor of one second stops a zero-cooldown
+     * ability from being counted on every event.
+     */
+    addCastRefused(unit, ability, time, cooldownPeriod) {
+        if (!this.manaRefusalNextAt[unit.hrid]) this.manaRefusalNextAt[unit.hrid] = {};
+        const nextAt = this.manaRefusalNextAt[unit.hrid];
+        if (time < (nextAt[ability.hrid] ?? 0)) return;
+        nextAt[ability.hrid] = time + Math.max(cooldownPeriod, 1e9);
+        this.manaCastsRefused[unit.hrid] = (this.manaCastsRefused[unit.hrid] || 0) + 1;
+    }
+
     addRanOutOfManaCount(unit, isOutOfMana, time) {
         if (isOutOfMana) this.playerRanOutOfMana[unit.hrid] = true;
 
@@ -351,7 +366,6 @@ class SimResult {
 
         if (isOutOfMana) {
             if (!this.playerRanOutOfManaTime[unit.hrid].isOutOfMana) {
-                this.manaCastsRefused[unit.hrid] = (this.manaCastsRefused[unit.hrid] || 0) + 1;
                 this.playerRanOutOfManaTime[unit.hrid].isOutOfMana = true;
                 this.playerRanOutOfManaTime[unit.hrid].startTimeForOutOfMana = time;
             }
