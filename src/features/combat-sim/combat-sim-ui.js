@@ -106,7 +106,6 @@ import {
     houseUpgradeMaterials,
     assignRankScores,
     planWithinBudget,
-    conflictKeys,
     confirmUpgradeBudgetPlan,
     explainUpgradeCost,
     COST_SOURCES,
@@ -555,44 +554,20 @@ export function planUpgradeBudget(rows, budget, { baseline = {}, metricKey = 'pr
         }));
     const coins = Number.isFinite(budget) ? budget : 0;
 
-    const measured = planWithinBudget(planRows, coins);
-    if (measured.picks.length) {
-        // A measured pick holds its slot or ability: an estimate must not displace it or be bought beside it
-        const held = new Set(measured.picks.flatMap((pick) => conflictKeys(pick.candidate)));
-        // A refunding estimate (a swap that sells for more than it costs) is
-        // left out: its coins would be spent on unproven gains in a pass that
-        // cannot give the measured rows first claim on them, and a refund inside
-        // the pass can let a stronger same-slot pick replace it and overshoot the
-        // budget. The all-estimated plan below still considers them.
-        const fillRows = planRows.filter(
-            (row) =>
-                row.significant === false &&
-                !(row.cost < 0) &&
-                !conflictKeys(row.candidate).some((key) => held.has(key))
-        );
-        const fill = planWithinBudget(fillRows, coins - measured.totalCost, { includeUnmeasured: true });
-        const filled = new Set(fill.picks.map((pick) => pick.candidate));
-        const attemptsSaved = measured.attemptsSaved + fill.attemptsSaved;
-        return {
-            picks: [...measured.picks, ...fill.picks.map((pick) => ({ ...pick, provisional: true }))],
-            totalCost: measured.totalCost + fill.totalCost,
-            attemptsSaved,
-            // "Within the noise" still explains a row the fill left out: it is why a measured pick outranked it
-            skipped: measured.skipped.filter((entry) => !filled.has(entry.result.candidate)),
-            budget: measured.budget,
-            gainTotal: attemptsSaved,
-            metric,
-            provisional: false,
-        };
-    }
-
-    const estimated = planWithinBudget(planRows, coins, { includeUnmeasured: true });
+    // One pass over every row, whatever the metric. The noise check is kept as
+    // a label rather than a gate: gating on it planned the few rows that cleared
+    // it and left the rest of the budget idle (the EXP/hr report: one necklace
+    // out of 1.6B), and a two-pass fill around it could not give the measured
+    // rows first claim on an estimated swap's refund. A pick whose gain is
+    // within the run's noise carries `provisional: true` and shows as an estimate.
+    const plan = planWithinBudget(planRows, coins, { includeUnmeasured: true });
+    const picks = plan.picks.map((pick) => (pick.significant === false ? { ...pick, provisional: true } : pick));
     return {
-        ...estimated,
-        picks: estimated.picks.map((pick) => ({ ...pick, provisional: true })),
-        gainTotal: estimated.attemptsSaved,
+        ...plan,
+        picks,
+        gainTotal: plan.attemptsSaved,
         metric,
-        provisional: estimated.picks.length > 0,
+        provisional: picks.length > 0 && picks.every((pick) => pick.provisional === true),
     };
 }
 
