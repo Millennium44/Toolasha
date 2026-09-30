@@ -527,6 +527,15 @@ describe('the guild leaderboard series is one account-wide record', () => {
         expect(stored('guildXP_Cheesy').Rival).toBeUndefined();
     });
 
+    test('a cached leaderboard snapshot older than the newest own sample does not lower the current XP', () => {
+        guildXPTracker.guildXPHistory = { Milky: [{ t: 10, xp: 1000 }] };
+        guildXPTracker.leaderboardXPHistory = { Milky: [{ t: 11, xp: 900 }] };
+
+        expect(guildXPTracker.getCurrentGuildXP('Milky')).toBe(1000);
+        expect(guildXPTracker._seriesOf('Milky')).toEqual([{ t: 10, xp: 1000 }]);
+        expect(guildXPTracker.getGuildStats('Milky').lastXPH).toBeGreaterThanOrEqual(0);
+    });
+
     test('the own guild reads from both its own messages and the leaderboard', async () => {
         await guildXPTracker._onCharacterInit(guildInit('Milky', 'g1', 1000));
         vi.setSystemTime(new Date('2026-01-01T01:00:00Z'));

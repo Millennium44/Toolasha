@@ -197,6 +197,24 @@ export function dropFlatRepeats(arr) {
 }
 
 /**
+ * Apply pushXP's admission rules to a series assembled from more than one
+ * source: oldest first, no sample below an earlier kept one (XP never
+ * decreases; there is no reset rule), no flat repeat inside the refresh window.
+ * @param {Array<{t: number, xp: number}>} arr - Samples in any order
+ * @returns {Array<{t: number, xp: number}>} A fresh, admissible series
+ */
+export function normalizeXPSeries(arr) {
+    const sorted = [...arr].sort((a, b) => a.t - b.t);
+    const kept = [];
+    for (const sample of sorted) {
+        const last = kept[kept.length - 1];
+        if (last && sample.xp < last.xp) continue;
+        kept.push(sample);
+    }
+    return dropFlatRepeats(kept);
+}
+
+/**
  * Calculate XP/hr between two data points.
  * @param {{t: number, xp: number}} prev
  * @param {{t: number, xp: number}} cur
@@ -591,6 +609,9 @@ class GuildXPTracker {
      * A guild's samples from both places they are recorded: its own messages
      * (`guildXPHistory`, the player's guild only) and the guild leaderboard.
      * @param {string} name - Guild name
+     * The union is re-admitted under pushXP's rules: the leaderboard can serve a
+     * cached snapshot older than a newer guild_updated sample, and two sources
+     * each valid alone can disagree in order.
      * @returns {Array<{t: number, xp: number}>} Oldest first; a fresh array, empty when untracked
      */
     _seriesOf(name) {
@@ -598,7 +619,7 @@ class GuildXPTracker {
         const board = this.leaderboardXPHistory[name];
         if (!board?.length) return own ? [...own] : [];
         if (!own?.length) return [...board];
-        return mergeXPHistories({ [name]: board }, { [name]: own })[name];
+        return normalizeXPSeries(mergeXPHistories({ [name]: board }, { [name]: own })[name]);
     }
 
     /** @returns {Object<string, Array<{t: number, xp: number}>>} Every guild's combined series */
