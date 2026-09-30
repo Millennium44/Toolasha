@@ -125,6 +125,29 @@ describe('buildMpCandidates', () => {
     });
 });
 
+describe('buildMpCandidates max mana cap', () => {
+    const only = (hrid, maxMana) =>
+        buildMpCandidates({ [hrid]: ITEMS[hrid] }, { priceOf: () => 10, maxMana }).find((c) => c.hrid === hrid);
+
+    test('an instant restore above the pool is capped at max mana', () => {
+        const yogurt = only('/items/star_fruit_yogurt', 110);
+        expect(yogurt.mpPerUse).toBe(110);
+        expect(yogurt.mpPerMinute).toBeCloseTo(110);
+        expect(yogurt.cappedAtMaxMana).toBe(true);
+    });
+
+    test('no known max mana leaves the restore uncapped', () => {
+        const yogurt = only('/items/star_fruit_yogurt', null);
+        expect(yogurt.mpPerMinute).toBeCloseTo(350);
+        expect(yogurt.cappedAtMaxMana).toBe(false);
+    });
+
+    test('an instant restore within the pool, and any over-time restore, is untouched', () => {
+        expect(only('/items/donut', 110).mpPerMinute).toBeCloseTo(60);
+        expect(only('/items/star_fruit_gummy', 110).mpPerMinute).toBeCloseTo(280);
+    });
+});
+
 describe('findBestOptimAllocation', () => {
     test('takes the single cheapest item that reaches a low target', () => {
         // Per hour: donut 60 MP/min for 18,000; plum gummy 100 for 12,000

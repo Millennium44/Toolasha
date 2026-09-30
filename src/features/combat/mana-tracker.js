@@ -70,6 +70,8 @@ let baselineMana = 0;
 let haste = { foodHaste: 0, drinkConcentration: 0 };
 /** The character's own consumable slots, from `new_battle`; null until seen (the planner then assumes 3 + 3) */
 let slots = null;
+/** The character's own max MP, from `new_battle`; null until seen (instant restores are then uncapped) */
+let maxMana = null;
 
 /** What the MP optimizer panel section was last asked for; null until typed, so the measured rate fills it */
 let optimTarget = null;
@@ -102,6 +104,7 @@ function claimState() {
 export function resetMpPlanner() {
     haste = { foodHaste: 0, drinkConcentration: 0 };
     slots = null;
+    maxMana = null;
     optimTarget = null;
 }
 
@@ -165,6 +168,7 @@ export function mpSupplyPlan(targetMpPerMinute) {
     const candidates = buildMpCandidates(itemDetailMap, {
         priceOf: (hrid) => resolveItemPrice(hrid, { context: 'profit', side: 'buy' }).price,
         ...haste,
+        maxMana,
     });
     // A character without a maxed pouch may hold a single food: a plan that needs two must not be offered
     const options = slots ? { maxSlots: slots } : {};
@@ -233,6 +237,8 @@ export default {
             const characterName = dataManager.getCurrentCharacterName?.();
             const self = findOwnBattlePlayer(data, { characterId, characterName });
             const stats = self?.combatDetails?.combatStats;
+            const max = Number(self?.combatDetails?.maxManapoints);
+            if (max > 0) maxMana = max;
             if (stats) {
                 haste = { foodHaste: stats.foodHaste || 0, drinkConcentration: stats.drinkConcentration || 0 };
                 if (Number.isFinite(stats.foodSlots) && Number.isFinite(stats.drinkSlots)) {

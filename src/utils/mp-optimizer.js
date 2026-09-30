@@ -66,17 +66,23 @@ export function slotTypeOf(detail) {
  * @param {(hrid: string) => (number|null)} options.priceOf - Price to buy one; null or 0 leaves the item out
  * @param {number} [options.foodHaste] - The character's food haste, as a fraction
  * @param {number} [options.drinkConcentration] - The character's drink concentration, as a fraction
+ * @param {number|null} [options.maxMana] - The character's max MP; an instant restore cannot bank more than the
+ *   pool holds (the simulator's `addManapoints` clamps), so its per-use MP is capped. Over-time restores land a
+ *   tick at a time and are not capped. Null or absent leaves every restore uncapped.
  * @returns {Array<Object>} Candidates, best MP per coin first
  */
-export function buildMpCandidates(itemDetailMap, { priceOf, foodHaste = 0, drinkConcentration = 0 }) {
+export function buildMpCandidates(itemDetailMap, { priceOf, foodHaste = 0, drinkConcentration = 0, maxMana = null }) {
     const candidates = [];
 
     for (const [hrid, item] of Object.entries(itemDetailMap || {})) {
         const detail = item?.consumableDetail;
         if (!detail) continue;
 
-        const mpPerUse = Number(detail.manapointRestore) || 0;
-        if (mpPerUse <= 0) continue;
+        const restore = Number(detail.manapointRestore) || 0;
+        if (restore <= 0) continue;
+        const instant = !((Number(detail.recoveryDuration) || 0) > 0);
+        const capped = instant && maxMana > 0 && restore > maxMana;
+        const mpPerUse = capped ? maxMana : restore;
 
         const category = item.categoryHrid || '';
         const kind = category.includes('drink') ? 'drink' : category.includes('food') ? 'food' : null;
@@ -98,6 +104,7 @@ export function buildMpCandidates(itemDetailMap, { priceOf, foodHaste = 0, drink
             kind,
             slotType: `${kind}:${slotTypeOf(detail)}`,
             mpPerUse,
+            cappedAtMaxMana: capped,
             alsoHeals: hpPerUse > 0,
             price,
             usesPerMinute,
