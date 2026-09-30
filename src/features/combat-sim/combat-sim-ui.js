@@ -106,6 +106,7 @@ import {
     houseUpgradeMaterials,
     assignRankScores,
     planWithinBudget,
+    conflictKeys,
     confirmUpgradeBudgetPlan,
     explainUpgradeCost,
     COST_SOURCES,
@@ -520,15 +521,21 @@ export const UPGRADE_PLAN_METRICS = [
  *
  * "Not proven" is not "worth zero". The first pass still prefers the rows that
  * cleared their error bar, because a plan made of measurements is worth more
- * than one made of point estimates. Only when that pass buys nothing does the
- * second one run over everything, and what comes back is flagged `provisional`
- * so the panel can say which of the two it is looking at.
+ * than one made of point estimates. What the measured picks leave of the budget
+ * is then spent on the unmeasured rows, in slots and abilities no measured pick
+ * holds, and each of those picks is flagged `provisional`. Stopping at the
+ * measured picks left most of a budget unspent whenever one large gain cleared
+ * the bar: EXP/hr bought one 896M necklace out of 1.6B while four affordable
+ * rows in other slots and abilities sat below the noise. When the measured
+ * pass buys nothing the whole plan is estimated and the plan itself is flagged
+ * `provisional`.
  *
  * @param {Array<Object>} rows - Upgrade results (`{candidate, cost, metrics, economics}`)
  * @param {number} budget - Coins available
  * @param {Object} [options] - `{ baseline, metricKey }`
  * @returns {{picks: Array<Object>, totalCost: number, gainTotal: number,
- *   skipped: Array<Object>, budget: number, metric: Object, provisional: boolean}}
+ *   skipped: Array<Object>, budget: number, metric: Object, provisional: boolean}} `provisional` is true only
+ *   when every pick is estimated; a pick carries its own `provisional: true` when it was ranked on an estimate
  */
 export function planUpgradeBudget(rows, budget, { baseline = {}, metricKey = 'profit' } = {}) {
     const metric = UPGRADE_PLAN_METRICS.find((m) => m.key === metricKey) || UPGRADE_PLAN_METRICS[0];
@@ -550,12 +557,31 @@ export function planUpgradeBudget(rows, budget, { baseline = {}, metricKey = 'pr
 
     const measured = planWithinBudget(planRows, coins);
     if (measured.picks.length) {
-        return { ...measured, gainTotal: measured.attemptsSaved, metric, provisional: false };
+        // A measured pick holds its slot or ability: an estimate must not displace it or be bought beside it
+        const held = new Set(measured.picks.flatMap((pick) => conflictKeys(pick.candidate)));
+        const fillRows = planRows.filter(
+            (row) => row.significant === false && !conflictKeys(row.candidate).some((key) => held.has(key))
+        );
+        const fill = planWithinBudget(fillRows, coins - measured.totalCost, { includeUnmeasured: true });
+        const filled = new Set(fill.picks.map((pick) => pick.candidate));
+        const attemptsSaved = measured.attemptsSaved + fill.attemptsSaved;
+        return {
+            picks: [...measured.picks, ...fill.picks.map((pick) => ({ ...pick, provisional: true }))],
+            totalCost: measured.totalCost + fill.totalCost,
+            attemptsSaved,
+            // "Within the noise" still explains a row the fill left out: it is why a measured pick outranked it
+            skipped: measured.skipped.filter((entry) => !filled.has(entry.result.candidate)),
+            budget: measured.budget,
+            gainTotal: attemptsSaved,
+            metric,
+            provisional: false,
+        };
     }
 
     const estimated = planWithinBudget(planRows, coins, { includeUnmeasured: true });
     return {
         ...estimated,
+        picks: estimated.picks.map((pick) => ({ ...pick, provisional: true })),
         gainTotal: estimated.attemptsSaved,
         metric,
         provisional: estimated.picks.length > 0,
@@ -10443,7 +10469,14 @@ class CombatSimUI {
                 const picks = plan.picks
                     .map(
                         (pick) => `<div style="display:flex; justify-content:space-between; gap:10px; padding:1px 0;">
-                            <span style="color:#e0e0e0;">${pick.candidate.description}</span>
+                            <span style="color:#e0e0e0;">${pick.candidate.description}${
+                                pick.provisional && !plan.provisional
+                                    ? `<span style="color:#e8a87c; font-size:9px; margin-left:4px;"
+                                        title="This gain on ${plan.metric.label} is inside the simulation's
+                                        sampling error. Ranked on the point estimate, after the measured picks.">
+                                        estimate</span>`
+                                    : ''
+                            }</span>
                             <span style="white-space:nowrap; color:#aaa;">${money(pick.cost)}
                                 <span style="color:#4caf50;">${plan.metric.format(pick.marginalAttemptsSaved)}</span>
                             </span>
