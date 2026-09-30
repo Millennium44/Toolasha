@@ -4674,6 +4674,49 @@ describe('floor calculation across a floor change', () => {
         // The fenced pass did not re-arm the flag it no longer owns
         expect(labyrinthClearRate.tileCalcRunning).toBe(false);
     });
+
+    test('a floor change leaves the shared sim epoch and queues alone, so Recommend and the badge queue clean up', async () => {
+        const parent = document.createElement('div');
+        const cell = document.createElement('div');
+        cell.className = 'LabyrinthPanel_roomCell_abc';
+        parent.appendChild(cell);
+        document.body.appendChild(parent);
+        labyrinthClearRate.roomData = [[{ monsterHrid: IMP, recommendedLevel: 100, isCleared: false }]];
+        labyrinthClearRate.currentFloor = 3;
+        labyrinthClearRate._autoCalcFingerprint = null;
+        labyrinthClearRate.calculatedTileKeys = null;
+        let release;
+        vi.spyOn(labyrinthClearRate, 'computeCombatClear').mockImplementation(
+            () =>
+                new Promise((resolve) => {
+                    release = resolve;
+                })
+        );
+        const cancelSpy = vi.spyOn(labyrinthClearRate, 'cancelRunningSims');
+
+        const pass = labyrinthClearRate.runTileCalculation();
+        await vi.waitFor(() => expect(release).toBeTypeOf('function'));
+
+        // A Recommend / badge-queue batch in flight: it captured the epoch before its await
+        const epoch = labyrinthClearRate.simEpoch();
+        let recommendRunning = true;
+        const recommend = (async () => {
+            await Promise.resolve();
+            // The same finally contract both batches use: clean up only while the epoch matches
+            if (labyrinthClearRate.simEpoch() === epoch) recommendRunning = false;
+        })();
+
+        labyrinthClearRate.onLabyrinthUpdated({ labyrinth: { currentFloor: 4, roomData: [[null]] } });
+        expect(cancelSpy).not.toHaveBeenCalled();
+        expect(labyrinthClearRate.simEpoch()).toBe(epoch);
+        expect(labyrinthClearRate.simCancelled()).toBe(false);
+
+        await recommend;
+        expect(recommendRunning).toBe(false);
+        release({ clearChance: 0.9, expectedSeconds: 10 });
+        await pass;
+        expect(labyrinthClearRate.tileCalcRunning).toBe(false);
+    });
 });
 
 describe('floor calculation progress bar across a retry', () => {

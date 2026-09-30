@@ -714,12 +714,15 @@ class LabyrinthClearRate {
                 // A pass still awaiting a sim belongs to the floor just left; its
                 // cells stay connected until React repaints, so without a fence it
                 // resumes and writes the old floor's result under a coordinate the
-                // new floor reuses. The epoch bump is the fence (same teardown
-                // contract as `disable()`), so the pass also has to hand back the
-                // flag and button it will no longer restore itself.
+                // new floor reuses. The fence is the pass's own generation, never
+                // the shared sim epoch or the global cancel: Automation Recommend
+                // and the badge queue run on that epoch and their `finally` blocks
+                // skip cleanup on a mismatch, which would strand their running
+                // flags. The in-flight sim finishes and is discarded; the pass
+                // restores nothing once fenced, so hand back the flag and button
+                // here.
+                this._tileGen = (this._tileGen || 0) + 1;
                 if (this.tileCalcRunning) {
-                    this.cancelRunningSims();
-                    this.endSimEpoch();
                     this.tileCalcRunning = false;
                     this._pathQueued = false;
                     this.setPathButtonRunning(false);
@@ -3244,6 +3247,10 @@ class LabyrinthClearRate {
         this.tileCalcRunning = true;
         this.beginSimBatch();
         const epoch = this.simEpoch();
+        const tileGen = this._tileGen || 0;
+        // Torn down (`disable()` epoch) or superseded by a floor change
+        const epochGone = () => this.simEpoch() !== epoch;
+        const floorGone = () => (this._tileGen || 0) !== tileGen;
         this.syncTileCalcButton(0, total);
         this.setTileStatus('');
         let completed = 0;
@@ -3276,12 +3283,12 @@ class LabyrinthClearRate {
             for (const target of combatTargets) {
                 // Between rooms as well as during one: cancelling an uncapped
                 // batch has to stop the queue, not just the fight in flight
-                if (this.simCancelled() || this.simEpoch() !== epoch) {
+                if (this.simCancelled() || epochGone() || floorGone()) {
                     cancelled = true;
                     break;
                 }
                 const result = await this.computeCombatClear(target.room.monsterHrid, target.roomLevel, { uncapped });
-                if (result?.cancelled || this.simCancelled() || this.simEpoch() !== epoch) {
+                if (result?.cancelled || this.simCancelled() || epochGone() || floorGone()) {
                     cancelled = true;
                     break;
                 }
@@ -3317,7 +3324,7 @@ class LabyrinthClearRate {
             if (cancelled) {
                 // Torn down rather than stopped: the status line and the
                 // fingerprint belong to a character already switched away from
-                if (this.simEpoch() !== epoch) return;
+                if (epochGone() || floorGone()) return;
                 // A partial pass is not a settled one: leave the fingerprint
                 // unset so the rooms that never ran are picked up next time,
                 // and leave every badge already drawn exactly where it is.
@@ -3358,7 +3365,10 @@ class LabyrinthClearRate {
             // A pass the feature was torn down under owns neither the flag nor
             // the button: `disable()` cleared the first, and the second belongs
             // to whatever floor is on screen now.
-            if (this.simEpoch() === epoch) {
+            if (floorGone() && !epochGone()) {
+                // The floor change already handed back the flag and button, and
+                // a newer pass may own them now
+            } else if (!epochGone()) {
                 this.tileCalcRunning = false;
                 this.syncTileCalcButton();
                 refreshRoomDistribution();
