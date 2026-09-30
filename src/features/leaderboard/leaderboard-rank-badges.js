@@ -61,6 +61,7 @@ import {
 } from '../../utils/rank-badge-data.js';
 
 const SETTING_KEY = 'leaderboardRankBadges';
+const XP_TRACKER_KEY = 'leaderboardXPTracker';
 const STEAM_SETTING_KEY = 'leaderboardRankBadgesSteam';
 const STORE_NAME = 'leaderboardHistory';
 const STORAGE_KEY = 'rankBoards';
@@ -244,6 +245,8 @@ class LeaderboardRankBadges {
         const unwatch = [
             config.onSettingChange(SETTING_KEY, onChange),
             config.onSettingChange(STEAM_SETTING_KEY, onChange),
+            // Only the Steam status wording depends on it
+            config.onSettingChange(XP_TRACKER_KEY, () => this.refreshCycleBars()),
         ];
         this.unwatchSetting = () => unwatch.forEach((undo) => undo?.());
         await this.restart();
@@ -391,10 +394,16 @@ class LeaderboardRankBadges {
             const [button, status] = bar.children;
             button.textContent = `Next board ▸ ${target ? categoryLabel(target) : '-'}`;
             if (steam) {
-                status.textContent = `${cached.length}/${RANK_CATEGORIES.length} Steam boards opened`;
+                const tracking = config.getSettingValue(XP_TRACKER_KEY, true) !== false;
+                status.textContent =
+                    `${cached.length}/${RANK_CATEGORIES.length} Steam boards opened` +
+                    (tracking ? '' : ' (EXP tracking is off)');
                 status.title =
-                    `${boardTypeLabel(this.boardType)} boards opened since the game loaded. Each one you open is ` +
-                    'recorded by the leaderboard XP tracker, so this feeds EXP history.';
+                    `${boardTypeLabel(this.boardType)} boards opened since the game loaded. ` +
+                    (tracking
+                        ? 'Each one you open is recorded by the leaderboard XP tracker, so this feeds EXP history.'
+                        : 'The leaderboard XP tracker setting is off, so opening them records no EXP history; ' +
+                          'they are only kept for badges when Steam badges are on.');
                 continue;
             }
             status.textContent = `${cached.length}/${RANK_CATEGORIES.length} boards cached`;

@@ -4,6 +4,7 @@ import { describe, test, expect, beforeEach, afterEach, vi } from 'vitest';
 const game = vi.hoisted(() => ({
     mode: 'off',
     steam: false,
+    xpTracker: true,
     saved: {},
     wsHandlers: {},
     settingWatchers: [],
@@ -24,7 +25,12 @@ vi.mock('../../core/websocket.js', () => ({
 }));
 vi.mock('../../core/config.js', () => ({
     default: {
-        getSettingValue: (key) => (key === 'leaderboardRankBadgesSteam' ? game.steam : game.mode),
+        getSettingValue: (key) =>
+            key === 'leaderboardRankBadgesSteam'
+                ? game.steam
+                : key === 'leaderboardXPTracker'
+                  ? game.xpTracker
+                  : game.mode,
         onSettingChange: (key, callback) => {
             game.settingWatchers.push(callback);
             return () => {
@@ -118,7 +124,7 @@ describe('leaderboard rank badges', () => {
         expect(badges()).toHaveLength(0);
         expect(document.getElementById('toolasha-rank-badge-style')).toBeNull();
         // Only the setting watch exists, so switching the select can start it live
-        expect(game.settingWatchers).toHaveLength(2);
+        expect(game.settingWatchers).toHaveLength(3);
     });
 
     test('a reused name element that switches player gets the new player badge, or none', async () => {
@@ -452,6 +458,26 @@ describe('next board button', () => {
         await flush();
         expect(bar().style.display).toBe('flex');
         expect(bar().textContent).toContain('boards cached');
+    });
+
+    test('the Steam status says EXP tracking is off when the XP tracker setting is off', async () => {
+        game.mode = 'local';
+        buildPanel();
+        await leaderboardRankBadges.initialize();
+        game.wsHandlers.leaderboard_updated({ ...board('total_level'), leaderboardType: 'steam_standard' });
+        await flush();
+        const status = bar().children[1];
+        expect(status.textContent).toBe('1/21 Steam boards opened');
+        expect(status.title).toContain('feeds EXP history');
+
+        game.xpTracker = false;
+        for (const callback of game.settingWatchers) callback();
+        await vi.advanceTimersByTimeAsync(0);
+        const off = bar().children[1];
+        expect(off.textContent).toBe('1/21 Steam boards opened (EXP tracking is off)');
+        expect(off.title).toContain('setting is off');
+        expect(off.title).not.toContain('feeds EXP history');
+        game.xpTracker = true;
     });
 
     test('is hidden on a view filtered', async () => {
