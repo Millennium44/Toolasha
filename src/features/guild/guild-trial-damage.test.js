@@ -85,6 +85,9 @@ vi.mock('./guild-trial-abilities.js', () => ({
             game.casts.push([name, hrid]);
             return true;
         },
+        setLiveTrialSource: (source) => {
+            game.liveTrialSource = source;
+        },
     },
 }));
 
@@ -3709,5 +3712,19 @@ describe('a trial first watched mid-tier, before any roster', () => {
         const without = run(false);
         expect(without.totals).toEqual({ Bo: 100_000, Ada: 80_000 });
         expect(run(true)).toEqual(without);
+    });
+});
+
+describe('the ability session learns the running trial from the lifecycle', () => {
+    test('the source it is given answers with the current encounter', () => {
+        const before = guildTrialDamage.encounter;
+        try {
+            guildTrialDamage.encounter = 'badger';
+            expect(game.liveTrialSource()).toBe('badger');
+            guildTrialDamage.encounter = 'swarm';
+            expect(game.liveTrialSource()).toBe('swarm');
+        } finally {
+            guildTrialDamage.encounter = before;
+        }
     });
 });

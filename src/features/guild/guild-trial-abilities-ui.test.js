@@ -1661,4 +1661,27 @@ describe('pre-trial loadout check', () => {
 
         expect(guildTrialAbilities.state().capturedCount).toBe(1);
     });
+
+    test('a Fetch press refused as busy does not disturb the mode the outstanding request is waiting on', async () => {
+        guildXPTracker.memberMeta[3] = {
+            name: 'Cara',
+            signedUpCombatTrialHrid: '/guild_combat/badger',
+            signupWeekStartAt: WEEK,
+        };
+        await feature.initialize('Cats');
+        openTrialAbilitiesPanel();
+        choose('Badger').click();
+        button('Fetch next: Alice').click();
+        // A second row's Fetch while the first is outstanding: refused as busy
+        const rowFetches = [...guildTrialAbilitiesPanel.panel.querySelectorAll('button')].filter(
+            (el) => el.textContent === 'Fetch'
+        );
+        rowFetches[rowFetches.length - 1].click();
+        choose('Live trial').click();
+        await vi.advanceTimersByTimeAsync(2000);
+
+        expect(viewLoadoutState.core.handleViewLoadout).toHaveBeenCalledTimes(1);
+        // Alice's reply belongs to the pre-trial check that asked for it
+        expect(guildTrialAbilities.session).toBeNull();
+    });
 });
