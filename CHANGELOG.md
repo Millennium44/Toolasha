@@ -6,6 +6,11 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Audit round: mana planner and lab spread
+
+- The mana planner's auto-filled target now subtracts your natural MP regen (read from the battle, measured against live regen ticks), so a rate you actually sustain is no longer reported out of reach.
+- The lab clear-chance chart's bars now line up with their axis labels at bin widths that do not divide 100.
+
 ### Rank badges and guild history keep what they saved
 
 - Rank badges no longer lose cached leaderboards when another tab or device saved boards, when storage briefly fails to read, or when you change a badge setting or character mid-save.
