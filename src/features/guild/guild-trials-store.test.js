@@ -1608,7 +1608,9 @@ describe('archiveEarlierCycles — a week with more than one cycle in it', () =>
         expect(stamps(old).every((t) => t < from)).toBe(true);
         expect(stamps(live).every((t) => t >= from)).toBe(true);
         // The new cycle's badge and server statement are not the old cycle's
-        expect(old).toMatchObject({ completed: true, pointsByTier: { 4: 500 } });
+        // Tier 4's points were written by the post-boundary badge read: the new cycle's
+        expect(old).toMatchObject({ completed: true, pointsByTier: {} });
+        expect(live.pointsByTier).toEqual({ 4: 500 });
         for (const field of ['level', 'tier', 'points', 'signups', 'tierReadAt', 'serverTier']) {
             expect(old[field]).toBeUndefined();
         }
@@ -1618,6 +1620,114 @@ describe('archiveEarlierCycles — a week with more than one cycle in it', () =>
         expect(old.samples.length + live.samples.length).toBe(mixed.samples.length);
         expect(old.pointSamples.length + live.pointSamples.length).toBe(mixed.pointSamples.length);
         expect(live).toMatchObject({ tier: 4, points: 500, serverTier: 5, completed: false });
+    });
+
+    test('untimed fields go with the current part when a new-cycle read already landed on the tile', () => {
+        const HOUR = 3_600_000;
+        const start = CLEARS.CAPTURED_AT;
+        const hour = parseCurrentTrialsData(
+            JSON.stringify({
+                skilling: {
+                    status: 'in_progress',
+                    parties: {
+                        '/guild_skilling/milking': {
+                            highestTier: 1,
+                            tierStartedAtMs: start + 60_000,
+                            budgetRemainingMs: HOUR - 60_000,
+                            highestTierReachedAtMs: start + 60_000,
+                            done: false,
+                        },
+                    },
+                },
+            })
+        );
+        const sample = (t) => ({ t, readings: [{ current: 1, max: 2 }] });
+        const base = {
+            name: 'Milking',
+            kind: 'skilling',
+            completed: true,
+            tiers: [{ tier: 3, total: 100 }],
+            pointsByTier: { 3: 300, 4: 400 },
+            personalByCharacter: { 7: { personal: { successRate: 0.5 }, personalByTier: {} } },
+            liveTier: 4,
+            liveTierTarget: 200,
+            samples: [sample(start - 20 * 60_000)],
+            tierSeenAt: { 3: start - 30 * 60_000 },
+        };
+        const run = (tile) =>
+            archiveEarlierCycles({ weekStart: 0, tiles: { 'skilling::milking': tile }, history: [] }, hour, {
+                offset: 0,
+                at: start,
+            });
+
+        // A read after the boundary wrote them: the new cycle's
+        const read = run({
+            ...base,
+            tier: 4,
+            points: 400,
+            tierReadAt: start + 5 * 60_000,
+            samples: [...base.samples, sample(start + 4 * 60_000)],
+        });
+        const live = read.tiles['skilling::milking'];
+        expect(live).toMatchObject({ tiers: base.tiers, liveTier: 4, liveTierTarget: 200, pointsByTier: { 4: 400 } });
+        expect(live.personalByCharacter[7].personal).toEqual({ successRate: 0.5 });
+        const old = read.history[0].tiles['skilling::milking'];
+        expect(old).toMatchObject({ tiers: [], pointsByTier: { 3: 300 } });
+        expect(old.personalByCharacter).toBeUndefined();
+        expect(old.liveTier).toBeUndefined();
+
+        // Nothing read since: the earlier cycle keeps them all
+        const idle = run({
+            ...base,
+            tier: 4,
+            tierReadAt: start - 5 * 60_000,
+            serverTier: 5,
+            serverTierAt: start + 1_000,
+        });
+        expect(idle.history[0].tiles['skilling::milking']).toMatchObject({ tiers: base.tiers, liveTier: 4 });
+        expect(idle.tiles['skilling::milking'].tiers).toEqual([]);
+    });
+
+    test('combat reads from the cycle’s skilling hour are not an earlier cycle at the combat hour', () => {
+        const HOUR = 3_600_000;
+        const skillingStart = CLEARS.CAPTURED_AT;
+        const combatStart = skillingStart + HOUR;
+        const combatHour = parseCurrentTrialsData(
+            JSON.stringify({
+                skilling: { status: 'completed', parties: null },
+                combat: {
+                    status: 'in_progress',
+                    parties: {
+                        '/guild_combat/badger': {
+                            highestTier: 1,
+                            tierStartedAtMs: combatStart + 60_000,
+                            budgetRemainingMs: HOUR - 60_000,
+                            highestTierReachedAtMs: combatStart + 60_000,
+                            done: false,
+                        },
+                    },
+                },
+            })
+        );
+        const scheduled = {
+            name: 'Badger',
+            kind: 'combat',
+            samples: [{ t: skillingStart + 10 * 60_000, readings: [{ current: 0, max: 5 }] }],
+            tierSeenAt: {},
+        };
+        const held = { weekStart: 0, tiles: { 'combat::badger': scheduled }, history: [] };
+
+        // With the cycle's skilling start remembered it is this cycle's
+        expect(archiveEarlierCycles(held, combatHour, { offset: 0, at: combatStart, cycleStart: skillingStart })).toBe(
+            held
+        );
+        // With no cycle start ever observed, the combat hour's start is the cut
+        expect(archiveEarlierCycles(held, combatHour, { offset: 0, at: combatStart }).history).toHaveLength(1);
+        // A start from a cycle ago is not this one's
+        const stale = skillingStart - 5 * HOUR;
+        expect(
+            archiveEarlierCycles(held, combatHour, { offset: 0, at: combatStart, cycleStart: stale }).history
+        ).toHaveLength(1);
     });
 
     test('once cleaned it has nothing more to archive', () => {
