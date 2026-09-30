@@ -429,12 +429,12 @@ describe('next board button', () => {
         expect(bar().style.display).toBe('flex');
     });
 
-    test('shows on a Steam cohort tab, counting Steam boards opened, and stays hidden on Guilds', async () => {
+    test('shows on a Steam tab, counting Steam boards opened, and stays hidden on Guilds', async () => {
         game.mode = 'local';
         buildPanel();
         await leaderboardRankBadges.initialize();
 
-        game.wsHandlers.leaderboard_updated({ ...board('total_level'), playerCohortFilter: 'steam' });
+        game.wsHandlers.leaderboard_updated({ ...board('total_level'), leaderboardType: 'steam_standard' });
         await flush();
         expect(bar().style.display).toBe('flex');
         expect(bar().textContent).toContain('1/21 Steam boards opened');
@@ -442,7 +442,7 @@ describe('next board button', () => {
 
         game.wsHandlers.leaderboard_updated({
             leaderboardCategory: 'guild_points',
-            playerCohortFilter: 'steam',
+            leaderboardType: 'steam_standard',
             leaderboard: { rows: [{ name: 'Some Guild', rank: 1 }] },
         });
         await flush();
@@ -454,11 +454,11 @@ describe('next board button', () => {
         expect(bar().textContent).toContain('boards cached');
     });
 
-    test('is hidden on a view narrowed by something other than Steam', async () => {
+    test('is hidden on a view filtered', async () => {
         game.mode = 'local';
         buildPanel();
         await leaderboardRankBadges.initialize();
-        game.wsHandlers.leaderboard_updated({ ...board('total_level'), playerCohortFilter: 'other' });
+        game.wsHandlers.leaderboard_updated({ ...board('total_level'), guildTypeFilter: 'casual' });
         await flush();
         expect(bar().style.display).toBe('none');
     });
@@ -471,13 +471,13 @@ describe('next board button', () => {
         // Global boards known for total level and milking; the Steam view has opened only total level
         game.wsHandlers.leaderboard_updated(board('total_level'));
         game.wsHandlers.leaderboard_updated(board('milking'));
-        game.wsHandlers.leaderboard_updated({ ...board('total_level'), playerCohortFilter: 'steam' });
+        game.wsHandlers.leaderboard_updated({ ...board('total_level'), leaderboardType: 'steam_standard' });
         await flush();
         expect(button.textContent).toContain('Milking');
 
         button.click();
         expect(clicks).toEqual(['Milking']);
-        game.wsHandlers.leaderboard_updated({ ...board('milking'), playerCohortFilter: 'steam' });
+        game.wsHandlers.leaderboard_updated({ ...board('milking'), leaderboardType: 'steam_standard' });
         await flush();
         expect(bar().textContent).toContain('2/21 Steam boards opened');
         expect(button.textContent).toContain('Foraging');
@@ -485,8 +485,7 @@ describe('next board button', () => {
         // Ironcow (Steam) is its own view
         game.wsHandlers.leaderboard_updated({
             ...board('total_level'),
-            gameModeFilter: 'ironcow',
-            playerCohortFilter: 'steam',
+            leaderboardType: 'steam_ironcow',
         });
         await flush();
         expect(bar().textContent).toContain('1/21 Steam boards opened');
@@ -676,7 +675,7 @@ describe('Steam boards in badges', () => {
     const steamBoard = (rows, extra = {}) => ({
         leaderboardCategory: 'milking',
         gameModeFilter: 'standard',
-        playerCohortFilter: 'steam',
+        leaderboardType: 'steam_standard',
         leaderboard: { rows },
         ...extra,
     });
@@ -724,14 +723,14 @@ describe('Steam boards in badges', () => {
         expect(badges()[0].title).toContain('Standard (Steam) rank 2');
         expect(badges()[0].title).toContain('Standard rank 40');
         expect(game.saved.rankBoards['standard|milking'].rows).toEqual([['Alice', 40]]);
-        expect(game.saved.rankBoards['standard_steam|milking'].rows).toEqual([['Alice', 2]]);
+        expect(game.saved.rankBoards['steam_standard|milking'].rows).toEqual([['Alice', 2]]);
     });
 
-    test('another kind of narrowing stays out even with the option on', async () => {
+    test('a filtered view stays out even with the option on', async () => {
         game.steam = true;
         nameEl('Alice');
         await leaderboardRankBadges.initialize();
-        game.wsHandlers.leaderboard_updated(steamBoard([{ name: 'Alice', rank: 2 }], { playerCohortFilter: 'other' }));
+        game.wsHandlers.leaderboard_updated(steamBoard([{ name: 'Alice', rank: 2 }], { guildTypeFilter: 'casual' }));
         await flush();
         expect(badges()).toHaveLength(0);
     });
@@ -748,7 +747,7 @@ describe('Steam boards in badges', () => {
         for (const callback of game.settingWatchers) callback();
         await vi.advanceTimersByTimeAsync(0);
         expect(badges()).toHaveLength(0);
-        expect(game.saved.rankBoards['standard_steam|milking']).toBeDefined();
+        expect(game.saved.rankBoards['steam_standard|milking']).toBeDefined();
 
         game.steam = true;
         for (const callback of game.settingWatchers) callback();

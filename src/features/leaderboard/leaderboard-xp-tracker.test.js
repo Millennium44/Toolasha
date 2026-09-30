@@ -496,23 +496,28 @@ describe('leaderboard XP tracker', () => {
         expect(stats.lastWeekXPH).toBeCloseTo(3 / 71, 6);
     });
 
-    test('an unknown cohort filter (the live Steam boards) splits the rank series too', () => {
+    test('a Steam board (its own leaderboardType) keeps its rank series apart from the global one', () => {
         game.handlers.leaderboard_updated({
+            leaderboardType: 'standard',
             leaderboardCategory: 'total_level',
-            gameModeFilter: 'standard',
+            guildTypeFilter: 'all',
+            gameModeFilter: 'all',
+            trialFilter: 'all',
             leaderboard: { rows: [{ name: 'M', value1: 1842, value2: 1, rank: 2833 }] },
         });
         game.handlers.leaderboard_updated({
+            leaderboardType: 'steam_standard',
             leaderboardCategory: 'total_level',
-            gameModeFilter: 'standard',
-            playerCohortFilter: 'steam',
+            guildTypeFilter: 'all',
+            gameModeFilter: 'all',
+            trialFilter: 'all',
             leaderboard: { rows: [{ name: 'M', value1: 1842, value2: 1, rank: 1255 }] },
         });
 
         expect(leaderboardXPTracker.playerXPHistory['rank|total_level|standard_M']).toEqual([
             { t: expect.any(Number), r: 2833 },
         ]);
-        expect(leaderboardXPTracker.playerXPHistory['rank|total_level|standard/steam_M']).toEqual([
+        expect(leaderboardXPTracker.playerXPHistory['rank|total_level|steam_standard_M']).toEqual([
             { t: expect.any(Number), r: 1255 },
         ]);
         // No "▲1578" from reading the Steam board after the all-players one

@@ -6,6 +6,7 @@ import {
     boardKey,
     boardTypeLabel,
     boardViewOf,
+    isNarrowedBoard,
     buildNameIndex,
     categoryLabel,
     mergeBoards,
@@ -123,27 +124,46 @@ describe('parseLocalBoard', () => {
         expect(parseLocalBoard(null, NOW)).toBeNull();
     });
 
-    test('ignores a cohort-filtered board so a partial top 100 cannot replace the global one', () => {
-        expect(parseLocalBoard(localMessage({ playerCohortFilter: 'steam' }), NOW)).toBeNull();
+    test('ignores a filtered board so a partial top 100 cannot replace the global one', () => {
+        expect(parseLocalBoard(localMessage({ guildTypeFilter: 'casual' }), NOW)).toBeNull();
         expect(parseLocalBoard(localMessage({ trialFilter: 'all' }), NOW)).not.toBeNull();
     });
 
-    test('files a Steam cohort under its own slot only when asked, and maps nothing but steam', () => {
-        const steam = localMessage({ playerCohortFilter: 'steam' });
-        expect(parseLocalBoard(steam, NOW, { includeSteam: true }).key).toBe('standard_steam|milking');
+    test('files a Steam board (its own leaderboardType) under its own slot only when asked', () => {
+        const steam = localMessage({ leaderboardType: 'steam_standard', gameModeFilter: 'all' });
+        expect(parseLocalBoard(steam, NOW, { includeSteam: true }).key).toBe('steam_standard|milking');
         expect(parseLocalBoard(steam, NOW)).toBeNull();
-        expect(parseLocalBoard(localMessage({ playerCohortFilter: 'other' }), NOW, { includeSteam: true })).toBeNull();
-        expect(boardViewOf(steam)).toBe('standard_steam');
-        expect(boardViewOf(localMessage({ playerCohortFilter: 'other' }))).toBeNull();
-        expect(boardTypeLabel('ironcow_steam')).toBe('Ironcow (Steam)');
+        const filtered = localMessage({ leaderboardType: 'steam_standard', guildTypeFilter: 'casual' });
+        expect(parseLocalBoard(filtered, NOW, { includeSteam: true })).toBeNull();
+        expect(boardViewOf(steam)).toBe('steam_standard');
+        expect(boardViewOf(localMessage({ leaderboardType: 'steam_ironcow' }))).toBe('steam_ironcow');
+        expect(boardViewOf(filtered)).toBeNull();
+        expect(boardTypeLabel('steam_ironcow')).toBe('Ironcow (Steam)');
+    });
+
+    test('a full real leaderboard_updated message for a Steam board parses', () => {
+        const message = {
+            type: 'leaderboard_updated',
+            leaderboardType: 'steam_standard',
+            leaderboardCategory: 'total_level',
+            guildTypeFilter: 'all',
+            gameModeFilter: 'all',
+            trialFilter: 'all',
+            leaderboardRevision: 1,
+            leaderboard: { rows: [{ name: 'Alice', rank: 1, value1: 1842, value2: 1 }] },
+        };
+        expect(isNarrowedBoard(message)).toBe(false);
+        expect(boardViewOf(message)).toBe('steam_standard');
+        expect(parseLocalBoard(message, NOW)).toBeNull();
+        expect(parseLocalBoard(message, NOW, { includeSteam: true }).key).toBe('steam_standard|total_level');
     });
 
     test('Steam slots survive sanitizing and are indexed only when included', () => {
-        const boards = { [boardKey('standard_steam', 'milking')]: { at: NOW, source: 'local', rows: [['A', 3]] } };
-        expect(Object.keys(sanitizeBoards(boards))).toEqual(['standard_steam|milking']);
-        expect(Object.keys(mergeBoards({}, boards, NOW))).toEqual(['standard_steam|milking']);
+        const boards = { [boardKey('steam_standard', 'milking')]: { at: NOW, source: 'local', rows: [['A', 3]] } };
+        expect(Object.keys(sanitizeBoards(boards))).toEqual(['steam_standard|milking']);
+        expect(Object.keys(mergeBoards({}, boards, NOW))).toEqual(['steam_standard|milking']);
         expect(buildNameIndex(boards).size).toBe(0);
-        expect(buildNameIndex(boards, { includeSteam: true }).get('a')[0].type).toBe('standard_steam');
+        expect(buildNameIndex(boards, { includeSteam: true }).get('a')[0].type).toBe('steam_standard');
     });
 
     test('drops out-of-range ranks and keeps the best rank of a duplicated name', () => {
