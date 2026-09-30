@@ -1622,7 +1622,7 @@ describe('archiveEarlierCycles — a week with more than one cycle in it', () =>
         expect(live).toMatchObject({ tier: 4, points: 500, serverTier: 5, completed: false });
     });
 
-    test('untimed fields go with the current part when a new-cycle read already landed on the tile', () => {
+    test('a new-cycle read takes the current values, and the accumulated ladder stays with the archive', () => {
         const HOUR = 3_600_000;
         const start = CLEARS.CAPTURED_AT;
         const hour = parseCurrentTrialsData(
@@ -1669,11 +1669,12 @@ describe('archiveEarlierCycles — a week with more than one cycle in it', () =>
             samples: [...base.samples, sample(start + 4 * 60_000)],
         });
         const live = read.tiles['skilling::milking'];
-        expect(live).toMatchObject({ tiers: base.tiers, liveTier: 4, liveTierTarget: 200, pointsByTier: { 4: 400 } });
-        expect(live.personalByCharacter[7].personal).toEqual({ successRate: 0.5 });
+        expect(live).toMatchObject({ tiers: [], liveTier: 4, liveTierTarget: 200, pointsByTier: { 4: 400 } });
+        // Accumulated over every sample, so the whole of it is not the new cycle's
+        expect(live.personalByCharacter).toBeUndefined();
         const old = read.history[0].tiles['skilling::milking'];
-        expect(old).toMatchObject({ tiers: [], pointsByTier: { 3: 300 } });
-        expect(old.personalByCharacter).toBeUndefined();
+        expect(old).toMatchObject({ tiers: base.tiers, pointsByTier: { 3: 300 } });
+        expect(old.personalByCharacter[7].personal).toEqual({ successRate: 0.5 });
         expect(old.liveTier).toBeUndefined();
 
         // Nothing read since: the earlier cycle keeps them all
