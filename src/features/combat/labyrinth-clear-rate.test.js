@@ -4604,3 +4604,98 @@ describe('floor calculation progress bar', () => {
         expect(seq.filter((r) => r > 0.5 && r < 1)).toEqual([0.75]);
     });
 });
+
+/**
+ * Pressing Path while the rooms are still being calculated. It waits for the
+ * calculation to settle and then paths once; it neither interrupts the
+ * calculation nor judges partial results, and a second press withdraws the wait.
+ */
+describe('Path pressed during a floor calculation', () => {
+    const IMP = '/monsters/imp';
+    let pathBtn;
+    let refresh;
+
+    beforeEach(() => {
+        const parent = document.createElement('div');
+        for (let i = 0; i < 2; i++) {
+            const cell = document.createElement('div');
+            cell.className = 'LabyrinthPanel_roomCell_abc';
+            parent.appendChild(cell);
+        }
+        document.body.appendChild(parent);
+        pathBtn = document.createElement('button');
+        pathBtn.className = 'mwi-labyrinth-tile-controls-path-button';
+        pathBtn.textContent = 'Path';
+        document.body.appendChild(pathBtn);
+        labyrinthClearRate.roomData = [
+            [
+                { monsterHrid: IMP, recommendedLevel: 100, isCleared: false },
+                { monsterHrid: IMP, recommendedLevel: 110, isCleared: false },
+            ],
+        ];
+        // The first line of a path run; counting it counts runs
+        refresh = vi.spyOn(labyrinthClearRate, 'refreshRoomDataFromLive').mockImplementation(() => {});
+    });
+
+    afterEach(() => {
+        document.body.innerHTML = '';
+        labyrinthClearRate.roomData = null;
+        labyrinthClearRate.combatCache.clear();
+        labyrinthClearRate.tileCalcRunning = false;
+        labyrinthClearRate._pathQueued = false;
+        labyrinthClearRate._simCancelRequested = false;
+        vi.restoreAllMocks();
+    });
+
+    test('a press is queued, shown as waiting, and a second press withdraws it', async () => {
+        labyrinthClearRate.tileCalcRunning = true;
+
+        await labyrinthClearRate.runPathCalculation();
+        expect(pathBtn.textContent).toBe('Path (waiting...)');
+        expect(pathBtn.disabled).toBe(false);
+
+        await labyrinthClearRate.runPathCalculation();
+        expect(pathBtn.textContent).toBe('Path');
+        expect(refresh).not.toHaveBeenCalled();
+    });
+
+    test('the queued path runs once when the calculation settles, and never again', async () => {
+        let pressed = false;
+        let runsAtPress = -1;
+        vi.spyOn(labyrinthClearRate, 'computeCombatClear').mockImplementation(async () => {
+            // Pressed once, mid-calculation: nothing has run yet
+            if (!pressed) {
+                pressed = true;
+                await labyrinthClearRate.runPathCalculation();
+                runsAtPress = refresh.mock.calls.length;
+            }
+            return { clearChance: 0.5, expectedSeconds: 10 };
+        });
+
+        await labyrinthClearRate.runTileCalculation();
+        await vi.waitFor(() => expect(labyrinthClearRate.pathCalcRunning).toBe(false));
+        expect(runsAtPress).toBe(0);
+        const runs = refresh.mock.calls.length;
+        expect(runs).toBeGreaterThan(0);
+        expect(pathBtn.textContent).toBe('Path');
+
+        // A later calculation has nothing queued behind it
+        labyrinthClearRate.combatCache.clear();
+        await labyrinthClearRate.runTileCalculation();
+        expect(refresh.mock.calls.length).toBe(runs);
+    });
+
+    test('cancelling the calculation withdraws the queued path', async () => {
+        vi.spyOn(labyrinthClearRate, 'computeCombatClear').mockImplementation(async () => {
+            await labyrinthClearRate.runPathCalculation();
+            labyrinthClearRate._simCancelRequested = true;
+            return { cancelled: true, failed: true, clearChance: 0, expectedSeconds: Infinity };
+        });
+
+        await labyrinthClearRate.runTileCalculation();
+
+        expect(refresh).not.toHaveBeenCalled();
+        expect(labyrinthClearRate._pathQueued).toBe(false);
+        expect(pathBtn.textContent).toBe('Path');
+    });
+});
