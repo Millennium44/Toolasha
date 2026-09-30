@@ -289,6 +289,44 @@ describe('the XP history cannot be wiped by a failed read or a stale copy', () =
         expect(storageMock.set).not.toHaveBeenCalled();
     });
 
+    test('a guild leaderboard reading is recorded before the same message reaches the display', () => {
+        // The display redraws synchronously in the same dispatch; a reading
+        // recorded a microtask later drew every open one reading behind
+        guildXPTracker.ownGuildName = 'Milky';
+        guildXPTracker.guildXPHistory = { Rival: [{ t: 1, xp: 100 }] };
+
+        guildXPTracker._onLeaderboardUpdated({
+            leaderboardCategory: 'guild',
+            leaderboard: { rows: [{ name: 'Rival', value2: 500 }] },
+        });
+
+        expect(guildXPTracker.guildXPHistory.Rival.map((s) => s.xp)).toEqual([100, 500]);
+    });
+
+    test('while the history is still loading, a leaderboard reading waits for it and is kept', async () => {
+        storageMock.store.set(GUILD_KEY, { Rival: [{ t: 1, xp: 100 }] });
+        guildXPTracker.ownGuildName = 'Milky';
+        let finishLoad;
+        const load = guildXPTracker._trackLoad(
+            new Promise((resolve) => {
+                finishLoad = resolve;
+            })
+        );
+
+        const recorded = guildXPTracker._onLeaderboardUpdated({
+            leaderboardCategory: 'guild',
+            leaderboard: { rows: [{ name: 'Rival', value2: 500 }] },
+        });
+        expect(guildXPTracker.guildXPHistory.Rival).toBeUndefined();
+
+        guildXPTracker.guildXPHistory = structuredClone(storageMock.store.get(GUILD_KEY));
+        finishLoad();
+        await load;
+        await recorded;
+
+        expect(guildXPTracker.guildXPHistory.Rival.map((s) => s.xp)).toEqual([100, 500]);
+    });
+
     test('a save merges what is stored under what is in memory, so another tab\u2019s samples survive', async () => {
         storageMock.store.set(GUILD_KEY, { Milky: [{ t: 1, xp: 1 }], Other: [{ t: 1, xp: 1 }] });
         guildXPTracker.guildXPHistory = { Milky: [{ t: 2, xp: 2 }] };
