@@ -7085,6 +7085,8 @@ describe('a week with more than one cycle in it', () => {
             holdHour('skilling', T0, T0 + 20 * 60_000);
             guildTrials._archiveEarlierCycles(T0 + 20 * 60_000);
             expect(guildTrials.record.cycleStart).toBe(T0);
+            // Stamped with the write so a merge can tell this correction from a stale stored value
+            expect(guildTrials.record.cycleStartAt).toBe(T0 + 20 * 60_000);
             expect(guildTrials.record.history).toHaveLength(0);
 
             // The combat card's samples are from this cycle's skilling hour: kept.

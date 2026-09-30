@@ -4082,7 +4082,7 @@ class GuildTrials {
             const drifted =
                 Number.isFinite(skillingStart) &&
                 (!Number.isFinite(this.record.cycleStart) || Math.abs(this.record.cycleStart - skillingStart) > 60_000);
-            const base = drifted ? { ...this.record, cycleStart: skillingStart } : this.record;
+            const base = drifted ? { ...this.record, cycleStart: skillingStart, cycleStartAt: now } : this.record;
 
             const next = archiveEarlierCycles(base, held, {
                 offset: this.serverClockOffsetMs,

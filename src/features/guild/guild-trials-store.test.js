@@ -405,6 +405,45 @@ describe('loading and saving', () => {
             'cycleStart'
         );
     });
+
+    test('a backward correction within one cycle survives a merge with the stale stored boundary', () => {
+        const stored = { weekStart: 5, tiles: {}, cycleStart: 10_000_000, cycleStartAt: 100 };
+        const corrected = { weekStart: 5, tiles: {}, cycleStart: 9_900_000, cycleStartAt: 200 };
+        expect(mergeTrialRecords(stored, corrected)).toMatchObject({ cycleStart: 9_900_000, cycleStartAt: 200 });
+        // Either side can be the one in hand: the write stamp decides, not the argument order
+        expect(mergeTrialRecords(corrected, stored)).toMatchObject({ cycleStart: 9_900_000, cycleStartAt: 200 });
+        // A forward correction is the same rule
+        expect(mergeTrialRecords(corrected, { ...stored, cycleStartAt: 300 })).toMatchObject({
+            cycleStart: 10_000_000,
+        });
+    });
+
+    test('a genuinely newer cycle still wins over an older boundary written later', () => {
+        const older = { weekStart: 5, tiles: {}, cycleStart: 1_000_000, cycleStartAt: 900 };
+        const newer = { weekStart: 5, tiles: {}, cycleStart: 1_000_000 + 3 * 3_600_000, cycleStartAt: 100 };
+        expect(mergeTrialRecords(older, newer)).toMatchObject({ cycleStart: newer.cycleStart, cycleStartAt: 100 });
+        expect(mergeTrialRecords(newer, older)).toMatchObject({ cycleStart: newer.cycleStart });
+    });
+
+    test('a boundary with no write stamp falls back to the later value, and the stamp is carried', async () => {
+        expect(
+            mergeTrialRecords(
+                { weekStart: 5, tiles: {}, cycleStart: 10_000_000 },
+                { weekStart: 5, tiles: {}, cycleStart: 9_900_000, cycleStartAt: 200 }
+            )
+        ).toMatchObject({ cycleStart: 10_000_000 });
+        expect(
+            mergeTrialRecords({ weekStart: 5, tiles: {} }, { weekStart: 5, tiles: {}, cycleStartAt: 5 })
+        ).not.toHaveProperty('cycleStartAt');
+        game.store['guildTrials_Milky Way'] = { weekStart: thisWeek, tiles: {}, cycleStart: 1_000, cycleStartAt: 50 };
+        expect(await loadTrialRecord('Milky Way', now)).toMatchObject({ cycleStart: 1_000, cycleStartAt: 50 });
+        expect(
+            mergeTrialRecords({ weekStart: 4, tiles: {} }, { weekStart: 5, tiles: {}, cycleStart: 7, cycleStartAt: 8 })
+        ).toMatchObject({
+            cycleStart: 7,
+            cycleStartAt: 8,
+        });
+    });
 });
 
 describe('the personal half of a guild-keyed record', () => {

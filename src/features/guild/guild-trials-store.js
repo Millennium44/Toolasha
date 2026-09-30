@@ -610,10 +610,37 @@ export function archiveEarlierCycles(
  * Records rebuilt field by field must pass it through this to keep it.
  *
  * @param {*} value - A stored or merged value
- * @returns {{cycleStart: number}|{}} The field when it is a finite number
+ * @param {*} [writtenAt] - Client ms the value was written; kept beside it when finite
+ * @returns {{cycleStart: number, cycleStartAt?: number}|{}} The field when it is a finite number
  */
-function cycleStartField(value) {
-    return Number.isFinite(value) ? { cycleStart: value } : {};
+function cycleStartField(value, writtenAt) {
+    if (!Number.isFinite(value)) return {};
+    return Number.isFinite(writtenAt) ? { cycleStart: value, cycleStartAt: writtenAt } : { cycleStart: value };
+}
+
+/**
+ * The boundary two copies of a record agree on.
+ *
+ * Usually the later one: it is the running cycle's, and an older one is a cycle ago. But the writer moves the
+ * boundary backward on purpose when a tighter clock-offset bound corrects it, and a max would keep the stale
+ * value still on disk. Within one cycle's length the two are one boundary stated twice, so the most recently
+ * written (`cycleStartAt`) wins; further apart they are different cycles, and the later cycle wins. A side
+ * with no write stamp (written before it existed) falls back to the later value.
+ *
+ * @param {Object} base - The stored record
+ * @param {Object} incoming - The record in hand
+ * @returns {{cycleStart: number, cycleStartAt?: number}|{}} The field, or nothing when neither side has one
+ */
+function mergedCycleStart(base, incoming) {
+    const a = { start: base.cycleStart, at: base.cycleStartAt };
+    const b = { start: incoming.cycleStart, at: incoming.cycleStartAt };
+    if (!Number.isFinite(a.start)) return cycleStartField(b.start, b.at);
+    if (!Number.isFinite(b.start)) return cycleStartField(a.start, a.at);
+
+    const sameCycle = Math.abs(a.start - b.start) <= 2 * TRIAL_BUDGET_MS;
+    const stamped = Number.isFinite(a.at) && Number.isFinite(b.at) && a.at !== b.at;
+    const winner = sameCycle && stamped ? (a.at > b.at ? a : b) : a.start >= b.start ? a : b;
+    return cycleStartField(winner.start, winner.at);
 }
 
 /**
@@ -1038,7 +1065,7 @@ export function mergeTrialRecords(base, incoming) {
         guildId: record.guildId ?? null,
         guildName: record.guildName ?? null,
         history: Array.isArray(record.history) ? record.history : [],
-        ...cycleStartField(record.cycleStart),
+        ...cycleStartField(record.cycleStart, record.cycleStartAt),
     });
     if (baseWeek === null) return incoming ? whole(incoming) : emptyRecord(0);
     if (incomingWeek === null) return whole(base);
@@ -1158,9 +1185,7 @@ export function mergeTrialRecords(base, incoming) {
         }
     }
 
-    // The later boundary: it is the running cycle's, and an older one is a cycle ago
-    const cycleStart = Math.max(base.cycleStart ?? -Infinity, incoming.cycleStart ?? -Infinity);
-    return { weekStart: baseWeek, tiles, ...provenance, ...cycleStartField(cycleStart) };
+    return { weekStart: baseWeek, tiles, ...provenance, ...mergedCycleStart(base, incoming) };
 }
 
 /*
@@ -1225,7 +1250,7 @@ export async function loadTrialRecord(guildName, now = Date.now(), characterId =
             history: Array.isArray(record.history) ? record.history : [],
             guildId: record.guildId ?? guildId,
             guildName: record.guildName ?? guildName,
-            ...cycleStartField(record.cycleStart),
+            ...cycleStartField(record.cycleStart, record.cycleStartAt),
         });
 
         // The other half of the way in: a record written before the personal
