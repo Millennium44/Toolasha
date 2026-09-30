@@ -673,6 +673,17 @@ class LabyrinthClearRate {
         }
     }
 
+    /**
+     * The floor the room-distribution panel reads. Null once the run has ended:
+     * that update carries no roomData, so `this.roomData` still holds the
+     * finished floor while `currentFloor` has dropped to 0.
+     * @returns {{rooms: Array, results: Map, floor: number}|null}
+     */
+    roomDistributionFloor() {
+        if (!this.currentFloor || !this.roomData) return null;
+        return { rooms: this.roomData, results: this._tileResults, floor: this.currentFloor };
+    }
+
     onLabyrinthUpdated(data) {
         // Whatever badge a preview is anchored to belongs to the grid this
         // message is about to rebuild (or has just left behind, if the run
@@ -718,6 +729,10 @@ class LabyrinthClearRate {
 
             // Auto-calc newly revealed tiles when enabled (off by default)
             this.scheduleAutoTileCalc();
+        } else {
+            // No grid in this message (a run ending): an open distribution panel
+            // must redraw from the no-floor state rather than keep the last floor
+            refreshRoomDistribution();
         }
     }
 
@@ -2846,11 +2861,7 @@ class LabyrinthClearRate {
                 'min-width:48px; padding:0 10px; height:20px; border:0; border-radius:5px; background:#3d7bd8; ' +
                 'color:#fff; font-size:11px; font-weight:700; line-height:1; white-space:nowrap; cursor:pointer;';
             distributionButton.addEventListener('click', () =>
-                toggleRoomDistribution(() => ({
-                    rooms: this.roomData,
-                    results: this._tileResults,
-                    floor: this.currentFloor,
-                }))
+                toggleRoomDistribution(() => this.roomDistributionFloor())
             );
             group(distributionButton);
         }
