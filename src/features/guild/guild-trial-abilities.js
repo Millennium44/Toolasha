@@ -542,6 +542,29 @@ class GuildTrialAbilities {
         this.liveTrialKey = null;
         /** Where the running trial's encounter can be read from, wired by the damage module */
         this.liveTrialSource = null;
+        /**
+         * The source's encounter at the moment a new trial was detected from
+         * activity. The damage module keeps its encounter after combat ends and
+         * ignores skilling ticks, so it still names the previous trial; that
+         * key is ignored until the source names something else or nothing.
+         */
+        this.staleSourceKey = null;
+    }
+
+    /** @returns {string|null} The source's current encounter key; null when unset or throwing */
+    _sourceKey() {
+        try {
+            return trialKeyFromName(this.liveTrialSource?.() ?? null);
+        } catch (error) {
+            console.error('[GuildTrialAbilities] Reading the live trial failed:', error);
+            return null;
+        }
+    }
+
+    /** A new trial began: forget the last trial's section, and the source's encounter if it is still the last trial's */
+    _forgetLiveTrial() {
+        this.liveTrialKey = null;
+        this.staleSourceKey = this._sourceKey();
     }
 
     /**
@@ -555,11 +578,10 @@ class GuildTrialAbilities {
 
     /** @returns {string|null} The running trial's key: the lifecycle's answer, else the last one set */
     _liveTrialKey() {
-        let fromSource = null;
-        try {
-            fromSource = trialKeyFromName(this.liveTrialSource?.() ?? null);
-        } catch (error) {
-            console.error('[GuildTrialAbilities] Reading the live trial failed:', error);
+        let fromSource = this._sourceKey();
+        if (this.staleSourceKey) {
+            if (fromSource === this.staleSourceKey) fromSource = null;
+            else this.staleSourceKey = null;
         }
         // Kept: the damage module forgets its encounter when trial tracking is
         // switched off, and the session (and its Export) outlive that teardown
@@ -615,6 +637,7 @@ class GuildTrialAbilities {
         // The fallback names the trial the panel last opened on, for this
         // character; the next character must not be compared against it
         this.liveTrialKey = null;
+        this.staleSourceKey = null;
         guildTrialPlan.cleanup();
     }
 
@@ -744,7 +767,7 @@ class GuildTrialAbilities {
         // from its skilling hour into its combat hour, not a new one
         if (this.session && at - sessionLastActivity(this.session) <= TRIAL_START_GRACE_MS) return;
         // A new trial: last trial's plan section is not this one's
-        this.liveTrialKey = null;
+        this._forgetLiveTrial();
         this._start(at);
         this._persist();
     }
@@ -769,7 +792,7 @@ class GuildTrialAbilities {
         }
         // A rollover is a new trial, as in noteTrialStart: last trial's plan
         // section is not this one's. Not cleared in _start, which a capture also reaches
-        this.liveTrialKey = null;
+        this._forgetLiveTrial();
         this._start(at);
         this._persist();
     }

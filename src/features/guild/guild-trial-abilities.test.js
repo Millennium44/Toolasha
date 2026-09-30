@@ -226,6 +226,38 @@ describe('session reset rules', () => {
         expect(s.session.startedAt).toBe(nextTrial);
     });
 
+    test('a rollover is not undone by a source still naming the previous encounter', async () => {
+        const s = session();
+        s.recordCapture(snap('Alice', 1, []), { at: NOW });
+        let encounter = 'badger';
+        s.setLiveTrialSource(() => encounter);
+        expect(s._liveTrialKey()).toBe('badger');
+
+        // The next trial opens with skilling, which the damage module never sees
+        s.noteTrialActivity(NOW + 24 * 60 * 60 * 1000);
+        expect(s._liveTrialKey()).toBeNull();
+        expect(s.liveTrialKey).toBeNull();
+        await Promise.resolve();
+        expect(disk.saved?.trialKey ?? null).toBeNull();
+
+        // A genuinely new encounter is picked up again
+        encounter = 'swarm';
+        expect(s._liveTrialKey()).toBe('swarm');
+    });
+
+    test('a source that resets and then names the same boss again is live again', () => {
+        const s = session();
+        s.recordCapture(snap('Alice', 1, []), { at: NOW });
+        let encounter = 'badger';
+        s.setLiveTrialSource(() => encounter);
+        s.noteTrialActivity(NOW + 24 * 60 * 60 * 1000);
+        expect(s._liveTrialKey()).toBeNull();
+        encounter = null;
+        expect(s._liveTrialKey()).toBeNull();
+        encounter = 'badger';
+        expect(s._liveTrialKey()).toBe('badger');
+    });
+
     test('a tick that rolls the session over drops last trial’s kept plan key', () => {
         const s = session();
         s.recordCapture(snap('Alice', 1, []), { at: NOW });
