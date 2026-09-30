@@ -607,6 +607,31 @@ class GuildXPTracker {
     }
 
     /**
+     * Append the login snapshot's guild and member XP to the in-memory histories.
+     * Touches no metadata; persisting is the caller's.
+     * @param {Object} data - `init_character_data`
+     */
+    _pushLoginSample(data) {
+        const guild = data?.guild;
+        if (!guild?.name) return;
+        const t = data.currentTimestamp ? +new Date(data.currentTimestamp) : Date.now();
+
+        // Record guild XP snapshot
+        if (!this.guildXPHistory[guild.name]) {
+            this.guildXPHistory[guild.name] = [];
+        }
+        pushXP(this.guildXPHistory[guild.name], { t, xp: guild.experience });
+
+        // Record member XP snapshots
+        for (const [charId, guildChar] of Object.entries(data.guildCharacterMap || {})) {
+            if (!this.memberXPHistory[charId]) {
+                this.memberXPHistory[charId] = [];
+            }
+            pushXP(this.memberXPHistory[charId], { t, xp: guildChar.guildExperience });
+        }
+    }
+
+    /**
      * The `guildXPTracker` setting changed. Turning it off needs nothing (every
      * sampling path checks it); turning it on loads the saved history for the current
      * guild so the display fills without waiting for the next update.
@@ -627,6 +652,15 @@ class GuildXPTracker {
 
             this.guildXPHistory = mergeXPHistories(guildLoaded, this.guildXPHistory);
             if (membersLoaded) this.memberXPHistory = mergeXPHistories(membersLoaded, this.memberXPHistory);
+
+            // What `_onCharacterInit` would have recorded at login had tracking been on: seeded
+            // from the current character data, for this guild only, so the display has a sample
+            const current = dataManager.characterData;
+            if (current?.guild?.name === name) {
+                this._pushLoginSample(current);
+                this._persist(`guildXP_${name}`, this.guildXPHistory);
+                if (id) this._persist(`memberXP_${id}`, this.memberXPHistory);
+            }
         } catch (error) {
             console.error('[GuildXPTracker] Loading history after the setting came on failed:', error);
         }
@@ -641,7 +675,6 @@ class GuildXPTracker {
         if (!guild) return; // Player not in a guild
 
         const guildName = guild.name;
-        const guildXP = guild.experience;
         const previousGuildName = this.ownGuildName;
         const previousGuildID = this.ownGuildID;
         this.ownGuildName = guildName;
@@ -681,7 +714,12 @@ class GuildXPTracker {
         }
 
         // Metadata is all the trials features need; history is the setting's own business
-        if (!this._recordsHistory()) return;
+        if (!this._recordsHistory()) {
+            // Another guild's history must not be merged into this one when tracking comes back
+            if (guildName !== previousGuildName) this.guildXPHistory = {};
+            if (this.ownGuildID !== previousGuildID) this.memberXPHistory = {};
+            return;
+        }
 
         // Load persisted histories
         const endLoad = performanceMonitor.startSpan('bg:guildXPTracker', 'load history');
@@ -726,21 +764,7 @@ class GuildXPTracker {
         }
         endLoad();
 
-        const t = data.currentTimestamp ? +new Date(data.currentTimestamp) : Date.now();
-
-        // Record guild XP snapshot
-        if (!this.guildXPHistory[guildName]) {
-            this.guildXPHistory[guildName] = [];
-        }
-        pushXP(this.guildXPHistory[guildName], { t, xp: guildXP });
-
-        // Record member XP snapshots
-        for (const [charId, guildChar] of Object.entries(guildCharacterMap)) {
-            if (!this.memberXPHistory[charId]) {
-                this.memberXPHistory[charId] = [];
-            }
-            pushXP(this.memberXPHistory[charId], { t, xp: guildChar.guildExperience });
-        }
+        this._pushLoginSample(data);
 
         // Persist — queued, not awaited. storage.set is debounced and its
         // promise resolves only when the 3-second timer fires, so awaiting two
@@ -786,6 +810,7 @@ class GuildXPTracker {
         this.ownGuildLevel = typeof guild.level === 'number' ? guild.level : this.ownGuildLevel;
         this.guildCreatedAt = guild.createdAt;
         if (!this._recordsHistory()) {
+            if (previous && previous !== name) this.guildXPHistory = {};
             this.guildType = guild.guildType || this.guildType;
             this.currentWeekStartAt = guild.currentWeekStartAt || this.currentWeekStartAt;
             return;
@@ -846,6 +871,8 @@ class GuildXPTracker {
                 // Another switch may have landed while this read was in flight
                 if (this.ownGuildID !== newGuildID) return;
                 this.memberXPHistory = loaded;
+            } else {
+                this.memberXPHistory = {};
             }
             this.memberMeta = {};
         } else if (newGuildID) {

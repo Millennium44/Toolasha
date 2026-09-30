@@ -702,4 +702,48 @@ describe('with XP history tracking switched off', () => {
         guildXPTracker.disable();
         expect(settings.listeners.filter((e) => e.key === 'guildXPTracker')).toHaveLength(0);
     });
+
+    test('a guild change while tracking is off does not carry the old guild history into the new one', async () => {
+        await guildXPTracker.initialize();
+        guildXPTracker.ownGuildName = 'Milky';
+        guildXPTracker.ownGuildID = 'g1';
+        guildXPTracker.guildXPHistory = { Milky: [{ t: 1, xp: 10 }] };
+        guildXPTracker.memberXPHistory = { 101: [{ t: 1, xp: 5 }] };
+
+        await guildXPTracker._onGuildUpdated({ guild: { name: 'Other', experience: 1 } });
+        await guildXPTracker._onMembersUpdated({
+            guildCharacterMap: { 202: { guildID: 'g2', guildExperience: 3 } },
+            guildSharableCharacterMap: { 202: { name: 'Bo' } },
+        });
+
+        expect(guildXPTracker.guildXPHistory).toEqual({});
+        expect(guildXPTracker.memberXPHistory).toEqual({});
+        expect(storageMock.set).not.toHaveBeenCalled();
+    });
+
+    test('turning it on seeds the current guild and member XP even with nothing saved', async () => {
+        const login = {
+            guild: { name: 'Milky', experience: 1000, createdAt: 0 },
+            guildCharacterMap: { 101: { guildID: 'g1', guildExperience: 5 } },
+            guildSharableCharacterMap: { 101: { name: 'Ada' } },
+        };
+        dataManagerMock.characterData = login;
+        try {
+            await guildXPTracker.initialize();
+            await guildXPTracker._onCharacterInit(login);
+            expect(guildXPTracker.guildXPHistory).toEqual({});
+
+            settings.guildXPTracker = true;
+            for (const entry of settings.listeners.filter((e) => e.key === 'guildXPTracker'))
+                await entry.callback(true);
+
+            await vi.waitFor(() => expect(guildXPTracker.guildXPHistory.Milky).toHaveLength(1));
+            expect(guildXPTracker.guildXPHistory.Milky[0].xp).toBe(1000);
+            expect(guildXPTracker.memberXPHistory[101].map((sample) => sample.xp)).toEqual([5]);
+            // The metadata was not rebuilt
+            expect(guildXPTracker.getMemberMeta(101)?.name).toBe('Ada');
+        } finally {
+            dataManagerMock.characterData = null;
+        }
+    });
 });
