@@ -72,6 +72,11 @@ let haste = { foodHaste: 0, drinkConcentration: 0 };
 let slots = null;
 /** The character's own max MP, from `new_battle`; null until seen (instant restores are then uncapped) */
 let maxMana = null;
+/**
+ * The character's own MP regen per 10 s as a fraction of max MP, from the last `new_battle`; null until seen.
+ * The wire stat omits the game's base 0.01, which the simulator adds (`combat-unit.js` updateCombatDetails).
+ */
+let mpRegenPer10 = null;
 /** True from an equipment change until the next `new_battle`: haste, slots and max MP were dropped and not yet re-read */
 let plannerStale = false;
 
@@ -107,8 +112,19 @@ export function resetMpPlanner() {
     haste = { foodHaste: 0, drinkConcentration: 0 };
     slots = null;
     maxMana = null;
+    mpRegenPer10 = null;
     plannerStale = false;
     optimTarget = null;
+}
+
+/**
+ * MP per minute the character regenerates on its own: a floored share of max MP every 10 s, as the simulator
+ * ticks it. Measured spend is gross of this, so the supply items only have to cover the difference.
+ * @returns {number|null} Null until both max MP and the regen stat have been read from a `new_battle`
+ */
+export function naturalRegenPerMinute() {
+    if (!(maxMana > 0) || mpRegenPer10 === null) return null;
+    return Math.floor(maxMana * (0.01 + mpRegenPer10)) * 6;
 }
 
 /** Start the count again from here */
@@ -249,6 +265,7 @@ export default {
             if (max > 0) maxMana = max;
             plannerStale = false;
             if (stats) {
+                mpRegenPer10 = Number.isFinite(stats.mpRegenPer10) ? stats.mpRegenPer10 : null;
                 haste = { foodHaste: stats.foodHaste || 0, drinkConcentration: stats.drinkConcentration || 0 };
                 if (Number.isFinite(stats.foodSlots) && Number.isFinite(stats.drinkSlots)) {
                     slots = { food: stats.foodSlots, drink: stats.drinkSlots };
@@ -295,6 +312,7 @@ export default {
             haste = { foodHaste: 0, drinkConcentration: 0 };
             slots = null;
             maxMana = null;
+            mpRegenPer10 = null;
             plannerStale = true;
         };
 
@@ -348,7 +366,9 @@ function drawAllocation(card, allocation) {
  */
 function drawMpSupply(body) {
     const measured = manaPerMinuteMeasured();
-    const target = optimTarget ?? (measured === null ? null : Math.ceil(measured));
+    // The auto-filled target is what the items must supply: gross spend less the regeneration that covers part of it
+    const regen = naturalRegenPerMinute();
+    const target = optimTarget ?? (measured === null ? null : Math.ceil(Math.max(0, measured - (regen ?? 0))));
 
     const card = panelCard(body, 'Cheapest MP supply', '#8fd6ff');
 
@@ -415,6 +435,17 @@ function drawMpSupply(body) {
         );
     }
 
+    if (measured !== null && regen !== null && optimTarget === null) {
+        card.appendChild(
+            panelLine(
+                'Natural regen',
+                `${formatWithSeparator(regen)} MP/min`,
+                ROW_COLORS.dim,
+                'Subtracted from the measured spend to fill the target. A target you type is used as given.'
+            )
+        );
+    }
+
     if (plannerStale) {
         card.appendChild(panelNote('Equipment changed: slots, max MP and haste refresh after the next fight.'));
     }
@@ -440,10 +471,7 @@ function drawMpSupply(body) {
     }
 
     body.appendChild(
-        panelNote(
-            'Rates assume each item is used every time its cooldown ends, before natural regeneration. ' +
-                'Prices follow your pricing mode.'
-        )
+        panelNote('Rates assume each item is used every time its cooldown ends. Prices follow your pricing mode.')
     );
 }
 
