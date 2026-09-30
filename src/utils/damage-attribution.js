@@ -686,9 +686,11 @@ function isSingleTarget(action, abilityDetailMap) {
  * those would pay the next bleed tick off as a hit.
  *
  * Ownership is the actor rungs' ({@link findActors}), with two refinements the
- * pool makes possible. Each paid swing goes to the player whose swing paid it,
- * whatever the crowd size, so two players striking one monster on one tick get
- * a hit each rather than both going to the last swinger. A paid swing is a
+ * pool makes possible. A paid swing goes to the player whose swing paid it, so
+ * two players striking one monster on one tick get a hit each rather than both
+ * going to the last swinger. With a single swinger that holds whatever the
+ * crowd size; in a crowd with several swingers the pairing is by slot order, not
+ * evidence, so there the splat is shared between the swingers alone. A paid swing is a
  * monster's `dmgCounter` rise matched to one present player's own `atkCounter`
  * rise on the same tick, which is evidence about that swing and not merely
  * about who moved — {@link COLLISION_SPLIT_THRESHOLD} does not gate it. Gating
@@ -758,6 +760,18 @@ export function attributeTick(tick, state, options) {
         }
         return null;
     };
+    // Who a paid swing belongs to. With one swinger in the tick the pairing is
+    // exact whatever the crowd; in a small tick the swings pair off one by one.
+    // In a crowd with several swingers `takeSwing` only picks the first pending
+    // one in slot order, not the one whose swing landed here, so the splat is
+    // shared between the swingers — never the bystanders a party-wide mana
+    // restore put in the tick.
+    const collisionThreshold = options?.collisionThreshold ?? COLLISION_SPLIT_THRESHOLD;
+    const swingerShare = swings.size > 0 ? 1 / swings.size : 0;
+    const swingOwners = (swinger) =>
+        swings.size <= 1 || present.length <= collisionThreshold
+            ? [{ index: swinger, weight: 1 }]
+            : [...swings.keys()].map((index) => ({ index, weight: swingerShare }));
     const nonSwingers = present.filter((index) => !swung.has(index));
     const dotOwners =
         countersKnown && swung.size > 0 && nonSwingers.length === 1
@@ -894,7 +908,7 @@ export function attributeTick(tick, state, options) {
         // A bleed cannot crit, so a crit belongs to the last counted splat
         paid.forEach((swinger, n) => {
             const isCrit = crit && counted === 0 && n === paid.length - 1;
-            events.push(swingEvent({ index: swinger, weight: 1 }, index, perSplat, isCrit));
+            for (const owner of swingOwners(swinger)) events.push(swingEvent(owner, index, perSplat, isCrit));
         });
 
         if (isTick) {
