@@ -384,6 +384,27 @@ describe('loading and saving', () => {
         expect(await saveTrialRecord('Milky Way', record)).toBe(true);
         expect(await loadTrialRecord('Milky Way', now)).toMatchObject({ tiles: record.tiles });
     });
+
+    test('the cycle boundary survives a load and a merge, the later one winning', async () => {
+        game.store['guildTrials_Milky Way'] = { weekStart: thisWeek, tiles: {}, cycleStart: 1_000 };
+        expect((await loadTrialRecord('Milky Way', now)).cycleStart).toBe(1_000);
+
+        expect(
+            mergeTrialRecords({ weekStart: 5, tiles: {}, cycleStart: 1_000 }, { weekStart: 5, tiles: {} })
+        ).toMatchObject({ cycleStart: 1_000 });
+        expect(
+            mergeTrialRecords(
+                { weekStart: 5, tiles: {}, cycleStart: 1_000 },
+                { weekStart: 5, tiles: {}, cycleStart: 2_000 }
+            )
+        ).toMatchObject({ cycleStart: 2_000 });
+        expect(
+            mergeTrialRecords({ weekStart: 4, tiles: {}, cycleStart: 9 }, { weekStart: 5, tiles: {} })
+        ).not.toHaveProperty('cycleStart');
+        expect(mergeTrialRecords({ weekStart: 5, tiles: {} }, { weekStart: 5, tiles: {} })).not.toHaveProperty(
+            'cycleStart'
+        );
+    });
 });
 
 describe('the personal half of a guild-keyed record', () => {

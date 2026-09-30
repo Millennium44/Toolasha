@@ -7002,6 +7002,99 @@ describe('a week with more than one cycle in it', () => {
         const analysis = analyseTrial(cooking, { phase: 'live', now: CLEARS.RENDERED_AT });
         expect(analysis.tiersClearedSoFar).toBe(17);
     });
+
+    describe('a reload between the skilling hour and the combat hour', () => {
+        const HOUR = 3_600_000;
+        const T0 = 1_790_000_000_000;
+        const hourPayload = (kind, startedAt) => ({
+            status: 'in_progress',
+            parties: {
+                [`/guild_${kind}/x`]: {
+                    highestTier: 1,
+                    tierStartedAtMs: startedAt,
+                    budgetRemainingMs: HOUR,
+                    highestTierReachedAtMs: startedAt,
+                    done: false,
+                },
+            },
+        });
+        const holdHour = (kind, startedAt, at) => {
+            guildTrials.serverClockOffsetMs = 0;
+            guildTrials.currentTrials = {
+                ...parseCurrentTrialsData(
+                    JSON.stringify(
+                        kind === 'skilling'
+                            ? { skilling: hourPayload('skilling', startedAt), combat: { status: '', parties: null } }
+                            : {
+                                  skilling: { status: 'completed', parties: null },
+                                  combat: hourPayload('combat', startedAt),
+                              }
+                    )
+                ),
+                at,
+            };
+        };
+        const recordWith = (extra = {}) => ({
+            weekStart: trialWeekStart(T0),
+            tiles: {
+                'combat::badger': {
+                    name: 'Badger',
+                    kind: 'combat',
+                    samples: [{ t: T0 + 10 * 60_000, readings: [{ current: 0, max: 5 }] }],
+                    tierSeenAt: {},
+                },
+            },
+            history: [],
+            ...extra,
+        });
+        const reload = () => {
+            guildTrials.record = JSON.parse(JSON.stringify(guildTrials.record));
+            guildTrials.cycleStartMs = null;
+        };
+
+        afterEach(() => {
+            guildTrials.cycleStartMs = null;
+        });
+
+        test('keeps the skilling-hour combat reads in the cycle they belong to', () => {
+            game.testServer = true;
+            guildTrials.record = recordWith();
+            holdHour('skilling', T0, T0 + 20 * 60_000);
+            guildTrials._archiveEarlierCycles(T0 + 20 * 60_000);
+            expect(guildTrials.record.cycleStart).toBe(T0);
+
+            reload();
+            holdHour('combat', T0 + HOUR, T0 + HOUR + 5 * 60_000);
+            guildTrials._archiveEarlierCycles(T0 + HOUR + 5 * 60_000);
+            expect(guildTrials.record.history).toHaveLength(0);
+            expect(guildTrials.record.tiles['combat::badger'].samples).toHaveLength(1);
+        });
+
+        test('without the persisted boundary the same reload would split the cycle', () => {
+            game.testServer = true;
+            guildTrials.record = recordWith();
+            holdHour('combat', T0 + HOUR, T0 + HOUR + 5 * 60_000);
+            guildTrials._archiveEarlierCycles(T0 + HOUR + 5 * 60_000);
+            expect(guildTrials.record.history).toHaveLength(1);
+        });
+
+        test('a genuinely new cycle still archives the last one', () => {
+            game.testServer = true;
+            guildTrials.record = recordWith({ cycleStart: T0 - 4 * HOUR });
+            guildTrials.cycleStartMs = null;
+            holdHour('skilling', T0, T0 + 20 * 60_000);
+            guildTrials._archiveEarlierCycles(T0 + 20 * 60_000);
+            expect(guildTrials.record.cycleStart).toBe(T0);
+            expect(guildTrials.record.history).toHaveLength(0);
+
+            // The combat card's samples are from this cycle's skilling hour: kept.
+            // A next cycle's skilling hour puts them away
+            holdHour('skilling', T0 + 3 * HOUR, T0 + 3 * HOUR + 20 * 60_000);
+            guildTrials._archiveEarlierCycles(T0 + 3 * HOUR + 20 * 60_000);
+            expect(guildTrials.record.cycleStart).toBe(T0 + 3 * HOUR);
+            expect(guildTrials.record.history).toHaveLength(1);
+        });
+    });
 });
 
 describe('the Trace button', () => {

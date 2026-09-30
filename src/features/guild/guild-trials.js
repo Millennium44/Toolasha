@@ -4073,15 +4073,32 @@ class GuildTrials {
             const skillingStart = trialHourStartedAt(held.skilling, this.serverClockOffsetMs);
             if (Number.isFinite(skillingStart)) this.cycleStartMs = skillingStart;
 
-            const next = archiveEarlierCycles(this.record, held, {
+            // Kept on the record as well as in memory: a reload during the combat
+            // hour has no skilling start to observe, and without the boundary the
+            // skilling hour's combat-card samples are filed as an earlier cycle.
+            // Re-stamped only when it moves by more than the offset's drift, so
+            // the record is not rewritten on every pass
+            const remembered = this.cycleStartMs ?? this.record.cycleStart ?? null;
+            const drifted =
+                Number.isFinite(skillingStart) &&
+                (!Number.isFinite(this.record.cycleStart) || Math.abs(this.record.cycleStart - skillingStart) > 60_000);
+            const base = drifted ? { ...this.record, cycleStart: skillingStart } : this.record;
+
+            const next = archiveEarlierCycles(base, held, {
                 offset: this.serverClockOffsetMs,
-                cycleStart: this.cycleStartMs,
+                cycleStart: remembered,
                 at: now,
                 // The last point the damage module's summary still describes the
                 // cycle being archived: the next cycle's stats replace it
                 accuracy: guildTrialDamage.accuracySummary?.({ trace: guildTrialTrace.status?.() ?? null }) || null,
             });
             if (next === this.record) return;
+            if (next === base) {
+                // Only the boundary moved: an ordinary merging save
+                this.record = next;
+                this._persistRecord();
+                return;
+            }
             this.record = next;
             this.blockHtml.clear();
             // The one write meant to lose tiles, as in `_healStaleRecord`: a
