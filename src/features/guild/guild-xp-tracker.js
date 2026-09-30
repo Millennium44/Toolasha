@@ -7,7 +7,8 @@
  * - character_initialized (via dataManager) — initial snapshot on login
  * - guild_updated — guild total XP changes
  * - guild_characters_updated — per-member XP changes
- * - leaderboard_updated (category: guild) — XP for all guilds on the guild leaderboard
+ * - leaderboard_updated (category: guild) — XP for all guilds on the guild leaderboard,
+ *   kept in one account-wide record (`guildLeaderboardXP`), guild or no guild
  */
 
 import dataManager from '../../core/data-manager.js';
@@ -19,6 +20,12 @@ import { registerSyncMerge } from '../../utils/sync-merge-registry.js';
 import { runInBackground } from '../../utils/background-work.js';
 
 const STORE_NAME = 'guildHistory';
+/**
+ * The global guild leaderboard's series, one record for the whole account.
+ * Outside the `guildXP_` prefix on purpose: a guild named after the key must
+ * not be able to land on it, and the prefix matcher must not claim it.
+ */
+const LEADERBOARD_KEY = 'guildLeaderboardXP';
 /** The guild leaderboard's own refresh cadence, as the panel states */
 const LEADERBOARD_REFRESH_MS = 20 * 60 * 1000;
 const WINDOW_10M = 10 * 60 * 1000;
@@ -457,6 +464,12 @@ export function mergeXPHistories(stored, memory) {
  */
 registerSyncMerge({ store: STORE_NAME, prefix: 'guildXP_', merge: mergeXPHistories, label: 'Guild XP history' });
 registerSyncMerge({ store: STORE_NAME, prefix: 'memberXP_', merge: mergeXPHistories, label: 'Guild member XP' });
+registerSyncMerge({
+    store: STORE_NAME,
+    key: LEADERBOARD_KEY,
+    merge: mergeXPHistories,
+    label: 'Guild leaderboard XP',
+});
 
 class GuildXPTracker {
     constructor() {
@@ -467,7 +480,9 @@ class GuildXPTracker {
         this.guildCreatedAt = null;
         this.guildType = null;
         this.currentWeekStartAt = null;
-        this.guildXPHistory = {}; // guildName → [{t, xp}]
+        this.guildXPHistory = {}; // own guild's name → [{t, xp}], from its own messages
+        /** guildName → [{t, xp}] read off the global guild leaderboard, account-wide */
+        this.leaderboardXPHistory = {};
         this.memberXPHistory = {}; // characterID → [{t, xp}]
         this.memberMeta = {}; // characterID → {name, gameMode, joinTime, invitedBy, ...}
         this.unregisterHandlers = [];
@@ -555,6 +570,44 @@ class GuildXPTracker {
     /** @returns {boolean} Whether XP history is being recorded (the `guildXPTracker` setting) */
     _recordsHistory() {
         return config.getSetting('guildXPTracker', true);
+    }
+
+    /**
+     * Load the account-wide guild leaderboard series, folding stored under
+     * memory so readings taken before the read finished are kept. A failed read
+     * leaves memory as it is.
+     * @returns {Promise<boolean>} Whether the read could be made
+     */
+    async _loadLeaderboardHistory() {
+        const probe = await storage.tryGet(LEADERBOARD_KEY, STORE_NAME);
+        const stored = this._resolveLoad(probe, this.leaderboardXPHistory, LEADERBOARD_KEY);
+        const merged = mergeXPHistories(stored, this.leaderboardXPHistory);
+        for (const [name, arr] of Object.entries(merged)) merged[name] = dropFlatRepeats(arr);
+        this.leaderboardXPHistory = merged;
+        return probe !== null;
+    }
+
+    /**
+     * A guild's samples from both places they are recorded: its own messages
+     * (`guildXPHistory`, the player's guild only) and the guild leaderboard.
+     * @param {string} name - Guild name
+     * @returns {Array<{t: number, xp: number}>} Oldest first; a fresh array, empty when untracked
+     */
+    _seriesOf(name) {
+        const own = this.guildXPHistory[name];
+        const board = this.leaderboardXPHistory[name];
+        if (!board?.length) return own ? [...own] : [];
+        if (!own?.length) return [...board];
+        return mergeXPHistories({ [name]: board }, { [name]: own })[name];
+    }
+
+    /** @returns {Object<string, Array<{t: number, xp: number}>>} Every guild's combined series */
+    _combinedHistories() {
+        const out = {};
+        for (const name of new Set([...Object.keys(this.guildXPHistory), ...Object.keys(this.leaderboardXPHistory)])) {
+            out[name] = this._seriesOf(name);
+        }
+        return out;
     }
 
     async initialize() {
@@ -666,7 +719,10 @@ class GuildXPTracker {
         try {
             const name = this.ownGuildName;
             const id = this.ownGuildID;
-            if (!this.initialized || !this._recordsHistory() || !name) return;
+            if (!this.initialized || !this._recordsHistory()) return;
+            // Account-wide, so it loads for a player with no guild too
+            await this._loadLeaderboardHistory();
+            if (!name) return;
 
             const guildLoaded = await this._loadMap(`guildXP_${name}`, this.guildXPHistory);
             const membersLoaded = id ? await this._loadMap(`memberXP_${id}`, this.memberXPHistory) : null;
@@ -693,6 +749,10 @@ class GuildXPTracker {
      * @param {Object} data - Full init_character_data message
      */
     async _onCharacterInit(data) {
+        // The leaderboard series belongs to the account, not to a guild: a
+        // player with no guild reads the same ranking and keeps the same history
+        if (this._recordsHistory()) await this._loadLeaderboardHistory();
+
         const guild = data.guild;
         if (!guild) return; // Player not in a guild
 
@@ -759,6 +819,19 @@ class GuildXPTracker {
         for (const [name, arr] of Object.entries(this.guildXPHistory)) {
             this.guildXPHistory[name] = dropFlatRepeats(arr);
         }
+        // Before the leaderboard had a record of its own, every guild it listed
+        // was saved inside the player's own guild record — one copy per guild
+        // the account has played in. Move the others across; the record they
+        // leave is rewritten only once the account-wide one has landed.
+        const foreign = guildProbe === null ? [] : Object.keys(this.guildXPHistory).filter((n) => n !== guildName);
+        if (foreign.length) {
+            const moved = {};
+            for (const name of foreign) {
+                moved[name] = this.guildXPHistory[name];
+                delete this.guildXPHistory[name];
+            }
+            this.leaderboardXPHistory = mergeXPHistories(this.leaderboardXPHistory, moved);
+        }
         let membersProbe = null;
         if (this.ownGuildID) {
             membersProbe = await storage.tryGet(`memberXP_${this.ownGuildID}`, STORE_NAME);
@@ -799,11 +872,29 @@ class GuildXPTracker {
         // the prune above, both of which are meant to lose entries — so that one
         // save writes as-is; a load that failed goes through the merge instead.
         const endSave = performanceMonitor.startSpan('bg:guildXPTracker', 'queue save');
-        this._persist(`guildXP_${guildName}`, this.guildXPHistory, { overwrite: guildProbe !== null });
+        if (foreign.length) {
+            this._persistMigrated(guildName, this.guildXPHistory);
+        } else {
+            this._persist(`guildXP_${guildName}`, this.guildXPHistory, { overwrite: guildProbe !== null });
+        }
         if (this.ownGuildID) {
             this._persist(`memberXP_${this.ownGuildID}`, this.memberXPHistory, { overwrite: membersProbe !== null });
         }
         endSave();
+    }
+
+    /**
+     * Finish moving other guilds' series out of the own-guild record: the
+     * account-wide record is written first, and the own-guild record is
+     * rewritten without them only if that write landed.
+     * @param {string} guildName - The own guild
+     * @param {Object} ownMap - The own-guild map, already without the moved series
+     * @returns {Promise<void>}
+     */
+    async _persistMigrated(guildName, ownMap) {
+        const saved = await this._persist(LEADERBOARD_KEY, this.leaderboardXPHistory);
+        // Not landed: the old record still holds the series, so it is saved by merge
+        await this._persist(`guildXP_${guildName}`, ownMap, { overwrite: saved === true });
     }
 
     /**
@@ -991,15 +1082,13 @@ class GuildXPTracker {
             const xp = row.value2;
             if (!name || xp === undefined) continue;
 
-            if (!this.guildXPHistory[name]) {
-                this.guildXPHistory[name] = [];
+            if (!this.leaderboardXPHistory[name]) {
+                this.leaderboardXPHistory[name] = [];
             }
-            pushXP(this.guildXPHistory[name], { t, xp });
+            pushXP(this.leaderboardXPHistory[name], { t, xp });
         }
 
-        if (this.ownGuildName) {
-            this._persist(`guildXP_${this.ownGuildName}`, this.guildXPHistory);
-        }
+        this._persist(LEADERBOARD_KEY, this.leaderboardXPHistory);
     }
 
     // ─── Public API (for display module) ─────────────────────────────────────
@@ -1024,7 +1113,7 @@ class GuildXPTracker {
                 }))
                 .sort((a, b) => b.samples - a.samples);
 
-        const guilds = summary(this.guildXPHistory || {});
+        const guilds = summary(this._combinedHistories());
         const members = summary(this.memberXPHistory || {});
         console.log(`[Toolasha] Guild XP history — ${guilds.length} guilds, ${members.length} members tracked`);
         console.log('Guilds with at least 2 samples can show a rate:');
@@ -1038,7 +1127,7 @@ class GuildXPTracker {
      * @returns {{lastXPH: number, lastHourXPH: number, lastDayXPH: number, chart: Array}}
      */
     getGuildStats(guildName) {
-        return calcStats(this.guildXPHistory[guildName]);
+        return calcStats(this._seriesOf(guildName));
     }
 
     /**
@@ -1129,7 +1218,7 @@ class GuildXPTracker {
      * @returns {Object} guildName → [{t, xp}]
      */
     getAllGuildHistories() {
-        return this.guildXPHistory;
+        return this._combinedHistories();
     }
 
     /**
@@ -1138,8 +1227,8 @@ class GuildXPTracker {
      * @returns {number|null}
      */
     getCurrentGuildXP(guildName) {
-        const history = this.guildXPHistory[guildName];
-        if (!history || history.length === 0) return null;
+        const history = this._seriesOf(guildName);
+        if (history.length === 0) return null;
         return history[history.length - 1].xp;
     }
 
@@ -1186,7 +1275,7 @@ class GuildXPTracker {
         const levelExperienceTable =
             dataManager.getInitClientData?.()?.levelExperienceTable ?? LEVEL_EXPERIENCE_TABLE_BY_LEVEL;
 
-        return calcNextMemberSlotETA(guildLevel, currentXP, this.guildXPHistory[guildName], levelExperienceTable);
+        return calcNextMemberSlotETA(guildLevel, currentXP, this._seriesOf(guildName), levelExperienceTable);
     }
 
     /**
@@ -1223,7 +1312,7 @@ class GuildXPTracker {
      * @returns {Array<{t: number, xp: number}>} Oldest first; empty when untracked
      */
     getGuildSeries(guildName) {
-        return [...(this.guildXPHistory[guildName] || [])];
+        return this._seriesOf(guildName);
     }
 
     /**
@@ -1262,6 +1351,7 @@ class GuildXPTracker {
         this.ownGuildLevel = null;
         this.guildCreatedAt = null;
         this.guildXPHistory = {};
+        this.leaderboardXPHistory = {};
         this.memberXPHistory = {};
         this.memberMeta = {};
         this.initialized = false;

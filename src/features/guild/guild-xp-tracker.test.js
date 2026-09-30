@@ -240,6 +240,7 @@ describe('mergeXPHistories', () => {
 describe('the XP history cannot be wiped by a failed read or a stale copy', () => {
     const GUILD_KEY = 'guildXP_Milky';
     const MEMBER_KEY = 'memberXP_g1';
+    const BOARD_KEY = 'guildLeaderboardXP';
     const stored = (key) => storageMock.store.get(key);
     /** A login snapshot, as the tracker sees it */
     const initData = (xp = 1000) => ({
@@ -293,18 +294,18 @@ describe('the XP history cannot be wiped by a failed read or a stale copy', () =
         // The display redraws synchronously in the same dispatch; a reading
         // recorded a microtask later drew every open one reading behind
         guildXPTracker.ownGuildName = 'Milky';
-        guildXPTracker.guildXPHistory = { Rival: [{ t: 1, xp: 100 }] };
+        guildXPTracker.leaderboardXPHistory = { Rival: [{ t: 1, xp: 100 }] };
 
         guildXPTracker._onLeaderboardUpdated({
             leaderboardCategory: 'guild',
             leaderboard: { rows: [{ name: 'Rival', value2: 500 }] },
         });
 
-        expect(guildXPTracker.guildXPHistory.Rival.map((s) => s.xp)).toEqual([100, 500]);
+        expect(guildXPTracker.leaderboardXPHistory.Rival.map((s) => s.xp)).toEqual([100, 500]);
     });
 
     test('while the history is still loading, a leaderboard reading waits for it and is kept', async () => {
-        storageMock.store.set(GUILD_KEY, { Rival: [{ t: 1, xp: 100 }] });
+        storageMock.store.set(BOARD_KEY, { Rival: [{ t: 1, xp: 100 }] });
         guildXPTracker.ownGuildName = 'Milky';
         let finishLoad;
         const load = guildXPTracker._trackLoad(
@@ -317,14 +318,14 @@ describe('the XP history cannot be wiped by a failed read or a stale copy', () =
             leaderboardCategory: 'guild',
             leaderboard: { rows: [{ name: 'Rival', value2: 500 }] },
         });
-        expect(guildXPTracker.guildXPHistory.Rival).toBeUndefined();
+        expect(guildXPTracker.leaderboardXPHistory.Rival).toBeUndefined();
 
-        guildXPTracker.guildXPHistory = structuredClone(storageMock.store.get(GUILD_KEY));
+        guildXPTracker.leaderboardXPHistory = structuredClone(storageMock.store.get(BOARD_KEY));
         finishLoad();
         await load;
         await recorded;
 
-        expect(guildXPTracker.guildXPHistory.Rival.map((s) => s.xp)).toEqual([100, 500]);
+        expect(guildXPTracker.leaderboardXPHistory.Rival.map((s) => s.xp)).toEqual([100, 500]);
     });
 
     test('a save merges what is stored under what is in memory, so another tab\u2019s samples survive', async () => {
@@ -463,6 +464,126 @@ describe('the XP history cannot be wiped by a failed read or a stale copy', () =
 
 const HOUR = 60 * MIN;
 const DAY = 24 * HOUR;
+
+describe('the guild leaderboard series is one account-wide record', () => {
+    const BOARD_KEY = 'guildLeaderboardXP';
+    const stored = (key) => storageMock.store.get(key);
+    const board = (rows) => ({ leaderboardCategory: 'guild', leaderboard: { rows } });
+    const guildInit = (name, id, xp = 1000) => ({
+        guild: { name, experience: xp, createdAt: 0 },
+        guildCharacterMap: { 101: { guildID: id, guildExperience: 5 } },
+        guildSharableCharacterMap: { 101: { name: 'Ada' } },
+    });
+    const flush = async () => {
+        for (const chain of guildXPTracker._saveChains.values()) await chain;
+    };
+
+    beforeEach(() => {
+        vi.useFakeTimers();
+        vi.setSystemTime(new Date('2026-01-01T00:00:00Z'));
+        storageMock.store.clear();
+        storageMock.unavailable = false;
+        storageMock.set.mockClear();
+        guildXPTracker.disable();
+        dataManagerMock.characterData = null;
+    });
+
+    afterEach(() => {
+        vi.useRealTimers();
+    });
+
+    test('a player with no guild saves the readings and sees a rate after a reload', async () => {
+        await guildXPTracker._onCharacterInit({ guild: null });
+        await guildXPTracker._onLeaderboardUpdated(board([{ name: 'Rival', value2: 1000 }]));
+        vi.setSystemTime(new Date('2026-01-01T02:00:00Z'));
+        await guildXPTracker._onLeaderboardUpdated(board([{ name: 'Rival', value2: 3000 }]));
+        await flush();
+        expect(stored(BOARD_KEY).Rival.map((s) => s.xp)).toEqual([1000, 3000]);
+
+        guildXPTracker.disable();
+        await guildXPTracker._onCharacterInit({ guild: null });
+
+        expect(guildXPTracker.getGuildStats('Rival').lastXPH).toBeCloseTo(1000, 6);
+        expect(guildXPTracker.getCurrentGuildXP('Rival')).toBe(3000);
+    });
+
+    test('characters in different guilds share one series and leave their own records alone', async () => {
+        await guildXPTracker._onCharacterInit(guildInit('Milky', 'g1'));
+        await guildXPTracker._onLeaderboardUpdated(board([{ name: 'Rival', value2: 1000 }]));
+        await flush();
+
+        // The other character, in another guild, on the same account
+        guildXPTracker.disable();
+        vi.setSystemTime(new Date('2026-01-01T03:00:00Z'));
+        await guildXPTracker._onCharacterInit(guildInit('Cheesy', 'g2'));
+        await guildXPTracker._onLeaderboardUpdated(board([{ name: 'Rival', value2: 4000 }]));
+        await flush();
+
+        expect(stored(BOARD_KEY).Rival.map((s) => s.xp)).toEqual([1000, 4000]);
+        expect(guildXPTracker.getGuildStats('Rival').lastXPH).toBeCloseTo(1000, 6);
+        expect(stored('guildXP_Milky')).toBeDefined();
+        expect(stored('guildXP_Cheesy')).toBeDefined();
+        expect(stored('guildXP_Milky').Rival).toBeUndefined();
+        expect(stored('guildXP_Cheesy').Rival).toBeUndefined();
+    });
+
+    test('the own guild reads from both its own messages and the leaderboard', async () => {
+        await guildXPTracker._onCharacterInit(guildInit('Milky', 'g1', 1000));
+        vi.setSystemTime(new Date('2026-01-01T01:00:00Z'));
+        await guildXPTracker._onLeaderboardUpdated(board([{ name: 'Milky', value2: 2000 }]));
+        vi.setSystemTime(new Date('2026-01-01T02:00:00Z'));
+        await guildXPTracker._onGuildUpdated({ guild: { name: 'Milky', experience: 3000 } });
+
+        expect(guildXPTracker.getGuildSeries('Milky').map((s) => s.xp)).toEqual([1000, 2000, 3000]);
+        expect(guildXPTracker.getAllGuildHistories().Milky).toHaveLength(3);
+    });
+
+    test('other guilds saved inside the own-guild record move to the account-wide one, history intact', async () => {
+        storageMock.store.set('guildXP_Milky', {
+            Milky: [{ t: 10, xp: 100 }],
+            Rival: [
+                { t: 1, xp: 10 },
+                { t: 2, xp: 20 },
+            ],
+        });
+        storageMock.store.set(BOARD_KEY, { Rival: [{ t: 3, xp: 30 }], Other: [{ t: 3, xp: 5 }] });
+
+        await guildXPTracker._onCharacterInit(guildInit('Milky', 'g1'));
+        await vi.runAllTimersAsync();
+        await flush();
+
+        expect(stored(BOARD_KEY).Rival.map((s) => s.xp)).toEqual([10, 20, 30]);
+        expect(stored(BOARD_KEY).Other).toBeDefined();
+        expect(Object.keys(stored('guildXP_Milky'))).toEqual(['Milky']);
+        expect(guildXPTracker.getGuildSeries('Rival').map((s) => s.xp)).toEqual([10, 20, 30]);
+    });
+
+    test('the own-guild record is not stripped when the account-wide write fails', async () => {
+        storageMock.store.set('guildXP_Milky', { Milky: [{ t: 10, xp: 100 }], Rival: [{ t: 1, xp: 10 }] });
+        storageMock.set.mockImplementation(async (key, value) => {
+            if (key === BOARD_KEY) return false;
+            storageMock.store.set(key, structuredClone(value));
+            return true;
+        });
+
+        await guildXPTracker._onCharacterInit(guildInit('Milky', 'g1'));
+        await flush();
+
+        expect(stored('guildXP_Milky').Rival).toBeDefined();
+        storageMock.set.mockImplementation(async (key, value) => {
+            storageMock.store.set(key, structuredClone(value));
+            return true;
+        });
+    });
+
+    test('a guild named like the record key cannot collide with it', async () => {
+        await guildXPTracker._onCharacterInit(guildInit('leaderboard', 'g1'));
+        await flush();
+
+        expect(stored('guildXP_leaderboard')).toBeDefined();
+        expect(stored(BOARD_KEY)).toBeUndefined();
+    });
+});
 
 describe('calcTimeToLevel - exact-threshold boundary', () => {
     test('does not return null when currentXP lands exactly on a level threshold', () => {

@@ -122,6 +122,7 @@ const corpus = [
     // guild/guild-xp-tracker.js
     { store: 'guildHistory', key: 'guildXP_Some Guild', label: 'Guild XP history' },
     { store: 'guildHistory', key: `memberXP_${CHAR}`, label: 'Guild member XP' },
+    { store: 'guildHistory', key: 'guildLeaderboardXP', label: 'Guild leaderboard XP' },
 
     // guild/guild-trials-store.js — and the cache key its prefix must not eat
     { store: 'guildHistory', key: 'guildTrials_Some Guild', label: 'Guild trial records' },
