@@ -112,7 +112,17 @@ export function collectFloorChances({ rooms, results, floor = 0 }) {
 
     for (let i = 0; i < flat.length; i++) {
         const room = flat[i];
-        if (!room) continue;
+        // The entrance and exit are structural, as the path calculation treats them: by room type, or by
+        // position when the cell carries no contents (a hidden room is null, and the corners are always known)
+        const type = String(room?.roomType || '');
+        const hasContents = !!(room?.skillHrid || room?.monsterHrid);
+        const isEntrance = /\/(entrance|start)$/.test(type) || (i === 0 && !hasContents);
+        const isExit = /\/(descend|exit|finish|flag|victory)$/.test(type) || (i === flat.length - 1 && !hasContents);
+        if (isEntrance || isExit) continue;
+        if (!room) {
+            summary.unrevealed++;
+            continue;
+        }
         if (room.isCleared) {
             summary.cleared++;
             continue;

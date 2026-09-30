@@ -159,6 +159,27 @@ describe('collectFloorChances', () => {
         expect(s.chances.sort()).toEqual([0.3, 0.8]);
     });
 
+    test('a hidden room is null in roomData and counts as unrevealed', () => {
+        const rooms = [
+            [{ roomType: '/labyrinth_room_types/entrance', isCleared: true }, null, monster(100)],
+            [null, monster(100), null],
+            [monster(100), null, { roomType: '/labyrinth_room_types/descend' }],
+        ];
+        const s = collectFloorChances({ rooms, results: new Map([['2,0', { clearChance: 0.5 }]]), floor: 0 });
+        expect(s).toMatchObject({ judged: 1, pending: 2, unrevealed: 4, cleared: 0 });
+    });
+
+    test('a revealed exit is left out of every count', () => {
+        const rooms = [
+            [{ isCleared: true }, monster(100)],
+            [monster(100), { roomType: '/labyrinth_room_types/descend' }],
+        ];
+        const s = collectFloorChances({ rooms, results: new Map(), floor: 0 });
+        expect(s.unrevealed).toBe(0);
+        expect(s.pending).toBe(2);
+        expect(s.pending + s.unrevealed + s.judged + s.cleared + s.treasure).toBe(2 + 0 + 0 + 0 + 0);
+    });
+
     test('tolerates missing input', () => {
         expect(collectFloorChances({ rooms: null, results: null }).judged).toBe(0);
     });
