@@ -29,6 +29,12 @@ import { ROW_COLORS } from './overlay-format.js';
 
 const DEFAULT_REFRESH_MS = 3000;
 
+/** What a list holds, so a scroll position is only carried to the same list and not to another one */
+function listShape(select) {
+    const options = select.options;
+    return `${options.length}|${options[0]?.value}|${options[options.length - 1]?.value}`;
+}
+
 /**
  * @param {Object} definition - What makes this panel itself
  * @param {string} definition.id - DOM id and geometry key
@@ -66,6 +72,18 @@ export function createPanel({
     /** Draw, or say which panel could not be drawn */
     function render() {
         if (!bodyEl) return;
+
+        // replaceChildren empties the body, which clamps its scrollTop to 0, and
+        // the rebuilt list boxes start at the top with no focus. A redraw that
+        // lands mid-interaction (a button click, a price refresh) would otherwise
+        // throw the reader back to the top of the panel and of every list in it.
+        // Lists are matched by position, as a redraw rebuilds them in order.
+        const bodyTop = bodyEl.scrollTop;
+        const selects = [...bodyEl.querySelectorAll('select')];
+        const listTops = selects.map((select) => select.scrollTop);
+        const listShapes = selects.map((select) => listShape(select));
+        const focusedList = selects.indexOf(document.activeElement);
+
         bodyEl.replaceChildren();
 
         try {
@@ -76,6 +94,15 @@ export function createPanel({
             failed.textContent = `This could not be drawn: ${error.message}`;
             failed.style.color = ROW_COLORS.bad;
             bodyEl.appendChild(failed);
+        }
+
+        bodyEl.scrollTop = bodyTop;
+        const rebuilt = [...bodyEl.querySelectorAll('select')];
+        if (rebuilt.length === selects.length) {
+            rebuilt.forEach((select, index) => {
+                if (listShape(select) === listShapes[index]) select.scrollTop = listTops[index];
+            });
+            if (focusedList >= 0) rebuilt[focusedList].focus({ preventScroll: true });
         }
     }
 

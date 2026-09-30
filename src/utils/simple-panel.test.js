@@ -177,6 +177,42 @@ describe('createPanel', () => {
         panel.hide();
     });
 
+    test('a redraw keeps the body and list scroll positions and the list focus', () => {
+        const panel = createPanel({
+            id: 'scrolly',
+            title: 'Scrolly',
+            size: SIZE,
+            refreshMs: 1000,
+            draw: (body) => {
+                const select = document.createElement('select');
+                for (let i = 0; i < 40; i++) {
+                    const option = document.createElement('option');
+                    option.value = `item-${i}`;
+                    option.textContent = `Item ${i}`;
+                    select.appendChild(option);
+                }
+                body.appendChild(select);
+                const button = document.createElement('button');
+                button.textContent = 'level';
+                body.appendChild(button);
+            },
+        });
+        panel.show();
+
+        const body = panel.panel.querySelector('select').parentElement;
+        body.scrollTop = 120;
+        panel.panel.querySelector('select').scrollTop = 200;
+        panel.panel.querySelector('select').focus();
+
+        panel.render();
+
+        const rebuilt = panel.panel.querySelector('select');
+        expect(body.scrollTop).toBe(120);
+        expect(rebuilt.scrollTop).toBe(200);
+        expect(document.activeElement).toBe(rebuilt);
+        panel.hide();
+    });
+
     test('the close button closes it', () => {
         const panel = createPanel({ id: 'close', title: 'Close', size: SIZE, draw: () => {} });
         panel.show();
