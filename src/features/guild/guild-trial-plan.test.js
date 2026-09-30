@@ -452,3 +452,12 @@ describe('per-trial plan sections', () => {
         expect(comparePlan(plan, [], ABILITIES).summary.unknownTokens).toEqual(['Zzzzz']);
     });
 });
+
+describe('one absent player is reported once', () => {
+    test('a trial line replacing a global line for a player not in the roster does not double the count', () => {
+        const plan = parse(['Zed: Fierce Aura', '== Badger ==', 'Zed: Sweep'].join('\n'));
+        const compare = comparePlan(plan, [row('Alice', [])], ABILITIES, 'badger');
+        expect(compare.notInTrial).toEqual(['Zed']);
+        expect(compare.summary.notInTrialCount).toBe(1);
+    });
+});

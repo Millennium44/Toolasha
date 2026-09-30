@@ -409,7 +409,12 @@ export function comparePlan(plan, participants = [], abilityDetailMap = {}, tria
     for (const line of lines) {
         const row = matchPlanName(line.player, rows);
         if (!row) {
-            notInTrial.push(line.player);
+            // A later line for the same absent player replaces the earlier one, as it
+            // does for a matched player, so one person is reported once
+            const absent = String(line.player || '').toLowerCase();
+            const held = notInTrial.findIndex((name) => String(name).toLowerCase() === absent);
+            if (held >= 0) notInTrial[held] = line.player;
+            else notInTrial.push(line.player);
             continue;
         }
         const key = String(row.name || '').toLowerCase();
