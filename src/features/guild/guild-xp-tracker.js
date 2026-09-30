@@ -473,6 +473,8 @@ class GuildXPTracker {
         this.unregisterHandlers = [];
         /** One save chain per storage key, so read-merge-writes never interleave */
         this._saveChains = new Map();
+        /** History loads still in flight; see `_trackLoad` */
+        this._loadsPending = 0;
     }
 
     /**
@@ -602,10 +604,28 @@ class GuildXPTracker {
         // load finishes would otherwise append to an empty history and then be
         // overwritten by the load, so the handlers wait on it.
         if (dataManager.characterData) {
-            this.ready = runInBackground('guildXPTracker', () => this._onCharacterInit(dataManager.characterData));
+            this.ready = this._trackLoad(
+                runInBackground('guildXPTracker', () => this._onCharacterInit(dataManager.characterData))
+            );
         }
 
         this.initialized = true;
+    }
+
+    /**
+     * Count a history load as pending until it settles, so the handlers wait
+     * only while one is. A counter, not a flag: a character switch can start
+     * a second load while the first is still in flight.
+     * @param {Promise<*>} load - The load
+     * @returns {Promise<*>} What the load resolves to
+     */
+    async _trackLoad(load) {
+        this._loadsPending += 1;
+        try {
+            return await load;
+        } finally {
+            this._loadsPending -= 1;
+        }
     }
 
     /**
@@ -790,7 +810,10 @@ class GuildXPTracker {
      * Wait for the history load, where it matters.
      *
      * An update that lands mid-load would otherwise write into an empty history
-     * and be overwritten the moment the real one arrives.
+     * and be overwritten the moment the real one arrives. The handlers await it
+     * only while a load is pending: the display redraws synchronously on the
+     * same message, and a reading recorded even a microtask later is drawn one
+     * reading behind — a series of two shows as a blank rate.
      * @returns {Promise<void>}
      */
     async whenReady() {
@@ -802,7 +825,7 @@ class GuildXPTracker {
      * @param {Object} data - guild_updated message
      */
     async _onGuildUpdated(data) {
-        await this.whenReady();
+        if (this._loadsPending > 0) await this.whenReady();
         const guild = data.guild;
         if (!guild) return;
 
@@ -845,7 +868,7 @@ class GuildXPTracker {
      * @param {Object} data - guild_characters_updated message
      */
     async _onMembersUpdated(data) {
-        await this.whenReady();
+        if (this._loadsPending > 0) await this.whenReady();
         const guildCharacterMap = data.guildCharacterMap || {};
         const sharableMap = data.guildSharableCharacterMap || {};
         this.rawSharableMap = sharableMap;
@@ -954,7 +977,7 @@ class GuildXPTracker {
      * @param {Object} data - leaderboard_updated message
      */
     async _onLeaderboardUpdated(data) {
-        await this.whenReady();
+        if (this._loadsPending > 0) await this.whenReady();
         if (!this._recordsHistory()) return;
         if (data.leaderboardCategory !== 'guild') return;
 
