@@ -4618,6 +4618,34 @@ describe('floor calculation progress bar across a retry', () => {
         vi.restoreAllMocks();
     });
 
+    test('a cached 0% an auto pass will retry is not counted done up front', async () => {
+        const parent = document.createElement('div');
+        const cell = document.createElement('div');
+        cell.className = 'LabyrinthPanel_roomCell_abc';
+        parent.appendChild(cell);
+        document.body.appendChild(parent);
+        labyrinthClearRate.roomData = [[{ monsterHrid: IMP, recommendedLevel: 100, isCleared: false }]];
+        labyrinthClearRate._autoCalcFingerprint = null;
+        labyrinthClearRate.calculatedTileKeys = null;
+        labyrinthClearRate.autoTileRetryCount = 0;
+        const key = labyrinthClearRate.buildCombatCacheKey(IMP, 100, null, clampPrecisionPct(undefined));
+        labyrinthClearRate.combatCache.set(key, { clearChance: 0, hitTarget: true });
+        vi.spyOn(labyrinthClearRate, 'computeCombatClear').mockImplementation(async (hrid, lvl) =>
+            labyrinthClearRate.peekCombatClear(hrid, lvl)
+        );
+        const seq = [];
+        const real = labyrinthClearRate.setTileProgress.bind(labyrinthClearRate);
+        vi.spyOn(labyrinthClearRate, 'setTileProgress').mockImplementation((ratio) => {
+            seq.push(ratio);
+            real(ratio);
+        });
+
+        await labyrinthClearRate.runTileCalculation({ auto: true });
+
+        expect(seq).not.toContain(1);
+        for (let i = 1; i < seq.length; i++) expect(seq[i]).toBeGreaterThanOrEqual(seq[i - 1]);
+    });
+
     test('a last room left for a retry never touches full and drops back', async () => {
         const parent = document.createElement('div');
         for (let i = 0; i < 2; i++) {
