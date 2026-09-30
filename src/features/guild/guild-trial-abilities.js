@@ -595,7 +595,9 @@ class GuildTrialAbilities {
      */
     async initialize(guildName = null) {
         if (guildName) this.guildName = guildName;
-        this.characterId = dataManager.getCurrentCharacterId?.() ?? null;
+        const characterId = dataManager.getCurrentCharacterId?.() ?? null;
+        if (characterId !== this.characterId) this.liveTrialKey = null;
+        this.characterId = characterId;
         this.initialized = true;
         // The session's read is issued first and in this same tick: a capture
         // landing while it is in flight is merged into it, while one landing
@@ -607,6 +609,9 @@ class GuildTrialAbilities {
 
     cleanup() {
         this.initialized = false;
+        // The fallback names the trial the panel last opened on, for this
+        // character; the next character must not be compared against it
+        this.liveTrialKey = null;
         guildTrialPlan.cleanup();
     }
 
@@ -676,6 +681,7 @@ class GuildTrialAbilities {
             this.session = null;
         }
         const changed = next !== this.guildName;
+        if (changed) this.liveTrialKey = null;
         this.guildName = next;
         // Re-read here as the recorder does: the name usually arrives long
         // after `initialize`, and the fallback key is only right while this is

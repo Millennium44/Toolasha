@@ -1243,4 +1243,12 @@ describe('a sectioned plan follows the trial lifecycle, not the panel', () => {
         expect(s.state(GAME).planCompare.summary.planLines).toBe(2);
         vi.restoreAllMocks();
     });
+
+    test('the panel-set trial is forgotten on cleanup, so the next character is not compared against it', () => {
+        const s = session(['Alice']);
+        s.setLiveTrial('Trial Badger');
+        expect(s._liveTrialKey()).toBe('badger');
+        s.cleanup();
+        expect(s._liveTrialKey()).toBeNull();
+    });
 });
