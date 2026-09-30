@@ -288,6 +288,9 @@ function counterStatsOf(stats) {
  */
 export const COLLISION_SPLIT_THRESHOLD = 3;
 
+/** A single-target swing count below this is spent: shared splats leave fractional counts behind */
+const PENDING_EPSILON = 1e-6;
+
 /**
  * Who acted this tick, and whether the tick had to be shared between them.
  *
@@ -757,7 +760,7 @@ export function attributeTick(tick, state, options) {
         for (const index of swings.keys()) {
             const pending = singleTarget.has(index) ? tickPending : monsterPending;
             const left = pending.get(index) || 0;
-            if (left <= 0) continue;
+            if (left <= PENDING_EPSILON) continue;
             pool.push([index, left]);
             if (taken === null) taken = { index, pending, left };
         }
@@ -779,7 +782,26 @@ export function attributeTick(tick, state, options) {
         const total = pool.reduce((sum, [, left]) => sum + left, 0);
         return swings.size <= 1 || present.length <= collisionThreshold || pool.length <= 1 || total <= 0
             ? [{ index: swinger, weight: 1 }]
-            : pool.map(([index, left]) => ({ index, weight: left / total }));
+            : // A single-target swinger's tick-wide count is spent by what it is credited, so its share of a splat
+              // is capped at what it has left; area counts reset per monster and are never fractional
+              pool.map(([index, left]) => ({
+                  index,
+                  weight: singleTarget.has(index) ? Math.min(left, left / total) : left / total,
+              }));
+    };
+    // A shared splat spends each single-target owner's tick-wide count by its share, not one whole swing from the
+    // slot-order winner `takeSwing` picked: otherwise one swing is credited in full on every monster that rang.
+    // Refunds run before any share is spent, or a clamp at zero eats the share
+    const refundShared = (taken, owners) => {
+        if (owners.length <= 1 || !singleTarget.has(taken.swinger)) return;
+        tickPending.set(taken.swinger, (tickPending.get(taken.swinger) || 0) + 1);
+    };
+    const spendShared = (owners) => {
+        if (owners.length <= 1) return;
+        for (const owner of owners) {
+            if (!singleTarget.has(owner.index)) continue;
+            tickPending.set(owner.index, Math.max(0, (tickPending.get(owner.index) || 0) - owner.weight));
+        }
     };
     const nonSwingers = present.filter((index) => !swung.has(index));
     const dotOwners =
@@ -913,18 +935,22 @@ export function attributeTick(tick, state, options) {
             (attacks === beforeAttacks || !couldCounter(state, struck, hurt, pMap, reflecting));
         const counted = isTick ? 0 : unpaid;
 
+        const sharedOwners = paid.map((taken) => swingOwners({ swinger: taken.swinger, pool: paid[0].pool }));
+        paid.forEach((taken, n) => refundShared(taken, sharedOwners[n]));
+
         // A bleed cannot crit, so a crit belongs to the last counted splat
         paid.forEach((taken, n) => {
             const isCrit = crit && counted === 0 && n === paid.length - 1;
             // The pool as it stood before this monster's first rise: consuming a swing per rise must not shift
             // the shares between the monster's own splats
-            const owners = swingOwners({ swinger: taken.swinger, pool: paid[0].pool });
+            const owners = sharedOwners[n];
             // The killing splat is the last rise. The kill is someone's only when one player could have made
             // any of this monster's splats: with several possible swingers the counters say nothing about
             // which splat came last, and the last one paid is just the last in slot order
             if (killEvent && killEvent.killerIndex === null && unpaid === 0 && n === paid.length - 1) {
                 if (owners.length === 1 && paid[0].pool.length === 1) killEvent.killerIndex = owners[0].index;
             }
+            spendShared(owners);
             for (const owner of owners) events.push(swingEvent(owner, index, perSplat, isCrit));
         });
 
