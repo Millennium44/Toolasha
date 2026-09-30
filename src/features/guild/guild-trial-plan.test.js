@@ -444,4 +444,11 @@ describe('per-trial plan sections', () => {
         expect(diff.added).toEqual([]);
         expect(diff.removed).toEqual([]);
     });
+
+    test('a typo under another trial heading is not reported for this trial', () => {
+        const plan = parse(['== Badger ==', 'Alice: Fierce Aura', '== Swarm ==', 'Bob: Zzzzz'].join('\n'));
+        expect(comparePlan(plan, [], ABILITIES, 'badger').summary.unknownTokens).toEqual([]);
+        expect(comparePlan(plan, [], ABILITIES, 'swarm').summary.unknownTokens).toEqual(['Zzzzz']);
+        expect(comparePlan(plan, [], ABILITIES).summary.unknownTokens).toEqual(['Zzzzz']);
+    });
 });

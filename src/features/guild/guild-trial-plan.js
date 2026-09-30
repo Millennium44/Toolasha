@@ -357,6 +357,37 @@ export function verdictFor(line, abilities, abilityDetailMap = {}) {
 }
 
 /**
+ * The unrecognised and ambiguous tokens a comparison should report.
+ *
+ * For a single trial these come from the selected lines only: a typo that sits
+ * under another trial's heading is not a problem with this trial's check.
+ *
+ * @param {Object|null} plan - From {@link parsePlan}
+ * @param {Array<Object>} lines - The lines being compared
+ * @param {string|null} trialKey - The trial, or null for the whole plan
+ * @returns {{unknownTokens: string[], ambiguousTokens: Array<{token: string, matches: string[]}>}}
+ */
+function tokenDiagnostics(plan, lines, trialKey) {
+    if (!trialKey) {
+        return { unknownTokens: [...(plan?.unknownTokens || [])], ambiguousTokens: [...(plan?.ambiguousTokens || [])] };
+    }
+    const unknownTokens = [];
+    const ambiguousTokens = [];
+    for (const line of lines) {
+        for (const token of line.unknown || []) {
+            if (!unknownTokens.some((seen) => normalizeToken(seen) === normalizeToken(token)))
+                unknownTokens.push(token);
+        }
+        for (const entry of line.ambiguous || []) {
+            if (!ambiguousTokens.some((seen) => normalizeToken(seen.token) === normalizeToken(entry.token))) {
+                ambiguousTokens.push({ token: entry.token, matches: entry.matches });
+            }
+        }
+    }
+    return { unknownTokens, ambiguousTokens };
+}
+
+/**
  * The plan compared against what was captured.
  *
  * @param {Object} plan - From {@link parsePlan}
@@ -417,8 +448,7 @@ export function comparePlan(plan, participants = [], abilityDetailMap = {}, tria
             onPlan,
             noPlanCount: noPlan.length,
             notInTrialCount: notInTrial.length,
-            unknownTokens: [...(plan?.unknownTokens || [])],
-            ambiguousTokens: [...(plan?.ambiguousTokens || [])],
+            ...tokenDiagnostics(plan, lines, trialKey),
         },
     };
 }

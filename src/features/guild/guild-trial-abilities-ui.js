@@ -1248,6 +1248,28 @@ function playerLine(row, value, color, title = '') {
 }
 
 /**
+ * The mode a Fetch press was made in, held while its request is in flight.
+ * The reply is classified by this, not by the picker as it stands when the reply
+ * lands: the user may have switched between pre-trial and live meanwhile.
+ * @type {{hrid: string|null}|null}
+ */
+let fetchOrigin = null;
+
+/**
+ * One {@link fetchLoadout} request, remembering which mode asked for it.
+ * @param {{characterId: string|number|null, name: string}} member
+ * @returns {Promise<Object>} The fetch result
+ */
+async function fetchForCurrentMode(member) {
+    fetchOrigin = { hrid: pretrialUi.hrid };
+    try {
+        return await fetchLoadout(member, VIEW_LOADOUT_CONTEXT.GuildTrial, COMBAT_TRIAL_KIND);
+    } finally {
+        fetchOrigin = null;
+    }
+}
+
+/**
  * A per-player "Fetch" control: one click, one {@link fetchLoadout} for that
  * player's trial loadout — nothing here loops or retries on its own.
  *
@@ -1283,11 +1305,7 @@ function fetchLoadoutButton(row) {
         button.disabled = true;
         button.textContent = '…';
         try {
-            const result = await fetchLoadout(
-                { characterId: row.characterId, name: row.name },
-                VIEW_LOADOUT_CONTEXT.GuildTrial,
-                COMBAT_TRIAL_KIND
-            );
+            const result = await fetchForCurrentMode({ characterId: row.characterId, name: row.name });
             // A 'done' reply is already folded in and rendered by the capture
             // listener below by the time this resolves; anything else leaves
             // the row as it was, so the button is simply put back
@@ -1419,11 +1437,7 @@ function fetchNextRow(state) {
         fetchNextInFlight = { name: next.name };
         guildTrialAbilitiesPanel.render();
         try {
-            await fetchLoadout(
-                { characterId: next.characterId, name: next.name },
-                VIEW_LOADOUT_CONTEXT.GuildTrial,
-                COMBAT_TRIAL_KIND
-            );
+            await fetchForCurrentMode({ characterId: next.characterId, name: next.name });
         } catch (error) {
             console.error('[GuildTrialAbilitiesUI] Fetching the next trial loadout failed:', error);
         } finally {
@@ -2025,7 +2039,9 @@ function onViewLoadoutCaptured(entry) {
         if (!isCombatTrialCapture(entry)) return;
         const snapshot = snapshotFromViewLoadout(entry);
         if (!snapshot) return;
-        if (pretrialUi.hrid) {
+        // A reply to one of this panel's own requests belongs to the mode that asked
+        const pretrialMode = entry.requested && fetchOrigin ? fetchOrigin.hrid : pretrialUi.hrid;
+        if (pretrialMode) {
             // A pre-trial check: the capture is already in the View Loadout store, which is
             // what the pre-trial rows read. Folding it into the live session would start
             // one, and the trial going live would then throw it away
