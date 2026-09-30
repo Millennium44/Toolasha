@@ -21,11 +21,11 @@
  * In local mode the game's leaderboard panel also gets a "Next board" button: each real click
  * makes exactly one click on the game's own tab for the next uncached category (on the standard/
  * ironcow board already showing), so the cache can be filled by pressing it repeatedly. Nothing
- * advances on its own. On a Steam cohort tab the button cycles that Steam board's categories instead,
+ * advances on its own. On a Steam tab the button cycles that Steam board's categories instead,
  * judged by which ones were opened this session (the leaderboard XP tracker records them for EXP history).
  *
- * A second setting, `leaderboardRankBadgesSteam` (default off, Local only), files Steam cohort boards
- * under their own slots (`standard_steam`, `ironcow_steam`) and lets badges use them, labelled Steam.
+ * A second setting, `leaderboardRankBadgesSteam` (default off, Local only), files Steam boards
+ * under their own slots (`steam_standard`, `steam_ironcow`) and lets badges use them, labelled Steam.
  *
  * The badge shows one entry per player: their best rank across every board.
  * The tooltip lists up to five, each with the age of its snapshot.
@@ -51,7 +51,6 @@ import {
     categoryLabel,
     isNarrowedBoard,
     isSteamBoardType,
-    isSteamCohortBoard,
     mergeBoards,
     nextBoardCategory,
     normalizeName,
@@ -186,7 +185,7 @@ class LeaderboardRankBadges {
         this.boardCategory = null;
         // False once the open board is one the skill categories do not cover (the Guilds tab's boards)
         this.playerBoardOpen = true;
-        // Categories opened per Steam view this session, keyed like boards ("standard_steam|milking" -> {at})
+        // Categories opened per Steam view this session, keyed like boards ("steam_standard|milking" -> {at})
         this.opened = {};
         this.includeSteam = false;
         this.runId = 0;
@@ -315,11 +314,9 @@ class LeaderboardRankBadges {
     onLocalBoard(data) {
         // Judged before parsing: a guild board never parses, yet it is what decides whether the bar applies
         if (typeof data?.leaderboardCategory === 'string') {
-            // The view covers Standard/Ironcow and their Steam cohorts; other narrowing has no tab to cycle
+            // The view covers Standard/Ironcow and their Steam types; a filtered view has no tab to cycle
             const view = boardViewOf(data);
-            this.playerBoardOpen =
-                RANK_CATEGORIES.includes(data.leaderboardCategory) &&
-                (!isNarrowedBoard(data) || isSteamCohortBoard(data));
+            this.playerBoardOpen = RANK_CATEGORIES.includes(data.leaderboardCategory) && !isNarrowedBoard(data);
             if (view) {
                 this.boardType = view;
                 this.boardCategory = data.leaderboardCategory;

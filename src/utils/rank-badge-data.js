@@ -44,13 +44,13 @@ export const RANK_CATEGORIES = Object.freeze([
 /** Board pairs, in tie-break order */
 export const RANK_BOARD_TYPES = Object.freeze(['standard', 'ironcow']);
 
-/** Steam-cohort slots: separate from the global boards, never merged into them */
-export const STEAM_BOARD_TYPES = Object.freeze(['standard_steam', 'ironcow_steam']);
+/** Steam leaderboard types (the game's own hrids): separate from the global boards, never merged into them */
+export const STEAM_BOARD_TYPES = Object.freeze(['steam_standard', 'steam_ironcow']);
 
 /** Every slot a cache may hold, in tie-break order */
 export const ALL_BOARD_TYPES = Object.freeze([...RANK_BOARD_TYPES, ...STEAM_BOARD_TYPES]);
 
-const STEAM_SUFFIX = '_steam';
+const STEAM_PREFIX = 'steam_';
 
 /** A response larger than this is dropped unread; a real one is a few hundred KB at most */
 export const MAX_SERVER_TEXT_LENGTH = 2_000_000;
@@ -87,22 +87,22 @@ export function normalizeBoardType(value) {
 
 /**
  * Readable name of a board slot.
- * @param {string} type - `standard`, `ironcow`, or a Steam slot (`standard_steam`, `ironcow_steam`)
+ * @param {string} type - `standard`, `ironcow`, or a Steam type (`steam_standard`, `steam_ironcow`)
  * @returns {string} `Standard`, `Ironcow`, `Standard (Steam)` or `Ironcow (Steam)`
  */
 export function boardTypeLabel(type) {
     const steam = isSteamBoardType(type);
-    const base = steam ? type.slice(0, -STEAM_SUFFIX.length) : type;
+    const base = steam ? type.slice(STEAM_PREFIX.length) : type;
     return `${base === 'ironcow' ? 'Ironcow' : 'Standard'}${steam ? ' (Steam)' : ''}`;
 }
 
 /**
- * Whether a board slot is a Steam-cohort one.
+ * Whether a board slot is a Steam leaderboard one.
  * @param {*} type - A board slot
  * @returns {boolean}
  */
 export function isSteamBoardType(type) {
-    return typeof type === 'string' && type.endsWith(STEAM_SUFFIX);
+    return typeof type === 'string' && type.startsWith(STEAM_PREFIX);
 }
 
 /**
@@ -195,8 +195,8 @@ function readRows(rows, nameOf) {
 }
 
 /**
- * Whether a `leaderboard_updated` message is a narrowed view (a Steam cohort tab, say) rather than
- * the global board. `gameModeFilter` is the Standard/Ironcow tab, not a narrowing.
+ * Whether a `leaderboard_updated` message is a filtered view rather than the full board. The Steam boards are
+ * their own `leaderboardType`, not a filter, and `gameModeFilter` is a guild-board filter, not a narrowing here.
  * @param {Object} data - `leaderboard_updated` message
  * @returns {boolean} True for a filtered view
  */
@@ -211,63 +211,50 @@ export function isNarrowedBoard(data) {
 }
 
 /**
- * Whether a narrowed message is a Steam cohort view and nothing else. Only the value `steam` is mapped; a
- * message narrowed by anything else (or by several things) is not a Steam board.
+ * The board slot a message's type names: the player boards and their Steam twins.
  * @param {Object} data - `leaderboard_updated` message
- * @returns {boolean}
+ * @returns {string|null} `standard`, `ironcow`, `steam_standard`, `steam_ironcow`; null when unattributable.
+ *   `gameModeFilter` is consulted only when the message carries no type at all.
  */
-export function isSteamCohortBoard(data) {
-    if (!isNarrowedBoard(data)) return false;
-    const values = [];
-    for (const key of Object.keys(data)) {
-        if (key === 'gameModeFilter' || !/Filter$/.test(key)) continue;
-        const value = data[key];
-        if (typeof value === 'string' && value && value !== 'all') values.push(value.toLowerCase());
-    }
-    return values.length > 0 && values.every((value) => value === 'steam');
+function boardSlotOf(data) {
+    const raw = data.leaderboardType ?? data.leaderboard?.type;
+    if (typeof raw === 'string' && STEAM_BOARD_TYPES.includes(raw.toLowerCase())) return raw.toLowerCase();
+    return normalizeBoardType(raw ?? data.gameModeFilter);
 }
 
 /**
  * The board slot a player-category message shows, Steam views included.
  * @param {Object} data - `leaderboard_updated` message
- * @returns {string|null} `standard`, `ironcow`, `standard_steam`, `ironcow_steam`; null for a guild or unknown
- *   category, an unattributable type, or any other narrowing
+ * @returns {string|null} `standard`, `ironcow`, `steam_standard`, `steam_ironcow`; null for a guild or unknown
+ *   category, an unattributable type, or a filtered view
  */
 export function boardViewOf(data) {
     if (!data || typeof data !== 'object') return null;
     const category = data.leaderboardCategory ?? data.leaderboard?.category;
     if (typeof category !== 'string' || !CATEGORY_SET.has(category)) return null;
-    const type = normalizeBoardType(data.leaderboardType ?? data.leaderboard?.type ?? data.gameModeFilter);
-    if (!type) return null;
-    if (!isNarrowedBoard(data)) return type;
-    return isSteamCohortBoard(data) ? `${type}${STEAM_SUFFIX}` : null;
+    if (isNarrowedBoard(data)) return null;
+    return boardSlotOf(data);
 }
 
 /**
  * A board the player opened, from the game's `leaderboard_updated` message.
  * @param {Object} data - The message
  * @param {number} now - Timestamp to stamp the board with
- * @param {{includeSteam?: boolean}} [options] - `includeSteam` files a Steam cohort board under its own slot
+ * @param {{includeSteam?: boolean}} [options] - `includeSteam` files a Steam board under its own slot
  * @returns {{key: string, board: {at: number, source: 'local', rows: Array<[string, number]>}}|null}
  *   Null for a guild board, an unknown category, an unattributable board type, or no usable rows; also for any
- *   narrowed view unless it is a Steam cohort and `includeSteam` is set
+ *   filtered view, and for a Steam board unless `includeSteam` is set
  */
 export function parseLocalBoard(data, now, { includeSteam = false } = {}) {
     if (!data || typeof data !== 'object') return null;
     const board = data.leaderboard;
     const category = data.leaderboardCategory ?? board?.category;
     if (typeof category !== 'string' || !CATEGORY_SET.has(category)) return null;
-    // The type rides as `leaderboardType` on the wire MWITools reads and as
-    // `gameModeFilter` on the tab filter the XP tracker already reads
-    const type = normalizeBoardType(data.leaderboardType ?? board?.type ?? data.gameModeFilter);
-    if (!type) return null;
-    // Badges mean global ranks: a narrowed view lists a partial top 100 that must not replace the complete
-    // snapshot. A Steam cohort gets a slot of its own when asked for; any other narrowing stays out.
-    let slot = type;
-    if (isNarrowedBoard(data)) {
-        if (!includeSteam || !isSteamCohortBoard(data)) return null;
-        slot = `${type}${STEAM_SUFFIX}`;
-    }
+    // Badges mean global ranks: a filtered view lists a partial top 100 that must not replace the complete
+    // snapshot. A Steam board is its own leaderboardType and gets its own slot when asked for.
+    if (isNarrowedBoard(data)) return null;
+    const slot = boardSlotOf(data);
+    if (!slot || (isSteamBoardType(slot) && !includeSteam)) return null;
     const rows = readRows(board?.rows, (row) => row.name ?? row.characterName);
     if (!rows.length) return null;
     return { key: boardKey(slot, category), board: { at: now, source: 'local', rows } };

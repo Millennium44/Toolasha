@@ -3934,7 +3934,7 @@ export const settingsGroups = {
                 type: 'checkbox',
                 default: false,
                 help:
-                    'With Local only rank badges, Steam cohort boards you open also count toward badges. Their ' +
+                    'With Local only rank badges, Steam boards you open also count toward badges. Their ' +
                     'ranks are kept apart from the global boards and labelled Standard (Steam) or Ironcow (Steam) ' +
                     'in the badge tooltip. Has no effect with the MWITools data server or with badges Off.',
             },
