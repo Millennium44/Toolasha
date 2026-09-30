@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Bulk Sell confirms vendor sales too
+
+- On a vendor step, the Bulk Sell strip's Confirm now presses the item menu's Sell For button (both of its steps) after checking the item, quantity and coin amount, so each vendor sale is still one click of yours.
+
 ### Follow-ups to this release's new features
 
 - The sim's refused-cast count now counts each blocked ability once per cooldown, so its share is the real share of casts refused and it no longer changes with the worker count.
