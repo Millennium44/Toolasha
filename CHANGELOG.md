@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Leaderboard EXP/hr history kept
+
+- Leaderboard and guild leaderboard rates no longer go blank on boards you open less than weekly (the week prune now keeps the reading a rate needs), each weekly trial board keeps its own series, and the guild leaderboard shows a new reading on the same open instead of the next one. Guild leaderboard history is now kept for the whole account, so it survives having no guild or switching characters, and a one-time cleanup no longer deletes all-zero series on every reload.
+
 ### Labyrinth floor clear-chance spread
 
 - A new option adds a "Spread" button to the labyrinth toolbar that charts how the floor's rooms spread across clear chance, with a bin-width control. It reads the badges' own results, so it costs no extra simulation; rooms not yet calculated or revealed are counted apart rather than as 0%.

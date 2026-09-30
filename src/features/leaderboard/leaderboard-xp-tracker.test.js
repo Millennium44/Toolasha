@@ -515,4 +515,24 @@ describe('leaderboard XP tracker', () => {
         // No "▲1578" from reading the Steam board after the all-players one
         expect(leaderboardXPTracker.getPreviousRank('M', 'total_level')).toBeNull();
     });
+
+    test('a board opened again after more than a week keeps its previous reading and has a rate', () => {
+        const day = 24 * 60 * 60 * 1000;
+        const read = (value) =>
+            game.handlers.leaderboard_updated({
+                leaderboardCategory: 'foraging',
+                leaderboard: { rows: [{ name: 'Rare', value2: value, rank: 3 }] },
+            });
+        read(1000);
+        vi.setSystemTime(new Date(Date.parse('2026-01-01T00:00:00Z') + day));
+        read(2000);
+        vi.setSystemTime(new Date(Date.parse('2026-01-01T00:00:00Z') + 11 * day));
+        read(26_000);
+
+        // Every earlier reading is past the week; the latest of them stays
+        const stats = leaderboardXPTracker.getPlayerStats('Rare', 'foraging');
+        expect(stats.samples).toBe(2);
+        expect(stats.lastXPH).toBeCloseTo(24_000 / (10 * 24), 6);
+        expect(stats.lastSpanMs).toBe(10 * day);
+    });
 });
