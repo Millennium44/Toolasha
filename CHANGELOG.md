@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Mana panel plans the cheapest MP supply
+
+- The Mana panel can now work out the cheapest food set that reaches a target MP per minute (defaulting to your measured spend), and the most MP the slots allow, priced with your pricing mode.
+
 ### Combat sim counts refused casts
 
 - The sim's mana results now show how many casts per hour were refused for lack of mana, and what share of casts that is, beside the run-out ratio.
