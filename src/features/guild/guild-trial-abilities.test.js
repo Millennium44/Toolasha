@@ -1244,6 +1244,16 @@ describe('a sectioned plan follows the trial lifecycle, not the panel', () => {
         vi.restoreAllMocks();
     });
 
+    test('the running trial is remembered after the damage module forgets its encounter', () => {
+        const s = session(['Alice']);
+        let encounter = 'badger';
+        s.setLiveTrialSource(() => encounter);
+        expect(s._liveTrialKey()).toBe('badger');
+        // Trial tracking switched off: the damage module resets and its encounter is gone
+        encounter = null;
+        expect(s._liveTrialKey()).toBe('badger');
+    });
+
     test('the panel-set trial is forgotten on cleanup, so the next character is not compared against it', () => {
         const s = session(['Alice']);
         s.setLiveTrial('Trial Badger');

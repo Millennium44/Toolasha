@@ -561,6 +561,9 @@ class GuildTrialAbilities {
         } catch (error) {
             console.error('[GuildTrialAbilities] Reading the live trial failed:', error);
         }
+        // Kept: the damage module forgets its encounter when trial tracking is
+        // switched off, and the session (and its Export) outlive that teardown
+        if (fromSource) this.liveTrialKey = fromSource;
         return fromSource || this.liveTrialKey;
     }
 
