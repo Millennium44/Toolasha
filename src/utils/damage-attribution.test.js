@@ -1344,6 +1344,14 @@ describe('a paid swing in a crowd tick', () => {
                 .reduce((sum, event) => sum + event.weight, 0);
         expect(onMonster1('12')).toBeCloseTo(0.5, 6);
         expect(onMonster1('2')).toBeCloseTo(1, 6);
+
+        // The 1.5 splats of weight left 500 of monster 1's 2000 with no owner: it stays in the team total as
+        // unattributed, adds no hit to anyone, and the team total is the health the monsters actually lost
+        const team = foldTeam({}, events);
+        expect(team.damage).toBeCloseTo(800 + 2000, 6);
+        expect(team.unattributed).toBeCloseTo(500, 6);
+        expect(events.filter((event) => event.isUnattributed && event.weight !== 1)).toEqual([]);
+        expect(tally[null]).toBeUndefined();
     });
 
     test('a paid killing splat from the only swinger in a crowd makes the kill theirs', () => {
