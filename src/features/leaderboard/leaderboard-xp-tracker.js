@@ -362,19 +362,33 @@ class LeaderboardXPTracker {
                 purged = true;
             }
         }
-        // The flag is spent only once the cleaned record is on disk: a failed
-        // overwrite with a landed flag would leave the junk unpurgeable forever.
-        if (purgeDue) {
-            const cleanedWritten = purged ? await this.history.save({ overwrite: true }) : true;
-            if (!stillOurs(ticket)) return;
-            if (cleanedWritten) await storage.set(LEGACY_PURGE_DONE_KEY, true, STORE_NAME);
-        }
-
         this._boundOnLeaderboardUpdated = (data) => this._onLeaderboardUpdated(data);
         webSocketHook.on('leaderboard_updated', this._boundOnLeaderboardUpdated);
         this.unregisterHandlers.push(() => webSocketHook.off('leaderboard_updated', this._boundOnLeaderboardUpdated));
 
         this.initialized = true;
+
+        // Detached: the writes are debounced (seconds), and this feature is not
+        // concurrent in the entrypoint, so awaiting them would stall every later
+        // feature and the websocket handler on the first load after an update.
+        if (purgeDue) void this._persistPurge(ticket, purged);
+    }
+
+    /**
+     * Persist the legacy purge. The flag is spent only once the cleaned record is
+     * on disk: a failed overwrite with a landed flag would leave the junk
+     * unpurgeable forever.
+     * @param {Object} ticket - Owner ticket captured by initialize
+     * @param {boolean} purged - Whether any series was dropped
+     */
+    async _persistPurge(ticket, purged) {
+        try {
+            const cleanedWritten = purged ? await this.history.save({ overwrite: true }) : true;
+            if (!stillOurs(ticket)) return;
+            if (cleanedWritten) await storage.set(LEGACY_PURGE_DONE_KEY, true, STORE_NAME);
+        } catch (error) {
+            console.error('[LeaderboardXPTracker] Legacy purge persistence failed:', error);
+        }
     }
 
     /**
