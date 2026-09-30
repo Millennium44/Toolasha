@@ -64,6 +64,7 @@ await import('../features/insights/enhancement-calibration.js');
 await import('../features/insights/prediction-calibration.js');
 await import('../features/inventory/custom-tabs/custom-tabs-data.js');
 await import('../features/leaderboard/leaderboard-xp-tracker.js');
+await import('../features/leaderboard/leaderboard-rank-badges.js');
 await import('../features/ui/overlay-layouts.js');
 await import('../features/planner/goal-planner-store.js');
 await import('../features/skills/xp-tracker.js');
@@ -118,6 +119,9 @@ const corpus = [
 
     // leaderboard/leaderboard-xp-tracker.js
     { store: 'leaderboardHistory', key: 'playerXP', label: 'Leaderboard XP' },
+
+    // leaderboard/leaderboard-rank-badges.js
+    { store: 'leaderboardHistory', key: 'rankBoards', label: 'Leaderboard rank badges' },
 
     // guild/guild-xp-tracker.js
     { store: 'guildHistory', key: 'guildXP_Some Guild', label: 'Guild XP history' },

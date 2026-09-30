@@ -226,6 +226,19 @@ totals (`src/features/actions/output-totals.js`) are based on
 licence itself; this entry is the attribution the BY clause requires). No separate licence file
 is vendored because the licence is identical to this repository's own.
 
+## MWITools - leaderboard rank badges
+
+The leaderboard rank badges (`src/features/leaderboard/leaderboard-rank-badges.js`,
+`src/utils/rank-badge-data.js`) adapt the design of the leaderboard overlay in
+**[MWITools](https://greasyfork.org/en/scripts/494467)** by bot7420, shykai and Stella
+(CC-BY-NC-SA-4.0 — same licence as this project; this entry is the attribution the BY clause
+requires). Adapted: the pill beside a name with the skill sprite and the rank, the tier bands
+(1-20 rainbow, 21-50 gold, 51-80 silver, 81-100 bronze), the standard/ironcow board pair, the
+choice to show a player's best rank, and the shape of the optional data server's response
+(`schemaVersion` 1, `leaderboardType`, `categories`) and its endpoint. **No code was copied**:
+the parsing, merging, decorator and CSS are written fresh, and the server option is opt-in and
+off by default. See `third-party/mwitools/README.md`.
+
 ## Edible Tools
 
 The loot-log statistics (`src/features/actions/loot-log-stats.js`) are ported from

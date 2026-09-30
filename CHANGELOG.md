@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Leaderboard rank badges
+
+- An optional badge beside player names shows their best top-100 leaderboard rank, from leaderboards you open or, if you choose, from the MWITools data server (polled every 15 minutes). Off by default; design adapted from MWITools.
+
 ### Runs on the CN mirror
 
 - Toolasha now runs on www.milkywayidlecn.com and its test server, reading market data and sprites from whichever site you are on. Market-history contributions stay .com-only.

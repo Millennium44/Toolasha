@@ -20,6 +20,7 @@
 // @connect      api.github.com
 // @connect      gist.githubusercontent.com
 // @connect      www.githubstatus.com
+// @connect      mwi-guild.43.167.210.211.sslip.io
 // @grant        GM_notification
 // @grant        GM_getValue
 // @grant        GM_setValue
