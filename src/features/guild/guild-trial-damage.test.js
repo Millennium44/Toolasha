@@ -4003,9 +4003,9 @@ describe('the ability session learns the running trial from the lifecycle', () =
         const before = guildTrialDamage.encounter;
         try {
             guildTrialDamage.encounter = 'badger';
-            expect(game.liveTrialSource()).toBe('badger');
+            expect(game.liveTrialSource().encounter).toBe('badger');
             guildTrialDamage.encounter = 'swarm';
-            expect(game.liveTrialSource()).toBe('swarm');
+            expect(game.liveTrialSource().encounter).toBe('swarm');
         } finally {
             guildTrialDamage.encounter = before;
         }

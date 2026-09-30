@@ -543,28 +543,39 @@ class GuildTrialAbilities {
         /** Where the running trial's encounter can be read from, wired by the damage module */
         this.liveTrialSource = null;
         /**
-         * The source's encounter at the moment a new trial was detected from
-         * activity. The damage module keeps its encounter after combat ends and
-         * ignores skilling ticks, so it still names the previous trial; that
-         * key is ignored until the source names something else or nothing.
+         * The source's encounter ({ key, instance }) at the moment a new trial was
+         * detected from activity. The damage module keeps its encounter after
+         * combat ends and ignores skilling ticks, so it still names the previous
+         * trial; that reading is ignored until the source names another key, or
+         * the same key under another instance. A repeat of the same encounter
+         * clears and restores the key within one message, so the name alone
+         * never changes.
          */
         this.staleSourceKey = null;
     }
 
-    /** @returns {string|null} The source's current encounter key; null when unset or throwing */
-    _sourceKey() {
+    /**
+     * The source answers with a name, or { encounter, instance } where `instance`
+     * identifies this fight (the damage module's first-seen stamp).
+     * @returns {{key: string|null, instance: *}} The source's current encounter; key null when unset or throwing
+     */
+    _sourceReading() {
         try {
-            return trialKeyFromName(this.liveTrialSource?.() ?? null);
+            const raw = this.liveTrialSource?.() ?? null;
+            if (raw && typeof raw === 'object')
+                return { key: trialKeyFromName(raw.encounter ?? null), instance: raw.instance };
+            return { key: trialKeyFromName(raw), instance: undefined };
         } catch (error) {
             console.error('[GuildTrialAbilities] Reading the live trial failed:', error);
-            return null;
+            return { key: null, instance: undefined };
         }
     }
 
     /** A new trial began: forget the last trial's section, and the source's encounter if it is still the last trial's */
     _forgetLiveTrial() {
         this.liveTrialKey = null;
-        this.staleSourceKey = this._sourceKey();
+        const reading = this._sourceReading();
+        this.staleSourceKey = reading.key ? reading : null;
     }
 
     /**
@@ -578,10 +589,12 @@ class GuildTrialAbilities {
 
     /** @returns {string|null} The running trial's key: the lifecycle's answer, else the last one set */
     _liveTrialKey() {
-        let fromSource = this._sourceKey();
+        const reading = this._sourceReading();
+        let fromSource = reading.key;
         if (this.staleSourceKey) {
-            if (fromSource === this.staleSourceKey) fromSource = null;
-            else this.staleSourceKey = null;
+            if (fromSource === this.staleSourceKey.key && reading.instance === this.staleSourceKey.instance) {
+                fromSource = null;
+            } else this.staleSourceKey = null;
         }
         // Kept: the damage module forgets its encounter when trial tracking is
         // switched off, and the session (and its Export) outlive that teardown

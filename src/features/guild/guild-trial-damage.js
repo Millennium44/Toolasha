@@ -3860,7 +3860,10 @@ export function bossHpCeiling(bossSheets) {
 const guildTrialDamage = new GuildTrialDamage();
 // The plan check compares by the running trial's section, and reads it from here
 // rather than waiting for the Trial Abilities panel to be opened
-guildTrialAbilities.setLiveTrialSource?.(() => guildTrialDamage.encounter);
+guildTrialAbilities.setLiveTrialSource?.(() => ({
+    encounter: guildTrialDamage.encounter,
+    instance: guildTrialDamage.startedAt,
+}));
 
 /**
  * How recently the spectated stream must have ticked for its per-player figures

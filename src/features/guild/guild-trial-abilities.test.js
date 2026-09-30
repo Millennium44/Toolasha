@@ -258,6 +258,21 @@ describe('session reset rules', () => {
         expect(s._liveTrialKey()).toBe('badger');
     });
 
+    test('a repeat of the same encounter is live again, while the stale instance stays suppressed', () => {
+        const s = session();
+        s.recordCapture(snap('Alice', 1, []), { at: NOW });
+        let reading = { encounter: 'badger', instance: 1 };
+        s.setLiveTrialSource(() => reading);
+        expect(s._liveTrialKey()).toBe('badger');
+        s.noteTrialActivity(NOW + 24 * 60 * 60 * 1000);
+        expect(s._liveTrialKey()).toBeNull();
+        // Still the previous fight's instance: suppressed on every read
+        expect(s._liveTrialKey()).toBeNull();
+        // A new fight of the same boss, never passing through null
+        reading = { encounter: 'badger', instance: 2 };
+        expect(s._liveTrialKey()).toBe('badger');
+    });
+
     test('a tick that rolls the session over drops last trial’s kept plan key', () => {
         const s = session();
         s.recordCapture(snap('Alice', 1, []), { at: NOW });
