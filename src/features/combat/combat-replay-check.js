@@ -226,6 +226,7 @@ import { registerSyncMerge } from '../../utils/sync-merge-registry.js';
 import { clearRecord, clearedRecord, entriesOf, mergeClearable } from '../../utils/cleared-record.js';
 import { scriptVersion } from '../../utils/script-version.js';
 import { stableStringify } from '../../utils/stable-stringify.js';
+import { isTestServer } from '../../utils/game-server.js';
 import { hashPlayerName } from './labyrinth-accuracy-export.js';
 
 /** Below this many fights the spread of the sample says nothing about the mean */
@@ -2533,7 +2534,7 @@ class ReplayCheck {
             // test do not share balance
             toolashaVersion: scriptVersion(),
             host,
-            isTestServer: host ? host.includes('test.') : null,
+            isTestServer: host ? isTestServer(host) : null,
             exportedAt: Date.now(),
             simHours: SIM_HOURS,
             simNoiseFloorPct: SIM_NOISE_FLOOR_PCT,

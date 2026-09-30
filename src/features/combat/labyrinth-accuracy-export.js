@@ -16,6 +16,7 @@
 import { splitModelCohorts, calibrationReport } from './labyrinth-calibration.js';
 import tickCapture from './labyrinth-tick-capture.js';
 import { FINGERPRINT_SPEC, FINGERPRINT_VERSION } from './labyrinth-fingerprint.js';
+import { isTestServer } from '../../utils/game-server.js';
 
 /**
  * Where the sim's stop rule and hour budget are read from at export time.
@@ -67,7 +68,7 @@ export function exportMeta() {
     return {
         toolashaVersion: scriptVersion(),
         host,
-        isTestServer: host ? host.includes('test.') : null,
+        isTestServer: host ? isTestServer(host) : null,
         // The sim model this build runs; attempts carry their own marker
         fullKit: true,
         // Replay sims run with no fixed seed, so a re-run will not reproduce

@@ -1146,7 +1146,7 @@ export async function buildTrialExport({ guildName = null } = {}) {
         version: 1,
         toolashaVersion: scriptVersion(),
         host,
-        isTestServer: host ? host.includes('test.') : null,
+        isTestServer: host ? isTestServer(host) : null,
         exportedAt: new Date().toISOString(),
         guildName,
         characterId,

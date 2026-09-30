@@ -26,6 +26,7 @@ import dataManager from '../../core/data-manager.js';
 import storage from '../../core/storage.js';
 import { FINGERPRINT_SPEC } from './labyrinth-recommendation.js';
 import { scriptVersion } from '../../utils/script-version.js';
+import { isTestServer } from '../../utils/game-server.js';
 
 /** Ticks kept before the oldest fall off — far more than one fight, bounded so a tab can't grow forever */
 const MAX_TICKS = 8000;
@@ -600,7 +601,7 @@ export function captureFile() {
         version: 4,
         toolashaVersion: scriptVersion(),
         host,
-        isTestServer: host ? host.includes('test.') : null,
+        isTestServer: host ? isTestServer(host) : null,
         recordedAt: startedAt || null,
         exportedAt: Date.now(),
         savedAt,

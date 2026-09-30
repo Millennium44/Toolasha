@@ -34,6 +34,7 @@ import webSocketHook from '../../core/websocket.js';
 import { compressionAvailable, gzipText, gunzipToText } from '../sync/sync-compress.js';
 import { readScoped } from '../../utils/character-key.js';
 import { scriptVersion } from '../../utils/script-version.js';
+import { isTestServer } from '../../utils/game-server.js';
 
 /** The settings toggle the capture is gated on */
 export const TRACE_SETTING = 'guildTrialDiagnosticTrace';
@@ -975,7 +976,7 @@ class GuildTrialTrace {
             traceId: this.traceId,
             toolashaVersion: scriptVersion(),
             host,
-            isTestServer: host ? host.includes('test.') : null,
+            isTestServer: host ? isTestServer(host) : null,
             recordedAt: this.startedAt || null,
             exportedAt: Date.now(),
             eventCount: this.eventCount,
