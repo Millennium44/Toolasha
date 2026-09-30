@@ -255,10 +255,13 @@ export function parseServerText(text, type, now) {
 
 /**
  * A cache read back from storage, or arriving from another device, reduced to valid boards.
+ * A capture time in the future (a fast-clock device) is capped to `now`: left alone it would win every merge
+ * until wall time caught up and freeze stale ranks.
  * @param {*} value - Whatever was stored
+ * @param {number} [now] - Current time; the bound on `at`
  * @returns {Object<string, {at: number, source: 'local'|'server', rows: Array<[string, number]>}>}
  */
-export function sanitizeBoards(value) {
+export function sanitizeBoards(value, now = Date.now()) {
     const out = {};
     if (!value || typeof value !== 'object') return out;
     for (const type of RANK_BOARD_TYPES) {
@@ -272,7 +275,7 @@ export function sanitizeBoards(value) {
                 (row) => row.n
             );
             if (!rows.length) continue;
-            out[key] = { at: held.at, source: held.source === 'server' ? 'server' : 'local', rows };
+            out[key] = { at: Math.min(held.at, now), source: held.source === 'server' ? 'server' : 'local', rows };
         }
     }
     return out;
@@ -283,11 +286,12 @@ export function sanitizeBoards(value) {
  * Also the cross-device sync fold, which is why it takes two whole caches.
  * @param {Object} base - The cache held
  * @param {Object} incoming - The cache arriving
+ * @param {number} [now] - Current time; future capture times are capped to it
  * @returns {Object} A new cache; neither argument is modified
  */
-export function mergeBoards(base, incoming) {
-    const out = { ...sanitizeBoards(base) };
-    for (const [key, board] of Object.entries(sanitizeBoards(incoming))) {
+export function mergeBoards(base, incoming, now = Date.now()) {
+    const out = { ...sanitizeBoards(base, now) };
+    for (const [key, board] of Object.entries(sanitizeBoards(incoming, now))) {
         const held = out[key];
         if (
             !held ||
