@@ -25,6 +25,7 @@
 
 import config from '../../core/config.js';
 import dataManager from '../../core/data-manager.js';
+import { findOwnBattlePlayer } from '../../core/character-abilities.js';
 import webSocketHook from '../../core/websocket.js';
 import { formatWithSeparator } from '../../utils/formatters.js';
 import { row, blank, ROW_COLORS, glyph } from '../../utils/overlay-format.js';
@@ -119,7 +120,7 @@ export function manaPerMinuteMeasured() {
 export function mpSupplyPlan(targetMpPerMinute) {
     const itemDetailMap = dataManager.getInitClientData?.()?.itemDetailMap || {};
     const candidates = buildMpCandidates(itemDetailMap, {
-        priceOf: (hrid) => resolveItemPrice(hrid, { side: 'buy' }).price,
+        priceOf: (hrid) => resolveItemPrice(hrid, { context: 'profit', side: 'buy' }).price,
         ...haste,
     });
     // A character without a maxed pouch may hold a single food: a plan that needs two must not be offered
@@ -177,13 +178,8 @@ export default {
 
             const characterId = dataManager.getCurrentCharacterId?.();
             // Id first, then name: a player entry is not guaranteed to carry an id
-            // (equippedAbilitiesFromBattle matches the same two ways)
             const characterName = dataManager.getCurrentCharacterName?.();
-            const self = (data?.players || []).find(
-                (player) =>
-                    (characterId !== null && characterId !== undefined && player?.character?.id === characterId) ||
-                    (characterName && player?.character?.name === characterName)
-            );
+            const self = findOwnBattlePlayer(data, { characterId, characterName });
             const stats = self?.combatDetails?.combatStats;
             if (stats) {
                 haste = { foodHaste: stats.foodHaste || 0, drinkConcentration: stats.drinkConcentration || 0 };
