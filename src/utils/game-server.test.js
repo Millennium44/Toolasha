@@ -8,7 +8,7 @@
  */
 
 import { describe, test, expect, afterEach } from 'vitest';
-import { isTestServer } from './game-server.js';
+import { isTestServer, gameOrigin, isPooledDatasetSite } from './game-server.js';
 
 const hadLocation = 'location' in globalThis;
 const originalLocation = globalThis.location;
@@ -23,6 +23,16 @@ describe('isTestServer', () => {
         expect(isTestServer('test.milkywayidle.com')).toBe(true);
         // The socket host too, for anything holding the URL rather than the page
         expect(isTestServer('api-test.milkywayidle.com')).toBe(true);
+    });
+
+    test('the CN mirror test server is the test server', () => {
+        expect(isTestServer('test.milkywayidlecn.com')).toBe(true);
+        expect(isTestServer('api-test.milkywayidlecn.com')).toBe(true);
+    });
+
+    test('the CN mirror live server is not', () => {
+        expect(isTestServer('www.milkywayidlecn.com')).toBe(false);
+        expect(isTestServer('api.milkywayidlecn.com')).toBe(false);
     });
 
     test('the live server is not', () => {
@@ -55,5 +65,38 @@ describe('isTestServer', () => {
 
         globalThis.location = { hostname: 'www.milkywayidle.com' };
         expect(isTestServer()).toBe(false);
+    });
+});
+
+describe('gameOrigin', () => {
+    test.each([
+        'https://www.milkywayidle.com',
+        'https://test.milkywayidle.com',
+        'https://www.milkywayidlecn.com',
+        'https://test.milkywayidlecn.com',
+    ])('a game host reads its own copy: %s', (origin) => {
+        expect(gameOrigin(origin)).toBe(origin);
+    });
+
+    test('a sim site or an unknown origin falls back to the international site', () => {
+        expect(gameOrigin('https://example.com')).toBe('https://www.milkywayidle.com');
+        expect(gameOrigin('https://milkywayidle.com.evil.example')).toBe('https://www.milkywayidle.com');
+        expect(gameOrigin('')).toBe('https://www.milkywayidle.com');
+        expect(gameOrigin(undefined)).toBe('https://www.milkywayidle.com');
+    });
+
+    test('with no argument it reads the page it is on', () => {
+        globalThis.location = { origin: 'https://test.milkywayidlecn.com' };
+        expect(gameOrigin()).toBe('https://test.milkywayidlecn.com');
+    });
+});
+
+describe('isPooledDatasetSite', () => {
+    test('only www.milkywayidle.com', () => {
+        expect(isPooledDatasetSite('www.milkywayidle.com')).toBe(true);
+        expect(isPooledDatasetSite('test.milkywayidle.com')).toBe(false);
+        expect(isPooledDatasetSite('www.milkywayidlecn.com')).toBe(false);
+        expect(isPooledDatasetSite('test.milkywayidlecn.com')).toBe(false);
+        expect(isPooledDatasetSite('')).toBe(false);
     });
 });

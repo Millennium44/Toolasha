@@ -5,7 +5,7 @@
  * sprite URLs without hardcoding hashes that break on game updates.
  */
 
-const MANIFEST_URL = 'https://www.milkywayidle.com/asset-manifest.json';
+import { gameOrigin } from './game-server.js';
 
 // Sprite keys to extract from the manifest (key → sprite name)
 const SPRITE_KEYS = {
@@ -31,7 +31,7 @@ async function fetchManifest() {
 
     manifestPromise = (async () => {
         try {
-            const response = await fetch(MANIFEST_URL);
+            const response = await fetch(`${gameOrigin()}/asset-manifest.json`);
             if (!response.ok) {
                 console.warn('[AssetManifest] Failed to fetch manifest:', response.status);
                 return {};

@@ -7,6 +7,7 @@ import settingsStorage from './settings-storage.js';
 import { settingsGroups } from './settings-schema.js';
 import dataManager from './data-manager.js';
 import storage from './storage.js';
+import { gameOrigin } from '../utils/game-server.js';
 
 /**
  * Every setting key in the schema mapped to its declared default.
@@ -102,7 +103,7 @@ class Config {
         this.Z_NOTIFICATION = 99999; // Transient notifications (above everything)
 
         // Market API URL
-        this.MARKET_API_URL = 'https://www.milkywayidle.com/game_data/marketplace.json';
+        this.MARKET_API_URL = `${gameOrigin()}/game_data/marketplace.json`;
 
         // Settings loaded from settings-schema via settings-storage.js
         this.settingsMap = {};

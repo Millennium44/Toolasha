@@ -74,6 +74,14 @@ import performanceMonitor from '../utils/performance-monitor.js';
  * One Set lookup per message, rather than a chain of string comparisons on
  * every frame the socket delivers.
  */
+/** Socket hosts of the game servers: live and test, international and CN mirror */
+const GAME_SOCKET_HOSTS = [
+    'api.milkywayidle.com',
+    'api-test.milkywayidle.com',
+    'api.milkywayidlecn.com',
+    'api-test.milkywayidlecn.com',
+];
+
 const SKIP_DEDUP_TYPES = new Set([
     'quests_updated',
     'action_completed',
@@ -387,10 +395,7 @@ class WebSocketHook {
             return false;
         }
 
-        return (
-            socket.url.indexOf('api.milkywayidle.com/ws') !== -1 ||
-            socket.url.indexOf('api-test.milkywayidle.com/ws') !== -1
-        );
+        return GAME_SOCKET_HOSTS.some((host) => socket.url.indexOf(`${host}/ws`) !== -1);
     }
 
     /**

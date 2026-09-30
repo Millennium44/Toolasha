@@ -941,3 +941,36 @@ describe('MarketAPI snapshot cache age', () => {
         expect(marketAPI.getPrice('/items/cheese')).toEqual({ ask: 20, bid: 19 });
     });
 });
+
+describe('MarketAPI endpoint origin', () => {
+    const hadLocation = 'location' in globalThis;
+    const originalLocation = globalThis.location;
+
+    beforeEach(() => {
+        vi.resetModules();
+        createMocks(true);
+    });
+
+    afterEach(() => {
+        vi.restoreAllMocks();
+        if (hadLocation) globalThis.location = originalLocation;
+        else delete globalThis.location;
+    });
+
+    test.each([
+        'https://www.milkywayidle.com',
+        'https://test.milkywayidle.com',
+        'https://www.milkywayidlecn.com',
+        'https://test.milkywayidlecn.com',
+    ])('%s reads its own copy', async (origin) => {
+        globalThis.location = { origin, hostname: new URL(origin).hostname };
+        const { default: marketAPI } = await import('./marketplace.js');
+        expect(marketAPI.API_URL).toBe(`${origin}/game_data/marketplace.json`);
+    });
+
+    test('a sim site falls back to the international copy', async () => {
+        globalThis.location = { origin: 'https://example.com', hostname: 'example.com' };
+        const { default: marketAPI } = await import('./marketplace.js');
+        expect(marketAPI.API_URL).toBe('https://www.milkywayidle.com/game_data/marketplace.json');
+    });
+});

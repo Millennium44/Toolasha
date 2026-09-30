@@ -114,6 +114,30 @@ describe('on the live server', () => {
     });
 });
 
+describe('on the CN mirror', () => {
+    test.each(['www.milkywayidlecn.com', 'test.milkywayidlecn.com'])(
+        '%s opens no socket and reports nothing',
+        (host) => {
+            on(host);
+
+            marketHistoryAPI.connect();
+            marketHistoryAPI.report({ marketItemOrderBooks: { '/items/cheese': {} } });
+
+            expect(sockets).toHaveLength(0);
+        }
+    );
+
+    test('reading history still works', async () => {
+        on('www.milkywayidlecn.com');
+        const fetchMock = vi.fn(async () => ({ ok: true, json: async () => [{ time: 1, ask: 5 }] }));
+        globalThis.fetch = fetchMock;
+
+        const rows = await marketHistoryAPI.fetchHistory('/items/cheese', 0, 7);
+
+        expect(rows).toEqual([{ time: 1, ask: 5 }]);
+    });
+});
+
 describe('on the test server', () => {
     test('no socket is opened, however many times connect is called', () => {
         on('test.milkywayidle.com');

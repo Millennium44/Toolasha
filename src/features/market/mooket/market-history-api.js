@@ -27,7 +27,7 @@
  */
 
 import config from '../../../core/config.js';
-import { isTestServer } from '../../../utils/game-server.js';
+import { isTestServer, isPooledDatasetSite } from '../../../utils/game-server.js';
 
 /**
  * The mooket II server (Q7). This is also the pool this client *contributes* to —
@@ -245,7 +245,10 @@ class MarketHistoryAPI {
             return false;
         }
 
-        return true;
+        // The pooled dataset is keyed to the www.milkywayidle.com market. Whether
+        // the CN mirror shares those order books is unconfirmed, so CN reads
+        // work but CN sessions never upload.
+        return isPooledDatasetSite();
     }
 
     /**
