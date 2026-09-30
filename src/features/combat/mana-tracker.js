@@ -43,6 +43,12 @@ const MIN_RATE_SPAN_MS = 60_000;
  */
 let firstEventAt = null;
 let lastEventAt = null;
+/**
+ * Mana already counted when the clock started. A cast that opens the span (tracking began mid-fight, with
+ * no `new_battle` before it) marks the start of the interval rather than filling it, so it stays out of
+ * the rate's numerator; a `new_battle` starts the clock with none.
+ */
+let baselineMana = 0;
 
 /** The character's own food haste and drink concentration, from the last `new_battle` */
 let haste = { foodHaste: 0, drinkConcentration: 0 };
@@ -76,14 +82,19 @@ export function resetManaTally() {
     tally = newManaTally();
     firstEventAt = null;
     lastEventAt = null;
+    baselineMana = 0;
 }
 
 /**
  * Note that something was counted, for the span a per-minute rate divides by.
+ * @param {number} [openingMana] - Mana of the event, when it is a cast: kept out of the rate if it starts the span
  * @param {number} [now] - Clock reading, injectable for tests
  */
-function markEvent(now = Date.now()) {
-    if (firstEventAt === null) firstEventAt = now;
+function markEvent(openingMana = 0, now = Date.now()) {
+    if (firstEventAt === null) {
+        firstEventAt = now;
+        baselineMana = openingMana;
+    }
     lastEventAt = now;
 }
 
@@ -94,7 +105,7 @@ function markEvent(now = Date.now()) {
  */
 export function manaPerMinuteMeasured() {
     if (firstEventAt === null || lastEventAt - firstEventAt < MIN_RATE_SPAN_MS) return null;
-    const { mana } = manaSpend();
+    const mana = manaSpend().mana - baselineMana;
     if (!(mana > 0)) return null;
     return (mana / (lastEventAt - firstEventAt)) * 60_000;
 }
@@ -187,8 +198,9 @@ export default {
             // both shapes have been seen in the wild
             const abilityHrid = data?.ability?.abilityHrid || data?.ability;
             if (typeof abilityHrid !== 'string') return;
-            recordCast(tally, abilityHrid, manaCostOf(abilityHrid));
-            markEvent();
+            const cost = manaCostOf(abilityHrid);
+            recordCast(tally, abilityHrid, cost);
+            markEvent(cost);
         };
         // The tally is kept across a settings toggle on purpose — see the
         // module note — but a character switch is a different character's run
