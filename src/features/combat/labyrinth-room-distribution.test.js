@@ -151,6 +151,24 @@ describe('histogram axis labels', () => {
     });
 });
 
+describe('histogram bar placement', () => {
+    test('a width that does not divide 100 still puts each bar between its own tick edges', () => {
+        // 30-wide bins: 0-30, 30-60, 60-90 and a narrow 90-100
+        const bins = summarizeRoomDistribution([0.1, 0.4, 0.7, 0.95], 30);
+        const svg = buildHistogramSvg(bins);
+        const rects = [...svg.querySelectorAll('rect')];
+        expect(rects).toHaveLength(4);
+        rects.forEach((rect, index) => {
+            const left = (bins[index].min / 100) * 300;
+            const right = (bins[index].max / 100) * 300;
+            expect(Number(rect.getAttribute('x'))).toBeGreaterThanOrEqual(left - 0.06);
+            expect(Number(rect.getAttribute('x')) + Number(rect.getAttribute('width'))).toBeLessThanOrEqual(
+                right + 0.06
+            );
+        });
+    });
+});
+
 describe('collectFloorChances', () => {
     test('judged rooms feed the chances and the rest are reported apart', () => {
         const s = collectFloorChances(floor());
