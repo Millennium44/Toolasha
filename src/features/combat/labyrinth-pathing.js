@@ -1065,15 +1065,19 @@ function minimalChains(grid, revealed, startOK, distToEnd, minNeeded) {
  * way out stayed dark. It is now a constraint the placement has to clear first.
  *
  * Pure function so the planning logic is testable without DOM.
- * @param {boolean[]} revealed - Flat grid of already-revealed rooms
+ * @param {boolean[]} revealedRooms - Flat grid of already-revealed rooms; the exit is treated as revealed
  * @param {number} cols - Grid width
  * @param {number} [beaconCount=0] - Beacons to place; 0 = fewest that cover a path
  * @returns {Object|null} { feasible, beacons: [index...], covered: Set<number>,
  *   revealedNew, minNeeded, routes, corridorOpen } or null on empty input
  */
-export function computeBeaconPlan(revealed, cols, beaconCount = 0) {
-    const n = revealed.length;
+export function computeBeaconPlan(revealedRooms, cols, beaconCount = 0) {
+    const n = revealedRooms.length;
     if (!n || !cols) return null;
+    // The last room is always the exit flag, so it is known as the entrance is:
+    // a beacon never gains it and never has to be spent to learn it
+    const revealed = revealedRooms.slice();
+    revealed[labyrinthExit(n)] = true;
     const entranceIdx = LABYRINTH_ENTRANCE;
     const exitIdx = labyrinthExit(n);
     const grid = beaconGrid(n, cols);

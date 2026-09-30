@@ -701,9 +701,9 @@ describe('computeBeaconPlan optimality', () => {
         const revealed = board([0, 1, 2, 3, 8]);
         const plan = computeBeaconPlan(revealed, COLS, 3);
 
-        // 36 is the exhaustive optimum over all 41,664 three-beacon
-        // placements; relocating one beacon at a time stops at 35
-        expect(plan.revealedNew).toBe(36);
+        // 35 is the exhaustive optimum over all 41,664 three-beacon placements
+        // once the exit, which is always known, is no longer counted as a gain
+        expect(plan.revealedNew).toBe(35);
         expect(plan.corridorOpen).toBe(true);
         expect(plan.routes).toBe(2);
     });
@@ -752,5 +752,28 @@ describe('computeBeaconPlan optimality', () => {
         // Twenty plans: the panel recomputes one per click with auto-calc on,
         // and they measure in tens of milliseconds each
         expect(Date.now() - started).toBeLessThan(3000);
+    });
+});
+
+describe('computeBeaconPlan exit tile', () => {
+    test('the exit is known: a beacon over only the exit gains nothing and is not placed', () => {
+        const revealed = new Array(25).fill(true);
+        revealed[24] = false;
+        const plan = computeBeaconPlan(revealed, 5, 1);
+
+        expect(plan.beacons).toHaveLength(0);
+        expect(plan.revealedNew).toBe(0);
+    });
+
+    test('the reveal count and covered set exclude the exit', () => {
+        // Only the top-right corner (4) is dark besides the exit (24)
+        const revealed = new Array(25).fill(true);
+        revealed[4] = false;
+        revealed[24] = false;
+        const plan = computeBeaconPlan(revealed, 5, 1);
+
+        expect(plan.revealedNew).toBe(1);
+        expect(plan.covered.has(24)).toBe(false);
+        expect(plan.covered.has(4)).toBe(true);
     });
 });
