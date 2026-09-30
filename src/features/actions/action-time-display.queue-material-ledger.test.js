@@ -15,7 +15,7 @@
  * @vitest-environment happy-dom
  */
 
-import { describe, test, expect, beforeEach, afterEach, vi } from 'vitest';
+import { describe, test, expect, beforeEach, afterEach, onTestFinished, vi } from 'vitest';
 
 const observerState = vi.hoisted(() => ({ handler: null }));
 
@@ -220,6 +220,11 @@ describe('queue tooltip costs each row against what the rows before it leave', (
     });
 
     test('a counted row spends only what it performs, and the clock follows the reduced counts', () => {
+        // Each row's clock reads the time on its own; frozen, so a second boundary between the two reads
+        // cannot turn the 50s gap into 51
+        vi.useFakeTimers({ toFake: ['Date'] });
+        vi.setSystemTime(new Date('2026-09-30T12:00:00.250Z'));
+        onTestFinished(() => vi.useRealTimers());
         game.inventory = [stack(CHEESE, 8)];
         game.currentActions = [alchemyAction(1, COINIFY, { maxCount: 3 }), alchemyAction(2, COINIFY)];
 
