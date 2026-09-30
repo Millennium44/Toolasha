@@ -4605,6 +4605,50 @@ describe('floor calculation progress bar', () => {
     });
 });
 
+describe('floor calculation progress bar across a retry', () => {
+    const IMP = '/monsters/imp';
+    afterEach(() => {
+        document.body.innerHTML = '';
+        labyrinthClearRate.roomData = null;
+        labyrinthClearRate.combatCache.clear();
+        labyrinthClearRate.tileCalcRunning = false;
+        if (labyrinthClearRate.autoTileTimer) clearTimeout(labyrinthClearRate.autoTileTimer);
+        labyrinthClearRate.autoTileTimer = null;
+        labyrinthClearRate.autoTileRetryCount = 0;
+        vi.restoreAllMocks();
+    });
+
+    test('a last room left for a retry never touches full and drops back', async () => {
+        const parent = document.createElement('div');
+        for (let i = 0; i < 2; i++) {
+            const cell = document.createElement('div');
+            cell.className = 'LabyrinthPanel_roomCell_abc';
+            parent.appendChild(cell);
+        }
+        document.body.appendChild(parent);
+        labyrinthClearRate.roomData = [
+            [100, 110].map((lvl) => ({ monsterHrid: IMP, recommendedLevel: lvl, isCleared: false })),
+        ];
+        labyrinthClearRate._autoCalcFingerprint = null;
+        labyrinthClearRate.calculatedTileKeys = null;
+        labyrinthClearRate.autoTileRetryCount = 0;
+        vi.spyOn(labyrinthClearRate, 'computeCombatClear').mockImplementation(async (_hrid, lvl) =>
+            lvl === 110 ? { failed: true, clearChance: 0, expectedSeconds: Infinity } : { clearChance: 0.5 }
+        );
+        const seq = [];
+        const real = labyrinthClearRate.setTileProgress.bind(labyrinthClearRate);
+        vi.spyOn(labyrinthClearRate, 'setTileProgress').mockImplementation((ratio) => {
+            seq.push(ratio);
+            real(ratio);
+        });
+
+        await labyrinthClearRate.runTileCalculation({ auto: true });
+
+        expect(seq).not.toContain(1);
+        for (let i = 1; i < seq.length; i++) expect(seq[i]).toBeGreaterThanOrEqual(seq[i - 1]);
+    });
+});
+
 /**
  * Pressing Path while the rooms are still being calculated. It waits for the
  * calculation to settle and then paths once; it neither interrupts the

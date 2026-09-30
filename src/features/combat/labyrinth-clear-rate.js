@@ -3212,6 +3212,10 @@ class LabyrinthClearRate {
             }
 
             let combatRetryNeeded = 0;
+            // Drawn once a room is judged, net of every room left for a retry: a
+            // failed last room otherwise touched 100% and dropped back when the
+            // retry was scheduled
+            const step = () => this.setTileProgress(barFraction(combatRetryNeeded));
             for (const target of combatTargets) {
                 // Between rooms as well as during one: cancelling an uncapped
                 // batch has to stop the queue, not just the fight in flight
@@ -3227,16 +3231,19 @@ class LabyrinthClearRate {
                 completed++;
                 // A cached room was counted done up front; only a sim advances the bar
                 if (!target.cached) simmed++;
-                this.setTileProgress(barFraction());
                 this.syncTileCalcButton(completed, total);
 
                 if (!result || result.failed) {
                     // Sim inputs not ready (e.g. loadout snapshots still loading) —
                     // leave the tile unbadged and unmarked so a retry picks it up
                     combatRetryNeeded++;
+                    step();
                     continue;
                 }
-                if (!target.cell.isConnected) continue;
+                if (!target.cell.isConnected) {
+                    step();
+                    continue;
+                }
 
                 this.appendTileBadge(target.cell, result);
                 this._tileResults.set(target.tileKey, result);
@@ -3247,6 +3254,7 @@ class LabyrinthClearRate {
                     // so the next auto pass re-sims it with loaded snapshots
                     combatRetryNeeded++;
                 }
+                step();
             }
 
             if (cancelled) {
