@@ -966,7 +966,11 @@ export function attributeTick(tick, state, options) {
                 if (owners.length === 1 && paid[0].pool.length === 1) killEvent.killerIndex = owners[0].index;
             }
             spendShared(owners);
-            for (const owner of owners) events.push(swingEvent(owner, index, perSplat, isCrit));
+            for (const owner of owners) {
+                // An owner capped to nothing made no swing here; a zero-weight event folds as a whole hit
+                if (owners.length > 1 && !(owner.weight > 0)) continue;
+                events.push(swingEvent(owner, index, perSplat, isCrit));
+            }
             // A capped splat's owners can sum to under one: the rise was paid, so the remainder belongs to no
             // swing and no hit, but the health it took is real and stays in the team total
             if (owners.length > 1 && perSplat > 0) {

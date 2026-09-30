@@ -1354,6 +1354,22 @@ describe('a paid swing in a crowd tick', () => {
         expect(tally[null]).toBeUndefined();
     });
 
+    test('capped shared splats emit only positive-weight swing events', () => {
+        // A swing event of weight 0 folds as a whole hit, so a capped-out owner must not appear at all. Monster 1
+        // takes three rises after slot 12 was left with half a swing on monster 0
+        const events = mixed(
+            { 0: insect(299970, 2, 32, 29, 1063337956), 1: insect(312440, 1, 17, 17, 1248266296) },
+            { 0: insect(299170, 2, 33, 29, 1063337956), 1: insect(309440, 1, 20, 18, 1248266296) }
+        ).filter((event) => !event.isKill);
+
+        const swings = events.filter((event) => !event.isUnattributed && event.playerIndex !== null);
+        expect(swings.filter((event) => !(event.weight > 0))).toEqual([]);
+        const tally = foldEvents({}, events, { filterNonDamaging: false });
+        expect(tally['12'].hits).toBeLessThanOrEqual(1 + 1e-9);
+        const team = foldTeam({}, events);
+        expect(team.damage).toBeCloseTo(800 + 3000, 6);
+    });
+
     test('a paid killing splat from the only swinger in a crowd makes the kill theirs', () => {
         const events = mixed(
             { 0: insect(4000, 2, 32, 29, 1063337956), 3: insect(316465, 1, 17, 16, 1421800947) },
