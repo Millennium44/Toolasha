@@ -917,8 +917,10 @@ export function attributeTick(tick, state, options) {
         // with a swing that could not be seen, or a monster whose attacks could
         // not, it stays what it always was — a hit
         const paid = [];
+        let monsterAreaPending = new Map();
         if (countersKnown) {
             const monsterPending = new Map([...swings].filter(([swinger]) => !singleTarget.has(swinger)));
+            monsterAreaPending = new Map(monsterPending);
             for (let n = 0; n < rises; n++) {
                 const taken = takeSwing(monsterPending);
                 if (taken === null) break;
@@ -937,13 +939,26 @@ export function attributeTick(tick, state, options) {
 
         const sharedOwners = paid.map((taken) => swingOwners({ swinger: taken.swinger, pool: paid[0].pool }));
         paid.forEach((taken, n) => refundShared(taken, sharedOwners[n]));
+        // What each swinger can still be credited on this monster: every splat reuses the first rise's pool, so
+        // without a cap a fractional single-target balance (or an area swing) is credited once per splat
+        const budget = new Map(monsterAreaPending);
 
         // A bleed cannot crit, so a crit belongs to the last counted splat
         paid.forEach((taken, n) => {
             const isCrit = crit && counted === 0 && n === paid.length - 1;
             // The pool as it stood before this monster's first rise: consuming a swing per rise must not shift
-            // the shares between the monster's own splats
-            const owners = sharedOwners[n];
+            // the shares between the monster's own splats, but a share never exceeds what the swinger has left
+            const owners =
+                sharedOwners[n].length <= 1
+                    ? sharedOwners[n]
+                    : sharedOwners[n].map((owner) => {
+                          const left = singleTarget.has(owner.index)
+                              ? tickPending.get(owner.index) || 0
+                              : (budget.get(owner.index) ?? owner.weight);
+                          const weight = Math.max(0, Math.min(owner.weight, left));
+                          if (!singleTarget.has(owner.index)) budget.set(owner.index, left - weight);
+                          return { index: owner.index, weight };
+                      });
             // The killing splat is the last rise. The kill is someone's only when one player could have made
             // any of this monster's splats: with several possible swingers the counters say nothing about
             // which splat came last, and the last one paid is just the last in slot order
