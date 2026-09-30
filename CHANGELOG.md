@@ -6,6 +6,12 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Labyrinth beacon planner and calculation follow-ups
+
+- The beacon planner treats the bottom-right exit tile as known, so it never spends a beacon on it or counts it in "reveals N new rooms".
+- Pressing Path while rooms are still being calculated now waits and paths once the calculation finishes ("Path (waiting…)"; press again to cancel), instead of running its own sims alongside it.
+- The calculation progress bar counts rooms already known or cached as done from the start, so it climbs steadily instead of refilling from zero on every pass.
+
 ### Upgrade budget plan fills the budget in every mode
 
 - Planning for EXP/hr, DPS, Profit or EPH stopped after the upgrades whose gain cleared the simulation's noise, often leaving most of the budget unspent on a single pick. Every mode now plans on each upgrade's expected gain, as Score already did; a pick whose gain is within the noise is marked "estimate".
