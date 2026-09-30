@@ -213,6 +213,31 @@ describe('measured spend gaps', () => {
         expect(manaPerMinuteMeasured()).toBe(600);
     });
 
+    /** Seven 100-MP casts 10 s apart: 60 s observed, 600 mana after the opening cast's baseline */
+    function castForAMinute() {
+        for (let i = 0; i < 7; i++) {
+            game.handlers['battle_consumable_ability_updated']({ ability: '/abilities/fireball' });
+            if (i < 6) vi.advanceTimersByTime(10_000);
+        }
+    }
+
+    test('a long stretch out of combat is not part of the rate', () => {
+        spendSteadily();
+        vi.advanceTimersByTime(2 * 60 * 60_000);
+        castForAMinute();
+
+        expect(manaPerMinuteMeasured()).toBe(600);
+    });
+
+    test('a gap shorter than the combat threshold still counts', () => {
+        spendSteadily();
+        // A 2 minute gap (a trial death) stays inside one span: 300 s observed, all 19 casts (1,900 mana) counted
+        vi.advanceTimersByTime(2 * 60_000);
+        castForAMinute();
+
+        expect(manaPerMinuteMeasured()).toBe((1_900 / 300) * 60);
+    });
+
     test('a reset clears the banked time too', () => {
         spendSteadily();
         manaTracker.cleanup();

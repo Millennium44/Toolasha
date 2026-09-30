@@ -39,6 +39,14 @@ import { resolveItemPrice } from '../../utils/profit-helpers.js';
 const MIN_RATE_SPAN_MS = 60_000;
 
 /**
+ * A silence longer than this between counted events means the character left combat (skilling, away), not
+ * that it is still fighting. In combat a cast, `new_battle` or auto-cycle arrives every few seconds, the
+ * wave respawn gap is about 3 s, and a player death in a trial can idle up to about 150 s; 5 minutes clears
+ * all of those, so only a real departure is cut out of the rate's denominator.
+ */
+const COMBAT_GAP_MS = 5 * 60_000;
+
+/**
  * Wall-clock span of the tally, for a per-minute rate. Kept beside the tally
  * rather than in it: `mana-spend.js` counts fights and casts and has no clock.
  */
@@ -119,6 +127,8 @@ function pauseSpan() {
  * @param {number} [now] - Clock reading, injectable for tests
  */
 function markEvent(openingMana = 0, now = Date.now()) {
+    // A gap this long is time spent outside combat: bank the stretch before it and open a new one here
+    if (firstEventAt !== null && now - lastEventAt > COMBAT_GAP_MS) pauseSpan();
     if (firstEventAt === null) {
         firstEventAt = now;
         baselineMana += openingMana;
@@ -128,7 +138,7 @@ function markEvent(openingMana = 0, now = Date.now()) {
 
 /**
  * Mana spent per minute of observed wall-clock time, from the first counted event to the last, idle gaps
- * between fights included and time the tracker was disabled excluded — the rate consumables must sustain.
+ * between fights included and time the tracker was disabled or the character was out of combat excluded — the rate consumables must sustain.
  * @returns {number|null} Null until a minute has been observed, and while any observed ability has no
  *   stated cost: its casts add no mana, so the known subtotal would understate the spend.
  *   Zero once a minute has been observed with a complete tally and nothing spent
