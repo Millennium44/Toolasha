@@ -287,3 +287,127 @@ describe('describeEntries', () => {
         expect(lines[1]).toBe('Milking · Ironcow rank 2 (as of 1h 30m ago)');
     });
 });
+
+describe('next board button', () => {
+    const LABELS = ['Total Level', 'Milking', 'Foraging', 'Woodcutting'];
+
+    const buildPanel = (labels = LABELS) => {
+        const root = document.createElement('div');
+        root.className = 'LeaderboardPanel_leaderboardPanel__x';
+        const clicks = [];
+        const strip = document.createElement('div');
+        strip.setAttribute('role', 'tablist');
+        for (const label of labels) {
+            const tab = document.createElement('button');
+            tab.setAttribute('role', 'tab');
+            tab.textContent = label;
+            tab.addEventListener('click', () => clicks.push(label));
+            strip.appendChild(tab);
+        }
+        const content = document.createElement('div');
+        content.className = 'LeaderboardPanel_content__y';
+        root.append(strip, content);
+        document.body.appendChild(root);
+        return { root, content, clicks };
+    };
+    const bar = () => document.querySelector('[data-toolasha-rank-cycle]');
+    const board = (category, rank = 1) => ({
+        leaderboardCategory: category,
+        gameModeFilter: 'standard',
+        leaderboard: { rows: [{ name: 'Alice', rank }] },
+    });
+
+    beforeEach(() => {
+        vi.useFakeTimers();
+        vi.setSystemTime(new Date('2026-09-30T12:00:00Z'));
+        game.saved = {};
+        game.wsHandlers = {};
+        game.settingWatchers = [];
+        game.classHandlers = [];
+        document.body.innerHTML = '';
+        document.head.innerHTML = '';
+    });
+
+    afterEach(() => {
+        leaderboardRankBadges.cleanup();
+        vi.useRealTimers();
+    });
+
+    test('appears only in Local only mode, inside the leaderboard panel', async () => {
+        game.mode = 'server';
+        const { content } = buildPanel();
+        await leaderboardRankBadges.initialize();
+        expect(bar()).toBeNull();
+
+        game.mode = 'local';
+        await leaderboardRankBadges.restart();
+        expect(bar()).not.toBeNull();
+        expect(content.previousElementSibling).toBe(bar());
+        expect(bar().textContent).toContain('Next board ▸ Total Level');
+        expect(bar().textContent).toContain('0/21 boards cached');
+
+        const stray = document.createElement('div');
+        stray.className = 'LeaderboardPanel_content__z';
+        const guild = document.createElement('div');
+        guild.className = 'GuildPanel_x';
+        guild.appendChild(stray);
+        document.body.appendChild(guild);
+        for (const handler of game.classHandlers) handler(stray);
+        expect(document.querySelectorAll('[data-toolasha-rank-cycle]')).toHaveLength(1);
+    });
+
+    test('insertion is idempotent across re-renders', async () => {
+        game.mode = 'local';
+        const { content } = buildPanel();
+        await leaderboardRankBadges.initialize();
+        for (const handler of game.classHandlers) handler(content);
+        for (const handler of game.classHandlers) handler(content);
+        expect(document.querySelectorAll('[data-toolasha-rank-cycle]')).toHaveLength(1);
+    });
+
+    test('one press makes exactly one click on the matching tab, and repeated presses advance', async () => {
+        game.mode = 'local';
+        const { clicks } = buildPanel();
+        await leaderboardRankBadges.initialize();
+        const button = bar().querySelector('button');
+
+        button.click();
+        expect(clicks).toEqual(['Total Level']);
+
+        // The game answers with the board that was opened, then the next press moves on
+        game.wsHandlers.leaderboard_updated(board('total_level'));
+        await flush();
+        expect(bar().textContent).toContain('1/21 boards cached');
+        expect(button.textContent).toContain('Milking');
+        button.click();
+        expect(clicks).toEqual(['Total Level', 'Milking']);
+        button.click();
+        expect(clicks).toEqual(['Total Level', 'Milking', 'Foraging']);
+    });
+
+    test('a missing tab leaves a note and does not throw or click anything', async () => {
+        game.mode = 'local';
+        const { clicks } = buildPanel(['Milking']);
+        await leaderboardRankBadges.initialize();
+        expect(() => bar().querySelector('button').click()).not.toThrow();
+        expect(clicks).toEqual([]);
+        expect(bar().textContent).toContain('Could not find the Total Level tab');
+    });
+
+    test('cleanup and a mode change take the bar down', async () => {
+        game.mode = 'local';
+        buildPanel();
+        await leaderboardRankBadges.initialize();
+        expect(bar()).not.toBeNull();
+
+        game.mode = 'server';
+        await leaderboardRankBadges.restart();
+        expect(bar()).toBeNull();
+
+        game.mode = 'local';
+        await leaderboardRankBadges.restart();
+        expect(bar()).not.toBeNull();
+        leaderboardRankBadges.cleanup();
+        expect(bar()).toBeNull();
+    });
+});

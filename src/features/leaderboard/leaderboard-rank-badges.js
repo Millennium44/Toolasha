@@ -18,6 +18,11 @@
  *   the response is parsed as untrusted (see utils/rank-badge-data.js). A newer
  *   snapshot of a board wins, the game's own rows on a tie.
  *
+ * In local mode the game's leaderboard panel also gets a "Next board" button: each real click
+ * makes exactly one click on the game's own tab for the next uncached category (on the standard/
+ * ironcow board already showing), so the cache can be filled by pressing it repeatedly. Nothing
+ * advances on its own.
+ *
  * The badge shows one entry per player: their best rank across every board.
  * The tooltip lists up to five, each with the age of its snapshot.
  */
@@ -33,10 +38,13 @@ import assetManifest from '../../utils/asset-manifest.js';
 import { formatRelativeTime } from '../../utils/formatters.js';
 import {
     RANK_BOARD_TYPES,
+    RANK_CATEGORIES,
     bestEntry,
+    boardKey,
     buildNameIndex,
     categoryLabel,
     mergeBoards,
+    nextBoardCategory,
     normalizeName,
     parseLocalBoard,
     parseServerText,
@@ -56,6 +64,17 @@ const STYLE_ID = 'toolasha-rank-badge-style';
 const BADGE_ATTR = 'data-toolasha-rank-badge';
 const SVG_NS = 'http://www.w3.org/2000/svg';
 const TOOLTIP_ENTRIES = 5;
+const BAR_ATTR = 'data-toolasha-rank-cycle';
+const PANEL_CLASS = 'LeaderboardPanel_content';
+
+/** Tab labels that differ from the category's display label; matched case-insensitively and exactly */
+const TAB_ALIASES = Object.freeze({
+    fame_points: ['fame points'],
+    labyrinth_depth: ['labyrinth depth', 'labyrinth'],
+    task_points: ['tasks'],
+    defense: ['defence'],
+});
+const TAB_SELECTOR = '[role="tab"], [class*="MuiTab-root"], [role="option"], [role="menuitem"]';
 
 /** Categories whose icon is in the misc sprite rather than the skills sprite */
 const MISC_SYMBOLS = Object.freeze({
@@ -113,8 +132,28 @@ function nameFrom(el) {
     return (el.getAttribute('data-name') || el.textContent || '').trim().replace(/:$/, '').trim();
 }
 
+/**
+ * The game's own control for a category: a tab (or menu entry) whose whole text is the category's name.
+ * Looked up from the panel outward, because the tab strip is a sibling of the table, not a child.
+ * @param {Element} host - The `LeaderboardPanel_content` element
+ * @param {string} category - A category slug
+ * @returns {Element|null} Null when the panel shows no such control
+ */
+export function findCategoryTab(host, category) {
+    const wanted = new Set([categoryLabel(category), ...(TAB_ALIASES[category] || [])].map((t) => t.toLowerCase()));
+    let scope = host;
+    for (let depth = 0; depth < 6 && scope; depth++, scope = scope.parentElement) {
+        const tabs = [...scope.querySelectorAll(TAB_SELECTOR)].filter((el) => !el.closest(`[${BAR_ATTR}]`));
+        if (!tabs.length) continue;
+        return tabs.find((el) => wanted.has((el.textContent || '').replace(/\s+/g, ' ').trim().toLowerCase())) || null;
+    }
+    return null;
+}
+
 class LeaderboardRankBadges {
     constructor() {
+        this.boardType = 'standard';
+        this.boardCategory = null;
         this.runId = 0;
         this.mode = 'off';
         this.boards = {};
@@ -162,6 +201,12 @@ class LeaderboardRankBadges {
         this.teardown.push(
             domObserver.onClass('LeaderboardRankBadges', 'CharacterName_name', (el) => this.decorate(el))
         );
+        if (this.mode === 'local') {
+            this.teardown.push(
+                domObserver.onClass('LeaderboardRankBadges-cycle', PANEL_CLASS, (el) => this.insertCycleBar(el))
+            );
+            for (const el of document.querySelectorAll(`[class*="${PANEL_CLASS}"]`)) this.insertCycleBar(el);
+        }
         this.decorateAll(false);
 
         this.loadSprites(runId).catch((error) => console.warn('[LeaderboardRankBadges] Sprites unavailable:', error));
@@ -197,7 +242,69 @@ class LeaderboardRankBadges {
     onLocalBoard(data) {
         const parsed = parseLocalBoard(data, Date.now());
         if (!parsed) return;
+        [this.boardType, this.boardCategory] = parsed.key.split('|');
         this.adopt({ [parsed.key]: parsed.board });
+        this.refreshCycleBars();
+    }
+
+    /**
+     * Put the "Next board" bar before the leaderboard panel's content. Idempotent: a re-render that
+     * keeps the bar is left alone. The guild panel reuses the same classes and is skipped.
+     * @param {Element} host - A `LeaderboardPanel_content` element
+     */
+    insertCycleBar(host) {
+        if (this.mode !== 'local' || !host?.isConnected || !host.matches?.(`[class*="${PANEL_CLASS}"]`)) return;
+        if (host.closest('[class*="GuildPanel"]')) return;
+        if (host.previousElementSibling?.hasAttribute?.(BAR_ATTR)) return;
+        const bar = document.createElement('div');
+        bar.setAttribute(BAR_ATTR, '');
+        bar.style.cssText = 'display:flex;flex-wrap:wrap;align-items:center;gap:8px;margin:4px 0;font-size:12px';
+        const button = document.createElement('button');
+        button.type = 'button';
+        button.style.cssText = 'padding:2px 10px;cursor:pointer';
+        const status = document.createElement('span');
+        const note = document.createElement('span');
+        note.style.opacity = '0.8';
+        bar.append(button, status, note);
+        // One real click, one game click: no timer, no loop, nothing queued behind it
+        button.addEventListener('click', () => this.openNextBoard(host, note));
+        host.insertAdjacentElement('beforebegin', bar);
+        this.refreshCycleBars();
+    }
+
+    /** Redraw the label and the cached count of every bar. */
+    refreshCycleBars() {
+        const target = nextBoardCategory(this.boards, this.boardType, this.boardCategory);
+        const cached = RANK_CATEGORIES.filter((c) => this.boards[boardKey(this.boardType, c)]);
+        const oldest = Math.min(...cached.map((c) => this.boards[boardKey(this.boardType, c)].at));
+        for (const bar of document.querySelectorAll(`[${BAR_ATTR}]`)) {
+            const [button, status] = bar.children;
+            button.textContent = `Next board ▸ ${target ? categoryLabel(target) : '-'}`;
+            status.textContent = `${cached.length}/${RANK_CATEGORIES.length} boards cached`;
+            status.title = cached.length
+                ? `Oldest ${this.boardType} board: ${formatRelativeTime(Math.max(0, Date.now() - oldest))} ago`
+                : 'Nothing cached yet';
+        }
+    }
+
+    /**
+     * The single game click behind one press of the button.
+     * @param {Element} host - The panel content the bar belongs to
+     * @param {Element} note - Where a failure is said
+     */
+    openNextBoard(host, note) {
+        const target = nextBoardCategory(this.boards, this.boardType, this.boardCategory);
+        note.textContent = '';
+        if (!target) return;
+        const tab = findCategoryTab(host, target);
+        if (!tab) {
+            note.textContent = `Could not find the ${categoryLabel(target)} tab`;
+            return;
+        }
+        // Assume it lands; the board's own message corrects this if it did not
+        this.boardCategory = target;
+        tab.click();
+        this.refreshCycleBars();
     }
 
     /**
@@ -328,7 +435,9 @@ class LeaderboardRankBadges {
         for (const undo of this.teardown) undo();
         this.teardown = [];
         this.fetching = false;
-        document.querySelectorAll(`[${BADGE_ATTR}]`).forEach((el) => el.remove());
+        document.querySelectorAll(`[${BADGE_ATTR}], [${BAR_ATTR}]`).forEach((el) => el.remove());
+        this.boardType = 'standard';
+        this.boardCategory = null;
         document.getElementById(STYLE_ID)?.remove();
         this.index = new Map();
         this.boards = {};

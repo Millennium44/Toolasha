@@ -1,11 +1,13 @@
 import { describe, test, expect } from 'vitest';
 import {
     MAX_SERVER_TEXT_LENGTH,
+    RANK_CATEGORIES,
     bestEntry,
     boardKey,
     buildNameIndex,
     categoryLabel,
     mergeBoards,
+    nextBoardCategory,
     normalizeBoardType,
     normalizeName,
     parseLocalBoard,
@@ -16,6 +18,24 @@ import {
 } from './rank-badge-data.js';
 
 const NOW = Date.parse('2026-09-30T12:00:00Z');
+
+describe('nextBoardCategory', () => {
+    const held = (category, at, type = 'standard') => [`${type}|${category}`, { at, rows: [['A', 1]] }];
+
+    test('walks forward to the first uncached category, wrapping, never the current one', () => {
+        const boards = Object.fromEntries([held('total_level', 5), held('milking', 5)]);
+        expect(nextBoardCategory(boards, 'standard', 'milking')).toBe('foraging');
+        expect(nextBoardCategory({}, 'standard', null)).toBe('total_level');
+        expect(nextBoardCategory(boards, 'standard', 'fame_points')).toBe('foraging');
+        expect(nextBoardCategory(boards, 'ironcow', 'milking')).toBe('foraging');
+    });
+
+    test('with everything cached it picks the oldest, not the current', () => {
+        const boards = Object.fromEntries(RANK_CATEGORIES.map((c, i) => held(c, 100 + i)));
+        expect(nextBoardCategory(boards, 'standard', 'total_level')).toBe('milking');
+        expect(nextBoardCategory(boards, 'standard', 'milking')).toBe('total_level');
+    });
+});
 
 // Shape of the server payload as MWITools' own reader accepts it
 // (schemaVersion 1, leaderboardType, categories → {receivedAt, rows}); assumed, not seen live
