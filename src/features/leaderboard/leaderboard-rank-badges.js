@@ -86,6 +86,15 @@ const TAB_ALIASES = Object.freeze({
     task_points: ['tasks'],
     defense: ['defence'],
 });
+/** Top-level type tab labels (the game's leaderboardTypeNames) -> board slot; `guilds` is not a player board */
+const TYPE_TAB_LABELS = Object.freeze({
+    standard: 'standard',
+    ironcow: 'ironcow',
+    'standard (steam)': 'steam_standard',
+    'ironcow (steam)': 'steam_ironcow',
+    guilds: 'guilds',
+});
+const SELECTED_TAB_SELECTOR = '[role="tab"][aria-selected="true"]';
 const TAB_SELECTOR = '[role="tab"], [class*="MuiTab-root"], [role="option"], [role="menuitem"]';
 
 /** Categories whose icon is in the misc sprite rather than the skills sprite */
@@ -180,6 +189,38 @@ export function findCategoryTab(anchor, category) {
     return null;
 }
 
+/**
+ * The open leaderboard view read off the selected tabs, for when no `leaderboard_updated` has been seen (Local only
+ * switched on while a board was already showing; the game does not resend it). English labels only: a
+ * non-English UI infers nothing and the view stays as it was until a board message arrives.
+ * @param {Element} anchor - The `LeaderboardPanel_content` element, or anything beside it in the panel
+ * @returns {{type: string, category: string|null}|null} `type` is a board slot or `guilds`; null when unreadable
+ */
+export function inferOpenView(anchor) {
+    const norm = (el) => (el.textContent || '').replace(/\s+/g, ' ').trim().toLowerCase();
+    let scope = anchor;
+    for (let depth = 0; depth < 6 && scope; depth++, scope = scope.parentElement) {
+        const selected = [...scope.querySelectorAll(SELECTED_TAB_SELECTOR)].filter(
+            (el) => !el.closest(`[${BAR_ATTR}]`)
+        );
+        const typeTab = selected.find((el) => TYPE_TAB_LABELS[norm(el)]);
+        if (!typeTab) continue;
+        const type = TYPE_TAB_LABELS[norm(typeTab)];
+        let category = null;
+        if (type !== 'guilds') {
+            for (const el of selected) {
+                const text = norm(el);
+                category =
+                    RANK_CATEGORIES.find(
+                        (c) => categoryLabel(c).toLowerCase() === text || (TAB_ALIASES[c] || []).includes(text)
+                    ) || category;
+            }
+        }
+        return { type, category };
+    }
+    return null;
+}
+
 class LeaderboardRankBadges {
     constructor() {
         this.boardType = 'standard';
@@ -188,6 +229,8 @@ class LeaderboardRankBadges {
         this.playerBoardOpen = true;
         // Categories opened per Steam view this session, keyed like boards ("steam_standard|milking" -> {at})
         this.opened = {};
+        // Whether any leaderboard_updated arrived: a message always outranks inferring the view from the tabs
+        this.messageSeen = false;
         this.includeSteam = false;
         this.runId = 0;
         this.mode = 'off';
@@ -315,6 +358,7 @@ class LeaderboardRankBadges {
      * @param {Object} data - `leaderboard_updated` message
      */
     onLocalBoard(data) {
+        this.messageSeen = true;
         // Judged before parsing: a guild board never parses, yet it is what decides whether the bar applies
         if (typeof data?.leaderboardCategory === 'string') {
             // The view covers Standard/Ironcow and their Steam types; a filtered view has no tab to cycle
@@ -364,12 +408,27 @@ class LeaderboardRankBadges {
         const note = document.createElement('span');
         note.style.opacity = '0.8';
         bar.append(button, status, note);
+        this.inferView(host);
         // One real click, one game click: no timer, no loop, nothing queued behind it. The bar is the search
         // anchor: a re-render can replace the panel content while keeping the bar, so `host` may be detached
         button.addEventListener('click', () => this.openNextBoard(bar, note));
         if (container) container.prepend(bar);
         else host.insertAdjacentElement('beforebegin', bar);
         this.refreshCycleBars();
+    }
+
+    /**
+     * Adopt the view showing in the tabs when no board message has said otherwise.
+     * @param {Element} anchor - The leaderboard panel content
+     */
+    inferView(anchor) {
+        if (this.messageSeen) return;
+        const view = inferOpenView(anchor);
+        if (!view) return;
+        this.playerBoardOpen = view.type !== 'guilds';
+        if (!this.playerBoardOpen) return;
+        this.boardType = view.type;
+        this.boardCategory = view.category;
     }
 
     /**
@@ -589,6 +648,7 @@ class LeaderboardRankBadges {
         // The open view survives a settings restart (the game does not resend the board it is showing)
         // and is forgotten only here
         this.opened = {};
+        this.messageSeen = false;
         this.boardType = 'standard';
         this.boardCategory = null;
         this.playerBoardOpen = true;

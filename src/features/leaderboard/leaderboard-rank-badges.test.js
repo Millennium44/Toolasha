@@ -480,6 +480,68 @@ describe('next board button', () => {
         game.xpTracker = true;
     });
 
+    describe('inferring the open view from the tabs', () => {
+        const buildTabs = (typeLabel, categoryLabel) => {
+            const { root, content } = buildPanel([]);
+            const strip = (labels, selected) => {
+                const list = document.createElement('div');
+                list.setAttribute('role', 'tablist');
+                for (const label of labels) {
+                    const tab = document.createElement('button');
+                    tab.setAttribute('role', 'tab');
+                    tab.setAttribute('aria-selected', String(label === selected));
+                    tab.textContent = label;
+                    list.appendChild(tab);
+                }
+                return list;
+            };
+            root.insertBefore(
+                strip(['Standard', 'Ironcow', 'Standard (Steam)', 'Ironcow (Steam)', 'Guilds'], typeLabel),
+                content
+            );
+            if (categoryLabel) root.insertBefore(strip(['Total Level', 'Milking', 'Foraging'], categoryLabel), content);
+            return content;
+        };
+
+        test('a Steam tab already open when Local only is enabled is adopted', async () => {
+            game.mode = 'local';
+            buildTabs('Ironcow (Steam)', 'Milking');
+            await leaderboardRankBadges.initialize();
+            expect(leaderboardRankBadges.boardType).toBe('steam_ironcow');
+            expect(leaderboardRankBadges.boardCategory).toBe('milking');
+            expect(bar().textContent).toContain('Steam boards opened');
+            expect(bar().textContent).toContain('Next board ▸ Foraging');
+        });
+
+        test('the Guilds tab hides the bar', async () => {
+            game.mode = 'local';
+            buildTabs('Guilds', null);
+            await leaderboardRankBadges.initialize();
+            expect(bar().style.display).toBe('none');
+        });
+
+        test('a board message wins over the tabs', async () => {
+            game.mode = 'local';
+            buildTabs('Ironcow (Steam)', 'Milking');
+            await leaderboardRankBadges.initialize();
+            game.wsHandlers.leaderboard_updated({ ...board('foraging'), leaderboardType: 'ironcow' });
+            await flush();
+            expect(leaderboardRankBadges.boardType).toBe('ironcow');
+            // A later restart re-inserts the bar but must not fall back to the tabs
+            await leaderboardRankBadges.restart();
+            expect(leaderboardRankBadges.boardType).toBe('ironcow');
+            expect(leaderboardRankBadges.boardCategory).toBe('foraging');
+        });
+
+        test('unreadable tabs keep the default view', async () => {
+            game.mode = 'local';
+            buildPanel();
+            await leaderboardRankBadges.initialize();
+            expect(leaderboardRankBadges.boardType).toBe('standard');
+            expect(leaderboardRankBadges.boardCategory).toBeNull();
+        });
+    });
+
     test('is hidden on a view filtered', async () => {
         game.mode = 'local';
         buildPanel();
