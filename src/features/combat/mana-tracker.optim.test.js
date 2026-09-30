@@ -14,6 +14,7 @@ const game = vi.hoisted(() => ({
     itemDetailMap: {},
     prices: {},
     handlers: {},
+    dmHandlers: {},
 }));
 
 vi.mock('../../core/config.js', () => ({
@@ -24,8 +25,12 @@ vi.mock('../../core/data-manager.js', () => ({
         getInitClientData: () => ({ abilityDetailMap: game.abilityDetailMap, itemDetailMap: game.itemDetailMap }),
         getCurrentCharacterId: () => 'char1',
         getCurrentCharacterName: () => 'Tib',
-        on: () => {},
-        off: () => {},
+        on: (event, handler) => {
+            game.dmHandlers[event] = handler;
+        },
+        off: (event, handler) => {
+            if (game.dmHandlers[event] === handler) delete game.dmHandlers[event];
+        },
     },
 }));
 vi.mock('../../core/websocket.js', () => ({
@@ -71,6 +76,7 @@ beforeEach(() => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date('2026-09-30T12:00:00Z'));
     game.handlers = {};
+    game.dmHandlers = {};
     game.abilityDetailMap = { '/abilities/fireball': { manaCost: 100, name: 'Fireball' } };
     game.itemDetailMap = {
         '/items/star_fruit_yogurt': {
@@ -299,6 +305,46 @@ describe('mpSupplyPlan', () => {
         });
 
         expect(mpSupplyPlan(0).max.mpPerMinute).toBe(450 * 1.5);
+    });
+});
+
+describe('gear changes after the battle message', () => {
+    const battle = () =>
+        game.handlers['new_battle']({
+            players: [{ character: { id: 'char1' }, combatDetails: { combatStats: { foodHaste: 0.5 } } }],
+        });
+
+    test('an equipment change clears the captured haste and says it will refresh', () => {
+        battle();
+        expect(mpSupplyPlan(0).max.mpPerMinute).toBe(450 * 1.5);
+
+        game.dmHandlers['items_updated']({
+            endCharacterItems: [
+                { itemLocationHrid: '/item_locations/pouch', itemHrid: '/items/small_pouch', count: 1 },
+            ],
+        });
+
+        expect(mpSupplyPlan(0).max.mpPerMinute).toBe(450);
+        manaPanel.show();
+        expect(text()).toContain('refresh after the next fight');
+        battle();
+        expect(mpSupplyPlan(0).max.mpPerMinute).toBe(450 * 1.5);
+    });
+
+    test('an inventory-only update keeps the captured values', () => {
+        battle();
+
+        game.dmHandlers['items_updated']({
+            endCharacterItems: [{ itemLocationHrid: '/item_locations/inventory', itemHrid: '/items/egg', count: 4 }],
+        });
+
+        expect(mpSupplyPlan(0).max.mpPerMinute).toBe(450 * 1.5);
+    });
+
+    test('cleanup unregisters the listener', () => {
+        manaTracker.cleanup();
+
+        expect(game.dmHandlers['items_updated']).toBeUndefined();
     });
 });
 
