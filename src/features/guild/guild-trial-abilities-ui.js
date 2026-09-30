@@ -31,6 +31,7 @@ import storage from '../../core/storage.js';
 import {
     fetchLoadout,
     getLoadouts,
+    isFetchingLoadout,
     isViewLoadoutAvailable,
     onLoadoutCaptured,
     VIEW_LOADOUT_CONTEXT,
@@ -1261,6 +1262,9 @@ let fetchOrigin = null;
  * @returns {Promise<Object>} The fetch result
  */
 async function fetchForCurrentMode(member) {
+    // A press made while another request is outstanding is refused as busy: it must
+    // not overwrite, and then clear, the origin the outstanding request is waiting on
+    if (isFetchingLoadout()) return fetchLoadout(member, VIEW_LOADOUT_CONTEXT.GuildTrial, COMBAT_TRIAL_KIND);
     fetchOrigin = { hrid: pretrialUi.hrid };
     try {
         return await fetchLoadout(member, VIEW_LOADOUT_CONTEXT.GuildTrial, COMBAT_TRIAL_KIND);

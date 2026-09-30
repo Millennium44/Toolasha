@@ -54,6 +54,7 @@ const {
     aggregateAuras,
     auraCoverage,
 } = await import('./guild-trial-abilities.js');
+const { default: guildTrialPlan, parsePlan } = await import('./guild-trial-plan.js');
 
 const NOW = 1_800_000_000_000;
 
@@ -1220,5 +1221,26 @@ describe('a peer resurrecting a rekeyed player does not double the roster', () =
         };
 
         expect(dropRenamedPlayerDuplicates(players)).toEqual(players);
+    });
+});
+
+describe('a sectioned plan follows the trial lifecycle, not the panel', () => {
+    test('state and export compare only the running trial section once a live source says which', () => {
+        const s = session(['Alice']);
+        s.recordCapture(snap('Alice', 1, [{ hrid: '/abilities/fierce_aura', level: 70 }]), { at: NOW });
+        const text = ['== Badger ==', 'Alice: Fierce Aura', '== Swarm ==', 'Alice: Sweep', 'Bob: Sweep'].join('\n');
+        const plan = parsePlan(text, GAME);
+        vi.spyOn(guildTrialPlan, 'parsed').mockReturnValue(plan);
+
+        // No panel was opened, so nothing has called setLiveTrial: every section is compared
+        expect(s.state(GAME).planCompare.summary.planLines).toBe(3);
+
+        s.setLiveTrialSource(() => 'badger');
+        expect(s.state(GAME).planCompare.summary.planLines).toBe(1);
+        expect(s.exportSnapshot(GAME).players['1'].planVerdict.status).toBe('ok');
+
+        s.setLiveTrialSource(() => 'swarm');
+        expect(s.state(GAME).planCompare.summary.planLines).toBe(2);
+        vi.restoreAllMocks();
     });
 });

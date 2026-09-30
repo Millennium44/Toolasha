@@ -540,6 +540,28 @@ class GuildTrialAbilities {
          * compared by that trial's section. Null compares every line.
          */
         this.liveTrialKey = null;
+        /** Where the running trial's encounter can be read from, wired by the damage module */
+        this.liveTrialSource = null;
+    }
+
+    /**
+     * Let the trial lifecycle say which trial is running, without the panel having
+     * been opened: an export built straight from the session needs it too.
+     * @param {(() => string|null)|null} source - Returns the live encounter
+     */
+    setLiveTrialSource(source) {
+        this.liveTrialSource = typeof source === 'function' ? source : null;
+    }
+
+    /** @returns {string|null} The running trial's key: the lifecycle's answer, else the last one set */
+    _liveTrialKey() {
+        let fromSource = null;
+        try {
+            fromSource = trialKeyFromName(this.liveTrialSource?.() ?? null);
+        } catch (error) {
+            console.error('[GuildTrialAbilities] Reading the live trial failed:', error);
+        }
+        return fromSource || this.liveTrialKey;
     }
 
     /**
@@ -1044,7 +1066,7 @@ class GuildTrialAbilities {
         // The plan is the lead's own writing, compared here so every reader of
         // `state()` — panel and export alike — sees the same verdicts
         const plan = guildTrialPlan.parsed(abilityDetailMap);
-        const planCompare = comparePlan(plan, rows, abilityDetailMap, this.liveTrialKey);
+        const planCompare = comparePlan(plan, rows, abilityDetailMap, this._liveTrialKey());
 
         const notCurrent = Object.entries(session?.players || {})
             .filter(([key]) => !currentKeys.has(key))
