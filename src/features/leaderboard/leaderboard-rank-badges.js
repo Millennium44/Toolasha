@@ -420,6 +420,16 @@ class LeaderboardRankBadges {
         if (best.rank <= 5) badge.setAttribute('data-top-five', '');
         else badge.removeAttribute('data-top-five');
         badge.title = describeEntries(entries, Date.now());
+        badge.dataset.nameKey = normalizeName(name);
+        if (!existing) {
+            // The age in the tooltip is read at inspection, not baked in at decoration
+            const refresh = () => {
+                const current = this.index.get(badge.dataset.nameKey);
+                if (current?.length) badge.title = describeEntries(current, Date.now());
+            };
+            badge.addEventListener('mouseenter', refresh);
+            badge.addEventListener('focus', refresh);
+        }
         // textContent and SVG nodes only: nothing from a payload is ever markup
         badge.replaceChildren();
         const icon = this.buildIcon(best.category);

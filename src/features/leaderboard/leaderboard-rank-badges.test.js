@@ -141,6 +141,26 @@ describe('leaderboard rank badges', () => {
         expect(game.saved.rankBoards['standard|milking'].rows).toEqual([['Alice', 7]]);
     });
 
+    test('the tooltip age is recomputed on hover, not frozen at decoration', async () => {
+        game.mode = 'local';
+        await leaderboardRankBadges.initialize();
+        const el = nameEl('Alice');
+        game.wsHandlers.leaderboard_updated({
+            leaderboardCategory: 'milking',
+            gameModeFilter: 'standard',
+            leaderboard: { rows: [{ name: 'Alice', rank: 7 }] },
+        });
+        await flush();
+        const badge = el.nextElementSibling;
+        expect(badge.title).toContain('as of just now');
+
+        vi.setSystemTime(new Date('2026-09-30T14:05:00Z'));
+        badge.dispatchEvent(new Event('mouseenter'));
+
+        expect(badge.title).not.toContain('just now');
+        expect(badge.title).toContain('2h');
+    });
+
     test('a name that appears later is decorated by the observer callback, and unranked names get nothing', async () => {
         game.mode = 'local';
         game.saved.rankBoards = { 'standard|milking': { at: Date.now(), source: 'local', rows: [['Alice', 55]] } };
