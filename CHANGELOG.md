@@ -6,6 +6,11 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Guild trial follow-ups
+
+- A crowded trial tick with an area attacker and a single-target attacker no longer credits the single-target player with a share of every monster's hit.
+- A new trial first seen from guild activity no longer inherits the last trial's plan section in the ability checker; on the test server, repeat trial cycles split and archive cleanly and a finished cycle counts toward ledger coverage.
+
 ### Audit round: guild trial ETAs for trials your guild mates are running
 
 - A trial only your guild mates are in now gets its tier, ETA and pace from the guild's own trial data, which arrives on every screen, instead of saying "measuring" until you watched two tier clears on the Trials tab. Its points also count toward the payout's on-pace total, since tokens are shared by everyone.
