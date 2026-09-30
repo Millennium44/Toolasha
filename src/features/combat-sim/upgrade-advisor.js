@@ -5072,7 +5072,8 @@ export function planWithinBudget(results, budget, { baselineFights = [], include
         // pick in this group that this one beats in every room it covered is
         // taken back out and its cost and gain reversed. Done before the new
         // pick goes in, at the price `best.cost` was affordability-checked at
-        for (const i of displacedBy(entry)) {
+        const displaced = displacedBy(entry);
+        for (const i of displaced) {
             const older = picks[i];
             spent -= older.cost;
             picks.splice(i, 1);
@@ -5090,6 +5091,26 @@ export function planWithinBudget(results, budget, { baselineFights = [], include
             entry.key,
             standing.map((saving, index) => Math.max(saving, entry.savings[index]))
         );
+
+        // `marginal` was measured while the displaced picks still stood, so it
+        // is only the increment over pieces no longer in the plan. Rebuild the
+        // group's standing best and each retained pick's share from what is
+        // left, so the per-pick figures add up to the plan's gain
+        if (displaced.length) {
+            let running = entry.savings.map(() => 0);
+            for (const pick of picks) {
+                if (conflictKey(pick.candidate) !== entry.key) continue;
+                const savings = savingsOf(pick);
+                let share = 0;
+                running = running.map((standingSaving, index) => {
+                    const next = Math.max(standingSaving, savings[index] || 0);
+                    share += next - standingSaving;
+                    return next;
+                });
+                pick.marginalAttemptsSaved = share;
+            }
+            bestBySlot.set(entry.key, running);
+        }
     }
 
     for (const entry of remaining) {

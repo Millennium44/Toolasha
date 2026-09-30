@@ -2692,6 +2692,23 @@ describe('what a budget buys', () => {
         expect(plan.skipped.some((s) => s.reason.includes('covers every room'))).toBe(true);
     });
 
+    test('after a replacement the per-pick gains still add up to the plan total', () => {
+        // The replacement was valued while the cheap piece stood; once that piece is
+        // gone its listed gain has to be the whole of what it saves, not the increment
+        const plan = planFor(
+            [
+                covering([0], { hrid: '/items/cheap', cost: 1, winRate: 0.6 }),
+                covering([0, 1, 2], { hrid: '/items/better', cost: 100, winRate: 1 }),
+            ],
+            100
+        );
+
+        expect(plan.picks).toHaveLength(1);
+        expect(plan.picks[0].marginalAttemptsSaved).toBeCloseTo(3, 6);
+        const listed = plan.picks.reduce((sum, p) => sum + p.marginalAttemptsSaved, 0);
+        expect(listed).toBeCloseTo(plan.attemptsSaved, 6);
+    });
+
     test('a refunding swap that a stronger piece displaces does not fund that piece', () => {
         // Budget 100: the -250 swap is taken first, which would make room for the
         // 300-coin replacement; but the replacement discards the swap and its

@@ -10456,7 +10456,7 @@ class CombatSimUI {
                                 pick.provisional && !plan.provisional
                                     ? `<span style="color:#e8a87c; font-size:9px; margin-left:4px;"
                                         title="This gain on ${plan.metric.label} is inside the simulation's
-                                        sampling error. Ranked on the point estimate, after the measured picks.">
+                                        sampling error, so it is ranked on its expected value like every other pick.">
                                         estimate</span>`
                                     : ''
                             }</span>
