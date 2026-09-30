@@ -5,6 +5,7 @@
 
 import { describe, test, expect, vi, afterEach } from 'vitest';
 import {
+    formatRatePerHour,
     numberFormatter,
     timeReadable,
     formatWithSeparator,
@@ -156,6 +157,32 @@ describe('timeReadable', () => {
             expect(timeReadable(2_327_961_600, { maxUnits: 3 })).toBe('73 years 9 months 29 days');
             expect(timeReadable(358_860, { maxUnits: 3 })).toBe('4 days 3h 41m');
         });
+    });
+});
+
+describe('formatRatePerHour', () => {
+    test('10 and up is a whole number', () => {
+        expect(formatRatePerHour(10)).toBe('10');
+        expect(formatRatePerHour(1234.6)).toBe(new Intl.NumberFormat().format(1235));
+    });
+
+    test('1 up to 10 keeps one decimal', () => {
+        expect(formatRatePerHour(1)).toBe('1.0');
+        expect(formatRatePerHour(4.25)).toBe('4.3');
+    });
+
+    test('below 1 keeps two decimals', () => {
+        expect(formatRatePerHour(0.5)).toBe('0.50');
+        expect(formatRatePerHour(0.01)).toBe('0.01');
+    });
+
+    test('a positive rate that would round to 0 reads as <0.01, never 0', () => {
+        expect(formatRatePerHour(0.004)).toBe('<0.01');
+        expect(formatRatePerHour(1e-9)).toBe('<0.01');
+    });
+
+    test('no rate reads as 0', () => {
+        expect(formatRatePerHour(0)).toBe('0');
     });
 });
 

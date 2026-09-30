@@ -50,7 +50,7 @@ import {
     saveAllZonesSnapshot,
     loadAllZonesSnapshot,
 } from '../../utils/all-zones-snapshot.js';
-import { formatWithSeparator, formatKMB, parseKMB, timeReadable } from '../../utils/formatters.js';
+import { formatWithSeparator, formatRatePerHour, formatKMB, parseKMB, timeReadable } from '../../utils/formatters.js';
 import {
     monsterCreditsPerHour,
     countsByMonster,
@@ -6700,7 +6700,7 @@ class CombatSimUI {
             const refusedShare = (castsRefused / (castsRefused + castsMade)) * 100;
             html += `<div style="${rowStyle}" title="Times a ready ability could not be cast for lack of mana, counted once per starved stretch">`;
             html += `<span style="${labelStyle}">Casts Refused/hr</span>`;
-            html += `<span style="color:#ff6b6b; font-weight:600;">${formatWithSeparator(Math.round(refusedPerHr))} (${refusedShare.toFixed(1)}%)</span>`;
+            html += `<span style="color:#ff6b6b; font-weight:600;">${formatRatePerHour(refusedPerHr)} (${refusedShare.toFixed(1)}%)</span>`;
             html += '</div>';
         }
 
