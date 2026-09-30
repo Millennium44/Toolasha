@@ -43,6 +43,8 @@ const {
     planDiff,
     planDiffSummary,
     describePlanChange,
+    trialKeyFromName,
+    linesForTrial,
 } = await import('./guild-trial-plan.js');
 
 /** A game ability map with two auras sharing no prefix and one that does */
@@ -381,5 +383,65 @@ describe('what a save changed', () => {
         const diff = plan.lastDiff();
         expect(diff.added).toEqual(['Bob']);
         expect(diff.changed[0]).toMatchObject({ player: 'Ana', added: ['Sweep'] });
+    });
+});
+
+describe('per-trial plan sections', () => {
+    const at = (name, level) => ({ hrid: `/abilities/${name}`, level });
+    const SECTIONED = [
+        'Alice: Fierce Aura',
+        '== Trial Badger ==',
+        'Bob: Sweep',
+        '== /guild_combat/swarm ==',
+        'Bob: Vampirism',
+    ].join('\n');
+
+    test('a heading names its trial by boss, hrid or full title, case-insensitively', () => {
+        expect(trialKeyFromName('Trial Badger')).toBe('badger');
+        expect(trialKeyFromName('/guild_combat/Swarm')).toBe('swarm');
+        expect(trialKeyFromName('badger')).toBe('badger');
+        expect(trialKeyFromName('')).toBeNull();
+    });
+
+    test('lines carry the section they sit under, and the plan lists its trials', () => {
+        const plan = parse(SECTIONED);
+        expect(plan.lines.map((line) => [line.player, line.trial])).toEqual([
+            ['Alice', null],
+            ['Bob', 'badger'],
+            ['Bob', 'swarm'],
+        ]);
+        expect(plan.trials).toEqual(['badger', 'swarm']);
+    });
+
+    test('a trial is compared against its own section plus the lines above any heading', () => {
+        const plan = parse(SECTIONED);
+        const rows = [row('Alice', [at('fierce_aura', 1)]), row('Bob', [at('sweep', 1)])];
+        expect(linesForTrial(plan, 'swarm').map((line) => line.raw)).toEqual(['Alice: Fierce Aura', 'Bob: Vampirism']);
+
+        const badger = comparePlan(plan, rows, ABILITIES, 'badger');
+        expect(badger.byName.bob.status).toBe('ok');
+        const swarm = comparePlan(plan, rows, ABILITIES, 'swarm');
+        expect(swarm.byName.bob).toMatchObject({ status: 'missing', missing: ['Vampirism'] });
+        expect(swarm.summary.planLines).toBe(2);
+    });
+
+    test('a plan with no headings applies to whichever trial is checked', () => {
+        const plan = parse('Alice: Fierce Aura');
+        const rows = [row('Alice', [at('fierce_aura', 1)])];
+        for (const key of ['badger', 'swarm', null]) {
+            expect(comparePlan(plan, rows, ABILITIES, key).summary.onPlan).toBe(1);
+        }
+    });
+
+    test('no trial key compares every line, as before', () => {
+        const compare = comparePlan(parse(SECTIONED), [row('Bob', [at('sweep', 1)])], ABILITIES);
+        expect(compare.summary.planLines).toBe(3);
+    });
+
+    test('the same player under two headings is two assignments in a save diff', () => {
+        const diff = planDiff(parse(SECTIONED), parse(SECTIONED.replace('Bob: Vampirism', 'Bob: Sweep')));
+        expect(diff.changed.map((entry) => entry.player)).toEqual(['Bob']);
+        expect(diff.added).toEqual([]);
+        expect(diff.removed).toEqual([]);
     });
 });

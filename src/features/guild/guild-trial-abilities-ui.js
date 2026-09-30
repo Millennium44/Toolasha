@@ -19,6 +19,8 @@ import guildLoadoutCapture from './guild-loadout-capture.js';
 import guildMemberSkills, { findBattleUnits, orderUnitsToAsk, REQUEST_TIMEOUT_MS } from './guild-member-skills.js';
 import guildTrialAbilities, { SESSION_MAX_AGE_MS } from './guild-trial-abilities.js';
 import guildTrialPlan, { planStatusLine, planDiffSummary, describePlanChange } from './guild-trial-plan.js';
+import { guildXPTracker } from './guild-xp-tracker.js';
+import { combatTrialsThisWeek, pretrialState } from './guild-trial-pretrial.js';
 import { formatEta } from '../../utils/progress-eta.js';
 import { ROW_COLORS } from '../../utils/overlay-format.js';
 import { isAuraAbility } from '../../utils/party-lint.js';
@@ -1659,6 +1661,129 @@ function drawControls(body, state) {
     );
 }
 
+/**
+ * Which pre-trial check the panel is showing: the hrid of a combat trial from this
+ * week's sign-ups, or null for the live trial (today's behavior, untouched).
+ */
+const pretrialUi = { hrid: null };
+
+/** Back to the live view — for tests and a fresh panel */
+export function resetPretrialUi() {
+    pretrialUi.hrid = null;
+}
+
+/**
+ * A member's captured combat trial loadout as a `recordCapture` snapshot.
+ *
+ * Any age: the game keeps one combat trial loadout per character, so a capture
+ * from before this trial's session began is still the player's loadout.
+ *
+ * @param {{characterId?: string|number|null, name?: string}} member
+ * @returns {Object|null}
+ */
+function pretrialLookup(member) {
+    const entry = newestTrialLoadout(member.characterId ?? member.name);
+    return entry ? snapshotFromViewLoadout(entry) : null;
+}
+
+/**
+ * The pre-trial state for the selected trial, or null when the live view applies.
+ * @param {Object} abilityDetailMap - Game data
+ * @returns {{trial: Object, state: Object}|null}
+ */
+function currentPretrial(abilityDetailMap) {
+    if (!pretrialUi.hrid) return null;
+    const trial = combatTrialsThisWeek(guildXPTracker).find((entry) => entry.hrid === pretrialUi.hrid);
+    if (!trial) {
+        // The week rolled over or the sign-up left: nothing to check, back to live
+        pretrialUi.hrid = null;
+        return null;
+    }
+    const state = pretrialState({
+        tracker: guildXPTracker,
+        trial,
+        lookup: pretrialLookup,
+        plan: guildTrialPlan.parsed(abilityDetailMap),
+        abilityDetailMap,
+    });
+    return { trial, state };
+}
+
+/**
+ * The trial picker: live, or one of the week's combat trials for a check before it starts.
+ * @param {HTMLElement} body - Panel body
+ * @param {Array<Object>} trials - From `combatTrialsThisWeek`
+ */
+function drawTrialPicker(body, trials) {
+    const { card, collapsed } = collapsibleCard(body, 'Trial', 'trial-picker');
+    if (collapsed) return;
+    Object.assign(card.style, { flexDirection: 'row', flexWrap: 'wrap', gap: '6px' });
+    const options = [{ hrid: null, label: 'Live trial' }, ...trials.map((t) => ({ hrid: t.hrid, label: t.name }))];
+    for (const option of options) {
+        const button = controlButton(
+            option.label,
+            option.hrid
+                ? `Check the ${option.label} sign-ups' trial loadouts against that trial's plan section, before it starts.`
+                : "The running trial's own roster, as it works during a trial.",
+            () => {
+                pretrialUi.hrid = option.hrid;
+                guildTrialAbilitiesPanel.render();
+            }
+        );
+        if ((pretrialUi.hrid ?? null) === option.hrid) button.style.borderColor = ACCENT;
+        card.appendChild(button);
+    }
+}
+
+/**
+ * The pre-trial body: fetch controls, the plan line, and one row per signed-up member.
+ * @param {HTMLElement} body - Panel body
+ * @param {{trial: Object, state: Object}} pretrial - From {@link currentPretrial}
+ * @param {Object} abilityDetailMap - Game data
+ */
+function drawPretrial(body, pretrial, abilityDetailMap) {
+    const { trial, state } = pretrial;
+    const { card, collapsed } = collapsibleCard(
+        body,
+        `${trial.name} sign-ups (${state.capturedCount}/${state.rosterCount})`,
+        'pretrial'
+    );
+    if (collapsed) return;
+    if (!state.participants.length) {
+        card.appendChild(panelNote('Nobody is signed up for this trial this week.'));
+        return;
+    }
+    const fetchNext = fetchNextRow(state);
+    if (fetchNext) card.appendChild(fetchNext);
+    card.appendChild(
+        panelNote(
+            `${planStatusLine(state.planCompare)} — compared with the ${trial.name} section of the plan. ` +
+                'A player has one combat trial loadout, valid for every trial.'
+        )
+    );
+    for (const row of sortParticipants(state.participants, state.complete)) {
+        const line = row.capture?.abilitiesAuthoritative
+            ? playerLine(
+                  row,
+                  captureSourceLabel({ ...row.capture, capturedAt: row.capture.capturedAt }) || '',
+                  ROW_COLORS.good
+              )
+            : playerLine(row, 'no trial loadout yet', ROW_COLORS.bad);
+        const fetchButton = fetchLoadoutButton(row);
+        if (fetchButton) line.appendChild(fetchButton);
+        card.appendChild(line);
+        if (row.captured) card.appendChild(abilityRow(row.capture, abilityDetailMap));
+        const verdict = verdictLine(state.planCompare?.byName?.[String(row.name || '').toLowerCase()]);
+        if (verdict) {
+            const detail = document.createElement('div');
+            detail.textContent = verdict.text;
+            detail.title = verdict.title;
+            Object.assign(detail.style, { paddingLeft: '10px', color: verdict.color });
+            card.appendChild(detail);
+        }
+    }
+}
+
 export const guildTrialAbilitiesPanel = createPanel({
     id: 'guildTrialAbilities',
     title: 'Trial Abilities',
@@ -1666,6 +1791,15 @@ export const guildTrialAbilitiesPanel = createPanel({
     accent: ACCENT,
     draw: (body) => {
         const abilityDetailMap = dataManager.getInitClientData?.()?.abilityDetailMap || {};
+        const trials = combatTrialsThisWeek(guildXPTracker);
+        const pretrial = currentPretrial(abilityDetailMap);
+        if (trials.length || pretrial) drawTrialPicker(body, trials);
+        if (pretrial) {
+            // The live session is not touched: a pre-trial capture is filed in the
+            // View Loadout store only, and the running trial adopts from there itself
+            drawPretrial(body, pretrial, abilityDetailMap);
+            return;
+        }
         adoptStoredCaptures();
         adoptViewLoadoutCaptures();
         const state = guildTrialAbilities.state(abilityDetailMap);
@@ -1891,6 +2025,14 @@ function onViewLoadoutCaptured(entry) {
         if (!isCombatTrialCapture(entry)) return;
         const snapshot = snapshotFromViewLoadout(entry);
         if (!snapshot) return;
+        if (pretrialUi.hrid) {
+            // A pre-trial check: the capture is already in the View Loadout store, which is
+            // what the pre-trial rows read. Folding it into the live session would start
+            // one, and the trial going live would then throw it away
+            if (entry.hasLoadout === false && snapshot.name) answeredWithoutLoadout.add(snapshot.name.toLowerCase());
+            guildTrialAbilitiesPanel.render();
+            return;
+        }
         guildTrialAbilities.recordCapture(snapshot, {
             at: Number.isFinite(entry.capturedAt) ? entry.capturedAt : undefined,
             now: Date.now(),
@@ -1961,6 +2103,7 @@ export default {
         onTrialTick = null;
         guildTrialAbilitiesPanel.hide({ remember: false });
         resetFetchNext();
+        resetPretrialUi();
         guildTrialAbilities.cleanup();
     },
 };

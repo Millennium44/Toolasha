@@ -19,6 +19,11 @@
  * and `#` comments are ignored. `Name 200` or `Name@200` after an ability is a
  * minimum level.
  *
+ * A heading line — `== Trial Badger ==`, or `== /guild_combat/badger ==` — starts a
+ * section for that trial (matched case-insensitively by boss name); the player
+ * lines under it apply to that trial only. Lines before any heading, and every
+ * line of a plan with no headings, apply to whichever trial is being checked.
+ *
  * ## Forgiving on purpose, silent never
  *
  * Names are typed by a human under time pressure, so an ability is matched
@@ -166,23 +171,65 @@ export function splitMinLevel(token, index = []) {
 }
 
 /**
+ * The trial key a plan heading (or a trial name or hrid) names: the boss, lowercased.
+ *
+ * `Trial Badger`, `badger` and `/guild_combat/badger` all answer `badger`.
+ *
+ * @param {string} text - A heading's text, a trial name, or a trial hrid
+ * @returns {string|null} The key, or null when nothing letter-like is left
+ */
+export function trialKeyFromName(text) {
+    const tail = String(text || '')
+        .trim()
+        .split('/')
+        .filter(Boolean)
+        .pop();
+    const key = String(tail || '')
+        .toLowerCase()
+        .replace(/[^a-z]/g, '')
+        .replace(/^trial(?=.)/, '');
+    return key || null;
+}
+
+/**
+ * The plan lines that apply to one trial.
+ * @param {Object|null} plan - From {@link parsePlan}
+ * @param {string|null} [trialKey] - From {@link trialKeyFromName}; null applies every line
+ * @returns {Array<Object>} Lines with no heading, plus those under this trial's heading
+ */
+export function linesForTrial(plan, trialKey = null) {
+    const lines = plan?.lines || [];
+    if (!trialKey) return lines;
+    return lines.filter((line) => !line.trial || line.trial === trialKey);
+}
+
+/**
  * Parse a plan, one player per line.
  *
  * @param {string} text - The plan as written
  * @param {Object} [abilityDetailMap] - Game data
  * @param {number} [parsedAt] - Clock
  * @returns {{text: string, parsedAt: number, lines: Array<Object>, unknownTokens: string[],
- *   ambiguousTokens: Array<{token: string, matches: string[]}>}} The parsed plan
+ *   trials: string[], ambiguousTokens: Array<{token: string, matches: string[]}>}} The parsed plan
  */
 export function parsePlan(text, abilityDetailMap = {}, parsedAt = Date.now()) {
     const index = buildAbilityIndex(abilityDetailMap);
     const lines = [];
     const unknownTokens = [];
     const ambiguousTokens = [];
+    const trials = [];
+    let section = null;
 
     for (const raw of String(text || '').split('\n')) {
         const trimmed = raw.trim();
         if (!trimmed || trimmed.startsWith('#')) continue;
+
+        const heading = trimmed.match(/^=+\s*(.*?)\s*=*$/);
+        if (heading) {
+            section = trialKeyFromName(heading[1]);
+            if (section && !trials.includes(section)) trials.push(section);
+            continue;
+        }
 
         // Colon needs no surrounding space ("Alice:"), but a bare hyphen or dash
         // does — otherwise a name that itself contains one ("Az-0r") is cut at
@@ -191,7 +238,7 @@ export function parsePlan(text, abilityDetailMap = {}, parsedAt = Date.now()) {
         const player = (split ? split[1] : trimmed).trim();
         if (!player) continue;
 
-        const line = { player, raw: trimmed, abilities: [], unknown: [], ambiguous: [] };
+        const line = { player, raw: trimmed, trial: section, abilities: [], unknown: [], ambiguous: [] };
         for (const piece of String(split ? split[2] : '').split(',')) {
             const token = piece.trim();
             if (!token) continue;
@@ -220,7 +267,7 @@ export function parsePlan(text, abilityDetailMap = {}, parsedAt = Date.now()) {
         lines.push(line);
     }
 
-    return { text: String(text || ''), parsedAt, lines, unknownTokens, ambiguousTokens };
+    return { text: String(text || ''), parsedAt, lines, trials, unknownTokens, ambiguousTokens };
 }
 
 /**
@@ -315,9 +362,11 @@ export function verdictFor(line, abilities, abilityDetailMap = {}) {
  * @param {Object} plan - From {@link parsePlan}
  * @param {Array<Object>} participants - From `guildTrialAbilities.state().participants`
  * @param {Object} [abilityDetailMap] - Game data
+ * @param {string|null} [trialKey] - Compare only this trial's section (see {@link linesForTrial});
+ *   null compares every line
  * @returns {Object} `{verdicts, byName, notInTrial, noPlan, summary}`
  */
-export function comparePlan(plan, participants = [], abilityDetailMap = {}) {
+export function comparePlan(plan, participants = [], abilityDetailMap = {}, trialKey = null) {
     const rows = participants || [];
     const verdicts = [];
     const indexByKey = new Map();
@@ -325,7 +374,8 @@ export function comparePlan(plan, participants = [], abilityDetailMap = {}) {
     const notInTrial = [];
     const planned = new Set();
 
-    for (const line of plan?.lines || []) {
+    const lines = linesForTrial(plan, trialKey);
+    for (const line of lines) {
         const row = matchPlanName(line.player, rows);
         if (!row) {
             notInTrial.push(line.player);
@@ -361,7 +411,7 @@ export function comparePlan(plan, participants = [], abilityDetailMap = {}) {
         notInTrial,
         noPlan,
         summary: {
-            planLines: plan?.lines?.length || 0,
+            planLines: lines.length,
             plannedPlayers: verdicts.length,
             comparedPlayers: compared,
             onPlan,
@@ -410,10 +460,11 @@ export function planStatusLine(compare) {
 function planLinesByPlayer(plan) {
     const byPlayer = new Map();
     for (const line of plan?.lines || []) {
-        const key = String(line?.player || '')
+        const player = String(line?.player || '')
             .trim()
             .toLowerCase();
-        if (key) byPlayer.set(key, line);
+        // Sectioned per trial: the same player named under two headings is two assignments
+        if (player) byPlayer.set(`${line.trial || ''}|${player}`, line);
     }
     return byPlayer;
 }
@@ -639,10 +690,11 @@ class GuildTrialPlan {
      * The plan compared against a captured roster.
      * @param {Array<Object>} participants - From `guildTrialAbilities.state().participants`
      * @param {Object} [abilityDetailMap] - Game data
+     * @param {string|null} [trialKey] - Only this trial's section; see {@link comparePlan}
      * @returns {Object} From {@link comparePlan}
      */
-    compare(participants, abilityDetailMap = {}) {
-        return comparePlan(this.parsed(abilityDetailMap), participants, abilityDetailMap);
+    compare(participants, abilityDetailMap = {}, trialKey = null) {
+        return comparePlan(this.parsed(abilityDetailMap), participants, abilityDetailMap, trialKey);
     }
 
     /** Build the record on the current key */

@@ -51,7 +51,7 @@
 import dataManager from '../../core/data-manager.js';
 import storage from '../../core/storage.js';
 import { sharedClassEvidenceFor } from '../../core/profile-manager.js';
-import guildTrialPlan, { comparePlan } from './guild-trial-plan.js';
+import guildTrialPlan, { comparePlan, trialKeyFromName } from './guild-trial-plan.js';
 import { inferClass, newCastLog, noteCast, WEAPON_PASSIVE_STATS } from '../../utils/class-inference.js';
 import { applyClassOverride } from '../../utils/class-override.js';
 import { isAuraAbility } from '../../utils/party-lint.js';
@@ -535,6 +535,19 @@ class GuildTrialAbilities {
          * ended. See `src/utils/class-inference.js`.
          */
         this.casts = {};
+        /**
+         * The live trial's key (its boss, lowercased), so a sectioned plan is
+         * compared by that trial's section. Null compares every line.
+         */
+        this.liveTrialKey = null;
+    }
+
+    /**
+     * Name the live trial for the plan comparison.
+     * @param {string|null} trial - A trial name, hrid or encounter; null forgets it
+     */
+    setLiveTrial(trial) {
+        this.liveTrialKey = trialKeyFromName(trial);
     }
 
     /**
@@ -1031,7 +1044,7 @@ class GuildTrialAbilities {
         // The plan is the lead's own writing, compared here so every reader of
         // `state()` — panel and export alike — sees the same verdicts
         const plan = guildTrialPlan.parsed(abilityDetailMap);
-        const planCompare = comparePlan(plan, rows, abilityDetailMap);
+        const planCompare = comparePlan(plan, rows, abilityDetailMap, this.liveTrialKey);
 
         const notCurrent = Object.entries(session?.players || {})
             .filter(([key]) => !currentKeys.has(key))
