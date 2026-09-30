@@ -1145,6 +1145,94 @@ describe('an area attack, target by target', () => {
     });
 });
 
+describe('a paid swing in a crowd tick', () => {
+    // Tier 1 of a 53-player Trial Swarm (test server, 2026-08-29), trimmed to six
+    // of the 53 players present. Slot 12 casts Mana Spring: its attack counter
+    // rises 3 → 4, its mana falls, and all four monsters' damage counters rise
+    // once. The mana it restores is why the whole roster is in the tick. Entries
+    // are verbatim; the baseline is each unit's last state before the cast.
+    const unit = (cHP, cMP, mMP, atkCounter, abilityHrid, int, dmgCounter) => ({
+        cHP,
+        mHP: 2202,
+        cMP,
+        mMP,
+        isActive: true,
+        leftCombat: false,
+        atkCounter,
+        abilityHrid,
+        int,
+        dmgCounter,
+        critCounter: 0,
+    });
+    const bystanders = {
+        0: unit(2202, 1982, 2202, 4, '/abilities/firestorm', 802183221, 1),
+        1: unit(2202, 2428, 2638, 4, '/abilities/frost_surge', 821289128, 1),
+        2: unit(2202, 2473, 2638, 3, '/abilities/frost_surge', 1055578309, 0),
+        3: unit(2202, 2483, 2638, 3, '/abilities/entangle', 1583367463, 0),
+        4: unit(2202, 2473, 2638, 3, '/abilities/mana_spring', 1053631974, 0),
+    };
+    const insect = (cHP, atkCounter, dmgCounter, critCounter, int, ability) => ({
+        cHP,
+        mHP: 336600,
+        cMP: 220000,
+        mMP: 220000,
+        isActive: true,
+        leftCombat: false,
+        atkCounter,
+        ...(ability ? { abilityHrid: ability } : { isAutoAtk: true }),
+        int,
+        dmgCounter,
+        critCounter,
+    });
+    const baseline = {
+        type: 'guild_battle_updated',
+        battleId: 1,
+        tier: 1,
+        pMap: { ...bystanders, 12: unit(2202, 2503, 2638, 3, '/abilities/mana_spring', 801861601, 1) },
+        mMap: {
+            0: insect(299970, 2, 32, 29, 1063337956),
+            1: insect(312440, 1, 17, 17, 1248266296),
+            2: insect(319221, 1, 17, 17, 1202034211),
+            3: insect(316465, 1, 17, 16, 1421800947, '/abilities/fireball'),
+        },
+    };
+    const cast = {
+        type: 'guild_battle_updated',
+        battleId: 1,
+        tier: 1,
+        pMap: { ...bystanders, 12: unit(2202, 2438, 2638, 4, '/abilities/frost_surge', 801861601, 1) },
+        mMap: {
+            0: insect(296329, 2, 33, 29, 1063337956),
+            1: insect(312440, 1, 18, 18, 1248266296),
+            2: insect(314827, 1, 18, 17, 1202034211),
+            3: insect(315742, 1, 18, 16, 1421800947, '/abilities/fireball'),
+        },
+    };
+
+    const replay = () => {
+        const state = newAttributionState();
+        attributeTick(baseline, state, { soloFallback: false, unattributed: true });
+        noteActions(state, baseline.pMap);
+        return attributeTick(cast, state, { soloFallback: false, unattributed: true });
+    };
+
+    test('stays with the swinger however many players are present', () => {
+        const events = replay().filter((event) => !event.isKill);
+
+        expect(new Set(events.map((event) => event.playerIndex))).toEqual(new Set(['12']));
+        const tally = foldEvents({}, events, { filterNonDamaging: false });
+        expect(tally['12']).toMatchObject({ damage: 3641 + 4394 + 723, hits: 3, misses: 1 });
+        expect(tally['12'].byAbility['/abilities/mana_spring'].damage).toBe(8758);
+    });
+
+    test('leaves the tick’s total exactly what the monsters lost', () => {
+        const team = foldTeam({}, replay());
+        expect(team.damage).toBeCloseTo(8758, 6);
+        expect(team.attributed).toBeCloseTo(8758, 6);
+        expect(team.unattributed).toBe(0);
+    });
+});
+
 describe('a monster respawning into a slot', () => {
     const unit = (cHP, mHP, dmgCounter) => ({ cHP, mHP, dmgCounter, critCounter: 0 });
 
