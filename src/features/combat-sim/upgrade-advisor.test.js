@@ -2677,6 +2677,37 @@ describe('what a budget buys', () => {
         expect(plan.skipped.some((s) => s.reason.includes('covers every room'))).toBe(true);
     });
 
+    test('a replacement is priced net of the piece it displaces', () => {
+        // 1 coin for +2 rooms-worth and 100 for +100 in the same slot, with exactly 100
+        // coins: bought in ratio order the pair costs 101, but the second makes the
+        // first pointless, so it fits on its own and the whole budget goes on it
+        const results = [
+            covering([0], { hrid: '/items/cheap', cost: 1, winRate: 0.6 }),
+            covering([0, 1, 2], { hrid: '/items/better', cost: 100, winRate: 1 }),
+        ];
+        const plan = planFor(results, 100);
+
+        expect(plan.picks.map((p) => p.candidate.upgradeHrid)).toEqual(['/items/better']);
+        expect(plan.totalCost).toBe(100);
+        expect(plan.skipped.some((s) => s.reason.includes('covers every room'))).toBe(true);
+    });
+
+    test('a refunding swap that a stronger piece displaces does not fund that piece', () => {
+        // Budget 100: the -250 swap is taken first, which would make room for the
+        // 300-coin replacement; but the replacement discards the swap and its
+        // credit, leaving 300 spent against 100
+        const results = [
+            covering([0], { hrid: '/items/refund', cost: -250, winRate: 0.6 }),
+            covering([0, 1, 2], { hrid: '/items/strong', cost: 300, winRate: 1 }),
+        ];
+        const plan = planFor(results, 100);
+
+        expect(plan.totalCost).toBeLessThanOrEqual(100);
+        expect(plan.picks.map((p) => p.candidate.upgradeHrid)).toEqual(['/items/refund']);
+        expect(plan.totalCost).toBe(-250);
+        expect(plan.skipped.find((s) => s.result.candidate.upgradeHrid === '/items/strong').reason).toBe('over budget');
+    });
+
     test('a skill level is still one purchase, however many rooms it touches', () => {
         const level = (upgradeLevel, cost) => ({
             ...covering([0, 1, 2], { cost }),
