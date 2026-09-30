@@ -1258,6 +1258,13 @@ describe('a sectioned plan follows the trial lifecycle, not the panel', () => {
         vi.restoreAllMocks();
     });
 
+    test('a fresh trial session does not inherit the last trial section', () => {
+        const s = session(['Alice']);
+        s.setLiveTrial('Trial Badger');
+        s.noteTrialStart(NOW + 7 * 24 * 60 * 60_000);
+        expect(s._liveTrialKey()).toBeNull();
+    });
+
     test('the running trial is remembered after the damage module forgets its encounter', () => {
         const s = session(['Alice']);
         let encounter = 'badger';
