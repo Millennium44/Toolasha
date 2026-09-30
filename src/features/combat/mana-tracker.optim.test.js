@@ -55,7 +55,8 @@ vi.mock('../../core/storage.js', () => ({
 }));
 
 const manaTracker = (await import('./mana-tracker.js')).default;
-const { manaPanel, resetManaTally, manaPerMinuteMeasured, mpSupplyPlan } = await import('./mana-tracker.js');
+const { manaPanel, resetManaTally, resetMpPlanner, manaPerMinuteMeasured, mpSupplyPlan } =
+    await import('./mana-tracker.js');
 
 const MINUTE_NS = 60e9;
 const text = () => manaPanel.panel.textContent;
@@ -91,6 +92,8 @@ beforeEach(() => {
 afterEach(() => {
     manaPanel.hide();
     manaTracker.cleanup();
+    // The typed target, haste and slots are the panel's per-character state
+    resetMpPlanner();
     vi.useRealTimers();
 });
 
@@ -167,5 +170,17 @@ describe('mpSupplyPlan', () => {
         });
 
         expect(mpSupplyPlan(0).max.mpPerMinute).toBe(450 * 1.5);
+    });
+});
+
+describe('a character with fewer consumable slots', () => {
+    test('is not offered a plan that needs more food than it can equip', () => {
+        // One food slot: the yogurt (350/min) and the gummy (100/min) together would reach 400
+        game.handlers['new_battle']({
+            players: [{ character: { id: 'char1' }, combatDetails: { combatStats: { foodSlots: 1, drinkSlots: 1 } } }],
+        });
+        expect(mpSupplyPlan(400).best).toBeNull();
+        expect(mpSupplyPlan(300).best.items).toHaveLength(1);
+        expect(mpSupplyPlan(0).max.items).toHaveLength(1);
     });
 });
