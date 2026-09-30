@@ -33,9 +33,9 @@
 
 import webSocketHook from '../../core/websocket.js';
 import config from '../../core/config.js';
-import storage from '../../core/storage.js';
 import domObserver from '../../core/dom-observer.js';
 import { httpRequest } from '../sync/gist-client.js';
+import { createPersistedRecord } from '../../utils/persisted-record.js';
 import { registerSyncMerge } from '../../utils/sync-merge-registry.js';
 import { createTimerRegistry } from '../../utils/timer-registry.js';
 import assetManifest from '../../utils/asset-manifest.js';
@@ -56,7 +56,6 @@ import {
     normalizeName,
     parseLocalBoard,
     parseServerText,
-    sanitizeBoards,
     tierForRank,
 } from '../../utils/rank-badge-data.js';
 
@@ -221,6 +220,20 @@ export function inferOpenView(anchor) {
     return null;
 }
 
+/**
+ * Whether two caches hold the same snapshots. A board's rows only change with its capture time.
+ * @param {Object} a - A cache
+ * @param {Object} b - A cache
+ * @returns {boolean}
+ */
+function sameBoards(a, b) {
+    const keys = Object.keys(a);
+    return (
+        keys.length === Object.keys(b).length &&
+        keys.every((key) => b[key]?.at === a[key].at && b[key].source === a[key].source)
+    );
+}
+
 class LeaderboardRankBadges {
     constructor() {
         this.boardType = 'standard';
@@ -235,6 +248,16 @@ class LeaderboardRankBadges {
         this.runId = 0;
         this.mode = 'off';
         this.boards = {};
+        // One record for the account. Saves fold what is stored (another tab, a sync pull) under memory, and an
+        // unreadable store is never taken for an empty cache and written over
+        this.record = createPersistedRecord({
+            base: STORAGE_KEY,
+            store: STORE_NAME,
+            scoped: false,
+            empty: () => ({}),
+            merge: mergeBoards,
+            label: 'LeaderboardRankBadges',
+        });
         this.index = new Map();
         this.spriteUrls = { skills: null, misc: null };
         this.timers = createTimerRegistry();
@@ -309,8 +332,10 @@ class LeaderboardRankBadges {
         const runId = ++this.runId;
 
         this.installStyle();
-        this.boards = sanitizeBoards(await storage.get(STORAGE_KEY, STORE_NAME, {}));
+        this.record.reset();
+        await this.record.load();
         if (runId !== this.runId) return;
+        this.boards = this.record.get();
         this.rebuildIndex();
 
         const onBoard = (data) => this.onLocalBoard(data);
@@ -532,10 +557,24 @@ class LeaderboardRankBadges {
         const merged = mergeBoards(this.boards, incoming);
         if (JSON.stringify(merged) === JSON.stringify(this.boards)) return;
         this.boards = merged;
+        this.record.set(merged);
         this.rebuildIndex();
-        storage.set(STORAGE_KEY, this.boards, STORE_NAME).catch((error) => {
-            console.error('[LeaderboardRankBadges] Saving the rank cache failed:', error);
-        });
+        this.persist().catch((error) => console.error('[LeaderboardRankBadges] Saving the rank cache failed:', error));
+        this.decorateAll(true);
+    }
+
+    /**
+     * Save the cache, and take back whatever the save found stored beside it (another tab's boards, a sync pull)
+     * so the next save does not write the stale copy over them.
+     * @returns {Promise<void>}
+     */
+    async persist() {
+        const runId = this.runId;
+        if (!(await this.record.save()) || runId !== this.runId) return;
+        const folded = this.record.get();
+        if (sameBoards(folded, this.boards)) return;
+        this.boards = folded;
+        this.rebuildIndex();
         this.decorateAll(true);
     }
 

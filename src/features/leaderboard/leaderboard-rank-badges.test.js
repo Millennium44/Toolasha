@@ -42,12 +42,17 @@ vi.mock('../../core/config.js', () => ({
 vi.mock('../../core/storage.js', () => ({
     default: {
         get: async (key, store, fallback) => game.saved[key] ?? fallback,
+        tryGet: async (key) =>
+            game.saved[key] === undefined
+                ? { found: false, value: null }
+                : { found: true, value: structuredClone(game.saved[key]) },
         set: async (key, value) => {
             game.saved[key] = structuredClone(value);
             return true;
         },
     },
 }));
+vi.mock('../../core/data-manager.js', () => ({ default: { getCurrentCharacterId: () => 'char1' } }));
 vi.mock('../../core/dom-observer.js', () => ({
     default: {
         onClass: (name, classes, callback) => {
@@ -178,6 +183,45 @@ describe('leaderboard rank badges', () => {
         expect(badge.title).toContain('Milking · Standard rank 7 (as of just now)');
         expect(badge.querySelector('use').getAttribute('href')).toBe('/static/skills.svg#milking');
         expect(game.saved.rankBoards['standard|milking'].rows).toEqual([['Alice', 7]]);
+    });
+
+    test('a save keeps boards another tab or a sync pull stored meanwhile, and badges them', async () => {
+        game.mode = 'local';
+        await leaderboardRankBadges.initialize();
+        const bob = nameEl('Bob');
+        // Written straight to storage after this tab loaded, as a second tab or a sync pull does
+        game.saved.rankBoards = { 'ironcow|milking': { at: Date.now() - 1000, source: 'local', rows: [['Bob', 4]] } };
+
+        game.wsHandlers.leaderboard_updated({
+            leaderboardCategory: 'milking',
+            gameModeFilter: 'standard',
+            leaderboard: { rows: [{ name: 'Alice', rank: 7 }] },
+        });
+        await flush();
+
+        expect(Object.keys(game.saved.rankBoards).sort()).toEqual(['ironcow|milking', 'standard|milking']);
+        expect(bob.nextElementSibling.textContent).toBe('4');
+    });
+
+    test('a cache that cannot be read is not overwritten by the next board', async () => {
+        game.mode = 'local';
+        game.saved.rankBoards = { 'standard|foraging': { at: Date.now(), source: 'local', rows: [['Zed', 9]] } };
+        const storage = (await import('../../core/storage.js')).default;
+        const tryGet = storage.tryGet;
+        storage.tryGet = async () => null;
+        try {
+            await leaderboardRankBadges.initialize();
+            game.wsHandlers.leaderboard_updated({
+                leaderboardCategory: 'milking',
+                gameModeFilter: 'standard',
+                leaderboard: { rows: [{ name: 'Alice', rank: 7 }] },
+            });
+            await flush();
+        } finally {
+            storage.tryGet = tryGet;
+        }
+
+        expect(Object.keys(game.saved.rankBoards)).toEqual(['standard|foraging']);
     });
 
     test('the tooltip age is recomputed on hover, not frozen at decoration', async () => {
