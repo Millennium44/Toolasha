@@ -4627,6 +4627,55 @@ describe('floor calculation progress bar', () => {
     });
 });
 
+describe('floor calculation across a floor change', () => {
+    const IMP = '/monsters/imp';
+    afterEach(() => {
+        document.body.innerHTML = '';
+        labyrinthClearRate.roomData = null;
+        labyrinthClearRate.combatCache.clear();
+        labyrinthClearRate.tileCalcRunning = false;
+        labyrinthClearRate._tileResults?.clear();
+        labyrinthClearRate.currentFloor = 0;
+        vi.restoreAllMocks();
+    });
+
+    test('a sim still pending when the floor changes cannot write the old floor back', async () => {
+        const parent = document.createElement('div');
+        const cell = document.createElement('div');
+        cell.className = 'LabyrinthPanel_roomCell_abc';
+        parent.appendChild(cell);
+        document.body.appendChild(parent);
+        labyrinthClearRate.roomData = [[{ monsterHrid: IMP, recommendedLevel: 100, isCleared: false }]];
+        labyrinthClearRate.currentFloor = 3;
+        labyrinthClearRate._autoCalcFingerprint = null;
+        labyrinthClearRate.calculatedTileKeys = null;
+        let release;
+        vi.spyOn(labyrinthClearRate, 'computeCombatClear').mockImplementation(
+            () =>
+                new Promise((resolve) => {
+                    release = resolve;
+                })
+        );
+
+        const pass = labyrinthClearRate.runTileCalculation();
+        await vi.waitFor(() => expect(release).toBeTypeOf('function'));
+        expect(labyrinthClearRate.tileCalcRunning).toBe(true);
+
+        // The floor advances while the sim is awaited; the old cell is still attached
+        labyrinthClearRate.onLabyrinthUpdated({ labyrinth: { currentFloor: 4, roomData: [[null]] } });
+        expect(labyrinthClearRate.tileCalcRunning).toBe(false);
+
+        release({ clearChance: 0.9, expectedSeconds: 10 });
+        await pass;
+
+        expect(labyrinthClearRate._tileResults.size).toBe(0);
+        expect(labyrinthClearRate.calculatedTileKeys.size).toBe(0);
+        expect(cell.querySelector('.mwi-labyrinth-tile-badge')).toBeNull();
+        // The fenced pass did not re-arm the flag it no longer owns
+        expect(labyrinthClearRate.tileCalcRunning).toBe(false);
+    });
+});
+
 describe('floor calculation progress bar across a retry', () => {
     const IMP = '/monsters/imp';
     afterEach(() => {

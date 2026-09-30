@@ -711,6 +711,20 @@ class LabyrinthClearRate {
                 this.resetBeaconCountToAuto();
                 document.querySelectorAll(`.${TILE_BADGE_CLASS}`).forEach((el) => this.removeTileBadge(el));
                 this.calculatedTileKeys?.clear();
+                // A pass still awaiting a sim belongs to the floor just left; its
+                // cells stay connected until React repaints, so without a fence it
+                // resumes and writes the old floor's result under a coordinate the
+                // new floor reuses. The epoch bump is the fence (same teardown
+                // contract as `disable()`), so the pass also has to hand back the
+                // flag and button it will no longer restore itself.
+                if (this.tileCalcRunning) {
+                    this.cancelRunningSims();
+                    this.endSimEpoch();
+                    this.tileCalcRunning = false;
+                    this._pathQueued = false;
+                    this.setPathButtonRunning(false);
+                    this.syncTileCalcButton();
+                }
                 // The last floor's results are keyed by coordinate too, and would
                 // otherwise stand in for the new floor's rooms at the same spots
                 this._tileResults?.clear();
