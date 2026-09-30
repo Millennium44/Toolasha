@@ -58,6 +58,8 @@ vi.mock('../../core/storage.js', () => ({
     default: { getJSON: async () => null, setJSON: async () => {}, ready: Promise.resolve() },
 }));
 
+import bleedCapture from '../../utils/__fixtures__/labyrinth-pyre-hunter-bleed.json';
+
 const manaTracker = (await import('./mana-tracker.js')).default;
 const { manaPanel, resetManaTally, resetMpPlanner, manaPerMinuteMeasured, mpSupplyPlan } =
     await import('./mana-tracker.js');
@@ -297,6 +299,26 @@ describe('mpSupplyPlan', () => {
         });
 
         expect(mpSupplyPlan(0).max.mpPerMinute).toBe(450 * 1.5);
+    });
+});
+
+describe('max mana from a recorded new_battle', () => {
+    // The live payload carries maxManapoints on the player itself; combatDetails holds only combatStats
+    const recorded = bleedCapture.ticks.find((tick) => tick.type === 'new_battle').payload.players[0];
+
+    test('the recorded player has max MP at the top level and not under combatDetails', () => {
+        expect(recorded.maxManapoints).toBeGreaterThan(0);
+        expect(recorded.combatDetails.maxManapoints).toBeUndefined();
+    });
+
+    test('caps an instant restore at the top-level max MP', () => {
+        game.handlers['new_battle']({
+            players: [{ ...recorded, character: { id: 'char1' }, maxManapoints: 200 }],
+        });
+
+        expect(mpSupplyPlan(0).candidates).toBeGreaterThan(0);
+        const yogurt = mpSupplyPlan(0).max.items.find((item) => item.hrid === '/items/star_fruit_yogurt');
+        expect(yogurt.mpPerUse).toBe(200);
     });
 });
 
