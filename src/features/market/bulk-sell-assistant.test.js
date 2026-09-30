@@ -1102,22 +1102,16 @@ describe('confirming from the strip', () => {
      * anything against, and a skipped step's `current` is a sale that is over.
      */
     describe('a step the strip is no longer looking at', () => {
-        test('a vendor step offers no Confirm, and refuses one anyway', () => {
-            // The vendor sale is the game's own "Sell For" button in the item
-            // menu — there is no modal naming an item, a level or a quantity,
-            // so there is nothing for the guard to check and nothing to press.
-            // The primary slot still reads Confirm (it never loses its label
-            // reservation) but sits disabled, since there is nothing to press.
+        test('a vendor step does not press a sell modal, only its own item menu', () => {
             openModal();
             runAtStep0();
             bulkSell.decision = { insta: false, vendor: true, price: 10, reason: 'vendor' };
             bulkSell._render();
 
-            expect(confirmBtn().disabled).toBe(true);
             confirmBtn().click();
 
             expect(gameClicks).toBe(0);
-            expect(bulkSell._confirmTarget().why).toMatch(/vendor/);
+            expect(bulkSell._confirmTarget().why).toMatch(/item menu is not open/);
         });
 
         test('after Skip the same modal is no longer this step’s sale', () => {
@@ -1130,6 +1124,169 @@ describe('confirming from the strip', () => {
             expect(gameClicks).toBe(0);
             expect(bulkSell._confirmTarget().why).toMatch(/no sale waiting/);
             modal.remove();
+        });
+    });
+
+    /**
+     * The vendor sale is the game's "Sell For N Coins" button in the item action
+     * menu. Confirm presses it under the same envelope as the market modal: the
+     * menu must be for the queued item, show the queued quantity, and quote the
+     * queued coin total.
+     */
+    describe('a vendor step', () => {
+        // 18 cheese at 22,222 each: 399,996, which the game labels "400K"
+        const PRICE = 22222;
+
+        /** Clicks that only armed the two-step button (no game request) */
+        let armClicks;
+        beforeEach(() => {
+            armClicks = 0;
+        });
+
+        /**
+         * The game's two-step vendor button: the first click relabels it (and
+         * turns it red) without a request; only a click on the armed label sells.
+         * `armedLabel` is what it relabels to; `neverArms` leaves it unchanged.
+         */
+        const openMenu = ({
+            item = 'cheese',
+            qty = 18,
+            label = 'Sell For 400K Coins',
+            armedLabel = 'Confirm Sell For 400K Coins',
+            neverArms = false,
+            enhanced = false,
+        } = {}) => {
+            const menu = document.createElement('div');
+            menu.className = 'Item_actionMenu__q';
+            menu.innerHTML = `<div><svg><use href="/static/media/items.svg#${item}"></use></svg>Cheese</div>`;
+            if (enhanced) menu.insertAdjacentHTML('beforeend', '<div class="Item_enhancementLevel__e">+3</div>');
+            const input = document.createElement('input');
+            input.value = String(qty);
+            const all = document.createElement('button');
+            all.textContent = 'All';
+            const sell = document.createElement('button');
+            sell.className = 'Button_button__1Fe9z Button_sell__x';
+            sell.textContent = label;
+            sell.addEventListener('click', () => {
+                if (/^confirm/i.test(sell.textContent)) {
+                    gameClicks++;
+                } else {
+                    armClicks++;
+                    if (!neverArms) sell.textContent = armedLabel;
+                }
+            });
+            menu.append(input, all);
+            if (label !== null) menu.append(sell);
+            document.body.appendChild(menu);
+            return menu;
+        };
+
+        const vendorRun = () => {
+            runAtStep0();
+            bulkSell.decision = { insta: false, vendor: true, price: PRICE, reason: 'vendor' };
+            bulkSell._render();
+            bulkSell._watchClose('[class*="Item_actionMenu"]');
+        };
+
+        /** Press Confirm and let the bounded arming wait run out or finish */
+        const pressAndSettle = async () => {
+            confirmBtn().click();
+            await vi.advanceTimersByTimeAsync(1200);
+        };
+
+        test('an unarmed button is armed by one click, then sold by one more', async () => {
+            openMenu();
+            vendorRun();
+            expect(confirmBtn().disabled).toBe(false);
+
+            await pressAndSettle();
+            expect(armClicks).toBe(1);
+            expect(gameClicks).toBe(1);
+        });
+
+        test('an already-armed button is pressed once, with no arming click', async () => {
+            openMenu({ label: 'Confirm Sell For 400K Coins' });
+            vendorRun();
+
+            await pressAndSettle();
+            expect(armClicks).toBe(0);
+            expect(gameClicks).toBe(1);
+        });
+
+        test('a second press is a no-op, including one during the arming wait', async () => {
+            openMenu();
+            vendorRun();
+
+            confirmBtn().click();
+            bulkSell._onConfirmClick();
+            await vi.advanceTimersByTimeAsync(1200);
+            expect(gameClicks).toBe(1);
+
+            bulkSell._onConfirmClick();
+            await vi.advanceTimersByTimeAsync(1200);
+            expect(gameClicks).toBe(1);
+            expect(armClicks).toBe(1);
+            expect(confirmBtn().disabled).toBe(true);
+        });
+
+        test('the walk still advances only when the game closes the menu', async () => {
+            const menu = openMenu();
+            vendorRun();
+            await pressAndSettle();
+            expect(bulkSell.state).toBe('awaiting_confirm');
+
+            closeModalAndSettle(menu);
+            expect(bulkSell.state).toBe('awaiting_next');
+        });
+
+        test('an exact, unabbreviated total is accepted', async () => {
+            openMenu({ label: 'Sell For 399,996 Coins', armedLabel: 'Confirm Sell For 399,996 Coins' });
+            vendorRun();
+            await pressAndSettle();
+            expect(gameClicks).toBe(1);
+        });
+
+        test('a relabel that shows a different amount is refused and sells nothing', async () => {
+            openMenu({ armedLabel: 'Confirm Sell For 410K Coins' });
+            vendorRun();
+
+            await pressAndSettle();
+            expect(armClicks).toBe(1);
+            expect(gameClicks).toBe(0);
+            expect(bulkSell.confirmNote).toMatch(/Sell For says 410K/);
+            expect(bulkSell._confirmSent()).toBe(false);
+        });
+
+        test('a button that never arms is refused after the bounded wait, without retrying', async () => {
+            openMenu({ neverArms: true });
+            vendorRun();
+
+            await pressAndSettle();
+            expect(armClicks).toBe(1);
+            expect(gameClicks).toBe(0);
+            expect(bulkSell.confirmNote).toMatch(/did not arm in time/);
+            expect(bulkSell._confirmSent()).toBe(false);
+        });
+
+        test.each([
+            ['no menu open', null, /item menu is not open/],
+            ['the wrong item', { item: 'milk' }, /milk|not Cheese/],
+            ['the wrong quantity', { qty: 17 }, /says 17, not the queued 18/],
+            ['a mismatched coin amount', { label: 'Sell For 410K Coins' }, /Sell For says 410K/],
+            ['an exact total that is off by one', { label: 'Sell For 399,995 Coins' }, /Sell For says/],
+            ['an enhanced item', { enhanced: true }, /enhanced/],
+            ['no Sell For button', { label: null }, /Sell For button was not found/],
+        ])('refuses on %s and presses nothing', async (_name, menuOptions, why) => {
+            if (menuOptions) openMenu(menuOptions);
+            vendorRun();
+
+            await pressAndSettle();
+
+            expect(gameClicks).toBe(0);
+            expect(armClicks).toBe(0);
+            expect(bulkSell._confirmTarget().why).toMatch(why);
+            expect(statusText()).toMatch(/can’t confirm/);
+            expect(bulkSell._confirmSent()).toBe(false);
         });
     });
 

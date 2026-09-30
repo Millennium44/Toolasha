@@ -50,11 +50,15 @@ import marketplaceShortcuts from './marketplace-shortcuts.js';
 import { navigateToMarketplace, insertTabInOrder } from '../../utils/marketplace-tabs.js';
 import { createMutationWatcher } from '../../utils/dom-observer-helpers.js';
 import { createFloatingWidget } from '../../utils/floating-widget.js';
-import { formatKMB } from '../../utils/formatters.js';
+import { formatKMB, parseKMB } from '../../utils/formatters.js';
 import { holdKey, collectHeldKeys } from './bulk-sell-holds.js';
 import { watchlistEntries } from '../inventory/watchlist.js';
 import bundledLoadoutSnapshot from '../combat/loadout-snapshot.js';
 import { loadoutSnapshot } from '../../utils/bundle-bridge.js';
+
+/** Bound on waiting for the vendor button to relabel after its arming click */
+const VENDOR_ARM_WAIT_MS = 1000;
+const VENDOR_ARM_POLL_MS = 50;
 
 const BUTTON_ID = 'mwi-bulk-sell-btn';
 const CHIP_ID = 'mwi-bulk-sell-chip';
@@ -901,7 +905,7 @@ class BulkSellAssistant {
                 : this._confirmSent()
                   ? 'confirm sent — waiting for the game'
                   : d?.vendor
-                    ? 'click Sell For in the item menu'
+                    ? 'click Sell For in the item menu, or press Confirm here'
                     : 'confirm in the modal, or press Confirm here';
             const shown = d?.insta && d.avgPrice ? d.avgPrice : d?.price || 0;
             const detail = `${progress} · ${verb} ${this.current.count}× ${this.current.name} @ ${d?.insta ? '~' : ''}${formatKMB(shown)} (${d?.reason})`;
@@ -910,15 +914,17 @@ class BulkSellAssistant {
             // that had refused for a stated reason looked like a dead button.
             say(this.confirmNote ? `${confirmHint} — ${detail}` : `${detail} — ${confirmHint}`);
             setMain('✔ Confirm');
-            // Only offered while a market sell modal of ours is the thing on
-            // screen. The vendor path has no modal to check the item and
-            // quantity against, so it keeps the game's own "Sell For" button
-            // and nothing else — the primary slot stays dim rather than
-            // pressing something that cannot be found.
-            if (d?.vendor) {
-                setMainEnabled(false, 'click Sell For in the item menu');
-            } else if (this._confirmSent()) {
-                setMainEnabled(false, 'Already confirmed — waiting for the game to close the modal');
+            // Always armed while unsent; `_confirmTarget` refuses on press
+            // unless the open surface (sell modal, or the item menu for a
+            // vendor step) shows exactly what this step queued.
+            if (this._confirmSent()) {
+                setMainEnabled(false, 'Already confirmed — waiting for the game to close the modal or menu');
+            } else if (d?.vendor) {
+                setMainEnabled(
+                    true,
+                    'Press the item menu’s own Sell For button. Refuses unless the menu is open for exactly ' +
+                        'the item, quantity and coin total this step queued.'
+                );
             } else {
                 setMainEnabled(
                     true,
@@ -1058,7 +1064,7 @@ class BulkSellAssistant {
      */
     _confirmTarget() {
         if (this.state !== 'awaiting_confirm' || !this.current) return { why: 'there is no sale waiting' };
-        if (this.decision?.vendor) return { why: 'this one is a vendor sale' };
+        if (this.decision?.vendor) return this._vendorConfirmTarget();
 
         const modal = document.querySelector('[class*="Modal_modalContainer"]');
         if (!modal) return { why: 'the sell modal is not open' };
@@ -1098,6 +1104,75 @@ class BulkSellAssistant {
     }
 
     /**
+     * The vendor step's counterpart of the modal checks: the game's "Sell For N
+     * Coins" button in the open item action menu, or why it may not be pressed.
+     *
+     * Selectors (assumed from the game's markup, must be checked live): the menu
+     * is `[class*="Item_actionMenu"]` (the one `_openVendorSell` waits for); the
+     * item is read from its icon `svg use` href, falling back to the queued
+     * item's name appearing in the menu text; the quantity is the menu's first
+     * input; the button is found by its label `Sell For <amount> Coin(s)`, never
+     * by position.
+     *
+     * The button is two-step in game: "Sell For N Coins" (first click only arms
+     * it, no request) then "Confirm Sell For N Coins" (second click sells).
+     *
+     * @returns {{button: HTMLButtonElement, armed: boolean}|{why: string}}
+     */
+    _vendorConfirmTarget() {
+        const menu = document.querySelector('[class*="Item_actionMenu"]');
+        if (!menu) return { why: 'the item menu is not open' };
+        // The vendor path only opens +0 stacks, so an enhanced step or an
+        // enhancement marker in the menu is a sale this guard did not queue
+        if ((this.current.enhancementLevel || 0) !== 0 || menu.querySelector('[class*="Item_enhancementLevel"]')) {
+            return { why: 'the item menu is for an enhanced item, not the queued +0 stack' };
+        }
+
+        const hrid = this._modalItemHrid(menu);
+        if (hrid) {
+            if (hrid !== this.current.itemHrid) {
+                const name = dataManager.getInitClientData()?.itemDetailMap?.[hrid]?.name || hrid.split('/').pop();
+                return { why: `the item menu is for ${name}, not ${this.current.name}` };
+            }
+        } else if (!this.current.name || !(menu.textContent || '').includes(this.current.name)) {
+            return { why: 'the item menu does not say what it is selling' };
+        }
+
+        const input = menu.querySelector('input');
+        const quantity = input ? parseInt(String(input.value).replace(/[^0-9-]/g, ''), 10) : NaN;
+        if (!Number.isFinite(quantity)) return { why: 'the item menu quantity cannot be read' };
+        if (quantity !== this.current.count) {
+            return { why: `the item menu says ${quantity}, not the queued ${this.current.count}` };
+        }
+
+        const button = Array.from(menu.querySelectorAll('button')).find(
+            (btn) =>
+                !String(btn.className || '').includes('mwi-') &&
+                /^(confirm\s+)?sell for\b/i.test(btn.textContent.trim())
+        );
+        if (!button) return { why: "the item menu's Sell For button was not found" };
+        // "Confirm Sell For N Coins" is the same button after its arming click
+        const armed = /^confirm\b/i.test(button.textContent.trim());
+
+        const amount = button.textContent
+            .trim()
+            .replace(/^(confirm\s+)?sell for/i, '')
+            .replace(/coins?\s*$/i, '')
+            .trim();
+        const shown = parseKMB(amount);
+        const expected = this.current.count * (this.decision?.price || 0);
+        if (!Number.isFinite(shown) || !(expected > 0)) return { why: 'the Sell For amount cannot be read' };
+        // An abbreviated label ("400K") is only exact to its last printed digit:
+        // allow half a unit of that digit, and nothing more
+        const digits = amount.match(/^[\d,]*\.?(\d*)/)?.[1].length ?? 0;
+        const unit = shown / (parseFloat(amount.replace(/,/g, '')) || 1);
+        if (Math.abs(shown - expected) > (unit * 10 ** -digits) / 2) {
+            return { why: `Sell For says ${amount}, not the queued ${formatKMB(expected)}` };
+        }
+        return { button, armed };
+    }
+
+    /**
      * Press the game's confirm button for this step.
      *
      * It presses rather than sells: the modal closing is still the only thing
@@ -1106,7 +1181,9 @@ class BulkSellAssistant {
      * itself and the step key makes a second press a no-op even if it does not.
      */
     _onConfirmClick() {
-        if (this._confirmSent()) return;
+        // A press while the vendor button is mid-arming would find it already
+        // armed and sell, then the waiting press would sell again
+        if (this._confirmSent() || this._vendorArming) return;
         // A lock landing in the gap between the modal opening and this click is
         // caught here too — see `_isCurrentLocked` — rather than only refusing the
         // press: the server would reject the sale either way, and a refusal note
@@ -1124,10 +1201,58 @@ class BulkSellAssistant {
             this._render();
             return;
         }
+        // The vendor button is two-step: the first click only arms it (no game
+        // request), the second sells. One press of ours must be one sale, so the
+        // arming click is followed by a bounded wait for the armed label.
+        if (target.armed === false) {
+            this._armVendorThenPress(target.button);
+            return;
+        }
+        this._pressConfirm(target.button);
+    }
+
+    /** Mark the step sent and press the game's button — the one game action of this step */
+    _pressConfirm(button) {
         this.confirmNote = '';
         this._confirmedStep = this._stepKey();
         this._render();
-        target.button.click();
+        button.click();
+    }
+
+    /**
+     * Arm the vendor's "Sell For" button (UI-only click), wait up to about a
+     * second for it to relabel as "Confirm Sell For" with the same amount, then
+     * press it once. Not a background loop: bounded, inside the press handler,
+     * and it gives up with a stated reason rather than retrying.
+     * @param {HTMLButtonElement} button - The unarmed Sell For button
+     */
+    async _armVendorThenPress(button) {
+        if (this._vendorArming) return;
+        this._vendorArming = true;
+        const key = this._stepKey();
+        try {
+            button.click();
+            let result = { why: 'the Sell For button did not arm in time' };
+            for (let waited = 0; waited <= VENDOR_ARM_WAIT_MS; waited += VENDOR_ARM_POLL_MS) {
+                await new Promise((resolve) => setTimeout(resolve, VENDOR_ARM_POLL_MS));
+                if (this.state !== 'awaiting_confirm' || this._stepKey() !== key || this._confirmSent()) return;
+                const again = this._confirmTarget();
+                // A refusal (amount changed, menu gone) ends the wait; an
+                // unarmed-but-valid button is just not relabeled yet
+                if (again.why || again.armed) {
+                    result = again;
+                    break;
+                }
+            }
+            if (result.why) {
+                this.confirmNote = result.why;
+                this._render();
+                return;
+            }
+            this._pressConfirm(result.button);
+        } finally {
+            this._vendorArming = false;
+        }
     }
 
     /**
