@@ -4054,6 +4054,110 @@ describe('which metric the budget planner has to believe', () => {
     });
 });
 
+describe('a budget the measured picks leave mostly unspent', () => {
+    // One real Upgrade tab (1.6B budget, EXP/hr): cost and the table's Gold/0.01% EXP
+    // figure per row, so each row's EXP gain is cost / goldPer × 0.01%. Only the
+    // necklace's 5.27% (+14.8K EXP/hr) clears the run's error bar; every other gain is below it.
+    const XP_BASE = 281_000;
+    const TABLE = [
+        [
+            'Frenzy Lv60 → Lv65',
+            139.6e6,
+            1.8e6,
+            { type: 'ability_level', slot: 'ability_1', upgradeHrid: '/abilities/frenzy' },
+        ],
+        ['Vampire Fang Dirk +12 → +13', 202.2e6, 2.3e6, { slot: '/equipment_types/main_hand' }],
+        [
+            'Berserk Lv66 → Lv71',
+            140.4e6,
+            2.0e6,
+            { type: 'ability_level', slot: 'ability_2', upgradeHrid: '/abilities/berserk' },
+        ],
+        ['Sinister Cape +5 → +7', 252.7e6, 2.2e6, { slot: '/equipment_types/back' }],
+        ['Furious Spear ★ +10 → +12', 1.1e9, 3.2e6, { slot: '/equipment_types/two_hand' }],
+        ['Sinister Cape +5 → Sinister Cape ★ +5', 264.8e6, 3.1e6, { slot: '/equipment_types/back' }],
+        ["Ring Of Critical Strike +7 → Philosopher's Ring +5", 795.6e6, 6.8e6, { slot: '/equipment_types/ring' }],
+        [
+            "Earrings Of Critical Strike +7 → Philosopher's Earrings +5",
+            808.2e6,
+            6.9e6,
+            { slot: '/equipment_types/earrings' },
+        ],
+        ['Gym Lv5 → Lv6', 183.2e6, 3.7e6, { type: 'house', slot: '/house_rooms/gym' }],
+        ['Maelstrom Plate Body ★ +10 → +12', 800e6, 4.8e6, { slot: '/equipment_types/body' }],
+        ["Necklace Of Speed +5 → Philosopher's Necklace +5", 896e6, 1.7e6, { slot: '/equipment_types/neck' }],
+        ['Maelstrom Plate Legs ★ +10 → +12', 757e6, 5.2e6, { slot: '/equipment_types/legs' }],
+        [
+            'Puncture Lv70 → Lv75',
+            129.9e6,
+            4.4e6,
+            { type: 'ability_level', slot: 'ability_3', upgradeHrid: '/abilities/puncture' },
+        ],
+    ];
+    const base = { ...BASELINE, xpPerHour: XP_BASE };
+    const rows = TABLE.map(([description, cost, goldPerXp, candidate]) => {
+        const xpPct = (cost / goldPerXp) * 0.01;
+        const cleared = description.startsWith('Necklace');
+        return {
+            candidate: { upgradeHrid: `/items/${description}`, ...candidate, description, cost },
+            cost,
+            metrics: { ...base, xpPerHour: XP_BASE * (1 + xpPct / 100) },
+            deltas: { dps: 0, xp: xpPct, profit: 0, deaths: 0, encounters: 0 },
+            economics: { profitGainPerHour: 0 },
+            significantBy: { dps: false, xp: cleared, profit: false, deaths: false, encounters: false },
+            significant: cleared,
+        };
+    });
+
+    test('EXP/hr spends what the one measured pick leaves on the estimates in other slots', () => {
+        const plan = planUpgradeBudget(rows, 1.6e9, { baseline: base, metricKey: 'xp' });
+        const names = plan.picks.map((p) => p.candidate.description);
+
+        // The report: the necklace alone, 896M of 1.6B, +14.8K EXP/hr
+        expect(names[0]).toBe("Necklace Of Speed +5 → Philosopher's Necklace +5");
+        expect(plan.picks[0].provisional).toBeUndefined();
+        expect(names.slice(1)).toEqual([
+            'Frenzy Lv60 → Lv65',
+            'Berserk Lv66 → Lv71',
+            'Sinister Cape +5 → +7',
+            'Puncture Lv70 → Lv75',
+        ]);
+        expect(plan.picks.slice(1).every((p) => p.provisional === true)).toBe(true);
+        expect(plan.provisional).toBe(false);
+        expect(plan.totalCost).toBeCloseTo(1558.6e6, -3);
+        expect(plan.totalCost).toBeLessThanOrEqual(1.6e9);
+        // 5.27% + 2.92% of the baseline, against 5.27% for the necklace alone
+        expect(plan.gainTotal / XP_BASE).toBeCloseTo(0.0819, 3);
+        expect(plan.skipped.some((s) => s.result.candidate.description.startsWith('Frenzy'))).toBe(false);
+    });
+
+    test('a measured pick keeps its slot: no estimate is bought beside it or in its place', () => {
+        const withRival = [
+            ...rows,
+            {
+                ...rows[10],
+                candidate: { ...rows[10].candidate, description: 'Bigger noisy necklace', cost: 100e6 },
+                cost: 100e6,
+                metrics: { ...base, xpPerHour: XP_BASE * 1.02 },
+                significantBy: { dps: false, xp: false, profit: false, deaths: false, encounters: false },
+                significant: false,
+            },
+        ];
+        const plan = planUpgradeBudget(withRival, 1.6e9, { baseline: base, metricKey: 'xp' });
+        const necks = plan.picks.filter((p) => p.candidate.slot === '/equipment_types/neck');
+
+        expect(necks.map((p) => p.candidate.description)).toEqual(["Necklace Of Speed +5 → Philosopher's Necklace +5"]);
+    });
+
+    test('Score, which never consults the error bar, plans the same way it did', () => {
+        const scored = rows.map((r, i) => ({ ...r, score: 100 - i }));
+        const plan = planUpgradeBudget(scored, 1.6e9, { baseline: base, metricKey: 'score' });
+
+        expect(plan.picks.every((p) => p.provisional === undefined)).toBe(true);
+        expect(plan.picks.length).toBeGreaterThan(1);
+    });
+});
+
 describe('the noise a row reports for one metric', () => {
     test('reads the bar and the verdict off the row', () => {
         const read = upgradeNoiseFor({ noise: { dps: 2.5 }, significantBy: { dps: false } }, 'dps');
