@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Trial ledger on the test server
+
+- A test-server week that could not be split into cycles is no longer reported as a finished cycle when its trials came from two different cycles.
+
 <!-- shipped in 3.62.0 -->
 
 ### Bulk Sell confirms vendor sales too

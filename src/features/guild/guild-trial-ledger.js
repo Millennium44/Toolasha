@@ -1030,10 +1030,17 @@ export function observedCoverage(cycles, { trialsPerCycle = TRIALS_PER_CYCLE, no
     // The test server can finish a cycle and idle before the next starts, so its
     // newest cycle is over once it holds every trial a cycle runs; counted as
     // running it would drop out of the ratio until the next cycle began. Live
-    // has one cycle a week, and the week is left out until it rolls over
+    // has one cycle a week, and the week is left out until it rolls over. A record
+    // ledgerCyclesByAnchor left unsplit (a legacy trial without memberFigures) can
+    // hold trials from several cycles, so its trial count says nothing about one
     const distinctTrials = (cycle) =>
         new Set((cycle?.trials || []).map((trial, index) => trial?.trialId ?? `#${index}`)).size;
-    const finished = isTestServer() && running && perCycle > 0 && distinctTrials(running) >= perCycle;
+    const finished =
+        isTestServer() &&
+        running &&
+        perCycle > 0 &&
+        distinctTrials(running) >= perCycle &&
+        trialCycleGroups(Array.isArray(running.trials) ? running.trials : []).length <= 1;
 
     for (const cycle of list) {
         if (cycle === running && !finished) {
