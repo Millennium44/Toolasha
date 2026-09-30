@@ -646,6 +646,9 @@ class GuildTrialAbilities {
                 if (!this.roster.length && Array.isArray(stored.roster)) {
                     this.roster = normalizeRoster(stored.roster);
                 }
+                if (!this.liveTrialKey && typeof stored.trialKey === 'string' && stored.trialKey) {
+                    this.liveTrialKey = stored.trialKey;
+                }
             }
         } catch (error) {
             console.error('[GuildTrialAbilities] Reading the stored session failed:', error);
@@ -1217,7 +1220,9 @@ class GuildTrialAbilities {
             // on the session object itself
             .set(
                 sessionStorageKey(this.guildName, this.characterId),
-                { ...this.session, roster: [...this.roster] },
+                // …and so does the trial the session was compared as: with trial
+                // tracking off after a reload nothing else can say which section
+                { ...this.session, roster: [...this.roster], trialKey: this._liveTrialKey() },
                 SESSION_STORE
             )
             .catch((error) => console.error('[GuildTrialAbilities] Saving the session failed:', error));

@@ -471,4 +471,10 @@ describe('one absent player is reported once', () => {
         expect(compare.notInTrial).toEqual(['Zed']);
         expect(compare.summary.notInTrialCount).toBe(1);
     });
+    test('a truncated and a full spelling of one absent member are one person', () => {
+        const plan = parse(['SarinTe…: Zzzzz', '== Badger ==', 'SarinTesla: Sweep'].join(String.fromCharCode(10)));
+        const compare = comparePlan(plan, [row('Alice', [])], ABILITIES, 'badger');
+        expect(compare.notInTrial).toEqual(['SarinTesla']);
+        expect(compare.summary.unknownTokens).toEqual([]);
+    });
 });
