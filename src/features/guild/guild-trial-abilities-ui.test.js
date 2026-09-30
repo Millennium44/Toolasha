@@ -1638,4 +1638,27 @@ describe('pre-trial loadout check', () => {
         choose('Live trial').click();
         expect(panelText()).not.toContain(FAILED_DRAW);
     });
+
+    test('a reply lands in the mode that asked, even if the picker moved meanwhile', async () => {
+        await feature.initialize('Cats');
+        openTrialAbilitiesPanel();
+        choose('Badger').click();
+        button('Fetch next: Alice').click();
+        // Back to the live view before the reply arrives
+        choose('Live trial').click();
+        await vi.advanceTimersByTimeAsync(2000);
+
+        expect(guildTrialAbilities.session).toBeNull();
+    });
+
+    test('a live fetch is recorded in the live session even if the picker moved to a pre-trial check', async () => {
+        await feature.initialize('Cats');
+        guildTrialAbilities.setRoster([{ characterId: 1, name: 'Alice' }]);
+        openTrialAbilitiesPanel();
+        button('Fetch next: Alice').click();
+        choose('Badger').click();
+        await vi.advanceTimersByTimeAsync(2000);
+
+        expect(guildTrialAbilities.state().capturedCount).toBe(1);
+    });
 });
