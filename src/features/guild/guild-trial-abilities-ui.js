@@ -28,7 +28,7 @@ import { openPlayerProfile, VALID_PLAYER_NAME_RE } from '../../utils/profile-com
 import storage from '../../core/storage.js';
 import {
     fetchLoadout,
-    getLoadout,
+    getLoadouts,
     isViewLoadoutAvailable,
     onLoadoutCaptured,
     VIEW_LOADOUT_CONTEXT,
@@ -1734,6 +1734,36 @@ export function adoptStoredCaptures() {
 }
 
 /**
+ * Whether a capture could be a combat trial's loadout: a guild-trial context, and
+ * either the combat kind or no kind at all (the user's own roster click).
+ * @param {Object} entry - A `CapturedLoadout`
+ * @returns {boolean}
+ */
+function isCombatTrialCapture(entry) {
+    if (entry?.context !== VIEW_LOADOUT_CONTEXT.GuildTrial) return false;
+    return !entry.kind || entry.kind === COMBAT_TRIAL_KIND;
+}
+
+/**
+ * The newest stored capture for a player that can be a combat trial kit — one
+ * {@link snapshotFromViewLoadout} accepts, so a newer skilling loadout for the same
+ * player cannot shadow the combat one.
+ * @param {string|number} wanted - Character id, or name
+ * @returns {Object|null}
+ */
+function newestTrialLoadout(wanted) {
+    const id = String(wanted);
+    const name = id.toLowerCase();
+    let best = null;
+    for (const entry of getLoadouts()) {
+        if (!isCombatTrialCapture(entry) || !snapshotFromViewLoadout(entry)) continue;
+        const same = entry.characterId === id || (entry.name && entry.name.toLowerCase() === name);
+        if (same && (!best || entry.capturedAt >= best.capturedAt)) best = entry;
+    }
+    return best;
+}
+
+/**
  * Fold in any trial loadout the {@link module:utils/view-loadout} store already
  * holds for an outstanding player, taken since this session began.
  *
@@ -1754,7 +1784,7 @@ export function adoptViewLoadoutCaptures() {
         for (const row of state.outstanding) {
             const wanted = row.characterId ?? row.name;
             if (wanted === null || wanted === undefined || wanted === '') continue;
-            const entry = getLoadout(wanted, VIEW_LOADOUT_CONTEXT.GuildTrial);
+            const entry = newestTrialLoadout(wanted);
             if (!entry || !Number.isFinite(entry.capturedAt) || entry.capturedAt < horizon) continue;
             const snapshot = snapshotFromViewLoadout(entry);
             if (!snapshot) continue;
@@ -1858,7 +1888,7 @@ function onCapturedEvent(event) {
  */
 function onViewLoadoutCaptured(entry) {
     try {
-        if (!entry || entry.context !== VIEW_LOADOUT_CONTEXT.GuildTrial) return;
+        if (!isCombatTrialCapture(entry)) return;
         const snapshot = snapshotFromViewLoadout(entry);
         if (!snapshot) return;
         guildTrialAbilities.recordCapture(snapshot, {

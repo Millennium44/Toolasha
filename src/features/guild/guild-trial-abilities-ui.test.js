@@ -1102,6 +1102,63 @@ describe('trial abilities panel', () => {
             expect(text()).not.toContain(FAILED);
         });
 
+        test('a skilling-kind loadout fetched after the combat one does not evict it', async () => {
+            // Regression: view-loadout's store was keyed by context and player only, so the
+            // skilling loadout (same player, same guild_trial context) replaced the combat
+            // kit, and adoptViewLoadoutCaptures then found a skilling entry it must refuse
+            viewLoadoutState.core = {
+                handleViewProfile: () => {},
+                handleViewLoadout: vi.fn((characterId, context, kind) => {
+                    const reply =
+                        kind === 'skilling'
+                            ? loadoutReply(characterId, 'Alice', [])
+                            : loadoutReply(characterId, 'Alice', [{ hrid: '/abilities/fierce_aura', level: 120 }]);
+                    reply.loadout.actionTypeHrid =
+                        kind === 'skilling' ? '/action_types/woodcutting' : '/action_types/combat';
+                    setTimeout(() => handleLoadoutShared(reply), 10);
+                }),
+            };
+            for (const kind of [COMBAT_TRIAL_KIND, 'skilling']) {
+                const run = fetchLoadout({ characterId: 5, name: 'Alice' }, VIEW_LOADOUT_CONTEXT.GuildTrial, kind, {
+                    closeGameModal: false,
+                });
+                await vi.advanceTimersByTimeAsync(10);
+                await run;
+            }
+
+            await feature.initialize('Cats');
+            guildTrialAbilities.setRoster([{ characterId: 5, name: 'Alice' }]);
+            vi.setSystemTime(NOW + 6000);
+            openTrialAbilitiesPanel();
+
+            expect(guildTrialAbilities.state().capturedCount).toBe(1);
+        });
+
+        test('a skilling-kind capture is not folded into the combat session by the live listener', async () => {
+            await feature.initialize('Cats');
+            guildTrialAbilities.setRoster([{ characterId: 5, name: 'Alice' }]);
+            viewLoadoutState.core = {
+                handleViewProfile: () => {},
+                handleViewLoadout: vi.fn((characterId) => {
+                    // A reply without an action type: only the request's kind says it is not combat
+                    setTimeout(
+                        () =>
+                            handleLoadoutShared(
+                                loadoutReply(characterId, 'Alice', [{ hrid: '/abilities/fierce_aura', level: 120 }])
+                            ),
+                        10
+                    );
+                }),
+            };
+            const run = fetchLoadout({ characterId: 5, name: 'Alice' }, VIEW_LOADOUT_CONTEXT.GuildTrial, 'skilling', {
+                closeGameModal: false,
+            });
+            await vi.advanceTimersByTimeAsync(10);
+            await run;
+
+            expect(guildTrialAbilities.state().capturedCount).toBe(0);
+        });
+
         test('Fetch is offered only when View Loadout is available, sends exactly one request per click', async () => {
             viewLoadoutState.core = null;
             await feature.initialize('Cats');
