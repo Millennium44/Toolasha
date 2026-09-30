@@ -446,19 +446,19 @@ describe('natural regeneration', () => {
         spendWithRegen(0);
         manaPanel.show();
 
-        // The base 1% of 2,000 per 10 s is 120 MP/min
+        // A stat below the game's 1% floor counts as 1%: 20 per 10 s, 120 MP/min
         expect(manaPerMinuteMeasured()).toBe(600);
         expect(manaPanel.panel.querySelector('[data-mp-target]').value).toBe('480');
         expect(text()).toContain('Natural regen');
         expect(text()).not.toContain('could not be drawn');
     });
 
-    test('gear regen adds to the base rate', () => {
-        spendWithRegen(0.01);
+    test('the regen stat is the full rate, floored at 1%, not added to a base', () => {
+        spendWithRegen(0.05);
         manaPanel.show();
 
-        // floor(2000 x 0.02) = 40 per tick, 240 per minute
-        expect(manaPanel.panel.querySelector('[data-mp-target]').value).toBe('360');
+        // floor(2000 x 0.05) = 100 per tick, 600 per minute: the items need cover nothing
+        expect(manaPanel.panel.querySelector('[data-mp-target]').value).toBe('0');
     });
 
     test('an equipment change drops the regen reading and the target falls back to gross spend', () => {

@@ -74,7 +74,8 @@ let slots = null;
 let maxMana = null;
 /**
  * The character's own MP regen per 10 s as a fraction of max MP, from the last `new_battle`; null until seen.
- * The wire stat omits the game's base 0.01, which the simulator adds (`combat-unit.js` updateCombatDetails).
+ * The wire stat is the full rate: the game floors it at 0.01 (`Math.max(.01, mpRegenPer10)` in the client) rather than
+ * adding a base on top — measured live on a 2,608-MP character at 0.048, whose regen ticks were +125 (not +151).
  */
 let mpRegenPer10 = null;
 /** True from an equipment change until the next `new_battle`: haste, slots and max MP were dropped and not yet re-read */
@@ -124,7 +125,7 @@ export function resetMpPlanner() {
  */
 export function naturalRegenPerMinute() {
     if (!(maxMana > 0) || mpRegenPer10 === null) return null;
-    return Math.floor(maxMana * (0.01 + mpRegenPer10)) * 6;
+    return Math.floor(maxMana * Math.max(0.01, mpRegenPer10)) * 6;
 }
 
 /** Start the count again from here */
