@@ -1792,6 +1792,7 @@ class CombatSimulator {
         }
 
         if (source.isPlayer) {
+            this.simResult.addCastMade(source);
             if (source.abilityManaCosts.has(ability.hrid)) {
                 source.abilityManaCosts.set(ability.hrid, source.abilityManaCosts.get(ability.hrid) + ability.manaCost);
             } else {

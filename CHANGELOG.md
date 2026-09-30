@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Combat sim counts refused casts
+
+- The sim's mana results now show how many casts per hour were refused for lack of mana, and what share of casts that is, beside the run-out ratio.
+
 ### Action panel no longer scrolls sideways
 
 - The red Required/Missing line under an action's inputs now wraps instead of widening the panel, so a large missing amount no longer adds a horizontal scrollbar.

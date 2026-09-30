@@ -6692,6 +6692,17 @@ class CombatSimUI {
             html += `<span style="color:#ff6b6b; font-weight:600;">${oomRatio}%</span>`;
             html += '</div>';
         }
+        // Fully-dry time understates a build that keeps casting at the edge, so the refusals are shown too
+        const castsRefused = simResult.manaCastsRefused?.[activeTab] ?? 0;
+        if (castsRefused > 0 && simResult.simulatedTime > 0) {
+            const castsMade = simResult.manaCastsMade?.[activeTab] ?? 0;
+            const refusedPerHr = castsRefused / (simResult.simulatedTime / 3.6e12);
+            const refusedShare = (castsRefused / (castsRefused + castsMade)) * 100;
+            html += `<div style="${rowStyle}" title="Times a ready ability could not be cast for lack of mana, counted once per starved stretch">`;
+            html += `<span style="${labelStyle}">Casts Refused/hr</span>`;
+            html += `<span style="color:#ff6b6b; font-weight:600;">${formatWithSeparator(Math.round(refusedPerHr))} (${refusedShare.toFixed(1)}%)</span>`;
+            html += '</div>';
+        }
 
         // Debuff on level gap — only shown when non-zero
         const debuff = simResult.debuffOnLevelGap?.[activeTab] ?? 0;
