@@ -93,6 +93,22 @@ describe('pushXP', () => {
         pushXP(history, { t: MIN, xp: 900 });
         expect(history).toHaveLength(1);
     });
+
+    test('a reading more than a week after the last keeps that last one, so a rate still exists', () => {
+        // Another guild is only read when the leaderboard is opened; opened ten
+        // days apart, the week prune used to leave the new reading alone
+        const day = 24 * 60 * MIN;
+        const history = [
+            { t: 0, xp: 1000 },
+            { t: day, xp: 2000 },
+        ];
+        pushXP(history, { t: 11 * day, xp: 12_000 });
+        expect(history).toEqual([
+            { t: day, xp: 2000 },
+            { t: 11 * day, xp: 12_000 },
+        ]);
+        expect(calcStats(history).lastXPH).toBeCloseTo(10_000 / (10 * 24), 6);
+    });
 });
 
 describe('the blank-column bug', () => {

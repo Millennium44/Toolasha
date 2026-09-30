@@ -116,8 +116,10 @@ function pushXP(arr, d) {
         arr.splice(arr.length - sameLength + 1, sameLength - 2);
     }
 
+    // Past the week, except the reading before the newest: a board opened
+    // less than weekly otherwise keeps one reading and never shows a rate
     let oldLength = 0;
-    for (let i = 0; i < arr.length; i++) {
+    for (let i = 0; i < arr.length - 2; i++) {
         if (d.t - arr[i].t > WINDOW_1W) {
             oldLength++;
         } else {

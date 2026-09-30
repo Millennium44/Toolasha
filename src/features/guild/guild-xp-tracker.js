@@ -117,9 +117,11 @@ export function pushXP(arr, d) {
         arr.splice(arr.length - sameLength, sameLength - 1);
     }
 
-    // Rule 3: drop entries older than 1 week
+    // Rule 3: drop entries older than 1 week, except the one before the
+    // newest — another guild is read only when the leaderboard is opened, and
+    // opened less than weekly it would otherwise never hold two readings
     let oldLength = 0;
-    for (let i = 0; i < arr.length; i++) {
+    for (let i = 0; i < arr.length - 2; i++) {
         if (d.t - arr[i].t > WINDOW_1W) {
             oldLength++;
         } else {
