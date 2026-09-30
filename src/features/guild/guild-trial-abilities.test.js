@@ -273,6 +273,27 @@ describe('session reset rules', () => {
         expect(s._liveTrialKey()).toBe('badger');
     });
 
+    test('a rollover by new_guild_battle whose source already advanced keeps the new encounter live', () => {
+        const s = session();
+        s.recordCapture(snap('Alice', 1, []), { at: NOW });
+        const rolloverAt = NOW + 24 * 60 * 60 * 1000;
+        // The damage listener ran first: encounter and instance are already the new fight's
+        const reading = { encounter: 'swarm', instance: rolloverAt };
+        s.setLiveTrialSource(() => reading);
+
+        s.noteTrialActivity(rolloverAt);
+        expect(s._liveTrialKey()).toBe('swarm');
+        // instance is fixed for the whole fight: later tiers stay live
+        s.noteTrialActivity(rolloverAt + 10 * 60 * 1000);
+        s.noteTrialActivity(rolloverAt + 20 * 60 * 1000);
+        expect(s._liveTrialKey()).toBe('swarm');
+
+        // The next trial opened by skilling still suppresses this fight's leftover reading
+        const later = rolloverAt + 3 * 24 * 60 * 60 * 1000;
+        s.noteTrialActivity(later);
+        expect(s._liveTrialKey()).toBeNull();
+    });
+
     test('a tick that rolls the session over drops last trial’s kept plan key', () => {
         const s = session();
         s.recordCapture(snap('Alice', 1, []), { at: NOW });
