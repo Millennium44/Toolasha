@@ -72,6 +72,8 @@ let haste = { foodHaste: 0, drinkConcentration: 0 };
 let slots = null;
 /** The character's own max MP, from `new_battle`; null until seen (instant restores are then uncapped) */
 let maxMana = null;
+/** True from an equipment change until the next `new_battle`: haste, slots and max MP were dropped and not yet re-read */
+let plannerStale = false;
 
 /** What the MP optimizer panel section was last asked for; null until typed, so the measured rate fills it */
 let optimTarget = null;
@@ -105,6 +107,7 @@ export function resetMpPlanner() {
     haste = { foodHaste: 0, drinkConcentration: 0 };
     slots = null;
     maxMana = null;
+    plannerStale = false;
     optimTarget = null;
 }
 
@@ -210,6 +213,10 @@ function manaCostOf(abilityHrid) {
 let onNewBattle = null;
 let onAbility = null;
 let onCharacterSwitching = null;
+let onItemsUpdated = null;
+
+/** Equipment lives at every location but the inventory; a delta message lists only the items that changed */
+const INVENTORY_LOCATION = '/item_locations/inventory';
 
 export default {
     name: 'Mana Tracker',
@@ -240,6 +247,7 @@ export default {
             // A live new_battle player carries max MP at the top level; combatDetails only has combatStats
             const max = Number(self?.maxManapoints ?? self?.combatDetails?.maxManapoints);
             if (max > 0) maxMana = max;
+            plannerStale = false;
             if (stats) {
                 haste = { foodHaste: stats.foodHaste || 0, drinkConcentration: stats.drinkConcentration || 0 };
                 if (Number.isFinite(stats.foodSlots) && Number.isFinite(stats.drinkSlots)) {
@@ -278,17 +286,32 @@ export default {
             ownerCharacterId = null;
         };
 
+        // Pouch, max-MP and haste gear change these between fights, and `new_battle` is the only message that
+        // carries them: drop the captured values so the planner falls back rather than plan on the old gear
+        onItemsUpdated = (data) => {
+            const items = data?.endCharacterItems;
+            if (!Array.isArray(items)) return;
+            if (!items.some((item) => item?.itemLocationHrid && item.itemLocationHrid !== INVENTORY_LOCATION)) return;
+            haste = { foodHaste: 0, drinkConcentration: 0 };
+            slots = null;
+            maxMana = null;
+            plannerStale = true;
+        };
+
         webSocketHook.on('new_battle', onNewBattle);
         webSocketHook.on('battle_consumable_ability_updated', onAbility);
         dataManager.on?.('character_switching', onCharacterSwitching);
+        dataManager.on?.('items_updated', onItemsUpdated);
     },
     cleanup: () => {
         if (onNewBattle) webSocketHook.off('new_battle', onNewBattle);
         if (onAbility) webSocketHook.off('battle_consumable_ability_updated', onAbility);
         if (onCharacterSwitching) dataManager.off?.('character_switching', onCharacterSwitching);
+        if (onItemsUpdated) dataManager.off?.('items_updated', onItemsUpdated);
         onNewBattle = null;
         onAbility = null;
         onCharacterSwitching = null;
+        onItemsUpdated = null;
         pauseSpan();
     },
 };
@@ -390,6 +413,10 @@ function drawMpSupply(body) {
                 'Mana spent over the time between the first and last counted cast or fight, idle gaps included.'
             )
         );
+    }
+
+    if (plannerStale) {
+        card.appendChild(panelNote('Equipment changed: slots, max MP and haste refresh after the next fight.'));
     }
 
     const plan = mpSupplyPlan(target ?? 0);
