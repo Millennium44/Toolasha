@@ -81,6 +81,11 @@ import {
     GEAR_CHANGED_DETAIL,
 } from './labyrinth-sim-cache.js';
 import { recommendationMethods, RECOMMEND_CLASS, RECOMMEND_CONTROLS_CLASS } from './labyrinth-recommendation.js';
+import {
+    toggleRoomDistribution,
+    refreshRoomDistribution,
+    destroyRoomDistribution,
+} from './labyrinth-room-distribution.js';
 
 /**
  * Re-exported from the modules they now live in, so importers that have always
@@ -559,6 +564,7 @@ class LabyrinthClearRate {
             // `restoreTileBadgesFromCache()`. Safety should not rest on two
             // characters happening to be geared differently.
             this._tileResults?.clear();
+            destroyRoomDistribution();
             this._autoCalcFingerprint = null;
             this.isInitialized = false;
         } catch (error) {
@@ -2602,6 +2608,7 @@ class LabyrinthClearRate {
             this.appendTileBadge(cell, result);
             this.calculatedTileKeys?.add(tileKey);
         }
+        refreshRoomDistribution();
     }
 
     /**
@@ -2825,6 +2832,25 @@ class LabyrinthClearRate {
             'color:#fff; font-size:12px; font-weight:700; line-height:1; cursor:pointer;';
         beaconAutoButton.addEventListener('click', () => this.resetBeaconCountToAuto(true));
         group(beaconButton, beaconInput, beaconAutoButton);
+
+        if (config.getSetting('labyrinthRoomDistribution')) {
+            const distributionButton = document.createElement('button');
+            distributionButton.className = `-distribution-button`;
+            distributionButton.textContent = 'Spread';
+            distributionButton.title =
+                'Histogram of the clear chances calculated for the rooms on this floor, with rooms not yet judged counted apart';
+            distributionButton.style.cssText =
+                'min-width:48px; padding:0 10px; height:20px; border:0; border-radius:5px; background:#3d7bd8; ' +
+                'color:#fff; font-size:11px; font-weight:700; line-height:1; white-space:nowrap; cursor:pointer;';
+            distributionButton.addEventListener('click', () =>
+                toggleRoomDistribution(() => ({
+                    rooms: this.roomData,
+                    results: this._tileResults,
+                    floor: this.currentFloor,
+                }))
+            );
+            group(distributionButton);
+        }
 
         // What is actually in the bag, beside the controls that spend it. The
         // planners read this fresh at plan time; this is only so the numbers a
@@ -3307,6 +3333,7 @@ class LabyrinthClearRate {
             if (this.simEpoch() === epoch) {
                 this.tileCalcRunning = false;
                 this.syncTileCalcButton();
+                refreshRoomDistribution();
                 // Cleared before it runs, so a calculation the path itself
                 // triggers cannot queue it again. Cancelling the calculation
                 // withdraws the wait too: the rooms it skipped are unjudged.

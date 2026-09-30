@@ -211,8 +211,9 @@ by salairkas (MIT). The MIT licence text, with the holder named, is vendored at 
 
 ## Labyrinth Clear Rate Calculator
 
-Parts of `src/features/combat/labyrinth-room-logs.js` — and material consulted throughout the
-labyrinth simulator — are ported from the
+Parts of `src/features/combat/labyrinth-room-logs.js`, the clear-chance distribution panel
+(`src/features/combat/labyrinth-room-distribution.js`, idea and bin-width control only) — and material
+consulted throughout the labyrinth simulator — are ported from the
 **[Labyrinth Win Rate Calculator](https://greasyfork.org/en/scripts/566829)** by dakonglong
 (MIT). The MIT licence text, with the holder named, is vendored at `third-party/labyrinth-clear-rate/LICENSE.md`.
 
