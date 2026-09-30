@@ -186,6 +186,23 @@ export function formatWithSeparator(num) {
 }
 
 /**
+ * Format a per-hour rate that can be real but tiny. Precision follows magnitude so a positive rate never reads as 0.
+ * @param {number} rate - Events per hour
+ * @returns {string} Integer from 10 up, one decimal from 1, two decimals below; "<0.01" for a positive rate that
+ *   would round to 0
+ *
+ * @example
+ * formatRatePerHour(0.004) // "<0.01"
+ */
+export function formatRatePerHour(rate) {
+    if (!(rate > 0)) return '0';
+    if (rate >= 10) return formatWithSeparator(Math.round(rate));
+    if (rate >= 1) return rate.toFixed(1);
+    const fixed = rate.toFixed(2);
+    return fixed === '0.00' ? '<0.01' : fixed;
+}
+
+/**
  * Format large numbers in K/M/B notation
  * @param {number} num - The number to format
  * @param {number} decimals - Number of decimal places (default: 1)
