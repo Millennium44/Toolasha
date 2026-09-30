@@ -798,6 +798,32 @@ describe('observedCoverage', () => {
         expect(coverage).toEqual({ observed: 2, expected: 2, cycles: 1, inProgress: true, fraction: 1 });
     });
 
+    test('on the test server a newest cycle that ran both trials is complete, not running', () => {
+        const now = Date.parse('2026-08-23T12:00:00Z');
+        const thisWeek = trialWeekStart(now);
+        const cycles = [
+            { weekStart: thisWeek, cycleAt: thisWeek + 3_600_000, trials: [{ trialId: 'a' }, { trialId: 'b' }] },
+            { weekStart: thisWeek, cycleAt: thisWeek + 90_000_000, trials: [{ trialId: 'c' }, { trialId: 'd' }] },
+        ];
+        server.test = true;
+        try {
+            expect(observedCoverage(cycles, { now })).toEqual({
+                observed: 4,
+                expected: 4,
+                cycles: 2,
+                inProgress: false,
+                fraction: 1,
+            });
+            // One trial still to run: it stays out
+            const running = [cycles[0], { ...cycles[1], trials: [{ trialId: 'c' }] }];
+            expect(observedCoverage(running, { now })).toMatchObject({ cycles: 1, inProgress: true });
+        } finally {
+            server.test = false;
+        }
+        // Live: one record a week, left out until the week rolls over
+        expect(observedCoverage(cycles, { now })).toMatchObject({ cycles: 1, inProgress: true });
+    });
+
     test('no cycles is no fraction rather than zero', () => {
         expect(observedCoverage([]).fraction).toBeNull();
     });
