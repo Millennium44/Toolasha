@@ -423,3 +423,50 @@ describe('a character with fewer consumable slots', () => {
         expect(mpSupplyPlan(0).max.items).toHaveLength(1);
     });
 });
+
+describe('natural regeneration', () => {
+    /** Two minutes at 600 MP/min from a 2,000-MP character with the given gear regen stat */
+    function spendWithRegen(mpRegenPer10) {
+        game.handlers['new_battle']({
+            players: [
+                {
+                    character: { id: 'char1' },
+                    maxManapoints: 2000,
+                    combatDetails: { combatStats: { mpRegenPer10 } },
+                },
+            ],
+        });
+        for (let i = 0; i < 12; i++) {
+            vi.advanceTimersByTime(10_000);
+            game.handlers['battle_consumable_ability_updated']({ ability: '/abilities/fireball' });
+        }
+    }
+
+    test('the auto-filled target is spend net of regen, because the items only cover the difference', () => {
+        spendWithRegen(0);
+        manaPanel.show();
+
+        // The base 1% of 2,000 per 10 s is 120 MP/min
+        expect(manaPerMinuteMeasured()).toBe(600);
+        expect(manaPanel.panel.querySelector('[data-mp-target]').value).toBe('480');
+        expect(text()).toContain('Natural regen');
+        expect(text()).not.toContain('could not be drawn');
+    });
+
+    test('gear regen adds to the base rate', () => {
+        spendWithRegen(0.01);
+        manaPanel.show();
+
+        // floor(2000 x 0.02) = 40 per tick, 240 per minute
+        expect(manaPanel.panel.querySelector('[data-mp-target]').value).toBe('360');
+    });
+
+    test('an equipment change drops the regen reading and the target falls back to gross spend', () => {
+        spendWithRegen(0);
+        game.dmHandlers['items_updated']({ endCharacterItems: [{ itemLocationHrid: '/item_locations/main_hand' }] });
+        manaPanel.show();
+
+        expect(manaPanel.panel.querySelector('[data-mp-target]').value).toBe('600');
+        expect(text()).not.toContain('Natural regen');
+    });
+});
