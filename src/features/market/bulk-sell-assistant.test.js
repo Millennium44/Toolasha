@@ -99,8 +99,10 @@ vi.mock('../combat/loadout-snapshot.js', () => ({
         whenReady: () => (game.loadoutsReady ? Promise.resolve(true) : new Promise((r) => game.readyWaiters.push(r))),
     },
 }));
+/** Every order-book navigation the run asked for — each one is a game request */
+const navigations = vi.hoisted(() => []);
 vi.mock('../../utils/marketplace-tabs.js', () => ({
-    navigateToMarketplace: () => {},
+    navigateToMarketplace: (itemHrid) => navigations.push(itemHrid),
     insertTabInOrder: (container, tab) => container?.appendChild(tab),
 }));
 vi.mock('../../utils/dom-observer-helpers.js', () => ({
@@ -282,6 +284,10 @@ describe('Locked items are never queued', () => {
  * seconds apart with a modal sitting open in between.
  */
 describe('a lock landing mid-run is caught again, not just at the queue build', () => {
+    // A run the previous suite started and left open is not this suite's
+    beforeEach(() => {
+        bulkSell._stop('');
+    });
     afterEach(() => {
         bulkSell._stop('');
     });
@@ -1124,6 +1130,53 @@ describe('confirming from the strip', () => {
             expect(gameClicks).toBe(0);
             expect(bulkSell._confirmTarget().why).toMatch(/no sale waiting/);
             modal.remove();
+        });
+    });
+
+    /**
+     * Opening an item's order book is a game request, and the click that asked
+     * for it has spent its one action. A skip the game causes afterwards must
+     * not open the next book on its own.
+     */
+    describe('a skip after the order book was opened', () => {
+        const unmarketable = () => {
+            bulkSell.queue = ['cheese', 'milk', 'egg'].map((slug) => ({
+                itemHrid: `/items/${slug}`,
+                enhancementLevel: 0,
+                count: 3,
+                name: slug,
+            }));
+            // Parked just before the first item, so Next opens it
+            bulkSell.index = -1;
+            bulkSell.state = 'awaiting_next';
+            bulkSell._buildPanel();
+            navigations.length = 0;
+        };
+
+        test('one Next click opens one book, however many items find no market data', () => {
+            unmarketable();
+
+            confirmBtn().click();
+            vi.advanceTimersByTime(20_000);
+
+            expect(navigations).toEqual(['/items/cheese']);
+            expect(bulkSell.state).toBe('awaiting_next');
+            expect(statusText()).toMatch(/skipped \(no market data\)/);
+
+            confirmBtn().click();
+            vi.advanceTimersByTime(20_000);
+            expect(navigations).toEqual(['/items/cheese', '/items/milk']);
+        });
+
+        test('the Skip button is a click of its own, so it opens the next book', () => {
+            unmarketable();
+            confirmBtn().click();
+            navigations.length = 0;
+
+            skipBtn().click();
+            vi.advanceTimersByTime(700);
+
+            expect(navigations).toEqual(['/items/milk']);
         });
     });
 

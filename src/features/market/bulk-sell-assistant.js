@@ -265,6 +265,12 @@ class BulkSellAssistant {
          * re-arms the button without anything having to reset this.
          */
         this._confirmedStep = null;
+        /**
+         * Whether an order book has been opened since the player's last click
+         * on the strip. That navigation is the click's one game action, so a
+         * skip after it has to wait for Next rather than open another book.
+         */
+        this._navigatedSinceClick = false;
         /** Why the last Confirm press was refused, shown on the strip */
         this.confirmNote = '';
     }
@@ -603,7 +609,10 @@ class BulkSellAssistant {
         skipBtn.style.cssText =
             'visibility:hidden; border:0; border-radius:5px; background:rgba(255,255,255,0.1); color:#cfd8ea; ' +
             'font-weight:700; font-size:12px; padding:3px 7px; cursor:pointer; font-family:inherit;';
-        skipBtn.addEventListener('click', () => this._skip('skipped'));
+        skipBtn.addEventListener('click', () => {
+            this._navigatedSinceClick = false;
+            this._skip('skipped');
+        });
 
         const stopBtn = document.createElement('button');
         stopBtn.className = `${CHIP_ID}-stop`;
@@ -935,7 +944,8 @@ class BulkSellAssistant {
             show(skipBtn, true);
             skipBtn.title = 'Close the modal and skip this item';
         } else if (this.state === 'awaiting_next') {
-            say(`${progress} · ${this.current?.name || ''} dealt with — press Next for the next item`);
+            const outcome = this.statusNote ? `skipped (${this.statusNote})` : 'dealt with';
+            say(`${progress} · ${this.current?.name || ''} ${outcome} — press Next for the next item`);
             setMain('▶ Next');
             setMainEnabled(true, 'Open the next item. Its own click, so one click never does two game actions.');
             show(skipBtn, false);
@@ -1286,6 +1296,7 @@ class BulkSellAssistant {
      * nothing yet to confirm and skipping is the other button's job.
      */
     _onMainClick() {
+        this._navigatedSinceClick = false;
         if (this.state === 'idle' || this.state === 'done') {
             this._start();
         } else if (this.state === 'awaiting_next') {
@@ -1522,6 +1533,7 @@ class BulkSellAssistant {
         // trailing clicks/re-renders dismiss it right after it opens
         if (this._tryVendorSell()) return;
 
+        this._navigatedSinceClick = true;
         navigateToMarketplace(this.current.itemHrid, this.current.enhancementLevel);
         // No order book within the timeout → item isn't marketable right now
         this.bookTimeout = setTimeout(() => this._skip('no market data'), 3000);
@@ -1882,6 +1894,15 @@ class BulkSellAssistant {
             );
         }
         this.statusNote = note || '';
+        // A skip the game caused (no book, no orders, no sell button) lands
+        // after this click already opened an order book. Opening the next one
+        // is a second game action, so it waits for the player's Next — and an
+        // unbroken run of such items can never walk the queue on its own.
+        if (this._navigatedSinceClick) {
+            this.state = 'awaiting_next';
+            this._render();
+            return;
+        }
         this.index++;
         this.state = 'preparing';
         this._render();
@@ -1890,6 +1911,7 @@ class BulkSellAssistant {
 
     _stop(note) {
         this._clearTransient();
+        this._navigatedSinceClick = false;
         this.state = 'idle';
         this.queue = [];
         this.index = 0;

@@ -6,6 +6,11 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Audit round: Bulk Sell
+
+- Bulk Sell's vendor Confirm stops waiting if you click the game's own sell button during its arm-and-confirm step, so that sale can't be sent twice.
+- When Bulk Sell skips an item on its own (no market data, empty order book), it now waits for Next instead of opening the next order book by itself, so every order-book request follows one of your clicks.
+
 ### Audit round: mana planner and lab spread
 
 - The mana planner's auto-filled target now subtracts your natural MP regen (read from the battle, measured against live regen ticks), so a rate you actually sustain is no longer reported out of reach.
