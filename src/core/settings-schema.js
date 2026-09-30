@@ -2562,6 +2562,23 @@ export const settingsGroups = {
                 step: 1,
                 help: 'Beacons the beacon planner places on the floor in view, sited to cover a revealed path to the exit first, a second independent route next, and the most rooms with what is left — 0 uses the fewest that cover a path, which every new floor resets to',
             },
+            labyrinthRoomDistribution: {
+                id: 'labyrinthRoomDistribution',
+                label: 'Labyrinth: Show clear chance distribution button',
+                type: 'checkbox',
+                default: false,
+                help: 'Adds a Spread button to the floor map controls that opens a panel charting how the floor’s calculated rooms are spread across clear chance, with rooms not yet calculated counted apart. Takes effect the next time the floor map controls are drawn.',
+            },
+            labyrinthDistributionBinWidth: {
+                id: 'labyrinthDistributionBinWidth',
+                label: 'Labyrinth: Distribution bin width (%)',
+                type: 'number',
+                default: 10,
+                min: 5,
+                max: 100,
+                step: 5,
+                help: 'Width of each clear-chance bin in the distribution panel, in percentage points. The panel has its own selector that changes this same value.',
+            },
             labyrinthSkipEditAutofill: {
                 id: 'labyrinthSkipEditAutofill',
                 label: 'Labyrinth: Autofill skip Edit input',
