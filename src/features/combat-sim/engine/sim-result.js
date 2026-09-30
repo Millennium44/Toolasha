@@ -24,6 +24,11 @@ class SimResult {
             player5: false,
         };
         this.playerRanOutOfManaTime = {};
+        // Per player: ability casts that went through, and refusals - a triggered ability the unit could not
+        // afford. A refusal is counted once per starved stretch (until the next affordable check), because
+        // checkTriggers re-tests after every event and a per-check count would scale with event density.
+        this.manaCastsMade = {};
+        this.manaCastsRefused = {};
         this.manaUsed = {};
         this.timeSpentAlive = [];
         // Per dungeon wave: how long after the wave spawned the party first
@@ -329,6 +334,10 @@ class SimResult {
         this.hitpointsSpent[unit.hrid][source] += amount;
     }
 
+    addCastMade(unit) {
+        this.manaCastsMade[unit.hrid] = (this.manaCastsMade[unit.hrid] || 0) + 1;
+    }
+
     addRanOutOfManaCount(unit, isOutOfMana, time) {
         if (isOutOfMana) this.playerRanOutOfMana[unit.hrid] = true;
 
@@ -342,6 +351,7 @@ class SimResult {
 
         if (isOutOfMana) {
             if (!this.playerRanOutOfManaTime[unit.hrid].isOutOfMana) {
+                this.manaCastsRefused[unit.hrid] = (this.manaCastsRefused[unit.hrid] || 0) + 1;
                 this.playerRanOutOfManaTime[unit.hrid].isOutOfMana = true;
                 this.playerRanOutOfManaTime[unit.hrid].startTimeForOutOfMana = time;
             }

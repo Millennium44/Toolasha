@@ -2328,3 +2328,40 @@ describe('a respawn fills the pools the build actually has', () => {
         expect(player.combatDetails.currentHitpoints).toBe(player.combatDetails.maxHitpoints);
     });
 });
+
+describe('casts refused for mana', () => {
+    function starvedFight() {
+        installGameData();
+        seedSimRng(11);
+        const zone = new Zone(ZONE_HRID, 0);
+        const player = fixturePlayer();
+        player.zoneBuffs = zone.buffs;
+        player.extraBuffs = [];
+        const sim = new CombatSimulator([player], zone);
+        sim.reset();
+        sim.simulationTime = ONE_SECOND;
+        player.reset(sim.simulationTime);
+        sim.startNewEncounter();
+        const ability = { hrid: '/abilities/fixture', manaCost: 10, castDuration: 0, lastUsed: 0, abilityEffects: [] };
+        return { sim, player, ability };
+    }
+
+    test('a starved stretch is one refusal however many times it is re-tested, and casts are counted', () => {
+        const { sim, player, ability } = starvedFight();
+        player.combatDetails.currentManapoints = 4;
+
+        // checkTriggers re-tests after every event; three tests inside one dry stretch are one refusal
+        for (let i = 0; i < 3; i++) expect(sim.canUseAbility(player, ability, true)).toBe(false);
+        expect(sim.simResult.manaCastsRefused[player.hrid]).toBe(1);
+
+        // Mana returns: the cast goes through and closes the stretch
+        player.combatDetails.currentManapoints = 10;
+        expect(sim.tryUseAbility(player, ability)).toBe(true);
+        expect(sim.simResult.manaCastsMade[player.hrid]).toBe(1);
+
+        // Spent again: a new stretch is a new refusal, and the dry time shows it ran out
+        expect(sim.canUseAbility(player, ability, true)).toBe(false);
+        expect(sim.simResult.manaCastsRefused[player.hrid]).toBe(2);
+        expect(sim.simResult.playerRanOutOfMana[player.hrid]).toBe(true);
+    });
+});

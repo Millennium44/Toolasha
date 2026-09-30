@@ -469,6 +469,16 @@ function mergeSimResults(results) {
             }
         }
 
+        // Casts made and refused for mana (per player, summed)
+        for (const field of ['manaCastsMade', 'manaCastsRefused']) {
+            if (r[field]) {
+                if (!merged[field]) merged[field] = {};
+                for (const [playerHrid, count] of Object.entries(r[field])) {
+                    merged[field][playerHrid] = (merged[field][playerHrid] || 0) + count;
+                }
+            }
+        }
+
         // Mana run out time (sum closed OOM windows; close any still-open window at chunk boundary)
         if (r.playerRanOutOfManaTime) {
             if (!merged.playerRanOutOfManaTime) merged.playerRanOutOfManaTime = {};
