@@ -1,4 +1,4 @@
-import { describe, test, expect, beforeEach, vi } from 'vitest';
+import { describe, test, expect, beforeEach, afterEach, vi } from 'vitest';
 
 // `unavailable` stands in for a dropped IndexedDB connection: `tryGet` then
 // says the read could not be made, which is not the same as "nothing there"
@@ -30,7 +30,10 @@ const dataManagerMock = vi.hoisted(() => ({
     getInitClientData: () => dataManagerMock.initClientData,
 }));
 vi.mock('../../core/data-manager.js', () => ({ default: dataManagerMock }));
-vi.mock('../../core/config.js', () => ({ default: { getSetting: () => true } }));
+const settings = vi.hoisted(() => ({ guildXPTracker: true }));
+vi.mock('../../core/config.js', () => ({
+    default: { getSetting: (key) => (key in settings ? settings[key] : true) },
+}));
 vi.mock('../../utils/performance-monitor.js', () => ({ default: { startSpan: () => () => {} } }));
 
 import {
@@ -621,5 +624,53 @@ describe('getNextMemberSlotETA', () => {
         dataManagerMock.initClientData = { levelExperienceTable: [0, 0, 40, 90, 150] };
         guildXPTracker.guildXPHistory = { 'Milky Way': [{ t: Date.now(), xp: 50 }] };
         expect(guildXPTracker.getNextMemberSlotETA('Milky Way').xpRemaining).toBe(90 - 50);
+    });
+});
+
+describe('with XP history tracking switched off', () => {
+    beforeEach(() => {
+        storageMock.store.clear();
+        storageMock.set.mockClear();
+        guildXPTracker.disable();
+        guildXPTracker.ownGuildName = null;
+        guildXPTracker.ownGuildID = null;
+        guildXPTracker.guildXPHistory = {};
+        guildXPTracker.memberXPHistory = {};
+        guildXPTracker.memberMeta = {};
+        settings.guildXPTracker = false;
+    });
+
+    afterEach(() => {
+        settings.guildXPTracker = true;
+        guildXPTracker.disable();
+    });
+
+    test('still collects the member sign-ups the trials features read, and writes no history', async () => {
+        const signedUp = {
+            name: 'Ada',
+            signedUpCombatTrialHrid: '/guild_combat/badger',
+            signupWeekStartAt: 'w1',
+        };
+        await guildXPTracker.initialize();
+        expect(guildXPTracker.initialized).toBe(true);
+
+        await guildXPTracker._onCharacterInit({
+            guild: { name: 'Milky', experience: 1000, createdAt: 0, currentWeekStartAt: 'w1' },
+            guildCharacterMap: {
+                101: {
+                    guildID: 'g1',
+                    guildExperience: 5,
+                    signedUpCombatTrialHrid: signedUp.signedUpCombatTrialHrid,
+                    signupWeekStartAt: 'w1',
+                },
+            },
+            guildSharableCharacterMap: { 101: { name: 'Ada' } },
+        });
+
+        expect(guildXPTracker.getCurrentWeekStartAt()).toBe('w1');
+        expect(guildXPTracker.getMemberMeta(101)).toMatchObject(signedUp);
+        expect(guildXPTracker.guildXPHistory).toEqual({});
+        expect(guildXPTracker.memberXPHistory).toEqual({});
+        expect(storageMock.set).not.toHaveBeenCalled();
     });
 });

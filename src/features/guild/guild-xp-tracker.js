@@ -548,9 +548,17 @@ class GuildXPTracker {
         return chain;
     }
 
+    /** @returns {boolean} Whether XP history is being recorded (the `guildXPTracker` setting) */
+    _recordsHistory() {
+        return config.getSetting('guildXPTracker', true);
+    }
+
     async initialize() {
         if (this.initialized) return;
-        if (!config.getSetting('guildXPTracker', true)) return;
+        // No guildXPTracker gate here: the member metadata (sign-ups, roster) feeds
+        // the trials features whatever the setting says, so the listeners always run
+        // and only the XP history — its reads, samples and writes — checks the setting
+        // through `_recordsHistory()`.
 
         // Bind handlers
         this._boundOnCharacterInit = (data) => this._onCharacterInit(data);
@@ -640,6 +648,9 @@ class GuildXPTracker {
                 signupWeekStartAt: guildChar?.signupWeekStartAt || null,
             };
         }
+
+        // Metadata is all the trials features need; history is the setting's own business
+        if (!this._recordsHistory()) return;
 
         // Load persisted histories
         const endLoad = performanceMonitor.startSpan('bg:guildXPTracker', 'load history');
@@ -743,6 +754,11 @@ class GuildXPTracker {
         this.ownGuildName = name;
         this.ownGuildLevel = typeof guild.level === 'number' ? guild.level : this.ownGuildLevel;
         this.guildCreatedAt = guild.createdAt;
+        if (!this._recordsHistory()) {
+            this.guildType = guild.guildType || this.guildType;
+            this.currentWeekStartAt = guild.currentWeekStartAt || this.currentWeekStartAt;
+            return;
+        }
 
         // A guild change mid-session. The map in hand is the guild just left's
         // key, and `_persist` below would write the whole of it — every series
@@ -794,10 +810,12 @@ class GuildXPTracker {
             // one guild and `memberXPHistory` holding another's. Stamping first
             // lets the check below tell a superseded read apart from a fresh one.
             this.ownGuildID = newGuildID;
-            const loaded = await this._loadMap(`memberXP_${newGuildID}`, {});
-            // Another switch may have landed while this read was in flight
-            if (this.ownGuildID !== newGuildID) return;
-            this.memberXPHistory = loaded;
+            if (this._recordsHistory()) {
+                const loaded = await this._loadMap(`memberXP_${newGuildID}`, {});
+                // Another switch may have landed while this read was in flight
+                if (this.ownGuildID !== newGuildID) return;
+                this.memberXPHistory = loaded;
+            }
             this.memberMeta = {};
         } else if (newGuildID) {
             this.ownGuildID = newGuildID;
@@ -842,6 +860,8 @@ class GuildXPTracker {
             };
         }
 
+        if (!this._recordsHistory()) return;
+
         const t = Date.now();
 
         for (const [charId, guildChar] of Object.entries(guildCharacterMap)) {
@@ -875,6 +895,7 @@ class GuildXPTracker {
      */
     async _onLeaderboardUpdated(data) {
         await this.whenReady();
+        if (!this._recordsHistory()) return;
         if (data.leaderboardCategory !== 'guild') return;
 
         const rows = data.leaderboard?.rows;

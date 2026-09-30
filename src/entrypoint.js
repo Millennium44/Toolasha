@@ -2267,6 +2267,11 @@ function registerFeatures() {
             category: 'Guild',
             module: Combat.guildXPTracker,
             async: false,
+            // The key switches only the XP history (its reads, samples and writes), which
+            // the tracker checks itself. The member metadata the trials features read —
+            // sign-ups above all, for the pre-trial loadout check — rides on the same
+            // module, so gating the module on this key took it away too.
+            customCheck: () => true,
         },
         {
             key: 'guildXPDisplay',
