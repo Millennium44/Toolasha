@@ -183,6 +183,7 @@ import {
 import {
     archiveCycle,
     archiveEarlierCycles,
+    trialHourStartedAt,
     emptyRecord,
     loadTrialRecord,
     loadWorkBases,
@@ -2489,6 +2490,12 @@ class GuildTrials {
          * property of the two clocks, so it survives a character switch.
          */
         this.serverClockOffsetMs = null;
+        /**
+         * Client ms the last observed skilling hour started (test server only):
+         * the payload stops stating it once that hour ends, and the cycle's combat
+         * tiles are cut there rather than at the combat hour's start
+         */
+        this.cycleStartMs = null;
         /** The phase that message implies, used only where the page says nothing */
         this.socketPhase = null;
         /** The character whose record is in hand; a switch invalidates everything below it */
@@ -4063,8 +4070,12 @@ class GuildTrials {
             const held = this.currentTrials;
             if (!held || !Number.isFinite(held.at) || now - held.at > TRIAL_ACTIVE_MS) return;
 
+            const skillingStart = trialHourStartedAt(held.skilling, this.serverClockOffsetMs);
+            if (Number.isFinite(skillingStart)) this.cycleStartMs = skillingStart;
+
             const next = archiveEarlierCycles(this.record, held, {
                 offset: this.serverClockOffsetMs,
+                cycleStart: this.cycleStartMs,
                 at: now,
                 // The last point the damage module's summary still describes the
                 // cycle being archived: the next cycle's stats replace it
