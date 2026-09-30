@@ -176,7 +176,14 @@ export default {
             markEvent();
 
             const characterId = dataManager.getCurrentCharacterId?.();
-            const self = (data?.players || []).find((player) => player?.character?.id === characterId);
+            // Id first, then name: a player entry is not guaranteed to carry an id
+            // (equippedAbilitiesFromBattle matches the same two ways)
+            const characterName = dataManager.getCurrentCharacterName?.();
+            const self = (data?.players || []).find(
+                (player) =>
+                    (characterId !== null && characterId !== undefined && player?.character?.id === characterId) ||
+                    (characterName && player?.character?.name === characterName)
+            );
             const stats = self?.combatDetails?.combatStats;
             if (stats) {
                 haste = { foodHaste: stats.foodHaste || 0, drinkConcentration: stats.drinkConcentration || 0 };
