@@ -14,7 +14,7 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ### Leaderboard rank badges
 
-- An optional badge beside player names shows their best top-100 leaderboard rank, from leaderboards you open or, if you choose, from the MWITools data server (polled every 15 minutes). Off by default; design adapted from MWITools. In Local only, a Next board button on the leaderboard panel opens the next board not yet cached, one board per click.
+- An optional badge beside player names shows their best top-100 leaderboard rank, from leaderboards you open or, if you choose, from the MWITools data server (polled every 15 minutes). Off by default; design adapted from MWITools. In Local only, a Next board button on the player leaderboards opens the next board not yet cached, one board per click.
 
 ### Runs on the CN mirror
 

@@ -408,6 +408,24 @@ describe('next board button', () => {
         expect(document.querySelectorAll('[data-toolasha-rank-cycle]')).toHaveLength(1);
     });
 
+    test('is hidden while a guild board is open and returns with a player board', async () => {
+        game.mode = 'local';
+        buildPanel();
+        await leaderboardRankBadges.initialize();
+        expect(bar().style.display).toBe('flex');
+
+        game.wsHandlers.leaderboard_updated({
+            leaderboardCategory: 'guild_points',
+            leaderboard: { rows: [{ name: 'Some Guild', rank: 1 }] },
+        });
+        await flush();
+        expect(bar().style.display).toBe('none');
+
+        game.wsHandlers.leaderboard_updated(board('total_level'));
+        await flush();
+        expect(bar().style.display).toBe('flex');
+    });
+
     test('insertion is idempotent across re-renders', async () => {
         game.mode = 'local';
         const { content } = buildPanel();

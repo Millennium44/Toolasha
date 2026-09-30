@@ -145,7 +145,8 @@ function iconSymbols(el) {
 
 /**
  * The game's own control for a category. The icon's sprite symbol is matched first because it does not
- * depend on the UI language; the English label is the fallback for a control without an icon.
+ * depend on the UI language; the English label is the fallback for a control without an icon. The live
+ * category tabs carry no icons, so a non-English UI relies on the icon path only if the game adds icons.
  * Looked up from the anchor outward, because the tab strip is a sibling of the table, not a child.
  * @param {Element} anchor - The `LeaderboardPanel_content` element, or anything beside it in the panel
  * @param {string} category - A category slug
@@ -171,6 +172,8 @@ class LeaderboardRankBadges {
     constructor() {
         this.boardType = 'standard';
         this.boardCategory = null;
+        // False once the open board is one the skill categories do not cover (the Guilds tab's boards)
+        this.playerBoardOpen = true;
         this.runId = 0;
         this.mode = 'off';
         this.boards = {};
@@ -289,6 +292,11 @@ class LeaderboardRankBadges {
      * @param {Object} data - `leaderboard_updated` message
      */
     onLocalBoard(data) {
+        // Judged before parsing: a guild board never parses, yet it is what decides whether the bar applies
+        if (typeof data?.leaderboardCategory === 'string') {
+            this.playerBoardOpen = RANK_CATEGORIES.includes(data.leaderboardCategory);
+            this.refreshCycleBars();
+        }
         const parsed = parseLocalBoard(data, Date.now());
         if (!parsed) return;
         [this.boardType, this.boardCategory] = parsed.key.split('|');
@@ -328,6 +336,8 @@ class LeaderboardRankBadges {
         const cached = RANK_CATEGORIES.filter((c) => this.boards[boardKey(this.boardType, c)]);
         const oldest = Math.min(...cached.map((c) => this.boards[boardKey(this.boardType, c)].at));
         for (const bar of document.querySelectorAll(`[${BAR_ATTR}]`)) {
+            // Player skill boards do not exist on the Guilds tab, so the button would hunt for a missing tab
+            bar.style.display = this.playerBoardOpen ? 'flex' : 'none';
             const [button, status] = bar.children;
             button.textContent = `Next board ▸ ${target ? categoryLabel(target) : '-'}`;
             status.textContent = `${cached.length}/${RANK_CATEGORIES.length} boards cached`;
