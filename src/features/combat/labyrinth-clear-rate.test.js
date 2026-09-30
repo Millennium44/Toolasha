@@ -4685,6 +4685,46 @@ describe('Path pressed during a floor calculation', () => {
         expect(refresh.mock.calls.length).toBe(runs);
     });
 
+    test('an auto pass that schedules a retry keeps the queued path until the retry settles', async () => {
+        vi.useFakeTimers();
+        try {
+            labyrinthClearRate.autoTileRetryCount = 0;
+            // A settled fingerprint from an earlier test would gate this auto pass out
+            labyrinthClearRate._autoCalcFingerprint = null;
+            labyrinthClearRate.calculatedTileKeys = null;
+            let first = true;
+            vi.spyOn(labyrinthClearRate, 'computeCombatClear').mockImplementation(async () => {
+                if (first) {
+                    first = false;
+                    await labyrinthClearRate.runPathCalculation();
+                    // Inputs not ready: the auto pass will retry this room
+                    return { failed: true, clearChance: 0, expectedSeconds: Infinity };
+                }
+                return { clearChance: 0.5, expectedSeconds: 10 };
+            });
+
+            await labyrinthClearRate.runTileCalculation({ auto: true });
+            expect(refresh).not.toHaveBeenCalled();
+            expect(labyrinthClearRate._pathQueued).toBe(true);
+            expect(pathBtn.textContent).toBe('Path (waiting...)');
+
+            await vi.advanceTimersByTimeAsync(2500);
+            await vi.waitFor(() => expect(refresh).toHaveBeenCalled());
+            expect(labyrinthClearRate._pathQueued).toBe(false);
+        } finally {
+            if (labyrinthClearRate.autoTileTimer) clearTimeout(labyrinthClearRate.autoTileTimer);
+            labyrinthClearRate.autoTileTimer = null;
+            labyrinthClearRate.autoTileRetryCount = 0;
+            vi.useRealTimers();
+        }
+    });
+
+    test('a toolbar rebuilt mid-wait shows the queued path', () => {
+        labyrinthClearRate._pathQueued = true;
+        labyrinthClearRate.setPathButtonRunning(false);
+        expect(pathBtn.textContent).toBe('Path (waiting...)');
+    });
+
     test('cancelling the calculation withdraws the queued path', async () => {
         vi.spyOn(labyrinthClearRate, 'computeCombatClear').mockImplementation(async () => {
             await labyrinthClearRate.runPathCalculation();

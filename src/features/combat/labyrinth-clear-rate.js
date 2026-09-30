@@ -2947,8 +2947,6 @@ class LabyrinthClearRate {
         container.appendChild(header);
         container.appendChild(body);
         applyCollapsed();
-        this.syncTileCalcButton();
-        this.setPathButtonRunning(!!this.pathCalcRunning);
 
         if (host) {
             container.style.margin = '2px 0 2px 12px';
@@ -2956,6 +2954,11 @@ class LabyrinthClearRate {
         } else {
             gridParent.parentElement.insertBefore(container, gridParent);
         }
+        // After the bar is in the page: both look their buttons up in the
+        // document, and a bar rebuilt mid-calculation must show a queued or
+        // running path rather than an idle button whose press cancels the wait
+        this.syncTileCalcButton();
+        this.setPathButtonRunning(!!this.pathCalcRunning);
     }
 
     /**
@@ -3076,8 +3079,17 @@ class LabyrinthClearRate {
         // pass — those fire off DOM re-renders and must stay bounded.
         const uncapped = options.uncapped === true || (!auto && this.tileCalcUncapped());
         if (this.tileCalcRunning) return;
+        // A pass that finds nothing to calculate still settles a path queued
+        // while it was pending, or the wait would never be released
+        const settledIdle = () => {
+            if (!this._pathQueued || this.autoTileTimer) return;
+            this._pathQueued = false;
+            this.setPathButtonRunning(false);
+            this.runPathCalculation();
+        };
         if (!this.roomData) {
             if (!auto) this.setTileStatus('No labyrinth data');
+            settledIdle();
             return;
         }
 
@@ -3090,6 +3102,7 @@ class LabyrinthClearRate {
         const fingerprint = this._tileCalcFingerprint();
         if (auto && fingerprint && fingerprint === this._autoCalcFingerprint) {
             this.restoreTileBadgesFromCache();
+            settledIdle();
             return;
         }
 
@@ -3101,6 +3114,7 @@ class LabyrinthClearRate {
         const cells = this.findRoomGridCells(flatRooms.length);
         if (!cols || cells.length !== flatRooms.length) {
             if (!auto) this.setTileStatus('Grid not found');
+            settledIdle();
             return;
         }
 
@@ -3166,6 +3180,7 @@ class LabyrinthClearRate {
         const total = skillingTargets.length + combatTargets.length;
         if (!total) {
             if (!auto) this.setTileStatus('No calculable tiles');
+            settledIdle();
             return;
         }
 
@@ -3176,6 +3191,8 @@ class LabyrinthClearRate {
         this.setTileStatus('');
         let completed = 0;
         let cancelled = false;
+        // An auto pass that schedules a retry is not settled: a queued path waits for the retry
+        let retryScheduled = false;
         let simmed = 0;
         const barFraction = (failed = 0) => Math.min(1, Math.max(0, (doneUpFront + simmed - failed) / eligible));
         this.setTileProgress(barFraction());
@@ -3251,6 +3268,7 @@ class LabyrinthClearRate {
             this.setTileProgress(retrying ? barFraction(combatRetryNeeded) : 1);
 
             if (retrying) {
+                retryScheduled = true;
                 this.autoTileRetryCount = (this.autoTileRetryCount || 0) + 1;
                 // Not settled — leave the fingerprint unset so the retry, and any
                 // later auto pass, still run rather than being gated out.
@@ -3280,8 +3298,10 @@ class LabyrinthClearRate {
                 // Cleared before it runs, so a calculation the path itself
                 // triggers cannot queue it again. Cancelling the calculation
                 // withdraws the wait too: the rooms it skipped are unjudged.
-                const wantsPath = this._pathQueued;
-                this._pathQueued = false;
+                // A pass that scheduled a retry keeps the wait: pathing now would
+                // judge the rooms the retry is about to settle on assumptions.
+                const wantsPath = this._pathQueued && !retryScheduled;
+                if (!retryScheduled || cancelled) this._pathQueued = false;
                 this.setPathButtonRunning(false);
                 if (wantsPath && !cancelled) this.runPathCalculation();
             } else {
@@ -3597,7 +3617,9 @@ class LabyrinthClearRate {
         // second time alongside the running pass, or judge them on partial
         // results. A press waits its turn instead, and a second press withdraws
         // the wait; `runTileCalculation` starts the queued path once it settles.
-        if (this.tileCalcRunning) {
+        // …including the gap before a scheduled auto retry, which is the same
+        // calculation still settling
+        if (this.tileCalcRunning || this.autoTileTimer) {
             this._pathQueued = !this._pathQueued;
             this.setPathButtonRunning(false);
             return;
