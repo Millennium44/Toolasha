@@ -22,7 +22,7 @@ vi.mock('../../core/storage.js', () => ({
                 : { found: false, value: null };
         },
         set: async (key, value) => {
-            if (game.unavailable) return false;
+            if (game.unavailable || (game.failKey && game.failKey === key)) return false;
             game.saved[key] = structuredClone(value);
             return true;
         },
@@ -46,6 +46,7 @@ describe('leaderboard XP tracker', () => {
         game.setting = true;
         game.saved = {};
         game.unavailable = false;
+        game.failKey = null;
         game.handlers = {};
         leaderboardXPTracker.disable();
         vi.useFakeTimers();
@@ -596,6 +597,18 @@ describe('the legacy-shape purge at load', () => {
         await reload();
 
         expect(leaderboardXPTracker.playerXPHistory['guild_weekly_points_Fresh']).toEqual(zeroSeries);
+    });
+
+    test('a failed overwrite of the cleaned record leaves the flag unspent, so the next load purges again', async () => {
+        game.saved.playerXP = { guild_weekly_points_Old: zeroSeries };
+        game.failKey = 'playerXP';
+        await reload();
+        expect(game.saved.playerXPLegacyPurged).toBeUndefined();
+
+        game.failKey = null;
+        await reload();
+        expect(game.saved.playerXP.guild_weekly_points_Old).toBeUndefined();
+        expect(game.saved.playerXPLegacyPurged).toBe(true);
     });
 
     test('an unreadable record neither purges nor spends the flag', async () => {
