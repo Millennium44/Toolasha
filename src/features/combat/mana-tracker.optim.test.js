@@ -119,6 +119,27 @@ describe('measured spend', () => {
 
         expect(manaPerMinuteMeasured()).toBe(600);
     });
+
+    test('a cast that opens the span without a new_battle is the baseline, not part of the interval', () => {
+        // Tracking began mid-fight: seven 100-MP casts 10 s apart cover 60 s and six casts of spend
+        for (let i = 0; i < 7; i++) {
+            game.handlers['battle_consumable_ability_updated']({ ability: '/abilities/fireball' });
+            if (i < 6) vi.advanceTimersByTime(10_000);
+        }
+
+        expect(manaPerMinuteMeasured()).toBe(600);
+    });
+
+    test('a reset mid-fight starts from the next cast the same way', () => {
+        game.handlers['battle_consumable_ability_updated']({ ability: '/abilities/fireball' });
+        resetManaTally();
+        for (let i = 0; i < 7; i++) {
+            game.handlers['battle_consumable_ability_updated']({ ability: '/abilities/fireball' });
+            if (i < 6) vi.advanceTimersByTime(10_000);
+        }
+
+        expect(manaPerMinuteMeasured()).toBe(600);
+    });
 });
 
 describe('the MP supply section', () => {
