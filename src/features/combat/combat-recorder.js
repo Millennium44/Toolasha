@@ -118,6 +118,7 @@ import { describeMonsterPanel } from '../../utils/battle-panel-monsters.js';
 import { webSocketHook as sharedWebSocketHook } from '../../utils/bundle-bridge.js';
 import { scriptVersion } from '../../utils/script-version.js';
 import { stableStringify } from '../../utils/stable-stringify.js';
+import { isTestServer } from '../../utils/game-server.js';
 
 /**
  * Ticks per segment.
@@ -869,7 +870,7 @@ export function sessionFile() {
         // not share balance, and a reader cannot tell from the fights alone
         toolashaVersion: scriptVersion(),
         host,
-        isTestServer: host ? host.includes('test.') : null,
+        isTestServer: host ? isTestServer(host) : null,
         recordedAt: recordingStartedAt || null,
         recordingId,
         exportedAt: Date.now(),

@@ -64,6 +64,7 @@ import { copyReplayInputs, replayBuildKey, replayBuildIdFor } from './labyrinth-
 import { registerSyncMerge } from '../../utils/sync-merge-registry.js';
 import { clearRecord, clearedAtOf, clearedRecord, entriesOf, mergeClearable } from '../../utils/cleared-record.js';
 import { scriptVersion } from '../../utils/script-version.js';
+import { isTestServer } from '../../utils/game-server.js';
 import { FINGERPRINT_SPEC, FINGERPRINT_VERSION, isCurrentFingerprintVersion } from './labyrinth-fingerprint.js';
 
 /** The labyrinth store, shared with the sim cache — this is labyrinth history */
@@ -883,7 +884,7 @@ export function recordingFile(extra = {}) {
         exportedAt: Date.now(),
         toolashaVersion: scriptVersion(),
         host,
-        isTestServer: host ? host.includes('test.') : null,
+        isTestServer: host ? isTestServer(host) : null,
         // The sim model this build records under; attempts carry their own marker
         fullKit: true,
         // The fingerprint definition this build records under. Attempts carry
