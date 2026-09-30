@@ -484,9 +484,6 @@ function currentCyclePart(tile, from) {
         // time: the archive keeps them and the new cycle rebuilds its own
         tiers: [],
         pointsByTier: Number.isFinite(badgePoints) ? { [tile.tier]: badgePoints } : {},
-        ...(kept && Number.isFinite(tile.liveTier)
-            ? { liveTier: tile.liveTier, liveTierTarget: tile.liveTierTarget ?? null }
-            : {}),
         tierSeenAt,
         ...(stated
             ? { serverTier: tile.serverTier, serverTierAt: tile.serverTierAt, serverDone: Boolean(tile.serverDone) }
@@ -524,9 +521,9 @@ function earlierCyclePart(tile, from) {
         for (const field of ['serverTier', 'serverTierAt', 'serverDone']) delete part[field];
     }
     if (lastReadSince(tile, from)) {
-        // The current part took these single values; see currentCyclePart. The
-        // accumulated ladder and personal stats stay with the archive
-        for (const field of ['liveTier', 'liveTierTarget']) delete part[field];
+        // The current part took the badge tier's points; see currentCyclePart.
+        // The accumulated ladder, personal stats and the unstamped live tier stay
+        // with the archive — the socket restates the live tier within the cycle
         if (stampedSince(tile.tierReadAt, from) && Number.isFinite(tile.tier)) {
             part.pointsByTier = Object.fromEntries(
                 Object.entries(tile.pointsByTier || {}).filter(([tier]) => Number(tier) !== tile.tier)
