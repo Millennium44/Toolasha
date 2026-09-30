@@ -4,6 +4,8 @@ import {
     RANK_CATEGORIES,
     bestEntry,
     boardKey,
+    boardTypeLabel,
+    boardViewOf,
     buildNameIndex,
     categoryLabel,
     mergeBoards,
@@ -124,6 +126,24 @@ describe('parseLocalBoard', () => {
     test('ignores a cohort-filtered board so a partial top 100 cannot replace the global one', () => {
         expect(parseLocalBoard(localMessage({ playerCohortFilter: 'steam' }), NOW)).toBeNull();
         expect(parseLocalBoard(localMessage({ trialFilter: 'all' }), NOW)).not.toBeNull();
+    });
+
+    test('files a Steam cohort under its own slot only when asked, and maps nothing but steam', () => {
+        const steam = localMessage({ playerCohortFilter: 'steam' });
+        expect(parseLocalBoard(steam, NOW, { includeSteam: true }).key).toBe('standard_steam|milking');
+        expect(parseLocalBoard(steam, NOW)).toBeNull();
+        expect(parseLocalBoard(localMessage({ playerCohortFilter: 'other' }), NOW, { includeSteam: true })).toBeNull();
+        expect(boardViewOf(steam)).toBe('standard_steam');
+        expect(boardViewOf(localMessage({ playerCohortFilter: 'other' }))).toBeNull();
+        expect(boardTypeLabel('ironcow_steam')).toBe('Ironcow (Steam)');
+    });
+
+    test('Steam slots survive sanitizing and are indexed only when included', () => {
+        const boards = { [boardKey('standard_steam', 'milking')]: { at: NOW, source: 'local', rows: [['A', 3]] } };
+        expect(Object.keys(sanitizeBoards(boards))).toEqual(['standard_steam|milking']);
+        expect(Object.keys(mergeBoards({}, boards, NOW))).toEqual(['standard_steam|milking']);
+        expect(buildNameIndex(boards).size).toBe(0);
+        expect(buildNameIndex(boards, { includeSteam: true }).get('a')[0].type).toBe('standard_steam');
     });
 
     test('drops out-of-range ranks and keeps the best rank of a duplicated name', () => {
