@@ -147,6 +147,7 @@ vi.mock('../../core/storage.js', () => ({
 }));
 
 const { default: labyrinthClearRate } = await import('./labyrinth-clear-rate.js');
+const { clampPrecisionPct } = await import('./labyrinth-sim-cache.js');
 const { default: configMock } = await import('../../core/config.js');
 const { COMBAT_CACHE_STORAGE_VERSION } = await import('./labyrinth-sim-cache.js');
 const { registeredCommands, resetCommands } = await import('../../utils/command-registry.js');
@@ -4547,5 +4548,59 @@ describe('the room preview forecast rows', () => {
         expect(previewValue(skillingResult({ clearChance: 0, expectedSeconds: Infinity }), 'Est. room attempts')).toBe(
             undefined
         );
+    });
+});
+
+/**
+ * The progress bar over a floor calculation. Its denominator is every
+ * calculable room and rooms that need no sim (cached, already badged) count as
+ * done from the start, so the bar is monotonic, never restarts from zero, and
+ * does not lurch when a run of cache hits comes back at once.
+ */
+describe('floor calculation progress bar', () => {
+    const IMP = '/monsters/imp';
+    const roomsOf = (levels) => levels.map((lvl) => ({ monsterHrid: IMP, recommendedLevel: lvl, isCleared: false }));
+
+    afterEach(() => {
+        document.body.innerHTML = '';
+        labyrinthClearRate.roomData = null;
+        labyrinthClearRate.combatCache.clear();
+        labyrinthClearRate.tileCalcRunning = false;
+        vi.restoreAllMocks();
+    });
+
+    test('cached rooms count as done up front and the bar only ever climbs', async () => {
+        const parent = document.createElement('div');
+        for (let i = 0; i < 4; i++) {
+            const cell = document.createElement('div');
+            cell.className = 'LabyrinthPanel_roomCell_abc';
+            parent.appendChild(cell);
+        }
+        document.body.appendChild(parent);
+        labyrinthClearRate.roomData = [roomsOf([100, 110, 120, 130])];
+        for (const lvl of [100, 110]) {
+            const key = labyrinthClearRate.buildCombatCacheKey(IMP, lvl, null, clampPrecisionPct(undefined));
+            labyrinthClearRate.combatCache.set(key, { clearChance: 0.9, hitTarget: true });
+        }
+        vi.spyOn(labyrinthClearRate, 'computeCombatClear').mockImplementation(async (hrid, lvl) => {
+            const cached = labyrinthClearRate.peekCombatClear(hrid, lvl);
+            return cached || { clearChance: 0.5, expectedSeconds: 10 };
+        });
+        const seq = [];
+        const real = labyrinthClearRate.setTileProgress.bind(labyrinthClearRate);
+        vi.spyOn(labyrinthClearRate, 'setTileProgress').mockImplementation((ratio) => {
+            seq.push(ratio);
+            real(ratio);
+        });
+
+        await labyrinthClearRate.runTileCalculation();
+
+        // Two of four rooms were cached: the bar opens at half, not at zero
+        expect(seq[0]).toBe(0.5);
+        expect(seq).not.toContain(0);
+        for (let i = 1; i < seq.length; i++) expect(seq[i]).toBeGreaterThanOrEqual(seq[i - 1]);
+        expect(seq[seq.length - 1]).toBe(1);
+        // Cache hits are not steps: 0.5 -> 0.75 (one sim) -> 1 (the other)
+        expect(seq.filter((r) => r > 0.5 && r < 1)).toEqual([0.75]);
     });
 });
