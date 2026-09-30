@@ -568,8 +568,6 @@ class LeaderboardRankBadges {
         this.nameWatcher?.disconnect();
         this.nameWatcher = null;
         document.querySelectorAll(`[${BADGE_ATTR}], [${BAR_ATTR}]`).forEach((el) => el.remove());
-        this.boardType = 'standard';
-        this.boardCategory = null;
         document.getElementById(STYLE_ID)?.remove();
         this.index = new Map();
         this.boards = {};
@@ -579,7 +577,12 @@ class LeaderboardRankBadges {
         this.unwatchSetting?.();
         this.unwatchSetting = null;
         this.stop();
+        // The open view survives a settings restart (the game does not resend the board it is showing)
+        // and is forgotten only here
         this.opened = {};
+        this.boardType = 'standard';
+        this.boardCategory = null;
+        this.playerBoardOpen = true;
         this.mode = 'off';
     }
 }

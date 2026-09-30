@@ -754,4 +754,19 @@ describe('Steam boards in badges', () => {
         await vi.advanceTimersByTimeAsync(0);
         expect(badges()).toHaveLength(1);
     });
+
+    test('a settings restart keeps the Steam view that is on screen', async () => {
+        game.steam = true;
+        await leaderboardRankBadges.initialize();
+        game.wsHandlers.leaderboard_updated(steamBoard([{ name: 'Alice', rank: 2 }]));
+        await flush();
+        expect(leaderboardRankBadges.boardType).toBe('steam_standard');
+        expect(leaderboardRankBadges.boardCategory).toBe('milking');
+
+        game.steam = false;
+        for (const callback of game.settingWatchers) callback();
+        await vi.advanceTimersByTimeAsync(0);
+        expect(leaderboardRankBadges.boardType).toBe('steam_standard');
+        expect(leaderboardRankBadges.boardCategory).toBe('milking');
+    });
 });
