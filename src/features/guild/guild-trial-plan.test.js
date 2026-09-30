@@ -452,6 +452,12 @@ describe('per-trial plan sections', () => {
         expect(comparePlan(plan, [], ABILITIES).summary.unknownTokens).toEqual(['Zzzzz']);
     });
 
+    test('an overridden typo under another accepted spelling of the same member is not reported', () => {
+        const plan = parse(['SarinTe…: Zzzzz', '== Badger ==', 'SarinTesla: Sweep'].join('\n'));
+        const compare = comparePlan(plan, [row('SarinTesla', [])], ABILITIES, 'badger');
+        expect(compare.summary.unknownTokens).toEqual([]);
+    });
+
     test('a typo on a global line the trial section overrides is not reported', () => {
         const plan = parse(['Alice: Zzzzz', '== Badger ==', 'Alice: Sweep'].join('\n'));
         expect(comparePlan(plan, [], ABILITIES, 'badger').summary.unknownTokens).toEqual([]);

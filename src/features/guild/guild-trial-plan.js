@@ -366,16 +366,22 @@ export function verdictFor(line, abilities, abilityDetailMap = {}) {
  * @param {Object|null} plan - From {@link parsePlan}
  * @param {Array<Object>} lines - The lines being compared
  * @param {string|null} trialKey - The trial, or null for the whole plan
+ * @param {Array<Object>} [rows] - The roster, for resolving plan names to players
  * @returns {{unknownTokens: string[], ambiguousTokens: Array<{token: string, matches: string[]}>}}
  */
-function tokenDiagnostics(plan, lines, trialKey) {
+function tokenDiagnostics(plan, lines, trialKey, rows = []) {
     if (!trialKey) {
         return { unknownTokens: [...(plan?.unknownTokens || [])], ambiguousTokens: [...(plan?.ambiguousTokens || [])] };
     }
     // Only each player's effective line: a later line for the same player replaces
     // the earlier one, as it does for the verdicts, so an overridden typo is not reported
     const effective = new Map();
-    lines.forEach((line, n) => effective.set(String(line.player || `#${n}`).toLowerCase(), line));
+    // Keyed by the roster player the line resolves to, so two spellings the
+    // name matcher accepts for one member (a truncated one, say) are one player
+    lines.forEach((line, n) => {
+        const row = matchPlanName(line.player, rows);
+        effective.set(String(row?.name || line.player || `#${n}`).toLowerCase(), line);
+    });
     const unknownTokens = [];
     const ambiguousTokens = [];
     for (const line of effective.values()) {
@@ -458,7 +464,7 @@ export function comparePlan(plan, participants = [], abilityDetailMap = {}, tria
             onPlan,
             noPlanCount: noPlan.length,
             notInTrialCount: notInTrial.length,
-            ...tokenDiagnostics(plan, lines, trialKey),
+            ...tokenDiagnostics(plan, lines, trialKey, rows),
         },
     };
 }
