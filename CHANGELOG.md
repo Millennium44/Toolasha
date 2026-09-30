@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Equipment Watch list keeps its place
+
+- The Equipment Watch panel — and every other panel on the same shell — no longer jumps its list and body back to the top whenever it redraws, which happened on each price refresh and after clicking a level button, so picking an item to watch no longer means scrolling back down to it.
+
 ### Guild trial damage meter credits each swing to the player who made it
 
 - In a crowded tick — every Mana Spring cast restores the whole party, so about 50 players appear at once — a player's own swing was split equally across everyone present, so on Trial Swarm most players read about 20% under the game's totals and a few read over. The swing now stays with its swinger; replayed against the game's own stats, per-player error on a recorded Swarm fell from 17% to 2%.
