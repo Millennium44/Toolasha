@@ -369,6 +369,27 @@ describe('fetchLoadout', () => {
     });
 });
 
+describe('captures per kind', () => {
+    test('two kinds requested for one player are kept side by side, and getLoadout can pick one', async () => {
+        game.core = makeCore({ players: { 7: 'Ally' } });
+
+        for (const kind of ['combat', 'skilling']) {
+            const run = fetchLoadout({ characterID: 7, characterName: 'Ally' }, 'guild_trial', kind, {
+                closeGameModal: false,
+            });
+            await vi.advanceTimersByTimeAsync(200);
+            await run;
+        }
+
+        expect(getLoadouts()).toHaveLength(2);
+        expect(getLoadout(7, 'guild_trial', 'combat')).toMatchObject({ kind: 'combat' });
+        expect(getLoadout(7, 'guild_trial', 'skilling')).toMatchObject({ kind: 'skilling' });
+        expect(getLoadout(7, 'guild_trial', null)).toBeNull();
+        // Omitted kind still answers the newest of any
+        expect(getLoadout(7, 'guild_trial')).toMatchObject({ kind: 'skilling' });
+    });
+});
+
 describe('a game build without View Loadout', () => {
     test('is not available, and a fetch requests nothing', async () => {
         game.core = { handleViewProfile: vi.fn() };

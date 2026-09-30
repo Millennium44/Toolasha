@@ -221,7 +221,11 @@ function remember(entry) {
         if (existing.ownerCharacterId !== entry.ownerCharacterId) store.delete(key);
     }
     const who = entry.characterId ? `id:${entry.characterId}` : `name:${nameKey(entry.name)}`;
-    const key = `${entry.context ?? ''}|${who}`;
+    // Context, kind and action type are all part of what was asked for: a player holds a
+    // build per action type and per trial kind, and one reply must not replace another's
+    // (a skilling loadout opened from the roster used to evict the combat one fetched a
+    // moment earlier for the same player and context)
+    const key = `${entry.context ?? ''}|${entry.kind ?? ''}|${entry.loadout?.actionTypeHrid ?? ''}|${who}`;
     store.delete(key);
     store.set(key, entry);
     while (store.size > MAX_ENTRIES) store.delete(store.keys().next().value);
@@ -357,13 +361,17 @@ export function getLoadouts() {
  *
  * @param {string|number} characterIdOrName - Character id, or the player's name (case-insensitive)
  * @param {string|null} [context] - 'party', 'guild_trial', or null for unknown-context captures only
+ * @param {string|null} [kind] - The request's kind ('combat', 'skilling'), or null for captures made
+ *   without one (the user's own clicks); omitted answers any kind
  * @returns {CapturedLoadout|null} A copy of the entry; its `loadout` is shared and read-only
  */
-export function getLoadout(characterIdOrName, context) {
+export function getLoadout(characterIdOrName, context, kind) {
     const id = idKey(characterIdOrName);
     const name = nameKey(characterIdOrName);
     if (!id && !name) return null;
-    const all = getLoadouts().filter((entry) => context === undefined || entry.context === context);
+    const all = getLoadouts().filter(
+        (entry) => (context === undefined || entry.context === context) && (kind === undefined || entry.kind === kind)
+    );
     const byId = all.filter((entry) => entry.characterId && entry.characterId === id);
     const pool = byId.length ? byId : all.filter((entry) => entry.name && nameKey(entry.name) === name);
     if (!pool.length) return null;
