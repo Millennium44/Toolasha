@@ -1326,6 +1326,26 @@ describe('a paid swing in a crowd tick', () => {
         expect(tally['12'].damage).toBeLessThanOrEqual(800 + 1e-6);
     });
 
+    test('a fractional single-target balance is not credited once per splat on a later monster', () => {
+        // Monster 0 shares one splat evenly (slot 12 is left with half a swing), then monster 1 takes two splats
+        // against the one area swing: the single-target swinger is credited no more than its one attack, and the
+        // area swinger no more than one hit on that monster
+        const events = mixed(
+            { 0: insect(299970, 2, 32, 29, 1063337956), 1: insect(312440, 1, 17, 17, 1248266296) },
+            { 0: insect(299170, 2, 33, 29, 1063337956), 1: insect(310440, 1, 19, 18, 1248266296) }
+        ).filter((event) => !event.isKill);
+
+        const tally = foldEvents({}, events, { filterNonDamaging: false });
+        expect(tally['12'].hits).toBeLessThanOrEqual(1 + 1e-9);
+        // An area swing rings each monster it reaches, so its cap is one hit per monster, not one in all
+        const onMonster1 = (player) =>
+            events
+                .filter((event) => event.monsterIndex === '1' && event.playerIndex === player)
+                .reduce((sum, event) => sum + event.weight, 0);
+        expect(onMonster1('12')).toBeCloseTo(0.5, 6);
+        expect(onMonster1('2')).toBeCloseTo(1, 6);
+    });
+
     test('a paid killing splat from the only swinger in a crowd makes the kill theirs', () => {
         const events = mixed(
             { 0: insect(4000, 2, 32, 29, 1063337956), 3: insect(316465, 1, 17, 16, 1421800947) },
