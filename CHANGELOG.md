@@ -6,6 +6,12 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Follow-ups to this release's new features
+
+- The sim's refused-cast count now counts each blocked ability once per cooldown, so its share is the real share of casts refused and it no longer changes with the worker count.
+- The mana planner drops its fight-captured slots, max MP and haste when your equipment changes, and says it will refresh after the next fight.
+- The leaderboard cleanup no longer delays startup, and a rival guild's history is tidied like your own so a stale snapshot cannot show a negative rate.
+
 ### Leaderboard rank badges
 
 - An optional badge beside player names shows their best top-100 leaderboard rank, from leaderboards you open or, if you choose, from the MWITools data server (polled every 15 minutes). Off by default; design adapted from MWITools. In Local only, a Next board button on the leaderboard panel opens the next board not yet cached, one board per click.

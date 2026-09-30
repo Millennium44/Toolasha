@@ -22,6 +22,7 @@ vi.mock('../../core/storage.js', () => ({
                 : { found: false, value: null };
         },
         set: async (key, value) => {
+            if (game.hangKey && game.hangKey === key) await game.release;
             if (game.unavailable || (game.failKey && game.failKey === key)) return false;
             game.saved[key] = structuredClone(value);
             return true;
@@ -47,6 +48,7 @@ describe('leaderboard XP tracker', () => {
         game.saved = {};
         game.unavailable = false;
         game.failKey = null;
+        game.hangKey = null;
         game.handlers = {};
         leaderboardXPTracker.disable();
         vi.useFakeTimers();
@@ -573,11 +575,39 @@ describe('the legacy-shape purge at load', () => {
         game.saved = {};
     });
 
+    const settle = async () => {
+        for (let i = 0; i < 20; i++) await new Promise((resolve) => setTimeout(resolve, 0));
+    };
+
     const reload = async () => {
         leaderboardXPTracker.disable();
         game.handlers = {};
         await leaderboardXPTracker.initialize();
+        // The purge's writes are detached from initialize
+        await settle();
     };
+
+    test('initialize does not wait on the purge writes, and the flag stays unspent while they are pending', async () => {
+        game.saved.playerXP = { guild_weekly_points_Old: zeroSeries };
+        game.hangKey = 'playerXP';
+        // Held, then released below: a write that never settled would block the
+        // record's save chain for every later test
+        let release;
+        game.release = new Promise((resolve) => {
+            release = resolve;
+        });
+        leaderboardXPTracker.disable();
+        game.handlers = {};
+        await leaderboardXPTracker.initialize();
+        await settle();
+
+        expect(leaderboardXPTracker.initialized).toBe(true);
+        expect(game.handlers.leaderboard_updated).toBeDefined();
+        expect(game.saved.playerXPLegacyPurged).toBeUndefined();
+        game.hangKey = null;
+        release();
+        await settle();
+    });
 
     test('cleans the legacy junk the first time and never again', async () => {
         game.saved.playerXP = { guild_weekly_points_Old: zeroSeries, guild_weekly_points_Real: [{ t: 1, xp: 50 }] };
