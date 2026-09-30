@@ -31,7 +31,6 @@ import { registerSyncMerge } from '../../utils/sync-merge-registry.js';
 import { createTimerRegistry } from '../../utils/timer-registry.js';
 import assetManifest from '../../utils/asset-manifest.js';
 import { formatRelativeTime } from '../../utils/formatters.js';
-import { GAME } from '../../utils/selectors.js';
 import {
     RANK_BOARD_TYPES,
     bestEntry,
@@ -96,6 +95,22 @@ export function describeEntries(entries, now) {
             return `${categoryLabel(entry.category)} · ${board} rank ${entry.rank} (${when})`;
         })
         .join('\n');
+}
+
+/**
+ * Every name element, with or without `data-name`: the profile modal and restored chat
+ * history draw the name as plain text inside it. The badge is a sibling, never a child,
+ * so a re-scan cannot read it back as part of the name.
+ */
+const NAME_SELECTOR = '[class*="CharacterName_name"]';
+
+/**
+ * The name an element shows: `data-name` when the game sets it, else its visible text.
+ * @param {Element} el - A `CharacterName_name` element
+ * @returns {string} The trimmed name, empty when there is none
+ */
+function nameFrom(el) {
+    return (el.getAttribute('data-name') || el.textContent || '').trim().replace(/:$/, '').trim();
 }
 
 class LeaderboardRankBadges {
@@ -243,7 +258,7 @@ class LeaderboardRankBadges {
     }
 
     decorateAll(force) {
-        for (const el of document.querySelectorAll(GAME.CHARACTER_NAME)) this.decorate(el, force);
+        for (const el of document.querySelectorAll(NAME_SELECTOR)) this.decorate(el, force);
     }
 
     /**
@@ -252,7 +267,7 @@ class LeaderboardRankBadges {
      * @param {boolean} [force] - Rebuild even if the badge already matches
      */
     decorate(nameEl, force = false) {
-        if (this.mode === 'off' || !nameEl?.isConnected || !nameEl.matches?.(GAME.CHARACTER_NAME)) return;
+        if (this.mode === 'off' || !nameEl?.isConnected || !nameEl.matches?.(NAME_SELECTOR)) return;
         const existing = nameEl.nextElementSibling?.hasAttribute?.(BADGE_ATTR) ? nameEl.nextElementSibling : null;
         // The leaderboard's own rank column says this already, and the player's
         // own header name is not a place to advertise
@@ -260,7 +275,11 @@ class LeaderboardRankBadges {
             existing?.remove();
             return;
         }
-        const name = nameEl.getAttribute('data-name');
+        const name = nameFrom(nameEl);
+        if (!name) {
+            existing?.remove();
+            return;
+        }
         const entries = this.index.get(normalizeName(name));
         const best = bestEntry(entries);
         if (!best) {

@@ -157,6 +157,26 @@ describe('leaderboard rank badges', () => {
         expect(other.nextElementSibling).toBeNull();
     });
 
+    test('names drawn as plain text, with no data-name, are badged once and stay idempotent', async () => {
+        game.mode = 'local';
+        game.saved.rankBoards = { 'standard|milking': { at: Date.now(), source: 'local', rows: [['Alice', 2]] } };
+        await leaderboardRankBadges.initialize();
+        // The profile modal and a restored chat sender, as the fixtures draw them
+        document.body.innerHTML =
+            '<div class="CharacterName_characterName__1amXp"><div class="CharacterName_name__1amXo"><span>Alice</span></div></div>' +
+            '<span class="ChatMessage_name__1"><div class="CharacterName_characterName__2"><div class="CharacterName_name__1amXp"><span>Alice:</span></div></div></span>';
+        leaderboardRankBadges.decorateAll(false);
+        leaderboardRankBadges.decorateAll(false);
+        leaderboardRankBadges.decorateAll(true);
+        leaderboardRankBadges.decorateAll(false);
+
+        expect(badges()).toHaveLength(2);
+        for (const el of document.querySelectorAll('[class*="CharacterName_name"]')) {
+            expect(el.nextElementSibling.hasAttribute('data-toolasha-rank-badge')).toBe(true);
+            expect(el.nextElementSibling.nextElementSibling).toBeNull();
+        }
+    });
+
     test('names inside the leaderboard panel and the header are left alone', async () => {
         game.mode = 'local';
         game.saved.rankBoards = { 'standard|milking': { at: Date.now(), source: 'local', rows: [['Alice', 2]] } };
