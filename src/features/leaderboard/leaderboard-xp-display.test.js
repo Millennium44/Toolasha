@@ -17,6 +17,7 @@ vi.mock('./leaderboard-xp-tracker.js', () => ({
     },
     isLevelBoard: (category) => category === 'total_level',
     isWeeklyBoard: (category) => typeof category === 'string' && category.includes('weekly'),
+    seriesCategoryOf: (category) => category,
 }));
 
 const { xpPerDay, xpPerWeek, timeToOvertake, boardUnit, assignRateRanks, rateRankEligible, LEVEL_RATE_RANK_CUTOFF } =
