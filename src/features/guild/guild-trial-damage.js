@@ -933,6 +933,8 @@ class GuildTrialDamage {
          * Held for {@link statsScope} only, and replaced when that changes.
          */
         this.storedStats = {};
+        /** A test-server stats restore waiting for a fight to name its cycle */
+        this.statsRestoreOwed = false;
         /**
          * Whose week `storedStats` is: the guild, and the character for the
          * fallback key before the guild is known. Set by {@link setGuildName}.
@@ -1471,6 +1473,7 @@ class GuildTrialDamage {
             if (this.frozenSeconds !== null || this.endedAt !== null) this._resumeStream();
             if (!this.startedAt) this.startedAt = now;
             if (Number.isFinite(tier)) this.tierStarts[tier] = now;
+            this._restoreOwedStats();
 
             // The roster replaces every weaker source, and a new battle restates
             // it — a slot that changed hands must not keep the old name. A slot
@@ -1882,7 +1885,17 @@ class GuildTrialDamage {
      * encounter.
      */
     async _restoreStats() {
-        const scope = { ...this.statsScope, cycleAt: this._statsCycleAt() };
+        const cycleAt = this._statsCycleAt();
+        // On the test server a week's stats are filed per cycle, and with no
+        // fight held yet an unscoped read would bring the previous cycle back
+        // as this one's — into participation, and into the accuracy the next
+        // archive keeps. Held until a fight gives the read its cycle.
+        if (cycleAt === undefined && isTestServer()) {
+            this.statsRestoreOwed = true;
+            return;
+        }
+        this.statsRestoreOwed = false;
+        const scope = { ...this.statsScope, cycleAt };
         const scopeKey = statsScopeKey(scope);
         try {
             const blob = await loadTrialStats(Date.now(), scope);
@@ -1892,6 +1905,15 @@ class GuildTrialDamage {
         } catch {
             // Unreadable: memory keeps whatever arrived under this scope since
         }
+    }
+
+    /**
+     * Run the stats restore {@link _restoreStats} held back for want of a
+     * cycle, once a fight has given it one.
+     */
+    _restoreOwedStats() {
+        if (!this.statsRestoreOwed || this._statsCycleAt() === undefined) return;
+        this._restoreStats().catch(() => {});
     }
 
     /**
@@ -1946,6 +1968,7 @@ class GuildTrialDamage {
             this.reason = SPECTATED_TRIAL_NOTE;
             if (!this.startedAt) this.startedAt = now;
             if (!this.spectator.firstAt) this.spectator.firstAt = now;
+            this._restoreOwedStats();
 
             const pMap = data.pMap || {};
             const mMap = data.mMap || {};
@@ -3325,6 +3348,7 @@ class GuildTrialDamage {
         this.reason = saved.reason || this.reason;
         this.fights = Number(saved.fights) || this.fights;
         this.startedAt = Number(saved.startedAt) || this.startedAt;
+        this._restoreOwedStats();
         if (Array.isArray(saved.monsterNames)) this.monsterNames = saved.monsterNames;
         this.source = 'spectated';
         this.guildBattleId = saved.guildBattleId ?? null;
