@@ -700,6 +700,9 @@ class LabyrinthClearRate {
                 this.resetBeaconCountToAuto();
                 document.querySelectorAll(`.${TILE_BADGE_CLASS}`).forEach((el) => this.removeTileBadge(el));
                 this.calculatedTileKeys?.clear();
+                // The last floor's results are keyed by coordinate too, and would
+                // otherwise stand in for the new floor's rooms at the same spots
+                this._tileResults?.clear();
             }
             this.injectTileControls();
             this.refreshSupplyReadout();

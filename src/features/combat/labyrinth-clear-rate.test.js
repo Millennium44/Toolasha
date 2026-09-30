@@ -1582,6 +1582,16 @@ describe('the beacon count as a per-floor override', () => {
         expect(input.value).toBe('0');
     });
 
+    test('a new floor forgets the last floor’s room results', () => {
+        buildToolbar(4);
+        labyrinthClearRate.currentFloor = 3;
+        labyrinthClearRate._tileResults = new Map([['0,1', { clearChance: 0.9 }]]);
+
+        labyrinthClearRate.onLabyrinthUpdated({ labyrinth: { currentFloor: 4, roomData: [[null]] } });
+
+        expect(labyrinthClearRate._tileResults.size).toBe(0);
+    });
+
     test('an update from the floor you are on leaves the count alone', () => {
         const { input } = buildToolbar(4);
         labyrinthClearRate.currentFloor = 3;

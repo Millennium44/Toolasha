@@ -146,6 +146,19 @@ describe('collectFloorChances', () => {
         expect(s.median).toBeCloseTo((0.5 + 0.95) / 2);
     });
 
+    test('a flat room list takes its row width from the floor', () => {
+        // Floor 1 is a 4-wide grid (MIN(3 + floor, 8)); a flat list carries no row width of its own
+        const rooms = Array.from({ length: 16 }, () => skilling(100));
+        rooms[1] = monster(100); // col 1, row 0
+        rooms[6] = monster(110); // col 2, row 1
+        const results = new Map([
+            ['1,0', { clearChance: 0.8 }],
+            ['2,1', { clearChance: 0.3 }],
+        ]);
+        const s = collectFloorChances({ rooms, results, floor: 1 });
+        expect(s.chances.sort()).toEqual([0.3, 0.8]);
+    });
+
     test('tolerates missing input', () => {
         expect(collectFloorChances({ rooms: null, results: null }).judged).toBe(0);
     });
