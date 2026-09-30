@@ -76,6 +76,18 @@ let optimTarget = null;
 let tally = newManaTally();
 
 /**
+ * The character the tally, typed target, haste and slots belong to. While the feature is disabled its
+ * `character_switching` handler is unregistered, so a switch then resets nothing; `initialize()` compares
+ * this against the current character instead. Null until something is written.
+ */
+let ownerCharacterId = null;
+
+/** Mark the retained state as the current character's; called wherever that state is written */
+function claimState() {
+    ownerCharacterId = dataManager.getCurrentCharacterId?.() ?? ownerCharacterId;
+}
+
+/**
  * Forget the supply planner's per-character state: the typed target, haste and slots.
  * Called on a character switch, and by tests between cases.
  */
@@ -118,7 +130,8 @@ function markEvent(openingMana = 0, now = Date.now()) {
  * Mana spent per minute of observed wall-clock time, from the first counted event to the last, idle gaps
  * between fights included and time the tracker was disabled excluded — the rate consumables must sustain.
  * @returns {number|null} Null until a minute has been observed, and while any observed ability has no
- *   stated cost: its casts add no mana, so the known subtotal would understate the spend
+ *   stated cost: its casts add no mana, so the known subtotal would understate the spend.
+ *   Zero once a minute has been observed with a complete tally and nothing spent
  */
 export function manaPerMinuteMeasured() {
     const observedMs = bankedMs + (firstEventAt === null ? 0 : lastEventAt - firstEventAt);
@@ -126,7 +139,8 @@ export function manaPerMinuteMeasured() {
     const summary = manaSpend();
     if (summary.incomplete) return null;
     const mana = summary.mana - baselineMana;
-    if (!(mana > 0)) return null;
+    // A complete tally over a full span that spent nothing is a real rate: zero, not "still measuring"
+    if (!(mana > 0)) return 0;
     return (mana / observedMs) * 60_000;
 }
 
@@ -191,7 +205,16 @@ export default {
         // checkbox did nothing
         if (!config.getSetting('manaTracker')) return;
 
+        // A switch made while disabled reached no handler: what is retained belongs to the previous character
+        const currentId = dataManager.getCurrentCharacterId?.();
+        if (ownerCharacterId !== null && currentId && currentId !== ownerCharacterId) {
+            resetManaTally();
+            resetMpPlanner();
+            ownerCharacterId = null;
+        }
+
         onNewBattle = (data) => {
+            claimState();
             recordFight(tally);
             markEvent();
 
@@ -215,6 +238,7 @@ export default {
             // by — inflating Mana/fight and every per-ability share for
             // whoever happens to be spectating one.
             if (data?.isGuildBattle) return;
+            claimState();
 
             // The message carries either the ability object or its hrid, and
             // both shapes have been seen in the wild
@@ -234,6 +258,7 @@ export default {
             resetManaTally();
             // Another character's haste would price this one's items wrongly
             resetMpPlanner();
+            ownerCharacterId = null;
         };
 
         webSocketHook.on('new_battle', onNewBattle);
@@ -311,6 +336,7 @@ function drawMpSupply(body) {
     const apply = () => {
         const typed = parseFloat(input.value);
         optimTarget = Number.isFinite(typed) && typed >= 0 ? typed : null;
+        claimState();
         manaPanel.render();
     };
     input.addEventListener('keydown', (event) => {
@@ -356,6 +382,8 @@ function drawMpSupply(body) {
     }
     if (target === null && !unknownCosts) {
         card.appendChild(panelNote('Enter a target, or fight for a minute so the measured spend can fill it in.'));
+    } else if (target === 0) {
+        card.appendChild(panelNote('No MP needed: nothing has been spent, so no mana food or drink is required.'));
     } else if (plan.best) {
         drawAllocation(card, plan.best);
     } else {

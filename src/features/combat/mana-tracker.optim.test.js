@@ -146,6 +146,38 @@ describe('measured spend', () => {
     });
 });
 
+describe('a character that spends no mana', () => {
+    /** Two minutes of fights with no casts: a complete tally that spent nothing */
+    function fightWithoutCasting() {
+        game.handlers['new_battle']({ players: [{ character: { id: 'char1' }, combatDetails: { combatStats: {} } }] });
+        vi.advanceTimersByTime(60_000);
+        game.handlers['new_battle']({ players: [{ character: { id: 'char1' }, combatDetails: { combatStats: {} } }] });
+    }
+
+    test('measures zero once a minute has been watched, not "still measuring"', () => {
+        fightWithoutCasting();
+
+        expect(manaPerMinuteMeasured()).toBe(0);
+    });
+
+    test('is still unknown before the span threshold', () => {
+        game.handlers['new_battle']({});
+
+        expect(manaPerMinuteMeasured()).toBe(null);
+    });
+
+    test('the card says no MP is needed instead of asking for a target or erroring', () => {
+        fightWithoutCasting();
+        manaPanel.show();
+
+        expect(manaPanel.panel.querySelector('[data-mp-target]').value).toBe('0');
+        expect(text()).toContain('No MP needed');
+        expect(text()).not.toContain('Enter a target');
+        expect(text()).not.toContain('out of reach');
+        expect(text()).not.toContain('could not be drawn');
+    });
+});
+
 describe('measured spend gaps', () => {
     test('is withheld while an observed ability has no stated cost', () => {
         spendSteadily();

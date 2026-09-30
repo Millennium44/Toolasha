@@ -5,6 +5,7 @@ const game = vi.hoisted(() => ({
     abilityDetailMap: {},
     handlers: {},
     dataManagerHandlers: {},
+    characterId: 'char1',
 }));
 
 vi.mock('../../core/config.js', () => ({
@@ -13,7 +14,7 @@ vi.mock('../../core/config.js', () => ({
 vi.mock('../../core/data-manager.js', () => ({
     default: {
         getInitClientData: () => ({ abilityDetailMap: game.abilityDetailMap }),
-        getCurrentCharacterId: () => 'char1',
+        getCurrentCharacterId: () => game.characterId,
         on: (event, handler) => {
             game.dataManagerHandlers[event] = handler;
         },
@@ -45,6 +46,7 @@ describe('mana tracker wiring', () => {
         game.abilityDetailMap = {};
         game.handlers = {};
         game.dataManagerHandlers = {};
+        game.characterId = 'char1';
         resetManaTally();
         manaTracker.cleanup();
     });
@@ -135,6 +137,33 @@ describe('mana tracker wiring', () => {
 
         expect(manaSpend().fights).toBe(0);
         expect(manaSpend().mana).toBe(0);
+    });
+
+    test('a switch made while disabled clears what the previous character left behind', () => {
+        game.abilityDetailMap['/abilities/fireball'] = { manaCost: 15 };
+        manaTracker.initialize();
+        game.handlers['new_battle']();
+        game.handlers['battle_consumable_ability_updated']({ ability: '/abilities/fireball' });
+        manaTracker.cleanup();
+
+        game.characterId = 'char2';
+        manaTracker.initialize();
+
+        expect(manaSpend().fights).toBe(0);
+        expect(manaSpend().mana).toBe(0);
+    });
+
+    test('the same character re-enabling keeps the tally', () => {
+        game.abilityDetailMap['/abilities/fireball'] = { manaCost: 15 };
+        manaTracker.initialize();
+        game.handlers['new_battle']();
+        game.handlers['battle_consumable_ability_updated']({ ability: '/abilities/fireball' });
+        manaTracker.cleanup();
+
+        manaTracker.initialize();
+
+        expect(manaSpend().fights).toBe(1);
+        expect(manaSpend().mana).toBe(15);
     });
 
     test('resetManaTally starts the count over', () => {
