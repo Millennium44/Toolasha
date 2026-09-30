@@ -23,6 +23,7 @@ vi.mock('../../core/data-manager.js', () => ({
     default: {
         getInitClientData: () => ({ abilityDetailMap: game.abilityDetailMap, itemDetailMap: game.itemDetailMap }),
         getCurrentCharacterId: () => 'char1',
+        getCurrentCharacterName: () => 'Tib',
         on: () => {},
         off: () => {},
     },
@@ -188,6 +189,19 @@ describe('mpSupplyPlan', () => {
     test('reads food haste from the character in the battle message', () => {
         game.handlers['new_battle']({
             players: [{ character: { id: 'char1' }, combatDetails: { combatStats: { foodHaste: 0.5 } } }],
+        });
+
+        expect(mpSupplyPlan(0).max.mpPerMinute).toBe(450 * 1.5);
+    });
+});
+
+describe('a battle entry without an id', () => {
+    test('is matched by the current character name', () => {
+        game.handlers['new_battle']({
+            players: [
+                { character: { name: 'Someone Else' }, combatDetails: { combatStats: { foodHaste: 0.1 } } },
+                { character: { name: 'Tib' }, combatDetails: { combatStats: { foodHaste: 0.5 } } },
+            ],
         });
 
         expect(mpSupplyPlan(0).max.mpPerMinute).toBe(450 * 1.5);
