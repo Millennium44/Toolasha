@@ -266,6 +266,25 @@ export function filterKeyOf(data) {
     return parts.length ? parts.join('/') : 'all';
 }
 
+/** The one board whose value differs per view: each trial has its own count */
+const TRIAL_BOARD = 'guild_weekly_trial';
+
+/**
+ * The category part of a value series key. The weekly trial board is one
+ * category showing a separate count per trial (`trialFilter`), so a guild's
+ * readings of two trials must not share a series — the smaller count reads
+ * as a board reset and wipes the other trial's readings. Every other board
+ * shows one value per row whatever the view, and keeps the bare category.
+ * @param {string} category - `leaderboardCategory`
+ * @param {string|null|undefined} trialFilter - The message's `trialFilter`
+ * @returns {string}
+ */
+export function seriesCategoryOf(category, trialFilter) {
+    return category === TRIAL_BOARD && typeof trialFilter === 'string' && trialFilter && trialFilter !== 'all'
+        ? `${category}|${trialFilter}`
+        : category;
+}
+
 // ─── Tracker class ──────────────────────────────────────────────────────────
 
 class LeaderboardXPTracker {
@@ -284,6 +303,8 @@ class LeaderboardXPTracker {
         });
         this.lastLeaderboardCategory = null;
         this.lastFilterKey = 'all';
+        /** The trial the last message showed; the readers' default for the trial board */
+        this.lastTrialFilter = null;
         this.unregisterHandlers = [];
     }
 
@@ -355,6 +376,8 @@ class LeaderboardXPTracker {
         const t = Date.now();
         this.lastLeaderboardCategory = data.leaderboardCategory;
         this.lastFilterKey = filterKeyOf(data);
+        this.lastTrialFilter = data.trialFilter ?? null;
+        const seriesCategory = seriesCategoryOf(data.leaderboardCategory, data.trialFilter);
         let changed = false;
 
         // The board's number is its LAST value column: Level/Experience boards
@@ -376,7 +399,7 @@ class LeaderboardXPTracker {
             const xp = row[valueField] ?? row.value2 ?? row.value1;
             if (!name || xp === undefined || xp === null) continue;
 
-            const key = `${data.leaderboardCategory}_${name}`;
+            const key = `${seriesCategory}_${name}`;
             if (!this.playerXPHistory[key]) {
                 this.playerXPHistory[key] = [];
             }
@@ -422,7 +445,7 @@ class LeaderboardXPTracker {
      * @returns {{lastXPH: number, lastHourXPH: number, lastDayXPH: number}}
      */
     getPlayerStats(playerName, category) {
-        const key = `${category}_${playerName}`;
+        const key = `${seriesCategoryOf(category, this.lastTrialFilter)}_${playerName}`;
         return calcStats(this.playerXPHistory[key]);
     }
 
@@ -447,7 +470,7 @@ class LeaderboardXPTracker {
      * @returns {number|null}
      */
     getLatestValue(playerName, category) {
-        const series = this.playerXPHistory[`${category}_${playerName}`];
+        const series = this.playerXPHistory[`${seriesCategoryOf(category, this.lastTrialFilter)}_${playerName}`];
         return Array.isArray(series) && series.length ? series[series.length - 1].xp : null;
     }
 
@@ -467,6 +490,7 @@ class LeaderboardXPTracker {
         this.unregisterHandlers = [];
         this.history.reset();
         this.lastLeaderboardCategory = null;
+        this.lastTrialFilter = null;
         this.initialized = false;
     }
 }

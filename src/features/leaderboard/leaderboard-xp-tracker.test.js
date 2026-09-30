@@ -535,4 +535,28 @@ describe('leaderboard XP tracker', () => {
         expect(stats.lastXPH).toBeCloseTo(24_000 / (10 * 24), 6);
         expect(stats.lastSpanMs).toBe(10 * day);
     });
+
+    test('each trial of the weekly trial board keeps its own series', () => {
+        const read = (trialFilter, value) =>
+            game.handlers.leaderboard_updated({
+                leaderboardCategory: 'guild_weekly_trial',
+                trialFilter,
+                leaderboard: { rows: [{ name: 'G', value1: value, rank: 1 }] },
+            });
+        read('/guild_trials/a', 500);
+        read('/guild_trials/b', 30);
+        vi.setSystemTime(new Date('2026-01-01T01:00:00Z'));
+        read('/guild_trials/a', 900);
+
+        // Trial b's smaller count used to read as a board reset and wipe trial a's series
+        const a = leaderboardXPTracker.getPlayerStats('G', 'guild_weekly_trial');
+        expect(a.samples).toBe(2);
+        expect(a.lastXPH).toBeCloseTo(400, 6);
+        expect(leaderboardXPTracker.getLatestValue('G', 'guild_weekly_trial')).toBe(900);
+
+        read('/guild_trials/b', 60);
+        const b = leaderboardXPTracker.getPlayerStats('G', 'guild_weekly_trial');
+        expect(b.samples).toBe(2);
+        expect(b.lastXPH).toBeCloseTo(30, 6);
+    });
 });
