@@ -1224,18 +1224,39 @@ class BulkSellAssistant {
      * second for it to relabel as "Confirm Sell For" with the same amount, then
      * press it once. Not a background loop: bounded, inside the press handler,
      * and it gives up with a stated reason rather than retrying.
+     *
+     * Any click inside the item menu that is not this method's own ends the
+     * wait without pressing. The player's own click on the button we armed is
+     * that step's sale, and until the server answers the menu can still show
+     * the armed label with the same item and quantity — pressing it then would
+     * send a second sale.
      * @param {HTMLButtonElement} button - The unarmed Sell For button
      */
     async _armVendorThenPress(button) {
         if (this._vendorArming) return;
         this._vendorArming = true;
         const key = this._stepKey();
+        let ownClick = false;
+        let menuClicked = false;
+        const onClick = (event) => {
+            if (!ownClick && event.target?.closest?.('[class*="Item_actionMenu"]')) menuClicked = true;
+        };
+        document.addEventListener('click', onClick, true);
         try {
-            button.click();
+            ownClick = true;
+            try {
+                button.click();
+            } finally {
+                ownClick = false;
+            }
             let result = { why: 'the Sell For button did not arm in time' };
             for (let waited = 0; waited <= VENDOR_ARM_WAIT_MS; waited += VENDOR_ARM_POLL_MS) {
                 await new Promise((resolve) => setTimeout(resolve, VENDOR_ARM_POLL_MS));
                 if (this.state !== 'awaiting_confirm' || this._stepKey() !== key || this._confirmSent()) return;
+                if (menuClicked) {
+                    result = { why: 'the item menu was clicked while Confirm waited, so it pressed nothing' };
+                    break;
+                }
                 const again = this._confirmTarget();
                 // A refusal (amount changed, menu gone) ends the wait; an
                 // unarmed-but-valid button is just not relabeled yet
@@ -1251,6 +1272,7 @@ class BulkSellAssistant {
             }
             this._pressConfirm(result.button);
         } finally {
+            document.removeEventListener('click', onClick, true);
             this._vendorArming = false;
         }
     }
