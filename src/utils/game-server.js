@@ -69,8 +69,8 @@ export function isTestServer(hostname = currentHostname()) {
 
 /**
  * The origin to read the game's own static files from (market JSON, asset
- * manifest). A game host reads its own copy; anything else — a sim site the
- * script is also matched on — falls back to the international site.
+ * manifest). A game host reads its own copy; anything else â€” a sim site the
+ * script is also matched on â€” falls back to the international site.
  *
  * @param {string} [origin] - Overrides the page's own, for tests
  * @returns {string} An origin with no trailing slash
