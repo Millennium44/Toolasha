@@ -2688,6 +2688,47 @@ describe('the week’s stats belong to one guild and character', () => {
         expect(game.statsSaves.at(-1).scope.cycleAt).toBeUndefined();
     });
 
+    test('on the test server, the week’s stats are read back only once a fight names the cycle', async () => {
+        // An unscoped read before any fight is held brought the previous
+        // cycle's comparisons back as this one's
+        game.testServer = true;
+        const reads = [];
+        const earlier = { badger: { reported: { Tank: { damage: 1, healing: 0, taken: 0 } }, measured: null, at } };
+        game.loadStats = async (scope) => {
+            reads.push(scope);
+            return { weekStart: 0, trials: Number.isFinite(scope?.cycleAt) ? {} : earlier };
+        };
+        guildTrialDamage.setGuildName('Milky Way', 111);
+        await vi.advanceTimersByTimeAsync(0);
+        expect(reads).toEqual([]);
+        expect(guildTrialDamage.breakdown().storedStats).toEqual({});
+
+        vi.setSystemTime(at + 60_000);
+        game.wsHandlers.new_guild_battle({
+            battleId: 1,
+            tier: 1,
+            combatStartTime: new Date(at + 59_000).toISOString(),
+            players: [{ character: { id: 910011, name: 'Tank' } }],
+            monsters: [{ hrid: '/monsters/trial_badger', name: 'Trial Badger', combatDetails: {} }],
+        });
+        await vi.advanceTimersByTimeAsync(0);
+        expect(reads).toHaveLength(1);
+        expect(Number.isFinite(reads[0].cycleAt)).toBe(true);
+        expect(guildTrialDamage.breakdown().storedStats).toEqual({});
+    });
+
+    test('on live, the week’s stats are read back straight away as before', async () => {
+        const reads = [];
+        game.loadStats = async (scope) => {
+            reads.push(scope);
+            return { weekStart: 0, trials: {} };
+        };
+        guildTrialDamage.setGuildName('Milky Way', 111);
+        await vi.advanceTimersByTimeAsync(0);
+        expect(reads).toHaveLength(1);
+        expect(reads[0].cycleAt).toBeUndefined();
+    });
+
     test('comparisons filed before the guild was known move onto the guild’s key', async () => {
         game.loadStats = async () => ({ weekStart: 0, trials: {} });
         guildTrialDamage.setGuildName(null, 111);
