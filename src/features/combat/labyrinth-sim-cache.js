@@ -1213,6 +1213,27 @@ export const simCacheMethods = {
     /**
      * Run combat sim for a monster room and return clear stats
      */
+    /**
+     * The cached answer `computeCombatClear` would return without simulating, or
+     * null. A cached result answers the question unless the run was asked to be
+     * uncapped and the cached one stopped on the fight ceiling instead of on
+     * precision — that wide "(capped)" band is exactly what the caller ticked
+     * Uncapped to get rid of, so serving it back would make the toggle do
+     * nothing.
+     *
+     * @param {string} monsterHrid - Monster
+     * @param {number} roomLevel - Room level
+     * @param {Object} [options] - The options `computeCombatClear` takes
+     * @returns {Object|null} Cached result
+     */
+    peekCombatClear(monsterHrid, roomLevel, options = {}) {
+        const rawBar = Number(options.decideAgainst);
+        const bar = Number.isFinite(rawBar) && rawBar > 0 && rawBar < 1 ? rawBar : null;
+        const precisionPct = clampPrecisionPct(options.precisionPct);
+        const cached = this.combatCache.get(this.buildCombatCacheKey(monsterHrid, roomLevel, bar, precisionPct));
+        if (cached && !(options.uncapped === true && cached.hitTarget === false)) return cached;
+        return null;
+    },
     async computeCombatClear(monsterHrid, roomLevel, options = {}) {
         // A bar means the caller only needs to know which side of it this room
         // falls on, which is a far cheaper question than what its rate is
@@ -1223,13 +1244,8 @@ export const simCacheMethods = {
         const precisionPct = clampPrecisionPct(options.precisionPct);
 
         const cacheKey = this.buildCombatCacheKey(monsterHrid, roomLevel, bar, precisionPct);
-        const cached = this.combatCache.get(cacheKey);
-        // A cached result answers the question unless this run was asked to be
-        // uncapped and the cached one stopped on the fight ceiling instead of
-        // on precision — that wide "(capped)" band is exactly what the caller
-        // ticked Uncapped to get rid of, so serving it back would make the
-        // toggle do nothing.
-        if (cached && !(uncapped && cached.hitTarget === false)) return cached;
+        const cached = this.peekCombatClear(monsterHrid, roomLevel, options);
+        if (cached) return cached;
 
         // A measured result already in hand answers a decision for free, as
         // long as its interval clears the bar — no reason to simulate again

@@ -3119,6 +3119,12 @@ class LabyrinthClearRate {
         // Gather targets first so the progress bar has a stable total
         const skillingTargets = [];
         const combatTargets = [];
+        // The bar's denominator is every calculable room on the floor and its
+        // numerator starts at the rooms that need no sim (badged already, worked
+        // out arithmetically, or cached), so it neither restarts from zero for
+        // each pass nor jumps when a run of cache hits comes back at once.
+        let eligible = 0;
+        let doneUpFront = 0;
         for (let i = 0; i < flatRooms.length; i++) {
             const room = flatRooms[i];
             const cell = cells[i];
@@ -3136,14 +3142,22 @@ class LabyrinthClearRate {
             if (roomLevel <= 0) continue;
 
             const tileKey = `${i % cols},${Math.floor(i / cols)}`;
+            if (!room.skillHrid && !room.monsterHrid) continue;
+            eligible++;
             if (auto && this.calculatedTileKeys.has(tileKey) && cell.querySelector(`.${TILE_BADGE_CLASS}`)) {
+                doneUpFront++;
                 continue;
             }
 
             if (room.skillHrid) {
                 skillingTargets.push({ room, cell, roomLevel, tileKey });
-            } else if (room.monsterHrid) {
-                combatTargets.push({ room, cell, roomLevel, tileKey });
+                // Worked out arithmetically in one burst, so never a step of the bar
+                doneUpFront++;
+            } else {
+                const cached = !!this.peekCombatClear(room.monsterHrid, roomLevel, { uncapped });
+                combatTargets.push({ room, cell, roomLevel, tileKey, cached });
+                // Served from the cache, so finished before the first sim starts
+                if (cached) doneUpFront++;
             }
         }
 
@@ -3158,9 +3172,11 @@ class LabyrinthClearRate {
         const epoch = this.simEpoch();
         this.syncTileCalcButton(0, total);
         this.setTileStatus('');
-        this.setTileProgress(0);
         let completed = 0;
         let cancelled = false;
+        let simmed = 0;
+        const barFraction = (failed = 0) => Math.min(1, Math.max(0, (doneUpFront + simmed - failed) / eligible));
+        this.setTileProgress(barFraction());
 
         try {
             for (const target of skillingTargets) {
@@ -3174,7 +3190,6 @@ class LabyrinthClearRate {
                     this._tileResults.set(target.tileKey, result);
                 }
                 completed++;
-                this.setTileProgress(completed / total);
             }
 
             let combatRetryNeeded = 0;
@@ -3191,7 +3206,9 @@ class LabyrinthClearRate {
                     break;
                 }
                 completed++;
-                this.setTileProgress(completed / total);
+                // A cached room was counted done up front; only a sim advances the bar
+                if (!target.cached) simmed++;
+                this.setTileProgress(barFraction());
                 this.syncTileCalcButton(completed, total);
 
                 if (!result || result.failed) {
@@ -3221,14 +3238,17 @@ class LabyrinthClearRate {
                 // unset so the rooms that never ran are picked up next time,
                 // and leave every badge already drawn exactly where it is.
                 this._autoCalcFingerprint = null;
-                this.setTileProgress(completed / total);
+                this.setTileProgress(barFraction());
                 this.setTileStatus('Cancelled');
                 return;
             }
 
-            this.setTileProgress(1);
+            const retrying = auto && combatRetryNeeded > 0 && (this.autoTileRetryCount || 0) < 3;
+            // A retry picks up the rooms that failed, so the bar rests short of
+            // full for them instead of filling and then dropping when it starts
+            this.setTileProgress(retrying ? barFraction(combatRetryNeeded) : 1);
 
-            if (auto && combatRetryNeeded > 0 && (this.autoTileRetryCount || 0) < 3) {
+            if (retrying) {
                 this.autoTileRetryCount = (this.autoTileRetryCount || 0) + 1;
                 // Not settled — leave the fingerprint unset so the retry, and any
                 // later auto pass, still run rather than being gated out.
@@ -4042,7 +4062,8 @@ class LabyrinthClearRate {
     clearRecommendations() {
         this.clearPathOverlays();
         this.clearBeaconOverlays();
-        this.setTileProgress(0);
+        // A calculation in flight owns the bar
+        if (!this.tileCalcRunning) this.setTileProgress(0);
         this.setTileStatus('Path and beacons cleared');
     }
 
