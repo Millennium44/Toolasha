@@ -1316,6 +1316,32 @@ describe('a paid swing in a crowd tick', () => {
         expect(kills).toEqual([{ monsterIndex: '0', isKill: true, killerIndex: '12' }]);
     });
 
+    test('several splats on one monster keep the swing-count shares of the first', () => {
+        // Counters up by 2 and 1, three equal splats on one monster: 2:1, not what the slot order leaves behind
+        const both = {
+            ...cast,
+            pMap: {
+                ...cast.pMap,
+                2: unit(2202, 2400, 2638, 5, '/abilities/frost_surge', 1055578309, 0),
+                12: unit(2202, 2438, 2638, 4, '/abilities/frost_surge', 801861601, 1),
+            },
+            mMap: { 0: insect(299970 - 3000, 2, 35, 29, 1063337956) },
+        };
+        const before = { ...baseline, mMap: { 0: baseline.mMap[0] } };
+        const state = newAttributionState();
+        attributeTick(before, state, { soloFallback: false, unattributed: true });
+        noteActions(state, before.pMap);
+        const events = attributeTick(both, state, { soloFallback: false, unattributed: true }).filter(
+            (event) => !event.isKill
+        );
+
+        const tally = foldEvents({}, events, { filterNonDamaging: false });
+        expect(tally['2'].damage).toBeCloseTo(2000, 6);
+        expect(tally['12'].damage).toBeCloseTo(1000, 6);
+        expect(tally['2'].hits).toBeCloseTo(2, 6);
+        expect(tally['12'].hits).toBeCloseTo(1, 6);
+    });
+
     test('leaves the tick’s total exactly what the monsters lost', () => {
         const team = foldTeam({}, replay());
         expect(team.damage).toBeCloseTo(8758, 6);
