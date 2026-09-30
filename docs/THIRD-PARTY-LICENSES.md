@@ -133,6 +133,12 @@ it. The rules are Toolasha's own and read the game's `abilityDetailMap` — an e
 classifies itself; every verdict carries the evidence it was drawn from, and a captured stat
 sheet's `threat` outranks the stream.
 
+The cheapest-MP-supply search in the mana panel (`src/utils/mp-optimizer.js`) is the idea of
+the Optim tab in **KikiMeter v4.3.2**, under the same licence. No code was copied: the search
+is Toolasha's own, reads the game's cooldowns, restore amounts and slot-type rule off the item
+data where KikiMeter matches item names and hard-codes durations, and prices through the
+pricing mode setting.
+
 <https://greasyfork.org/scripts/584984>
 
 Full terms in `third-party/kikimeter/LICENSE.md`; what was and was not adopted, in detail, in

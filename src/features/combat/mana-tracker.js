@@ -31,6 +31,24 @@ import { row, blank, ROW_COLORS, glyph } from '../../utils/overlay-format.js';
 import { createPanel, panelCard, panelLine, panelNote } from '../../utils/simple-panel.js';
 import { registerRow } from '../../utils/overlay-rows.js';
 import { newManaTally, recordCast, recordFight, manaSummary } from '../../utils/mana-spend.js';
+import { buildMpCandidates, findBestOptimAllocation, findMaxMpAllocation } from '../../utils/mp-optimizer.js';
+import { resolveItemPrice } from '../../utils/profit-helpers.js';
+
+/** A rate over less wall-clock time than this is noise, not a measurement */
+const MIN_RATE_SPAN_MS = 60_000;
+
+/**
+ * Wall-clock span of the tally, for a per-minute rate. Kept beside the tally
+ * rather than in it: `mana-spend.js` counts fights and casts and has no clock.
+ */
+let firstEventAt = null;
+let lastEventAt = null;
+
+/** The character's own food haste and drink concentration, from the last `new_battle` */
+let haste = { foodHaste: 0, drinkConcentration: 0 };
+
+/** What the MP optimizer panel section was last asked for; null until typed, so the measured rate fills it */
+let optimTarget = null;
 
 /**
  * The running tally, at module scope so the row can read it.
@@ -44,6 +62,48 @@ let tally = newManaTally();
 /** Start the count again from here */
 export function resetManaTally() {
     tally = newManaTally();
+    firstEventAt = null;
+    lastEventAt = null;
+}
+
+/**
+ * Note that something was counted, for the span a per-minute rate divides by.
+ * @param {number} [now] - Clock reading, injectable for tests
+ */
+function markEvent(now = Date.now()) {
+    if (firstEventAt === null) firstEventAt = now;
+    lastEventAt = now;
+}
+
+/**
+ * Mana spent per minute of wall-clock time between the first and last counted
+ * event, idle gaps between fights included — the rate consumables must sustain.
+ * @returns {number|null} Null until a minute has been observed
+ */
+export function manaPerMinuteMeasured() {
+    if (firstEventAt === null || lastEventAt - firstEventAt < MIN_RATE_SPAN_MS) return null;
+    const { mana } = manaSpend();
+    if (!(mana > 0)) return null;
+    return (mana / (lastEventAt - firstEventAt)) * 60_000;
+}
+
+/**
+ * Cheapest and maximum MP supply for a target, priced at the current pricing mode.
+ *
+ * @param {number} targetMpPerMinute - MP per minute the items must supply
+ * @returns {{best: Object|null, max: Object|null, candidates: number}} `best` is null when out of reach
+ */
+export function mpSupplyPlan(targetMpPerMinute) {
+    const itemDetailMap = dataManager.getInitClientData?.()?.itemDetailMap || {};
+    const candidates = buildMpCandidates(itemDetailMap, {
+        priceOf: (hrid) => resolveItemPrice(hrid, { side: 'buy' }).price,
+        ...haste,
+    });
+    return {
+        best: findBestOptimAllocation(candidates, targetMpPerMinute),
+        max: findMaxMpAllocation(candidates),
+        candidates: candidates.length,
+    };
 }
 
 /** @returns {Object} From `manaSummary` */
@@ -86,7 +146,17 @@ export default {
         // checkbox did nothing
         if (!config.getSetting('manaTracker')) return;
 
-        onNewBattle = () => recordFight(tally);
+        onNewBattle = (data) => {
+            recordFight(tally);
+            markEvent();
+
+            const characterId = dataManager.getCurrentCharacterId?.();
+            const self = (data?.players || []).find((player) => player?.character?.id === characterId);
+            const stats = self?.combatDetails?.combatStats;
+            if (stats) {
+                haste = { foodHaste: stats.foodHaste || 0, drinkConcentration: stats.drinkConcentration || 0 };
+            }
+        };
         onAbility = (data) => {
             // A spectated guild trial's own casts ride this same message,
             // flagged `isGuildBattle` (KikiMeter reads the same flag off it).
@@ -101,6 +171,7 @@ export default {
             const abilityHrid = data?.ability?.abilityHrid || data?.ability;
             if (typeof abilityHrid !== 'string') return;
             recordCast(tally, abilityHrid, manaCostOf(abilityHrid));
+            markEvent();
         };
         // The tally is kept across a settings toggle on purpose — see the
         // module note — but a character switch is a different character's run
@@ -108,7 +179,12 @@ export default {
         // rotation-tracker.js draws on the same event for the same reason.
         // Without this, mana spent by whoever was played before the switch
         // stayed in the total and was shown as this character's.
-        onCharacterSwitching = () => resetManaTally();
+        onCharacterSwitching = () => {
+            resetManaTally();
+            // Another character's haste would price this one's items wrongly
+            haste = { foodHaste: 0, drinkConcentration: 0 };
+            optimTarget = null;
+        };
 
         webSocketHook.on('new_battle', onNewBattle);
         webSocketHook.on('battle_consumable_ability_updated', onAbility);
@@ -125,6 +201,126 @@ export default {
 };
 
 /**
+ * One allocation as panel lines and a total.
+ * @param {HTMLElement} card - Card to fill
+ * @param {{items: Array<Object>, mpPerMinute: number, costPerHour: number}} allocation
+ */
+function drawAllocation(card, allocation) {
+    for (const item of allocation.items) {
+        card.appendChild(
+            panelLine(
+                item.name,
+                `${formatWithSeparator(Math.round(item.mpPerMinute))} MP/min  ·  ${formatWithSeparator(Math.round(item.costPerHour))}/h`,
+                ROW_COLORS.gold,
+                `${formatWithSeparator(item.mpPerUse)} MP per use, ${item.usesPerMinute.toFixed(2)} uses per minute at ` +
+                    `${formatWithSeparator(Math.round(item.price))} each` +
+                    (item.alsoHeals ? '. It also heals, so it takes an HP slot type as well.' : '')
+            )
+        );
+    }
+    card.appendChild(
+        panelLine('Total', `${formatWithSeparator(Math.round(allocation.mpPerMinute))} MP/min`, ROW_COLORS.accent)
+    );
+    card.appendChild(
+        panelLine('Cost', `${formatWithSeparator(Math.round(allocation.costPerHour))}/h`, ROW_COLORS.accent)
+    );
+}
+
+/**
+ * The cheapest mana foods and drinks for a target, and the most the slots allow.
+ * @param {HTMLElement} body - Panel body
+ */
+function drawMpSupply(body) {
+    const measured = manaPerMinuteMeasured();
+    const target = optimTarget ?? (measured === null ? null : Math.ceil(measured));
+
+    const card = panelCard(body, 'Cheapest MP supply', '#8fd6ff');
+
+    const controls = document.createElement('div');
+    Object.assign(controls.style, { display: 'flex', gap: '6px', alignItems: 'center', marginBottom: '3px' });
+
+    const label = document.createElement('span');
+    label.textContent = 'Target MP/min';
+    label.style.color = 'rgba(232, 236, 245, 0.5)';
+
+    const input = document.createElement('input');
+    input.type = 'number';
+    input.min = '0';
+    input.dataset.mpTarget = 'true';
+    input.value = target === null ? '' : String(target);
+    Object.assign(input.style, {
+        width: '80px',
+        background: 'rgba(255, 255, 255, 0.08)',
+        border: '1px solid rgba(255, 255, 255, 0.10)',
+        borderRadius: '3px',
+        color: '#e8ecf5',
+        padding: '2px 6px',
+    });
+
+    const apply = () => {
+        const typed = parseFloat(input.value);
+        optimTarget = Number.isFinite(typed) && typed >= 0 ? typed : null;
+        manaPanel.render();
+    };
+    input.addEventListener('keydown', (event) => {
+        if (event.key === 'Enter') apply();
+    });
+
+    const go = document.createElement('button');
+    go.textContent = 'Calculate';
+    go.dataset.mpCalculate = 'true';
+    Object.assign(go.style, {
+        background: 'rgba(255, 255, 255, 0.08)',
+        border: '1px solid rgba(255, 255, 255, 0.10)',
+        borderRadius: '3px',
+        color: '#e8ecf5',
+        cursor: 'pointer',
+        fontSize: '11px',
+        padding: '2px 10px',
+    });
+    go.addEventListener('click', apply);
+
+    controls.append(label, input, go);
+    card.appendChild(controls);
+
+    if (measured !== null) {
+        card.appendChild(
+            panelLine(
+                'Measured spend',
+                `${formatWithSeparator(Math.round(measured))} MP/min`,
+                ROW_COLORS.accent,
+                'Mana spent over the time between the first and last counted cast or fight, idle gaps included.'
+            )
+        );
+    }
+
+    const plan = mpSupplyPlan(target ?? 0);
+    if (plan.candidates === 0) {
+        card.appendChild(panelNote('No priced mana food or drink to choose from yet. Open the market to load prices.'));
+        return;
+    }
+    if (target === null) {
+        card.appendChild(panelNote('Enter a target, or fight for a minute so the measured spend can fill it in.'));
+    } else if (plan.best) {
+        drawAllocation(card, plan.best);
+    } else {
+        card.appendChild(panelNote(`${formatWithSeparator(target)} MP/min is out of reach with the slots available.`));
+    }
+
+    if (plan.max && (target === null || !plan.best || plan.max.mpPerMinute > plan.best.mpPerMinute + 1e-9)) {
+        const max = panelCard(body, 'Most MP the slots allow', '#8fd6ff');
+        drawAllocation(max, plan.max);
+    }
+
+    body.appendChild(
+        panelNote(
+            'Rates assume each item is used every time its cooldown ends, before natural regeneration. ' +
+                'Prices follow your pricing mode.'
+        )
+    );
+}
+
+/**
  * What the run has cost in mana, ability by ability.
  *
  * The tile carries one figure; the question behind it is which ability is
@@ -133,7 +329,7 @@ export default {
 export const manaPanel = createPanel({
     id: 'manaPanel',
     title: 'Mana',
-    size: { width: 380, height: 320 },
+    size: { width: 400, height: 560 },
     accent: '#8fd6ff',
     draw: (body) => {
         const summary = manaSpend();
@@ -169,6 +365,8 @@ export const manaPanel = createPanel({
             manaPanel.render();
         });
         run.appendChild(reset);
+
+        drawMpSupply(body);
 
         if (!summary.abilities.length) {
             body.appendChild(panelNote('Nothing cast yet. Mana is counted from the game announcing a cast.'));

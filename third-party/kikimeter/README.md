@@ -58,6 +58,12 @@ re-implemented against its own attribution module, its own storage and its own p
   — but it is now frozen explicitly, and the stale-stream fallback and the `currentTrialsData`
   parse are both taken from here.
 
+- **Cheapest MP supply.** The Optim tab of **v4.3.2** searches food and drink for the cheapest
+  set that reaches a target MP per minute, plus a maximum-MP variant. Toolasha's version is
+  `src/utils/mp-optimizer.js`: written from scratch, it takes cooldowns, restore amounts and the
+  one-item-per-slot-type rule from the item data rather than item names and fixed durations, and
+  its rates follow the simulator's food haste and drink concentration.
+
 ## What was not adopted
 
 - **The DOM name scraping.** KikiMeter reads the trial roster out of `MiniUnit_name` elements
