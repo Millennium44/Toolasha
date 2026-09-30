@@ -1305,6 +1305,27 @@ describe('a paid swing in a crowd tick', () => {
         expect(events.reduce((sum, event) => sum + event.amount * event.weight, 0)).toBeCloseTo(1440, 6);
     });
 
+    test('a single-target swinger shared across three monsters is credited at most its one swing', () => {
+        // The area swinger (slot 2) sits before the single-target one (slot 12) in the payload, and its per-monster
+        // count resets on every monster; slot 12's one swing must be spent by what it is credited, not re-offered
+        const events = mixed(
+            {
+                0: insect(299970, 2, 32, 29, 1063337956),
+                1: insect(312440, 1, 17, 17, 1248266296),
+                2: insect(319221, 1, 17, 17, 1202034211),
+            },
+            {
+                0: insect(299170, 2, 33, 29, 1063337956),
+                1: insect(311640, 1, 18, 18, 1248266296),
+                2: insect(318421, 1, 18, 17, 1202034211),
+            }
+        ).filter((event) => !event.isKill && event.playerIndex === '12');
+
+        const tally = foldEvents({}, events, { filterNonDamaging: false });
+        expect(tally['12'].hits).toBeLessThanOrEqual(1 + 1e-9);
+        expect(tally['12'].damage).toBeLessThanOrEqual(800 + 1e-6);
+    });
+
     test('a paid killing splat from the only swinger in a crowd makes the kill theirs', () => {
         const events = mixed(
             { 0: insect(4000, 2, 32, 29, 1063337956), 3: insect(316465, 1, 17, 16, 1421800947) },
