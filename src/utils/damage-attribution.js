@@ -919,9 +919,11 @@ export function attributeTick(tick, state, options) {
             // The pool as it stood before this monster's first rise: consuming a swing per rise must not shift
             // the shares between the monster's own splats
             const owners = swingOwners({ swinger: taken.swinger, pool: paid[0].pool });
-            // The killing splat is the last rise; when it was paid and has one owner the kill is theirs
+            // The killing splat is the last rise. The kill is someone's only when one player could have made
+            // any of this monster's splats: with several possible swingers the counters say nothing about
+            // which splat came last, and the last one paid is just the last in slot order
             if (killEvent && killEvent.killerIndex === null && unpaid === 0 && n === paid.length - 1) {
-                if (owners.length === 1) killEvent.killerIndex = owners[0].index;
+                if (owners.length === 1 && paid[0].pool.length === 1) killEvent.killerIndex = owners[0].index;
             }
             for (const owner of owners) events.push(swingEvent(owner, index, perSplat, isCrit));
         });

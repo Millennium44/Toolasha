@@ -1316,6 +1316,33 @@ describe('a paid swing in a crowd tick', () => {
         expect(kills).toEqual([{ monsterIndex: '0', isKill: true, killerIndex: '12' }]);
     });
 
+    test('in a small tick two swingers that kill a monster leave the kill unowned', () => {
+        // Two players, each counter up by one, two splats that kill: which landed last is unknowable
+        const pair = (p2, p12) => ({ 2: p2, 12: p12 });
+        const before = {
+            ...baseline,
+            pMap: pair(baseline.pMap[2], baseline.pMap[12]),
+            mMap: { 0: insect(3000, 2, 32, 29, 1063337956) },
+        };
+        const after = {
+            ...cast,
+            pMap: pair(
+                unit(2202, 2400, 2638, 4, '/abilities/frost_surge', 1055578309, 0),
+                unit(2202, 2438, 2638, 4, '/abilities/frost_surge', 801861601, 1)
+            ),
+            mMap: { 0: insect(0, 2, 34, 29, 1063337956) },
+        };
+        const state = newAttributionState();
+        attributeTick(before, state, { soloFallback: false, unattributed: true });
+        noteActions(state, before.pMap);
+        const kills = attributeTick(after, state, { soloFallback: false, unattributed: true }).filter(
+            (event) => event.isKill
+        );
+
+        expect(kills).toHaveLength(1);
+        expect(kills[0].killerIndex).toBeNull();
+    });
+
     test('several splats on one monster keep the swing-count shares of the first', () => {
         // Counters up by 2 and 1, three equal splats on one monster: 2:1, not what the slot order leaves behind
         const both = {
