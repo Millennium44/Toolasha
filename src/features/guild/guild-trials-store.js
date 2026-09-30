@@ -601,6 +601,22 @@ export function archiveEarlierCycles(
 }
 
 /**
+ * The `cycleStart` field of a record, or nothing.
+ *
+ * `cycleStart` is the client ms the running cycle's skilling hour was last seen
+ * to start (test server only; live never writes it). It is persisted because the
+ * combat hour's payload no longer states it, and a reload between the two hours
+ * would otherwise cut same-cycle skilling-hour samples as an earlier cycle.
+ * Records rebuilt field by field must pass it through this to keep it.
+ *
+ * @param {*} value - A stored or merged value
+ * @returns {{cycleStart: number}|{}} The field when it is a finite number
+ */
+function cycleStartField(value) {
+    return Number.isFinite(value) ? { cycleStart: value } : {};
+}
+
+/**
  * The key a tile's history is stored under.
  *
  * Name plus kind rather than name alone: two trials could in principle share a
@@ -1022,6 +1038,7 @@ export function mergeTrialRecords(base, incoming) {
         guildId: record.guildId ?? null,
         guildName: record.guildName ?? null,
         history: Array.isArray(record.history) ? record.history : [],
+        ...cycleStartField(record.cycleStart),
     });
     if (baseWeek === null) return incoming ? whole(incoming) : emptyRecord(0);
     if (incomingWeek === null) return whole(base);
@@ -1141,7 +1158,9 @@ export function mergeTrialRecords(base, incoming) {
         }
     }
 
-    return { weekStart: baseWeek, tiles, ...provenance };
+    // The later boundary: it is the running cycle's, and an older one is a cycle ago
+    const cycleStart = Math.max(base.cycleStart ?? -Infinity, incoming.cycleStart ?? -Infinity);
+    return { weekStart: baseWeek, tiles, ...provenance, ...cycleStartField(cycleStart) };
 }
 
 /*
@@ -1206,6 +1225,7 @@ export async function loadTrialRecord(guildName, now = Date.now(), characterId =
             history: Array.isArray(record.history) ? record.history : [],
             guildId: record.guildId ?? guildId,
             guildName: record.guildName ?? guildName,
+            ...cycleStartField(record.cycleStart),
         });
 
         // The other half of the way in: a record written before the personal
