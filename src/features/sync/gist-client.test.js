@@ -7,6 +7,7 @@ import {
     chunkFileName,
     chunkIndexFromName,
     findSyncGist,
+    httpRequest,
     readSyncGist,
     writeSyncGist,
 } from './gist-client.js';
@@ -39,6 +40,28 @@ beforeEach(() => {
 
 afterEach(() => {
     delete globalThis.GM_xmlhttpRequest;
+});
+
+describe('httpRequest anonymous', () => {
+    test('forwards anonymous to GM_xmlhttpRequest only when asked', async () => {
+        responses.push({ body: {} }, { body: {} });
+        await httpRequest({ method: 'GET', url: 'https://example.test/a', anonymous: true });
+        await httpRequest({ method: 'GET', url: 'https://example.test/b' });
+        expect(calls[0].anonymous).toBe(true);
+        expect('anonymous' in calls[1]).toBe(false);
+    });
+
+    test('fetch fallback omits credentials', async () => {
+        delete globalThis.GM_xmlhttpRequest;
+        const fetchMock = vi.fn(async () => ({ status: 200, text: async () => '', headers: new Headers() }));
+        vi.stubGlobal('fetch', fetchMock);
+        try {
+            await httpRequest({ method: 'GET', url: 'https://example.test/a', anonymous: true });
+            expect(fetchMock.mock.calls[0][1].credentials).toBe('omit');
+        } finally {
+            vi.unstubAllGlobals();
+        }
+    });
 });
 
 describe('chunkPayload', () => {
