@@ -5009,6 +5009,28 @@ export function planWithinBudget(results, budget, { baselineFights = [], include
         return marginal;
     };
 
+    /**
+     * The earlier picks a candidate would replace: same group, and beaten by it
+     * in every room they cover. Bought alongside them it would never be worn
+     * over them, so it is priced as a swap — their cost comes back — and the
+     * pick that stands afterwards is the one that has to fit the budget.
+     */
+    const displacedBy = (entry) => {
+        const displaced = [];
+        for (let i = picks.length - 1; i >= 0; i--) {
+            const older = picks[i];
+            if (conflictKey(older.candidate) !== entry.key) continue;
+            const olderSavings = savingsOf(older);
+            if (olderSavings.every((saving, index) => saving <= (entry.savings[index] ?? 0) + 1e-9)) {
+                displaced.push(i);
+            }
+        }
+        return displaced;
+    };
+    /** Spend after buying `entry`, with whatever it displaces given back */
+    const costWithReplacements = (entry, displaced) =>
+        entry.result.cost - displaced.reduce((sum, i) => sum + picks[i].cost, 0);
+
     const remaining = [...eligible];
     while (remaining.length) {
         let best = null;
@@ -5017,10 +5039,10 @@ export function planWithinBudget(results, budget, { baselineFights = [], include
             // the other swaps into the slot it empties and the other offers of
             // the book it buys
             if (isExclusive(entry.result.candidate) && entry.keys.some((key) => taken.has(key))) continue;
-            if (spent + entry.result.cost > budget) continue;
+            const cost = costWithReplacements(entry, displacedBy(entry));
+            if (spent + cost > budget) continue;
             const marginal = marginalOf(entry);
             if (marginal <= 0) continue;
-            const cost = entry.result.cost;
             // Gain per coin is meaningless at or below zero cost — everything
             // free ties at infinity and a refund divided by a small gain is
             // *more* negative the worse the row is. So the free-and-refunding
@@ -5045,6 +5067,17 @@ export function planWithinBudget(results, budget, { baselineFights = [], include
         const { entry, marginal } = best;
         remaining.splice(remaining.indexOf(entry), 1);
         for (const key of entry.keys) taken.add(key);
+
+        // A piece nobody would now wear is gold spent on nothing: an earlier
+        // pick in this group that this one beats in every room it covered is
+        // taken back out and its cost and gain reversed. Done before the new
+        // pick goes in, at the price `best.cost` was affordability-checked at
+        for (const i of displacedBy(entry)) {
+            const older = picks[i];
+            spent -= older.cost;
+            picks.splice(i, 1);
+            skipped.push({ result: older, reason: 'a later pick covers every room it did' });
+        }
         spent += entry.result.cost;
         picks.push({
             ...entry.result,
@@ -5057,20 +5090,6 @@ export function planWithinBudget(results, budget, { baselineFights = [], include
             entry.key,
             standing.map((saving, index) => Math.max(saving, entry.savings[index]))
         );
-
-        // A piece nobody would now wear is gold spent on nothing: if an earlier
-        // pick in this group has been beaten in every room it covered, take it
-        // back out and give the budget back
-        for (let i = picks.length - 2; i >= 0; i--) {
-            const older = picks[i];
-            if (conflictKey(older.candidate) !== entry.key) continue;
-            const olderSavings = savingsOf(older);
-            if (olderSavings.every((saving, index) => saving <= (entry.savings[index] ?? 0) + 1e-9)) {
-                spent -= older.cost;
-                picks.splice(i, 1);
-                skipped.push({ result: older, reason: 'a later pick covers every room it did' });
-            }
-        }
     }
 
     for (const entry of remaining) {
@@ -5079,7 +5098,7 @@ export function planWithinBudget(results, budget, { baselineFights = [], include
             // Otherwise this reads as "worthless", when it may well be the
             // second-best swap into a slot the plan has already filled
             reason = 'a pick already uses what this needs';
-        } else if (spent + entry.result.cost > budget) {
+        } else if (spent + costWithReplacements(entry, displacedBy(entry)) > budget) {
             reason = 'over budget';
         } else {
             reason = 'adds nothing the picks do not already cover';
@@ -5091,6 +5110,12 @@ export function planWithinBudget(results, budget, { baselineFights = [], include
     let attemptsSaved = 0;
     for (const savings of bestBySlot.values()) {
         for (const saving of savings) attemptsSaved += saving;
+    }
+
+    // Every acceptance above was checked against the spend it leaves behind, so
+    // this cannot fire; it exists so a future edit that breaks that says so
+    if (picks.length && spent > budget) {
+        console.error('[UpgradeAdvisor] planWithinBudget spent', spent, 'against a budget of', budget);
     }
 
     return { picks, totalCost: spent, attemptsSaved, skipped, budget };
