@@ -218,8 +218,9 @@ export function buildHistogramSvg(bins) {
     const top = 16;
     const bottom = 20;
     const plotHeight = height - top - bottom;
-    const slot = width / bins.length;
-    const barWidth = Math.max(2, slot - 2);
+    // A bin sits over its own span of the axis: a width that does not divide 100 leaves a narrower last bin,
+    // and equal slots would put every bar off the tick labels (which are placed by bin edge)
+    const slotOf = (bin) => ((bin.max - bin.min) / 100) * width;
     const peak = Math.max(1, ...bins.map((bin) => bin.count));
 
     const svg = document.createElementNS(SVG_NS, 'svg');
@@ -241,9 +242,12 @@ export function buildHistogramSvg(bins) {
         return el;
     };
 
-    bins.forEach((bin, index) => {
+    bins.forEach((bin) => {
         const barHeight = (bin.count / peak) * plotHeight;
-        const x = index * slot + (slot - barWidth) / 2;
+        const slot = slotOf(bin);
+        const barWidth = Math.max(2, slot - 2);
+        const slotStart = (bin.min / 100) * width;
+        const x = slotStart + (slot - barWidth) / 2;
         const rect = document.createElementNS(SVG_NS, 'rect');
         rect.setAttribute('x', x.toFixed(1));
         rect.setAttribute('y', (top + plotHeight - barHeight).toFixed(1));
@@ -256,7 +260,7 @@ export function buildHistogramSvg(bins) {
         rect.appendChild(title);
         svg.appendChild(rect);
 
-        const cx = index * slot + slot / 2;
+        const cx = slotStart + slot / 2;
         if (bin.count > 0)
             svg.appendChild(text(cx, top + plotHeight - barHeight - 3, String(bin.count), 'middle', '#e8ecf5'));
     });
