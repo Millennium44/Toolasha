@@ -490,6 +490,7 @@ class LabyrinthClearRate {
             this.clearPathOverlays();
             this.clearBeaconOverlays();
             this.pathCalcRunning = false;
+            this._pathQueued = false;
             pruneEmptyAnnotationContainers();
 
             if (this._editClickHandler) {
@@ -2947,6 +2948,7 @@ class LabyrinthClearRate {
         container.appendChild(body);
         applyCollapsed();
         this.syncTileCalcButton();
+        this.setPathButtonRunning(!!this.pathCalcRunning);
 
         if (host) {
             container.style.margin = '2px 0 2px 12px';
@@ -3275,6 +3277,15 @@ class LabyrinthClearRate {
             if (this.simEpoch() === epoch) {
                 this.tileCalcRunning = false;
                 this.syncTileCalcButton();
+                // Cleared before it runs, so a calculation the path itself
+                // triggers cannot queue it again. Cancelling the calculation
+                // withdraws the wait too: the rooms it skipped are unjudged.
+                const wantsPath = this._pathQueued;
+                this._pathQueued = false;
+                this.setPathButtonRunning(false);
+                if (wantsPath && !cancelled) this.runPathCalculation();
+            } else {
+                this._pathQueued = false;
             }
         }
     }
@@ -3582,6 +3593,15 @@ class LabyrinthClearRate {
 
     async runPathCalculation() {
         if (this.pathCalcRunning) return;
+        // Pathing on a floor still being calculated would sim the same rooms a
+        // second time alongside the running pass, or judge them on partial
+        // results. A press waits its turn instead, and a second press withdraws
+        // the wait; `runTileCalculation` starts the queued path once it settles.
+        if (this.tileCalcRunning) {
+            this._pathQueued = !this._pathQueued;
+            this.setPathButtonRunning(false);
+            return;
+        }
         // Trust the live client grid over the last websocket snapshot, which may
         // have missed a tile's clear (dropped `labyrinth_updated`, common on
         // mobile) and would otherwise route back through a room already cleared.
@@ -4121,12 +4141,23 @@ class LabyrinthClearRate {
         }
     }
 
+    /**
+     * The Path button's state: idle, running, or waiting behind a floor
+     * calculation. A waiting button stays enabled, because pressing it again is
+     * how the wait is withdrawn.
+     * @param {boolean} running - Whether a path calculation is in flight
+     */
     setPathButtonRunning(running) {
         const btn = document.querySelector(`.${TILE_CONTROLS_CLASS}-path-button`);
         if (btn) {
+            const queued = !running && !!this._pathQueued;
+            if (btn.dataset.baseTitle === undefined) btn.dataset.baseTitle = btn.title;
             btn.disabled = running;
-            btn.textContent = running ? 'Pathing...' : 'Path';
-            btn.style.opacity = running ? '0.75' : '1';
+            btn.textContent = running ? 'Pathing...' : queued ? 'Path (waiting...)' : 'Path';
+            btn.title = queued
+                ? 'Waiting for the room calculation to finish, then paths once. Press again to cancel.'
+                : btn.dataset.baseTitle;
+            btn.style.opacity = running || queued ? '0.75' : '1';
         }
     }
 
