@@ -426,6 +426,20 @@ describe('next board button', () => {
         expect(bar().style.display).toBe('flex');
     });
 
+    test('is hidden on a Steam cohort tab, whose boards never feed the global cache', async () => {
+        game.mode = 'local';
+        buildPanel();
+        await leaderboardRankBadges.initialize();
+
+        game.wsHandlers.leaderboard_updated({ ...board('total_level'), playerCohortFilter: 'steam' });
+        await flush();
+        expect(bar().style.display).toBe('none');
+
+        game.wsHandlers.leaderboard_updated(board('total_level'));
+        await flush();
+        expect(bar().style.display).toBe('flex');
+    });
+
     test('insertion is idempotent across re-renders', async () => {
         game.mode = 'local';
         const { content } = buildPanel();

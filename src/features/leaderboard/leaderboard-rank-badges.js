@@ -43,6 +43,7 @@ import {
     boardKey,
     buildNameIndex,
     categoryLabel,
+    isNarrowedBoard,
     mergeBoards,
     nextBoardCategory,
     normalizeName,
@@ -296,7 +297,8 @@ class LeaderboardRankBadges {
     onLocalBoard(data) {
         // Judged before parsing: a guild board never parses, yet it is what decides whether the bar applies
         if (typeof data?.leaderboardCategory === 'string') {
-            this.playerBoardOpen = RANK_CATEGORIES.includes(data.leaderboardCategory);
+            // A Steam cohort tab never feeds the global cache, so cycling it would fill nothing
+            this.playerBoardOpen = RANK_CATEGORIES.includes(data.leaderboardCategory) && !isNarrowedBoard(data);
             this.refreshCycleBars();
         }
         const parsed = parseLocalBoard(data, Date.now());

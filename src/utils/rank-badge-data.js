@@ -167,6 +167,22 @@ function readRows(rows, nameOf) {
 }
 
 /**
+ * Whether a `leaderboard_updated` message is a narrowed view (a Steam cohort tab, say) rather than
+ * the global board. `gameModeFilter` is the Standard/Ironcow tab, not a narrowing.
+ * @param {Object} data - `leaderboard_updated` message
+ * @returns {boolean} True for a filtered view
+ */
+export function isNarrowedBoard(data) {
+    if (!data || typeof data !== 'object') return false;
+    for (const key of Object.keys(data)) {
+        if (key === 'gameModeFilter' || !/Filter$/.test(key)) continue;
+        const value = data[key];
+        if (typeof value === 'string' && value && value !== 'all') return true;
+    }
+    return false;
+}
+
+/**
  * A board the player opened, from the game's `leaderboard_updated` message.
  * @param {Object} data - The message
  * @param {number} now - Timestamp to stamp the board with
@@ -183,12 +199,8 @@ export function parseLocalBoard(data, now) {
     const type = normalizeBoardType(data.leaderboardType ?? board?.type ?? data.gameModeFilter);
     if (!type) return null;
     // Badges mean global ranks: a cohort (Steam) or other narrowed view lists a partial top 100 that
-    // must not replace the complete snapshot. `gameModeFilter` is the type tab, not a narrowing.
-    for (const key of Object.keys(data)) {
-        if (key === 'gameModeFilter' || !/Filter$/.test(key)) continue;
-        const value = data[key];
-        if (typeof value === 'string' && value && value !== 'all') return null;
-    }
+    // must not replace the complete snapshot
+    if (isNarrowedBoard(data)) return null;
     const rows = readRows(board?.rows, (row) => row.name ?? row.characterName);
     if (!rows.length) return null;
     return { key: boardKey(type, category), board: { at: now, source: 'local', rows } };
