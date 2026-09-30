@@ -33,6 +33,9 @@ vi.mock('../../core/websocket.js', () => ({
     },
 }));
 
+// The panel prices items through this, which drags in the market API and its socket
+vi.mock('../../utils/profit-helpers.js', () => ({ resolveItemPrice: () => ({ price: null }) }));
+
 const manaTracker = (await import('./mana-tracker.js')).default;
 const { resetManaTally, manaSpend, abilityLabel } = await import('./mana-tracker.js');
 
