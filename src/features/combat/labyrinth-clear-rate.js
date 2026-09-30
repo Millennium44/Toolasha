@@ -3170,9 +3170,12 @@ class LabyrinthClearRate {
                 // Worked out arithmetically in one burst, so never a step of the bar
                 doneUpFront++;
             } else {
-                const cached = !!this.peekCombatClear(room.monsterHrid, roomLevel, { uncapped });
+                const hit = this.peekCombatClear(room.monsterHrid, roomLevel, { uncapped });
+                // Served from the cache, so finished before the first sim starts —
+                // unless it is a 0% an auto pass treats as suspicious and retries,
+                // which counted up front and then subtracted walked the bar back
+                const cached = !!hit && !(auto && !(hit.clearChance > 0));
                 combatTargets.push({ room, cell, roomLevel, tileKey, cached });
-                // Served from the cache, so finished before the first sim starts
                 if (cached) doneUpFront++;
             }
         }
