@@ -170,12 +170,49 @@ function binColor(min, max) {
     return '#5fcf8a';
 }
 
+/** Approximate glyph width of the 9px axis labels, in viewBox units */
+const AXIS_CHAR_WIDTH = 5.5;
+/** Clear space kept between neighbouring axis labels, in viewBox units */
+const AXIS_LABEL_GAP = 4;
+
+/**
+ * Axis tick labels at the bin edges, thinned so none overprint another.
+ * The first label is start-anchored and the last end-anchored so neither spills
+ * out of the viewBox; 0 and 100% are always kept, middle edges are dropped
+ * where they would touch a label already placed or the closing 100%.
+ * @param {Array<{min: number, max: number}>} bins - From `summarizeRoomDistribution`
+ * @param {number} width - Plot width in viewBox units
+ * @returns {Array<{x: number, text: string, anchor: string, left: number, right: number}>} Left to right
+ */
+export function buildAxisLabels(bins, width) {
+    const edges = [...bins.map((bin) => bin.min), bins[bins.length - 1].max];
+    const make = (edge, isFirst, isLast) => {
+        const content = isLast ? `${edge}%` : String(edge);
+        const span = content.length * AXIS_CHAR_WIDTH;
+        const x = (edge / 100) * width;
+        if (isFirst) return { x, text: content, anchor: 'start', left: x, right: x + span };
+        if (isLast) return { x, text: content, anchor: 'end', left: x - span, right: x };
+        return { x, text: content, anchor: 'middle', left: x - span / 2, right: x + span / 2 };
+    };
+    const last = make(edges[edges.length - 1], false, true);
+    const labels = [make(edges[0], true, false)];
+    for (let i = 1; i < edges.length - 1; i++) {
+        const label = make(edges[i], false, false);
+        const previous = labels[labels.length - 1];
+        if (label.left - previous.right >= AXIS_LABEL_GAP && last.left - label.right >= AXIS_LABEL_GAP) {
+            labels.push(label);
+        }
+    }
+    labels.push(last);
+    return labels;
+}
+
 /**
  * Draw the histogram as an SVG that scales to the panel's width.
  * @param {Array} bins - From `summarizeRoomDistribution`
  * @returns {SVGElement}
  */
-function buildHistogramSvg(bins) {
+export function buildHistogramSvg(bins) {
     const width = 300;
     const height = 130;
     const top = 16;
@@ -184,8 +221,6 @@ function buildHistogramSvg(bins) {
     const slot = width / bins.length;
     const barWidth = Math.max(2, slot - 2);
     const peak = Math.max(1, ...bins.map((bin) => bin.count));
-    // Labels every bin would overprint each other past ten bins
-    const labelEvery = bins.length > 10 ? Math.ceil(bins.length / 10) : 1;
 
     const svg = document.createElementNS(SVG_NS, 'svg');
     svg.setAttribute('viewBox', `0 0 ${width} ${height}`);
@@ -224,9 +259,10 @@ function buildHistogramSvg(bins) {
         const cx = index * slot + slot / 2;
         if (bin.count > 0)
             svg.appendChild(text(cx, top + plotHeight - barHeight - 3, String(bin.count), 'middle', '#e8ecf5'));
-        if (index % labelEvery === 0) svg.appendChild(text(cx, height - 6, String(bin.min), 'middle', '#9ab0d8'));
     });
-    svg.appendChild(text(width, height - 6, '100%', 'end', '#9ab0d8'));
+    for (const label of buildAxisLabels(bins, width)) {
+        svg.appendChild(text(label.x, height - 6, label.text, label.anchor, '#9ab0d8'));
+    }
     return svg;
 }
 
