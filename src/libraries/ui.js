@@ -114,6 +114,7 @@ import predictionCalibration from '../features/insights/index.js';
 // Leaderboard
 import leaderboardXPTracker from '../features/leaderboard/leaderboard-xp-tracker.js';
 import leaderboardXPDisplay from '../features/leaderboard/leaderboard-xp-display.js';
+import leaderboardRankBadges from '../features/leaderboard/leaderboard-rank-badges.js';
 
 // Notifications
 import emptyQueueNotification from '../features/notifications/empty-queue-notification.js';
@@ -247,6 +248,7 @@ toolashaRoot.UI = {
     predictionCalibration,
     leaderboardXPTracker,
     leaderboardXPDisplay,
+    leaderboardRankBadges,
     emptyQueueNotification,
     communityBuffAlerts,
     labyrinthRunAlerts,

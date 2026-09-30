@@ -3908,6 +3908,26 @@ export const settingsGroups = {
                 default: true,
                 help: 'Adds Last XP/h and Last day XP/h columns to the player Leaderboard panel.',
             },
+            leaderboardRankBadges: {
+                id: 'leaderboardRankBadges',
+                label: 'Leaderboard rank badges next to player names',
+                type: 'select',
+                default: 'off',
+                options: [
+                    { value: 'off', label: 'Off' },
+                    { value: 'local', label: 'Local only (leaderboards you open)' },
+                    { value: 'server', label: 'MWITools data server (polls an external site every 15 min)' },
+                ],
+                help:
+                    'Shows a small pill with a skill icon and rank beside the names of players in the top 100 of a ' +
+                    'leaderboard (chat, guild, friends, profiles): gold, silver and bronze bands, and a rainbow ' +
+                    'border for the top 20. Local only uses just the rows the game sends when you open a ' +
+                    'leaderboard, so a badge appears only for boards you have looked at. The MWITools data server ' +
+                    'option also fetches from a third-party host (mwi-guild.43.167.210.211.sslip.io, the one the MWITools script uses, ' +
+                    'not run by Toolasha) every 15 minutes while the game is open. Each request ' +
+                    'is a plain GET carrying only the board type (standard or ironcow) and sends nothing about you ' +
+                    'or your character, but the host does see your IP address. Off runs nothing and contacts nobody.',
+            },
         },
     },
 

@@ -2349,6 +2349,17 @@ function registerFeatures() {
             async: false,
         },
         {
+            key: 'leaderboardRankBadges',
+            name: 'Leaderboard Rank Badges',
+            category: 'Leaderboard',
+            module: UI.leaderboardRankBadges,
+            async: true,
+            // A select, not a switch: the module reads its own setting and
+            // watches it, so changing the dropdown takes effect without a
+            // refresh. Off starts nothing beyond that watch.
+            customCheck: () => true,
+        },
+        {
             key: 'emptyQueueNotification',
             name: 'Empty Queue Notification',
             category: 'Notifications',

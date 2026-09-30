@@ -101,6 +101,19 @@ which portions, what Toolasha does with them, and where.
   `actions_artisanMaterialMode` already handles the tea-rounding half of the same problem, and was
   left alone.
 
+- **Leaderboard rank badges.** MWITools' `leaderboard-overlay` (v1.4.1) draws a pill beside
+  character names with the game's skill sprite and a top-100 rank, in four tier bands, fed by the
+  game's `leaderboard_updated` message and by a third-party data server polled every 15 minutes.
+  Toolasha's `src/features/leaderboard/leaderboard-rank-badges.js` and
+  `src/utils/rank-badge-data.js` take the design — tiers, pill, the standard/ironcow pair, best-rank
+  choice, the server's response shape and endpoint — and no code. Departures: one select setting
+  (`leaderboardRankBadges`, default Off) chooses between nothing, local rows only, and the server;
+  one badge per name with the other ranks in its tooltip, each with the age of its snapshot; the
+  server response is parsed as untrusted and only ever written with `textContent`; cached through
+  the storage module with a per-board newer-wins merge that also serves cross-device sync. The host
+  is declared in `@connect` in both header files. **Not taken:** the leaderboard XP/hour rate
+  column (Toolasha has its own) and the custom icon base URL.
+
 ## What was not adapted
 
 - **MWITools' own market API.** Its value handling sits beside a fetch of a third-party market
