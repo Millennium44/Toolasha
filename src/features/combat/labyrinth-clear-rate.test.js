@@ -4646,6 +4646,36 @@ describe('floor calculation progress bar across a retry', () => {
         for (let i = 1; i < seq.length; i++) expect(seq[i]).toBeGreaterThanOrEqual(seq[i - 1]);
     });
 
+    test('cancelling after a failed room does not show the failed room as done', async () => {
+        const parent = document.createElement('div');
+        for (let i = 0; i < 2; i++) {
+            const cell = document.createElement('div');
+            cell.className = 'LabyrinthPanel_roomCell_abc';
+            parent.appendChild(cell);
+        }
+        document.body.appendChild(parent);
+        labyrinthClearRate.roomData = [
+            [100, 110].map((lvl) => ({ monsterHrid: IMP, recommendedLevel: lvl, isCleared: false })),
+        ];
+        labyrinthClearRate._autoCalcFingerprint = null;
+        labyrinthClearRate.calculatedTileKeys = null;
+        vi.spyOn(labyrinthClearRate, 'computeCombatClear').mockImplementation(async (_hrid, lvl) =>
+            lvl === 100
+                ? { failed: true, clearChance: 0, expectedSeconds: Infinity }
+                : { cancelled: true, failed: true, clearChance: 0, expectedSeconds: Infinity }
+        );
+        const seq = [];
+        const real = labyrinthClearRate.setTileProgress.bind(labyrinthClearRate);
+        vi.spyOn(labyrinthClearRate, 'setTileProgress').mockImplementation((ratio) => {
+            seq.push(ratio);
+            real(ratio);
+        });
+
+        await labyrinthClearRate.runTileCalculation({ auto: true });
+
+        expect(seq[seq.length - 1]).toBe(0);
+    });
+
     test('a last room left for a retry never touches full and drops back', async () => {
         const parent = document.createElement('div');
         for (let i = 0; i < 2; i++) {

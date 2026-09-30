@@ -3268,7 +3268,8 @@ class LabyrinthClearRate {
                 // unset so the rooms that never ran are picked up next time,
                 // and leave every badge already drawn exactly where it is.
                 this._autoCalcFingerprint = null;
-                this.setTileProgress(barFraction());
+                // Net of the rooms that failed before the cancel, as every step was
+                this.setTileProgress(barFraction(combatRetryNeeded));
                 this.setTileStatus('Cancelled');
                 return;
             }
