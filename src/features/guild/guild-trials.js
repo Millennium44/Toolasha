@@ -3754,7 +3754,12 @@ class GuildTrials {
             // over while the combat clock counts down, its record never marked
             // completed because its card was not on screen when it ended — was
             // paced on the other trial's hour and paid for tiers it cannot reach.
-            const running = !(phase === 'completed' || phase === 'scheduled' || this._trialRunning(record) === false);
+            // The page stating live outranks the payload, which may be a login
+            // snapshot from just before the start; the payload only vetoes when
+            // the page says nothing either way
+            const running =
+                phase === 'live' ||
+                !(phase === 'completed' || phase === 'scheduled' || this._trialRunning(record) === false);
             const pace = running ? analysis.pace : null;
             // A trial with no bar to walk — the mates' trials, whose points pay
             // every member the same as the reader's own — is paced from its tier
