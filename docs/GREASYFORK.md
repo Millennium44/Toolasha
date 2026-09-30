@@ -100,7 +100,7 @@ it can be seen:
 - **IOMisaka** — author of the mooket I pooled market history, one of the two
   sources the History panel reads from.
 - **Q7** — author of the
-  [market history viewer](https://greasyfork.org/scripts/531109) (MIT) whose API
+  [market history viewer](https://greasyfork.org/scripts/569362) (MIT) whose API
   usage, volume-split estimate and price panel shape this fork's market history
   is built on.
 - **baozhi & SukiSukiDaiSuki** — authors of
