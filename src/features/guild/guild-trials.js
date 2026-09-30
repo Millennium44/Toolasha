@@ -4427,7 +4427,9 @@ class GuildTrials {
             const breakdown = guildTrialDamage.breakdown?.() || {};
             const roster = Object.values(breakdown.roster || {});
             if (roster.length) guildTrialAbilities.setRoster?.(roster);
-            guildTrialAbilities.setLiveTrial?.(breakdown.encounter ?? null);
+            // Only a real encounter replaces the key: with trial tracking off the
+            // breakdown is empty, and null would erase the one the session kept
+            if (breakdown.encounter) guildTrialAbilities.setLiveTrial?.(breakdown.encounter);
             if (breakdown.tier !== null && breakdown.tier !== undefined) guildTrialAbilities.setTier?.(breakdown.tier);
             openTrialAbilitiesPanel();
         });

@@ -743,6 +743,8 @@ class GuildTrialAbilities {
         // A "start" while the session is being ticked is the same trial moving
         // from its skilling hour into its combat hour, not a new one
         if (this.session && at - sessionLastActivity(this.session) <= TRIAL_START_GRACE_MS) return;
+        // A new trial: last trial's plan section is not this one's
+        this.liveTrialKey = null;
         this._start(at);
         this._persist();
     }
