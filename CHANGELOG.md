@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Guild trial damage meter credits each swing to the player who made it
+
+- In a crowded tick — every Mana Spring cast restores the whole party, so about 50 players appear at once — a player's own swing was split equally across everyone present, so on Trial Swarm most players read about 20% under the game's totals and a few read over. The swing now stays with its swinger; replayed against the game's own stats, per-player error on a recorded Swarm fell from 17% to 2%.
+
 ### Labyrinth beacon planner and calculation follow-ups
 
 - The beacon planner treats the bottom-right exit tile as known, so it never spends a beacon on it or counts it in "reveals N new rooms".
