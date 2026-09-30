@@ -583,6 +583,11 @@ class GuildXPTracker {
             webSocketHook.off('guild_trial_signup_updated', this._boundOnTrialSignupUpdated);
         });
 
+        // The setting can be flipped after startup, and the registry entry no longer follows
+        // it, so nothing else would load the saved history when it comes back on
+        const offSetting = config.onSettingChange?.('guildXPTracker', () => this._onHistorySettingChanged());
+        if (typeof offSetting === 'function') this.unregisterHandlers.push(offSetting);
+
         // If character data already loaded, load the history — but not here.
         //
         // This reads a guild's whole XP history out of IndexedDB, adds a
@@ -599,6 +604,32 @@ class GuildXPTracker {
         }
 
         this.initialized = true;
+    }
+
+    /**
+     * The `guildXPTracker` setting changed. Turning it off needs nothing (every
+     * sampling path checks it); turning it on loads the saved history for the current
+     * guild so the display fills without waiting for the next update.
+     *
+     * Identity-guarded like the login load: a guild switch or the setting flipping
+     * back while the reads are in flight discards the answer.
+     * @returns {Promise<void>}
+     */
+    async _onHistorySettingChanged() {
+        try {
+            const name = this.ownGuildName;
+            const id = this.ownGuildID;
+            if (!this.initialized || !this._recordsHistory() || !name) return;
+
+            const guildLoaded = await this._loadMap(`guildXP_${name}`, this.guildXPHistory);
+            const membersLoaded = id ? await this._loadMap(`memberXP_${id}`, this.memberXPHistory) : null;
+            if (this.ownGuildName !== name || this.ownGuildID !== id || !this._recordsHistory()) return;
+
+            this.guildXPHistory = mergeXPHistories(guildLoaded, this.guildXPHistory);
+            if (membersLoaded) this.memberXPHistory = mergeXPHistories(membersLoaded, this.memberXPHistory);
+        } catch (error) {
+            console.error('[GuildXPTracker] Loading history after the setting came on failed:', error);
+        }
     }
 
     /**
