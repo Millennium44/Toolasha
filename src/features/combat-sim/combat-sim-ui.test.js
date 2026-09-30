@@ -4131,7 +4131,7 @@ describe('a budget the measured picks leave mostly unspent', () => {
         expect(plan.skipped.some((s) => s.result.candidate.description.startsWith('Frenzy'))).toBe(false);
     });
 
-    test('a refund from an estimated swap goes to a measured row the first pass could not afford', () => {
+    test('a refunding estimate stays out of a mixed plan, which never exceeds the budget', () => {
         const row = (description, cost, xpPct, slot, cleared) => ({
             candidate: { upgradeHrid: `/items/${description}`, slot, description, cost },
             cost,
@@ -4144,18 +4144,17 @@ describe('a budget the measured picks leave mostly unspent', () => {
         const plan = planUpgradeBudget(
             [
                 row('Necklace', 900e6, 5, '/equipment_types/neck', true),
-                row('Ring', 300e6, 1, '/equipment_types/ring', true),
-                // Sells the current body piece for more than its replacement costs
+                // Sells the current body piece for more than a weak replacement costs,
+                // which would fund the stronger body estimate beside it
                 row('Body swap', -250e6, 0.1, '/equipment_types/body', false),
+                row('Body upgrade', 300e6, 1, '/equipment_types/body', false),
+                row('Ring', 80e6, 0.5, '/equipment_types/ring', false),
             ],
             1e9,
             { baseline: base, metricKey: 'xp' }
         );
         const names = plan.picks.map((p) => p.candidate.description);
-        expect(names).toContain('Necklace');
-        expect(names).toContain('Body swap');
-        expect(names).toContain('Ring');
-        expect(plan.picks.find((p) => p.candidate.description === 'Ring').provisional).toBeUndefined();
+        expect(names).toEqual(['Necklace', 'Ring']);
         expect(plan.totalCost).toBeLessThanOrEqual(1e9);
     });
 

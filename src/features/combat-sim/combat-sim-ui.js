@@ -559,37 +559,26 @@ export function planUpgradeBudget(rows, budget, { baseline = {}, metricKey = 'pr
     if (measured.picks.length) {
         // A measured pick holds its slot or ability: an estimate must not displace it or be bought beside it
         const held = new Set(measured.picks.flatMap((pick) => conflictKeys(pick.candidate)));
+        // A refunding estimate (a swap that sells for more than it costs) is
+        // left out: its coins would be spent on unproven gains in a pass that
+        // cannot give the measured rows first claim on them, and a refund inside
+        // the pass can let a stronger same-slot pick replace it and overshoot the
+        // budget. The all-estimated plan below still considers them.
         const fillRows = planRows.filter(
-            (row) => row.significant === false && !conflictKeys(row.candidate).some((key) => held.has(key))
+            (row) =>
+                row.significant === false &&
+                !(row.cost < 0) &&
+                !conflictKeys(row.candidate).some((key) => held.has(key))
         );
         const fill = planWithinBudget(fillRows, coins - measured.totalCost, { includeUnmeasured: true });
         const filled = new Set(fill.picks.map((pick) => pick.candidate));
-        // An estimated swap with a negative net cost refunds coins, which can
-        // make a measured row the first pass could not afford affordable after
-        // all: offer the proven rows the refund before it is left idle
-        let refund = { picks: [], totalCost: 0, attemptsSaved: 0 };
-        const left = coins - measured.totalCost - fill.totalCost;
-        if (fill.totalCost < 0 && left > 0) {
-            const taken = new Set([...held, ...fill.picks.flatMap((pick) => conflictKeys(pick.candidate))]);
-            const bought = new Set(measured.picks.map((pick) => pick.candidate));
-            const again = planRows.filter(
-                (row) =>
-                    row.significant !== false &&
-                    !bought.has(row.candidate) &&
-                    !conflictKeys(row.candidate).some((key) => taken.has(key))
-            );
-            refund = planWithinBudget(again, left);
-        }
-        const refunded = new Set(refund.picks.map((pick) => pick.candidate));
-        const attemptsSaved = measured.attemptsSaved + fill.attemptsSaved + refund.attemptsSaved;
+        const attemptsSaved = measured.attemptsSaved + fill.attemptsSaved;
         return {
-            picks: [...measured.picks, ...refund.picks, ...fill.picks.map((pick) => ({ ...pick, provisional: true }))],
-            totalCost: measured.totalCost + fill.totalCost + refund.totalCost,
+            picks: [...measured.picks, ...fill.picks.map((pick) => ({ ...pick, provisional: true }))],
+            totalCost: measured.totalCost + fill.totalCost,
             attemptsSaved,
             // "Within the noise" still explains a row the fill left out: it is why a measured pick outranked it
-            skipped: measured.skipped.filter(
-                (entry) => !filled.has(entry.result.candidate) && !refunded.has(entry.result.candidate)
-            ),
+            skipped: measured.skipped.filter((entry) => !filled.has(entry.result.candidate)),
             budget: measured.budget,
             gainTotal: attemptsSaved,
             metric,
