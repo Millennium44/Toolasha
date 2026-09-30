@@ -19,6 +19,7 @@
  */
 
 import config from '../../core/config.js';
+import { labyrinthGridSize } from './labyrinth-formulas.js';
 import { createPanel, panelCard, panelLine, panelNote } from '../../utils/simple-panel.js';
 
 const PANEL_ID = 'labyrinth-room-distribution';
@@ -93,7 +94,8 @@ export function summarizeRoomDistribution(chances, binWidth) {
 export function collectFloorChances({ rooms, results, floor = 0 }) {
     const grid = Array.isArray(rooms) ? rooms : [];
     const flat = grid.flat();
-    const cols = Array.isArray(grid[0]) ? grid[0].length : 0;
+    // A flat list carries no row width; the floor gives it, as the tile calculation derives it
+    const cols = Array.isArray(grid[0]) ? grid[0].length : labyrinthGridSize(floor);
     const summary = {
         floor,
         chances: [],
