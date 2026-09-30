@@ -617,8 +617,8 @@ class GuildXPTracker {
     _seriesOf(name) {
         const own = this.guildXPHistory[name];
         const board = this.leaderboardXPHistory[name];
-        if (!board?.length) return own ? [...own] : [];
-        if (!own?.length) return [...board];
+        if (!board?.length) return own ? normalizeXPSeries([...own]) : [];
+        if (!own?.length) return normalizeXPSeries([...board]);
         return normalizeXPSeries(mergeXPHistories({ [name]: board }, { [name]: own })[name]);
     }
 
