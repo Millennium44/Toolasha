@@ -4131,6 +4131,34 @@ describe('a budget the measured picks leave mostly unspent', () => {
         expect(plan.skipped.some((s) => s.result.candidate.description.startsWith('Frenzy'))).toBe(false);
     });
 
+    test('a refund from an estimated swap goes to a measured row the first pass could not afford', () => {
+        const row = (description, cost, xpPct, slot, cleared) => ({
+            candidate: { upgradeHrid: `/items/${description}`, slot, description, cost },
+            cost,
+            metrics: { ...base, xpPerHour: XP_BASE * (1 + xpPct / 100) },
+            deltas: { dps: 0, xp: xpPct, profit: 0, deaths: 0, encounters: 0 },
+            economics: { profitGainPerHour: 0 },
+            significantBy: { dps: false, xp: cleared, profit: false, deaths: false, encounters: false },
+            significant: cleared,
+        });
+        const plan = planUpgradeBudget(
+            [
+                row('Necklace', 900e6, 5, '/equipment_types/neck', true),
+                row('Ring', 300e6, 1, '/equipment_types/ring', true),
+                // Sells the current body piece for more than its replacement costs
+                row('Body swap', -250e6, 0.1, '/equipment_types/body', false),
+            ],
+            1e9,
+            { baseline: base, metricKey: 'xp' }
+        );
+        const names = plan.picks.map((p) => p.candidate.description);
+        expect(names).toContain('Necklace');
+        expect(names).toContain('Body swap');
+        expect(names).toContain('Ring');
+        expect(plan.picks.find((p) => p.candidate.description === 'Ring').provisional).toBeUndefined();
+        expect(plan.totalCost).toBeLessThanOrEqual(1e9);
+    });
+
     test('a measured pick keeps its slot: no estimate is bought beside it or in its place', () => {
         const withRival = [
             ...rows,
