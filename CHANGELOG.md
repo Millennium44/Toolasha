@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Labyrinth floor clear-chance spread
+
+- A new option adds a "Spread" button to the labyrinth toolbar that charts how the floor's rooms spread across clear chance, with a bin-width control. It reads the badges' own results, so it costs no extra simulation; rooms not yet calculated or revealed are counted apart rather than as 0%.
+
 ### Mana panel plans the cheapest MP supply
 
 - The Mana panel can now work out the cheapest food set that reaches a target MP per minute (defaulting to your measured spend), and the most MP the slots allow, priced with your pricing mode.
