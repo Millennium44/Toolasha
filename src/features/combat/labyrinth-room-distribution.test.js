@@ -44,6 +44,9 @@ vi.mock('../../utils/panel-geometry.js', () => ({
 import {
     normalizeBinWidth,
     summarizeRoomDistribution,
+    buildAxisLabels,
+    buildHistogramSvg,
+    BIN_WIDTH_OPTIONS,
     collectFloorChances,
     toggleRoomDistribution,
     refreshRoomDistribution,
@@ -118,6 +121,33 @@ describe('summarizeRoomDistribution', () => {
     test('sorts a shown 50% with the 50s bin, not the 40s', () => {
         const bins = summarizeRoomDistribution([0.496], 10);
         expect(bins[5].count).toBe(1);
+    });
+});
+
+describe('histogram axis labels', () => {
+    const widths = [...BIN_WIDTH_OPTIONS, 30, 15, 7];
+
+    test.each(widths)('bin width %i: labels are unique, span 0 to 100%, and never touch', (binWidth) => {
+        const bins = summarizeRoomDistribution([0.1, 0.5, 1], binWidth);
+        const labels = buildAxisLabels(bins, 300);
+        const texts = labels.map((l) => l.text);
+        expect(new Set(texts).size).toBe(texts.length);
+        expect(texts[0]).toBe('0');
+        expect(texts[texts.length - 1]).toBe('100%');
+        for (let i = 1; i < labels.length; i++) {
+            expect(labels[i].left - labels[i - 1].right).toBeGreaterThanOrEqual(4);
+        }
+        expect(labels[0].left).toBeGreaterThanOrEqual(0);
+        expect(labels[labels.length - 1].right).toBeLessThanOrEqual(300);
+    });
+
+    test.each(widths)('bin width %i: the drawn svg carries exactly those labels', (binWidth) => {
+        const bins = summarizeRoomDistribution([0.1, 0.5, 1], binWidth);
+        const svg = buildHistogramSvg(bins);
+        const axis = [...svg.querySelectorAll('text')]
+            .filter((el) => el.getAttribute('y') === '124')
+            .map((el) => el.textContent);
+        expect(axis).toEqual(buildAxisLabels(bins, 300).map((l) => l.text));
     });
 });
 
