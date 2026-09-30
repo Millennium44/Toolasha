@@ -81,6 +81,14 @@ vi.mock('../combat-sim/combat-sim-adapter.js', () => ({
     ],
 }));
 /** Records worker-level cancellation, which is what a Cancel press has to reach */
+// Wrapped, not replaced: the real panel still runs, the spy only records the call
+const distributionSpy = vi.hoisted(() => ({ refresh: null }));
+vi.mock('./labyrinth-room-distribution.js', async (importOriginal) => {
+    const actual = await importOriginal();
+    distributionSpy.refresh = vi.fn(actual.refreshRoomDistribution);
+    return { ...actual, refreshRoomDistribution: distributionSpy.refresh };
+});
+
 const cancelSpy = vi.hoisted(() => ({ fn: vi.fn() }));
 vi.mock('../combat-sim/combat-sim-runner.js', () => ({
     runLabyrinthSimulation: vi.fn(),
@@ -1590,6 +1598,21 @@ describe('the beacon count as a per-floor override', () => {
         labyrinthClearRate.onLabyrinthUpdated({ labyrinth: { currentFloor: 4, roomData: [[null]] } });
 
         expect(labyrinthClearRate._tileResults.size).toBe(0);
+    });
+
+    test('a new floor redraws an open distribution panel from the cleared results', () => {
+        buildToolbar(4);
+        labyrinthClearRate.currentFloor = 3;
+        labyrinthClearRate._tileResults = new Map([['0,1', { clearChance: 0.9 }]]);
+        distributionSpy.refresh.mockClear();
+        distributionSpy.refresh.mockImplementationOnce(() => {
+            // The panel reads the source when asked, so it must already be cleared
+            expect(labyrinthClearRate._tileResults.size).toBe(0);
+        });
+
+        labyrinthClearRate.onLabyrinthUpdated({ labyrinth: { currentFloor: 4, roomData: [[null]] } });
+
+        expect(distributionSpy.refresh).toHaveBeenCalled();
     });
 
     test('an update from the floor you are on leaves the count alone', () => {

@@ -731,6 +731,9 @@ class LabyrinthClearRate {
                 // The last floor's results are keyed by coordinate too, and would
                 // otherwise stand in for the new floor's rooms at the same spots
                 this._tileResults?.clear();
+                // An open distribution panel reads that cleared source; redraw it
+                // now rather than show the previous floor until the next calc
+                refreshRoomDistribution();
             }
             this.injectTileControls();
             this.refreshSupplyReadout();
