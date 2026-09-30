@@ -4427,6 +4427,7 @@ class GuildTrials {
             const breakdown = guildTrialDamage.breakdown?.() || {};
             const roster = Object.values(breakdown.roster || {});
             if (roster.length) guildTrialAbilities.setRoster?.(roster);
+            guildTrialAbilities.setLiveTrial?.(breakdown.encounter ?? null);
             if (breakdown.tier !== null && breakdown.tier !== undefined) guildTrialAbilities.setTier?.(breakdown.tier);
             openTrialAbilitiesPanel();
         });

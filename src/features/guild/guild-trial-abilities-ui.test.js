@@ -99,7 +99,8 @@ const {
     captureSourceLabel,
     COMBAT_TRIAL_KIND,
 } = await import('./guild-trial-abilities-ui.js');
-const { resetPlanUi, resetChipUi, resetFetchNext } = await import('./guild-trial-abilities-ui.js');
+const { resetPlanUi, resetChipUi, resetFetchNext, resetPretrialUi } = await import('./guild-trial-abilities-ui.js');
+const { guildXPTracker } = await import('./guild-xp-tracker.js');
 const guildTrialPlan = (await import('./guild-trial-plan.js')).default;
 const { REQUEST_TIMEOUT_MS } = await import('./guild-member-skills.js');
 const memberSkills = (await import('./guild-member-skills.js')).default;
@@ -201,6 +202,9 @@ describe('trial abilities panel', () => {
         resetPlanUi();
         resetChipUi();
         resetFetchNext();
+        resetPretrialUi();
+        guildXPTracker.memberMeta = {};
+        guildXPTracker.currentWeekStartAt = null;
         // `controls` is module state: a test that wires its own openNext /
         // retryCurrent / captureFor replaces the built-in action for every
         // test that follows, so a chip press lands in the previous test's spy
@@ -1543,5 +1547,95 @@ describe('class tags on the players card', () => {
     test('no verdict draws nothing at all', () => {
         expect(classTagText(null)).toBeNull();
         expect(classTagText({ label: 'Mage' })).toBeNull();
+    });
+});
+
+describe('pre-trial loadout check', () => {
+    const WEEK = '2026-09-28T00:00:00Z';
+    const FAILED_DRAW = 'could not be drawn';
+    const panelText = () => guildTrialAbilitiesPanel.panel.textContent;
+    const choose = (label) =>
+        [...guildTrialAbilitiesPanel.panel.querySelectorAll('button')].find((el) => el.textContent === label);
+
+    beforeEach(() => {
+        vi.useFakeTimers();
+        vi.setSystemTime(NOW);
+        document.body.replaceChildren();
+        game.abilityDetailMap = {
+            '/abilities/fierce_aura': aura('Fierce Aura'),
+            '/abilities/sweep': { name: 'Sweep', isSpecialAbility: false, abilityEffects: [] },
+        };
+        capture.listeners = [];
+        capture.players = {};
+        _resetViewLoadout();
+        resetFetchNext();
+        resetPretrialUi();
+        guildXPTracker.currentWeekStartAt = WEEK;
+        guildXPTracker.memberMeta = {
+            1: { name: 'Alice', signedUpCombatTrialHrid: '/guild_combat/badger', signupWeekStartAt: WEEK },
+            2: { name: 'Bob', signedUpCombatTrialHrid: '/guild_combat/swarm', signupWeekStartAt: WEEK },
+        };
+        viewLoadoutState.core = {
+            handleViewProfile: () => {},
+            handleViewLoadout: vi.fn((characterId) => {
+                const name = String(characterId) === '1' ? 'Alice' : 'Bob';
+                const ability = name === 'Alice' ? '/abilities/fierce_aura' : '/abilities/sweep';
+                setTimeout(
+                    () => handleLoadoutShared(loadoutReply(characterId, name, [{ hrid: ability, level: 9 }])),
+                    10
+                );
+            }),
+        };
+    });
+
+    afterEach(() => {
+        feature.cleanup();
+        guildTrialAbilities.session = null;
+        guildTrialAbilities.roster = [];
+        guildTrialAbilities.guildName = null;
+        guildTrialPlan.record?.set({});
+        guildTrialPlan.cache = null;
+        guildXPTracker.memberMeta = {};
+        guildXPTracker.currentWeekStartAt = null;
+        vi.useRealTimers();
+    });
+
+    test('the picker offers the live trial and the sign-up trials, and checks one against its plan section', async () => {
+        await feature.initialize('Cats');
+        await guildTrialPlan.setText(
+            ['== Trial Badger ==', 'Alice: Fierce Aura', '== Trial Swarm ==', 'Alice: Sweep', 'Bob: Sweep'].join('\n')
+        );
+        openTrialAbilitiesPanel();
+        expect(choose('Live trial')).toBeDefined();
+        expect(choose('Badger')).toBeDefined();
+        expect(choose('Swarm')).toBeDefined();
+
+        choose('Badger').click();
+        // Only the members signed up for Badger
+        expect(panelText()).toContain('Alice');
+        expect(panelText()).not.toContain('Bob');
+
+        // One click, one request
+        const fetchNext = button('Fetch next: Alice');
+        fetchNext.click();
+        await vi.advanceTimersByTimeAsync(2000);
+        expect(viewLoadoutState.core.handleViewLoadout).toHaveBeenCalledTimes(1);
+        expect(panelText()).toContain('on plan');
+        expect(panelText()).not.toContain(FAILED_DRAW);
+    });
+
+    test('a pre-trial capture stays out of the live session, so the trial going live cannot wipe it', async () => {
+        await feature.initialize('Cats');
+        openTrialAbilitiesPanel();
+        choose('Badger').click();
+        button('Fetch next: Alice').click();
+        await vi.advanceTimersByTimeAsync(2000);
+
+        expect(guildTrialAbilities.session).toBeNull();
+        // Trial goes live: no session to wipe, and the check is still there for either trial
+        guildTrialAbilities.noteTrialStart(NOW + 60_000);
+        expect(panelText()).toContain('trial loadout');
+        choose('Live trial').click();
+        expect(panelText()).not.toContain(FAILED_DRAW);
     });
 });
