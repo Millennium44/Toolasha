@@ -508,6 +508,8 @@ class GuildXPTracker {
         this._saveChains = new Map();
         /** History loads still in flight; see `_trackLoad` */
         this._loadsPending = 0;
+        /** Bumped by `disable()`; a login load that started before it is for a character that is gone */
+        this._epoch = 0;
     }
 
     /**
@@ -770,9 +772,13 @@ class GuildXPTracker {
      * @param {Object} data - Full init_character_data message
      */
     async _onCharacterInit(data) {
+        // A character switch tears this down while the reads below are in flight; resuming afterwards would put the
+        // departed character's guild, roster and history into a tracker that now belongs to somebody else
+        const epoch = this._epoch;
         // The leaderboard series belongs to the account, not to a guild: a
         // player with no guild reads the same ranking and keeps the same history
         if (this._recordsHistory()) await this._loadLeaderboardHistory();
+        if (epoch !== this._epoch) return;
 
         const guild = data.guild;
         if (!guild) return; // Player not in a guild
@@ -830,6 +836,7 @@ class GuildXPTracker {
         // a record this tab has never held starts empty, which the merge-on-save
         // below makes safe
         const guildProbe = await storage.tryGet(`guildXP_${guildName}`, STORE_NAME);
+        if (epoch !== this._epoch) return;
         this.guildXPHistory = this._resolveLoad(
             guildProbe,
             guildName === previousGuildName ? this.guildXPHistory : {},
@@ -856,6 +863,7 @@ class GuildXPTracker {
         let membersProbe = null;
         if (this.ownGuildID) {
             membersProbe = await storage.tryGet(`memberXP_${this.ownGuildID}`, STORE_NAME);
+            if (epoch !== this._epoch) return;
             this.memberXPHistory = this._resolveLoad(
                 membersProbe,
                 this.ownGuildID === previousGuildID ? this.memberXPHistory : {},
@@ -1362,6 +1370,7 @@ class GuildXPTracker {
      * Cleanup when disabled.
      */
     disable() {
+        this._epoch += 1;
         for (const unregister of this.unregisterHandlers) {
             unregister();
         }
