@@ -767,6 +767,9 @@ class GuildTrialAbilities {
             this._touch(at);
             return;
         }
+        // A rollover is a new trial, as in noteTrialStart: last trial's plan
+        // section is not this one's. Not cleared in _start, which a capture also reaches
+        this.liveTrialKey = null;
         this._start(at);
         this._persist();
     }
