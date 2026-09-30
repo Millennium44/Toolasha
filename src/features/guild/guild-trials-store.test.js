@@ -1669,13 +1669,15 @@ describe('archiveEarlierCycles — a week with more than one cycle in it', () =>
             samples: [...base.samples, sample(start + 4 * 60_000)],
         });
         const live = read.tiles['skilling::milking'];
-        expect(live).toMatchObject({ tiers: [], liveTier: 4, liveTierTarget: 200, pointsByTier: { 4: 400 } });
+        expect(live).toMatchObject({ tiers: [], pointsByTier: { 4: 400 } });
+        // Unstamped, so it may be the old cycle's: the socket restates it within the new one
+        expect(live.liveTier).toBeUndefined();
         // Accumulated over every sample, so the whole of it is not the new cycle's
         expect(live.personalByCharacter).toBeUndefined();
         const old = read.history[0].tiles['skilling::milking'];
         expect(old).toMatchObject({ tiers: base.tiers, pointsByTier: { 3: 300 } });
         expect(old.personalByCharacter[7].personal).toEqual({ successRate: 0.5 });
-        expect(old.liveTier).toBeUndefined();
+        expect(old.liveTier).toBe(4);
 
         // Nothing read since: the earlier cycle keeps them all
         const idle = run({
