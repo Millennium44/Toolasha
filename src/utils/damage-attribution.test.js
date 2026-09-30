@@ -1263,6 +1263,59 @@ describe('a paid swing in a crowd tick', () => {
         expect(tally['2'].damage + tally['12'].damage).toBeCloseTo(8758, 6);
     });
 
+    // Slot 12 is a known single-target swinger (auto-attack), slot 2 casts an unknown ability that may be an
+    // area swing; both counters rise once with the whole roster present
+    const mixed = (baseMonsters, castMonsters, areaSwings = true) => {
+        const state = newAttributionState();
+        const swinger12 = (atkCounter) => {
+            const { abilityHrid: _ability, ...rest } = unit(2202, 2503, 2638, atkCounter, null, 801861601, 1);
+            return { ...rest, isAutoAtk: true };
+        };
+        const before = {
+            ...baseline,
+            pMap: {
+                ...bystanders,
+                2: unit(2202, 2473, 2638, 3, '/abilities/frost_surge', 1055578309, 0),
+                12: swinger12(3),
+            },
+            mMap: baseMonsters,
+        };
+        const after = {
+            ...cast,
+            pMap: {
+                ...bystanders,
+                2: unit(2202, 2400, 2638, areaSwings ? 4 : 3, '/abilities/frost_surge', 1055578309, 0),
+                12: swinger12(4),
+            },
+            mMap: castMonsters,
+        };
+        attributeTick(before, state, { soloFallback: false, unattributed: true });
+        noteActions(state, before.pMap);
+        return attributeTick(after, state, { soloFallback: false, unattributed: true });
+    };
+
+    test('a single-target swing spent on one monster takes no share of the next monster’s hit', () => {
+        const events = mixed(
+            { 0: insect(299970, 2, 32, 29, 1063337956), 1: insect(312440, 1, 17, 17, 1248266296) },
+            { 0: insect(296329, 2, 34, 29, 1063337956), 1: insect(311000, 1, 18, 18, 1248266296) }
+        ).filter((event) => !event.isKill && event.monsterIndex === '1');
+
+        expect(events.length).toBeGreaterThan(0);
+        expect(new Set(events.map((event) => event.playerIndex))).toEqual(new Set(['2']));
+        expect(events.reduce((sum, event) => sum + event.amount * event.weight, 0)).toBeCloseTo(1440, 6);
+    });
+
+    test('a paid killing splat from the only swinger in a crowd makes the kill theirs', () => {
+        const events = mixed(
+            { 0: insect(4000, 2, 32, 29, 1063337956), 3: insect(316465, 1, 17, 16, 1421800947) },
+            { 0: insect(0, 2, 33, 29, 1063337956), 3: insect(316465, 1, 17, 16, 1421800947) },
+            false
+        );
+
+        const kills = events.filter((event) => event.isKill);
+        expect(kills).toEqual([{ monsterIndex: '0', isKill: true, killerIndex: '12' }]);
+    });
+
     test('leaves the tick’s total exactly what the monsters lost', () => {
         const team = foldTeam({}, replay());
         expect(team.damage).toBeCloseTo(8758, 6);
