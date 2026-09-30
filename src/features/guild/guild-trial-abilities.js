@@ -81,6 +81,9 @@ export function sessionLastActivity(session) {
 /** An explicit trial-start signal younger than this is the same trial starting */
 export const TRIAL_START_GRACE_MS = 5 * 60 * 1000;
 
+/** How close to a rollover message a source's instance stamp must be to count as made by that message */
+const SOURCE_STAMP_TOLERANCE_MS = 2000;
+
 /**
  * Storage key for a guild's capture session.
  *
@@ -571,11 +574,24 @@ class GuildTrialAbilities {
         }
     }
 
-    /** A new trial began: forget the last trial's section, and the source's encounter if it is still the last trial's */
-    _forgetLiveTrial() {
+    /**
+     * A new trial began: forget the last trial's section, and the source's encounter if it is still the last trial's.
+     *
+     * A reading stamped by the very message that caused this rollover is the NEW
+     * fight, not a leftover: the damage module's `new_guild_battle` listener can
+     * run before the one that reaches here, and its `instance` never changes for
+     * the rest of the fight, so marking it stale would suppress the right plan
+     * section until the next fight. Listener order is not fixed (toggling trial
+     * tracking re-registers the damage listener last), hence the stamp test
+     * rather than an assumption about order.
+     * @param {number} [at] - Clock of the message that triggered the rollover
+     */
+    _forgetLiveTrial(at = Date.now()) {
         this.liveTrialKey = null;
         const reading = this._sourceReading();
-        this.staleSourceKey = reading.key ? reading : null;
+        const stamp = Number(reading.instance);
+        const stampedByThisMessage = Number.isFinite(stamp) && stamp > 0 && stamp >= at - SOURCE_STAMP_TOLERANCE_MS;
+        this.staleSourceKey = reading.key && !stampedByThisMessage ? reading : null;
     }
 
     /**
@@ -780,7 +796,7 @@ class GuildTrialAbilities {
         // from its skilling hour into its combat hour, not a new one
         if (this.session && at - sessionLastActivity(this.session) <= TRIAL_START_GRACE_MS) return;
         // A new trial: last trial's plan section is not this one's
-        this._forgetLiveTrial();
+        this._forgetLiveTrial(at);
         this._start(at);
         this._persist();
     }
@@ -805,7 +821,7 @@ class GuildTrialAbilities {
         }
         // A rollover is a new trial, as in noteTrialStart: last trial's plan
         // section is not this one's. Not cleared in _start, which a capture also reaches
-        this._forgetLiveTrial();
+        this._forgetLiveTrial(at);
         this._start(at);
         this._persist();
     }
