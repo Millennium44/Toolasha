@@ -1027,8 +1027,16 @@ export function observedCoverage(cycles, { trialsPerCycle = TRIALS_PER_CYCLE, no
             null
         );
 
+    // The test server can finish a cycle and idle before the next starts, so its
+    // newest cycle is over once it holds every trial a cycle runs; counted as
+    // running it would drop out of the ratio until the next cycle began. Live
+    // has one cycle a week, and the week is left out until it rolls over
+    const distinctTrials = (cycle) =>
+        new Set((cycle?.trials || []).map((trial, index) => trial?.trialId ?? `#${index}`)).size;
+    const finished = isTestServer() && running && perCycle > 0 && distinctTrials(running) >= perCycle;
+
     for (const cycle of list) {
-        if (cycle === running) {
+        if (cycle === running && !finished) {
             inProgress = true;
             continue;
         }
