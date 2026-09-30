@@ -30,9 +30,17 @@ const dataManagerMock = vi.hoisted(() => ({
     getInitClientData: () => dataManagerMock.initClientData,
 }));
 vi.mock('../../core/data-manager.js', () => ({ default: dataManagerMock }));
-const settings = vi.hoisted(() => ({ guildXPTracker: true }));
+const settings = vi.hoisted(() => ({ guildXPTracker: true, listeners: [] }));
 vi.mock('../../core/config.js', () => ({
-    default: { getSetting: (key) => (key in settings ? settings[key] : true) },
+    default: {
+        getSetting: (key) => (key in settings ? settings[key] : true),
+        onSettingChange: (key, callback) => {
+            settings.listeners.push({ key, callback });
+            return () => {
+                settings.listeners = settings.listeners.filter((entry) => entry.callback !== callback);
+            };
+        },
+    },
 }));
 vi.mock('../../utils/performance-monitor.js', () => ({ default: { startSpan: () => () => {} } }));
 
@@ -672,5 +680,26 @@ describe('with XP history tracking switched off', () => {
         expect(guildXPTracker.guildXPHistory).toEqual({});
         expect(guildXPTracker.memberXPHistory).toEqual({});
         expect(storageMock.set).not.toHaveBeenCalled();
+    });
+
+    test('turning it back on loads the saved history for the current guild without waiting for an update', async () => {
+        storageMock.store.set('guildXP_Milky', { Milky: [{ t: 1, xp: 10 }] });
+        storageMock.store.set('memberXP_g1', { 101: [{ t: 1, xp: 5 }] });
+        await guildXPTracker.initialize();
+        await guildXPTracker._onCharacterInit({
+            guild: { name: 'Milky', experience: 1000, createdAt: 0 },
+            guildCharacterMap: { 101: { guildID: 'g1', guildExperience: 5 } },
+            guildSharableCharacterMap: { 101: { name: 'Ada' } },
+        });
+        expect(guildXPTracker.guildXPHistory).toEqual({});
+
+        settings.guildXPTracker = true;
+        for (const entry of settings.listeners.filter((e) => e.key === 'guildXPTracker')) await entry.callback(true);
+        await vi.waitFor(() => expect(guildXPTracker.guildXPHistory.Milky).toEqual([{ t: 1, xp: 10 }]));
+        expect(guildXPTracker.memberXPHistory[101]).toEqual([{ t: 1, xp: 5 }]);
+
+        // Cleanup stops listening
+        guildXPTracker.disable();
+        expect(settings.listeners.filter((e) => e.key === 'guildXPTracker')).toHaveLength(0);
     });
 });
