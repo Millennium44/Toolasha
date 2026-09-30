@@ -560,3 +560,53 @@ describe('leaderboard XP tracker', () => {
         expect(b.lastXPH).toBeCloseTo(30, 6);
     });
 });
+
+describe('the legacy-shape purge at load', () => {
+    const zeroSeries = [
+        { t: 1000, xp: 0 },
+        { t: 2000, xp: 0 },
+    ];
+
+    // The outer beforeEach has already loaded once and spent the flag
+    beforeEach(() => {
+        game.saved = {};
+    });
+
+    const reload = async () => {
+        leaderboardXPTracker.disable();
+        game.handlers = {};
+        await leaderboardXPTracker.initialize();
+    };
+
+    test('cleans the legacy junk the first time and never again', async () => {
+        game.saved.playerXP = { guild_weekly_points_Old: zeroSeries, guild_weekly_points_Real: [{ t: 1, xp: 50 }] };
+        await reload();
+
+        expect(leaderboardXPTracker.playerXPHistory['guild_weekly_points_Old']).toBeUndefined();
+        expect(leaderboardXPTracker.playerXPHistory['guild_weekly_points_Real']).toBeDefined();
+        expect(game.saved.playerXPLegacyPurged).toBe(true);
+    });
+
+    test('an all-zero series recorded since survives the next load', async () => {
+        await reload();
+        expect(game.saved.playerXPLegacyPurged).toBe(true);
+
+        // A guild's row at the start of a weekly board is legitimately all zeros
+        game.saved.playerXP = { guild_weekly_points_Fresh: zeroSeries };
+        await reload();
+
+        expect(leaderboardXPTracker.playerXPHistory['guild_weekly_points_Fresh']).toEqual(zeroSeries);
+    });
+
+    test('an unreadable record neither purges nor spends the flag', async () => {
+        game.saved.playerXP = { guild_weekly_points_Old: zeroSeries };
+        game.unavailable = true;
+        await reload();
+        expect(game.saved.playerXPLegacyPurged).toBeUndefined();
+
+        game.unavailable = false;
+        await reload();
+        expect(leaderboardXPTracker.playerXPHistory['guild_weekly_points_Old']).toBeUndefined();
+        expect(game.saved.playerXPLegacyPurged).toBe(true);
+    });
+});

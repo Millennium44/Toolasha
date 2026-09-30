@@ -38,11 +38,20 @@ function mergePlayerXP(stored, memory) {
 
 import webSocketHook from '../../core/websocket.js';
 import config from '../../core/config.js';
+import storage from '../../core/storage.js';
 import { createPersistedRecord, mergeSeriesMaps } from '../../utils/persisted-record.js';
 import { registerSyncMerge } from '../../utils/sync-merge-registry.js';
 import { captureOwner, stillOurs, noteTeardown } from '../../utils/init-ownership.js';
 
 const STORE_NAME = 'leaderboardHistory';
+
+/**
+ * Set once the legacy-shape purge in `initialize` has run. The purge's
+ * conditions also describe series that are legitimate today — a guild's row at
+ * the start of a weekly board is all zeros, a young guild's XP is under ten
+ * thousand — so it must never run again once the old junk is gone.
+ */
+const LEGACY_PURGE_DONE_KEY = 'playerXPLegacyPurged';
 
 /*
  * Registered so a cross-device sync PULL combines this record instead of
@@ -327,14 +336,19 @@ class LeaderboardXPTracker {
         // and the switch's own re-initialise then early-returned on that flag —
         // no board reading was recorded again until the page was reloaded.
         const ticket = captureOwner(this);
-        await this.history.load();
+        const readable = await this.history.load();
         if (!stillOurs(ticket)) return;
         // Readings of 0 are the one-column boards as recorded before the value
         // column was read correctly; left in place they would pair with the
-        // first real reading into a rate from nothing. Dropped once, here.
+        // first real reading into a rate from nothing. Dropped once, here —
+        // and only off a record that was actually read, or the flag would be
+        // spent on an empty one.
+        const purgeFlag = readable ? await storage.tryGet(LEGACY_PURGE_DONE_KEY, STORE_NAME) : null;
+        if (!stillOurs(ticket)) return;
         const map = this.history.get();
+        const purgeDue = purgeFlag !== null && !purgeFlag.found;
         let purged = false;
-        for (const [key, series] of Object.entries(map)) {
+        for (const [key, series] of purgeDue ? Object.entries(map) : []) {
             if (!Array.isArray(series) || !series.length || key.startsWith(RANK_PREFIX)) continue;
             const category = key.slice(0, key.lastIndexOf('_'));
             // Level-board series recorded before they tracked the level hold
@@ -349,6 +363,7 @@ class LeaderboardXPTracker {
             }
         }
         if (purged) this.history.save({ overwrite: true });
+        if (purgeDue) storage.set(LEGACY_PURGE_DONE_KEY, true, STORE_NAME);
 
         this._boundOnLeaderboardUpdated = (data) => this._onLeaderboardUpdated(data);
         webSocketHook.on('leaderboard_updated', this._boundOnLeaderboardUpdated);
