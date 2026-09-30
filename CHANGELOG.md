@@ -6,6 +6,11 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Audit round: rank badges and guild history
+
+- The rank-badge cache now folds what is stored into each save instead of overwriting it, so boards saved by another tab or a sync, or an unreadable store, no longer wipe cached boards.
+- A character switch while the guild XP tracker is still loading no longer restores the previous character's guild name and member history.
+
 ### Trial ledger on the test server
 
 - A test-server week that could not be split into cycles is no longer reported as a finished cycle when its trials came from two different cycles.

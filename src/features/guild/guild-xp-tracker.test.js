@@ -507,6 +507,28 @@ describe('the guild leaderboard series is one account-wide record', () => {
         expect(guildXPTracker.getCurrentGuildXP('Rival')).toBe(3000);
     });
 
+    test('a login load still reading when the character switches leaves nothing of the old character behind', async () => {
+        const gate = { release: null };
+        const held = new Promise((resolve) => {
+            gate.release = resolve;
+        });
+        const real = storageMock.tryGet.getMockImplementation();
+        storageMock.tryGet.mockImplementationOnce(async (key) => {
+            await held;
+            return real(key);
+        });
+        const pending = guildXPTracker._onCharacterInit(guildInit('Milky', 'g1'));
+
+        guildXPTracker.disable();
+        gate.release();
+        await pending;
+        await flush();
+
+        expect(guildXPTracker.getOwnGuildName()).toBeNull();
+        expect(guildXPTracker.getOwnGuildID()).toBeNull();
+        expect(stored('guildXP_Milky')).toBeUndefined();
+    });
+
     test('characters in different guilds share one series and leave their own records alone', async () => {
         await guildXPTracker._onCharacterInit(guildInit('Milky', 'g1'));
         await guildXPTracker._onLeaderboardUpdated(board([{ name: 'Rival', value2: 1000 }]));
