@@ -226,6 +226,19 @@ describe('session reset rules', () => {
         expect(s.session.startedAt).toBe(nextTrial);
     });
 
+    test('a tick that rolls the session over drops last trial’s kept plan key', () => {
+        const s = session();
+        s.recordCapture(snap('Alice', 1, []), { at: NOW });
+        s.liveTrialKey = 'badger';
+
+        // Inside the session window the key belongs to this trial
+        s.noteTrialActivity(NOW + 30 * 60 * 1000);
+        expect(s.liveTrialKey).toBe('badger');
+
+        s.noteTrialActivity(NOW + 24 * 60 * 60 * 1000);
+        expect(s.liveTrialKey).toBeNull();
+    });
+
     test('a trial that runs past the hour — skilling hour into combat hour — keeps its session while it ticks', () => {
         const s = session();
         s.recordCapture(snap('Alice', 1, []), { at: NOW });
