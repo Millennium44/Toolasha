@@ -37,7 +37,10 @@ vi.mock('../../core/websocket.js', () => ({
     },
 }));
 vi.mock('../../utils/profit-helpers.js', () => ({
-    resolveItemPrice: (hrid) => ({ price: game.prices[hrid] ?? null }),
+    // The profit context is where the user's pricing mode applies; without it the resolver falls back to ask
+    resolveItemPrice: (hrid, options = {}) => ({
+        price: (options.context === 'profit' ? game.profitPrices?.[hrid] : undefined) ?? game.prices[hrid] ?? null,
+    }),
 }));
 vi.mock('../../utils/panel-geometry.js', () => ({
     saveCollapsed: async () => {},
@@ -189,6 +192,37 @@ describe('mpSupplyPlan', () => {
     test('reads food haste from the character in the battle message', () => {
         game.handlers['new_battle']({
             players: [{ character: { id: 'char1' }, combatDetails: { combatStats: { foodHaste: 0.5 } } }],
+        });
+
+        expect(mpSupplyPlan(0).max.mpPerMinute).toBe(450 * 1.5);
+    });
+});
+
+describe('item pricing', () => {
+    test('resolves costs in the profit context so the pricing mode applies', () => {
+        game.profitPrices = { '/items/star_fruit_yogurt': 9000 };
+        const item = mpSupplyPlan(0).max.items.find((entry) => entry.price === 9000);
+        game.profitPrices = undefined;
+
+        expect(item).toBeDefined();
+    });
+});
+
+describe('a battle entry shaped differently', () => {
+    test('is found when players is a map keyed by id', () => {
+        game.handlers['new_battle']({
+            players: {
+                char0: { name: 'x' },
+                char1: { character: { id: 'char1' }, combatDetails: { combatStats: { foodHaste: 0.5 } } },
+            },
+        });
+
+        expect(mpSupplyPlan(0).max.mpPerMinute).toBe(450 * 1.5);
+    });
+
+    test('is found by a top-level name', () => {
+        game.handlers['new_battle']({
+            players: [{ name: 'Tib', combatDetails: { combatStats: { foodHaste: 0.5 } } }],
         });
 
         expect(mpSupplyPlan(0).max.mpPerMinute).toBe(450 * 1.5);

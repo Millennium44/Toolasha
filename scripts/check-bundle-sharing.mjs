@@ -103,6 +103,13 @@ const SINGLE_COPY_FEATURES = new Set([
 
 const ALLOWLIST = new Map([
     [
+        'src/core/character-abilities.js',
+        // Pure reducers over ability lists plus the new_battle own-player
+        // lookup; no module state. The core bundle (data manager) and the
+        // combat bundle (mana tracker) each find the local player with it.
+        'stateless ability reducers and battle-player lookup; no module state to share',
+    ],
+    [
         'src/utils/item-hash.js',
         // One pure string parser over an action's item hash, no module state.
         // The ui bundle (action time display) and the market bundle (production

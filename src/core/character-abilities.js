@@ -143,6 +143,32 @@ export function applyAbilityProgress(current, updates) {
 }
 
 /**
+ * The local player's entry in a `new_battle` message.
+ *
+ * `players` may be an array or a map keyed by id (extractPartyLoadouts reads it
+ * with Object.values), and a player's name may sit at `character.name` or at the
+ * top level (extractLoadout accepts both). Id is tried first, then name.
+ *
+ * @param {Object} battle - `new_battle` message
+ * @param {Object} [identity]
+ * @param {string|number} [identity.characterId] - Own character id
+ * @param {string} [identity.characterName] - Own character name
+ * @returns {Object|null} The player entry, or null when none matches
+ */
+export function findOwnBattlePlayer(battle, { characterId, characterName } = {}) {
+    const raw = battle?.players;
+    const players = Array.isArray(raw) ? raw : Object.values(raw || {});
+    const hasId = characterId !== null && characterId !== undefined;
+    return (
+        players.find(
+            (player) =>
+                (hasId && player?.character?.id === characterId) ||
+                (characterName && (player?.character?.name === characterName || player?.name === characterName))
+        ) || null
+    );
+}
+
+/**
  * The kit the server says it is fighting with, from a `new_battle` message.
  *
  * This is the one place the equipped list arrives whole rather than as a delta,
@@ -155,16 +181,8 @@ export function applyAbilityProgress(current, updates) {
  * @param {string} [identity.characterName] - Own character name
  * @returns {Array<Object>|null} Equipped abilities, or null when the message is not about us
  */
-export function equippedAbilitiesFromBattle(battle, { characterId, characterName } = {}) {
-    const players = Array.isArray(battle?.players) ? battle.players : [];
-    if (players.length === 0) return null;
-
-    const me = players.find(
-        (player) =>
-            (characterId !== null && characterId !== undefined && player?.character?.id === characterId) ||
-            (characterName && player?.character?.name === characterName)
-    );
-
+export function equippedAbilitiesFromBattle(battle, identity = {}) {
+    const me = findOwnBattlePlayer(battle, identity);
     const abilities = me?.combatDetails?.combatAbilities;
     if (!Array.isArray(abilities)) return null;
 
