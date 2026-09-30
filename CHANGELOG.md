@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Upgrade budget plan fills the budget in every mode
+
+- Planning for EXP/hr, DPS, Profit or EPH stopped after the upgrades whose gain cleared the simulation's noise, often leaving most of the budget unspent on a single pick. The rest of the budget now goes to the best estimated upgrades too, marked "estimate", as Score mode already did.
+
 ### Guild trial alerts and the trials tile
 
 - A new setting lets guild trial start alerts fire only when you are signed up for a trial this week. The default stays "Every guild trial", so nothing changes until you pick it.
