@@ -114,6 +114,32 @@ export function categoryLabel(category) {
 }
 
 /**
+ * The board to open next when filling the cache by hand.
+ * @param {Object} boards - The cache held
+ * @param {'standard'|'ironcow'} type - The board pair on screen
+ * @param {string|null} current - The category on screen, when known
+ * @returns {string|null} The first category after `current` (in {@link RANK_CATEGORIES} order, wrapping) with no
+ *   cached board; when every board is cached, the one cached longest ago. Never `current` itself.
+ */
+export function nextBoardCategory(boards, type, current) {
+    const count = RANK_CATEGORIES.length;
+    const start = RANK_CATEGORIES.indexOf(current);
+    const order = [];
+    for (let i = 1; i <= count; i++) {
+        const category = RANK_CATEGORIES[(start + i + count) % count];
+        if (category !== current) order.push(category);
+    }
+    const missing = order.find((category) => !boards?.[boardKey(type, category)]);
+    if (missing) return missing;
+    let oldest = null;
+    for (const category of order) {
+        const at = boards[boardKey(type, category)].at;
+        if (!oldest || at < oldest.at) oldest = { category, at };
+    }
+    return oldest ? oldest.category : null;
+}
+
+/**
  * Rows of a board as [name, rank] pairs: valid ranks only, one row per name (best rank kept).
  * @param {*} rows - Untrusted row array
  * @param {(row: Object) => *} nameOf - Picks the name field
