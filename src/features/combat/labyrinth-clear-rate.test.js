@@ -2444,6 +2444,18 @@ describe('the hover preview does not outlive its anchor', () => {
         labyrinthClearRate.roomData = null;
     });
 
+    test('the room-distribution source reports no floor once a run ends without roomData', () => {
+        labyrinthClearRate.currentFloor = 4;
+        labyrinthClearRate.roomData = [[null]];
+        expect(labyrinthClearRate.roomDistributionFloor()).toMatchObject({ floor: 4, rooms: [[null]] });
+
+        labyrinthClearRate.onLabyrinthUpdated({ labyrinth: null });
+        expect(labyrinthClearRate.roomDistributionFloor()).toBeNull();
+
+        labyrinthClearRate._labyrinth = null;
+        labyrinthClearRate.roomData = null;
+    });
+
     test('scrolling hides an open preview', () => {
         labyrinthClearRate._previewScrollHandler = () => labyrinthClearRate.hidePreview();
         window.addEventListener('scroll', labyrinthClearRate._previewScrollHandler, { capture: true, passive: true });
