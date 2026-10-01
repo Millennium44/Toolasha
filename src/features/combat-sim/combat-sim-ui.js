@@ -1014,6 +1014,68 @@ export function runMatchesSimParty(
 }
 
 /**
+ * One all-zones table cell's figure as plain text, formatted exactly as the
+ * table formats it. The Bestiary plan's expanded detail reads through this so
+ * a zone's figures there cannot drift from the row they came from.
+ *
+ * @param {string} key - A results-table column key
+ * @param {Object} row - A results-table row
+ * @returns {string|null} Null where the table shows a dash (no figure to quote)
+ */
+export function allZonesCellText(key, row) {
+    const val = row?.[key];
+    if (key === 'clearsPerDay' || key === 'failsPerDay') {
+        return row?._dungeon && typeof val === 'number' ? val.toFixed(1) : null;
+    }
+    if (key === 'avgClearTime') return row?._dungeon && typeof val === 'number' ? timeReadable(val) : null;
+    if (val === null || val === undefined || Number.isNaN(Number(val))) return null;
+    if (key === 'deaths') return Number(val).toFixed(2);
+    if (key === 'score') return String(val);
+    return formatKMB(Math.round(val));
+}
+
+/**
+ * The figures a Bestiary plan row expands to: the zone's own all-zones table
+ * cells (same columns, same formatting) plus its biggest drops by rate.
+ * Figures the sweep did not produce are left out, not stubbed.
+ *
+ * @param {Object} row - The zone's results-table row
+ * @param {Array<{key: string, label: string}>} cols - The table's columns for this run
+ * @returns {Array<{label: string, text: string, color?: string}>}
+ */
+export function bestiaryPlanDetailItems(row, cols) {
+    if (!row) return [];
+    const skip = new Set(['zone', 'tier', 'set', 'bestiary']);
+    const items = [];
+    for (const col of cols || []) {
+        if (skip.has(col.key)) continue;
+        const text = allZonesCellText(col.key, row);
+        if (text === null) continue;
+        // The table's Profit/hr header carries a calibration badge's markup
+        const label = col.key === 'profit' ? 'Profit/hr' : col.label;
+        const red =
+            ((col.key === 'profit' || col.key === 'profitDay') && row[col.key] < 0) ||
+            ((col.key === 'deaths' || col.key === 'failsPerDay') && row[col.key] > 0);
+        items.push({ label, text, color: red ? '#f44336' : undefined });
+    }
+    const drops = (row._sells || [])
+        .filter((entry) => Number(entry.unitsPerHour) > 0)
+        .sort((a, b) => b.unitsPerHour - a.unitsPerHour)
+        .slice(0, 5)
+        .map((entry) => {
+            const name =
+                entry.name ||
+                String(entry.itemHrid || '')
+                    .split('/')
+                    .pop()
+                    .replace(/_/g, ' ');
+            return `${name} ${formatKMB(Math.round(entry.unitsPerHour))}/hr`;
+        });
+    if (drops.length) items.push({ label: 'Top drops', text: drops.join(', ') });
+    return items;
+}
+
+/**
  * One results-table row as a Bestiary planner zone, at the rates it should be
  * planned at.
  *
@@ -4167,6 +4229,16 @@ class CombatSimUI {
             });
         }
 
+        // The Bestiary plan expands a route step into this run's own figures for its zone;
+        // a new run is a new plan, so nothing stays expanded
+        this._allZonesDetailRows = new Map();
+        for (const row of rows) {
+            const key = `${row.zoneHrid || row.zone}|T${row.tier}`;
+            if (!this._allZonesDetailRows.has(key)) this._allZonesDetailRows.set(key, row);
+        }
+        this._allZonesDetailCols = cols;
+        this._bestiaryPlanOpen = new Set();
+
         // Find max values per numeric column for highlighting
         const maxVals = {};
         const minVals = {};
@@ -4671,6 +4743,8 @@ class CombatSimUI {
             readInput();
             this._persistBestiaryPlanPrefs();
             this._bestiaryPlanActive = true;
+            // A new plan: nothing stays expanded from the last one
+            this._bestiaryPlanOpen = new Set();
             this._drawBestiaryPlan();
         });
         const copyBtn = box.querySelector('#mwi-csim-bestiary-plan-copy');
@@ -4915,15 +4989,26 @@ class CombatSimUI {
                     zoneInfo && displayedCount !== null
                         ? `<button class="mwi-csim-plan-open-btn" data-hrid="${zoneInfo.zoneHrid}" data-tier="${zoneInfo.tier}" data-count="${displayedCount}" title="Open this zone at T${zoneInfo.tier} in-game and fill ${displayedCount.toLocaleString()} ${segment.isDungeon ? 'clears' : 'fights'}" style="margin-left:4px; background:transparent; border:1px solid transparent; color:#6b7a6b; border-radius:4px; padding:0 4px; font-size:9px; line-height:1.4; cursor:pointer;" onmouseover="this.style.color='#81c995'; this.style.borderColor='rgba(76,175,80,0.35)';" onmouseout="this.style.color='#6b7a6b'; this.style.borderColor='transparent';">&#9654;</button>`
                         : '';
+                // Click or Enter/Space expands this zone's sweep figures under the row; only a
+                // zone with a row in this run's table has any to show
+                const detailKey = segment.zoneHrid;
+                const expandable = this._allZonesDetailRows?.has(detailKey);
+                const isOpen = expandable && this._bestiaryPlanOpen?.has(detailKey);
+                const rowAttrs = expandable
+                    ? ` class="mwi-csim-plan-row" data-key="${esc(detailKey)}" tabindex="0" role="button" ` +
+                      `aria-expanded="${isOpen ? 'true' : 'false'}" title="Show this zone's sim results" ` +
+                      `style="cursor:pointer; border-bottom:1px solid #1a1a1a;${stripe}"`
+                    : ` style="border-bottom:1px solid #1a1a1a;${stripe}"`;
                 return (
-                    `<tr style="border-bottom:1px solid #1a1a1a;${stripe}">` +
+                    `<tr${rowAttrs}>` +
                     `<td style="${tdStyle} color:#888; text-align:right;">${index + 1}</td>` +
                     `<td style="${tdStyle} color:#e0e0e0; text-align:left;"${nameTitleAttr}>${esc(segment.name)}${scoreMark}${openBtn}</td>` +
                     `<td style="${tdStyle} color:#e0e0e0; text-align:right; font-variant-numeric:tabular-nums;">${formatPlanHours(segment.hours)}</td>` +
                     `<td style="${tdStyle} color:#bbb; text-align:right; font-variant-numeric:tabular-nums;" title="${esc(fightsTitle)}">${fightsCell(segment)}</td>` +
                     `<td style="${tdStyle} color:${segment.points > 0 ? '#4caf50' : '#888'}; text-align:right; font-variant-numeric:tabular-nums;">+${segment.points}</td>` +
                     `<td style="${tdStyle} text-align:left; white-space:normal;">${detail || '—'}</td>` +
-                    `</tr>`
+                    `</tr>` +
+                    (isOpen ? this._bestiaryDetailRowHtml(detailKey) : '')
                 );
             })
             .join('');
@@ -4932,6 +5017,16 @@ class CombatSimUI {
         // Total mode names the goal as a total everywhere, not the gap it plans for
         const totals = this._bestiaryPlanMode === 'total' ? this._bestiaryTotalGap() : null;
         const goal = totals ? `${totals.wanted} total` : `${plan.targetPoints}`;
+        const singleKey = plan.bestSingle ? `single|${plan.bestSingle.zoneHrid}` : null;
+        const singleOpen = Boolean(
+            singleKey &&
+            this._allZonesDetailRows?.has(plan.bestSingle.zoneHrid) &&
+            this._bestiaryPlanOpen?.has(singleKey)
+        );
+        const singleName =
+            plan.bestSingle && this._allZonesDetailRows?.has(plan.bestSingle.zoneHrid)
+                ? `<span class="mwi-csim-plan-single" data-key="${esc(plan.bestSingle.zoneHrid)}" tabindex="0" role="button" aria-expanded="${singleOpen}" title="Show this zone's sim results" style="cursor:pointer; text-decoration:underline dotted;">${esc(plan.bestSingle.name)}</span>`
+                : esc(plan.bestSingle?.name || '');
         let single;
         if (!plan.bestSingle) {
             single = plan.mode === 'points' ? 'no single zone reaches it' : 'no single zone earns a point';
@@ -4939,10 +5034,10 @@ class CombatSimUI {
             single =
                 plan.bestSingle.hours === null || plan.bestSingle.hours === undefined
                     ? `no single zone reaches ${goal}`
-                    : `best single zone ${esc(plan.bestSingle.name)} reaches ${goal} in ` +
+                    : `best single zone ${singleName} reaches ${goal} in ` +
                       `<span style="color:#e0e0e0;">${formatPlanHours(plan.bestSingle.hours)} h</span>`;
         } else {
-            single = `best single zone ${esc(plan.bestSingle.name)}: <span style="color:#e0e0e0;">${plan.bestSingle.points}</span>`;
+            single = `best single zone ${singleName}: <span style="color:#e0e0e0;">${plan.bestSingle.points}</span>`;
         }
         const shortfall = plan.unreachable
             ? `<div style="color:#ffb74d; font-size:10px; margin-top:2px;">Every zone ran dry before ` +
@@ -4953,7 +5048,13 @@ class CombatSimUI {
         const routeAmount = totals
             ? `${totals.currentTotal + plan.totalPoints} total (+${plan.totalPoints}, ${totals.wanted} wanted)`
             : `${plan.totalPoints} points`;
+        // The disclosure marker is a pseudo-element so no cell's text changes
         out.innerHTML = `
+            <style>
+                .mwi-csim-plan-row td:nth-child(2)::before { content: '\\25B8'; color: #888; margin-right: 3px; }
+                .mwi-csim-plan-row[aria-expanded="true"] td:nth-child(2)::before { content: '\\25BE'; }
+                .mwi-csim-plan-row:focus-visible { outline: 1px solid #ffb74d; }
+            </style>
             ${skippedNote}
             <div style="overflow-x:auto;">
                 <table style="width:100%; border-collapse:collapse; min-width:360px;">
@@ -4964,8 +5065,30 @@ class CombatSimUI {
             <div id="mwi-csim-bestiary-plan-footer" style="font-size:11px; color:#888; margin-top:4px;">
                 Route: <span style="color:#4caf50; font-weight:600;">${routeAmount}</span> in ${formatPlanHours(plan.hoursUsed)} h · ${single}
             </div>
+            <div id="mwi-csim-bestiary-plan-single-detail">${
+                singleOpen ? this._bestiaryDetailBoxHtml(plan.bestSingle.zoneHrid) : ''
+            }</div>
             ${shortfall}
         `;
+
+        // Disclosure: toggle in place (no redraw, so keyboard focus stays on the row)
+        const activate = (el, handler) => {
+            el.addEventListener('click', handler);
+            el.addEventListener('keydown', (event) => {
+                // Only the row itself: a key on the inner open button must still press that button
+                if (event.target !== el || (event.key !== 'Enter' && event.key !== ' ')) return;
+                event.preventDefault();
+                handler(event);
+            });
+        };
+        out.querySelectorAll('tr.mwi-csim-plan-row').forEach((tr) => {
+            activate(tr, (event) => {
+                if (event.target?.closest?.('.mwi-csim-plan-open-btn')) return;
+                this._toggleBestiaryDetail(tr);
+            });
+        });
+        const singleEl = out.querySelector('.mwi-csim-plan-single');
+        if (singleEl) activate(singleEl, () => this._toggleBestiarySingleDetail(singleEl));
 
         // Each step's ▶ button opens its zone at its tier and fills its own
         // displayed count, read from the button's own dataset rather than
@@ -4981,6 +5104,88 @@ class CombatSimUI {
                 });
             });
         });
+    }
+
+    /**
+     * The sweep's own figures for one zone + tier, as a box. Reads the table
+     * row and columns saved at render time, so nothing here is recomputed.
+     *
+     * @param {string} key - `<zoneHrid>|T<tier>`
+     * @returns {string} Empty when the run has no row for the key
+     * @private
+     */
+    _bestiaryDetailBoxHtml(key) {
+        const items = bestiaryPlanDetailItems(this._allZonesDetailRows?.get(key), this._allZonesDetailCols);
+        if (!items.length) return '';
+        const esc = (value) => String(value).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/"/g, '&quot;');
+        const cells = items
+            .map(
+                (item) =>
+                    `<span style="white-space:nowrap;"><span style="color:#888;">${esc(item.label)}</span> ` +
+                    `<span style="color:${item.color || '#e0e0e0'}; font-variant-numeric:tabular-nums;">${esc(
+                        item.text
+                    )}</span></span>`
+            )
+            .join('');
+        return (
+            `<div class="mwi-csim-plan-detail-box" style="display:flex; flex-wrap:wrap; gap:4px 14px; padding:4px 6px; ` +
+            `font-size:10px; background:rgba(255,255,255,0.03); border-left:2px solid #ffb74d;">${cells}</div>`
+        );
+    }
+
+    /**
+     * A plan table's detail row for one zone.
+     * @param {string} key - `<zoneHrid>|T<tier>`
+     * @returns {string}
+     * @private
+     */
+    _bestiaryDetailRowHtml(key) {
+        const box = this._bestiaryDetailBoxHtml(key);
+        if (!box) return '';
+        return `<tr class="mwi-csim-plan-detail" data-key="${key.replace(/"/g, '&quot;')}"><td colspan="6" style="padding:0 0 4px 0;">${box}</td></tr>`;
+    }
+
+    /**
+     * Expand or collapse one plan row in place.
+     * @param {HTMLElement} tr - The plan row
+     * @private
+     */
+    _toggleBestiaryDetail(tr) {
+        const key = tr.dataset.key;
+        if (!this._bestiaryPlanOpen) this._bestiaryPlanOpen = new Set();
+        const open = !this._bestiaryPlanOpen.has(key);
+        const next = tr.nextElementSibling;
+        if (open) {
+            const html = this._bestiaryDetailRowHtml(key);
+            if (!html) return;
+            this._bestiaryPlanOpen.add(key);
+            if (!(next && next.classList.contains('mwi-csim-plan-detail'))) {
+                // A bare <tr> only parses inside a table section
+                const holder = document.createElement('tbody');
+                holder.innerHTML = html;
+                tr.after(...holder.children);
+            }
+        } else {
+            this._bestiaryPlanOpen.delete(key);
+            if (next && next.classList.contains('mwi-csim-plan-detail')) next.remove();
+        }
+        tr.setAttribute('aria-expanded', open ? 'true' : 'false');
+    }
+
+    /**
+     * Expand or collapse the "best single zone" detail under the plan's footer.
+     * @param {HTMLElement} el - The clickable zone name
+     * @private
+     */
+    _toggleBestiarySingleDetail(el) {
+        const key = `single|${el.dataset.key}`;
+        if (!this._bestiaryPlanOpen) this._bestiaryPlanOpen = new Set();
+        const slot = this.panel?.querySelector('#mwi-csim-bestiary-plan-single-detail');
+        const open = !this._bestiaryPlanOpen.has(key);
+        if (open) this._bestiaryPlanOpen.add(key);
+        else this._bestiaryPlanOpen.delete(key);
+        if (slot) slot.innerHTML = open ? this._bestiaryDetailBoxHtml(el.dataset.key) : '';
+        el.setAttribute('aria-expanded', open ? 'true' : 'false');
     }
 
     /**

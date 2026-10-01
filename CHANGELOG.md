@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Bestiary plan rows expand
+
+- Each step of the combat sim's Bestiary plan, and the best single zone in its summary, can be clicked to show that zone's XP/hr, profit, revenue and cost per hour, encounters, deaths and top drops from the same all-zones run.
+
 ### Mana planner, Bulk Sell and ledger leftovers
 
 - The mana planner no longer subtracts natural regen for time you spent dead before respawning, so its target after a death is not too low.
