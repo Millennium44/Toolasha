@@ -547,11 +547,13 @@ describe('saveCombatSimData GM-storage bridge stamping', () => {
         webSocketHook.flushBattleBridge();
         webSocketHook.pendingBattleBridge = null;
         webSocketHook.lastBattleBridgeWriteAt = 0;
+        webSocketHook.latestBattleBridge = null;
     });
 
     afterEach(() => {
         webSocketHook.pendingBattleBridge = null;
         webSocketHook.flushBattleBridge();
+        webSocketHook.latestBattleBridge = null;
         vi.useRealTimers();
         delete globalThis.GM_setValue;
     });
@@ -599,6 +601,20 @@ describe('saveCombatSimData GM-storage bridge stamping', () => {
         vi.advanceTimersByTime(60_000);
         expect(battleWrites()).toEqual([fight, fight]);
         expect(webSocketHook.pendingBattleBridge).toBeNull();
+    });
+
+    test("opening a simulator rewrites this tab's newest battle after another tab replaced it", () => {
+        vi.useFakeTimers();
+        const fight = msg('new_battle', { battleId: 7, players: [] });
+        webSocketHook.processMessage(fight);
+        vi.advanceTimersByTime(0);
+        expect(battleWrites()).toEqual([fight]);
+
+        // Another game tab's trailing write lands on the shared key; nothing is held here now
+        globalThis.GM_setValue('toolasha_new_battle', 'other tab');
+        webSocketHook.saveCombatSimSnapshot({ character: {} }, { characterId: 1 });
+
+        expect(battleWrites()).toEqual([fight, 'other tab', fight]);
     });
 
     test('opening a simulator writes the held battle at once', () => {
