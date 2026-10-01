@@ -8,6 +8,7 @@
 import dataManager from '../../core/data-manager.js';
 import storage from '../../core/storage.js';
 import { runningCombatAction } from '../../utils/combat-actions.js';
+import { BATTLE_BRIDGE_KEY, battleBridgeKeyFor } from '../../utils/battle-bridge-keys.js';
 import { sharedProfileStatus, sharedProfileWarning } from '../../utils/shared-profile-status.js';
 
 /**
@@ -49,10 +50,12 @@ export function getLastBridgeIssue() {
  * different character than the one active on this tab is refused when `enforceOwner` is true.
  * @param {string} key - Base GM key, e.g. 'toolasha_init_character_data'
  * @param {string} label - Human-friendly label for console/user messages, e.g. 'Character data'
- * @param {{enforceOwner: boolean}} options - Whether an owner mismatch should refuse the read
+ * @param {{enforceOwner: boolean, expectedCharacterId?: string|number|null}} options - Whether an owner mismatch
+ *   should refuse the read; `expectedCharacterId` is the character to match when this page has none of its own
+ *   (a simulator page has no active character, so without it nothing could ever mismatch there)
  * @returns {boolean} true if the payload is safe to use, false if it must be refused
  */
-export function checkBridgeStamp(key, label, { enforceOwner }) {
+export function checkBridgeStamp(key, label, { enforceOwner, expectedCharacterId = null }) {
     lastBridgeIssue = null;
 
     if (typeof GM_getValue === 'undefined') return true;
@@ -93,7 +96,7 @@ export function checkBridgeStamp(key, label, { enforceOwner }) {
 
     if (!enforceOwner) return true;
 
-    const currentCharacterId = dataManager.getCurrentCharacterId();
+    const currentCharacterId = expectedCharacterId ?? dataManager.getCurrentCharacterId();
     if (currentCharacterId && !sameCharacterId(meta.characterId, currentCharacterId)) {
         lastBridgeIssue = `${label} is from character "${
             meta.characterName || meta.characterId
@@ -134,18 +137,53 @@ export function getCharacterData() {
 }
 
 /**
+ * The character a simulator page was opened for, from the character snapshot the game tab writes
+ * only when it opens a simulator. Its owner stamp is read first; the payload's own id is the fallback.
+ * @returns {string|number|null}
+ */
+function bridgedSimCharacterId() {
+    try {
+        const meta = JSON.parse(GM_getValue('toolasha_init_character_data_meta', null) || 'null');
+        if (meta?.characterId) return meta.characterId;
+        const raw = GM_getValue('toolasha_init_character_data', null);
+        return (raw && JSON.parse(raw)?.character?.id) || null;
+    } catch {
+        return null;
+    }
+}
+
+/**
  * Get battle data from dataManager (null if not in combat).
  * Falls back to GM storage when running on the Shykai page. Battle data is character-specific
- * (consumables/triggers), so an ownership mismatch is refused — callers already treat a null
- * battle as "not in combat" and fall back to profile-derived data.
+ * (consumables/triggers), so the bridged battle for the character the simulator was opened for is
+ * read from that character's own slot (another game tab's fight cannot replace it), then from the
+ * legacy shared slot only if its owner is that character. An ownership mismatch is refused —
+ * callers already treat a null battle as "not in combat" and fall back to profile-derived data.
  * @returns {Object|null}
  */
 export function getBattleData() {
     if (dataManager.battleData) return dataManager.battleData;
     if (typeof GM_getValue !== 'undefined') {
         try {
-            const raw = GM_getValue('toolasha_new_battle', null);
-            if (raw && checkBridgeStamp('toolasha_new_battle', 'Battle data', { enforceOwner: true })) {
+            const simCharacterId = bridgedSimCharacterId();
+            if (simCharacterId != null) {
+                const slot = battleBridgeKeyFor(simCharacterId);
+                const own = GM_getValue(slot, null);
+                if (
+                    own &&
+                    checkBridgeStamp(slot, 'Battle data', { enforceOwner: true, expectedCharacterId: simCharacterId })
+                ) {
+                    return JSON.parse(own);
+                }
+            }
+            const raw = GM_getValue(BATTLE_BRIDGE_KEY, null);
+            if (
+                raw &&
+                checkBridgeStamp(BATTLE_BRIDGE_KEY, 'Battle data', {
+                    enforceOwner: true,
+                    expectedCharacterId: simCharacterId,
+                })
+            ) {
                 return JSON.parse(raw);
             }
         } catch {

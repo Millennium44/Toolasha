@@ -8,6 +8,12 @@
 import { setCurrentProfile, evidenceFromSharedProfile, noteSharedClassEvidence } from './profile-manager.js';
 import storage from './storage.js';
 import performanceMonitor from '../utils/performance-monitor.js';
+import {
+    BATTLE_BRIDGE_INDEX_KEY,
+    BATTLE_BRIDGE_KEY,
+    MAX_BATTLE_BRIDGE_CHARACTERS,
+    battleBridgeKeyFor,
+} from '../utils/battle-bridge-keys.js';
 
 /**
  * Message types that bypass the content-hash deduplication.
@@ -163,7 +169,7 @@ const MAX_STORED_PROFILES = 20;
 const MAX_CLIENT_DATA_RETRIES = 60;
 
 /**
- * Least time between two GM-storage writes of `toolasha_new_battle`.
+ * Least time between two GM-storage writes of a character's bridged battle.
  *
  * `new_battle` arrives at the start of every fight — every few seconds while
  * farming — and each `GM_setValue` is a message to the userscript manager's
@@ -216,7 +222,7 @@ class WebSocketHook {
         this.latestBattleBridge = null;
         /** Trailing-write timer for {@link WebSocketHook#pendingBattleBridge} */
         this.battleBridgeTimer = null;
-        /** When `toolasha_new_battle` was last written to GM storage (ms) */
+        /** When a battle was last written to GM storage (ms) */
         this.lastBattleBridgeWriteAt = 0;
         /** The foreign-hook diagnostic is said once, not per message */
         this.notedForeignHookFailure = false;
@@ -981,6 +987,50 @@ class WebSocketHook {
     }
 
     /**
+     * Write one battle payload and its owner stamp to a GM slot. The readers trust the payload
+     * only with a matching stamp, so the pair succeeds or is retried together.
+     * @param {string} key - Payload key; the stamp goes to `${key}_meta`
+     * @param {{message: string, owner: Object|null}} pending - Battle and its owner
+     * @returns {boolean} True if both writes landed
+     */
+    writeBattleSlot(key, pending) {
+        GM_setValue(key, pending.message);
+        return this.writeBridgeMeta(`${key}_meta`, pending.owner);
+    }
+
+    /**
+     * Note that a character has a per-character battle slot, deleting the slots of the characters
+     * beyond {@link MAX_BATTLE_BRIDGE_CHARACTERS} so the keys do not accumulate. The index is shared
+     * by every tab; a lost update at worst leaves one orphaned slot until that character fights again.
+     * @param {string|number} characterId - Character just written
+     * @returns {void}
+     */
+    recordBattleBridgeCharacter(characterId) {
+        try {
+            let index = [];
+            if (typeof GM_getValue !== 'undefined') {
+                const stored = JSON.parse(GM_getValue(BATTLE_BRIDGE_INDEX_KEY, null) || 'null');
+                if (Array.isArray(stored)) index = stored.map(String);
+            }
+            const id = String(characterId);
+            const next = [id, ...index.filter((entry) => entry !== id)];
+            for (const evicted of next.slice(MAX_BATTLE_BRIDGE_CHARACTERS)) {
+                const key = battleBridgeKeyFor(evicted);
+                if (typeof GM_deleteValue !== 'undefined') {
+                    GM_deleteValue(key);
+                    GM_deleteValue(`${key}_meta`);
+                } else {
+                    GM_setValue(key, '');
+                    GM_setValue(`${key}_meta`, '');
+                }
+            }
+            GM_setValue(BATTLE_BRIDGE_INDEX_KEY, JSON.stringify(next.slice(0, MAX_BATTLE_BRIDGE_CHARACTERS)));
+        } catch (error) {
+            console.error('[WebSocket] Battle bridge index update failed:', error);
+        }
+    }
+
+    /**
      * Hold the newest `new_battle` for the GM bridge, writing it now if the last write is at
      * least {@link BATTLE_BRIDGE_MIN_INTERVAL_MS} old and otherwise when that much time has passed.
      * @param {string} message - Raw new_battle message JSON
@@ -1009,9 +1059,17 @@ class WebSocketHook {
         if (!pending || typeof GM_setValue === 'undefined') return false;
         let written = false;
         try {
-            GM_setValue('toolasha_new_battle', pending.message);
-            // The readers trust the payload only with a matching owner stamp, so the pair succeeds or retries together
-            written = this.writeBridgeMeta('toolasha_new_battle_meta', pending.owner);
+            const characterId = pending.owner?.characterId;
+            // Another tab's battle must not replace the one a simulator was opened for, so each
+            // character has its own slot. The legacy shared slot (read raw by an external simulator
+            // page) is written only when a simulator is being opened, or when the owner is unknown.
+            if (characterId != null) {
+                written = this.writeBattleSlot(battleBridgeKeyFor(characterId), pending);
+                if (written) this.recordBattleBridgeCharacter(characterId);
+            }
+            if (characterId == null || (force && written)) {
+                written = this.writeBattleSlot(BATTLE_BRIDGE_KEY, pending);
+            }
         } catch (error) {
             console.error('[WebSocket] Battle bridge write failed:', error);
         }

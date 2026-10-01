@@ -22,6 +22,7 @@ export default [
                 GM_notification: 'readonly',
                 GM_getValue: 'readonly',
                 GM_setValue: 'readonly',
+                GM_deleteValue: 'readonly',
                 GM_info: 'readonly',
                 unsafeWindow: 'readonly',
 
