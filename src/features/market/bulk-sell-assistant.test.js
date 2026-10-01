@@ -1168,6 +1168,18 @@ describe('confirming from the strip', () => {
             expect(navigations).toEqual(['/items/cheese', '/items/milk']);
         });
 
+        test('a double-click on Next still opens one book: the ignored second press keeps the flag', () => {
+            unmarketable();
+
+            confirmBtn().click();
+            confirmBtn().click();
+            vi.advanceTimersByTime(20_000);
+
+            expect(navigations).toEqual(['/items/cheese']);
+            expect(bulkSell.state).toBe('awaiting_next');
+            expect(statusText()).toMatch(/skipped \(no market data\)/);
+        });
+
         test('the Skip button is a click of its own, so it opens the next book', () => {
             unmarketable();
             confirmBtn().click();
