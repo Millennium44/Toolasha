@@ -106,6 +106,7 @@
  */
 
 import storage from './storage.js';
+import { gmGetValue, gmSetValue } from '../utils/gm-traffic.js';
 
 /** Where the mirror lives in GM (extension-scoped) storage. */
 const MIRROR_KEY = 'toolasha_settingsMirror_v1';
@@ -225,7 +226,7 @@ async function collectMirrorable() {
  */
 function readMirrorData() {
     try {
-        const raw = GM_getValue(MIRROR_KEY, null);
+        const raw = gmGetValue(MIRROR_KEY, null);
         if (!raw) return null;
         const parsed = typeof raw === 'string' ? JSON.parse(raw) : raw;
         const data = parsed?.data;
@@ -245,7 +246,7 @@ function readMirrorData() {
  */
 function readMirrorMeta() {
     try {
-        const raw = GM_getValue(MIRROR_META_KEY, null);
+        const raw = gmGetValue(MIRROR_META_KEY, null);
         if (!raw) return null;
         const parsed = typeof raw === 'string' ? JSON.parse(raw) : raw;
         if (!parsed || typeof parsed !== 'object' || typeof parsed.writtenAt !== 'number') return null;
@@ -265,7 +266,7 @@ function readMirrorMeta() {
  */
 function writeMirrorMeta(writtenAt, fingerprint) {
     try {
-        GM_setValue(MIRROR_META_KEY, JSON.stringify({ writtenAt, fingerprint }));
+        gmSetValue(MIRROR_META_KEY, JSON.stringify({ writtenAt, fingerprint }));
     } catch (error) {
         console.error('[SettingsMirror] Could not write mirror meta:', error);
     }
@@ -288,7 +289,7 @@ function writeMirrorMeta(writtenAt, fingerprint) {
  */
 function mirrorExists() {
     try {
-        return Boolean(GM_getValue(MIRROR_KEY, null));
+        return Boolean(gmGetValue(MIRROR_KEY, null));
     } catch (error) {
         console.error('[SettingsMirror] Could not check for an existing mirror:', error);
         return false;
@@ -386,7 +387,7 @@ async function maybeMirror(force = false) {
         // Union, live wins — see "Why the write merges rather than replaces".
         const data = { ...(readMirrorData() || {}), ...payload };
 
-        GM_setValue(MIRROR_KEY, JSON.stringify({ writtenAt: Date.now(), data }));
+        gmSetValue(MIRROR_KEY, JSON.stringify({ writtenAt: Date.now(), data }));
         writeMirrorMeta(Date.now(), fingerprintPayload(payload));
         return true;
     } catch (error) {
@@ -457,7 +458,7 @@ function _resetCadenceForTests() {
     lastWriteAttempt = 0;
     if (!gmAvailable()) return;
     try {
-        GM_setValue(MIRROR_META_KEY, JSON.stringify({ writtenAt: 0, fingerprint: null }));
+        gmSetValue(MIRROR_META_KEY, JSON.stringify({ writtenAt: 0, fingerprint: null }));
     } catch (error) {
         console.error('[SettingsMirror] Could not reset mirror meta (tests only):', error);
     }
