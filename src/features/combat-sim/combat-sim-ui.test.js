@@ -6768,7 +6768,10 @@ describe('the Bestiary plan step detail row', () => {
             netPerHour: 1500000,
             revenuePerHour: 1800000,
             costPerHour: 300000,
-            dropEntries: [{ itemHrid: '/items/honey', name: 'Honey', countPerHour: 42 }],
+            dropEntries: [
+                { itemHrid: '/items/honey', name: 'Honey', countPerHour: 42 },
+                { itemHrid: '/items/rare_gem', name: 'Rare Gem', countPerHour: 0.12 },
+            ],
         },
     });
     const gameData = { combatMonsterDetailMap: { '/monsters/fly': { name: 'Fly' } } };
@@ -6812,6 +6815,8 @@ describe('the Bestiary plan step detail row', () => {
         expect(text).toContain('Rev/hr');
         expect(text).toContain('Cost/hr');
         expect(text).toContain('Honey 42/hr');
+        // A rare drop under one an hour keeps its fraction instead of reading 0/hr
+        expect(text).toContain('Rare Gem 0.12/hr');
 
         click(rowEl());
         expect(rowEl().getAttribute('aria-expanded')).toBe('false');
