@@ -8,7 +8,8 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ### Trial ledger on the test server counts every finished cycle
 
-- On the test server, the trial ledger now places older trials that lack a cycle tag by when they were recorded, and counts a cycle as finished an hour after its fight, so a running week no longer reads as fewer cycles than it ran.
+- The trial ledger's coverage now counts cycles watched out of the cycles that ran ("Watched 6 of 8 cycles (2 missed)"), so a cycle nobody recorded shows as missed; before, it compared recorded fights to two trials per cycle and could never pass 50%.
+- On the test server, the ledger places older trials that lack a cycle tag by when they were recorded, and a finished cycle is no longer shown as running.
 
 ### Rank badge options for Steam ranks
 
