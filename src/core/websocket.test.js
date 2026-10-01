@@ -617,6 +617,21 @@ describe('saveCombatSimData GM-storage bridge stamping', () => {
         expect(battleWrites()).toEqual([fight, 'other tab', fight]);
     });
 
+    test('a failed forced rewrite of the latest battle is retried', () => {
+        vi.useFakeTimers();
+        const fight = msg('new_battle', { battleId: 8, players: [] });
+        webSocketHook.processMessage(fight);
+        vi.advanceTimersByTime(0);
+        globalThis.GM_setValue.mockImplementationOnce(() => {
+            throw new Error('storage unavailable');
+        });
+
+        webSocketHook.saveCombatSimSnapshot({ character: {} }, { characterId: 1 });
+        vi.advanceTimersByTime(60_000);
+
+        expect(battleWrites()).toEqual([fight, fight, fight]);
+    });
+
     test('opening a simulator writes the held battle at once', () => {
         vi.useFakeTimers();
         webSocketHook.processMessage(msg('new_battle', { battleId: 1, players: [] }));
