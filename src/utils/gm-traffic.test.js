@@ -2,6 +2,7 @@ import { describe, test, expect, beforeEach, afterEach, vi } from 'vitest';
 import {
     gmSetValue,
     gmGetValue,
+    gmDeleteValue,
     gmRequest,
     gmRequestAvailable,
     getGmTrafficSnapshot,
@@ -159,5 +160,21 @@ describe('rates', () => {
     test('summary carries totals and rates but no per-key rows', () => {
         const summary = getGmTrafficSummary();
         expect(Object.keys(summary).sort()).toEqual(['perHour', 'rateWindowMs', 'startedAt', 'totals']);
+    });
+});
+
+describe('gmDeleteValue', () => {
+    test('passes the key through, counts a delete and rethrows a failure uncounted', () => {
+        const stub = vi.fn(() => 'gone');
+        vi.stubGlobal('GM_deleteValue', stub);
+        expect(gmDeleteValue('k')).toBe('gone');
+        expect(stub).toHaveBeenCalledWith('k');
+        expect(getGmTrafficSnapshot().totals.deleteCalls).toBe(1);
+
+        vi.stubGlobal('GM_deleteValue', () => {
+            throw new Error('no');
+        });
+        expect(() => gmDeleteValue('k')).toThrow('no');
+        expect(getGmTrafficSnapshot().totals.deleteCalls).toBe(1);
     });
 });

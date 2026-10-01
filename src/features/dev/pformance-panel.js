@@ -636,7 +636,8 @@ class PFormancePanel {
             `Writes: ${snap.totals.writeCalls} calls, ${formatBytes(snap.totals.writeBytes)} — ` +
                 `${hourly.writeCalls}/h, ${formatBytes(hourly.writeBytes)}/h` +
                 (snap.writeErrors ? ` — ${snap.writeErrors} threw` : '') +
-                (snap.unsizedWrites ? ` — ${snap.unsizedWrites} unsized` : ''),
+                (snap.unsizedWrites ? ` — ${snap.unsizedWrites} unsized` : '') +
+                (snap.totals.deleteCalls ? ` — ${snap.totals.deleteCalls} deletes` : ''),
             ...snap.writesByKey.slice(0, 5).map(keyLine),
             `Reads: ${snap.totals.readCalls} calls, ${formatBytes(snap.totals.readBytes)} returned — ` +
                 `${hourly.readCalls}/h`,
