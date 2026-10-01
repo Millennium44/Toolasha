@@ -323,6 +323,27 @@ describe('several game tabs on one profile', () => {
         expect(stored(PUBLIC, TRADE)).toEqual(['one trade line']);
     });
 
+    test('a tab showing fewer live lines keeps the shared record’s allowance in its working record', async () => {
+        const ada = await openPage('101');
+        ada.persistence.enable(() => 5);
+        await ada.persistence.load();
+        for (let i = 0; i < 9; i += 1) ada.persistence.record(GLOBAL, line('Zed', `g${i}`, i));
+        ada.persistence.setLiveCount(GLOBAL, 4);
+        await ada.persistence.flush();
+        expect(stored(PUBLIC, GLOBAL)).toHaveLength(9);
+
+        const bob = await openPage('202');
+        bob.persistence.enable(() => 5);
+        await bob.persistence.load();
+        bob.persistence.setLiveCount(GLOBAL, 1);
+        bob.persistence.record(GLOBAL, line('Zed', 'g9', 9));
+
+        // Bob's own figure alone would cap at 5 + 1; the record allows 5 + 4.
+        expect(texts(bob.persistence.messagesFor(GLOBAL))).toEqual(Array.from({ length: 9 }, (_, i) => `g${i + 1}`));
+        await bob.persistence.flush();
+        expect(stored(PUBLIC, GLOBAL)).toEqual(Array.from({ length: 9 }, (_, i) => `g${i + 1}`));
+    });
+
     test('a deletion seen in one tab purges the shared record, and another tab cannot put it back', async () => {
         const ada = await openPage('101');
         const bob = await openPage('202');

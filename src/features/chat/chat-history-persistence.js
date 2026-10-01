@@ -1314,6 +1314,8 @@ class ChatHistoryPersistence {
         this.heldLegacy = null;
         /** @type {string|null} The guild the socket last named for this character, over `characterData`'s */
         this.guildOverride = null;
+        /** @type {Record<string, number>} Live allowances the shared records hold, as last read or written */
+        this.sharedLive = {};
     }
 
     /**
@@ -1336,9 +1338,16 @@ class ChatHistoryPersistence {
         if (!this.tabs) return;
         const context = this.context || this._contextNow();
         const perTab = this.getMaxHistory();
+        // A shared tab's record keeps the larger allowance of the game tabs showing
+        // it; the working record keeps the same, or a tab switch would restore
+        // fewer lines than are stored.
+        const live = { ...this.liveCounts };
+        for (const [tabKey, count] of Object.entries(this.sharedLive)) {
+            live[tabKey] = Math.max(live[tabKey] ?? 0, count);
+        }
         for (const group of Object.values(groupByRecord(this.tabs, context))) {
             const keys = Object.keys(group);
-            applyCaps(group, perTab, this.liveCounts);
+            applyCaps(group, perTab, live);
             for (const key of keys) {
                 if (group[key]) this.tabs[key] = group[key];
                 else delete this.tabs[key];
@@ -1550,6 +1559,10 @@ class ChatHistoryPersistence {
             const storedLive = {};
             for (const key of keys) Object.assign(storedLive, liveFromRecord(records[key]));
             this.liveCounts = { ...storedLive, ...this.liveCounts };
+            this.sharedLive = {};
+            for (const key of keys) {
+                if (key !== context.charKey) Object.assign(this.sharedLive, liveFromRecord(records[key]));
+            }
             // A guild change during the read moved the context on; the old
             // guild's record is no longer this session's to show.
             const current = this.context || context;
@@ -1836,6 +1849,7 @@ class ChatHistoryPersistence {
      * @param {RecordContext} context
      */
     _adopt(key, written, context) {
+        Object.assign(this.sharedLive, liveFromRecord(written));
         const stored = written && written.tabs && typeof written.tabs === 'object' ? written.tabs : {};
         const deleted = new Set(tombstonesFrom(written));
         const tabKeys = new Set([...Object.keys(stored), ...Object.keys(this.tabs)]);
@@ -2050,6 +2064,7 @@ class ChatHistoryPersistence {
         this.undeleted = new Map();
         this.heldLegacy = null;
         this.guildOverride = null;
+        this.sharedLive = {};
     }
 }
 

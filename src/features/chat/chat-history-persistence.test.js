@@ -2294,7 +2294,7 @@ describe('the cap counts lines older than the game’s live backlog', () => {
             tabs: { [KEY]: Array.from({ length: CAP + LIVE }, (_, i) => html(i)) },
             live: { [KEY]: LIVE },
         };
-        const [container] = buildChat(['General']);
+        const [container] = buildChat(['Local']);
         chatHistoryExtender.initialize();
         await settle();
 
@@ -2314,7 +2314,7 @@ describe('the cap counts lines older than the game’s live backlog', () => {
             tabs: { [KEY]: Array.from({ length: CAP + LIVE }, (_, i) => html(i)) },
             live: { [KEY]: LIVE },
         };
-        const [container] = buildChat(['General']);
+        const [container] = buildChat(['Local']);
         container.append(...Array.from({ length: LIVE }, (_, i) => makeMessage(line(CAP + i))));
         chatHistoryExtender.initialize();
         await settle();
