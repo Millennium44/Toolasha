@@ -959,15 +959,21 @@ class WebSocketHook {
         }
         const pending = this.pendingBattleBridge;
         if (!pending || typeof GM_setValue === 'undefined') return false;
-        this.pendingBattleBridge = null;
-        this.lastBattleBridgeWriteAt = Date.now();
         try {
             GM_setValue('toolasha_new_battle', pending.message);
-            this.writeBridgeMeta('toolasha_new_battle_meta', pending.owner);
-            return true;
         } catch {
+            // Keep the battle (unless a newer one replaced it) and retry after the interval
+            this.battleBridgeTimer = setTimeout(() => this.flushBattleBridge(), BATTLE_BRIDGE_MIN_INTERVAL_MS);
             return false;
         }
+        if (this.pendingBattleBridge === pending) this.pendingBattleBridge = null;
+        this.lastBattleBridgeWriteAt = Date.now();
+        try {
+            this.writeBridgeMeta('toolasha_new_battle_meta', pending.owner);
+        } catch {
+            // The payload landed; a missing meta key only drops the owner stamp
+        }
+        return true;
     }
 
     /**
