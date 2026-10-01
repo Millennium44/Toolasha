@@ -1032,15 +1032,16 @@ export function observedCoverage(cycles, { trialsPerCycle = TRIALS_PER_CYCLE, no
     // running it would drop out of the ratio until the next cycle began. Live
     // has one cycle a week, and the week is left out until it rolls over. A record
     // ledgerCyclesByAnchor left unsplit (a legacy trial without memberFigures) can
-    // hold trials from several cycles, so its trial count says nothing about one
-    const distinctTrials = (cycle) =>
-        new Set((cycle?.trials || []).map((trial, index) => trial?.trialId ?? `#${index}`)).size;
+    // hold trials from several cycles, so only its newest group is judged
+    const distinctTrials = (trials) =>
+        new Set((trials || []).map((trial, index) => trial?.trialId ?? `#${index}`)).size;
+    const runningTrials = Array.isArray(running?.trials) ? running.trials : [];
+    const newestGroup = isTestServer() && running ? trialCycleGroups(runningTrials).at(-1) : null;
     const finished =
         isTestServer() &&
         running &&
         perCycle > 0 &&
-        distinctTrials(running) >= perCycle &&
-        trialCycleGroups(Array.isArray(running.trials) ? running.trials : []).length <= 1;
+        distinctTrials(newestGroup ? newestGroup.trials : runningTrials) >= perCycle;
 
     for (const cycle of list) {
         const isRunning = cycle === running && !finished;

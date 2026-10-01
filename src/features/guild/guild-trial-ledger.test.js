@@ -849,6 +849,32 @@ describe('observedCoverage', () => {
         }
     });
 
+    test('on the test server an unsplit record whose newest group ran both trials is finished', () => {
+        const now = Date.parse('2026-08-23T12:00:00Z');
+        const thisWeek = trialWeekStart(now);
+        const week = {
+            weekStart: thisWeek,
+            trials: [
+                { trialId: 'a', cycleAt: thisWeek + 3_600_000 },
+                { trialId: 'b', cycleAt: thisWeek + 3_600_500 },
+                { trialId: 'c', cycleAt: thisWeek + 90_000_000 },
+                { trialId: 'd', cycleAt: thisWeek + 90_000_500 },
+            ],
+        };
+        server.test = true;
+        try {
+            expect(observedCoverage([week], { now })).toEqual({
+                observed: 4,
+                expected: 4,
+                cycles: 2,
+                inProgress: false,
+                fraction: 1,
+            });
+        } finally {
+            server.test = false;
+        }
+    });
+
     test('on the test server an unsplit week spanning two cycles is not one finished cycle', () => {
         const now = Date.parse('2026-08-23T12:00:00Z');
         const thisWeek = trialWeekStart(now);
