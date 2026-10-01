@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### PFormance shows Tampermonkey traffic and every open tab
+
+- With the PFormance extras on (◎), the panel counts every Toolasha save, read, delete and network request through Tampermonkey with their sizes and hourly rate, and lists every open game tab with its character, uptime and traffic.
+
 ### Fewer Tampermonkey storage writes in combat
 
 - The battle snapshot that external combat sims read is now saved to Tampermonkey storage at most once a minute instead of after every fight, and opening a sim from the game still sends the latest battle at once.
