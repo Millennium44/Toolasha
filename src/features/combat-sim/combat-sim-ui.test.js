@@ -6838,6 +6838,16 @@ describe('the Bestiary plan step detail row', () => {
         expect(rowEl().getAttribute('aria-expanded')).toBe('false');
     });
 
+    test('an open row stays open when the same run is redrawn by a sort, and a new run closes it', async () => {
+        click(rowEl());
+        const args = [ui._allZonesResults, 1, gameData];
+        await ui._displayAllZonesResults(...args);
+        expect(detailEls()).toHaveLength(1);
+
+        await ui._displayAllZonesResults(...args, 'player1', { newRun: true });
+        expect(detailEls()).toHaveLength(0);
+    });
+
     test('a volume-capped profit carries the same marker in the detail as in the table', () => {
         const row = ui._allZonesDetailRows.values().next().value;
         row.liquidityLimit = { note: 'Capped by volume', detail: 'Honey sells 10/day' };
