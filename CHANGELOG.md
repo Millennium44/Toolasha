@@ -9,6 +9,7 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 ### Fewer Tampermonkey storage writes in combat
 
 - The battle snapshot that external combat sims read is now saved to Tampermonkey storage at most once a minute instead of after every fight, and opening a sim from the game still sends the latest battle at once.
+- The game's item data is no longer saved to Tampermonkey storage on every load; it is saved when you open a sim from the game, and only if it changed, which keeps every other Toolasha save small.
 
 ### Chat history and rank badges
 
