@@ -165,15 +165,15 @@ class PFormancePanel {
         // Read once per open, in show(); a mocked or absent config must not
         // take the panel with it
         this.attributionEnabled = false;
-        // Publishes this tab's summary to the others while the extras are on,
-        // whether or not the panel is open: a tab nobody has opened a panel in
-        // is exactly the one the all-tabs list needs to hear from
+        // Always joined from initialize(), independent of the extras, so this
+        // tab answers another tab's poll. Polling itself is only while the panel
+        // is open with the extras on (_syncPolling).
         this.tabCensus = null;
     }
 
     initialize() {
         this.attributionEnabled = readAttributionSetting();
-        this._syncTabCensus();
+        this._joinTabCensus();
         // The panel itself is still created on demand by show(); all that
         // starts here is the palette entry that calls it
         registerCommand({
@@ -192,6 +192,7 @@ class PFormancePanel {
         this.attributionEnabled = readAttributionSetting();
         this._createPanel();
         this._startUpdating();
+        this._syncPolling();
     }
 
     /** @returns {boolean} Whether the panel is on screen right now */
@@ -304,7 +305,7 @@ class PFormancePanel {
         const attributionBtn = this._headerButton('◎', () => {
             this.attributionEnabled = !this.attributionEnabled;
             writeAttributionSetting(this.attributionEnabled);
-            this._syncTabCensus();
+            this._syncPolling();
             this._paintAttributionButton(attributionBtn);
             this._updateContent();
         });
@@ -413,6 +414,7 @@ class PFormancePanel {
 
     _removePanel() {
         this._stopUpdating();
+        this.tabCensus?.stopPolling();
         setMonitorEnabled(false);
         // The canary's history is bounded, but it is still the panel's, and a
         // closed panel holds nothing
@@ -552,29 +554,34 @@ class PFormancePanel {
     }
 
     /**
-     * Start or stop publishing this tab to the others to match the extras
-     * setting. Idempotent. Off means no channel at all, not an idle one.
+     * Join the census channel so this tab answers polls. Runs at init whatever
+     * the extras say: it costs one message listener and no timer.
      * @private
      */
-    _syncTabCensus() {
-        if (!this.attributionEnabled) {
-            this.tabCensus?.stop();
-            this.tabCensus = null;
-            return;
-        }
-        if (!this.tabCensus) {
-            this.tabCensus = createTabCensus({
-                getSummary: () =>
-                    buildTabSummary({
-                        dataManager: bridgedDataManager(),
-                        monitor: getPerformanceMonitor(),
-                        getTraffic: getGmTrafficSummary,
-                        heapBytes: () =>
-                            getPerformanceMonitor()?.heapMemorySupported?.() ? performance.memory.usedJSHeapSize : null,
-                    }),
-            });
-        }
+    _joinTabCensus() {
+        if (this.tabCensus) return;
+        this.tabCensus = createTabCensus({
+            getSummary: () =>
+                buildTabSummary({
+                    dataManager: bridgedDataManager(),
+                    monitor: getPerformanceMonitor(),
+                    getTraffic: getGmTrafficSummary,
+                    heapBytes: () =>
+                        getPerformanceMonitor()?.heapMemorySupported?.() ? performance.memory.usedJSHeapSize : null,
+                }),
+        });
         this.tabCensus.start();
+    }
+
+    /**
+     * Poll the other tabs only while the panel is open with the extras on.
+     * Idempotent.
+     * @private
+     */
+    _syncPolling() {
+        if (!this.tabCensus) return;
+        if (this.panel && this.attributionEnabled) this.tabCensus.startPolling();
+        else this.tabCensus.stopPolling();
     }
 
     /**
@@ -652,13 +659,13 @@ class PFormancePanel {
     }
 
     /**
-     * Every tab heard from in the last half-minute, this one marked.
+     * This tab, then every tab that answered either of the last two polls.
      * @returns {HTMLElement} The section
      * @private
      */
     _createTabsSection() {
         const census = this.tabCensus;
-        if (!census) return this._createTextSection('All tabs', ['Not publishing.'], 'tabsSectionCollapsed');
+        if (!census) return this._createTextSection('All tabs', ['Not listening.'], 'tabsSectionCollapsed');
         if (!census.supported) {
             return this._createTextSection(
                 'All tabs',

@@ -32,13 +32,21 @@ beforeEach(() => vi.useFakeTimers());
 afterEach(() => vi.useRealTimers());
 
 describe('createTabCensus', () => {
-    test('lists own tab first and marked, then peers heard from', () => {
+    /** Two tabs on one bus, both joined; the first one polls */
+    const pair = () => {
         const bus = makeBus();
         const a = createTabCensus({ getSummary: () => summary('A'), tabId: 'a', createChannel: bus.create });
         const b = createTabCensus({ getSummary: () => summary('B'), tabId: 'b', createChannel: bus.create });
         a.start();
         b.start();
-        b.start();
+        return { bus, a, b };
+    };
+
+    test('a tab that never polls still answers a poll, with no timer of its own', () => {
+        const { bus, a, b } = pair();
+        expect(b.isPolling()).toBe(false);
+        expect(vi.getTimerCount()).toBe(0);
+        a.startPolling();
 
         const tabs = a.getTabs();
         expect(tabs.map((t) => [t.tabId, t.self])).toEqual([
@@ -51,91 +59,137 @@ describe('createTabCensus', () => {
         b.stop();
     });
 
-    test('own summary is read at list time, so a character switch shows at once', () => {
-        const bus = makeBus();
-        let name = 'First';
-        const census = createTabCensus({ getSummary: () => summary(name), createChannel: bus.create });
-        census.start();
-        name = 'Second';
-        expect(census.getTabs()[0].summary.characterName).toBe('Second');
-        census.stop();
-    });
-
-    test('a tab that goes quiet drops out after the stale window', () => {
-        const bus = makeBus();
-        let clock = 1_000_000;
-        const now = () => clock;
-        const a = createTabCensus({ getSummary: () => summary('A'), tabId: 'a', createChannel: bus.create, now });
-        const b = createTabCensus({ getSummary: () => summary('B'), tabId: 'b', createChannel: bus.create, now });
-        a.start();
-        b.start();
-        expect(a.getTabs()).toHaveLength(2);
-
-        clock += 29_000;
-        expect(a.getTabs()).toHaveLength(2);
-        clock += 2_000;
+    test('nobody is listed until a poll is sent', () => {
+        const { a, b } = pair();
         expect(a.getTabs()).toHaveLength(1);
         b.stop();
         a.stop();
     });
 
-    test('republishes on the interval and a fresh beat keeps a peer listed', () => {
+    test('a tab only listens for replies to its own polls', () => {
         const bus = makeBus();
-        let clock = 0;
-        const now = () => clock;
-        const a = createTabCensus({ getSummary: () => summary('A'), tabId: 'a', createChannel: bus.create, now });
-        const b = createTabCensus({ getSummary: () => summary('B'), tabId: 'b', createChannel: bus.create, now });
+        const [a, b, c] = ['a', 'b', 'c'].map((id) => {
+            const census = createTabCensus({ getSummary: () => summary(id), tabId: id, createChannel: bus.create });
+            census.start();
+            return census;
+        });
+        b.startPolling();
+        expect(a.getTabs()).toHaveLength(1);
+        expect(b.getTabs()).toHaveLength(3);
+        a.stop();
+        b.stop();
+        c.stop();
+    });
+
+    test('own summary is read at list time, so a character switch shows at once', () => {
+        const bus = makeBus();
+        let name = 'First';
+        const census = createTabCensus({ getSummary: () => summary(name), createChannel: bus.create });
+        census.start();
+        census.startPolling();
+        name = 'Second';
+        expect(census.getTabs()[0].summary.characterName).toBe('Second');
+        census.stop();
+    });
+
+    test('a reply that arrives a poll late is still listed; two missed polls drop the tab', () => {
+        const bus = makeBus();
+        const a = createTabCensus({ getSummary: () => summary('A'), tabId: 'a', createChannel: bus.create });
         a.start();
-        b.start();
-        for (let i = 0; i < 6; i++) {
-            clock += 10_000;
-            vi.advanceTimersByTime(10_000);
-        }
+        a.startPolling();
+        const hear = bus.channels[0].onmessage;
+        const reply = (round) =>
+            hear({ data: { v: 1, type: 'summary', tabId: 'slow', replyTo: 'a', round, summary: summary('Slow') } });
+
+        // Round 1 went out; the hidden tab answers only after round 2 is already out
+        a.pollNow();
+        reply(1);
+        expect(a.getTabs().map((t) => t.tabId)).toContain('slow');
+
+        // Round 3 goes out with no answer to 2: round 1 is now two behind
+        a.pollNow();
+        expect(a.getTabs().map((t) => t.tabId)).not.toContain('slow');
+        a.stop();
+    });
+
+    test('a tab that answers every poll stays listed over time', () => {
+        const { a, b } = pair();
+        a.startPolling();
+        for (let i = 0; i < 6; i++) vi.advanceTimersByTime(10_000);
         expect(a.getTabs()).toHaveLength(2);
         a.stop();
         b.stop();
     });
 
     test('a goodbye removes the peer immediately', () => {
-        const bus = makeBus();
-        const a = createTabCensus({ getSummary: () => summary('A'), tabId: 'a', createChannel: bus.create });
-        const b = createTabCensus({ getSummary: () => summary('B'), tabId: 'b', createChannel: bus.create });
-        a.start();
-        b.start();
+        const { a, b } = pair();
+        a.startPolling();
         b.stop();
         expect(a.getTabs()).toHaveLength(1);
         a.stop();
     });
 
-    test('stop clears the timer, closes the channel and forgets peers; start again works', () => {
+    test('pagehide says goodbye, and stop removes the listener', () => {
+        const target = new EventTarget();
+        vi.stubGlobal('window', target);
         const bus = makeBus();
         const a = createTabCensus({ getSummary: () => summary('A'), tabId: 'a', createChannel: bus.create });
-        const b = createTabCensus({ getSummary: () => summary('B'), tabId: 'b', createChannel: bus.create });
         a.start();
+        const b = createTabCensus({ getSummary: () => summary('B'), tabId: 'b', createChannel: bus.create });
         b.start();
+        a.startPolling();
+        expect(a.getTabs()).toHaveLength(2);
+
+        target.dispatchEvent(new Event('pagehide'));
+        expect(a.getTabs()).toHaveLength(1);
+
+        a.stop();
+        b.stop();
+        vi.unstubAllGlobals();
+    });
+
+    test('stop clears the poll timer, closes the channel and forgets peers; start again works', () => {
+        const { bus, a, b } = pair();
+        a.startPolling();
+        expect(vi.getTimerCount()).toBe(1);
         a.stop();
         expect(a.isRunning()).toBe(false);
+        expect(a.isPolling()).toBe(false);
         expect(bus.channels[0].closed).toBe(true);
         expect(bus.channels[0].onmessage).toBe(null);
-        expect(vi.getTimerCount()).toBe(1);
-        expect(a.getTabs()).toHaveLength(1);
+        expect(vi.getTimerCount()).toBe(0);
         a.stop();
 
         a.start();
+        a.startPolling();
         expect(a.getTabs()).toHaveLength(2);
         a.stop();
         b.stop();
         expect(vi.getTimerCount()).toBe(0);
     });
 
+    test('stopPolling drops the timer and the list but keeps answering', () => {
+        const { a, b } = pair();
+        b.startPolling();
+        b.stopPolling();
+        expect(vi.getTimerCount()).toBe(0);
+        expect(b.getTabs()).toHaveLength(1);
+        a.startPolling();
+        expect(a.getTabs()).toHaveLength(2);
+        a.stop();
+        b.stop();
+    });
+
     test('ignores its own id, malformed messages and other versions', () => {
         const bus = makeBus();
         const a = createTabCensus({ getSummary: () => summary('A'), tabId: 'a', createChannel: bus.create });
         a.start();
+        a.startPolling();
         const hear = bus.channels[0].onmessage;
-        hear({ data: { v: 1, type: 'summary', tabId: 'a', summary: summary('echo') } });
-        hear({ data: { v: 2, type: 'summary', tabId: 'z', summary: summary('future') } });
-        hear({ data: { v: 1, type: 'summary', tabId: 'y', summary: 'nope' } });
+        hear({ data: { v: 1, type: 'summary', tabId: 'a', replyTo: 'a', round: 1, summary: summary('echo') } });
+        hear({ data: { v: 2, type: 'summary', tabId: 'z', replyTo: 'a', round: 1, summary: summary('future') } });
+        hear({ data: { v: 1, type: 'summary', tabId: 'y', replyTo: 'a', round: 1, summary: 'nope' } });
+        hear({ data: { v: 1, type: 'summary', tabId: 'x', replyTo: 'a', summary: summary('no round') } });
         hear({ data: null });
         expect(a.getTabs()).toHaveLength(1);
         a.stop();
@@ -145,6 +199,7 @@ describe('createTabCensus', () => {
         vi.stubGlobal('BroadcastChannel', undefined);
         const census = createTabCensus({ getSummary: () => summary('A') });
         census.start();
+        census.startPolling();
         expect(census.supported).toBe(false);
         expect(census.isRunning()).toBe(false);
         expect(vi.getTimerCount()).toBe(0);
@@ -161,7 +216,6 @@ describe('createTabCensus', () => {
         });
         census.start();
         expect(census.isRunning()).toBe(false);
-        expect(vi.getTimerCount()).toBe(0);
     });
 });
 

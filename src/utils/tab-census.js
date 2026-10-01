@@ -1,13 +1,18 @@
 /**
  * Tab Census
  *
- * Every game tab publishes a small summary of itself on a `BroadcastChannel`
- * every few seconds, and listens for the others'. The PFormance panel lists the
- * tabs it has heard from, so one open panel shows what all of the tabs are
- * costing the userscript manager side by side.
+ * Request/reply over a `BroadcastChannel`. Every game tab joins the channel and
+ * answers a `poll` with a small summary of itself, from the message handler:
+ * one listener, no timer, and nothing runs until someone asks. That matters
+ * because a hidden tab's timers are throttled to about once a minute, while
+ * its message handlers still run on time.
  *
- * Nothing here is persisted. A summary lives in a Map for as long as it is
- * fresh, and a tab that goes quiet drops out of the list after `staleMs`.
+ * Only a tab whose panel is open with the extras on polls, from its own
+ * (visible) timer. It lists the tabs that answered either of the last two
+ * polls, so a reply that arrives a poll late still counts and a tab that
+ * misses two in a row drops out.
+ *
+ * Nothing here is persisted.
  */
 
 import { createTimerRegistry } from './timer-registry.js';
@@ -15,11 +20,8 @@ import { createTimerRegistry } from './timer-registry.js';
 /** BroadcastChannel name. Toolasha-scoped; nothing else should post on it. */
 export const TAB_CENSUS_CHANNEL = 'toolasha-tab-census';
 
-/** How often a tab publishes. */
-export const TAB_CENSUS_INTERVAL_MS = 10000;
-
-/** How long a silent tab stays listed: three missed publishes. */
-export const TAB_CENSUS_STALE_MS = 30000;
+/** How often a polling tab asks. Run from the poller's own (visible) timer. */
+export const TAB_CENSUS_POLL_MS = 10000;
 
 /** Wire format version, so a future change can be told from this one. */
 const WIRE_VERSION = 1;
@@ -97,40 +99,34 @@ export function buildTabSummary({ dataManager, monitor, getTraffic, heapBytes })
 }
 
 /**
- * Publish this tab and hear the others.
+ * Join the census channel, answer polls, and optionally poll the others.
  *
  * @param {Object} options - Configuration
  * @param {Function} options.getSummary - Builds this tab's summary on demand
- * @param {number} [options.intervalMs] - Publish cadence
- * @param {number} [options.staleMs] - How long a silent tab stays listed
- * @param {Function} [options.now] - Clock, for tests
+ * @param {number} [options.pollMs] - Poll cadence while polling
  * @param {string} [options.tabId] - Fixed id, for tests
  * @param {Function} [options.createChannel] - `(name) => channel`, for tests
- * @returns {{start: Function, stop: Function, getTabs: Function, isRunning: Function, tabId: string,
- *   supported: boolean}} The census
+ * @returns {{start: Function, stop: Function, startPolling: Function, stopPolling: Function, pollNow: Function,
+ *   getTabs: Function, isRunning: Function, isPolling: Function, tabId: string, supported: boolean}} The census
  */
-export function createTabCensus({
-    getSummary,
-    intervalMs = TAB_CENSUS_INTERVAL_MS,
-    staleMs = TAB_CENSUS_STALE_MS,
-    now = Date.now,
-    tabId = newTabId(),
-    createChannel,
-}) {
+export function createTabCensus({ getSummary, pollMs = TAB_CENSUS_POLL_MS, tabId = newTabId(), createChannel }) {
     const open = createChannel || (broadcastChannelSupported() ? (name) => new BroadcastChannel(name) : null);
     const supported = open !== null;
-    /** @type {Map<string, {summary: Object, heardAt: number}>} */
+    /** @type {Map<string, {summary: Object, round: number}>} */
     const peers = new Map();
     let channel = null;
     let timers = null;
     let running = false;
+    let polling = false;
+    let round = 0;
 
-    const publish = () => {
-        if (!channel) return;
+    const send = (message) => {
         try {
-            channel.postMessage({ v: WIRE_VERSION, type: 'summary', tabId, summary: getSummary() });
+            channel?.postMessage({ v: WIRE_VERSION, tabId, ...message });
+            return true;
         } catch {
-            // A closed channel or an uncloneable summary skips this beat only
+            // A closed channel or an uncloneable summary skips this message only
+            return false;
         }
     };
 
@@ -139,59 +135,77 @@ export function createTabCensus({
         if (!message || message.v !== WIRE_VERSION || typeof message.tabId !== 'string' || message.tabId === tabId) {
             return;
         }
-        if (message.type === 'hello') {
-            // A tab that just started asks for everyone's summary rather than
-            // waiting out a publish interval to fill its list
-            publish();
+        if (message.type === 'poll') {
+            // Answered from the handler, not a timer, so a throttled hidden tab still replies on time
+            send({ type: 'summary', replyTo: message.tabId, round: message.round, summary: getSummary() });
             return;
         }
         if (message.type === 'bye') {
             peers.delete(message.tabId);
             return;
         }
-        if (message.type !== 'summary' || !message.summary || typeof message.summary !== 'object') return;
+        // Replies to other tabs' polls are broadcast to everyone; only ours count
+        if (message.type !== 'summary' || message.replyTo !== tabId || !polling) return;
+        if (!message.summary || typeof message.summary !== 'object' || !Number.isInteger(message.round)) return;
         if (!peers.has(message.tabId) && peers.size >= MAX_PEERS) return;
-        peers.set(message.tabId, { summary: message.summary, heardAt: now() });
+        const known = peers.get(message.tabId);
+        if (known && known.round > message.round) return;
+        peers.set(message.tabId, { summary: message.summary, round: message.round });
     };
 
+    const onPageHide = () => send({ type: 'bye' });
+
     /**
-     * Start publishing and listening. Idempotent. Without BroadcastChannel it
-     * does nothing and `getTabs()` still returns this tab alone.
+     * Join the channel and start answering polls. Idempotent. Without
+     * BroadcastChannel it does nothing and `getTabs()` still returns this tab.
      */
     const start = () => {
         if (running || !open) return;
-        running = true;
         try {
             channel = open(TAB_CENSUS_CHANNEL);
         } catch {
             channel = null;
-            running = false;
             return;
         }
+        running = true;
         channel.onmessage = onMessage;
-        timers = createTimerRegistry();
-        timers.registerInterval(setInterval(publish, intervalMs), 'tabCensus.publish');
-        // Publish at once and ask the others to do the same, so a newly started
-        // tab fills its list in a beat rather than after a full interval
-        publish();
-        try {
-            channel.postMessage({ v: WIRE_VERSION, type: 'hello', tabId });
-        } catch {
-            // The next interval's beats fill the list instead
-        }
+        // Say goodbye on unload so a closing tab leaves the list at once
+        if (typeof window !== 'undefined') window.addEventListener('pagehide', onPageHide);
     };
 
-    /** Say goodbye, stop the timer, close the channel and forget the peers. Idempotent. */
-    const stop = () => {
+    /** Ask every tab for its summary now. */
+    const pollNow = () => {
         if (!running) return;
-        running = false;
-        try {
-            channel?.postMessage({ v: WIRE_VERSION, type: 'bye', tabId });
-        } catch {
-            // Peers will age this tab out after staleMs
-        }
+        round += 1;
+        send({ type: 'poll', round });
+    };
+
+    /** Begin polling on a timer and poll once at once. Idempotent. */
+    const startPolling = () => {
+        if (!running || polling) return;
+        polling = true;
+        round = 0;
+        timers = createTimerRegistry();
+        timers.registerInterval(setInterval(pollNow, pollMs), 'tabCensus.poll');
+        pollNow();
+    };
+
+    /** Stop polling and forget what was heard; the tab still answers others. Idempotent. */
+    const stopPolling = () => {
+        if (!polling) return;
+        polling = false;
         timers?.clearAll();
         timers = null;
+        peers.clear();
+    };
+
+    /** Stop polling, say goodbye, close the channel. Idempotent. */
+    const stop = () => {
+        if (!running) return;
+        stopPolling();
+        send({ type: 'bye' });
+        running = false;
+        if (typeof window !== 'undefined') window.removeEventListener('pagehide', onPageHide);
         if (channel) {
             channel.onmessage = null;
             try {
@@ -201,27 +215,35 @@ export function createTabCensus({
             }
         }
         channel = null;
-        peers.clear();
     };
 
     /**
-     * Every tab heard from within `staleMs`, plus this one, newest summary
-     * first for peers. This tab's row is built now rather than from a message.
-     * @returns {Array<{tabId: string, self: boolean, ageMs: number, summary: Object}>} Own tab first
+     * This tab, then every tab that answered either of the last two polls.
+     * Own row is built now rather than from a message.
+     * @returns {Array<{tabId: string, self: boolean, summary: Object}>} Own tab first
      */
     const getTabs = () => {
-        const at = now();
-        const tabs = [{ tabId, self: true, ageMs: 0, summary: getSummary() }];
+        const tabs = [{ tabId, self: true, summary: getSummary() }];
         for (const [id, peer] of peers) {
-            const ageMs = at - peer.heardAt;
-            if (ageMs > staleMs) {
+            if (peer.round < round - 1) {
                 peers.delete(id);
                 continue;
             }
-            tabs.push({ tabId: id, self: false, ageMs, summary: peer.summary });
+            tabs.push({ tabId: id, self: false, summary: peer.summary });
         }
-        return [...tabs.slice(0, 1), ...tabs.slice(1).sort((a, b) => a.ageMs - b.ageMs)];
+        return tabs;
     };
 
-    return { start, stop, getTabs, isRunning: () => running, tabId, supported };
+    return {
+        start,
+        stop,
+        startPolling,
+        stopPolling,
+        pollNow,
+        getTabs,
+        isRunning: () => running,
+        isPolling: () => polling,
+        tabId,
+        supported,
+    };
 }
