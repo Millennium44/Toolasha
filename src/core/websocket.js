@@ -160,6 +160,19 @@ const MAX_STORED_PROFILES = 20;
 /** Retries of the localStorage client-data capture before giving up (~2 min). */
 const MAX_CLIENT_DATA_RETRIES = 60;
 
+/**
+ * Least time between two GM-storage writes of `toolasha_new_battle`.
+ *
+ * `new_battle` arrives at the start of every fight — every few seconds while
+ * farming — and each `GM_setValue` is a message to the userscript manager's
+ * background process, which stores the value and pushes it to every other tab
+ * running the script. Only an external simulator page ever reads the key, so it
+ * is written at most once per interval (the newest battle wins, trailing), and
+ * immediately when this tab opens a simulator (see {@link
+ * WebSocketHook#flushBattleBridge}).
+ */
+const BATTLE_BRIDGE_MIN_INTERVAL_MS = 60 * 1000;
+
 class WebSocketHook {
     constructor() {
         this.isHooked = false;
@@ -192,6 +205,12 @@ class WebSocketHook {
 
         /** Pristine MessageEvent.data getter, fetched lazily when a foreign hook breaks (null = unobtainable) */
         this.nativeDataGet = undefined;
+        /** Newest `new_battle` not yet bridged to GM storage: `{message, owner}` or null */
+        this.pendingBattleBridge = null;
+        /** Trailing-write timer for {@link WebSocketHook#pendingBattleBridge} */
+        this.battleBridgeTimer = null;
+        /** When `toolasha_new_battle` was last written to GM storage (ms) */
+        this.lastBattleBridgeWriteAt = 0;
         /** The foreign-hook diagnostic is said once, not per message */
         this.notedForeignHookFailure = false;
         /**
@@ -823,14 +842,12 @@ class WebSocketHook {
                     }
                 }, 0);
             } else if (hasGM && messageType === 'new_battle') {
-                setTimeout(() => {
-                    try {
-                        GM_setValue('toolasha_new_battle', message);
-                        this.writeBridgeMeta('toolasha_new_battle_meta');
-                    } catch {
-                        /* ignore */
-                    }
-                }, 0);
+                // Throttled, not per fight — see BATTLE_BRIDGE_MIN_INTERVAL_MS. The owner is
+                // captured now: a trailing write can land after a character switch.
+                this.queueBattleBridgeWrite(message, {
+                    characterId: this.bridgeCharacterId,
+                    characterName: this.bridgeCharacterName,
+                });
             }
 
             // Save profile shares (when opening party member profiles)
@@ -903,13 +920,52 @@ class WebSocketHook {
      * @returns {boolean} True if the snapshot was written
      */
     saveCombatSimSnapshot(characterData, owner) {
-        if (typeof GM_setValue === 'undefined' || !characterData || owner?.characterId == null) return false;
+        if (typeof GM_setValue === 'undefined') return false;
+        // The simulator reads the battle key too; hand it the newest fight, not one held back
+        this.flushBattleBridge();
+        if (!characterData || owner?.characterId == null) return false;
         try {
             GM_setValue('toolasha_init_character_data', JSON.stringify(characterData));
             this.writeBridgeMeta('toolasha_init_character_data_meta', owner);
             return true;
         } catch (error) {
             console.error('[WebSocket] Simulator snapshot write failed:', error);
+            return false;
+        }
+    }
+
+    /**
+     * Hold the newest `new_battle` for the GM bridge, writing it now if the last write is at
+     * least {@link BATTLE_BRIDGE_MIN_INTERVAL_MS} old and otherwise when that much time has passed.
+     * @param {string} message - Raw new_battle message JSON
+     * @param {{characterId: string|number|null, characterName: string|null}} owner - Character it belongs to
+     * @returns {void}
+     */
+    queueBattleBridgeWrite(message, owner) {
+        this.pendingBattleBridge = { message, owner };
+        if (this.battleBridgeTimer !== null) return;
+        const wait = Math.max(0, this.lastBattleBridgeWriteAt + BATTLE_BRIDGE_MIN_INTERVAL_MS - Date.now());
+        this.battleBridgeTimer = setTimeout(() => this.flushBattleBridge(), wait);
+    }
+
+    /**
+     * Write the held `new_battle`, if any, to GM storage now.
+     * @returns {boolean} True if a battle was written
+     */
+    flushBattleBridge() {
+        if (this.battleBridgeTimer !== null) {
+            clearTimeout(this.battleBridgeTimer);
+            this.battleBridgeTimer = null;
+        }
+        const pending = this.pendingBattleBridge;
+        if (!pending || typeof GM_setValue === 'undefined') return false;
+        this.pendingBattleBridge = null;
+        this.lastBattleBridgeWriteAt = Date.now();
+        try {
+            GM_setValue('toolasha_new_battle', pending.message);
+            this.writeBridgeMeta('toolasha_new_battle_meta', pending.owner);
+            return true;
+        } catch {
             return false;
         }
     }

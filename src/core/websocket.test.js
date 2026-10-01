@@ -26,6 +26,9 @@ const { default: webSocketHook } = await import('./websocket.js');
 const { setCurrentProfile, evidenceFromSharedProfile, noteSharedClassEvidence } = await import('./profile-manager.js');
 const storage = (await import('./storage.js')).default;
 
+/** websocket.js's BATTLE_BRIDGE_MIN_INTERVAL_MS */
+const BATTLE_INTERVAL_MS = 60 * 1000;
+
 function msg(type, extra = {}) {
     return JSON.stringify({ type, ...extra });
 }
@@ -541,10 +544,73 @@ describe('saveCombatSimData GM-storage bridge stamping', () => {
     // `hasGM` branch runs and so we can inspect exactly what got written.
     beforeEach(() => {
         globalThis.GM_setValue = vi.fn();
+        webSocketHook.flushBattleBridge();
+        webSocketHook.pendingBattleBridge = null;
+        webSocketHook.lastBattleBridgeWriteAt = 0;
     });
 
     afterEach(() => {
+        webSocketHook.pendingBattleBridge = null;
+        webSocketHook.flushBattleBridge();
+        vi.useRealTimers();
         delete globalThis.GM_setValue;
+    });
+
+    function battleWrites() {
+        return globalThis.GM_setValue.mock.calls.filter(([k]) => k === 'toolasha_new_battle').map(([, v]) => v);
+    }
+
+    test('a run of fights writes the battle key once a minute, newest fight last, not once per fight', () => {
+        vi.useFakeTimers();
+        vi.setSystemTime(new Date('2026-10-01T12:00:00Z'));
+        const fights = Array.from({ length: 12 }, (_, i) => msg('new_battle', { battleId: i + 1, players: [] }));
+
+        // First fight is bridged on the next tick, as before
+        webSocketHook.processMessage(fights[0]);
+        vi.advanceTimersByTime(0);
+        expect(battleWrites()).toEqual([fights[0]]);
+
+        // Eleven more, five seconds apart: nothing until the minute is up
+        for (const fight of fights.slice(1)) {
+            vi.advanceTimersByTime(5000);
+            webSocketHook.processMessage(fight);
+        }
+        expect(battleWrites()).toHaveLength(1);
+
+        vi.advanceTimersByTime(5000);
+        expect(battleWrites()).toEqual([fights[0], fights[11]]);
+        // The meta key travels with every payload write, never on its own
+        expect(globalThis.GM_setValue.mock.calls.filter(([k]) => k === 'toolasha_new_battle_meta')).toHaveLength(2);
+    });
+
+    test('opening a simulator writes the held battle at once', () => {
+        vi.useFakeTimers();
+        webSocketHook.processMessage(msg('new_battle', { battleId: 1, players: [] }));
+        vi.advanceTimersByTime(0);
+        const held = msg('new_battle', { battleId: 2, players: [] });
+        webSocketHook.processMessage(held);
+        expect(battleWrites()).toHaveLength(1);
+
+        webSocketHook.saveCombatSimSnapshot({ character: { id: 'c' } }, { characterId: 'c' });
+        expect(battleWrites()).toEqual([expect.any(String), held]);
+
+        // Nothing left behind for the trailing timer to write again
+        vi.advanceTimersByTime(BATTLE_INTERVAL_MS);
+        expect(battleWrites()).toHaveLength(2);
+    });
+
+    test('a held battle keeps the stamp of the character that fought it across a switch', async () => {
+        vi.useFakeTimers();
+        webSocketHook.processMessage(msg('init_character_data', { character: { id: 'char-a', name: 'A' } }));
+        webSocketHook.processMessage(msg('new_battle', { battleId: 1, players: [] }));
+        vi.advanceTimersByTime(0);
+        webSocketHook.processMessage(msg('new_battle', { battleId: 2, players: [] }));
+        webSocketHook.processMessage(msg('init_character_data', { character: { id: 'char-b', name: 'B' } }));
+        globalThis.GM_setValue.mockClear();
+
+        vi.advanceTimersByTime(BATTLE_INTERVAL_MS);
+        expect(battleWrites()).toHaveLength(1);
+        expect(metaWrite('toolasha_new_battle_meta')).toMatchObject({ characterId: 'char-a', characterName: 'A' });
     });
 
     function metaWrite(key) {
