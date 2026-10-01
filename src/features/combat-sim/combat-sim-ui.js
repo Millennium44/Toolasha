@@ -1076,7 +1076,9 @@ export function bestiaryPlanDetailItems(row, cols) {
                     .split('/')
                     .pop()
                     .replace(/_/g, ' ');
-            return `${name} ${formatKMB(Math.round(entry.unitsPerHour))}/hr`;
+            // A rare drop below one an hour is why it was kept; rounding would print 0
+            const rate = Number(entry.unitsPerHour);
+            return `${name} ${rate >= 1000 ? formatKMB(Math.round(rate)) : formatRatePerHour(rate)}/hr`;
         });
     if (drops.length) items.push({ label: 'Top drops', text: drops.join(', ') });
     return items;
