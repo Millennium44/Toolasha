@@ -949,6 +949,21 @@ class ChatHistoryPersistence {
     }
 
     /**
+     * The allowance the cap currently holds for a tab, or null when none is known.
+     *
+     * Read by the extender at restore: before the game's backlog has rendered,
+     * the saved allowance is the number of stored lines that will turn out to
+     * overlap it.
+     *
+     * @param {string} tabKey
+     * @returns {number|null}
+     */
+    liveCountFor(tabKey) {
+        const count = this.liveCounts[tabKey];
+        return typeof count === 'number' ? count : null;
+    }
+
+    /**
      * Turn persistence on for a session.
      * @param {() => number} getMaxHistory - Reads the user's per-tab cap
      */

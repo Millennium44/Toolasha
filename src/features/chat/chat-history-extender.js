@@ -713,6 +713,8 @@ class ChatTabHandler {
          * next restore; read by {@link ChatTabHandler#refillIfNeeded}.
          */
         this.needsRefill = false;
+        /** Saved live allowance at the last restore; read only by {@link ChatTabHandler#_pendingOverlap}. */
+        this._restoredAllowance = 0;
         /** Guards the one re-run of a restore whose failed answer raced a recovery. */
         this._retriedRestore = false;
         /** Whether a restore has already been fired for this tab; see {@link _resolveTabKey}. */
@@ -865,6 +867,7 @@ class ChatTabHandler {
      * the new tab's is restored straight after.
      */
     _clearBuffer() {
+        this._restoredAllowance = 0;
         for (const node of this._messageNodes()) {
             node.querySelectorAll('[data-mwi-uid]').forEach((u) => {
                 this.interactionCache.delete(u.getAttribute('data-mwi-uid'));
@@ -985,7 +988,14 @@ class ChatTabHandler {
         // so does a copy this tab already evicted into its buffer — a refill
         // runs on a tab that has been taking evictions since it mounted.
         const live = this._liveIdentities();
-        chatHistoryPersistence.setLiveCount(tabKey, this._liveMessageNodes().length);
+        const liveNow = this._liveMessageNodes().length;
+        // The saved allowance says how many stored lines the game's backlog
+        // will duplicate, and until that backlog renders they are all in the
+        // buffer. An empty pane is not a report that nothing is live — it is
+        // a backlog that has not arrived — so it must not overwrite the saved
+        // figure, which the cap and the trim below both still need.
+        this._restoredAllowance = chatHistoryPersistence.liveCountFor(tabKey) ?? 0;
+        if (liveNow > 0) chatHistoryPersistence.setLiveCount(tabKey, liveNow);
         for (const node of this._messageNodes()) {
             const identity = this._bufferIdentity(node);
             if (identity) live.add(identity);
@@ -1018,6 +1028,9 @@ class ChatTabHandler {
             }
         }
 
+        // Allows for the overlap still ahead (see `_pendingOverlap`): trimming to
+        // the bare cap now and then dropping the duplicates would leave the cap
+        // minus the overlap.
         this._trim(this.getMaxHistory());
         return restored;
     }
@@ -1045,12 +1058,30 @@ class ChatTabHandler {
     }
 
     /**
-     * Trim the buffer to `maxHistory` messages, oldest first.
+     * Stored lines a restore put in the buffer that the game's backlog has not
+     * yet rendered, and will duplicate when it does.
+     *
+     * The saved record holds the cap plus the lines that were live; a restore
+     * before the backlog renders holds all of them, and
+     * {@link ChatTabHandler#_dropBufferedDuplicates} then removes the live
+     * suffix. The buffer may carry that many lines past the cap until it has.
+     * Shrinks as live lines appear; zero once the pane shows as many as the
+     * saved allowance.
+     * @returns {number}
+     */
+    _pendingOverlap() {
+        return Math.max(0, this._restoredAllowance - this._liveMessageNodes().length);
+    }
+
+    /**
+     * Trim the buffer to `maxHistory` messages, oldest first, plus any lines
+     * still waiting to be matched against the game's backlog.
      * @param {number} maxHistory
      */
     _trim(maxHistory) {
         const nodes = this._messageNodes();
-        while (nodes.length > maxHistory) {
+        const limit = maxHistory + this._pendingOverlap();
+        while (nodes.length > limit) {
             const oldNode = nodes.shift();
             oldNode.querySelectorAll('[data-mwi-uid]').forEach((u) => {
                 this.interactionCache.delete(u.getAttribute('data-mwi-uid'));
@@ -1281,6 +1312,13 @@ class ChatTabHandler {
         // record under the incoming tab's key.
         const switched = Boolean(previousKey) && Boolean(tabKey) && tabKey !== previousKey;
         const renderedLive = new Set();
+        // Before anything is recorded: the observer delivers a batch after the
+        // DOM has changed, so the pane already holds the batch's new lines, and
+        // each one reaches the record's cap before the end of the loop. With
+        // last batch's count the cap would drop an oldest entry per new line.
+        // Not on a switch batch: the pane is mid-teardown and its count is
+        // neither tab's.
+        if (tabKey && !switched) chatHistoryPersistence.setLiveCount(tabKey, this._liveMessageNodes().length);
 
         mutations.forEach((mut) => {
             mut.addedNodes.forEach((node) => {
@@ -1345,9 +1383,8 @@ class ChatTabHandler {
         });
 
         this._dropBufferedDuplicates(renderedLive);
-        // Not on a switch batch: the pane is mid-teardown and its count is
-        // neither tab's.
-        if (tabKey && !switched) chatHistoryPersistence.setLiveCount(tabKey, this._liveMessageNodes().length);
+        // The restore's surplus is released once the live suffix is known.
+        if (renderedLive.size) this._trim(maxHistory);
         // A tab that just became this container's (a switch, late naming) has
         // had its backlog tagged above; whatever is still queued for it
         // matched nothing and never will.

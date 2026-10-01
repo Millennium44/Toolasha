@@ -2233,6 +2233,49 @@ describe('the cap counts lines older than the game’s live backlog', () => {
         expect(bufferTexts(reloaded)).toEqual(Array.from({ length: CAP }, (_, i) => line(i)));
     });
 
+    test('a full record keeps the whole cap of older lines when the backlog renders after the restore', async () => {
+        db.settings[STORAGE_KEY] = {
+            v: 1,
+            savedAt: 1,
+            tabs: { [KEY]: Array.from({ length: CAP + LIVE }, (_, i) => html(i)) },
+            live: { [KEY]: LIVE },
+        };
+        const [container] = buildChat(['General']);
+        chatHistoryExtender.initialize();
+        await settle();
+
+        // Nothing is live yet, so the whole record is restored.
+        expect(bufferTexts(container)).toHaveLength(CAP + LIVE);
+
+        container.append(...Array.from({ length: LIVE }, (_, i) => makeMessage(line(CAP + i))));
+        await settle();
+
+        expect(bufferTexts(container)).toEqual(Array.from({ length: CAP }, (_, i) => line(i)));
+    });
+
+    test('new live lines on a full record do not push its oldest entries out', async () => {
+        db.settings[STORAGE_KEY] = {
+            v: 1,
+            savedAt: 1,
+            tabs: { [KEY]: Array.from({ length: CAP + LIVE }, (_, i) => html(i)) },
+            live: { [KEY]: LIVE },
+        };
+        const [container] = buildChat(['General']);
+        container.append(...Array.from({ length: LIVE }, (_, i) => makeMessage(line(CAP + i))));
+        chatHistoryExtender.initialize();
+        await settle();
+
+        // The game's backlog grows by one without evicting anything.
+        container.appendChild(makeMessage(line(CAP + LIVE)));
+        await settle();
+        await chatHistoryPersistence.flush();
+
+        const stored = db.settings[STORAGE_KEY].tabs[KEY];
+        expect(stored).toHaveLength(CAP + LIVE + 1);
+        expect(stored[0]).toBe(html(0));
+        expect(db.settings[STORAGE_KEY].live[KEY]).toBe(LIVE + 1);
+    });
+
     test('a tab that is not mounted keeps its lines, past the plain cap, through another tab’s writes', async () => {
         db.settings[STORAGE_KEY] = {
             v: 1,
