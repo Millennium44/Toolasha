@@ -112,6 +112,29 @@ describe('createTabCensus', () => {
         a.stop();
     });
 
+    test('a late reply from before a polling restart does not block fresh replies', () => {
+        const bus = makeBus();
+        let bName = 'Old';
+        const a = createTabCensus({ getSummary: () => summary('A'), tabId: 'a', createChannel: bus.create });
+        const b = createTabCensus({ getSummary: () => summary(bName), tabId: 'b', createChannel: bus.create });
+        a.start();
+        b.start();
+        a.startPolling();
+        for (let i = 0; i < 10; i++) a.pollNow();
+        const hear = bus.channels[0].onmessage;
+
+        a.stopPolling();
+        a.startPolling();
+        // b's answer to the old session's last poll lands only after the restart
+        hear({ data: { v: 1, type: 'summary', tabId: 'b', replyTo: 'a', round: 11, summary: summary('Old') } });
+        bName = 'Fresh';
+        a.pollNow();
+
+        expect(a.getTabs().find((t) => t.tabId === 'b').summary.characterName).toBe('Fresh');
+        a.stop();
+        b.stop();
+    });
+
     test('a tab that answers every poll stays listed over time', () => {
         const { a, b } = pair();
         a.startPolling();

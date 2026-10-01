@@ -189,6 +189,9 @@ class PFormancePanel {
             return;
         }
         setMonitorEnabled(true);
+        // initialize() runs from the command palette; with that feature off the panel is still opened
+        // from Settings, so joining here keeps the census from depending on it
+        this._joinTabCensus();
         this.attributionEnabled = readAttributionSetting();
         this._createPanel();
         this._startUpdating();

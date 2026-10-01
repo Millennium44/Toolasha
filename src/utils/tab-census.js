@@ -184,7 +184,8 @@ export function createTabCensus({ getSummary, pollMs = TAB_CENSUS_POLL_MS, tabId
     const startPolling = () => {
         if (!running || polling) return;
         polling = true;
-        round = 0;
+        // Rounds stay monotonic across restarts: a reply to an earlier session's poll can still be in
+        // flight, and a reset counter would accept it and then refuse every fresh reply until caught up
         timers = createTimerRegistry();
         timers.registerInterval(setInterval(pollNow, pollMs), 'tabCensus.poll');
         pollNow();

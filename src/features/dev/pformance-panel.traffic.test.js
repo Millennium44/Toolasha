@@ -143,6 +143,11 @@ describe('Tampermonkey traffic and all-tabs sections', () => {
         expect(FakeChannel.all[0].closed).toBe(true);
     });
 
+    test('opening the panel joins the census even when initialize() never ran (command palette off)', () => {
+        pformancePanel.show();
+        expect(pformancePanel.tabCensus?.isRunning()).toBe(true);
+    });
+
     test('toggling the extras button starts and stops polling, not the channel', () => {
         pformancePanel.initialize();
         pformancePanel.show();
