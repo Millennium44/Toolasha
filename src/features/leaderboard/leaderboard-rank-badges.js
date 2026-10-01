@@ -41,6 +41,7 @@ import { createTimerRegistry } from '../../utils/timer-registry.js';
 import assetManifest from '../../utils/asset-manifest.js';
 import { formatRelativeTime } from '../../utils/formatters.js';
 import {
+    RANK_BADGE_ATTR,
     RANK_BOARD_TYPES,
     RANK_CATEGORIES,
     bestEntry,
@@ -70,7 +71,7 @@ export const RANK_SERVER_URL = 'https://mwi-guild.43.167.210.211.sslip.io/api/v1
 export const RANK_SERVER_INTERVAL_MS = 15 * 60 * 1000;
 
 const STYLE_ID = 'toolasha-rank-badge-style';
-const BADGE_ATTR = 'data-toolasha-rank-badge';
+const BADGE_ATTR = RANK_BADGE_ATTR;
 const SVG_NS = 'http://www.w3.org/2000/svg';
 const TOOLTIP_ENTRIES = 5;
 const BAR_ATTR = 'data-toolasha-rank-cycle';

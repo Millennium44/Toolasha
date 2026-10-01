@@ -1213,3 +1213,152 @@ describe('chat-history-extender: refill after a failed read', () => {
         expect(b.textContent).not.toContain('global one');
     });
 });
+
+/**
+ * The leaderboard rank badge is a span the badge module inserts right after a line's
+ * `CharacterName_name`, inside the game's clickable sender element: an icon and the rank as text.
+ * Nothing on the line's own path may read it as part of the message.
+ */
+describe('chat-history-extender: a rank badge beside the sender name', () => {
+    /**
+     * Put a badge after a line's name element, the way leaderboard-rank-badges.js's `decorate` does.
+     * @param {Element} line - A chat line
+     * @param {number} rank
+     * @returns {Element} The badge
+     */
+    function addBadge(line, rank) {
+        const badge = document.createElement('span');
+        badge.setAttribute('data-toolasha-rank-badge', 'gold');
+        badge.title = `Milking · Standard rank ${rank} (3m ago)`;
+        badge.innerHTML =
+            '<svg viewBox="0 0 40 40" aria-hidden="true"><use href="/static/skills.svg#milking"></use></svg>';
+        badge.appendChild(document.createTextNode(String(rank)));
+        line.querySelector('[class*="CharacterName_name"]').insertAdjacentElement('afterend', badge);
+        return badge;
+    }
+
+    function badgedLine(sender, text, rank = 12) {
+        const el = document.createElement('div');
+        el.className = 'ChatMessage_chatMessage__xyz';
+        el.innerHTML =
+            '<span>[12:00:00 PM] </span>' +
+            '<span class="ChatMessage_name__1UZ8t ChatMessage_clickable__3Nt2s">' +
+            '<div class="CharacterName_characterName__2FqyZ">' +
+            `<div class="CharacterName_name__1amXp"><span>${sender}</span></div></div></span>` +
+            `<span>: ${text}</span>`;
+        addBadge(el, rank);
+        return el;
+    }
+
+    async function settle() {
+        for (let i = 0; i < 4; i += 1) await Promise.resolve();
+    }
+
+    beforeEach(() => {
+        settingValues.chatHistoryExtender = true;
+        settingValues.chatHistoryExtender_maxHistory = null;
+        observerReady.handlers = [];
+        observerReady.domReady = true;
+        db.settings = {};
+        db.failReads = false;
+    });
+
+    afterEach(async () => {
+        await chatHistoryExtender.disable();
+        chatHistoryPersistence.reset();
+        document.body.innerHTML = '';
+    });
+
+    test('a badged line is still tagged with its id, so a later deletion can find it', async () => {
+        document.body.innerHTML = '<div id="root"><div class="Chat_tabsComponentContainer__x"></div></div>';
+        const button = document.createElement('button');
+        button.setAttribute('role', 'tab');
+        button.setAttribute('data-mention-channel', '/chat_channel_types/trade');
+        button.setAttribute('aria-selected', 'true');
+        button.textContent = 'trade';
+        document.querySelector('.Chat_tabsComponentContainer__x').appendChild(button);
+        const container = document.createElement('div');
+        container.className = 'ChatHistory_chatHistory__abc';
+        document.getElementById('root').appendChild(container);
+
+        chatHistoryExtender.initialize();
+        await settle();
+
+        wsHandlers.chat_message_received({
+            message: { id: 'msg-badge', chan: '/chat_channel_types/trade', sName: 'Alice', m: 'selling cheese' },
+        });
+        // The badge is already there when the extender sees the line: the shared observer that draws it was
+        // created first, so its callback runs first for the same insertion
+        const node = badgedLine('Alice', 'selling cheese');
+        container.appendChild(node);
+        await settle();
+
+        expect(node.dataset.mwiMsgId).toBe('msg-badge');
+    });
+
+    test('hydration stops walking the fiber tree once every game element is found', () => {
+        const container = buildChatContainer();
+        const message = badgedLine('Alice', 'hi');
+        container.appendChild(message);
+        const sender = message.querySelector('[class*="ChatMessage_name"]');
+        const nodes = [message, ...message.querySelectorAll('*')].filter(
+            (el) => !el.closest('[data-toolasha-rank-badge]')
+        );
+
+        // A fiber for every game element, none for the badge: it is not React's
+        const describeNode = (el) => ({
+            stateNode: el,
+            props: el === sender ? { onClick: vi.fn() } : {},
+            children: [...el.children].filter((child) => nodes.includes(child)).map((child) => describeNode(child)),
+        });
+        const visitedAfter = vi.fn();
+        const rootFiber = installFiberTree({
+            stateNode: document.getElementById('root'),
+            children: [{ stateNode: container, children: [describeNode(message)] }],
+        });
+        // The rest of the game's tree, reached only after the chat line's own fibers
+        const deepest = (fiber) => (fiber.child ? deepest(fiber.child) : fiber);
+        const tail = deepest(rootFiber);
+        Object.defineProperty(tail, 'child', {
+            get: () => ({
+                get stateNode() {
+                    visitedAfter();
+                    return null;
+                },
+                child: null,
+                sibling: null,
+            }),
+        });
+
+        chatHistoryExtender.initialize();
+
+        expect(sender.hasAttribute('data-mwi-uid')).toBe(true);
+        expect(visitedAfter, 'the walk went on through the whole tree looking for the badge').not.toHaveBeenCalled();
+    });
+
+    test('a click on the badge of an evicted line reaches the sender’s handler', async () => {
+        const container = buildChatContainer();
+        const message = badgedLine('Alice', 'hi');
+        container.appendChild(message);
+        const sender = message.querySelector('[class*="ChatMessage_name"]');
+        const onClick = vi.fn();
+        installFiberTree({
+            stateNode: document.getElementById('root'),
+            children: [
+                {
+                    stateNode: container,
+                    children: [{ stateNode: message, children: [{ stateNode: sender, props: { onClick } }] }],
+                },
+            ],
+        });
+
+        chatHistoryExtender.initialize();
+        container.removeChild(message);
+        await settle();
+
+        const badge = container.querySelector('.mwi-history-buffer [data-toolasha-rank-badge]');
+        expect(badge).not.toBeNull();
+        badge.querySelector('use').dispatchEvent(new MouseEvent('click', { bubbles: true }));
+        expect(onClick).toHaveBeenCalledTimes(1);
+    });
+});
