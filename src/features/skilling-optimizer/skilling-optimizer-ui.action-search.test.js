@@ -169,3 +169,23 @@ describe('action picker search', () => {
         expect(allRow.style.getPropertyValue('display')).toBe('flex');
     });
 });
+
+describe('picker outside-click listener', () => {
+    test('a picker closed inside the attach delay leaves no stray listener behind', () => {
+        vi.useFakeTimers();
+        try {
+            const first = openPicker();
+            // Double-click: the second click reopens before the first picker's 100 ms attach fired
+            const second = openPicker();
+            vi.advanceTimersByTime(150);
+
+            // A click inside the second picker must not be treated as outside it
+            second.search.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+
+            expect(ui._picker).toBe(second.popup);
+            expect(first.popup.isConnected).toBe(false);
+        } finally {
+            vi.useRealTimers();
+        }
+    });
+});
