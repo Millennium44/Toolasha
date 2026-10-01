@@ -90,8 +90,11 @@
  * transaction (`storage.update`), which IndexedDB serialises across every
  * connection on the origin. A deletion is kept in the record as a tombstone
  * (`deleted`), because a merge would otherwise put the line straight back from
- * whichever tab still holds it. The per-character record keeps its one writer
- * and is still written whole.
+ * whichever tab still holds it. Each deletion and undelete carries the time its
+ * event arrived, and the record keeps the newest per id (`decidedAt`), so a game
+ * tab that missed a later event cannot override it with an older one; a session
+ * stops sending a decision once a write has landed it. The per-character record
+ * keeps its one writer and is still written whole.
  *
  * The first load after this existed moves a character's copies of shared tabs
  * out of its own record — see {@link ChatHistoryPersistence#load}.
@@ -889,6 +892,33 @@ export function mergeLists(base, incoming, incomingNewer = true) {
 /** Message ids a shared record remembers as deleted, newest last. */
 const MAX_TOMBSTONES = 500;
 
+/** The last time {@link decisionTime} handed out. */
+let lastDecisionTime = 0;
+
+/**
+ * The time a moderation event arrived, for ordering it against others.
+ *
+ * Wall-clock milliseconds, so game tabs on one machine compare, but never
+ * repeated within one page: a deletion and its undelete arriving in the same
+ * millisecond still read in the order they came.
+ * @returns {number}
+ */
+function decisionTime() {
+    lastDecisionTime = Math.max(Date.now(), lastDecisionTime + 1);
+    return lastDecisionTime;
+}
+
+/**
+ * Whether one moderation decision supersedes another for the same id: the later
+ * one, and at the same instant the deletion.
+ * @param {{deleted: boolean, at: number}} a
+ * @param {{deleted: boolean, at: number}} b
+ * @returns {boolean}
+ */
+function newerDecision(a, b) {
+    return a.at > b.at || (a.at === b.at && a.deleted && !b.deleted);
+}
+
 /**
  * The deletion tombstones a stored record carries.
  * @param {*} record
@@ -914,6 +944,66 @@ function unionTombstones(a, b) {
         out.push(id);
     }
     return out.slice(-MAX_TOMBSTONES);
+}
+
+/**
+ * When each id's newest moderation decision was taken, as a stored record holds it.
+ * @param {*} record
+ * @returns {Record<string, number>}
+ */
+function decidedAtFrom(record) {
+    const stored =
+        record && record.v === RECORD_VERSION && record.decidedAt && typeof record.decidedAt === 'object'
+            ? record.decidedAt
+            : {};
+    const out = {};
+    for (const [id, at] of Object.entries(stored)) {
+        if (id && typeof at === 'number' && Number.isFinite(at)) out[id] = at;
+    }
+    return out;
+}
+
+/**
+ * Apply moderation decisions to a record's tombstones, the newest decision per id winning.
+ *
+ * Every decision carries the time the game tab saw its event, and the record
+ * keeps the time of the newest one it applied per id (`decidedAt`). A decision
+ * older than that is ignored: a game tab that missed a later undelete cannot
+ * put back an old deletion, and one that missed a later deletion cannot undo it
+ * with an old undelete. At the same instant a deletion wins. A tombstone stored
+ * with no time (a record written before the times were kept) counts as time 0.
+ *
+ * Undeletes keep their time too, up to {@link MAX_TOMBSTONES} of the newest, so
+ * an old deletion still loses to them once their tombstone is gone.
+ *
+ * @param {Array<string>} storedDeleted - The record's tombstones, oldest first
+ * @param {Record<string, number>} storedAt - The record's `decidedAt`
+ * @param {Array<{id: string, deleted: boolean, at: number}>} [decisions]
+ * @returns {{deleted: Array<string>, decidedAt: Record<string, number>}}
+ */
+export function applyDecisions(storedDeleted, storedAt, decisions) {
+    const decidedAt = { ...storedAt };
+    const deleted = new Set(storedDeleted);
+    const ordered = (decisions || [])
+        .filter((d) => d && typeof d.id === 'string' && d.id && typeof d.at === 'number' && Number.isFinite(d.at))
+        .sort((a, b) => a.at - b.at || Number(a.deleted) - Number(b.deleted));
+    for (const decision of ordered) {
+        const prior = decidedAt[decision.id] ?? (deleted.has(decision.id) ? 0 : -Infinity);
+        if (decision.at < prior || (decision.at === prior && !decision.deleted)) continue;
+        decidedAt[decision.id] = decision.at;
+        // Re-added at the end: the newest tombstone is the last the cap drops.
+        deleted.delete(decision.id);
+        if (decision.deleted) deleted.add(decision.id);
+    }
+    const kept = [...deleted].slice(-MAX_TOMBSTONES);
+    const undone = Object.entries(decidedAt)
+        .filter(([id]) => !deleted.has(id))
+        .sort((a, b) => b[1] - a[1])
+        .slice(0, MAX_TOMBSTONES);
+    const out = {};
+    for (const id of kept) if (decidedAt[id] !== undefined) out[id] = decidedAt[id];
+    for (const [id, at] of undone) out[id] = at;
+    return { deleted: kept, decidedAt: out };
 }
 
 /**
@@ -944,11 +1034,16 @@ function dropDeleted(tabs, deleted) {
  * character's record from last week merged in after this week's lines goes
  * first, not last.
  *
+ * Deletions and undeletes arrive as `decisions`, each with the time its event
+ * was seen; see {@link applyDecisions} for how a stale one is kept from
+ * overriding a newer one.
+ *
  * @param {*} stored - The record as read, or undefined
- * @param {{tabs: Record<string, Array<string>>, live?: Record<string, number>, deleted?: Array<string>,
- *   undeleted?: Array<string>, at: number}} incoming
+ * @param {{tabs: Record<string, Array<string>>, live?: Record<string, number>,
+ *   decisions?: Array<{id: string, deleted: boolean, at: number}>, at: number}} incoming
  * @param {number} perTab - Message cap per tab
- * @returns {{v: number, savedAt: number, tabs: Record<string, Array<string>>, live: Record<string, number>, deleted: Array<string>, at: Record<string, number>}}
+ * @returns {{v: number, savedAt: number, tabs: Record<string, Array<string>>, live: Record<string, number>,
+ *   deleted: Array<string>, decidedAt: Record<string, number>, at: Record<string, number>}}
  */
 export function mergeSharedRecord(stored, incoming, perTab = MAX_MESSAGES_PER_TAB) {
     const live = liveFromRecord(stored);
@@ -972,14 +1067,25 @@ export function mergeSharedRecord(stored, incoming, perTab = MAX_MESSAGES_PER_TA
     }
 
     // An undelete takes its id back out: the line may be recorded again.
-    const undeleted = new Set(incoming.undeleted || []);
-    const deleted = unionTombstones(tombstonesFrom(stored), incoming.deleted).filter((id) => !undeleted.has(id));
+    const { deleted, decidedAt } = applyDecisions(
+        unionTombstones(tombstonesFrom(stored), []),
+        decidedAtFrom(stored),
+        incoming.decisions
+    );
     dropDeleted(tabs, new Set(deleted));
     applyCaps(tabs, perTab, live);
 
     const keptAt = {};
     for (const key of Object.keys(tabs)) if (at[key] !== undefined) keptAt[key] = at[key];
-    return { v: RECORD_VERSION, savedAt: Date.now(), tabs, live: liveForRecord(live, tabs), deleted, at: keptAt };
+    return {
+        v: RECORD_VERSION,
+        savedAt: Date.now(),
+        tabs,
+        live: liveForRecord(live, tabs),
+        deleted,
+        decidedAt,
+        at: keptAt,
+    };
 }
 
 /**
@@ -1301,10 +1407,13 @@ class ChatHistoryPersistence {
         this.context = null;
         /** @type {Set<string>} Tabs recorded into or purged since their record was last written */
         this.dirtyTabs = new Set();
-        /** @type {Map<string, Array<string>>} Ids deleted this session, per tab, for the shared records */
-        this.tombstones = new Map();
-        /** @type {Map<string, Array<string>>} Ids undeleted this session, per tab: taken out of a record's tombstones */
-        this.undeleted = new Map();
+        /**
+         * Deletions and undeletes this session saw for the shared records that no
+         * write has landed yet, per tab: the newest decision per id, with the time
+         * its event arrived. See {@link applyDecisions}.
+         * @type {Map<string, Map<string, {deleted: boolean, at: number}>>}
+         */
+        this.decisions = new Map();
         /**
          * A character's copies of shared tabs whose move into the shared record
          * failed: written back into its own record so nothing is lost before the
@@ -1392,7 +1501,7 @@ class ChatHistoryPersistence {
             if (this.snapshot) delete this.snapshot[tabKey];
             delete this.liveCounts[tabKey];
             this.dirtyTabs.delete(tabKey);
-            this.tombstones.delete(tabKey);
+            this.decisions.delete(tabKey);
         }
         this.context = { ...context, guildKey };
     }
@@ -1752,11 +1861,7 @@ class ChatHistoryPersistence {
         const ownTabs = { ...(this.heldLegacy || {}), ...(groups[context.charKey] || {}) };
         const writes = [this._writeOwn(context.charKey, ownTabs, immediate)];
         for (const key of sharedKeys) {
-            if (
-                groups[key] ||
-                this._tombstonesFor(key, context).length ||
-                this._tombstonesFor(key, context, this.undeleted).length
-            ) {
+            if (groups[key] || this._decisionsFor(key, context).length) {
                 writes.push(this._writeShared(key, groups[key] || {}, context, ticket));
             }
         }
@@ -1801,18 +1906,56 @@ class ChatHistoryPersistence {
     }
 
     /**
-     * Ids this session deleted from the tabs that live in one record.
+     * The moderation decisions no write has landed yet for the tabs that live in
+     * one record, the newest per id.
      * @param {string} key - Record key
      * @param {RecordContext} context
-     * @param {Map<string, Array<string>>} [from] - {@link ChatHistoryPersistence#tombstones}, or the undeletes
-     * @returns {Array<string>}
+     * @returns {Array<{tabKey: string, id: string, deleted: boolean, at: number}>}
      */
-    _tombstonesFor(key, context, from = this.tombstones) {
-        const ids = [];
-        for (const [tabKey, list] of from) {
-            if (recordKeyFor(tabKey, context) === key) ids.push(...list);
+    _decisionsFor(key, context) {
+        const byId = new Map();
+        for (const [tabKey, ids] of this.decisions) {
+            if (recordKeyFor(tabKey, context) !== key) continue;
+            for (const [id, decision] of ids) {
+                const held = byId.get(id);
+                if (!held || newerDecision(decision, held)) byId.set(id, { tabKey, id, ...decision });
+            }
         }
-        return ids;
+        return [...byId.values()];
+    }
+
+    /**
+     * Remember a deletion or an undelete for a shared tab, unless a newer one for
+     * the same id is already held.
+     * @param {string} tabKey
+     * @param {string} id
+     * @param {boolean} deleted
+     * @param {number} at - When its event arrived
+     */
+    _noteDecision(tabKey, id, deleted, at) {
+        const ids = this.decisions.get(tabKey) || new Map();
+        const held = ids.get(id);
+        if (held && !newerDecision({ deleted, at }, held)) return;
+        ids.delete(id);
+        ids.set(id, { deleted, at });
+        // Bounded like the record's own tombstones; the oldest go first.
+        while (ids.size > MAX_TOMBSTONES) ids.delete(ids.keys().next().value);
+        this.decisions.set(tabKey, ids);
+    }
+
+    /**
+     * Forget the decisions a write landed, so later writes stop resending them.
+     * One replaced since it was sent is newer than what landed, and stays.
+     * @param {Array<{tabKey: string, id: string, deleted: boolean, at: number}>} sent
+     */
+    _acknowledge(sent) {
+        for (const { tabKey, id, deleted, at } of sent) {
+            const ids = this.decisions.get(tabKey);
+            const held = ids?.get(id);
+            if (!held || held.deleted !== deleted || held.at !== at) continue;
+            ids.delete(id);
+            if (!ids.size) this.decisions.delete(tabKey);
+        }
     }
 
     /**
@@ -1829,16 +1972,18 @@ class ChatHistoryPersistence {
      * @returns {Promise<boolean>} Whether the write was accepted
      */
     async _writeShared(key, tabs, context, ticket) {
+        const decisions = this._decisionsFor(key, context);
         const incoming = {
             tabs: Object.fromEntries(Object.entries(tabs).map(([tabKey, list]) => [tabKey, [...list]])),
             live: liveForRecord(this.liveCounts, tabs),
-            deleted: this._tombstonesFor(key, context),
-            undeleted: this._tombstonesFor(key, context, this.undeleted),
+            decisions,
             at: Date.now(),
         };
         const perTab = this.getMaxHistory();
         const result = await updateRecord(key, (stored) => mergeSharedRecord(stored, incoming, perTab));
         if (!result) return false;
+        // On the record now, with their times; resent later, they would only race a newer decision.
+        if (stillOurs(ticket)) this._acknowledge(decisions);
         // A switch or a guild change since the write was issued: the working
         // record is no longer the one these lines belong to.
         if (stillOurs(ticket) && this.context === context && this.tabs) this._adopt(key, result.value, context);
@@ -1907,8 +2052,7 @@ class ChatHistoryPersistence {
             const incoming = {
                 tabs: Object.fromEntries(Object.entries(tabs).map(([tabKey, list]) => [tabKey, [...list]])),
                 live: liveForRecord(sessionLive, tabs),
-                deleted: this._tombstonesFor(recordKey, context),
-                undeleted: this._tombstonesFor(recordKey, context, this.undeleted),
+                decisions: this._decisionsFor(recordKey, context),
                 at: Date.now(),
             };
             shared.push(updateRecord(recordKey, (stored) => mergeSharedRecord(stored, incoming, perTab)));
@@ -1977,6 +2121,9 @@ class ChatHistoryPersistence {
      */
     async purgeMessageById(tabKey, id) {
         if (!this.enabled || !tabKey || id == null) return false;
+        // When the event arrived, taken before the read below: an undelete that
+        // lands during that read is newer than this deletion, and must stay so.
+        const at = decisionTime();
         // Always load, not just await a read someone else already started.
         // A deletion can arrive before any chat container has ever called
         // `restore()` — the game is still mounting its chat UI, say — in
@@ -2000,12 +2147,7 @@ class ChatHistoryPersistence {
         // filtered here, so the deletion is written down as a tombstone too.
         const shared = tabScope(tabKey) !== 'character';
         if (shared) {
-            const ids = this.tombstones.get(tabKey) || [];
-            if (!ids.includes(key)) this.tombstones.set(tabKey, [...ids, key].slice(-MAX_TOMBSTONES));
-            this.undeleted.set(
-                tabKey,
-                (this.undeleted.get(tabKey) || []).filter((other) => other !== key)
-            );
+            this._noteDecision(tabKey, key, true, at);
             this.dirtyTabs.add(tabKey);
             this.dirty = true;
             this._scheduleWrite();
@@ -2032,13 +2174,7 @@ class ChatHistoryPersistence {
      */
     forgetDeletion(tabKey, id) {
         if (!this.enabled || !tabKey || id == null || tabScope(tabKey) === 'character') return;
-        const key = String(id);
-        this.tombstones.set(
-            tabKey,
-            (this.tombstones.get(tabKey) || []).filter((other) => other !== key)
-        );
-        const ids = this.undeleted.get(tabKey) || [];
-        if (!ids.includes(key)) this.undeleted.set(tabKey, [...ids, key].slice(-MAX_TOMBSTONES));
+        this._noteDecision(tabKey, String(id), false, decisionTime());
         this.dirtyTabs.add(tabKey);
         this.dirty = true;
         this._scheduleWrite();
@@ -2063,8 +2199,7 @@ class ChatHistoryPersistence {
         this.getMaxHistory = () => MAX_MESSAGES_PER_TAB;
         this.context = null;
         this.dirtyTabs = new Set();
-        this.tombstones = new Map();
-        this.undeleted = new Map();
+        this.decisions = new Map();
         this.heldLegacy = null;
         this.guildOverride = null;
         this.sharedLive = {};

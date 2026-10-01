@@ -415,6 +415,106 @@ describe('several game tabs on one profile', () => {
         expect(stored(PUBLIC, TRADE)).toEqual(['back again']);
     });
 
+    /**
+     * Run `fn` with the clock at `ms`: the time a moderation event arrives is
+     * what orders it against another game tab's.
+     */
+    async function at(ms, fn) {
+        const now = vi.spyOn(Date, 'now').mockReturnValue(ms);
+        try {
+            return await fn();
+        } finally {
+            now.mockRestore();
+        }
+    }
+
+    test('an old undelete from a tab that missed a newer deletion does not resurrect the line', async () => {
+        const ada = await openPage('101');
+        const bob = await openPage('202');
+        await Promise.all([ada.persistence.load(), bob.persistence.load()]);
+
+        // Bob saw a moderator's undelete at t=1000 and has not written since.
+        await at(1000, () => bob.persistence.forgetDeletion(TRADE, 'm5'));
+        // Ada saw the line deleted again at t=2000, and wrote it.
+        ada.persistence.record(TRADE, line('Tom', 'deleted twice', 1, 'm5'));
+        await at(2000, () => ada.persistence.purgeMessageById(TRADE, 'm5'));
+        await ada.persistence.flush();
+        expect(shared.db[PUBLIC].deleted).toEqual(['m5']);
+
+        // Bob still holds the line and his stale undelete; his write must not bring either back.
+        bob.persistence.record(TRADE, line('Tom', 'deleted twice', 1, 'm5'));
+        await bob.persistence.flush();
+
+        expect(shared.db[PUBLIC].deleted).toEqual(['m5']);
+        expect(stored(PUBLIC, TRADE)).toEqual([]);
+        expect(texts(bob.persistence.messagesFor(TRADE))).toEqual([]);
+    });
+
+    test('an old deletion from a tab that missed a newer undelete does not undo it', async () => {
+        const ada = await openPage('101');
+        const bob = await openPage('202');
+        await Promise.all([ada.persistence.load(), bob.persistence.load()]);
+
+        await at(1000, () => ada.persistence.purgeMessageById(TRADE, 'm6'));
+        await ada.persistence.flush();
+        // Bob saw the same deletion a moment later, and never saw the undelete.
+        await at(1001, () => bob.persistence.purgeMessageById(TRADE, 'm6'));
+        await at(3000, () => ada.persistence.forgetDeletion(TRADE, 'm6'));
+        await ada.persistence.flush();
+        expect(shared.db[PUBLIC].deleted).toEqual([]);
+
+        await bob.persistence.flush();
+        expect(shared.db[PUBLIC].deleted).toEqual([]);
+
+        // So the line can be recorded again.
+        ada.persistence.record(TRADE, line('Tom', 'undeleted for good', 1, 'm6'));
+        await ada.persistence.flush();
+        expect(stored(PUBLIC, TRADE)).toEqual(['undeleted for good']);
+    });
+
+    test('a decision a write landed is not sent again; one that failed to land is', async () => {
+        const ada = await openPage('101');
+        await ada.persistence.load();
+        await ada.persistence.purgeMessageById(TRADE, 'm7');
+
+        const { default: storage } = await import('../../core/storage.js');
+        const update = storage.update;
+        const sent = [];
+        storage.update = async (key) => {
+            sent.push(key);
+            return null;
+        };
+        try {
+            await ada.persistence.flush();
+        } finally {
+            storage.update = update;
+        }
+        expect(sent).toEqual([PUBLIC]);
+        expect(shared.db[PUBLIC]).toBeUndefined();
+
+        await ada.persistence.flush();
+        expect(shared.db[PUBLIC].deleted).toEqual(['m7']);
+        expect(ada.persistence.decisions.size).toBe(0);
+
+        // Nothing left to say: a later flush of an unrelated line carries no decision.
+        shared.db[PUBLIC].deleted = [];
+        shared.db[PUBLIC].decidedAt = {};
+        ada.persistence.record(TRADE, line('Tom', 'later', 2, 'm8'));
+        await ada.persistence.flush();
+        expect(shared.db[PUBLIC].deleted).toEqual([]);
+    });
+
+    test('a deletion and its undelete in the same millisecond keep their order', async () => {
+        const ada = await openPage('101');
+        await ada.persistence.load();
+        await at(5000, async () => {
+            await ada.persistence.purgeMessageById(TRADE, 'm9');
+            ada.persistence.forgetDeletion(TRADE, 'm9');
+        });
+        await ada.persistence.flush();
+        expect(shared.db[PUBLIC].deleted).toEqual([]);
+    });
+
     test('the page-close flush opens every write before its first await', async () => {
         const ada = await openPage('101', 'g1');
         await ada.persistence.load();
