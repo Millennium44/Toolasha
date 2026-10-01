@@ -29,7 +29,7 @@ vi.mock('../../core/storage.js', () => ({
     },
 }));
 
-const { checkBridgeStamp, getLastBridgeIssue, getCharacterData, constructExportObject } =
+const { checkBridgeStamp, getLastBridgeIssue, getCharacterData, getBattleData, constructExportObject } =
     await import('./combat-sim-export.js');
 
 function metaFor(characterId, { characterName = 'Hero', writtenAt = Date.now() } = {}) {
@@ -208,6 +208,48 @@ describe('constructExportObject with the GM-storage fallback', () => {
         expect(result).not.toBeNull();
         expect(result.playerIDs[0]).toBe('Me');
         expect(getLastBridgeIssue()).toBeNull();
+    });
+});
+
+describe('getBattleData on a simulator page', () => {
+    // Shapes as websocket.js writes them: payload keys hold raw messages, `_meta` siblings the owner stamp
+    function store(entries) {
+        globalThis.GM_getValue = vi.fn((key, fallback) => (key in entries ? entries[key] : fallback));
+    }
+    const simOpenedFor = (id) => ({
+        toolasha_init_character_data: JSON.stringify({ character: { id, name: id } }),
+        toolasha_init_character_data_meta: metaFor(id),
+    });
+    const battle = (id) => JSON.stringify({ type: 'new_battle', players: [{ character: { id } }] });
+
+    test("reads the battle of the character the simulator was opened for, whatever another tab's legacy slot holds", () => {
+        store({
+            ...simOpenedFor('char-b'),
+            'toolasha_new_battle:char-b': battle('char-b'),
+            'toolasha_new_battle:char-b_meta': metaFor('char-b'),
+            'toolasha_new_battle:char-a': battle('char-a'),
+            'toolasha_new_battle:char-a_meta': metaFor('char-a'),
+            toolasha_new_battle: battle('char-a'),
+            toolasha_new_battle_meta: metaFor('char-a'),
+        });
+
+        expect(getBattleData().players[0].character.id).toBe('char-b');
+    });
+
+    test('falls back to the legacy slot only when its owner is the simulator character', () => {
+        store({
+            ...simOpenedFor('char-b'),
+            toolasha_new_battle: battle('char-b'),
+            toolasha_new_battle_meta: metaFor('char-b'),
+        });
+        expect(getBattleData().players[0].character.id).toBe('char-b');
+
+        store({
+            ...simOpenedFor('char-b'),
+            toolasha_new_battle: battle('char-a'),
+            toolasha_new_battle_meta: metaFor('char-a'),
+        });
+        expect(getBattleData()).toBeNull();
     });
 });
 

@@ -103,6 +103,13 @@ const SINGLE_COPY_FEATURES = new Set([
 
 const ALLOWLIST = new Map([
     [
+        'src/utils/battle-bridge-keys.js',
+        // GM key names and one key-building function, no module state. The core
+        // bundle (battle bridge writer) and the combat bundle (simulator export
+        // reader) must agree on the names, and they do by sharing this source.
+        'stateless GM key constants and builder; no module state to share',
+    ],
+    [
         'src/core/character-abilities.js',
         // Pure reducers over ability lists plus the new_battle own-player
         // lookup; no module state. The core bundle (data manager) and the

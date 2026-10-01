@@ -548,6 +548,9 @@ describe('saveCombatSimData GM-storage bridge stamping', () => {
         webSocketHook.pendingBattleBridge = null;
         webSocketHook.lastBattleBridgeWriteAt = 0;
         webSocketHook.latestBattleBridge = null;
+        // Singleton: a character left by an earlier test would route every battle to a per-character slot
+        webSocketHook.bridgeCharacterId = null;
+        webSocketHook.bridgeCharacterName = null;
     });
 
     afterEach(() => {
@@ -558,9 +561,83 @@ describe('saveCombatSimData GM-storage bridge stamping', () => {
         delete globalThis.GM_setValue;
     });
 
-    function battleWrites() {
-        return globalThis.GM_setValue.mock.calls.filter(([k]) => k === 'toolasha_new_battle').map(([, v]) => v);
+    function battleWrites(key = 'toolasha_new_battle') {
+        return globalThis.GM_setValue.mock.calls.filter(([k]) => k === key).map(([, v]) => v);
     }
+
+    function battleSlot(characterId) {
+        return `toolasha_new_battle:${characterId}`;
+    }
+
+    // Callers run under fake timers, so the bridge's zero-delay write is advanced rather than awaited
+    function loginAs(id, name) {
+        webSocketHook.processMessage(msg('init_character_data', { character: { id, name } }));
+        vi.advanceTimersByTime(0);
+    }
+
+    test("two tabs' battles stay in their own character's slot, so a sim opened for one is not overwritten", () => {
+        vi.useFakeTimers();
+        // Tab B (char-b) opens a simulator: its battle and snapshot are written
+        loginAs('char-b', 'B');
+        const fightB = msg('new_battle', { battleId: 1, players: [] });
+        webSocketHook.processMessage(fightB);
+        vi.advanceTimersByTime(0);
+        webSocketHook.saveCombatSimSnapshot(
+            { character: { id: 'char-b' } },
+            { characterId: 'char-b', characterName: 'B' }
+        );
+
+        // Tab A's trailing timer fires afterwards (simulated: same hook, other character)
+        loginAs('char-a', 'A');
+        const fightA = msg('new_battle', { battleId: 2, players: [] });
+        webSocketHook.processMessage(fightA);
+        vi.advanceTimersByTime(BATTLE_INTERVAL_MS);
+
+        expect(battleWrites(battleSlot('char-b'))).toEqual([fightB, fightB]);
+        expect(battleWrites(battleSlot('char-a'))).toEqual([fightA]);
+        // Throttled writes never reach the shared legacy slot; only the sim-open rewrite did
+        expect(battleWrites()).toEqual([fightB]);
+    });
+
+    test('throttled writes leave the legacy shared slot alone, a simulator open writes it', () => {
+        vi.useFakeTimers();
+        loginAs('char-1', 'One');
+        const fight = msg('new_battle', { battleId: 3, players: [] });
+        webSocketHook.processMessage(fight);
+        vi.advanceTimersByTime(0);
+        expect(battleWrites(battleSlot('char-1'))).toEqual([fight]);
+        expect(battleWrites()).toEqual([]);
+
+        webSocketHook.saveCombatSimSnapshot({ character: { id: 'char-1' } }, { characterId: 'char-1' });
+        expect(battleWrites()).toEqual([fight]);
+        expect(metaWrite('toolasha_new_battle_meta')).toMatchObject({ characterId: 'char-1' });
+    });
+
+    test('keeps only the newest few characters battle slots, deleting the rest', () => {
+        vi.useFakeTimers();
+        const store = {};
+        globalThis.GM_setValue = vi.fn((k, v) => {
+            store[k] = v;
+        });
+        globalThis.GM_getValue = vi.fn((k, d) => (k in store ? store[k] : d));
+        globalThis.GM_deleteValue = vi.fn((k) => {
+            delete store[k];
+        });
+        try {
+            for (let i = 1; i <= 8; i++) {
+                loginAs(`char-${i}`, `C${i}`);
+                webSocketHook.processMessage(msg('new_battle', { battleId: i, players: [] }));
+                vi.advanceTimersByTime(BATTLE_INTERVAL_MS);
+            }
+            const slots = Object.keys(store).filter((k) => /^toolasha_new_battle:char-\d+$/.test(k));
+            expect(slots.sort()).toEqual([3, 4, 5, 6, 7, 8].map((i) => battleSlot(`char-${i}`)));
+            expect(store[`${battleSlot('char-1')}_meta`]).toBeUndefined();
+            expect(JSON.parse(store.toolasha_new_battle_index)[0]).toBe('char-8');
+        } finally {
+            delete globalThis.GM_getValue;
+            delete globalThis.GM_deleteValue;
+        }
+    });
 
     test('a run of fights writes the battle key once a minute, newest fight last, not once per fight', () => {
         vi.useFakeTimers();
@@ -679,8 +756,10 @@ describe('saveCombatSimData GM-storage bridge stamping', () => {
         globalThis.GM_setValue.mockClear();
 
         vi.advanceTimersByTime(BATTLE_INTERVAL_MS);
-        expect(battleWrites()).toHaveLength(1);
-        expect(metaWrite('toolasha_new_battle_meta')).toMatchObject({ characterId: 'char-a', characterName: 'A' });
+        // Held battle lands in char-a's slot, not char-b's, and carries char-a's stamp
+        expect(battleWrites(battleSlot('char-a'))).toHaveLength(1);
+        expect(battleWrites(battleSlot('char-b'))).toHaveLength(0);
+        expect(metaWrite(`${battleSlot('char-a')}_meta`)).toMatchObject({ characterId: 'char-a', characterName: 'A' });
     });
 
     function metaWrite(key) {
@@ -803,7 +882,7 @@ describe('saveCombatSimData GM-storage bridge stamping', () => {
         globalThis.GM_setValue.mockClear();
         webSocketHook.processMessage(msg('new_battle', { players: [] }));
         await new Promise((r) => setTimeout(r, 0));
-        expect(metaWrite('toolasha_new_battle_meta')).toMatchObject({ characterId: 'char-7' });
+        expect(metaWrite(`${battleSlot('char-7')}_meta`)).toMatchObject({ characterId: 'char-7' });
     });
 
     test('stamps toolasha_profile_list with the viewing (writer) character, not the profile being viewed', async () => {
