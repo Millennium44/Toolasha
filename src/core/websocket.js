@@ -207,6 +207,11 @@ class WebSocketHook {
         this.nativeDataGet = undefined;
         /** Newest `new_battle` not yet bridged to GM storage: `{message, owner}` or null */
         this.pendingBattleBridge = null;
+        /**
+         * This tab's newest `new_battle`, kept after it is written: GM storage is shared, so another
+         * tab's trailing write can replace it, and opening a simulator from this tab rewrites it.
+         */
+        this.latestBattleBridge = null;
         /** Trailing-write timer for {@link WebSocketHook#pendingBattleBridge} */
         this.battleBridgeTimer = null;
         /** When `toolasha_new_battle` was last written to GM storage (ms) */
@@ -921,8 +926,9 @@ class WebSocketHook {
      */
     saveCombatSimSnapshot(characterData, owner) {
         if (typeof GM_setValue === 'undefined') return false;
-        // The simulator reads the battle key too; hand it the newest fight, not one held back
-        this.flushBattleBridge();
+        // The simulator reads the battle key too; hand it this tab's newest fight, even if it was
+        // already written, since another game tab may have replaced the shared key since
+        this.flushBattleBridge({ force: true });
         if (!characterData || owner?.characterId == null) return false;
         try {
             GM_setValue('toolasha_init_character_data', JSON.stringify(characterData));
@@ -943,6 +949,7 @@ class WebSocketHook {
      */
     queueBattleBridgeWrite(message, owner) {
         this.pendingBattleBridge = { message, owner };
+        this.latestBattleBridge = this.pendingBattleBridge;
         if (this.battleBridgeTimer !== null) return;
         const wait = Math.max(0, this.lastBattleBridgeWriteAt + BATTLE_BRIDGE_MIN_INTERVAL_MS - Date.now());
         this.battleBridgeTimer = setTimeout(() => this.flushBattleBridge(), wait);
@@ -950,14 +957,15 @@ class WebSocketHook {
 
     /**
      * Write the held `new_battle`, if any, to GM storage now.
+     * @param {{force?: boolean}} [options] - `force` rewrites this tab's newest battle when none is held
      * @returns {boolean} True if a battle was written
      */
-    flushBattleBridge() {
+    flushBattleBridge({ force = false } = {}) {
         if (this.battleBridgeTimer !== null) {
             clearTimeout(this.battleBridgeTimer);
             this.battleBridgeTimer = null;
         }
-        const pending = this.pendingBattleBridge;
+        const pending = this.pendingBattleBridge || (force ? this.latestBattleBridge : null);
         if (!pending || typeof GM_setValue === 'undefined') return false;
         try {
             GM_setValue('toolasha_new_battle', pending.message);
