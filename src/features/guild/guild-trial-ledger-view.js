@@ -172,7 +172,10 @@ export async function refreshLedgerView() {
 
     try {
         const cycles = await loadLedgerCycles(guild, characterId, { cycles: chosen.cycles });
-        const firstRecord = await loadLedgerFirstRecord(guild, characterId);
+        // A failed key read answers [] and so null, the same as an empty ledger; with cycles loaded the
+        // ledger is not empty, so that null is unreadable and the window is left unclamped (undefined)
+        const firstFound = await loadLedgerFirstRecord(guild, characterId);
+        const firstRecord = firstFound === null && cycles.length ? undefined : firstFound;
         const record = await loadLoadouts(characterId, guild);
         // The accuracy card reads a different pair of stores from the ledger's:
         // this week's measured-vs-reported blob, which the ladder's rollover

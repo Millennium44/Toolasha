@@ -73,6 +73,8 @@ vi.mock('./guild-trial-ledger.js', async (importOriginal) => ({
         if (next.gate) await next.gate;
         return next.value;
     },
+    // Undefined unless a test sets it: the real lookup reads storage, which these tests never stand up
+    loadLedgerFirstRecord: async () => world.firstRecord,
 }));
 
 // The accuracy card reads the trial store, which is IndexedDB and is never what
@@ -299,6 +301,20 @@ describe('filterLedgerRows', () => {
 
     test('no match is an empty table, not the whole one', () => {
         expect(filterLedgerRows(rows, 'zzz')).toEqual([]);
+    });
+});
+
+describe('coverage when the first-record read fails', () => {
+    test('a populated ledger whose key read came back empty is not reported as having no cycles', async () => {
+        world.firstRecord = null;
+        try {
+            await refreshLedgerView();
+            const table = buildLedgerTable({});
+            expect(table.trialsRun).toBeGreaterThan(0);
+            expect(coverageLine(table.coverage)).not.toBe('No cycles recorded yet.');
+        } finally {
+            world.firstRecord = undefined;
+        }
     });
 });
 
