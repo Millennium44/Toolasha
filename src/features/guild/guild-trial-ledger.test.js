@@ -857,6 +857,31 @@ describe('observedCoverage', () => {
         }
     });
 
+    test('on the test server the same unsplit two-cycle record in the following week is not 2/2', () => {
+        const now = Date.parse('2026-08-23T12:00:00Z');
+        const thisWeek = trialWeekStart(now);
+        const lastWeek = thisWeek - 7 * 24 * 60 * 60 * 1000;
+        const week = {
+            weekStart: lastWeek,
+            trials: [
+                { trialId: 'a', cycleAt: lastWeek + 3_600_000 },
+                { trialId: 'c', cycleAt: lastWeek + 90_000_000 },
+            ],
+        };
+        server.test = true;
+        try {
+            expect(observedCoverage([week], { now })).toEqual({
+                observed: 2,
+                expected: 4,
+                cycles: 2,
+                inProgress: false,
+                fraction: 0.5,
+            });
+        } finally {
+            server.test = false;
+        }
+    });
+
     test('no cycles is no fraction rather than zero', () => {
         expect(observedCoverage([]).fraction).toBeNull();
     });

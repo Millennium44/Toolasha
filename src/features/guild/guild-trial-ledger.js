@@ -1047,6 +1047,17 @@ export function observedCoverage(cycles, { trialsPerCycle = TRIALS_PER_CYCLE, no
             inProgress = true;
             continue;
         }
+        // A completed record still holding several cycles (see above) counts once per cycle: as one it
+        // would read 2/2 however many trials the guild ran across them
+        const groups = isTestServer() ? trialCycleGroups(Array.isArray(cycle.trials) ? cycle.trials : []) : [];
+        if (groups.length > 1) {
+            for (const group of groups) {
+                observed += Math.min(group.trials.length, perCycle);
+                expected += perCycle;
+                counted += 1;
+            }
+            continue;
+        }
         observed += Math.min((cycle.trials || []).length, perCycle);
         expected += perCycle;
         counted += 1;
