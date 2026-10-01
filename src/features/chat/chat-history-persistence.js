@@ -1423,8 +1423,11 @@ class ChatHistoryPersistence {
      * @returns {number|null}
      */
     liveCountFor(tabKey) {
-        const count = this.liveCounts[tabKey];
-        return typeof count === 'number' ? count : null;
+        const own = this.liveCounts[tabKey];
+        const shared = this.sharedLive[tabKey];
+        // A shared tab is capped with the larger of the two (see `_capMemory`), so that is its allowance.
+        if (typeof shared === 'number') return typeof own === 'number' ? Math.max(own, shared) : shared;
+        return typeof own === 'number' ? own : null;
     }
 
     /**

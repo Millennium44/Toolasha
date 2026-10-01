@@ -344,6 +344,25 @@ describe('several game tabs on one profile', () => {
         expect(stored(PUBLIC, GLOBAL)).toEqual(Array.from({ length: 9 }, (_, i) => `g${i + 1}`));
     });
 
+    test('the allowance a tab reads for a shared tab is the one its cap uses', async () => {
+        const ada = await openPage('101');
+        await ada.persistence.load();
+        ada.persistence.record(GLOBAL, line('Zed', 'g0', 0));
+        ada.persistence.setLiveCount(GLOBAL, 6);
+        await ada.persistence.flush();
+
+        const bob = await openPage('202');
+        await bob.persistence.load();
+        expect(bob.persistence.liveCountFor(GLOBAL)).toBe(6);
+        // A smaller own report does not lower it; a larger one (a switch batch's raise) does raise it.
+        bob.persistence.setLiveCount(GLOBAL, 2);
+        expect(bob.persistence.liveCountFor(GLOBAL)).toBe(6);
+        bob.persistence.setLiveCount(GLOBAL, 9);
+        expect(bob.persistence.liveCountFor(GLOBAL)).toBe(9);
+        // A per-character tab is untouched by any of it.
+        expect(bob.persistence.liveCountFor(PARTY)).toBeNull();
+    });
+
     test('a deletion seen in one tab purges the shared record, and another tab cannot put it back', async () => {
         const ada = await openPage('101');
         const bob = await openPage('202');

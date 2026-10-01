@@ -2356,13 +2356,13 @@ describe('the cap counts lines older than the game’s live backlog', () => {
             tabs: { [KEY]: Array.from({ length: CAP + SAVED_LIVE }, (_, i) => html(i)) },
             live: { [KEY]: SAVED_LIVE },
         };
-        const [container] = buildChat(['General', 'Other'], 1);
+        const [container] = buildChat(['Local', 'Other'], 1);
         const other = makeMessage('[1/2 11:00:00] other tab line');
         container.appendChild(other);
         chatHistoryExtender.initialize();
         await settle();
 
-        // To General, whose pane now renders more lines than it was saved with
+        // To Local, whose pane now renders more lines than it was saved with
         container.removeChild(other);
         container.append(...Array.from({ length: NOW_LIVE }, (_, i) => makeMessage(line(50 + i))));
         selectTab(0);
