@@ -176,6 +176,30 @@ describe('choice dialog vs. a raised panel', () => {
     });
 });
 
+describe('the Toolasha surface marker', () => {
+    // text-appearance.js applies the text size and font under this attribute;
+    // a panel that loses it silently stops following those settings
+
+    test('every registered panel carries it, and keeps it after unregistering', () => {
+        const panel = makePanel();
+        registerFloatingPanel(panel);
+        expect(panel.getAttribute('data-toolasha-surface')).toBe('panel');
+
+        unregisterFloatingPanel(panel);
+        expect(panel.getAttribute('data-toolasha-surface')).toBe('panel');
+        panel.remove();
+    });
+
+    test('the choice dialog backdrop carries it', async () => {
+        const pending = askChoice({ title: 'Sure?', choices: [{ value: 'yes', label: 'Yes' }] });
+        const backdrop = document.body.lastElementChild;
+        expect(backdrop.getAttribute('data-toolasha-surface')).toBe('dialog');
+
+        backdrop.querySelector('button').click();
+        await pending;
+    });
+});
+
 describe('window resize re-clamp', () => {
     const registered = [];
     const originalWidth = window.innerWidth;

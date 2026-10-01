@@ -1797,6 +1797,17 @@ function registerFeatures() {
             async: false,
         },
         {
+            // Text size and font for Toolasha's own surfaces. No master switch:
+            // at the defaults it writes no stylesheet at all, and every setting
+            // it reads applies live through its own listeners.
+            key: 'textAppearance',
+            name: 'Text Appearance',
+            category: 'UI',
+            module: UI.textAppearance,
+            async: false,
+            customCheck: () => true,
+        },
+        {
             key: 'updateCheck',
             name: 'Update Check',
             category: 'UI',

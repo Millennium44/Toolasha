@@ -215,6 +215,21 @@ describe('docked into the character column', () => {
         expect(Number.parseInt(overlayPanel.panel.style.height, 10)).toBeGreaterThanOrEqual(640);
     });
 
+    test('under a Toolasha text size the tiles are measured in the scroller’s zoomed pixels', () => {
+        // text-appearance.js zooms the scroller, not the panel: 640 of the
+        // canvas's own pixels are 960 on screen at 150%
+        buildColumn();
+        window.innerHeight = 2000;
+        overlayPanel.settings.docked = true;
+        overlayPanel.settings.dockHeightPx = null;
+        overlayPanel.show();
+
+        Object.defineProperty(overlayPanel.canvasEl, 'scrollHeight', { value: 640, configurable: true });
+        Object.defineProperty(overlayPanel.scrollEl, 'currentCSSZoom', { value: 1.5, configurable: true });
+
+        expect(overlayPanel._contentHeight()).toBeGreaterThanOrEqual(960);
+    });
+
     test('closing it puts the column back the way it was', () => {
         const column = buildColumn();
         overlayPanel.settings.docked = true;

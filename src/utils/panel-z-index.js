@@ -63,6 +63,10 @@ const CASCADE_STEP = 30;
  */
 export function registerFloatingPanel(el, { managedZ = true } = {}) {
     panels.add(el);
+    // Read by text-appearance.js, whose text size and font apply under this
+    // marker. Left in place on unregister: the element is still a Toolasha panel
+    // if it is shown again without registering anew.
+    el.setAttribute?.('data-toolasha-surface', 'panel');
     if (managedZ) selfManaged.delete(el);
     else selfManaged.add(el);
     afterLayout(() => {

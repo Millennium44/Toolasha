@@ -1100,12 +1100,15 @@ class OverlayPanel {
         // grid works one out. Read straight, `style.height` has been an empty
         // string since the grid rework, so this returned the default every time
         // and a docked panel never fitted its tiles at all.
-        const content = this.canvasEl?.scrollHeight || 0;
+        // The scroller carries the Toolasha text size as CSS zoom (text-appearance.js),
+        // so it and the canvas measure in their own zoomed pixels; the panel does not
+        const zoom = this.scrollEl?.currentCSSZoom || 1;
+        const content = (this.canvasEl?.scrollHeight || 0) * zoom;
         if (!Number.isFinite(content) || content <= 0) return DOCK_HEIGHT.default;
 
         // Header, grab bar and borders: everything of the panel that is not the
         // scroller. Constant while the scroller flexes, so this cannot run away
-        const chrome = this.panel.offsetHeight - (this.scrollEl?.clientHeight || 0);
+        const chrome = this.panel.offsetHeight - (this.scrollEl?.clientHeight || 0) * zoom;
         return content + Math.max(0, chrome) + 4;
     }
 
@@ -1350,6 +1353,8 @@ class OverlayPanel {
      */
     _createPicker() {
         const picker = document.createElement('div');
+        // Read by text-appearance.js: the popover takes the Toolasha text size and font
+        picker.setAttribute('data-toolasha-surface', 'popover');
         Object.assign(picker.style, {
             display: 'none',
             position: 'fixed',

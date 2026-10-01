@@ -51,6 +51,8 @@ export function askChoice({ title, message = '', choices = [] }) {
             alignItems: 'center',
             justifyContent: 'center',
         });
+        // Read by text-appearance.js: the dialog inside takes the Toolasha text size and font
+        backdrop.setAttribute('data-toolasha-surface', 'dialog');
 
         const dialog = document.createElement('div');
         Object.assign(dialog.style, {

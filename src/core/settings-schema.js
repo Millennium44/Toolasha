@@ -3460,6 +3460,44 @@ export const settingsGroups = {
                 ],
                 help: 'Number of decimal places shown when numbers are abbreviated with K/M/B suffixes',
             },
+            ui_textScale: {
+                id: 'ui_textScale',
+                label: 'Toolasha text size',
+                type: 'select',
+                default: '100',
+                options: [
+                    { value: '80', label: '80%' },
+                    { value: '90', label: '90%' },
+                    { value: '100', label: '100% (as designed)' },
+                    { value: '110', label: '110%' },
+                    { value: '125', label: '125%' },
+                    { value: '150', label: '150%' },
+                ],
+                help:
+                    'Scales the text inside Toolasha’s floating panels, the overlay, dialogs, toasts, the command ' +
+                    'palette and this settings page. The panels themselves keep their size and position, so at a ' +
+                    'larger size a panel shows less at once and scrolls; drag its corner to give it more room. ' +
+                    'Charts keep their own size. Shared by every character on this device',
+            },
+            ui_fontFamily: {
+                id: 'ui_fontFamily',
+                label: 'Toolasha font',
+                type: 'select',
+                default: 'default',
+                options: [
+                    { value: 'default', label: 'Default (unchanged)' },
+                    { value: 'system', label: 'System UI' },
+                    { value: 'verdana', label: 'Verdana' },
+                    { value: 'tahoma', label: 'Tahoma' },
+                    { value: 'arial', label: 'Arial' },
+                    { value: 'georgia', label: 'Georgia (serif)' },
+                    { value: 'mono', label: 'Monospace' },
+                ],
+                help:
+                    'The typeface for the same Toolasha surfaces as the text size. Only fonts already installed with ' +
+                    'your operating system are offered, so nothing is downloaded; a machine missing one falls back to ' +
+                    'a similar face. Text that is monospace on purpose keeps its face',
+            },
             ui_externalLinks: {
                 id: 'ui_externalLinks',
                 label: 'Left sidebar: Show external tool links',
