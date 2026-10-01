@@ -147,6 +147,11 @@ function rosterNames() {
     return (guildXPTracker.getMemberList?.() || []).map((member) => member?.name).filter(Boolean);
 }
 
+/** @returns {Object} The {@link LEDGER_WINDOWS} entry the selector is on */
+function selectedWindow() {
+    return LEDGER_WINDOWS.find((entry) => entry.key === state.window) || LEDGER_WINDOWS[0];
+}
+
 /**
  * Read the ledger and the stored kits, then redraw.
  *
@@ -160,7 +165,7 @@ export async function refreshLedgerView() {
     const generation = ++refreshGeneration;
     const characterId = dataManager.getCurrentCharacterId?.() ?? null;
     const guild = guildName();
-    const chosen = LEDGER_WINDOWS.find((entry) => entry.key === state.window) || LEDGER_WINDOWS[0];
+    const chosen = selectedWindow();
 
     try {
         const cycles = await loadLedgerCycles(guild, characterId, { cycles: chosen.cycles });
@@ -244,6 +249,8 @@ export function filterLedgerRows(rows, query) {
  * @param {string} [options.sortKey] - A {@link LEDGER_COLUMNS} key
  * @param {'asc'|'desc'} [options.sortDirection] - Which way
  * @param {string} [options.filterText] - Member-name search, from {@link filterLedgerRows}
+ * @param {number|null} [options.windowCycles] - The window's length in cycles, null for all; the selected one
+ * @param {number} [options.now] - Clock, for which cycles have run
  * @returns {{rows: Array<Object>, trialsRun: number, coverage: Object, cycles: number}} The table
  */
 export function buildLedgerTable({
@@ -252,6 +259,8 @@ export function buildLedgerTable({
     sortKey = state.sortKey,
     sortDirection = state.sortDirection,
     filterText = state.filterText,
+    windowCycles = selectedWindow().cycles,
+    now = Date.now(),
 } = {}) {
     const folded = foldLedgerCycles(cycles, { rosterNames: roster ?? rosterNames() });
     return {
@@ -259,28 +268,31 @@ export function buildLedgerTable({
         trialsRun: folded.trialsRun,
         trialsKnown: folded.trialsKnown,
         cycles: folded.cycles,
-        coverage: observedCoverage(cycles),
+        coverage: observedCoverage(cycles, { window: windowCycles, now }),
     };
 }
 
 /**
  * The observed-coverage sentence.
  *
- * The current week is excluded from the ratio — its trials have not all been
- * run — so the sentence says so rather than letting the reader assume the
+ * The running cycle is excluded from the ratio — its fight may not have
+ * happened — so the sentence says so rather than letting the reader assume the
  * figure covers everything on screen.
  *
  * @param {Object} coverage - From `observedCoverage`
- * @returns {string} e.g. `4 of 8 trials watched across 4 cycles`
+ * @returns {string} e.g. `Watched 6 of 8 cycles (2 missed).`
  */
 export function coverageLine(coverage) {
-    const thisWeek = coverage?.inProgress ? ' This week is still running and is not counted yet.' : '';
-    if (!coverage?.cycles) {
-        return coverage?.inProgress ? `No completed cycles yet.${thisWeek}` : 'No cycles recorded yet.';
+    const running = coverage?.inProgress
+        ? ` ${coverage.daily ? 'This cycle' : 'This week'} is still running and is not counted yet.`
+        : '';
+    if (!coverage?.expected) {
+        return coverage?.inProgress ? `No completed cycles yet.${running}` : 'No cycles recorded yet.';
     }
+    const missed = coverage.expected - coverage.watched;
     return (
-        `${coverage.observed} of ${coverage.expected} trials watched across ${coverage.cycles} cycle` +
-        `${coverage.cycles === 1 ? '' : 's'}${thisWeek}`
+        `Watched ${coverage.watched} of ${coverage.expected} cycle${coverage.expected === 1 ? '' : 's'}` +
+        `${missed > 0 ? ` (${missed} missed)` : ''}.${running}`
     );
 }
 
@@ -946,11 +958,20 @@ export const guildTrialLedgerPanel = createPanel({
                 'Observed',
                 coverageLine(table.coverage),
                 ROW_COLORS.dim,
-                'A trial only reaches the ledger if the guild panel was open while it ran. ' +
+                'A cycle only reaches the ledger if the guild panel was open during its fight; ' +
+                    'one with nothing recorded counts as missed. ' +
                     'Attendance is against the trials recorded here, never against the ones you missed.'
             )
         );
-        header.appendChild(panelLine('Trials in window', String(table.trialsRun), ROW_COLORS.dim));
+        header.appendChild(
+            panelLine(
+                'Trials in window',
+                String(table.trialsRun),
+                ROW_COLORS.dim,
+                'Trials recorded in the window, the running cycle included: usually ' +
+                    'one per watched cycle, the fight the panel saw.'
+            )
+        );
         drawControls(header, table);
 
         const ledger = panelCard(body, `Attendance and contribution (${table.rows.length})`, ACCENT);

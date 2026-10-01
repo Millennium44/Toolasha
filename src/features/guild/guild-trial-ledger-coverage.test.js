@@ -6,7 +6,8 @@
  * anonymized. The test server runs a cycle a day — a skilling hour at 21:00 UTC
  * and a combat hour at 22:00 — and the ledger records only the combat fight the
  * client watched, so every entry here is a cycle of its own. The current week's
- * first two entries predate cycle anchors and carry none.
+ * first two entries predate cycle anchors and carry none. Some days have no
+ * entry at all (Sunday 2026-09-27 among them), and coverage counts them missed.
  */
 
 import { describe, test, expect, beforeEach, vi } from 'vitest';
@@ -127,33 +128,66 @@ describe('the ledger as stored on the test server on 2026-10-01', () => {
         expect(split).toHaveLength(4);
     });
 
-    test('"Last 4 cycles" is the last four fights, and the trials in it are the trials it counts', async () => {
-        const window = await loadLedgerCycles(SCOPE, null, { cycles: 4 });
+    test('"Last 4 cycles" is the four days that ran and the one running; the Sunday nothing recorded is missed', async () => {
+        // Thursday 21:29 UTC: Thursday's skilling hour is running. Sunday 2026-09-27 has no record
+        const window = await loadLedgerCycles(SCOPE, null, { cycles: 4, now: CAPTURED_AT });
+        expect(window.map((cycle) => cycle.trials[0].encounter)).toEqual(['chameleon', 'swarm', 'hedgehog']);
+
+        const coverage = observedCoverage(window, { window: 4, now: CAPTURED_AT });
+        expect(coverage).toEqual({ watched: 3, expected: 4, missed: 1, inProgress: true, daily: true, fraction: 0.75 });
+        // One trial per watched cycle: the table's count and the coverage line agree
+        expect(foldLedgerCycles(window).trialsRun).toBe(coverage.watched);
+    });
+
+    test('every day in a longer window with no record counts as missed', async () => {
+        // Saturday 19th to Wednesday 30th: fights on the 21st, 22nd, 24th, 26th, 28th, 29th and 30th
+        const window = await loadLedgerCycles(SCOPE, null, { cycles: 12, now: CAPTURED_AT });
+        expect(window).toHaveLength(7);
+        expect(observedCoverage(window, { window: 12, now: CAPTURED_AT })).toMatchObject({
+            watched: 7,
+            expected: 12,
+            missed: 5,
+        });
+    });
+
+    test('before the skilling hour opens nothing is running', async () => {
+        const morning = Date.parse('2026-10-01T12:00:00Z');
+        const window = await loadLedgerCycles(SCOPE, null, { cycles: 4, now: morning });
+        expect(observedCoverage(window, { window: 4, now: morning })).toMatchObject({
+            watched: 3,
+            expected: 4,
+            inProgress: false,
+        });
+    });
+
+    test('the newest cycle is still in progress while its combat hour can be running', async () => {
+        const now = 1790805617604 + 30 * 60_000;
+        const window = await loadLedgerCycles(SCOPE, null, { cycles: 4, now });
+        // Saturday to Tuesday ran; Wednesday's fight is shown but not counted
         expect(window.map((cycle) => cycle.trials[0].encounter)).toEqual([
             'jellyfish',
             'chameleon',
             'swarm',
             'hedgehog',
         ]);
-
-        const coverage = observedCoverage(window, { now: CAPTURED_AT });
-        // Wednesday's combat hour ended a day before the capture: that cycle is over,
-        // and the one running now (Thursday's skilling hour) has nothing recorded yet.
-        // `expected` is cycles × TRIALS_PER_CYCLE and is deliberately not pinned here
-        expect(coverage).toMatchObject({ observed: 4, cycles: 4, inProgress: false });
-        expect(foldLedgerCycles(window).trialsRun).toBe(coverage.observed);
+        expect(observedCoverage(window, { window: 4, now })).toMatchObject({
+            watched: 3,
+            expected: 4,
+            missed: 1,
+            inProgress: true,
+        });
     });
 
-    test('the newest cycle is still in progress while its combat hour can be running', async () => {
-        const window = await loadLedgerCycles(SCOPE, null, { cycles: 4 });
-        const coverage = observedCoverage(window, { now: 1790805617604 + 30 * 60_000 });
-        expect(coverage).toMatchObject({ observed: 3, cycles: 3, inProgress: true });
-    });
-
-    test('live is untouched: one record a week, the current one left out', async () => {
+    test('live: one record a week, the current one left out, an unrecorded week missed', async () => {
         server.test = false;
-        const window = await loadLedgerCycles(SCOPE, null, { cycles: 4 });
+        const window = await loadLedgerCycles(SCOPE, null, { cycles: 4, now: CAPTURED_AT });
         expect(window).toHaveLength(2);
-        expect(observedCoverage(window, { now: CAPTURED_AT })).toMatchObject({ cycles: 1, inProgress: true });
+        expect(observedCoverage(window, { window: 4, now: CAPTURED_AT })).toMatchObject({
+            watched: 1,
+            expected: 4,
+            missed: 3,
+            inProgress: true,
+            daily: false,
+        });
     });
 });

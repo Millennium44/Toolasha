@@ -368,23 +368,28 @@ describe('participationText', () => {
 });
 
 describe('coverageLine', () => {
-    test('says what was watched against what a cycle runs', () => {
-        expect(coverageLine({ observed: 2, expected: 4, cycles: 2 })).toBe('2 of 4 trials watched across 2 cycles');
-        expect(coverageLine({ observed: 1, expected: 2, cycles: 1 })).toContain('1 cycle');
+    test('says how many of the cycles that ran were watched, and how many were missed', () => {
+        expect(coverageLine({ watched: 6, expected: 8 })).toBe('Watched 6 of 8 cycles (2 missed).');
+        expect(coverageLine({ watched: 1, expected: 1 })).toBe('Watched 1 of 1 cycle.');
     });
 
     test('nothing recorded says so rather than printing zeros', () => {
-        expect(coverageLine({ observed: 0, expected: 0, cycles: 0 })).toBe('No cycles recorded yet.');
+        expect(coverageLine({ watched: 0, expected: 0 })).toBe('No cycles recorded yet.');
     });
 
     test('the week in progress is said to be uncounted', () => {
-        const line = coverageLine({ observed: 2, expected: 2, cycles: 1, inProgress: true });
-        expect(line).toContain('2 of 2 trials watched across 1 cycle');
+        const line = coverageLine({ watched: 2, expected: 3, inProgress: true, daily: false });
+        expect(line).toContain('Watched 2 of 3 cycles (1 missed).');
         expect(line).toContain('This week is still running and is not counted yet.');
     });
 
+    test('on the test server the running cycle is a day, not the week', () => {
+        const line = coverageLine({ watched: 3, expected: 4, inProgress: true, daily: true });
+        expect(line).toContain('This cycle is still running and is not counted yet.');
+    });
+
     test('a window that is only this week says there is nothing complete to measure', () => {
-        const line = coverageLine({ observed: 0, expected: 0, cycles: 0, inProgress: true });
+        const line = coverageLine({ watched: 0, expected: 0, inProgress: true });
         expect(line).toContain('No completed cycles yet.');
         expect(line).toContain('not counted yet');
     });
