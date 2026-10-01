@@ -967,9 +967,15 @@ class WebSocketHook {
         }
         const pending = this.pendingBattleBridge || (force ? this.latestBattleBridge : null);
         if (!pending || typeof GM_setValue === 'undefined') return false;
+        let written = false;
         try {
             GM_setValue('toolasha_new_battle', pending.message);
-        } catch {
+            // The readers trust the payload only with a matching owner stamp, so the pair succeeds or retries together
+            written = this.writeBridgeMeta('toolasha_new_battle_meta', pending.owner);
+        } catch (error) {
+            console.error('[WebSocket] Battle bridge write failed:', error);
+        }
+        if (!written) {
             // Keep the battle (unless a newer one replaced it) and retry after the interval; a forced
             // write of the already-written latest battle is held as pending so the retry still has it
             if (!this.pendingBattleBridge) this.pendingBattleBridge = pending;
@@ -978,11 +984,6 @@ class WebSocketHook {
         }
         if (this.pendingBattleBridge === pending) this.pendingBattleBridge = null;
         this.lastBattleBridgeWriteAt = Date.now();
-        try {
-            this.writeBridgeMeta('toolasha_new_battle_meta', pending.owner);
-        } catch {
-            // The payload landed; a missing meta key only drops the owner stamp
-        }
         return true;
     }
 
@@ -1038,9 +1039,10 @@ class WebSocketHook {
      * synchronously at write time.
      * @param {string} metaKey - Namespaced meta key to write, e.g. 'toolasha_init_character_data_meta'
      * @param {{characterId?: string|number|null, characterName?: string|null}|null} [owner]
+     * @returns {boolean} True if the meta key was written
      */
     writeBridgeMeta(metaKey, owner = null) {
-        if (typeof GM_setValue === 'undefined') return;
+        if (typeof GM_setValue === 'undefined') return false;
         try {
             GM_setValue(
                 metaKey,
@@ -1050,8 +1052,10 @@ class WebSocketHook {
                     writtenAt: Date.now(),
                 })
             );
-        } catch {
-            /* ignore */
+            return true;
+        } catch (error) {
+            console.error(`[WebSocket] Bridge meta write failed (${metaKey}):`, error);
+            return false;
         }
     }
 
