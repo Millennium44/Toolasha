@@ -58,8 +58,6 @@ import { loadoutSnapshot } from '../../utils/bundle-bridge.js';
 
 /** Bound on waiting for the vendor button to relabel after its arming click */
 const VENDOR_ARM_WAIT_MS = 1000;
-/** How long after our press the armed vendor button is shielded from a second click */
-const SALE_GUARD_MS = 3000;
 const VENDOR_ARM_POLL_MS = 50;
 
 const BUTTON_ID = 'mwi-bulk-sell-btn';
@@ -1228,7 +1226,11 @@ class BulkSellAssistant {
         this.confirmNote = '';
         this._confirmedStep = this._stepKey();
         this._render();
+        // Read before the click: the label is what says this is the vendor sale
+        const vendorSale = /^confirm\s+sell for\b/i.test(button.textContent.trim());
         button.click();
+        // Both routes (already armed, or armed by us) end here, so one place guards them
+        if (vendorSale) this._guardSale(button);
     }
 
     /**
@@ -1283,7 +1285,6 @@ class BulkSellAssistant {
                 return;
             }
             this._pressConfirm(result.button);
-            this._guardSale();
         } finally {
             document.removeEventListener('click', onClick, true);
             this._vendorArming = false;
@@ -1294,10 +1295,13 @@ class BulkSellAssistant {
      * After our press the menu still shows the armed Confirm Sell For button
      * until the server answers, so a player click (or one queued behind ours)
      * landing on it would send a second sale. Swallow clicks on that button in
-     * the capture phase until the menu closes, the run is stopped or skipped
-     * (_clearTransient), or SALE_GUARD_MS passes.
+     * the capture phase until the menu closes or the button is detached or
+     * relabeled away from "Confirm Sell For", or the run is stopped/skipped
+     * (_clearTransient). No wall-clock release: a slow server leaves the same
+     * armed button open for as long as it takes.
+     * @param {HTMLButtonElement} sold - The button our press clicked
      */
-    _guardSale() {
+    _guardSale(sold) {
         this._releaseSaleGuard();
         const menuOpen = () => !!document.querySelector('[class*="Item_actionMenu"]');
         const onClick = (event) => {
@@ -1308,10 +1312,10 @@ class BulkSellAssistant {
         };
         document.addEventListener('click', onClick, true);
         const poll = setInterval(() => {
-            if (!menuOpen()) this._releaseSaleGuard();
+            const armed = sold?.isConnected && /^confirm\s+sell for\b/i.test(sold.textContent.trim());
+            if (!menuOpen() || !armed) this._releaseSaleGuard();
         }, 100);
-        const timeout = setTimeout(() => this._releaseSaleGuard(), SALE_GUARD_MS);
-        this._saleGuard = { onClick, poll, timeout };
+        this._saleGuard = { onClick, poll };
     }
 
     _releaseSaleGuard() {
@@ -1320,7 +1324,6 @@ class BulkSellAssistant {
         this._saleGuard = null;
         document.removeEventListener('click', guard.onClick, true);
         clearInterval(guard.poll);
-        clearTimeout(guard.timeout);
     }
 
     /**
