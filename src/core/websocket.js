@@ -931,9 +931,10 @@ class WebSocketHook {
     saveCombatSimSnapshot(characterData, owner) {
         if (typeof GM_setValue === 'undefined') return false;
         this.bridgeClientData();
-        // The simulator reads the battle key too; hand it this tab's newest fight, even if it was
-        // already written, since another game tab may have replaced the shared key since
-        this.flushBattleBridge({ force: true });
+        // The simulator reads the battle key too; hand it this tab's newest fight for the character
+        // being opened, even if it was already written, since another game tab may have replaced
+        // the shared key since. A battle left from a character this tab has switched away from is not.
+        this.flushBattleBridge({ forceFor: owner?.characterId ?? null });
         if (!characterData || owner?.characterId == null) return false;
         try {
             GM_setValue('toolasha_init_character_data', JSON.stringify(characterData));
@@ -1050,15 +1051,22 @@ class WebSocketHook {
 
     /**
      * Write the held `new_battle`, if any, to GM storage now.
-     * @param {{force?: boolean}} [options] - `force` rewrites this tab's newest battle when none is held
+     * @param {{forceFor?: string|number|null}} [options] - A simulator is opening for this character:
+     *     rewrite this tab's newest battle when none is held and write the shared slot, but only for a
+     *     battle that character owns
      * @returns {boolean} True if a battle was written
      */
-    flushBattleBridge({ force = false } = {}) {
+    flushBattleBridge({ forceFor = null } = {}) {
         if (this.battleBridgeTimer !== null) {
             clearTimeout(this.battleBridgeTimer);
             this.battleBridgeTimer = null;
         }
-        const pending = this.pendingBattleBridge || (force ? this.latestBattleBridge : null);
+        const ownedBySimCharacter = (battle) =>
+            forceFor != null &&
+            battle?.owner?.characterId != null &&
+            String(battle.owner.characterId) === String(forceFor);
+        const pending =
+            this.pendingBattleBridge || (ownedBySimCharacter(this.latestBattleBridge) ? this.latestBattleBridge : null);
         if (!pending || typeof GM_setValue === 'undefined') return false;
         let written = false;
         try {
@@ -1070,7 +1078,7 @@ class WebSocketHook {
                 written = this.writeBattleSlot(battleBridgeKeyFor(characterId), pending);
                 if (written) this.recordBattleBridgeCharacter(characterId);
             }
-            if (characterId == null || (force && written)) {
+            if (characterId == null || (written && ownedBySimCharacter(pending))) {
                 written = this.writeBattleSlot(BATTLE_BRIDGE_KEY, pending);
             }
         } catch (error) {
@@ -1242,6 +1250,12 @@ class WebSocketHook {
      */
     cleanup() {
         this.clearClientDataRetry();
+        if (this.battleBridgeTimer !== null) {
+            clearTimeout(this.battleBridgeTimer);
+            this.battleBridgeTimer = null;
+        }
+        this.pendingBattleBridge = null;
+        this.latestBattleBridge = null;
         this.processedMessages.clear();
     }
 

@@ -703,20 +703,37 @@ describe('saveCombatSimData GM-storage bridge stamping', () => {
 
     test("opening a simulator rewrites this tab's newest battle after another tab replaced it", () => {
         vi.useFakeTimers();
+        loginAs('char-1', 'One');
         const fight = msg('new_battle', { battleId: 7, players: [] });
         webSocketHook.processMessage(fight);
         vi.advanceTimersByTime(0);
-        expect(battleWrites()).toEqual([fight]);
+        expect(battleWrites(battleSlot('char-1'))).toEqual([fight]);
 
-        // Another game tab's trailing write lands on the shared key; nothing is held here now
+        // Another game tab's write lands on the shared key; nothing is held here now
         globalThis.GM_setValue('toolasha_new_battle', 'other tab');
-        webSocketHook.saveCombatSimSnapshot({ character: {} }, { characterId: 1 });
+        webSocketHook.saveCombatSimSnapshot({ character: {} }, { characterId: 'char-1' });
 
-        expect(battleWrites()).toEqual([fight, 'other tab', fight]);
+        expect(battleWrites()).toEqual(['other tab', fight]);
+    });
+
+    test("opening a simulator for another character does not write the previous character's battle", () => {
+        vi.useFakeTimers();
+        loginAs('char-a', 'A');
+        const fight = msg('new_battle', { battleId: 5, players: [] });
+        webSocketHook.processMessage(fight);
+        vi.advanceTimersByTime(0);
+
+        // Switched to B, which has not fought yet; another tab holds B's battle in the shared key
+        loginAs('char-b', 'B');
+        globalThis.GM_setValue('toolasha_new_battle', 'b battle');
+        webSocketHook.saveCombatSimSnapshot({ character: {} }, { characterId: 'char-b' });
+
+        expect(battleWrites()).toEqual(['b battle']);
     });
 
     test('a failed forced rewrite of the latest battle is retried', () => {
         vi.useFakeTimers();
+        loginAs('char-1', 'One');
         const fight = msg('new_battle', { battleId: 8, players: [] });
         webSocketHook.processMessage(fight);
         vi.advanceTimersByTime(0);
@@ -724,10 +741,22 @@ describe('saveCombatSimData GM-storage bridge stamping', () => {
             throw new Error('storage unavailable');
         });
 
-        webSocketHook.saveCombatSimSnapshot({ character: {} }, { characterId: 1 });
+        webSocketHook.saveCombatSimSnapshot({ character: {} }, { characterId: 'char-1' });
         vi.advanceTimersByTime(60_000);
 
-        expect(battleWrites()).toEqual([fight, fight, fight]);
+        expect(battleWrites(battleSlot('char-1'))).toEqual([fight, fight, fight]);
+    });
+
+    test('cleanup cancels a pending battle write', () => {
+        vi.useFakeTimers();
+        loginAs('char-1', 'One');
+        webSocketHook.processMessage(msg('new_battle', { battleId: 1, players: [] }));
+        vi.advanceTimersByTime(0);
+        webSocketHook.processMessage(msg('new_battle', { battleId: 2, players: [] }));
+        webSocketHook.cleanup();
+        vi.advanceTimersByTime(120_000);
+
+        expect(battleWrites(battleSlot('char-1'))).toHaveLength(1);
     });
 
     test('a failed battle meta write retries the battle and its meta together', () => {
