@@ -266,7 +266,8 @@ export default {
             if (max > 0) maxMana = max;
             plannerStale = false;
             if (stats) {
-                mpRegenPer10 = Number.isFinite(stats.mpRegenPer10) ? stats.mpRegenPer10 : null;
+                // combatStats is sparse (zero fields are omitted): absent means no gear regen, so the 1% floor applies
+                mpRegenPer10 = Number.isFinite(stats.mpRegenPer10) ? stats.mpRegenPer10 : 0;
                 haste = { foodHaste: stats.foodHaste || 0, drinkConcentration: stats.drinkConcentration || 0 };
                 if (Number.isFinite(stats.foodSlots) && Number.isFinite(stats.drinkSlots)) {
                     slots = { food: stats.foodSlots, drink: stats.drinkSlots };

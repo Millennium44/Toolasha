@@ -461,6 +461,22 @@ describe('natural regeneration', () => {
         expect(manaPanel.panel.querySelector('[data-mp-target]').value).toBe('0');
     });
 
+    test('a recorded sparse combatStats with no regen field still gets the 1% floor', () => {
+        const recorded = bleedCapture.ticks.find((tick) => tick.type === 'new_battle').payload.players[0];
+        expect(recorded.combatDetails.combatStats.mpRegenPer10).toBeUndefined();
+        game.handlers['new_battle']({
+            players: [{ ...recorded, character: { id: 'char1' }, maxManapoints: 2000 }],
+        });
+        for (let i = 0; i < 12; i++) {
+            vi.advanceTimersByTime(10_000);
+            game.handlers['battle_consumable_ability_updated']({ ability: '/abilities/fireball' });
+        }
+        manaPanel.show();
+
+        // floor(2000 x 0.01) x 6 = 120 MP/min natural regen
+        expect(manaPanel.panel.querySelector('[data-mp-target]').value).toBe('480');
+    });
+
     test('an equipment change drops the regen reading and the target falls back to gross spend', () => {
         spendWithRegen(0);
         game.dmHandlers['items_updated']({ endCharacterItems: [{ itemLocationHrid: '/item_locations/main_hand' }] });
