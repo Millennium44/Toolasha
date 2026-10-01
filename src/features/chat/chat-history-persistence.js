@@ -173,12 +173,14 @@ export const MAX_LIVE_ALLOWANCE = 200;
 
 /**
  * Ceiling on the whole record, in characters of serialized HTML summed across
- * every tab. 256k characters is roughly a quarter-megabyte of UTF-8 for ASCII
- * chat and comfortably under it in practice; it is a bound, not a target, and
- * the trim that enforces it takes from the largest tab first so one busy
- * channel cannot starve the quiet ones.
+ * every tab. It is a bound, not a target, and the trim that enforces it takes
+ * from the largest tab first so one busy channel cannot starve the quiet ones.
+ * Measured 2026-10-01: a guild line with chat icons and a rank badge is ~1k
+ * characters, so 256k filled at ~400 lines across five tabs and capped history
+ * well before the per-tab limit; 1M leaves room for ~1,000. The record is local
+ * only (never synced or backed up).
  */
-export const MAX_TOTAL_CHARS = 256 * 1024;
+export const MAX_TOTAL_CHARS = 1024 * 1024;
 
 /** How long writes are coalesced before one hits storage. */
 const WRITE_DEBOUNCE_MS = 5000;
