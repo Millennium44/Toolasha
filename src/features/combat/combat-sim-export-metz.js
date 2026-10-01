@@ -14,6 +14,7 @@ import {
     constructPartyPlayer,
 } from './combat-sim-export.js';
 import { sharedProfileStatus, sharedProfileWarning } from '../../utils/shared-profile-status.js';
+import { gmGetValue } from '../../utils/gm-traffic.js';
 
 const ENHANCING_TOOL_LOCATION = '/item_locations/enhancing_tool';
 const ALCHEMY_TOOL_LOCATION = '/item_locations/alchemy_tool';
@@ -34,7 +35,7 @@ function sameCharacterId(left, right) {
 function bridgedSnapshotTime() {
     if (typeof GM_getValue === 'undefined') return null;
     try {
-        const writtenAt = JSON.parse(GM_getValue('toolasha_init_character_data_meta', null) || 'null')?.writtenAt;
+        const writtenAt = JSON.parse(gmGetValue('toolasha_init_character_data_meta', null) || 'null')?.writtenAt;
         return typeof writtenAt === 'number' && Number.isFinite(writtenAt) ? new Date(writtenAt).toISOString() : null;
     } catch {
         return null;
