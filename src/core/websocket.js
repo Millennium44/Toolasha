@@ -970,7 +970,9 @@ class WebSocketHook {
         try {
             GM_setValue('toolasha_new_battle', pending.message);
         } catch {
-            // Keep the battle (unless a newer one replaced it) and retry after the interval
+            // Keep the battle (unless a newer one replaced it) and retry after the interval; a forced
+            // write of the already-written latest battle is held as pending so the retry still has it
+            if (!this.pendingBattleBridge) this.pendingBattleBridge = pending;
             this.battleBridgeTimer = setTimeout(() => this.flushBattleBridge(), BATTLE_BRIDGE_MIN_INTERVAL_MS);
             return false;
         }
