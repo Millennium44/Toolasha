@@ -891,22 +891,36 @@ export function sortLedgerRows(rows, sortKey = 'damageShare', direction = 'desc'
  * A week record's trials grouped into cycles by their {@link trialCycleAnchor}.
  *
  * A group is every trial within {@link TRIAL_CYCLE_SPAN_MS} of its earliest
- * anchor. Trials with no anchor cannot be placed and join the earliest group,
- * or form the week's one group when nothing is anchored — the one-cycle week
- * the ledger has always assumed.
+ * anchor. A trial recorded before anchors existed is placed by its `at` (when
+ * its session closed, inside the fight's hour), which the same span covers; a
+ * group with no anchored trial takes its earliest `at` as its `cycleAt`. Only a
+ * trial with neither cannot be placed: it joins the earliest group, or forms
+ * the week's one group when nothing else is placed.
  *
  * @param {Array<Object>} trials - A record's trial entries
  * @returns {Array<{cycleAt: number|null, trials: Array<Object>}>} Groups, oldest first
  */
 function trialCycleGroups(trials) {
+    const placeOf = (trial) =>
+        Number.isFinite(trial?.cycleAt) ? trial.cycleAt : Number.isFinite(trial?.at) ? trial.at : null;
     const groups = [];
-    const anchored = trials.filter((trial) => Number.isFinite(trial?.cycleAt));
-    for (const trial of [...anchored].sort((a, b) => a.cycleAt - b.cycleAt)) {
+    const placed = trials.filter((trial) => placeOf(trial) !== null);
+    for (const trial of [...placed].sort((a, b) => placeOf(a) - placeOf(b))) {
         const last = groups[groups.length - 1];
-        if (last && sameTrialCycle(last.cycleAt, trial.cycleAt)) last.trials.add(trial);
-        else groups.push({ cycleAt: trial.cycleAt, trials: new Set([trial]) });
+        if (last && sameTrialCycle(last.at, placeOf(trial))) {
+            last.trials.add(trial);
+            // A fight start is the cycle's identity; an `at` only stands in for one
+            if (last.cycleAt === null && Number.isFinite(trial.cycleAt)) last.cycleAt = trial.cycleAt;
+        } else {
+            groups.push({
+                at: placeOf(trial),
+                cycleAt: Number.isFinite(trial.cycleAt) ? trial.cycleAt : null,
+                trials: new Set([trial]),
+            });
+        }
     }
-    const loose = trials.filter((trial) => !Number.isFinite(trial?.cycleAt));
+    for (const group of groups) if (group.cycleAt === null) group.cycleAt = group.at;
+    const loose = trials.filter((trial) => placeOf(trial) === null);
     if (loose.length && !groups.length) groups.push({ cycleAt: null, trials: new Set() });
     for (const trial of loose) groups[0].trials.add(trial);
     // Each group keeps the record's own order
@@ -1037,11 +1051,16 @@ export function observedCoverage(cycles, { trialsPerCycle = TRIALS_PER_CYCLE, no
         new Set((trials || []).map((trial, index) => trial?.trialId ?? `#${index}`)).size;
     const runningTrials = Array.isArray(running?.trials) ? running.trials : [];
     const newestGroup = isTestServer() && running ? trialCycleGroups(runningTrials).at(-1) : null;
+    // Combat is a cycle's last trial and its hour ends within the span of the
+    // fight's start, so a newest group placed further back than that is over —
+    // the ledger records only the fight it watched, so waiting for a second
+    // trial to land in the group would hold every finished cycle as running
+    const placedAt = newestGroup?.cycleAt;
     const finished =
         isTestServer() &&
         running &&
-        perCycle > 0 &&
-        distinctTrials(newestGroup ? newestGroup.trials : runningTrials) >= perCycle;
+        ((perCycle > 0 && distinctTrials(newestGroup ? newestGroup.trials : runningTrials) >= perCycle) ||
+            (Number.isFinite(placedAt) && now - placedAt > TRIAL_CYCLE_SPAN_MS));
 
     for (const cycle of list) {
         const isRunning = cycle === running && !finished;

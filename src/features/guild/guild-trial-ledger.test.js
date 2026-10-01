@@ -260,8 +260,10 @@ describe('a test-server week runs an encounter more than once', () => {
     });
 
     test('an earlier cycle of the current week counts toward coverage', () => {
-        const now = WEEK + 3 * 24 * HOUR;
-        const week = twoCycleWeek(trialWeekStart(now));
+        // Half an hour into the second cycle's fight, while it can still be running
+        const weekStart = trialWeekStart(WEEK + 3 * 24 * HOUR);
+        const now = weekStart + 2 * 24 * HOUR + 17.5 * HOUR;
+        const week = twoCycleWeek(weekStart);
         const coverage = observedCoverage(ledgerCyclesByAnchor([week], { perCycle: true }), { now });
         expect(coverage).toMatchObject({ observed: 1, expected: 2, cycles: 1, inProgress: true });
     });
@@ -825,8 +827,9 @@ describe('observedCoverage', () => {
     });
 
     test('on the test server a running unsplit record counts its earlier complete group', () => {
-        const now = Date.parse('2026-08-23T12:00:00Z');
-        const thisWeek = trialWeekStart(now);
+        const thisWeek = trialWeekStart(Date.parse('2026-08-23T12:00:00Z'));
+        // Half an hour into the newest cycle's fight, while it can still be running
+        const now = thisWeek + 90_000_000 + 30 * 60_000;
         const week = {
             weekStart: thisWeek,
             trials: [
@@ -876,8 +879,9 @@ describe('observedCoverage', () => {
     });
 
     test('on the test server an unsplit week spanning two cycles is not one finished cycle', () => {
-        const now = Date.parse('2026-08-23T12:00:00Z');
-        const thisWeek = trialWeekStart(now);
+        const thisWeek = trialWeekStart(Date.parse('2026-08-23T12:00:00Z'));
+        // Half an hour into the newest cycle's fight, while it can still be running
+        const now = thisWeek + 90_000_000 + 30 * 60_000;
         const week = {
             weekStart: thisWeek,
             trials: [
