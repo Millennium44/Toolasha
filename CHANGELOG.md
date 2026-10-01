@@ -6,6 +6,12 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Chat history keeps its order and its older lines
+
+- Restored chat history no longer shows lines newer than where the game's own messages begin, so lines are no longer out of order or shown twice.
+- Switching to another chat tab and back no longer drops the lines that scrolled out of the game's chat during the session.
+- Duplicates the previous version stored for players with rank badges are folded on load, so they no longer crowd older history out of the saved limit.
+
 ### Market stats note no longer cut off
 
 - The market stats overlay's "no trades — ask/bid only" note was hidden under the order book; the affected row is now marked with * and the note shows when you hover it.
