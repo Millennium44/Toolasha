@@ -1297,6 +1297,27 @@ describe('confirming from the strip', () => {
             expect(bulkSell.confirmNote).toMatch(/clicked while Confirm waited/);
         });
 
+        test('a player click on the still-armed button after our press sends no second sale', async () => {
+            const menu = openMenu();
+            vendorRun();
+            await pressAndSettle();
+            expect(gameClicks).toBe(1);
+
+            menu.querySelector('.Button_sell__x').click();
+            expect(gameClicks).toBe(1);
+        });
+
+        test('once the menu closes, clicks on a sell button are no longer swallowed', async () => {
+            const menu = openMenu();
+            vendorRun();
+            await pressAndSettle();
+            closeModalAndSettle(menu);
+
+            const next = openMenu({ label: 'Confirm Sell For 400K Coins' });
+            next.querySelector('.Button_sell__x').click();
+            expect(gameClicks).toBe(2);
+        });
+
         test('the walk still advances only when the game closes the menu', async () => {
             const menu = openMenu();
             vendorRun();

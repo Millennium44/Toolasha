@@ -58,6 +58,8 @@ import { loadoutSnapshot } from '../../utils/bundle-bridge.js';
 
 /** Bound on waiting for the vendor button to relabel after its arming click */
 const VENDOR_ARM_WAIT_MS = 1000;
+/** How long after our press the armed vendor button is shielded from a second click */
+const SALE_GUARD_MS = 3000;
 const VENDOR_ARM_POLL_MS = 50;
 
 const BUTTON_ID = 'mwi-bulk-sell-btn';
@@ -1281,10 +1283,44 @@ class BulkSellAssistant {
                 return;
             }
             this._pressConfirm(result.button);
+            this._guardSale();
         } finally {
             document.removeEventListener('click', onClick, true);
             this._vendorArming = false;
         }
+    }
+
+    /**
+     * After our press the menu still shows the armed Confirm Sell For button
+     * until the server answers, so a player click (or one queued behind ours)
+     * landing on it would send a second sale. Swallow clicks on that button in
+     * the capture phase until the menu closes, the run is stopped or skipped
+     * (_clearTransient), or SALE_GUARD_MS passes.
+     */
+    _guardSale() {
+        this._releaseSaleGuard();
+        const menuOpen = () => !!document.querySelector('[class*="Item_actionMenu"]');
+        const onClick = (event) => {
+            const target = event.target?.closest?.('[class*="Item_actionMenu"] button');
+            if (!target || !/^(confirm\s+)?sell for\b/i.test(target.textContent.trim())) return;
+            event.preventDefault();
+            event.stopImmediatePropagation();
+        };
+        document.addEventListener('click', onClick, true);
+        const poll = setInterval(() => {
+            if (!menuOpen()) this._releaseSaleGuard();
+        }, 100);
+        const timeout = setTimeout(() => this._releaseSaleGuard(), SALE_GUARD_MS);
+        this._saleGuard = { onClick, poll, timeout };
+    }
+
+    _releaseSaleGuard() {
+        const guard = this._saleGuard;
+        if (!guard) return;
+        this._saleGuard = null;
+        document.removeEventListener('click', guard.onClick, true);
+        clearInterval(guard.poll);
+        clearTimeout(guard.timeout);
     }
 
     /**
@@ -1922,6 +1958,7 @@ class BulkSellAssistant {
     }
 
     _clearTransient() {
+        this._releaseSaleGuard();
         if (this.bookTimeout) {
             clearTimeout(this.bookTimeout);
             this.bookTimeout = null;
