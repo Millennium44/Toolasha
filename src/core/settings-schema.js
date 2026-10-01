@@ -142,6 +142,17 @@ export const settingsGroups = {
                     'or opened is lost. Only if that has not worked a few seconds later does the page reload. A ' +
                     'page that comes back broken always asks rather than trying again.',
             },
+            // Toggled by the PFormance panel's header button, never listed as a row. It
+            // has to exist here: the config store only writes keys the schema declares,
+            // so without this the button's choice was silently dropped.
+            pformanceAttribution: {
+                id: 'pformanceAttribution',
+                label: 'PFormance attribution extras',
+                type: 'checkbox',
+                default: false,
+                hidden: true,
+                help: 'Extra diagnostics in the PFormance panel: stall attribution, leak canary, heap trend, Tampermonkey traffic and the all-tabs list.',
+            },
         },
     },
 
