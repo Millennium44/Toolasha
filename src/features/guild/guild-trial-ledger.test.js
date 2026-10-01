@@ -746,6 +746,12 @@ describe('observedCoverage', () => {
         const thisWeek = trialWeekStart(now);
         const week = (back, trials = [{ trialId: `w${back}` }]) => ({ weekStart: thisWeek - back * WEEK_MS, trials });
 
+        test('a ledger checked and found empty charges no cycle as missed', () => {
+            const coverage = observedCoverage([], { window: 4, now, daily: false, first: null });
+            expect(coverage.expected).toBe(0);
+            expect(coverage.missed).toBe(0);
+        });
+
         test('four weeks ran in the window and three were recorded: 3 of 4', () => {
             const cycles = [week(4), week(3), week(1)];
             expect(observedCoverage(cycles, { window: 4, now, daily: false })).toEqual({
