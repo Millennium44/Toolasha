@@ -1466,11 +1466,14 @@ class Storage {
      * to write, or `undefined` to write nothing. A value still queued by the
      * debounced `set` for the same key is newer than the disk, so it is what
      * `mutate` is handed, and the queued write is folded into this one.
+     *
+     * It answers when the transaction commits, not when its write request
+     * succeeds: a transaction can still abort after that, and nothing is on disk.
      * @param {string} key - Storage key
      * @param {(current: *, found: boolean) => *} mutate - Next value from the current one
      * @param {string} storeName - Object store name (default: 'settings')
      * @returns {Promise<{written: boolean, value: *}|null>} What is stored afterwards, or null when
-     *   the read or the write failed (nothing was written)
+     *   the read, the write or the commit failed (nothing was written)
      */
     async update(key, mutate, storeName = 'settings') {
         if (typeof mutate !== 'function') return null;
@@ -1510,6 +1513,9 @@ class Storage {
                 if (!outcome && this._isQuotaError(error)) this._handleQuotaExceeded(key, storeName, error);
                 resolve(outcome);
             };
+            const NOT_WRITTEN = Symbol('not written');
+            let written = NOT_WRITTEN;
+            let unchanged = null;
 
             try {
                 const transaction = this.db.transaction([storeName], 'readwrite');
@@ -1534,11 +1540,16 @@ class Storage {
                     // Declining to change a value that was only queued still owes the queue its write.
                     if (next === undefined && queued) next = queued.value;
                     if (next === undefined) {
-                        settle({ written: false, value: read.result }, null);
+                        unchanged = { written: false, value: read.result };
                         return;
                     }
                     const write = store.put(next, key);
-                    write.onsuccess = () => settle({ written: true, value: next }, null);
+                    // Not settled here: a request that succeeds can still be lost
+                    // to a transaction that aborts or fails at commit, and a caller
+                    // that took this for written would drop its dirty state.
+                    write.onsuccess = () => {
+                        written = next;
+                    };
                     write.onerror = () => {
                         console.error(`[Storage] Failed to update key ${key}:`, write.error);
                         settle(null, write.error);
@@ -1550,6 +1561,16 @@ class Storage {
                     settle(null, read.error);
                 };
 
+                // Only the commit says the value is on disk.
+                transaction.oncomplete = () => {
+                    if (written !== NOT_WRITTEN) settle({ written: true, value: written }, null);
+                    else if (unchanged) settle(unchanged, null);
+                    else settle(null, null);
+                };
+                transaction.onerror = () => {
+                    console.error(`[Storage] Update transaction failed for key ${key}:`, transaction.error);
+                    settle(null, transaction.error);
+                };
                 transaction.onabort = () => {
                     console.error(`[Storage] Update transaction aborted for key ${key}:`, transaction.error);
                     settle(null, transaction.error);

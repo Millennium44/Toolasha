@@ -547,6 +547,71 @@ describe('Storage.update', () => {
         expect(dataByStore.get('settings').get('kept')).toBe(1);
     });
 
+    test('a put that succeeds in a transaction that then aborts is reported as not written', async () => {
+        vi.spyOn(console, 'error').mockImplementation(() => {});
+        const disk = new Map([['lines', ['a']]]);
+        let txn = null;
+        storage.db = {
+            objectStoreNames: ['settings'],
+            transaction() {
+                txn = { oncomplete: null, onerror: null, onabort: null, error: null };
+                const pending = [];
+                const store = {
+                    get(key) {
+                        const request = { onsuccess: null, onerror: null, result: undefined };
+                        pending.push(() => {
+                            request.result = disk.get(key);
+                            request.onsuccess?.();
+                        });
+                        return request;
+                    },
+                    put() {
+                        // The request succeeds, and the value never reaches disk.
+                        const request = { onsuccess: null, onerror: null };
+                        pending.push(() => request.onsuccess?.());
+                        return request;
+                    },
+                };
+                queueMicrotask(() => {
+                    for (const run of pending) run();
+                    queueMicrotask(() => {
+                        txn.error = new DOMException('commit failed', 'UnknownError');
+                        txn.onabort?.();
+                    });
+                });
+                txn.objectStore = () => store;
+                return txn;
+            },
+        };
+
+        await expect(storage.update('lines', (current) => [...current, 'b'], 'settings')).resolves.toBeNull();
+        expect(disk.get('lines')).toEqual(['a']);
+    });
+
+    test('a written value is reported only once its transaction completes', async () => {
+        const { db } = createFakeDb(['settings'], { settings: { lines: [] } });
+        storage.db = db;
+        const transaction = db.transaction.bind(db);
+        const completed = [];
+        vi.spyOn(db, 'transaction').mockImplementation((...args) => {
+            const txn = transaction(...args);
+            const wrap = (fn) => () => {
+                completed.push('complete');
+                fn?.();
+            };
+            return new Proxy(txn, {
+                set(target, prop, value) {
+                    target[prop] = prop === 'oncomplete' ? wrap(value) : value;
+                    return true;
+                },
+            });
+        });
+
+        const result = await storage.update('lines', () => ['x'], 'settings');
+        expect(result).toEqual({ written: true, value: ['x'] });
+        expect(completed).toEqual(['complete']);
+    });
+
     test('after the teardown close it refuses, since a read-merge-write cannot be queued', async () => {
         const { db } = createFakeDb(['settings']);
         storage.db = db;
