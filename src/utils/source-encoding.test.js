@@ -10,13 +10,16 @@ import { describe, test, expect } from 'vitest';
 import { readdirSync, readFileSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 
-/** Every .js file under a directory */
-function allJsFiles(dir) {
+/** Text sources the build or the tests read as UTF-8 (CSS is embedded by rollup.config.js) */
+const TEXT_EXTENSIONS = ['.js', '.mjs', '.css', '.json', '.md', '.txt', '.html'];
+
+/** Every text source file under a directory */
+function allTextFiles(dir) {
     const out = [];
     for (const name of readdirSync(dir)) {
         const path = join(dir, name);
-        if (statSync(path).isDirectory()) out.push(...allJsFiles(path));
-        else if (name.endsWith('.js')) out.push(path);
+        if (statSync(path).isDirectory()) out.push(...allTextFiles(path));
+        else if (TEXT_EXTENSIONS.some((ext) => name.endsWith(ext))) out.push(path);
     }
     return out;
 }
@@ -24,7 +27,7 @@ function allJsFiles(dir) {
 describe('source encoding', () => {
     test('every file under src/ decodes as UTF-8', () => {
         const decoder = new TextDecoder('utf-8', { fatal: true });
-        const offenders = allJsFiles('src').filter((file) => {
+        const offenders = allTextFiles('src').filter((file) => {
             try {
                 decoder.decode(readFileSync(file));
                 return false;
