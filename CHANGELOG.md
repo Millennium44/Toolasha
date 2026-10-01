@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Fewer Tampermonkey storage writes in combat
+
+- The battle snapshot that external combat sims read is now saved to Tampermonkey storage at most once a minute instead of after every fight, and opening a sim from the game still sends the latest battle at once.
+
 ### Chat history and rank badges
 
 - Chat history no longer saves rank badges with its messages, so restored lines no longer show an old rank, or a badge after badges are turned off, and a badged message is no longer stored or restored twice beside the live line.
