@@ -2384,7 +2384,7 @@ describe('the cap counts lines older than the game’s live backlog', () => {
             tabs: { [KEY]: Array.from({ length: CAP + SAVED_LIVE }, (_, i) => html(i)) },
             live: { [KEY]: SAVED_LIVE },
         };
-        const [container] = buildChat(['General']);
+        const [container] = buildChat(['Local']);
         container.append(...Array.from({ length: LIVE }, (_, i) => makeMessage(line(50 + i))));
         chatHistoryExtender.initialize();
         await settle();
@@ -2406,7 +2406,7 @@ describe('the cap counts lines older than the game’s live backlog', () => {
             tabs: { [KEY]: Array.from({ length: CAP + SAVED_LIVE }, (_, i) => html(i)) },
             live: { [KEY]: SAVED_LIVE },
         };
-        const [container] = buildChat(['General']);
+        const [container] = buildChat(['Local']);
         // The newest NOW_LIVE stored lines are what the game shows again.
         container.append(
             ...Array.from({ length: NOW_LIVE }, (_, i) => makeMessage(line(CAP + SAVED_LIVE - NOW_LIVE + i)))
@@ -2416,6 +2416,50 @@ describe('the cap counts lines older than the game’s live backlog', () => {
 
         // Nothing waits to be matched against a backlog that is already there, so the cap is bare.
         expect(bufferTexts(container)).toHaveLength(CAP);
+    });
+
+    test('a shared tab’s first load merges a pane’s backlog under the pane’s count, not the record’s', async () => {
+        const SHARED = 'tab2:name:General';
+        const SAVED_LIVE = 3;
+        db.settings[PUBLIC_RECORD_KEY] = {
+            v: 1,
+            savedAt: 1,
+            tabs: { [SHARED]: Array.from({ length: CAP + SAVED_LIVE }, (_, i) => html(i)) },
+            live: { [SHARED]: SAVED_LIVE },
+        };
+        const [container] = buildChat(['General']);
+        container.append(...Array.from({ length: LIVE }, (_, i) => makeMessage(line(50 + i))));
+        chatHistoryExtender.initialize();
+        await settle();
+        await chatHistoryPersistence.flush();
+
+        const stored = db.settings[PUBLIC_RECORD_KEY].tabs[SHARED];
+        expect(stored).toHaveLength(CAP + LIVE);
+        expect(stored.at(-1)).toContain(line(50 + LIVE - 1));
+        // The record keeps the larger figure of the game tabs showing it.
+        expect(db.settings[PUBLIC_RECORD_KEY].live[SHARED]).toBe(LIVE);
+    });
+
+    test('a shared tab releases a saved overlap its pane’s smaller backlog will never repeat', async () => {
+        const SHARED = 'tab2:name:General';
+        const SAVED_LIVE = 20;
+        const NOW_LIVE = 5;
+        db.settings[PUBLIC_RECORD_KEY] = {
+            v: 1,
+            savedAt: 1,
+            tabs: { [SHARED]: Array.from({ length: CAP + SAVED_LIVE }, (_, i) => html(i)) },
+            live: { [SHARED]: SAVED_LIVE },
+        };
+        const [container] = buildChat(['General']);
+        container.append(
+            ...Array.from({ length: NOW_LIVE }, (_, i) => makeMessage(line(CAP + SAVED_LIVE - NOW_LIVE + i)))
+        );
+        chatHistoryExtender.initialize();
+        await settle();
+
+        // The record's allowance stays the larger one another game tab may need; this pane's buffer does not.
+        expect(bufferTexts(container)).toHaveLength(CAP);
+        expect(chatHistoryPersistence.liveCountFor(SHARED)).toBe(SAVED_LIVE);
     });
 
     test('a tab with no known live count gets the full allowance, not a bare cap', () => {
