@@ -347,7 +347,8 @@ class LeaderboardRankBadges {
         const runId = ++this.runId;
 
         this.installStyle();
-        this.record.reset();
+        // Not reset: the record is the account's, and a settings restart can land while a save is awaiting its
+        // storage read. A reset would make that save stand down and drop the board it was writing.
         const readable = await this.record.load();
         if (runId !== this.runId) return;
         // The load capped a future-dated board in memory only. Left stored, every later save re-reads the raw stamp,
@@ -709,6 +710,9 @@ class LeaderboardRankBadges {
         // The open view survives a settings restart (the game does not resend the board it is showing)
         // and is forgotten only here
         this.opened = {};
+        // A full teardown is the one place the account's record is dropped from memory
+        this.record.reset();
+        this.storedFuture = false;
         this.messageSeen = false;
         this.boardType = 'standard';
         this.boardCategory = null;

@@ -245,6 +245,41 @@ describe('leaderboard rank badges', () => {
         expect(game.saved.rankBoards['standard|milking'].at).toBeLessThanOrEqual(Date.now());
     });
 
+    test('a settings restart during a save keeps the board being saved', async () => {
+        game.mode = 'local';
+        await leaderboardRankBadges.initialize();
+        const storage = (await import('../../core/storage.js')).default;
+        const tryGet = storage.tryGet;
+        let release;
+        const gate = new Promise((resolve) => {
+            release = resolve;
+        });
+        storage.tryGet = async (...args) => {
+            await gate;
+            return tryGet(...args);
+        };
+        try {
+            game.wsHandlers.leaderboard_updated({
+                leaderboardCategory: 'milking',
+                gameModeFilter: 'standard',
+                leaderboard: { rows: [{ name: 'Alice', rank: 7 }] },
+            });
+            await flush();
+            game.steam = true;
+            game.settingWatchers.forEach((cb) => cb());
+            await flush();
+            release();
+            await flush();
+            await vi.advanceTimersByTimeAsync(10);
+            await flush();
+        } finally {
+            storage.tryGet = tryGet;
+        }
+
+        expect(game.saved.rankBoards['standard|milking'].rows).toEqual([['Alice', 7]]);
+        expect(leaderboardRankBadges.boards['standard|milking'].rows).toEqual([['Alice', 7]]);
+    });
+
     test('the tooltip age is recomputed on hover, not frozen at decoration', async () => {
         game.mode = 'local';
         await leaderboardRankBadges.initialize();
