@@ -114,6 +114,7 @@ import chatHistoryPersistence, {
     extractStoredMessageId,
     messageIdentity,
     handleRestoredClick,
+    MAX_LIVE_ALLOWANCE,
     MAX_MESSAGES_PER_TAB,
     MAX_TOTAL_CHARS,
     parseStoredMessage,
@@ -2179,5 +2180,128 @@ describe('restored history ends where the live backlog begins', () => {
         openPlayerProfile.mockClear();
         clickName();
         expect(openPlayerProfile).toHaveBeenCalledWith('Kasvitatti', expect.anything());
+    });
+});
+
+describe('the cap counts lines older than the game’s live backlog', () => {
+    const CAP = 10;
+    const LIVE = 8;
+    const line = (i) => `[1/2 10:00:${String(i).padStart(2, '0')}] line ${i}`;
+    const bufferTexts = (container) =>
+        [...container.querySelectorAll('.mwi-history-buffer [class*="ChatMessage_chatMessage"]')].map(
+            (el) => el.textContent
+        );
+    const html = (i) => `<div class="ChatMessage_chatMessage__z">${line(i)}</div>`;
+    const KEY = 'tab2:name:General';
+
+    beforeEach(() => {
+        settingValues.chatHistoryExtender = true;
+        settingValues.chatHistoryExtender_maxHistory = CAP;
+        observerReady.handlers = [];
+        observerReady.domReady = true;
+        db.settings = {};
+        db.quota = false;
+        db.writes = 0;
+    });
+
+    afterEach(async () => {
+        settingValues.chatHistoryExtender_maxHistory = null;
+        await chatHistoryExtender.disable();
+        chatHistoryPersistence.reset();
+        document.body.innerHTML = '';
+    });
+
+    test('a reload restores the full cap of older lines even though LIVE lines are still on screen', async () => {
+        const [container] = buildChat(['General']);
+        const nodes = Array.from({ length: CAP + LIVE }, (_, i) => makeMessage(line(i)));
+        container.append(...nodes);
+        chatHistoryExtender.initialize();
+        await settle();
+
+        // The game drops its oldest CAP lines and keeps LIVE.
+        for (const node of nodes.slice(0, CAP)) await evict(container, node);
+        await chatHistoryPersistence.flush();
+        expect(db.settings[STORAGE_KEY].tabs[KEY]).toHaveLength(CAP + LIVE);
+
+        await chatHistoryExtender.disable();
+        chatHistoryPersistence.reset();
+        const [reloaded] = buildChat(['General']);
+        reloaded.append(...nodes.slice(CAP).map((n) => makeMessage(n.textContent)));
+        chatHistoryExtender.initialize();
+        await settle();
+
+        expect(bufferTexts(reloaded)).toEqual(Array.from({ length: CAP }, (_, i) => line(i)));
+    });
+
+    test('a tab that is not mounted keeps its lines, past the plain cap, through another tab’s writes', async () => {
+        db.settings[STORAGE_KEY] = {
+            v: 1,
+            savedAt: 1,
+            tabs: { [KEY]: Array.from({ length: CAP + LIVE }, (_, i) => html(i)) },
+            live: { [KEY]: LIVE },
+        };
+        const [container] = buildChat(['General', 'Other'], 1);
+        container.appendChild(makeMessage(line(99)));
+        chatHistoryExtender.initialize();
+        await settle();
+        await chatHistoryPersistence.flush();
+
+        expect(db.settings[STORAGE_KEY].tabs[KEY]).toHaveLength(CAP + LIVE);
+        expect(db.settings[STORAGE_KEY].live[KEY]).toBe(LIVE);
+    });
+
+    test('a tab with no known live count gets the full allowance, not a bare cap', () => {
+        const tabs = { [KEY]: Array.from({ length: 400 }, (_, i) => `<div>${i}</div>`) };
+        applyCaps(tabs, 10, {});
+        expect(tabs[KEY]).toHaveLength(10 + MAX_LIVE_ALLOWANCE);
+        // The newest survive.
+        expect(tabs[KEY].at(-1)).toBe('<div>399</div>');
+    });
+
+    test('the ceiling holds whatever live count is claimed', async () => {
+        chatHistoryPersistence.enable(() => MAX_MESSAGES_PER_TAB);
+        chatHistoryPersistence.setLiveCount(KEY, 10_000);
+        for (let i = 0; i < MAX_MESSAGES_PER_TAB + MAX_LIVE_ALLOWANCE + 30; i += 1) {
+            chatHistoryPersistence.record(KEY, `<div class="ChatMessage_chatMessage__z">m${i}</div>`);
+        }
+        expect(chatHistoryPersistence.tabs[KEY]).toHaveLength(MAX_MESSAGES_PER_TAB + MAX_LIVE_ALLOWANCE);
+
+        const tabs = { [KEY]: Array.from({ length: 1000 }, (_, i) => `<div>${i}</div>`) };
+        applyCaps(tabs, 150, { [KEY]: 1e9 });
+        expect(tabs[KEY]).toHaveLength(MAX_MESSAGES_PER_TAB + MAX_LIVE_ALLOWANCE);
+    });
+
+    test('without a live count, a plain applyCaps is still the plain cap', () => {
+        const tabs = { [KEY]: Array.from({ length: 40 }, (_, i) => `<div>${i}</div>`) };
+        applyCaps(tabs, 10);
+        expect(tabs[KEY]).toHaveLength(10);
+    });
+
+    test('the merge path (a flush before the first read lands) keeps the extra lines too', async () => {
+        db.settings[STORAGE_KEY] = {
+            v: 1,
+            savedAt: 1,
+            tabs: { [KEY]: Array.from({ length: CAP + LIVE }, (_, i) => html(i)) },
+            live: { [KEY]: LIVE },
+        };
+        chatHistoryPersistence.enable(() => CAP);
+        // Not loaded: this goes through _mergeIntoStored.
+        chatHistoryPersistence.record('tab2:name:Other', html(500));
+        await chatHistoryPersistence.flush(true);
+
+        expect(db.settings[STORAGE_KEY].tabs[KEY]).toHaveLength(CAP + LIVE);
+        expect(db.settings[STORAGE_KEY].tabs['tab2:name:Other']).toHaveLength(1);
+    });
+
+    test('a non-numeric or unmounted live count in a stored record is read as the allowance, never trusted', async () => {
+        db.settings[STORAGE_KEY] = {
+            v: 1,
+            savedAt: 1,
+            tabs: { [KEY]: Array.from({ length: 60 }, (_, i) => html(i)) },
+            live: { [KEY]: 'lots' },
+        };
+        chatHistoryPersistence.enable(() => CAP);
+        await chatHistoryPersistence.load();
+        expect(chatHistoryPersistence.messagesFor(KEY)).toHaveLength(60);
     });
 });

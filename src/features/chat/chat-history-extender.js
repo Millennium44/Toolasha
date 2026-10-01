@@ -985,6 +985,7 @@ class ChatTabHandler {
         // so does a copy this tab already evicted into its buffer — a refill
         // runs on a tab that has been taking evictions since it mounted.
         const live = this._liveIdentities();
+        chatHistoryPersistence.setLiveCount(tabKey, this._liveMessageNodes().length);
         for (const node of this._messageNodes()) {
             const identity = this._bufferIdentity(node);
             if (identity) live.add(identity);
@@ -1344,6 +1345,9 @@ class ChatTabHandler {
         });
 
         this._dropBufferedDuplicates(renderedLive);
+        // Not on a switch batch: the pane is mid-teardown and its count is
+        // neither tab's.
+        if (tabKey && !switched) chatHistoryPersistence.setLiveCount(tabKey, this._liveMessageNodes().length);
         // A tab that just became this container's (a switch, late naming) has
         // had its backlog tagged above; whatever is still queued for it
         // matched nothing and never will.
