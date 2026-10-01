@@ -66,6 +66,18 @@ let bankedMs = 0;
  */
 let baselineMana = 0;
 
+/**
+ * Time the local player spent at 0 HP inside the observed span, so the regen deduction can leave it out: the game
+ * skips regen ticks for a dead unit. `deadMsStretch` holds closed intervals of the current stretch, `bankedDeadMs`
+ * those of earlier stretches, and `deadSince` the open interval's start. Each is clipped to the stretch's observed
+ * window (first to last counted event) so dead time inside a skipped gap never exceeds what the rate divides by.
+ */
+let deadMsStretch = 0;
+let bankedDeadMs = 0;
+let deadSince = null;
+/** The local player's key in `battle_updated`'s `pMap`, from the last `new_battle`; null until seen */
+let ownSlot = null;
+
 /** The character's own food haste and drink concentration, from the last `new_battle` */
 let haste = { foodHaste: 0, drinkConcentration: 0 };
 /** The character's own consumable slots, from `new_battle`; null until seen (the planner then assumes 3 + 3) */
@@ -116,16 +128,18 @@ export function resetMpPlanner() {
     mpRegenPer10 = null;
     plannerStale = false;
     optimTarget = null;
+    ownSlot = null;
 }
 
 /**
  * MP per minute the character regenerates on its own: a floored share of max MP every 10 s, as the simulator
- * ticks it. Measured spend is gross of this, so the supply items only have to cover the difference.
+ * ticks it, scaled by the share of the observed span the player was alive (a dead unit does not regenerate).
+ * Measured spend is gross of this, so the supply items only have to cover the difference.
  * @returns {number|null} Null until both max MP and the regen stat have been read from a `new_battle`
  */
 export function naturalRegenPerMinute() {
     if (!(maxMana > 0) || mpRegenPer10 === null) return null;
-    return Math.floor(maxMana * Math.max(0.01, mpRegenPer10)) * 6;
+    return Math.floor(maxMana * Math.max(0.01, mpRegenPer10)) * 6 * aliveFraction();
 }
 
 /** Start the count again from here */
@@ -135,13 +149,58 @@ export function resetManaTally() {
     lastEventAt = null;
     bankedMs = 0;
     baselineMana = 0;
+    deadMsStretch = 0;
+    bankedDeadMs = 0;
+    deadSince = null;
+}
+
+/**
+ * Dead time of the interval [deadSince, end] that falls inside the current stretch's observed window.
+ * @param {number} end - Where the interval ends; later than the last counted event is clipped to it
+ * @returns {number} Milliseconds, zero when no interval is open or no stretch has started
+ */
+function deadOverlap(end) {
+    if (deadSince === null || firstEventAt === null) return 0;
+    return Math.max(0, Math.min(end, lastEventAt) - Math.max(deadSince, firstEventAt));
 }
 
 /** Pause the span clock: bank the stretch observed so far; the next event opens a new one */
 function pauseSpan() {
     if (firstEventAt === null) return;
     bankedMs += lastEventAt - firstEventAt;
+    // An interval still open is clipped to the stretch being closed and not carried over: the gap is not observed
+    bankedDeadMs += deadMsStretch + deadOverlap(Infinity);
+    deadMsStretch = 0;
+    deadSince = null;
     firstEventAt = null;
+}
+
+/** The local player reached 0 HP */
+function markDead(now = Date.now()) {
+    if (deadSince === null) deadSince = now;
+}
+
+/** The local player is above 0 HP again: close the open dead interval */
+function markAlive(now = Date.now()) {
+    if (deadSince === null) return;
+    deadMsStretch += deadOverlap(now);
+    deadSince = null;
+}
+
+/** Wall-clock time counted toward the rate: banked stretches plus the open one */
+function observedSpanMs() {
+    return bankedMs + (firstEventAt === null ? 0 : lastEventAt - firstEventAt);
+}
+
+/**
+ * Share of the observed span the local player was alive.
+ * @returns {number} 1 when no death was seen
+ */
+function aliveFraction() {
+    const observed = observedSpanMs();
+    if (!(observed > 0)) return 1;
+    const dead = bankedDeadMs + deadMsStretch + deadOverlap(Infinity);
+    return Math.min(1, Math.max(0, 1 - dead / observed));
 }
 
 /**
@@ -167,7 +226,7 @@ function markEvent(openingMana = 0, now = Date.now()) {
  *   Zero once a minute has been observed with a complete tally and nothing spent
  */
 export function manaPerMinuteMeasured() {
-    const observedMs = bankedMs + (firstEventAt === null ? 0 : lastEventAt - firstEventAt);
+    const observedMs = observedSpanMs();
     if (observedMs < MIN_RATE_SPAN_MS) return null;
     const summary = manaSpend();
     if (summary.incomplete) return null;
@@ -229,6 +288,7 @@ function manaCostOf(abilityHrid) {
 
 let onNewBattle = null;
 let onAbility = null;
+let onBattleUpdated = null;
 let onCharacterSwitching = null;
 let onItemsUpdated = null;
 
@@ -260,6 +320,11 @@ export default {
             // Id first, then name: a player entry is not guaranteed to carry an id
             const characterName = dataManager.getCurrentCharacterName?.();
             const self = findOwnBattlePlayer(data, { characterId, characterName });
+            // A new battle is the respawn: the player starts it alive unless the message says otherwise
+            const startHp = Number(self?.currentHitpoints ?? self?.combatDetails?.currentHitpoints);
+            if (startHp <= 0) markDead();
+            else markAlive();
+            ownSlot = self ? (Object.entries(data?.players || {}).find(([, p]) => p === self)?.[0] ?? null) : null;
             const stats = self?.combatDetails?.combatStats;
             // A live new_battle player carries max MP at the top level; combatDetails only has combatStats
             const max = Number(self?.maxManapoints ?? self?.combatDetails?.maxManapoints);
@@ -292,6 +357,14 @@ export default {
             recordCast(tally, abilityHrid, cost);
             markEvent(cost);
         };
+        // Only a state change matters: the player's HP reaching 0, and rising above it again
+        onBattleUpdated = (data) => {
+            if (ownSlot === null) return;
+            const hp = Number(data?.pMap?.[ownSlot]?.cHP);
+            if (!Number.isFinite(hp)) return;
+            if (hp <= 0) markDead();
+            else markAlive();
+        };
         // The tally is kept across a settings toggle on purpose — see the
         // module note — but a character switch is a different character's run
         // and not the same one continuing, the same distinction
@@ -320,16 +393,19 @@ export default {
 
         webSocketHook.on('new_battle', onNewBattle);
         webSocketHook.on('battle_consumable_ability_updated', onAbility);
+        webSocketHook.on('battle_updated', onBattleUpdated);
         dataManager.on?.('character_switching', onCharacterSwitching);
         dataManager.on?.('items_updated', onItemsUpdated);
     },
     cleanup: () => {
         if (onNewBattle) webSocketHook.off('new_battle', onNewBattle);
         if (onAbility) webSocketHook.off('battle_consumable_ability_updated', onAbility);
+        if (onBattleUpdated) webSocketHook.off('battle_updated', onBattleUpdated);
         if (onCharacterSwitching) dataManager.off?.('character_switching', onCharacterSwitching);
         if (onItemsUpdated) dataManager.off?.('items_updated', onItemsUpdated);
         onNewBattle = null;
         onAbility = null;
+        onBattleUpdated = null;
         onCharacterSwitching = null;
         onItemsUpdated = null;
         pauseSpan();
@@ -441,9 +517,10 @@ function drawMpSupply(body) {
         card.appendChild(
             panelLine(
                 'Natural regen',
-                `${formatWithSeparator(regen)} MP/min`,
+                `${formatWithSeparator(Math.round(regen))} MP/min`,
                 ROW_COLORS.dim,
-                'Subtracted from the measured spend to fill the target. A target you type is used as given.'
+                'Subtracted from the measured spend to fill the target; time spent dead is left out. ' +
+                    'A target you type is used as given.'
             )
         );
     }
