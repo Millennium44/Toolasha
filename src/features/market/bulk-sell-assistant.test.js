@@ -1307,6 +1307,26 @@ describe('confirming from the strip', () => {
             expect(gameClicks).toBe(1);
         });
 
+        test('an already-armed press guards the button against a following player click', async () => {
+            const menu = openMenu({ label: 'Confirm Sell For 400K Coins' });
+            vendorRun();
+            await pressAndSettle();
+            expect(gameClicks).toBe(1);
+
+            menu.querySelector('.Button_sell__x').click();
+            expect(gameClicks).toBe(1);
+        });
+
+        test('a slow server leaves the guard up while the menu stays open', async () => {
+            const menu = openMenu();
+            vendorRun();
+            await pressAndSettle();
+            await vi.advanceTimersByTimeAsync(5000);
+
+            menu.querySelector('.Button_sell__x').click();
+            expect(gameClicks).toBe(1);
+        });
+
         test('once the menu closes, clicks on a sell button are no longer swallowed', async () => {
             const menu = openMenu();
             vendorRun();
