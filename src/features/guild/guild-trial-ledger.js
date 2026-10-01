@@ -1043,21 +1043,21 @@ export function observedCoverage(cycles, { trialsPerCycle = TRIALS_PER_CYCLE, no
         trialCycleGroups(Array.isArray(running.trials) ? running.trials : []).length <= 1;
 
     for (const cycle of list) {
-        if (cycle === running && !finished) {
-            inProgress = true;
-            continue;
-        }
-        // A completed record still holding several cycles (see above) counts once per cycle: as one it
-        // would read 2/2 however many trials the guild ran across them
+        const isRunning = cycle === running && !finished;
+        // A record still holding several cycles counts once per cycle: as one it would read 2/2 however
+        // many trials the guild ran across them. A running one has only its newest group in progress,
+        // as when ledgerCyclesByAnchor splits it
         const groups = isTestServer() ? trialCycleGroups(Array.isArray(cycle.trials) ? cycle.trials : []) : [];
+        if (isRunning) inProgress = true;
         if (groups.length > 1) {
-            for (const group of groups) {
+            for (const group of isRunning ? groups.slice(0, -1) : groups) {
                 observed += Math.min(group.trials.length, perCycle);
                 expected += perCycle;
                 counted += 1;
             }
             continue;
         }
+        if (isRunning) continue;
         observed += Math.min((cycle.trials || []).length, perCycle);
         expected += perCycle;
         counted += 1;

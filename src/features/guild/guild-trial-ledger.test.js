@@ -824,6 +824,31 @@ describe('observedCoverage', () => {
         expect(observedCoverage(cycles, { now })).toMatchObject({ cycles: 1, inProgress: true });
     });
 
+    test('on the test server a running unsplit record counts its earlier complete group', () => {
+        const now = Date.parse('2026-08-23T12:00:00Z');
+        const thisWeek = trialWeekStart(now);
+        const week = {
+            weekStart: thisWeek,
+            trials: [
+                { trialId: 'a', cycleAt: thisWeek + 3_600_000 },
+                { trialId: 'b', cycleAt: thisWeek + 3_600_500 },
+                { trialId: 'c', cycleAt: thisWeek + 90_000_000 },
+            ],
+        };
+        server.test = true;
+        try {
+            expect(observedCoverage([week], { now })).toEqual({
+                observed: 2,
+                expected: 2,
+                cycles: 1,
+                inProgress: true,
+                fraction: 1,
+            });
+        } finally {
+            server.test = false;
+        }
+    });
+
     test('on the test server an unsplit week spanning two cycles is not one finished cycle', () => {
         const now = Date.parse('2026-08-23T12:00:00Z');
         const thisWeek = trialWeekStart(now);
@@ -836,12 +861,13 @@ describe('observedCoverage', () => {
         };
         server.test = true;
         try {
+            // The earlier group is complete (one trial seen of two); only the newest is in progress
             expect(observedCoverage([week], { now })).toEqual({
-                observed: 0,
-                expected: 0,
-                cycles: 0,
+                observed: 1,
+                expected: 2,
+                cycles: 1,
                 inProgress: true,
-                fraction: null,
+                fraction: 0.5,
             });
             // A cycle with both trials, anchored together, still counts as finished
             const single = {
