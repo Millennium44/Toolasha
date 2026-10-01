@@ -32,6 +32,7 @@ const mocks = vi.hoisted(() => ({
     syncResult: { success: true, count: 0 },
     /** Which panels the utility buttons asked to open or close */
     toggled: [],
+    censusCalls: [],
     /** What the pointer looks like to auto-detection */
     coarsePointer: false,
     /** Held open to keep `loadSettings` in flight while the test moves the DOM */
@@ -434,7 +435,12 @@ vi.mock('../combat/spawn-census.js', () => ({
     },
 }));
 vi.mock('../dev/pformance-panel.js', () => ({
-    default: { show: () => {}, toggle: () => mocks.toggled.push('pformance') },
+    default: {
+        show: () => {},
+        toggle: () => mocks.toggled.push('pformance'),
+        joinTabCensus: () => mocks.censusCalls.push('join'),
+        leaveTabCensus: () => mocks.censusCalls.push('leave'),
+    },
 }));
 vi.mock('../inventory/treasure-tracker.js', () => ({
     default: { show: () => {}, toggle: () => mocks.toggled.push('treasure') },
@@ -550,6 +556,7 @@ beforeEach(() => {
     mocks.synced = [];
     mocks.syncResult = { success: true, count: 0 };
     mocks.toggled = [];
+    mocks.censusCalls = [];
     mocks.coarsePointer = false;
     mocks.loadGate = null;
     mocks.cacheClears = 0;
@@ -1389,6 +1396,15 @@ describe("switching tabs only touches this panel's own tab list", () => {
         expect(selectedTab.getAttribute('aria-selected')).toBe('true');
         expect(selectedTab.getAttribute('tabindex')).toBe('0');
         expect(selectedTab.classList.contains('Mui-selected')).toBe(true);
+    });
+});
+
+describe('the tab census join does not depend on the command palette', () => {
+    test('initialize() joins it and a full cleanup() leaves it', async () => {
+        await settingsUI.initialize();
+        expect(mocks.censusCalls).toEqual(['join']);
+        settingsUI.cleanup();
+        expect(mocks.censusCalls).toEqual(['join', 'leave']);
     });
 });
 

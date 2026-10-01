@@ -4,6 +4,8 @@ import { describe, test, expect, beforeEach, afterEach, vi } from 'vitest';
 const game = vi.hoisted(() => ({
     mode: 'off',
     steam: false,
+    steamMark: false,
+    preferStandard: false,
     xpTracker: true,
     saved: {},
     wsHandlers: {},
@@ -28,9 +30,13 @@ vi.mock('../../core/config.js', () => ({
         getSettingValue: (key) =>
             key === 'leaderboardRankBadgesSteam'
                 ? game.steam
-                : key === 'leaderboardXPTracker'
-                  ? game.xpTracker
-                  : game.mode,
+                : key === 'leaderboardRankBadgesSteamMark'
+                  ? game.steamMark
+                  : key === 'leaderboardRankBadgesPreferStandard'
+                    ? game.preferStandard
+                    : key === 'leaderboardXPTracker'
+                      ? game.xpTracker
+                      : game.mode,
         onSettingChange: (key, callback) => {
             game.settingWatchers.push(callback);
             return () => {
@@ -129,8 +135,8 @@ describe('leaderboard rank badges', () => {
         expect(game.requests).toHaveLength(0);
         expect(badges()).toHaveLength(0);
         expect(document.getElementById('toolasha-rank-badge-style')).toBeNull();
-        // Only the setting watch exists, so switching the select can start it live
-        expect(game.settingWatchers).toHaveLength(3);
+        // Only the setting watches exist (type, Steam, mark, prefer-standard, XP tracker), so switching can start it live
+        expect(game.settingWatchers).toHaveLength(5);
     });
 
     test('a reused name element that switches player gets the new player badge, or none', async () => {
@@ -991,5 +997,166 @@ describe('Steam boards in badges', () => {
         await vi.advanceTimersByTimeAsync(0);
         expect(leaderboardRankBadges.boardType).toBe('steam_standard');
         expect(leaderboardRankBadges.boardCategory).toBe('milking');
+    });
+});
+
+describe('Steam badge options', () => {
+    const board = (rows, type) => ({
+        leaderboardCategory: 'milking',
+        gameModeFilter: 'standard',
+        ...(type ? { leaderboardType: type } : {}),
+        leaderboard: { rows },
+    });
+    const change = async () => {
+        for (const callback of game.settingWatchers) callback();
+        await vi.advanceTimersByTimeAsync(0);
+    };
+    // Alice: Steam 2 beats global 40; Bob has only a Steam rank
+    const open = async () => {
+        game.steam = true;
+        nameEl('Alice');
+        nameEl('Bob');
+        await leaderboardRankBadges.initialize();
+        game.wsHandlers.leaderboard_updated(board([{ name: 'Alice', rank: 40 }]));
+        game.wsHandlers.leaderboard_updated(
+            board(
+                [
+                    { name: 'Alice', rank: 2 },
+                    { name: 'Bob', rank: 7 },
+                ],
+                'steam_standard'
+            )
+        );
+        await flush();
+    };
+    const mark = (badge) => badge.querySelector('[data-steam-mark]');
+
+    beforeEach(() => {
+        vi.useFakeTimers();
+        vi.setSystemTime(new Date('2026-09-30T12:00:00Z'));
+        game.mode = 'local';
+        game.steam = false;
+        game.steamMark = false;
+        game.preferStandard = false;
+        game.saved = {};
+        game.wsHandlers = {};
+        game.settingWatchers = [];
+        game.classHandlers = [];
+        document.body.innerHTML = '';
+        document.head.innerHTML = '';
+    });
+
+    afterEach(() => {
+        leaderboardRankBadges.cleanup();
+        leaderboardRankBadges.resetRecordForTests();
+        vi.useRealTimers();
+    });
+
+    test('defaults: the best rank shows, Steam or not, with no marker', async () => {
+        await open();
+        const [alice, bob] = badges();
+        expect(alice.textContent).toBe('2');
+        expect(bob.textContent).toBe('7');
+        expect(mark(alice)).toBeNull();
+        expect(mark(bob)).toBeNull();
+    });
+
+    test('the marker appears only on a Steam-sourced pill, and only with the option on', async () => {
+        await open();
+        game.steamMark = true;
+        await change();
+        const [alice, bob] = badges();
+        expect(mark(alice).textContent).toBe('S');
+        expect(mark(bob).textContent).toBe('S');
+
+        // A pill whose rank is a global one carries none
+        game.preferStandard = true;
+        await change();
+        expect(badges()[0].textContent).toBe('40');
+        expect(mark(badges()[0])).toBeNull();
+        expect(mark(badges()[1]).textContent).toBe('S');
+
+        game.steamMark = false;
+        await change();
+        expect(mark(badges()[1])).toBeNull();
+    });
+
+    test('the options do nothing while Steam boards are not included', async () => {
+        game.steamMark = true;
+        game.preferStandard = true;
+        nameEl('Alice');
+        await leaderboardRankBadges.initialize();
+        game.wsHandlers.leaderboard_updated(board([{ name: 'Alice', rank: 40 }]));
+        game.wsHandlers.leaderboard_updated(board([{ name: 'Alice', rank: 2 }], 'steam_standard'));
+        await flush();
+        expect(badges()[0].textContent).toBe('40');
+        expect(mark(badges()[0])).toBeNull();
+    });
+
+    test('prefer standard shows the best non-Steam rank over a better Steam one and lists both', async () => {
+        await open();
+        game.preferStandard = true;
+        await change();
+        const alice = badges()[0];
+        expect(alice.textContent).toBe('40');
+        expect(alice.title.split('\n')[0]).toContain('Standard rank 40');
+        expect(alice.title).toContain('Standard (Steam) rank 2');
+    });
+
+    test('prefer standard falls back to Steam when the player has no other rank', async () => {
+        await open();
+        game.preferStandard = true;
+        game.steamMark = true;
+        await change();
+        const bob = badges()[1];
+        expect(bob.textContent).toBe('S7');
+        expect(bob.title).toContain('Standard (Steam) rank 7');
+    });
+
+    test('prefer standard picks the best non-Steam entry across categories', async () => {
+        await open();
+        game.wsHandlers.leaderboard_updated({
+            leaderboardCategory: 'foraging',
+            gameModeFilter: 'ironcow',
+            leaderboard: { rows: [{ name: 'Alice', rank: 12 }] },
+        });
+        game.preferStandard = true;
+        await change();
+        expect(badges()[0].textContent).toBe('12');
+    });
+
+    test('the options apply live without dropping the badges', async () => {
+        await open();
+        const before = badges();
+        game.steamMark = true;
+        // Watchers register in order: type, Steam, mark, prefer-standard, XP tracker. Only the mark one fires.
+        game.settingWatchers[2]();
+        // Nothing awaited: a restart would have taken the badges down until its storage read finished
+        expect(badges()).toHaveLength(2);
+        expect(mark(badges()[0])).not.toBeNull();
+        expect(badges()[0]).toBe(before[0]);
+    });
+
+    test('a Melee player at Steam 16 and standard 90: marked at 16 by default, 90 with the Steam rank still listed', async () => {
+        game.steam = true;
+        nameEl('Alice');
+        await leaderboardRankBadges.initialize();
+        game.wsHandlers.leaderboard_updated({ ...board([{ name: 'Alice', rank: 90 }]), leaderboardCategory: 'melee' });
+        game.wsHandlers.leaderboard_updated({
+            ...board([{ name: 'Alice', rank: 16 }], 'steam_standard'),
+            leaderboardCategory: 'melee',
+        });
+        await flush();
+        expect(badges()[0].textContent).toBe('16');
+
+        game.steamMark = true;
+        await change();
+        expect(badges()[0].textContent).toBe('S16');
+
+        game.preferStandard = true;
+        await change();
+        expect(badges()[0].textContent).toBe('90');
+        expect(badges()[0].title).toContain('Melee · Standard rank 90');
+        expect(badges()[0].title).toContain('Melee · Standard (Steam) rank 16');
     });
 });

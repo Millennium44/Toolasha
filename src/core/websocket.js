@@ -8,6 +8,7 @@
 import { setCurrentProfile, evidenceFromSharedProfile, noteSharedClassEvidence } from './profile-manager.js';
 import storage from './storage.js';
 import performanceMonitor from '../utils/performance-monitor.js';
+import { gmGetValue, gmSetValue, gmDeleteValue } from '../utils/gm-traffic.js';
 import {
     BATTLE_BRIDGE_INDEX_KEY,
     BATTLE_BRIDGE_KEY,
@@ -839,7 +840,7 @@ class WebSocketHook {
                 }
                 setTimeout(() => {
                     try {
-                        GM_setValue('toolasha_init_character_data', message);
+                        gmSetValue('toolasha_init_character_data', message);
                         this.writeBridgeMeta('toolasha_init_character_data_meta', bridgeOwner);
                     } catch {
                         /* ignore */
@@ -937,7 +938,7 @@ class WebSocketHook {
         this.flushBattleBridge({ forceFor: owner?.characterId ?? null });
         if (!characterData || owner?.characterId == null) return false;
         try {
-            GM_setValue('toolasha_init_character_data', JSON.stringify(characterData));
+            gmSetValue('toolasha_init_character_data', JSON.stringify(characterData));
             this.writeBridgeMeta('toolasha_init_character_data_meta', owner);
             return true;
         } catch (error) {
@@ -971,15 +972,15 @@ class WebSocketHook {
             // Only runs at sim open; a string compare is cheap next to the write it saves.
             if (
                 typeof GM_getValue !== 'undefined' &&
-                GM_getValue(CLIENT_DATA_FINGERPRINT_KEY, null) === pending.fingerprint &&
-                GM_getValue('toolasha_init_client_data', null) === pending.message
+                gmGetValue(CLIENT_DATA_FINGERPRINT_KEY, null) === pending.fingerprint &&
+                gmGetValue('toolasha_init_client_data', null) === pending.message
             ) {
                 return false;
             }
-            GM_setValue('toolasha_init_client_data', pending.message);
+            gmSetValue('toolasha_init_client_data', pending.message);
             // A failed meta stamp leaves the fingerprint unwritten so the next sim open retries
             if (!this.writeBridgeMeta('toolasha_init_client_data_meta')) return false;
-            GM_setValue(CLIENT_DATA_FINGERPRINT_KEY, pending.fingerprint);
+            gmSetValue(CLIENT_DATA_FINGERPRINT_KEY, pending.fingerprint);
             return true;
         } catch (error) {
             console.error('[WebSocket] Client data bridge write failed:', error);
@@ -995,7 +996,7 @@ class WebSocketHook {
      * @returns {boolean} True if both writes landed
      */
     writeBattleSlot(key, pending) {
-        GM_setValue(key, pending.message);
+        gmSetValue(key, pending.message);
         return this.writeBridgeMeta(`${key}_meta`, pending.owner);
     }
 
@@ -1010,7 +1011,7 @@ class WebSocketHook {
         try {
             let index = [];
             if (typeof GM_getValue !== 'undefined') {
-                const stored = JSON.parse(GM_getValue(BATTLE_BRIDGE_INDEX_KEY, null) || 'null');
+                const stored = JSON.parse(gmGetValue(BATTLE_BRIDGE_INDEX_KEY, null) || 'null');
                 if (Array.isArray(stored)) index = stored.map(String);
             }
             const id = String(characterId);
@@ -1021,14 +1022,14 @@ class WebSocketHook {
             for (const evicted of next.slice(MAX_BATTLE_BRIDGE_CHARACTERS)) {
                 const key = battleBridgeKeyFor(evicted);
                 if (typeof GM_deleteValue !== 'undefined') {
-                    GM_deleteValue(key);
-                    GM_deleteValue(`${key}_meta`);
+                    gmDeleteValue(key);
+                    gmDeleteValue(`${key}_meta`);
                 } else {
-                    GM_setValue(key, '');
-                    GM_setValue(`${key}_meta`, '');
+                    gmSetValue(key, '');
+                    gmSetValue(`${key}_meta`, '');
                 }
             }
-            GM_setValue(BATTLE_BRIDGE_INDEX_KEY, JSON.stringify(next.slice(0, MAX_BATTLE_BRIDGE_CHARACTERS)));
+            gmSetValue(BATTLE_BRIDGE_INDEX_KEY, JSON.stringify(next.slice(0, MAX_BATTLE_BRIDGE_CHARACTERS)));
         } catch (error) {
             console.error('[WebSocket] Battle bridge index update failed:', error);
         }
@@ -1131,7 +1132,7 @@ class WebSocketHook {
         await storage.setJSON('profile_list', profileList, 'combatExport', true);
         if (hasGM) {
             try {
-                GM_setValue('toolasha_profile_list', JSON.stringify(profileList));
+                gmSetValue('toolasha_profile_list', JSON.stringify(profileList));
                 this.writeBridgeMeta('toolasha_profile_list_meta');
             } catch {
                 /* ignore */
@@ -1153,7 +1154,7 @@ class WebSocketHook {
     writeBridgeMeta(metaKey, owner = null) {
         if (typeof GM_setValue === 'undefined') return false;
         try {
-            GM_setValue(
+            gmSetValue(
                 metaKey,
                 JSON.stringify({
                     characterId: owner?.characterId || this.bridgeCharacterId || null,

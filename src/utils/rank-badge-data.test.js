@@ -348,3 +348,26 @@ describe('name index and best rank', () => {
         ]);
     });
 });
+
+describe('bestEntry with preferStandard', () => {
+    const entry = (type, rank, category = 'milking') => ({ type, category, rank, at: 1, source: 'local' });
+
+    test('default keeps the best rank overall', () => {
+        expect(bestEntry([entry('steam_standard', 2), entry('standard', 40)])).toMatchObject({ rank: 2 });
+    });
+
+    test('picks the best non-Steam entry over a better Steam one', () => {
+        const list = [entry('steam_standard', 2), entry('standard', 40), entry('ironcow', 55)];
+        expect(bestEntry(list, { preferStandard: true })).toMatchObject({ type: 'standard', rank: 40 });
+    });
+
+    test('falls back to Steam when there is no non-Steam entry', () => {
+        const list = [entry('steam_ironcow', 3), entry('steam_standard', 9)];
+        expect(bestEntry(list, { preferStandard: true })).toMatchObject({ type: 'steam_ironcow', rank: 3 });
+    });
+
+    test('empty or missing lists give null', () => {
+        expect(bestEntry([], { preferStandard: true })).toBeNull();
+        expect(bestEntry(undefined, { preferStandard: true })).toBeNull();
+    });
+});

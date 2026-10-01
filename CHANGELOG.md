@@ -11,6 +11,15 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 - New UI & Appearance settings set the text size (80–150%) and font of Toolasha's floating panels, dialogs and settings page, using fonts already on your computer.
 - An optional setting, off by default, also enlarges and changes the font of the game's chat, tooltips, item dictionary and patch notes, leaving its tiles and layout as they are.
 
+### Rank badge options for Steam ranks
+
+- With Steam leaderboards included, two new settings can mark a badge whose rank comes from a Steam board with an "S", and show a player's standard rank instead when they have one, even if their Steam rank is higher.
+
+### PFormance shows Tampermonkey traffic and every open tab
+
+- With the PFormance extras on (◎), the panel counts every Toolasha save, read, delete and network request through Tampermonkey with their sizes and hourly rate, and lists every open game tab with its character, uptime and traffic.
+- The PFormance extras (◎) toggle is now remembered across reloads; before, it silently reset.
+
 ### Market stats note no longer cut off
 
 - The market stats overlay's "no trades — ask/bid only" note was hidden under the order book; the affected row is now marked with * and the note shows when you hover it.

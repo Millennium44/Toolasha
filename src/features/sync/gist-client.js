@@ -27,6 +27,8 @@
  * it out of the thing being uploaded.
  */
 
+import { gmRequest, gmRequestAvailable } from '../../utils/gm-traffic.js';
+
 /** Manifest file name; also how an existing sync gist is recognised */
 export const MANIFEST_FILE = 'toolasha-sync.json';
 
@@ -92,9 +94,7 @@ function parseHeaders(raw) {
  * @returns {Function|null} A GM request function, or null to fall back to fetch
  */
 function getGMRequest() {
-    if (typeof GM_xmlhttpRequest === 'function') return GM_xmlhttpRequest;
-    if (typeof GM !== 'undefined' && typeof GM?.xmlHttpRequest === 'function') return GM.xmlHttpRequest.bind(GM);
-    return null;
+    return gmRequestAvailable() ? gmRequest : null;
 }
 
 /**
