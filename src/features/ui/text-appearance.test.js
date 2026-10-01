@@ -22,8 +22,11 @@ vi.mock('../../core/config.js', () => ({
 const {
     default: textAppearance,
     buildToolashaTextCSS,
+    buildGameTextCSS,
     FONT_STACKS,
     TEXT_SCALES,
+    GAME_TEXT_SCALES,
+    GAME_FONT_TOKENS,
 } = await import('./text-appearance.js');
 
 /** Change a setting the way the settings page does, firing its listeners */
@@ -177,6 +180,97 @@ describe('applying', () => {
         expect(state.listeners.get('ui_textScale').size).toBe(0);
 
         change('ui_textScale', '80');
+        expect(sheet()).toBeNull();
+    });
+});
+
+describe('game text', () => {
+    test('ships off at 100%, and the offered sizes are the ones the module knows', () => {
+        const ui = settingsGroups.ui.settings;
+        expect(ui.ui_gameText.default).toBe(false);
+        expect(ui.ui_gameTextScale.default).toBe('100');
+        expect(ui.ui_gameTextScale.options.map((option) => Number(option.value))).toEqual(GAME_TEXT_SCALES);
+    });
+
+    test('while the toggle is off nothing touches the game, whatever else is set', () => {
+        state.values.ui_gameTextScale = '150';
+        state.values.ui_fontFamily = 'verdana';
+        expect(buildGameTextCSS()).toBe('');
+        expect(buildToolashaTextCSS()).not.toContain('body');
+    });
+
+    test('on at 100% with the default font it still writes nothing', () => {
+        state.values.ui_gameText = true;
+        expect(buildGameTextCSS()).toBe('');
+    });
+
+    test('scales the font-size properties on the text areas, never the root size or any geometry', () => {
+        state.values.ui_gameText = true;
+        state.values.ui_gameTextScale = '125';
+        const css = buildGameTextCSS();
+
+        // The game sizes its whole layout in rem, so a root font-size change
+        // would resize item tiles and spacing along with the text
+        expect(css).not.toMatch(/(^|[\s,])(html|:root)\s*[,{]/);
+        expect(css).not.toContain('zoom');
+        expect(css).toContain('.MuiTooltip-popper');
+        expect(css).toContain('[class^="Chat_chat__"]');
+        expect(css).toContain('--font-size-base: calc(0.875rem * 1.25);');
+        expect(css).toContain('--font-size-xs: calc(0.6875rem * 1.25);');
+    });
+
+    test('chat messages, which inherit their size, scale relative to it', () => {
+        state.values.ui_gameText = true;
+        state.values.ui_gameTextScale = '150';
+        expect(buildGameTextCSS()).toMatch(/\[class\*=" Chat_chatChannel__"\] \{ font-size: calc\(1em \* 1\.5\); \}/);
+    });
+
+    test('item tiles inside a scaled area are pinned back to the original sizes', () => {
+        state.values.ui_gameText = true;
+        state.values.ui_gameTextScale = '150';
+        const css = buildGameTextCSS();
+        const originals = Object.entries(GAME_FONT_TOKENS)
+            .map(([name, rem]) => `${name}: ${rem}rem;`)
+            .join(' ');
+        expect(css).toContain(`.MuiTooltip-popper [class^="Item_itemContainer__"]`);
+        expect(css).toContain(`{ ${originals} }`);
+    });
+
+    test('module classes are matched by prefix, never as a substring of a longer name', () => {
+        state.values.ui_gameText = true;
+        state.values.ui_gameTextScale = '110';
+        const css = buildGameTextCSS();
+        expect(css).not.toContain('[class*="Chat_chat__"]');
+        expect(css).not.toMatch(/__[A-Za-z0-9]{5}/);
+    });
+
+    test('a size below 100 is not offered and not applied', () => {
+        state.values.ui_gameText = true;
+        state.values.ui_gameTextScale = '80';
+        expect(buildGameTextCSS()).toBe('');
+    });
+
+    test('the chosen font reaches every game element, sparing monospace', () => {
+        state.values.ui_gameText = true;
+        state.values.ui_fontFamily = 'arial';
+        const css = buildGameTextCSS();
+        expect(css).toContain(`body *:not(code)`);
+        expect(css).toContain(':not([class*="_itemKey__"])');
+        expect(css).toContain(`font-family: ${FONT_STACKS.arial} !important;`);
+    });
+
+    test('turning the toggle on and off applies and removes it live', () => {
+        state.values.ui_gameTextScale = '125';
+        textAppearance.initialize();
+        expect(sheet()).toBeNull();
+
+        change('ui_gameText', true);
+        expect(sheet().textContent).toContain('MuiTooltip-popper');
+
+        change('ui_gameTextScale', '150');
+        expect(sheet().textContent).toContain('calc(0.875rem * 1.5)');
+
+        change('ui_gameText', false);
         expect(sheet()).toBeNull();
     });
 });

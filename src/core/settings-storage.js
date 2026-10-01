@@ -396,9 +396,9 @@ const SHARED_SETTING_GROUPS = ['sync', 'colors'];
  * the script asks whether a newer one exists has nothing to do with which
  * character is logged in. They do travel with sync, the same way the colors do.
  *
- * Text size and font are how this player reads, like the number format. They
- * joined without a flag bump: they were new settings when they joined, so no
- * per-character value existed for a carry-over to find.
+ * Text size, font and the game-text pair are how this player reads, like the
+ * number format. They joined without a flag bump: they were new settings when
+ * they joined, so no per-character value existed for a carry-over to find.
  */
 const SHARED_SETTING_IDS = [
     'formatting_useKMBFormat',
@@ -412,6 +412,8 @@ const SHARED_SETTING_IDS = [
     'updateCheckHours',
     'ui_textScale',
     'ui_fontFamily',
+    'ui_gameText',
+    'ui_gameTextScale',
 ];
 
 /**

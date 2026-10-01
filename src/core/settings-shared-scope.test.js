@@ -123,6 +123,8 @@ describe('the shared scope is device-wide', () => {
                 'updateCheckHours',
                 'ui_textScale',
                 'ui_fontFamily',
+                'ui_gameText',
+                'ui_gameTextScale',
             ])
         );
 

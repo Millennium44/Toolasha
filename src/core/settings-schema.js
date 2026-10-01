@@ -3498,6 +3498,33 @@ export const settingsGroups = {
                     'your operating system are offered, so nothing is downloaded; a machine missing one falls back to ' +
                     'a similar face. Text that is monospace on purpose keeps its face',
             },
+            ui_gameText: {
+                id: 'ui_gameText',
+                label: 'Game text: Use the font above, and the size below, for the game’s own text',
+                type: 'checkbox',
+                default: false,
+                help:
+                    'Off, the game draws its own text exactly as it always has. On, the font chosen above applies to ' +
+                    'the whole game, and the size below enlarges the game’s text in chat, every tooltip, the item ' +
+                    'dictionary, and the patch notes and news — areas that grow or scroll with their text. Item ' +
+                    'tiles keep their size, and the rest of the game (sidebar, header, tabs, action grids, the ' +
+                    'battle panel, buttons) is left alone because its layout is fixed. For everything at once, ' +
+                    'use the browser’s own zoom (Ctrl and +)',
+            },
+            ui_gameTextScale: {
+                id: 'ui_gameTextScale',
+                label: 'Game text size',
+                type: 'select',
+                default: '100',
+                requires: 'ui_gameText',
+                options: [
+                    { value: '100', label: '100% (as the game draws it)' },
+                    { value: '110', label: '110%' },
+                    { value: '125', label: '125%' },
+                    { value: '150', label: '150%' },
+                ],
+                help: 'How much larger the game’s text is in the areas listed above. Only used while the game text setting is on',
+            },
             ui_externalLinks: {
                 id: 'ui_externalLinks',
                 label: 'Left sidebar: Show external tool links',
