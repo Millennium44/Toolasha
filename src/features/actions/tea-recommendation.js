@@ -1117,7 +1117,10 @@ class TeaRecommendation {
             color: ${config.COLOR_WARNING};
             font-size: 13px;
         `;
-        popup.textContent = message;
+        // In a span: a text node on the root cannot take the text zoom, which scales the root's children
+        const text = document.createElement('span');
+        text.textContent = message;
+        popup.appendChild(text);
 
         markToolashaSurface(popup, 'popover');
         document.body.appendChild(popup);

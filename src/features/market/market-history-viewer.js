@@ -1730,7 +1730,10 @@ class MarketHistoryViewer {
                 z-index: ${config.Z_MODAL + 1};
                 box-shadow: 0 4px 20px rgba(0, 0, 0, 0.5);
             `;
-            progressMsg.textContent = `Importing ${lines.length - 1} listings from CSV...`;
+            // In a span: a text node on the root cannot take the text zoom, which scales the root's children
+            const progressText = document.createElement('span');
+            progressText.textContent = `Importing ${lines.length - 1} listings from CSV...`;
+            progressMsg.appendChild(progressText);
             markToolashaSurface(progressMsg, 'popover');
             document.body.appendChild(progressMsg);
 
@@ -1980,7 +1983,10 @@ class MarketHistoryViewer {
                 z-index: ${config.Z_MODAL + 1};
                 box-shadow: 0 4px 20px rgba(0, 0, 0, 0.5);
             `;
-            progressMsg.textContent = `Importing ${marketList.length} listings...`;
+            // In a span: a text node on the root cannot take the text zoom, which scales the root's children
+            const progressText = document.createElement('span');
+            progressText.textContent = `Importing ${marketList.length} listings...`;
+            progressMsg.appendChild(progressText);
             markToolashaSurface(progressMsg, 'popover');
             document.body.appendChild(progressMsg);
 

@@ -881,7 +881,10 @@ class DungeonTrackerUIInteractions {
      */
     showNotification(message) {
         const notification = document.createElement('div');
-        notification.textContent = message;
+        // In a span: a text node on the root cannot take the text zoom, which scales the root's children
+        const text = document.createElement('span');
+        text.textContent = message;
+        notification.appendChild(text);
         notification.style.cssText = `
             position: fixed;
             top: 50%;

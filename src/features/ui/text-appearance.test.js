@@ -391,3 +391,42 @@ describe('the choice dialog at a zoomed scale', () => {
         expect(buildToolashaTextCSS()).not.toContain('"dialog"] > *');
     });
 });
+
+describe('review round 3', () => {
+    test('a canvas that is itself a zoom target is excluded from the zoom rule', () => {
+        state.values.ui_textScale = '150';
+        const css = buildToolashaTextCSS();
+        const zoomRule = css.split('{')[0];
+        expect(zoomRule).toContain(':not(canvas)');
+        document.body.innerHTML = '<div data-toolasha-surface="panel"><canvas id="c"></canvas><div id="d"></div></div>';
+        const selectors = zoomRule.split(/,\s*(?=\[data|#)/).map((selector) => selector.trim());
+        const zoomed = (el) => selectors.some((selector) => el.matches(selector));
+        expect(zoomed(document.getElementById('c'))).toBe(false);
+        expect(zoomed(document.getElementById('d'))).toBe(true);
+        document.body.innerHTML = '';
+    });
+
+    test('the game font rule does not reach into Toolasha surfaces', () => {
+        state.values.ui_gameText = true;
+        state.values.ui_fontFamily = 'verdana';
+        const css = buildGameTextCSS();
+        expect(css).toContain(
+            ':not(:is([data-toolasha-surface]:not([data-toolasha-surface="modal"]), #toolasha-toasts'
+        );
+        for (const root of ['#toolasha-command-palette', '#toolasha-settings-content']) expect(css).toContain(root);
+        expect(css.trimEnd()).toMatch(/\) \*\) \{ font-family: [^}]+ !important; \}$/);
+    });
+
+    test('text set directly on a popover root is wrapped so the text zoom reaches it', async () => {
+        const fs = await import('node:fs');
+        const sources = [
+            '../actions/tea-recommendation.js',
+            '../combat/dungeon-tracker-ui-interactions.js',
+            '../market/market-history-viewer.js',
+        ];
+        for (const rel of sources) {
+            const src = fs.readFileSync(new URL(rel, import.meta.url), 'utf8');
+            expect(src).not.toMatch(/(popup|notification|progressMsg)\.textContent\s*=/);
+        }
+    });
+});

@@ -99,8 +99,12 @@ const MODAL_SCROLL = `${MODAL_ROOT} > * { overflow-y: auto !important; }`;
 /** In-flow surfaces that are zoomed whole: no position of their own to break */
 const SELF_SCALED = ['#toolasha-settings-content'];
 
-/** The resize grip is sized and placed against the unzoomed root */
-const NOT_SCALED = ':not(.toolasha-resize-grip)';
+/**
+ * The resize grip is sized and placed against the unzoomed root. A canvas is never a zoom target: one
+ * that is a direct child of a root (the market-history panel's chart) would otherwise keep the zoom,
+ * because the reset below only matches canvases that descend from a target.
+ */
+const NOT_SCALED = ':not(.toolasha-resize-grip):not(canvas)';
 
 /**
  * Elements that are monospace on purpose: the tags, and anything whose inline style names a monospace
@@ -195,6 +199,17 @@ const GAME_FIXED_LAYOUTS = moduleClass('Item_itemContainer__');
 
 /** Game text that is monospace on purpose */
 const KEEP_GAME_FACE = `${KEEP_FACE_SELF}:not([class*="_itemKey__"])`;
+
+/**
+ * The game rule leaves Toolasha's own surfaces to the Toolasha rule. The game rule comes later and is
+ * `!important`, so on a monospace subtree inside a surface (the sim's event-log rows) it would put the chosen
+ * face back after KEEP_FACE had kept it off. It is one ancestor check on the attribute-selector form the
+ * engine already evaluates for KEEP_FACE; written last so the cheap self tests come first.
+ */
+function gameRuleExclusions() {
+    const roots = [...CHILD_SCALED_ROOTS, ...GRANDCHILD_SCALED_ROOTS, ...SELF_SCALED].join(', ');
+    return `:not(:is(${roots}) *)`;
+}
 
 /**
  * Read a percentage setting back as a multiplier.
@@ -296,7 +311,7 @@ export function buildGameTextCSS() {
     if (stack) {
         // Universal, because the game's own components set `Roboto` on body,
         // buttons and inputs, and MUI's emotion styles set it on theirs
-        parts.push(`body,\nbody *${KEEP_GAME_FACE} { font-family: ${stack} !important; }`);
+        parts.push(`body,\nbody *${KEEP_GAME_FACE}${gameRuleExclusions()} { font-family: ${stack} !important; }`);
     }
 
     return parts.join('\n');
