@@ -128,6 +128,7 @@ import { characterKey } from '../../utils/character-key.js';
 import { captureOwner, noteTeardown, stillOurs } from '../../utils/init-ownership.js';
 import { navigateToMarketplace } from '../../utils/marketplace-tabs.js';
 import { openPlayerProfile, VALID_PLAYER_NAME_RE } from '../../utils/profile-command.js';
+import { RANK_BADGE_ATTR, RANK_BADGE_SELECTOR } from '../../utils/rank-badge-data.js';
 
 /**
  * Unscoped storage key. The `toolasha_local_` prefix is the load-bearing part:
@@ -223,6 +224,9 @@ export function serializeMessage(node) {
     // Annotations this script drew are rebuilt from stored runs on the next
     // pass; keeping them would double them up.
     copy.querySelectorAll('.dungeon-timer-annotation, .dungeon-timer-average').forEach((span) => span.remove());
+    // A rank badge is a decoration of this session: its rank goes stale, and its digits would make the
+    // same line badged and unbadged two different messages to {@link messageIdentity}.
+    copy.querySelectorAll(RANK_BADGE_SELECTOR).forEach((badge) => badge.remove());
 
     const html = copy.outerHTML;
     if (typeof html !== 'string' || !html || html.length > MAX_MESSAGE_CHARS) return null;
@@ -339,6 +343,9 @@ export function parseStoredMessage(html) {
     if (!el) return null;
 
     sanitizeRestoredMarkup(el);
+    // Records written before the serializer dropped badges still carry one, with whatever rank it had then
+    // (and shown even with badges switched off). The badge module redraws a current one if it has one.
+    el.querySelectorAll(RANK_BADGE_SELECTOR).forEach((badge) => badge.remove());
 
     // Mark it as scrollback from a previous session. The dungeon tracker scans
     // every `ChatMessage_chatMessage` in the document, buffer included, and
@@ -634,6 +641,7 @@ export function messageIdentity(html) {
     const cached = identityMemo.get(html);
     if (cached !== undefined) return cached;
     const text = html
+        .replace(RANK_BADGE_MARKUP_RE, ' ')
         .replace(/<[^>]*>/g, ' ')
         .replace(/\s+/g, ' ')
         .trim();
@@ -641,6 +649,12 @@ export function messageIdentity(html) {
     identityMemo.set(html, text || null);
     return text || null;
 }
+
+/**
+ * A rank badge as stored by builds that serialized it: a span holding an icon and the rank, no nested span.
+ * Stripped before {@link messageIdentity} reads the text, so those records still match the same line unbadged.
+ */
+const RANK_BADGE_MARKUP_RE = new RegExp(String.raw`<span\b[^>]*\s${RANK_BADGE_ATTR}\b[^>]*>[\s\S]*?<\/span>`, 'g');
 
 /** Bound on {@link messageIdentity}'s memo: a little over one full tab set's worth of messages. */
 const IDENTITY_MEMO_MAX = 4000;

@@ -13,6 +13,15 @@
  * categories read, names kept as plain strings.
  */
 
+/**
+ * The attribute every rank badge carries. Shared so code that serializes or reads the text of a
+ * chat line can leave the badge out: it is a decoration of this session, not part of the message.
+ */
+export const RANK_BADGE_ATTR = 'data-toolasha-rank-badge';
+
+/** Selector matching every rank badge */
+export const RANK_BADGE_SELECTOR = `[${RANK_BADGE_ATTR}]`;
+
 /** Only the top of a board earns a badge */
 export const RANK_BADGE_MAX_RANK = 100;
 

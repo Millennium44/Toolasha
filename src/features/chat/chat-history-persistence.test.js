@@ -1855,3 +1855,119 @@ describe('messages that were only ever live survive a server restart', () => {
         expect(messageIdentity('<div></div>')).toBeNull();
     });
 });
+
+/**
+ * The leaderboard rank badge (leaderboard-rank-badges.js) is a span inserted right after a line's
+ * `CharacterName_name`, inside the sender element: an icon and the rank as text. It is this session's
+ * decoration, so it must not be stored, and its digits must not make two sightings of one line differ.
+ */
+describe('a rank badge beside a sender name', () => {
+    beforeEach(() => {
+        settingValues.chatHistoryExtender = true;
+        settingValues.chatHistoryExtender_maxHistory = null;
+        observerReady.handlers = [];
+        observerReady.domReady = true;
+        db.settings = {};
+        db.quota = false;
+        db.writes = 0;
+        openPlayerProfile.mockClear();
+    });
+
+    afterEach(async () => {
+        await chatHistoryExtender.disable();
+        chatHistoryPersistence.reset();
+        document.body.innerHTML = '';
+    });
+
+    const lineHTML = (name, text = 'hello') =>
+        '<div class="ChatMessage_chatMessage__2wc4V">' +
+        '<span>[1/2 10:00:00] </span>' +
+        '<span class="ChatMessage_name__1UZ8t ChatMessage_clickable__3Nt2s">' +
+        '<div class="CharacterName_characterName__2FqyZ">' +
+        `<div class="CharacterName_name__1amXp"><span>${name}</span></div></div></span>` +
+        `<span>: ${text}</span></div>`;
+
+    const line = (name, text) => {
+        const host = document.createElement('div');
+        host.innerHTML = lineHTML(name, text);
+        return host.firstElementChild;
+    };
+
+    /**
+     * Put a badge after the line's name element, the way leaderboard-rank-badges.js's `decorate` does.
+     * @param {Element} el - A chat line
+     * @param {number} rank
+     * @returns {Element} The line
+     */
+    const addBadge = (el, rank) => {
+        const badge = document.createElement('span');
+        badge.setAttribute('data-toolasha-rank-badge', 'gold');
+        badge.dataset.signature = `x|standard|milking|${rank}|1`;
+        badge.title = `Milking · Standard rank ${rank} (3m ago)`;
+        badge.innerHTML =
+            '<svg viewBox="0 0 40 40" aria-hidden="true"><use href="/static/skills.svg#milking"></use></svg>';
+        badge.appendChild(document.createTextNode(String(rank)));
+        el.querySelector('[class*="CharacterName_name"]').insertAdjacentElement('afterend', badge);
+        return el;
+    };
+
+    test('a badged line is stored without its badge, and is the same message as the unbadged line', () => {
+        const html = serializeMessage(addBadge(line('Spice'), 12));
+        expect(html).not.toContain('data-toolasha-rank-badge');
+        expect(messageIdentity(html)).toBe(messageIdentity(serializeMessage(line('Spice'))));
+    });
+
+    test('a record an older build stored with a badge still matches the line without one', () => {
+        // Built by hand: what the serializer wrote before it left badges out
+        const stored = addBadge(line('Spice'), 12).outerHTML;
+        expect(stored).toContain('data-toolasha-rank-badge');
+        expect(messageIdentity(stored)).toBe(messageIdentity(serializeMessage(line('Spice'))));
+        expect(messageIdentity(stored)).toBe(messageIdentity(addBadge(line('Spice'), 3).outerHTML));
+    });
+
+    test('a line seen unbadged and then evicted with a badge is stored once', async () => {
+        const [container] = buildChat(['General']);
+        chatHistoryExtender.initialize();
+        await settle();
+
+        // Rendered before the board was cached, so recorded unbadged; the badge arrives while it is on screen
+        const message = line('Spice');
+        container.appendChild(message);
+        await settle();
+        addBadge(message, 12);
+        await evict(container, message);
+        await chatHistoryPersistence.flush();
+
+        expect(db.settings[STORAGE_KEY].tabs['tab2:name:General']).toHaveLength(1);
+    });
+
+    test('a restored record carries no stale badge and its name is still clickable', async () => {
+        db.settings[STORAGE_KEY] = {
+            v: 1,
+            savedAt: 1,
+            tabs: { 'tab2:name:General': [addBadge(line('Spice'), 12).outerHTML] },
+        };
+        const [container] = buildChat(['General']);
+        chatHistoryExtender.initialize();
+        await settle();
+
+        const buffer = container.querySelector('.mwi-history-buffer');
+        expect(buffer.querySelector('[data-toolasha-rank-badge]')).toBeNull();
+        const sender = buffer.querySelector('[class*="ChatMessage_name"]');
+        expect(sender.dataset.mwiRestoredSender).toBe('Spice');
+    });
+
+    test('a click on a badge the badge module redraws on a restored line opens the profile', async () => {
+        db.settings[STORAGE_KEY] = { v: 1, savedAt: 1, tabs: { 'tab2:name:General': [lineHTML('Spice')] } };
+        const [container] = buildChat(['General']);
+        chatHistoryExtender.initialize();
+        await settle();
+
+        const restored = container.querySelector('.mwi-history-buffer [class*="ChatMessage_chatMessage"]');
+        addBadge(restored, 12);
+        restored
+            .querySelector('[data-toolasha-rank-badge] use')
+            .dispatchEvent(new MouseEvent('click', { bubbles: true }));
+        expect(openPlayerProfile).toHaveBeenCalledWith('Spice', expect.anything());
+    });
+});

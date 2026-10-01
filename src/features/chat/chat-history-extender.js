@@ -12,6 +12,7 @@ import domObserver from '../../core/dom-observer.js';
 import storage from '../../core/storage.js';
 import webSocketHook from '../../core/websocket.js';
 import { addStyles, removeStyles } from '../../utils/dom.js';
+import { RANK_BADGE_SELECTOR } from '../../utils/rank-badge-data.js';
 import { createTimerRegistry } from '../../utils/timer-registry.js';
 import chatHistoryPersistence, {
     extractStoredMessageId,
@@ -355,10 +356,13 @@ function extractSenderAndBody(node) {
     try {
         const linkContainers = node.querySelectorAll('[class*="ChatMessage_linkContainer"]');
         linkCount = linkContainers.length;
-        if (linkCount) {
-            linkIds = linkIdentitiesFromDom(linkContainers);
+        if (linkCount) linkIds = linkIdentitiesFromDom(linkContainers);
+        // A rank badge sits between the name and the ':' and its rank would read as the start of the body
+        if (linkCount || node.querySelector(RANK_BADGE_SELECTOR)) {
             const clone = node.cloneNode(true);
-            clone.querySelectorAll('[class*="ChatMessage_linkContainer"]').forEach((el) => el.remove());
+            clone
+                .querySelectorAll(`[class*="ChatMessage_linkContainer"], ${RANK_BADGE_SELECTOR}`)
+                .forEach((el) => el.remove());
             textSource = clone;
         }
     } catch {
@@ -1059,7 +1063,10 @@ class ChatTabHandler {
             'onMouseUp',
         ];
 
-        const elements = [messageNode, ...messageNode.querySelectorAll('*')];
+        // A rank badge has no fiber, and the walk only stops early once every element it was given is found
+        const elements = [messageNode, ...messageNode.querySelectorAll('*')].filter(
+            (el) => !el.closest(RANK_BADGE_SELECTOR)
+        );
         const propsByNode = getReactPropsForNodes(elements);
 
         elements.forEach((el) => {
