@@ -13,6 +13,7 @@ import { setReactInputValue } from '../../utils/react-input.js';
 import estimatedListingAge from './estimated-listing-age.js';
 import { formatRelativeTime, formatWithSeparator } from '../../utils/formatters.js';
 import { parseItemCount } from '../../utils/number-parser.js';
+import { markToolashaSurface } from '../../utils/surface-marker.js';
 
 /** Native input value setter for triggering React state updates */
 const nativeInputValueSetter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set;
@@ -129,8 +130,11 @@ class MarketplaceShortcuts {
         const viewportWidth = window.innerWidth || document.documentElement.clientWidth;
         const viewportHeight = window.innerHeight || document.documentElement.clientHeight;
 
-        panel.style.width = `${rect.width}px`;
-        panel.style.left = `${Math.max(0, Math.min(rect.left, viewportWidth - rect.width))}px`;
+        // A minimum, not a fixed width: at a larger Toolasha text size the zoomed buttons are wider than
+        // the toggle, and a pinned width would clip them
+        panel.style.minWidth = `${rect.width}px`;
+        const width = Math.max(rect.width, panel.getBoundingClientRect().width || 0);
+        panel.style.left = `${Math.max(0, Math.min(rect.left, viewportWidth - width))}px`;
 
         const height = panel.getBoundingClientRect().height || 0;
         let top = rect.bottom + GAP;
@@ -361,6 +365,7 @@ class MarketplaceShortcuts {
         });
 
         wrapper.appendChild(toggle);
+        markToolashaSurface(panel, 'popover');
         document.body.appendChild(panel);
         wrapper._dropdownPanel = panel;
         wrapper._closeDropdown = closePanel;
