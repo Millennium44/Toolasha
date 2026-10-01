@@ -61,6 +61,10 @@ const coreExternalGlobals = new Map([
     // bundle at that copy — before this entry each of them default-imported the
     // Utils namespace object and called methods that were not on it.
     [normalize(join(__dirname, 'src/utils/performance-monitor.js')), 'Toolasha.Core.performanceMonitor'],
+    // One set of GM traffic counters per tab: the core bundle's websocket hook and
+    // settings mirror write through it, and the ui bundle's sync client and
+    // PFormance panel read it. A copy each would be several partial tallies.
+    [normalize(join(__dirname, 'src/utils/gm-traffic.js')), 'Toolasha.Core.gmTraffic'],
     // A market path, but the core bundle's marketAPI is what calls show()/hide()
     // on it — with a copy each, the initialized one never showed and the showing
     // one was never initialized (two alert containers, one observer-less).

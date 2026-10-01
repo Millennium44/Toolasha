@@ -11,7 +11,9 @@ import domObserver from '../../core/dom-observer.js';
 import { registerFloatingPanel, unregisterFloatingPanel, bringPanelToFront } from '../../utils/panel-z-index.js';
 import { formatReport, reportData, gapsBetween, initTimeline, initSummary } from '../../utils/performance-report.js';
 import { downloadFile } from '../../utils/csv-export.js';
-import { performanceMonitor, scriptBuildLabel } from '../../utils/bundle-bridge.js';
+import { performanceMonitor, scriptBuildLabel, dataManager as bridgedDataManager } from '../../utils/bundle-bridge.js';
+import { getGmTrafficSnapshot, getGmTrafficSummary } from '../../utils/gm-traffic.js';
+import { createTabCensus, buildTabSummary } from '../../utils/tab-census.js';
 import { registerCommand, unregisterCommand } from '../../utils/command-registry.js';
 
 /**
@@ -90,6 +92,32 @@ function writeAttributionSetting(enabled) {
     }
 }
 
+/**
+ * Bytes as a short human figure.
+ * @param {number} bytes - A byte (or UTF-16 unit) count
+ * @returns {string} e.g. `812 B`, `41.3 KB`, `12.40 MB`
+ */
+function formatBytes(bytes) {
+    if (bytes < 1024) return `${Math.round(bytes)} B`;
+    if (bytes < 1048576) return `${(bytes / 1024).toFixed(1)} KB`;
+    return `${(bytes / 1048576).toFixed(2)} MB`;
+}
+
+/**
+ * Milliseconds as `3d 4h`, `2h 5m` or `45s`.
+ * @param {number} ms - Duration
+ * @returns {string} Short duration
+ */
+function formatSpan(ms) {
+    const seconds = Math.floor(ms / 1000);
+    if (seconds < 60) return `${seconds}s`;
+    const minutes = Math.floor(seconds / 60);
+    if (minutes < 60) return `${minutes}m`;
+    const hours = Math.floor(minutes / 60);
+    if (hours < 24) return `${hours}h ${minutes % 60}m`;
+    return `${Math.floor(hours / 24)}d ${hours % 24}h`;
+}
+
 const COLORS = {
     background: 'rgba(5, 5, 15, 0.95)',
     headerBg: 'rgba(15, 5, 35, 0.7)',
@@ -128,6 +156,8 @@ class PFormancePanel {
         this.startupCollapsed = false;
         this.attributionSectionCollapsed = false;
         this.leakSectionCollapsed = false;
+        this.trafficSectionCollapsed = false;
+        this.tabsSectionCollapsed = false;
         // Created on the first sample and dropped when the panel closes, so
         // nothing the canary retains outlives the panel
         this.leakCanary = null;
@@ -135,9 +165,15 @@ class PFormancePanel {
         // Read once per open, in show(); a mocked or absent config must not
         // take the panel with it
         this.attributionEnabled = false;
+        // Publishes this tab's summary to the others while the extras are on,
+        // whether or not the panel is open: a tab nobody has opened a panel in
+        // is exactly the one the all-tabs list needs to hear from
+        this.tabCensus = null;
     }
 
     initialize() {
+        this.attributionEnabled = readAttributionSetting();
+        this._syncTabCensus();
         // The panel itself is still created on demand by show(); all that
         // starts here is the palette entry that calls it
         registerCommand({
@@ -183,6 +219,8 @@ class PFormancePanel {
     disable() {
         unregisterCommand('PFormance');
         this._removePanel();
+        this.tabCensus?.stop();
+        this.tabCensus = null;
     }
 
     _createPanel() {
@@ -266,6 +304,7 @@ class PFormancePanel {
         const attributionBtn = this._headerButton('◎', () => {
             this.attributionEnabled = !this.attributionEnabled;
             writeAttributionSetting(this.attributionEnabled);
+            this._syncTabCensus();
             this._paintAttributionButton(attributionBtn);
             this._updateContent();
         });
@@ -292,7 +331,8 @@ class PFormancePanel {
     _paintAttributionButton(button) {
         button.style.color = this.attributionEnabled ? COLORS.accent : COLORS.textDim;
         button.title = this.attributionEnabled
-            ? 'Attribution extras on — unattributed stall time, registry leak canary, heap trend'
+            ? 'Attribution extras on — unattributed stall time, registry leak canary, heap trend, ' +
+              'Tampermonkey traffic, all-tabs list'
             : 'Show attribution extras (off by default)';
     }
 
@@ -506,7 +546,137 @@ class PFormancePanel {
             this.contentEl.appendChild(this._createLeakSection(pm));
             const heap = this._createHeapLine(pm);
             if (heap) this.contentEl.appendChild(heap);
+            this.contentEl.appendChild(this._createTrafficSection());
+            this.contentEl.appendChild(this._createTabsSection());
         }
+    }
+
+    /**
+     * Start or stop publishing this tab to the others to match the extras
+     * setting. Idempotent. Off means no channel at all, not an idle one.
+     * @private
+     */
+    _syncTabCensus() {
+        if (!this.attributionEnabled) {
+            this.tabCensus?.stop();
+            this.tabCensus = null;
+            return;
+        }
+        if (!this.tabCensus) {
+            this.tabCensus = createTabCensus({
+                getSummary: () =>
+                    buildTabSummary({
+                        dataManager: bridgedDataManager(),
+                        monitor: getPerformanceMonitor(),
+                        getTraffic: getGmTrafficSummary,
+                        heapBytes: () =>
+                            getPerformanceMonitor()?.heapMemorySupported?.() ? performance.memory.usedJSHeapSize : null,
+                    }),
+            });
+        }
+        this.tabCensus.start();
+    }
+
+    /**
+     * A collapsible block of plain text lines, headed like the tables.
+     * @param {string} title - Header text
+     * @param {string[]} lines - One row each
+     * @param {string} collapsedKey - Name of the boolean on `this` that remembers collapse
+     * @returns {HTMLElement} The block
+     * @private
+     */
+    _createTextSection(title, lines, collapsedKey) {
+        const collapsed = Boolean(this[collapsedKey]);
+        const section = document.createElement('div');
+        section.style.marginBottom = '8px';
+
+        const header = document.createElement('div');
+        Object.assign(header.style, {
+            cursor: 'pointer',
+            padding: '4px 6px',
+            background: COLORS.headerBg,
+            borderRadius: '4px',
+            marginBottom: collapsed ? '0' : '4px',
+            userSelect: 'none',
+            fontWeight: 'bold',
+            fontSize: '12px',
+            color: COLORS.accent,
+        });
+        header.textContent = `${collapsed ? '▶' : '▼'} ${title}`;
+        header.addEventListener('click', () => {
+            this[collapsedKey] = !collapsed;
+            this._updateContent();
+        });
+        section.appendChild(header);
+        if (collapsed) return section;
+
+        for (const text of lines) {
+            const row = document.createElement('div');
+            row.textContent = text;
+            Object.assign(row.style, { padding: '1px 6px', fontSize: '11px', whiteSpace: 'normal' });
+            section.appendChild(row);
+        }
+        return section;
+    }
+
+    /**
+     * What this tab has sent into, and pulled out of, the userscript manager.
+     *
+     * Counted at Toolasha's own call sites (`gm-traffic.js`). It bounds what the
+     * manager's process was asked to hold; it cannot see what that process
+     * actually retains, which no page script can.
+     * @returns {HTMLElement} The section
+     * @private
+     */
+    _createTrafficSection() {
+        const snap = getGmTrafficSnapshot();
+        const hourly = snap.perHour;
+        const keyLine = (row) => `  ${row.name}: ${row.calls}x, ${formatBytes(row.bytes)}`;
+        const lines = [
+            `Writes: ${snap.totals.writeCalls} calls, ${formatBytes(snap.totals.writeBytes)} — ` +
+                `${hourly.writeCalls}/h, ${formatBytes(hourly.writeBytes)}/h` +
+                (snap.writeErrors ? ` — ${snap.writeErrors} threw` : '') +
+                (snap.unsizedWrites ? ` — ${snap.unsizedWrites} unsized` : ''),
+            ...snap.writesByKey.slice(0, 5).map(keyLine),
+            `Reads: ${snap.totals.readCalls} calls, ${formatBytes(snap.totals.readBytes)} returned — ` +
+                `${hourly.readCalls}/h`,
+            ...snap.readsByKey.slice(0, 3).map(keyLine),
+            `Requests: ${snap.totals.requestCalls} calls, ${formatBytes(snap.totals.responseBytes)} received — ` +
+                `${hourly.requestCalls}/h`,
+            ...snap.requestsByHost.map((row) => keyLine(row) + (row.errors ? `, ${row.errors} failed` : '')),
+            `Since this page loaded (${formatSpan(snap.uptimeMs)}); /h extrapolates the last ` +
+                `${formatSpan(snap.rateWindowMs)}. Counts Toolasha's own calls only.`,
+        ];
+        return this._createTextSection('Tampermonkey traffic', lines, 'trafficSectionCollapsed');
+    }
+
+    /**
+     * Every tab heard from in the last half-minute, this one marked.
+     * @returns {HTMLElement} The section
+     * @private
+     */
+    _createTabsSection() {
+        const census = this.tabCensus;
+        if (!census) return this._createTextSection('All tabs', ['Not publishing.'], 'tabsSectionCollapsed');
+        if (!census.supported) {
+            return this._createTextSection(
+                'All tabs',
+                ['This browser has no BroadcastChannel, so other tabs cannot be heard.'],
+                'tabsSectionCollapsed'
+            );
+        }
+        const lines = census.getTabs().map(({ self, tabId, summary }) => {
+            const traffic = summary.traffic;
+            const heap = typeof summary.heapMb === 'number' ? `, heap ${summary.heapMb.toFixed(0)}MB` : '';
+            const stalls = summary.stalls ? `, ${summary.stalls.count} stalls (worst ${summary.stalls.worstMs}ms)` : '';
+            return (
+                `${self ? '▶ this tab' : tabId} — ${summary.characterName || 'no character yet'}, up ` +
+                `${formatSpan(summary.uptimeMs)}, writes ${formatBytes(traffic?.totals?.writeBytes ?? 0)} ` +
+                `(${formatBytes(traffic?.perHour?.writeBytes ?? 0)}/h), requests ${traffic?.totals?.requestCalls ?? 0}` +
+                `${heap}${stalls}`
+            );
+        });
+        return this._createTextSection('All tabs', lines, 'tabsSectionCollapsed');
     }
 
     /**
