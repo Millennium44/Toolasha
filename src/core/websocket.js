@@ -999,8 +999,8 @@ class WebSocketHook {
     }
 
     /**
-     * Note that a character has a per-character battle slot, deleting the slots of the characters
-     * beyond {@link MAX_BATTLE_BRIDGE_CHARACTERS} so the keys do not accumulate. The index is shared
+     * Note that a character has a per-character battle slot, deleting the slots of the earliest-listed
+     * characters beyond {@link MAX_BATTLE_BRIDGE_CHARACTERS} so the keys do not accumulate. The index is shared
      * by every tab; a lost update at worst leaves one orphaned slot until that character fights again.
      * @param {string|number} characterId - Character just written
      * @returns {void}
@@ -1013,7 +1013,10 @@ class WebSocketHook {
                 if (Array.isArray(stored)) index = stored.map(String);
             }
             const id = String(characterId);
-            const next = [id, ...index.filter((entry) => entry !== id)];
+            // Every GM write rewrites the script's whole value record, so a character already listed
+            // costs nothing; order is first-listed, which is what pruning drops from
+            if (index.includes(id)) return;
+            const next = [id, ...index];
             for (const evicted of next.slice(MAX_BATTLE_BRIDGE_CHARACTERS)) {
                 const key = battleBridgeKeyFor(evicted);
                 if (typeof GM_deleteValue !== 'undefined') {

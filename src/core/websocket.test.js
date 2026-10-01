@@ -639,6 +639,27 @@ describe('saveCombatSimData GM-storage bridge stamping', () => {
         }
     });
 
+    test('the battle slot index is written once per character, not on every battle write', () => {
+        vi.useFakeTimers();
+        const store = {};
+        globalThis.GM_setValue = vi.fn((k, v) => {
+            store[k] = v;
+        });
+        globalThis.GM_getValue = vi.fn((k, d) => (k in store ? store[k] : d));
+        try {
+            loginAs('char-1', 'C1');
+            for (let i = 1; i <= 3; i++) {
+                webSocketHook.processMessage(msg('new_battle', { battleId: i, players: [] }));
+                vi.advanceTimersByTime(BATTLE_INTERVAL_MS);
+            }
+            expect(battleWrites(battleSlot('char-1'))).toHaveLength(3);
+            const indexWrites = globalThis.GM_setValue.mock.calls.filter(([k]) => k === 'toolasha_new_battle_index');
+            expect(indexWrites).toHaveLength(1);
+        } finally {
+            delete globalThis.GM_getValue;
+        }
+    });
+
     test('a run of fights writes the battle key once a minute, newest fight last, not once per fight', () => {
         vi.useFakeTimers();
         vi.setSystemTime(new Date('2026-10-01T12:00:00Z'));
