@@ -566,14 +566,121 @@ describe('the move out of the character records', () => {
         await Promise.all(pages.map((page) => page.persistence.flush()));
 
         expect(stored(PUBLIC, GLOBAL).sort()).toEqual(['common', 'only 101', 'only 202', 'only 303', 'only 404']);
-        expect(stored(guildKey('g1'), GUILD)).toEqual(['g1 common']);
-        expect(stored(guildKey('g2'), GUILD)).toEqual(['g2 common']);
-        ids.forEach((id) => {
+        // Nothing proves which guild an old guild tab came from, so each stays with its character.
+        expect(shared.db[guildKey('g1')]).toBeUndefined();
+        expect(shared.db[guildKey('g2')]).toBeUndefined();
+        ids.forEach((id, i) => {
             const own = shared.db[ownKey(id)];
             expect(Object.keys(own.tabs)).toEqual([PARTY]);
             expect(stored(ownKey(id), PARTY)).toEqual([`party of ${id}`]);
+            expect(texts(own.guildLegacy[GUILD])).toEqual([i < 2 ? 'g1 common' : 'g2 common']);
             expect(own.sharedMigrated).toBe(true);
         });
+    });
+
+    test('an old guild tab is not moved into a guild the character has since joined', async () => {
+        // Ada's record is from her old guild; she is in g2 now, whose record Bob already writes.
+        shared.db[ownKey('101')] = legacyRecord({
+            [GUILD]: [line('Old', 'old guild secret', 1)],
+            [PARTY]: [line('Pat', 'p', 2)],
+        });
+        const bob = await openPage('202', 'g2');
+        await bob.persistence.load();
+        bob.persistence.record(GUILD, line('Gil', 'g2 today', 30));
+        await bob.persistence.flush();
+
+        const ada = await openPage('101', 'g2');
+        const snapshot = await ada.persistence.load();
+        await ada.persistence.flush();
+
+        expect(stored(guildKey('g2'), GUILD)).toEqual(['g2 today']);
+        expect(texts(shared.db[ownKey('101')].guildLegacy[GUILD])).toEqual(['old guild secret']);
+        expect(shared.db[ownKey('101')].tabs[GUILD]).toBeUndefined();
+        // Still Ada's to read, ahead of the guild's own lines.
+        expect(texts(snapshot[GUILD])).toEqual(['old guild secret', 'g2 today']);
+        expect(texts(ada.persistence.messagesFor(GUILD))).toEqual(['old guild secret', 'g2 today']);
+
+        // A line recorded since goes to the guild; the held ones never follow it.
+        ada.persistence.record(GUILD, line('Gil', 'g2 later', 31));
+        await ada.persistence.flush();
+        expect(stored(guildKey('g2'), GUILD)).toEqual(['g2 today', 'g2 later']);
+
+        // And another member of g2 never sees them.
+        const cy = await openPage('303', 'g2');
+        await cy.persistence.load();
+        expect(texts(cy.persistence.messagesFor(GUILD))).toEqual(['g2 today', 'g2 later']);
+
+        // Held across sessions.
+        const again = await openPage('101', 'g2');
+        await again.persistence.load();
+        expect(texts(again.persistence.messagesFor(GUILD))).toEqual(['old guild secret', 'g2 today', 'g2 later']);
+    });
+
+    test('an old guild tab that shares a line with the guild record is that guild’s, and moves', async () => {
+        shared.db[guildKey('g1')] = {
+            v: 1,
+            savedAt: 5000,
+            tabs: { [GUILD]: [line('Gil', 'seen by both', 5), line('Gil', 'newer', 6)] },
+            live: {},
+            at: { [GUILD]: 5000 },
+        };
+        shared.db[ownKey('101')] = legacyRecord(
+            { [GUILD]: [line('Gil', 'older', 4), line('Gil', 'seen by both', 5)] },
+            1000
+        );
+
+        const ada = await openPage('101', 'g1');
+        await ada.persistence.load();
+        await ada.persistence.flush();
+
+        expect(stored(guildKey('g1'), GUILD)).toEqual(['older', 'seen by both', 'newer']);
+        expect(shared.db[ownKey('101')].guildLegacy).toBeUndefined();
+        expect(shared.db[ownKey('101')].tabs[GUILD]).toBeUndefined();
+    });
+
+    test('held guild lines move once the guild record comes to share one of them', async () => {
+        shared.db[ownKey('101')] = legacyRecord({ [GUILD]: [line('Gil', 'held', 4), line('Gil', 'last', 5)] }, 1000);
+        const ada = await openPage('101', 'g1');
+        await ada.persistence.load();
+        await ada.persistence.flush();
+        expect(shared.db[guildKey('g1')]).toBeUndefined();
+
+        // A guildmate's tab records the game's backlog, which still shows the last line.
+        const bob = await openPage('202', 'g1');
+        await bob.persistence.load();
+        bob.persistence.record(GUILD, line('Gil', 'last', 5));
+        bob.persistence.record(GUILD, line('Gil', 'today', 6));
+        await bob.persistence.flush();
+
+        const next = await openPage('101', 'g1');
+        await next.persistence.load();
+        await next.persistence.flush();
+        expect(stored(guildKey('g1'), GUILD)).toEqual(['held', 'last', 'today']);
+        expect(shared.db[ownKey('101')].guildLegacy).toBeUndefined();
+    });
+
+    test('a deletion reaches held guild lines too', async () => {
+        shared.db[ownKey('101')] = legacyRecord({
+            [GUILD]: [line('Gil', 'keep', 1, 'k1'), line('Gil', 'remove', 2, 'r1')],
+        });
+        const ada = await openPage('101', 'g1');
+        await ada.persistence.load();
+
+        await expect(ada.persistence.purgeMessageById(GUILD, 'r1')).resolves.toBe(true);
+        await ada.persistence.flush();
+
+        expect(texts(ada.persistence.messagesFor(GUILD))).toEqual(['keep']);
+        expect(texts(shared.db[ownKey('101')].guildLegacy[GUILD])).toEqual(['keep']);
+    });
+
+    test('a write before the first read has landed keeps the held guild lines', async () => {
+        shared.db[ownKey('101')] = { ...legacyRecord({}), guildLegacy: { [GUILD]: [line('Gil', 'held', 1)] } };
+        const ada = await openPage('101', 'g1');
+        ada.persistence.record(PARTY, line('Pat', 'party before the read', 2));
+        await ada.persistence.flushPending();
+
+        expect(texts(shared.db[ownKey('101')].guildLegacy[GUILD])).toEqual(['held']);
+        expect(stored(ownKey('101'), PARTY)).toEqual(['party before the read']);
     });
 
     test('a migration cut short before the character record was rewritten runs again without doubling anything', async () => {

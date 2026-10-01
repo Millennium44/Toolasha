@@ -97,7 +97,10 @@
  * keeps its one writer and is still written whole.
  *
  * The first load after this existed moves a character's copies of shared tabs
- * out of its own record — see {@link ChatHistoryPersistence#load}.
+ * out of its own record — see {@link ChatHistoryPersistence#load}. Its Guild tab
+ * names no guild, so it moves only once a guild's record shares a line with it;
+ * until then the character's own record holds it (`guildLegacy`), shown to that
+ * character alone.
  *
  * ## Caps
  *
@@ -1272,6 +1275,49 @@ function groupByRecord(tabs, context) {
 }
 
 /**
+ * The guild-tab lines a character's own record holds back because nothing shows
+ * which guild they came from; see {@link ChatHistoryPersistence#load}.
+ * @param {*} record - The character's record as read
+ * @param {number} perTab - Message cap per tab
+ * @returns {Record<string, Array<string>>}
+ */
+function guildLegacyFrom(record, perTab) {
+    if (!record || record.v !== RECORD_VERSION || !record.guildLegacy || typeof record.guildLegacy !== 'object') {
+        return {};
+    }
+    const held = {};
+    for (const [tabKey, list] of Object.entries(
+        tabsFromRecord({ v: RECORD_VERSION, tabs: record.guildLegacy }, perTab, {})
+    )) {
+        if (tabScope(tabKey) === 'guild' && list.length) held[tabKey] = list;
+    }
+    return held;
+}
+
+/**
+ * Whether a character's held guild lines are provably from a guild's chat: one
+ * of them is also in that guild's shared record, which only that guild's members
+ * write. A line's identity is its sender, time and text, and a player is in one
+ * guild at a time, so two guilds never share one.
+ * @param {Record<string, Array<string>>} held
+ * @param {*} guildRecord - The guild's shared record as read
+ * @returns {boolean}
+ */
+function sharesGuildLine(held, guildRecord) {
+    const known = new Set();
+    const tabs = guildRecord && guildRecord.v === RECORD_VERSION && guildRecord.tabs ? guildRecord.tabs : {};
+    for (const list of Object.values(tabs)) {
+        if (!Array.isArray(list)) continue;
+        for (const html of list) {
+            const identity = messageIdentity(html);
+            if (identity) known.add(identity);
+        }
+    }
+    if (!known.size) return false;
+    return Object.values(held).some((list) => list.some((html) => known.has(messageIdentity(html))));
+}
+
+/**
  * Wait for a promise to settle, whichever way, without letting it throw here.
  * @param {Promise<*>|null} promise
  * @returns {Promise<void>}
@@ -1421,6 +1467,14 @@ class ChatHistoryPersistence {
          * @type {Record<string, Array<string>>|null}
          */
         this.heldLegacy = null;
+        /**
+         * Guild-tab lines from before the shared records, which name no guild:
+         * kept in the character's own record (`guildLegacy`) and shown only to
+         * that character, until a guild's record proves they are its lines.
+         * Never in `tabs`, so no write puts them in a guild's record.
+         * @type {Record<string, Array<string>>|null}
+         */
+        this.guildLegacy = null;
         /** @type {string|null} The guild the socket last named for this character, over `characterData`'s */
         this.guildOverride = null;
         /** @type {Record<string, number>} Live allowances the shared records hold, as last read or written */
@@ -1647,6 +1701,32 @@ class ChatHistoryPersistence {
             const legacy = groupByRecord(tabsFromRecord(own, perTab, liveFromRecord(own)), context);
             delete legacy[context.charKey];
             this.heldLegacy = null;
+
+            // Guild tabs in a character's record carry no guild id, and the
+            // character may have changed guilds since they were written: grouped
+            // under today's guild they would land in a guild that never saw them.
+            // They are held in the character's own record instead, and move only
+            // once that guild's record shares a line with them.
+            let guildHeld = guildLegacyFrom(own, perTab);
+            const heldBefore = Object.keys(guildHeld).length;
+            let heldChanged = false;
+            if (context.guildKey && legacy[context.guildKey]) {
+                for (const [tabKey, list] of Object.entries(legacy[context.guildKey])) {
+                    guildHeld[tabKey] = mergeLists(guildHeld[tabKey] || [], list, true);
+                }
+                delete legacy[context.guildKey];
+                heldChanged = true;
+            }
+            if (context.guildKey && Object.keys(guildHeld).length) {
+                if (sharesGuildLine(guildHeld, records[context.guildKey])) {
+                    legacy[context.guildKey] = guildHeld;
+                    guildHeld = {};
+                    heldChanged = heldChanged || heldBefore > 0;
+                }
+            }
+            this.guildLegacy = Object.keys(guildHeld).length ? guildHeld : null;
+            if (heldChanged) this.dirty = true;
+
             const moving = Object.entries(legacy);
             if (moving.length) {
                 const ownLive = liveFromRecord(own);
@@ -1688,6 +1768,9 @@ class ChatHistoryPersistence {
             // a snapshot taken after it held what was recorded during the read,
             // and a restore rendered those a second time.
             this.snapshot = Object.fromEntries(Object.entries(loaded).map(([key, list]) => [key, [...list]]));
+            for (const [tabKey, list] of Object.entries(this.guildLegacy || {})) {
+                this.snapshot[tabKey] = mergeLists(list, this.snapshot[tabKey] || [], true);
+            }
 
             // Anything recorded while the read was in flight belongs after what
             // was on disk, not instead of it.
@@ -1735,6 +1818,9 @@ class ChatHistoryPersistence {
      */
     messagesFor(tabKey) {
         if (!this.loaded || !this.tabs) return null;
+        const held = this.guildLegacy?.[tabKey];
+        // Older than anything the guild's record holds; shown ahead of it, never written into it.
+        if (held) return mergeLists(held, this.tabs[tabKey] || [], true);
         return [...(this.tabs[tabKey] || [])];
     }
 
@@ -1894,6 +1980,7 @@ class ChatHistoryPersistence {
                         live: liveForRecord(this.liveCounts, tabs),
                         // Marks the move into the shared records as done; see `load()`.
                         sharedMigrated: !this.heldLegacy,
+                        ...(this.guildLegacy ? { guildLegacy: this.guildLegacy } : {}),
                     },
                     CHAT_HISTORY_STORE,
                     immediate
@@ -2093,7 +2180,14 @@ class ChatHistoryPersistence {
             return (
                 (await storage.set(
                     key,
-                    { v: RECORD_VERSION, savedAt: Date.now(), tabs, live: liveForRecord(live, tabs) },
+                    {
+                        v: RECORD_VERSION,
+                        savedAt: Date.now(),
+                        tabs,
+                        live: liveForRecord(live, tabs),
+                        // Not this path's to drop: only a load decides where held guild lines go.
+                        ...(read.record?.guildLegacy ? { guildLegacy: read.record.guildLegacy } : {}),
+                    },
                     CHAT_HISTORY_STORE,
                     immediate
                 )) === true
@@ -2152,11 +2246,25 @@ class ChatHistoryPersistence {
             this.dirty = true;
             this._scheduleWrite();
         }
-        if (!this.tabs[tabKey]) return false;
+        const held = this.guildLegacy?.[tabKey];
+        let purgedHeld = false;
+        if (held) {
+            const kept = held.filter((html) => extractStoredMessageId(html) !== key);
+            if (kept.length !== held.length) {
+                purgedHeld = true;
+                if (kept.length) this.guildLegacy[tabKey] = kept;
+                else delete this.guildLegacy[tabKey];
+                if (!Object.keys(this.guildLegacy).length) this.guildLegacy = null;
+                // Held in the character's own record, which every flush writes.
+                this.dirty = true;
+                this._scheduleWrite();
+            }
+        }
+        if (!this.tabs[tabKey]) return purgedHeld;
 
         const before = this.tabs[tabKey].length;
         this.tabs[tabKey] = this.tabs[tabKey].filter((html) => extractStoredMessageId(html) !== key);
-        if (this.tabs[tabKey].length === before) return false;
+        if (this.tabs[tabKey].length === before) return purgedHeld;
 
         if (!this.tabs[tabKey].length) delete this.tabs[tabKey];
         this.dirtyTabs.add(tabKey);
@@ -2201,6 +2309,7 @@ class ChatHistoryPersistence {
         this.dirtyTabs = new Set();
         this.decisions = new Map();
         this.heldLegacy = null;
+        this.guildLegacy = null;
         this.guildOverride = null;
         this.sharedLive = {};
     }
