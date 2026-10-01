@@ -6838,6 +6838,17 @@ describe('the Bestiary plan step detail row', () => {
         expect(rowEl().getAttribute('aria-expanded')).toBe('false');
     });
 
+    test('a volume-capped profit carries the same marker in the detail as in the table', () => {
+        const row = ui._allZonesDetailRows.values().next().value;
+        row.liquidityLimit = { note: 'Capped by volume', detail: 'Honey sells 10/day' };
+
+        click(rowEl());
+        const markers = [...detailEls()[0].querySelectorAll('span[title]')].map((el) => el.textContent);
+
+        expect(markers).toEqual(['vol-capped', 'vol-capped']);
+        expect(detailEls()[0].querySelector('span[title]').title).toContain('Honey sells 10/day');
+    });
+
     test('the best single zone name shows the same figures', () => {
         const single = ui.panel.querySelector('.mwi-csim-plan-single');
         expect(single).not.toBeNull();

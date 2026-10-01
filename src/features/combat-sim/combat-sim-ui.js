@@ -1041,7 +1041,7 @@ export function allZonesCellText(key, row) {
  *
  * @param {Object} row - The zone's results-table row
  * @param {Array<{key: string, label: string}>} cols - The table's columns for this run
- * @returns {Array<{label: string, text: string, color?: string}>}
+ * @returns {Array<{label: string, text: string, color?: string, markerHtml?: string}>}
  */
 export function bestiaryPlanDetailItems(row, cols) {
     if (!row) return [];
@@ -1056,7 +1056,14 @@ export function bestiaryPlanDetailItems(row, cols) {
         const red =
             ((col.key === 'profit' || col.key === 'profitDay') && row[col.key] < 0) ||
             ((col.key === 'deaths' || col.key === 'failsPerDay') && row[col.key] > 0);
-        items.push({ label, text, color: red ? '#f44336' : undefined });
+        // A volume-bounded figure is never shown silently, here as in the table
+        const capped = (col.key === 'profit' || col.key === 'profitDay') && row.liquidityLimit;
+        items.push({
+            label,
+            text,
+            color: red ? '#f44336' : undefined,
+            markerHtml: capped ? liquidityMarkerHtml(row.liquidityLimit, { compact: true }) : undefined,
+        });
     }
     const drops = (row._sells || [])
         .filter((entry) => Number(entry.unitsPerHour) > 0)
@@ -4229,8 +4236,9 @@ class CombatSimUI {
             });
         }
 
-        // The Bestiary plan expands a route step into this run's own figures for its zone;
-        // a new run is a new plan, so nothing stays expanded
+        // The Bestiary plan expands a route step into this run's own figures for its zone.
+        // Only a new simulation resets what is expanded: sorts and pricing/Bestiary
+        // redraws show the same run and must keep it
         this._allZonesDetailRows = new Map();
         for (const row of rows) {
             const key = `${row.zoneHrid || row.zone}|T${row.tier}`;
@@ -5124,7 +5132,7 @@ class CombatSimUI {
                     `<span style="white-space:nowrap;"><span style="color:#888;">${esc(item.label)}</span> ` +
                     `<span style="color:${item.color || '#e0e0e0'}; font-variant-numeric:tabular-nums;">${esc(
                         item.text
-                    )}</span></span>`
+                    )}</span>${item.markerHtml || ''}</span>`
             )
             .join('');
         return (
