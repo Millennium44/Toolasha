@@ -80,9 +80,14 @@ class QueueAlerts {
         }
     }
 
+    /**
+     * Stop polling. `announced` is deliberately kept: features are disabled and
+     * re-initialized on every character switch, and initialize() checks at once,
+     * so clearing it would re-announce every already-announced idle alt on each
+     * switch once the notification cooldown had lapsed.
+     */
     disable() {
         this.timers.clearAll();
-        this.announced.clear();
         this.running = false;
     }
 }
