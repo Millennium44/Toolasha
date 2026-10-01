@@ -729,13 +729,53 @@ describe('saveCombatSimData GM-storage bridge stamping', () => {
         expect(globalThis.GM_setValue).not.toHaveBeenCalled();
     });
 
+    test('init_client_data alone does not write the client data to GM storage', async () => {
+        webSocketHook.processMessage(msg('init_client_data', { levelExperienceTable: [1, 2] }));
+        await new Promise((r) => setTimeout(r, 0));
+
+        expect(globalThis.GM_setValue.mock.calls.filter(([k]) => k.startsWith('toolasha_init_client_data'))).toEqual(
+            []
+        );
+    });
+
+    test('opening a simulator writes the client data once, and again only when it changed', async () => {
+        const store = {};
+        globalThis.GM_setValue = vi.fn((k, v) => {
+            store[k] = v;
+        });
+        globalThis.GM_getValue = vi.fn((k, d) => (k in store ? store[k] : d));
+        const owner = { characterId: 1 };
+        const clientWrites = () => globalThis.GM_setValue.mock.calls.filter(([k]) => k === 'toolasha_init_client_data');
+        try {
+            const first = msg('init_client_data', { levelExperienceTable: [1, 2] });
+            webSocketHook.processMessage(first);
+            webSocketHook.saveCombatSimSnapshot({ character: {} }, owner);
+            expect(clientWrites().map(([, v]) => v)).toEqual([first]);
+            expect(metaWrite('toolasha_init_client_data_meta')).toBeTruthy();
+
+            // Same data arrives again (next login), simulator opened again: no rewrite
+            webSocketHook.processMessage(msg('init_client_data', { levelExperienceTable: [1, 2] }));
+            webSocketHook.saveCombatSimSnapshot({ character: {} }, owner);
+            expect(clientWrites()).toHaveLength(1);
+
+            // Changed data (game patch): rewritten
+            const changed = msg('init_client_data', { levelExperienceTable: [1, 3] });
+            webSocketHook.processMessage(changed);
+            webSocketHook.saveCombatSimSnapshot({ character: {} }, owner);
+            expect(clientWrites().map(([, v]) => v)).toEqual([first, changed]);
+        } finally {
+            delete globalThis.GM_getValue;
+            webSocketHook.pendingClientData = null;
+        }
+    });
+
     test('stamps toolasha_init_client_data and toolasha_new_battle with the last character seen on this tab', async () => {
         webSocketHook.processMessage(msg('init_character_data', { character: { id: 'char-7', name: 'Zog' } }));
         await new Promise((r) => setTimeout(r, 0));
         globalThis.GM_setValue.mockClear();
 
         webSocketHook.processMessage(msg('init_client_data', { levelExperienceTable: [] }));
-        await new Promise((r) => setTimeout(r, 0));
+        webSocketHook.saveCombatSimSnapshot({ character: {} }, { characterId: 'char-7' });
         expect(metaWrite('toolasha_init_client_data_meta')).toMatchObject({ characterId: 'char-7' });
 
         globalThis.GM_setValue.mockClear();

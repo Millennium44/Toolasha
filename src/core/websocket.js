@@ -152,6 +152,8 @@ function ttlDedupKey(message) {
  * Checked at the call site so the hundreds of other messages a minute do not
  * each pay for an async call that falls through every branch.
  */
+const CLIENT_DATA_FINGERPRINT_KEY = 'toolasha_init_client_data_fp';
+
 const COMBAT_SIM_MESSAGE_TYPES = new Set(['init_character_data', 'init_client_data', 'new_battle', 'profile_shared']);
 
 /** How many shared profiles are kept in the export list. */
@@ -838,14 +840,10 @@ class WebSocketHook {
                     }
                 }, 0);
             } else if (hasGM && messageType === 'init_client_data') {
-                setTimeout(() => {
-                    try {
-                        GM_setValue('toolasha_init_client_data', message);
-                        this.writeBridgeMeta('toolasha_init_client_data_meta');
-                    } catch {
-                        /* ignore */
-                    }
-                }, 0);
+                // Held in memory only. Tampermonkey keeps all of a script's GM values as one record that
+                // every GM_setValue rewrites whole, and this payload is several MB of it; it is bridged
+                // to the GM store when a simulator is opened (see bridgeClientData).
+                this.pendingClientData = { message, fingerprint: null };
             } else if (hasGM && messageType === 'new_battle') {
                 // Throttled, not per fight — see BATTLE_BRIDGE_MIN_INTERVAL_MS. The owner is
                 // captured now: a trailing write can land after a character switch.
@@ -926,6 +924,7 @@ class WebSocketHook {
      */
     saveCombatSimSnapshot(characterData, owner) {
         if (typeof GM_setValue === 'undefined') return false;
+        this.bridgeClientData();
         // The simulator reads the battle key too; hand it this tab's newest fight, even if it was
         // already written, since another game tab may have replaced the shared key since
         this.flushBattleBridge({ force: true });
@@ -936,6 +935,38 @@ class WebSocketHook {
             return true;
         } catch (error) {
             console.error('[WebSocket] Simulator snapshot write failed:', error);
+            return false;
+        }
+    }
+
+    /**
+     * Copy the game's static client data to the GM bridge for the external simulator pages, but only
+     * when the stored copy is not already this one. The simulator reads it from GM storage; the game
+     * tab never does (it uses dataManager), so nothing else needs it there.
+     * Fingerprint (length + FNV-1a over the raw message) is computed once per received message and
+     * kept in a small separate GM key, so an unchanged copy costs no multi-MB write.
+     * @returns {boolean} True if the client data was written
+     */
+    bridgeClientData() {
+        const pending = this.pendingClientData;
+        if (!pending || typeof GM_setValue === 'undefined') return false;
+        try {
+            if (pending.fingerprint === null) {
+                let hash = 2166136261;
+                const text = pending.message;
+                for (let i = 0; i < text.length; i++) {
+                    hash = Math.imul(hash ^ text.charCodeAt(i), 16777619);
+                }
+                pending.fingerprint = `${text.length}:${hash >>> 0}`;
+            }
+            const stored = typeof GM_getValue === 'undefined' ? null : GM_getValue(CLIENT_DATA_FINGERPRINT_KEY, null);
+            if (stored === pending.fingerprint) return false;
+            GM_setValue('toolasha_init_client_data', pending.message);
+            this.writeBridgeMeta('toolasha_init_client_data_meta');
+            GM_setValue(CLIENT_DATA_FINGERPRINT_KEY, pending.fingerprint);
+            return true;
+        } catch (error) {
+            console.error('[WebSocket] Client data bridge write failed:', error);
             return false;
         }
     }
