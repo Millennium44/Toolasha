@@ -22,6 +22,7 @@ import listingMarkers, { markerStateFor } from './listing-markers.js';
 /** Rows here are finished trades, not working orders. Markers are told so. */
 const HISTORY_SURFACE = { surface: 'history' };
 import estimatedListingAge from './estimated-listing-age.js';
+import { markToolashaSurface } from '../../utils/surface-marker.js';
 
 class MarketHistoryViewer {
     constructor() {
@@ -722,6 +723,7 @@ class MarketHistoryViewer {
         content.appendChild(pagination);
 
         this.modal.appendChild(content);
+        markToolashaSurface(this.modal, 'modal');
         document.body.appendChild(this.modal);
 
         // Close on background click
@@ -1729,6 +1731,7 @@ class MarketHistoryViewer {
                 box-shadow: 0 4px 20px rgba(0, 0, 0, 0.5);
             `;
             progressMsg.textContent = `Importing ${lines.length - 1} listings from CSV...`;
+            markToolashaSurface(progressMsg, 'popover');
             document.body.appendChild(progressMsg);
 
             // Load existing listings
@@ -1978,6 +1981,7 @@ class MarketHistoryViewer {
                 box-shadow: 0 4px 20px rgba(0, 0, 0, 0.5);
             `;
             progressMsg.textContent = `Importing ${marketList.length} listings...`;
+            markToolashaSurface(progressMsg, 'popover');
             document.body.appendChild(progressMsg);
 
             // Convert imported format to Toolasha format
@@ -2263,6 +2267,7 @@ class MarketHistoryViewer {
         popup.style.left = `${buttonRect.left}px`;
         popup.style.zIndex = String(config.Z_MODAL + 2);
 
+        markToolashaSurface(popup, 'popover');
         document.body.appendChild(popup);
         this.activeFilterPopup = popup;
         this.activeFilterButton = buttonElement; // Track which button opened this popup

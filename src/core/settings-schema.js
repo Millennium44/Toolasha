@@ -3474,10 +3474,12 @@ export const settingsGroups = {
                     { value: '150', label: '150%' },
                 ],
                 help:
-                    'Scales the text inside Toolasha’s floating panels, the overlay, dialogs, toasts, the command ' +
-                    'palette and this settings page. The panels themselves keep their size and position, so at a ' +
-                    'larger size a panel shows less at once and scrolls; drag its corner to give it more room. ' +
-                    'Charts keep their own size. Shared by every character on this device',
+                    'Scales the text inside Toolasha’s own windows: floating panels, the overlay, history and ' +
+                    'calculator windows, dialogs, pop-up menus and tooltips, toasts, the command palette and this ' +
+                    'settings page. The windows themselves keep their size and position, so at a larger size one ' +
+                    'shows less at once and scrolls; drag its corner to give it more room. Charts keep their own ' +
+                    'size, and lines Toolasha adds inside the game’s own pages (such as profit rows) are not ' +
+                    'covered. Shared by every character on this device',
             },
             ui_fontFamily: {
                 id: 'ui_fontFamily',

@@ -30,6 +30,7 @@ import { effectiveInventoryRows, release, releaseMissing, reserve } from '../../
 import { formatWithSeparator } from '../../utils/formatters.js';
 import { createTimerRegistry } from '../../utils/timer-registry.js';
 import { GAME } from '../../utils/selectors.js';
+import { markToolashaSurface } from '../../utils/surface-marker.js';
 
 /** Action types whose tasks have a crafting chain worth walking */
 const PRODUCTION_TYPES = [
@@ -533,6 +534,7 @@ class TaskCraftingTrain {
         close.addEventListener('click', () => panel.remove());
         panel.appendChild(close);
 
+        markToolashaSurface(panel, 'panel');
         document.body.appendChild(panel);
     }
 

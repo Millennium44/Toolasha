@@ -57,6 +57,7 @@ import {
     clearItemTombstone,
     LINEBREAK_HRID,
 } from './custom-tabs-data.js';
+import { markToolashaSurface } from '../../../utils/surface-marker.js';
 
 /** Icon id (`<use href="…#inventory_all">`) of the native inventory's "All" tab */
 const NATIVE_ALL_TAB_ICON = 'inventory_all';
@@ -3318,6 +3319,7 @@ export default class CustomTabsUI {
         `;
 
         overlay.appendChild(modal);
+        markToolashaSurface(overlay, 'modal');
         document.body.appendChild(overlay);
 
         const nameInput = modal.querySelector('.toolasha-ct-editor-name');

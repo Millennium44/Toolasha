@@ -15,6 +15,7 @@ import { getAlchemyCoinCost } from '../../utils/alchemy-fees.js';
 import { runningAction } from '../../utils/combat-actions.js';
 import { formatLargeNumber } from '../../utils/formatters.js';
 import { PANEL_Z_CAP } from '../../utils/panel-z-index.js';
+import { markToolashaSurface } from '../../utils/surface-marker.js';
 
 const STORAGE_KEY_PREFIX = 'alchemyProtectedCategories';
 const LOCKDOWN_MS = 3000;
@@ -642,6 +643,7 @@ class AlchemyActionProtection {
         backdrop.addEventListener('click', () => this._closeConfigPopup());
 
         document.body.appendChild(backdrop);
+        markToolashaSurface(popup, 'popover');
         document.body.appendChild(popup);
     }
 

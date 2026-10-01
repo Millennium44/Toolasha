@@ -24,6 +24,7 @@ import { chooseProtectionOptions, sweepProtectFromMemo } from '../../utils/enhan
 import { runningAction } from '../../utils/combat-actions.js';
 import { ironCowBook } from '../../utils/ironcow-valuation.js';
 import { estimateUnlimitedAction, formatEnhancingUnlimitedText } from './unlimited-action-estimate.js';
+import { markToolashaSurface } from '../../utils/surface-marker.js';
 
 /**
  * Format a number with thousands separator and 2 decimal places
@@ -1629,6 +1630,7 @@ function showCostsTableModal(container) {
 
     modal.appendChild(clonedTable);
     backdrop.appendChild(modal);
+    markToolashaSurface(backdrop, 'modal');
     document.body.appendChild(backdrop);
 
     // Close button handler

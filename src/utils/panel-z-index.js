@@ -7,6 +7,7 @@
 
 import config from '../core/config.js';
 import { clampPanelToViewport } from './panel-geometry.js';
+import { markToolashaSurface } from './surface-marker.js';
 
 const panels = new Set();
 
@@ -66,7 +67,7 @@ export function registerFloatingPanel(el, { managedZ = true } = {}) {
     // Read by text-appearance.js, whose text size and font apply under this
     // marker. Left in place on unregister: the element is still a Toolasha panel
     // if it is shown again without registering anew.
-    el.setAttribute?.('data-toolasha-surface', 'panel');
+    markToolashaSurface(el, 'panel');
     if (managedZ) selfManaged.delete(el);
     else selfManaged.add(el);
     afterLayout(() => {

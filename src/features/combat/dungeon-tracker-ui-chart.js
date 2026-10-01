@@ -9,6 +9,7 @@ import dungeonTrackerStorage, {
     minMaxOf,
 } from './dungeon-tracker-storage.js';
 import { PANEL_Z_CAP } from '../../utils/panel-z-index.js';
+import { markToolashaSurface } from '../../utils/surface-marker.js';
 
 // Chart.js draws every point on every dataset every frame. A run history that
 // has years of live tracking behind it, or a JSON backup folded in on import,
@@ -400,6 +401,7 @@ class DungeonTrackerUIChart {
 
         modal.appendChild(header);
         modal.appendChild(canvasContainer);
+        markToolashaSurface(modal, 'panel');
         document.body.appendChild(modal);
 
         // A new pop-out; invalidate any render left over from a previous one

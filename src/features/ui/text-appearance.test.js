@@ -86,9 +86,12 @@ describe('text size', () => {
 
         // A zoomed root has its own left/top multiplied, which would put every
         // dragged panel somewhere other than under the pointer
-        expect(css).toContain('[data-toolasha-surface] > :not(.toolasha-resize-grip)');
+        expect(css).toContain(
+            '[data-toolasha-surface]:not([data-toolasha-surface="modal"]) > :not(.toolasha-resize-grip)'
+        );
         expect(css).toContain('#toolasha-toasts > :not(.toolasha-resize-grip)');
         expect(css).not.toMatch(/\[data-toolasha-surface\]\s*[,{]/);
+        expect(css).not.toMatch(/\[data-toolasha-surface\]:not\(\[data-toolasha-surface="modal"\]\)\s*[,{]/);
         expect(css).toContain('zoom: 1.25;');
     });
 
@@ -141,8 +144,8 @@ describe('font', () => {
     test('covers the surface roots and their descendants, sparing monospace text', () => {
         state.values.ui_fontFamily = 'georgia';
         const css = buildToolashaTextCSS();
-        expect(css).toMatch(/\[data-toolasha-surface\],/);
-        expect(css).toContain('[data-toolasha-surface] *:not(code):not(pre)');
+        expect(css).toContain('[data-toolasha-surface]:not([data-toolasha-surface="modal"]),');
+        expect(css).toContain('[data-toolasha-surface]:not([data-toolasha-surface="modal"]) *:not(code):not(pre)');
         expect(css).toContain(':not([style*="monospace"])');
         expect(css).toContain('#toolasha-settings-content *');
     });
@@ -324,6 +327,53 @@ describe('monospace subtrees keep their face', () => {
         // selector text is asserted above and the descendant case is covered by the engine's own support
         expect(matches(document.querySelector('[style*="monospace"]'))).toBe(false);
         document.body.innerHTML = '';
+    });
+});
+
+describe('marked surfaces', () => {
+    test('a marked element is matched by the zoom rule and an unmarked one is not', () => {
+        state.values.ui_textScale = '150';
+        const css = buildToolashaTextCSS();
+        const zoomRule = css.slice(0, css.indexOf('{'));
+        const selectors = zoomRule.split(',\n').map((selector) => selector.trim());
+        document.body.innerHTML =
+            '<div id="marked" data-toolasha-surface="popover"><p id="in">a</p></div><div id="bare"><p id="out">b</p></div>';
+        const matches = (el) => selectors.some((selector) => el.matches(selector));
+        expect(matches(document.getElementById('in'))).toBe(true);
+        expect(matches(document.getElementById('marked'))).toBe(false);
+        expect(matches(document.getElementById('out'))).toBe(false);
+        document.body.innerHTML = '';
+    });
+
+    test('a modal backdrop zooms the children of the modal box, not the box, whose caps are in viewport units', () => {
+        state.values.ui_textScale = '150';
+        const css = buildToolashaTextCSS();
+        expect(css).toContain('[data-toolasha-surface="modal"] > * > *');
+        document.body.innerHTML = '<div data-toolasha-surface="modal"><div id="box"><p id="body">a</p></div></div>';
+        const zoomRule = css
+            .slice(0, css.indexOf('{'))
+            .split(',\n')
+            .map((selector) => selector.trim());
+        const matches = (el) => zoomRule.some((selector) => el.matches(selector));
+        expect(matches(document.getElementById('box'))).toBe(false);
+        expect(matches(document.getElementById('body'))).toBe(true);
+        document.body.innerHTML = '';
+    });
+
+    test('a modal box scrolls instead of clipping the grown content, and only when a size is applied', () => {
+        state.values.ui_textScale = '150';
+        expect(buildToolashaTextCSS()).toContain(
+            '[data-toolasha-surface="modal"] > * { overflow-y: auto !important; }'
+        );
+        state.values.ui_textScale = '100';
+        expect(buildToolashaTextCSS()).not.toContain('"modal"] > *');
+    });
+
+    test('the font reaches a modal and its descendants', () => {
+        state.values.ui_fontFamily = 'verdana';
+        const css = buildToolashaTextCSS();
+        expect(css).toContain('[data-toolasha-surface="modal"],');
+        expect(css).toContain('[data-toolasha-surface="modal"] *:not(code)');
     });
 });
 

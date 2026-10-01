@@ -65,20 +65,36 @@ export const FONT_STACKS = {
 };
 
 /**
+ * A modal's backdrop. Its single child is the window, sized in viewport units (`max-height: 90vh`,
+ * `max-width: 95vw`), so it takes the grandchild treatment below rather than the child one.
+ */
+const MODAL_ROOT = '[data-toolasha-surface="modal"]';
+
+/**
  * Roots of Toolasha surfaces whose direct children carry the scale.
  *
- * `data-toolasha-surface` is stamped by `registerFloatingPanel` (every floating
- * panel and the overlay) and by the choice dialog's backdrop. The toast stack
- * is a fixed container whose toasts are its children.
+ * `data-toolasha-surface` is stamped through `markToolashaSurface`
+ * (`utils/surface-marker.js`): by `registerFloatingPanel` (every floating panel
+ * and the overlay), by `createFloatingWidget`, by the choice dialog's backdrop,
+ * and by each Toolasha window, popup and modal that is appended to the page on
+ * its own. The toast stack is a fixed container whose toasts are its children.
+ * A `modal` is the one kind left out: see `MODAL_ROOT`.
  */
-const CHILD_SCALED_ROOTS = ['[data-toolasha-surface]', '#toolasha-toasts'];
+const CHILD_SCALED_ROOTS = [`[data-toolasha-surface]:not(${MODAL_ROOT})`, '#toolasha-toasts'];
 
 /**
  * The command palette's box has its height cap and top margin in viewport
  * units, which `zoom` multiplies — a zoomed box would hang off the bottom of
- * the window. Its own children carry the scale instead.
+ * the window. Its own children carry the scale instead, and so do a modal's
+ * (the box's size and position stay what the feature set).
  */
-const GRANDCHILD_SCALED_ROOTS = ['#toolasha-command-palette'];
+const GRANDCHILD_SCALED_ROOTS = ['#toolasha-command-palette', MODAL_ROOT];
+
+/**
+ * A modal's box keeps its own size cap while its content grows, so content that no longer fits scrolls
+ * inside the box instead of being clipped by the cap.
+ */
+const MODAL_SCROLL = `${MODAL_ROOT} > * { overflow-y: auto !important; }`;
 
 /** In-flow surfaces that are zoomed whole: no position of their own to break */
 const SELF_SCALED = ['#toolasha-settings-content'];
@@ -236,6 +252,7 @@ export function buildToolashaTextCSS() {
         parts.push(`${targets.join(',\n')} { zoom: ${num(scale)}; }`);
         parts.push(`${targets.map((target) => `${target} canvas`).join(',\n')} { zoom: ${num(1 / scale)}; }`);
         parts.push(DIALOG_FIT);
+        parts.push(MODAL_SCROLL);
     }
 
     const stack = FONT_STACKS[config.getSettingValue('ui_fontFamily', 'default')];

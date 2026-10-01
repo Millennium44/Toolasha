@@ -43,6 +43,13 @@ afterEach(() => {
     document.body.replaceChildren();
 });
 
+describe('openPlayerMenu', () => {
+    test('marks the menu as a text-appearance popover', () => {
+        openPlayerMenu(document.body, 'Abe');
+        expect(menu().getAttribute('data-toolasha-surface')).toBe('popover');
+    });
+});
+
 describe('playerMarkersHTML', () => {
     test('with both on: a dot in the player color, and the board’s own chip made clickable', () => {
         const html = playerMarkersHTML('Abe', inferred, renderTag);

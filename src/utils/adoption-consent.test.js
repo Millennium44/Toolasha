@@ -61,6 +61,8 @@ describe('adoption consent', () => {
         const pending = requestAdoptionConsent({ recommendedId: 'market123' });
 
         await vi.waitFor(() => expect(dialog()).toBeTruthy());
+        // A backdrop whose one child is the window: text-appearance zooms inside the card, not the card
+        expect(dialog().closest('[data-toolasha-surface]').getAttribute('data-toolasha-surface')).toBe('modal');
         const inputs = [...document.querySelectorAll('input[name="mwi-adopt-target"]')];
         expect(inputs.map((i) => i.value).sort()).toEqual(['iron456', 'market123']);
         expect(inputs.find((i) => i.value === 'market123').checked).toBe(true);

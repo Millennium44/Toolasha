@@ -29,6 +29,7 @@ import { formatKMB, timeReadable } from '../../utils/formatters.js';
 import { buildEnhancementLevelMap } from '../../utils/loadout-scraper.js';
 import loadoutSnapshotLocal from '../combat/loadout-snapshot.js';
 import { loadoutSnapshot, dataManager as sharedDataManager } from '../../utils/bundle-bridge.js';
+import { markToolashaSurface } from '../../utils/surface-marker.js';
 
 function getLoadoutSnapshot() {
     return loadoutSnapshot() || loadoutSnapshotLocal;
@@ -992,6 +993,7 @@ class SkillingSimulatorUI {
         render('');
         search.addEventListener('input', () => render(search.value));
 
+        markToolashaSurface(popup, 'popover');
         document.body.appendChild(popup);
         this._picker = popup;
 

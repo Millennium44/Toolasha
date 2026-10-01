@@ -11,6 +11,7 @@ import storage from '../../core/storage.js';
 import { networthFormatter, formatDateTime } from '../../utils/formatters.js';
 import { createForecastSection } from './networth-forecast-section.js';
 import { PANEL_Z_CAP } from '../../utils/panel-z-index.js';
+import { markToolashaSurface } from '../../utils/surface-marker.js';
 
 const RANGE_MS = {
     '24h': 24 * 60 * 60 * 1000,
@@ -584,6 +585,7 @@ class NetworthHistoryChart {
             modal.appendChild(this.forecastSection.element);
         }
 
+        markToolashaSurface(modal, 'panel');
         document.body.appendChild(modal);
 
         // ESC to close
@@ -1143,6 +1145,7 @@ class NetworthHistoryChart {
         container.style.left = `${Math.max(8, Math.min(rect.left, window.innerWidth - width - 8))}px`;
 
         this.render24hBreakdown(container);
+        markToolashaSurface(container, 'popover');
         document.body.appendChild(container);
 
         // Close popout when clicking outside
@@ -1664,6 +1667,7 @@ class NetworthHistoryChart {
             <button id="mwi-nw-delete-cancel" style="background:#2a2a2a;color:#999;border:1px solid #444;border-radius:4px;padding:3px 10px;cursor:pointer;font-size:11px;">Cancel</button>
         `;
 
+        markToolashaSurface(popup, 'popover');
         document.body.appendChild(popup);
         this._deletePopup = popup;
 

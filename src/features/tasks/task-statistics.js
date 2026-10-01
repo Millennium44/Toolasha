@@ -25,6 +25,7 @@ import { buildTaskStatisticsCsv } from './task-statistics-export.js';
 import { timeReadable, formatKMB, formatDateTime } from '../../utils/formatters.js';
 import { analyzeTaskPayouts, MIN_CLAIMS } from '../../utils/task-payout-analysis.js';
 import { TOOLASHA } from '../../utils/selectors.js';
+import { markToolashaSurface } from '../../utils/surface-marker.js';
 
 /** formatKMB, on a rounded figure — the shape every money row in this panel uses. */
 const roundedKMB = (value) => formatKMB(Math.round(value));
@@ -627,6 +628,7 @@ class TaskStatistics {
         };
 
         overlay.appendChild(popup);
+        markToolashaSurface(overlay, 'modal');
         document.body.appendChild(overlay);
         this.overlay = overlay;
     }

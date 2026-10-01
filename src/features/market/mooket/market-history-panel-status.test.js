@@ -93,6 +93,12 @@ function statusText() {
     return panel.historyStatusEl.style.display === 'none' ? '' : panel.historyStatusEl.textContent;
 }
 
+describe('the panel is a text-appearance surface', () => {
+    test('buildPanel marks the history panel so the text size and font reach it', () => {
+        expect(document.getElementById('mwi-market-history-panel').getAttribute('data-toolasha-surface')).toBe('panel');
+    });
+});
+
 describe('a null answer while the shared cool-down is active', () => {
     test('shows a plain status line, with how long is left, in place of the chart', async () => {
         historyApi.rows = null;

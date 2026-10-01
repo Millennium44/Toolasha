@@ -44,6 +44,7 @@ import {
     totalsSessions,
 } from './alchemy-pre-fix-sessions.js';
 import { getAlchemyOutputShopValue, describeShopValue } from './alchemy-shop-value.js';
+import { markToolashaSurface } from '../../utils/surface-marker.js';
 
 const CATALYST_OF_TRANSMUTATION_HRID = '/items/catalyst_of_transmutation';
 const PRIME_CATALYST_HRID = '/items/prime_catalyst';
@@ -426,6 +427,7 @@ class TransmuteHistoryViewer {
         content.appendChild(totalsContainer);
         content.appendChild(pagination);
         this.modal.appendChild(content);
+        markToolashaSurface(this.modal, 'modal');
         document.body.appendChild(this.modal);
 
         // Close on backdrop click
@@ -2104,6 +2106,7 @@ class TransmuteHistoryViewer {
         popup.style.left = `${rect.left}px`;
         popup.style.zIndex = '10002';
 
+        markToolashaSurface(popup, 'popover');
         document.body.appendChild(popup);
         this.activeFilterPopup = popup;
         this.activeFilterButton = buttonElement;

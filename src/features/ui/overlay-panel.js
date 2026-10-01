@@ -120,6 +120,7 @@ import {
     pauseForManualChoice,
 } from './overlay-layouts.js';
 import { hasCoarsePointer } from '../../utils/mobile.js';
+import { markToolashaSurface } from '../../utils/surface-marker.js';
 import {
     columnsForLayout,
     MAX_SPAN,
@@ -1364,7 +1365,7 @@ class OverlayPanel {
     _createPicker() {
         const picker = document.createElement('div');
         // Read by text-appearance.js: the popover takes the Toolasha text size and font
-        picker.setAttribute('data-toolasha-surface', 'popover');
+        markToolashaSurface(picker, 'popover');
         Object.assign(picker.style, {
             display: 'none',
             position: 'fixed',

@@ -10,6 +10,7 @@ import config from '../../core/config.js';
 import { createTimerRegistry } from '../../utils/timer-registry.js';
 import { bringPanelToFront } from '../../utils/panel-z-index.js';
 import { askChoice } from '../../utils/choice-dialog.js';
+import { markToolashaSurface } from '../../utils/surface-marker.js';
 
 /**
  * How many team-and-dungeon pairs may be offered as buttons before the panel is
@@ -898,6 +899,7 @@ class DungeonTrackerUIInteractions {
             pointer-events: none;
         `;
 
+        markToolashaSurface(notification, 'popover');
         document.body.appendChild(notification);
 
         // Fade out and remove after 2 seconds

@@ -33,6 +33,7 @@ import {
     sharedProfileWarning,
 } from '../../utils/shared-profile-status.js';
 import { fetchLoadout, getLoadout, isViewLoadoutAvailable, VIEW_LOADOUT_CONTEXT } from '../../utils/view-loadout.js';
+import { markToolashaSurface } from '../../utils/surface-marker.js';
 
 const ACCENT = '#4a9eff';
 const ACCENT_BG = 'rgba(74, 158, 255, 0.12)';
@@ -1985,6 +1986,7 @@ export class SimEditor {
         backdrop.addEventListener('click', closePicker);
 
         document.body.appendChild(backdrop);
+        markToolashaSurface(popup, 'popover');
         document.body.appendChild(popup);
         renderList('');
         searchInput.focus();
@@ -2127,6 +2129,7 @@ export class SimEditor {
         backdrop.addEventListener('click', closePicker);
 
         document.body.appendChild(backdrop);
+        markToolashaSurface(popup, 'popover');
         document.body.appendChild(popup);
         renderList('');
         searchInput.focus();
@@ -2276,6 +2279,7 @@ export class SimEditor {
         backdrop.addEventListener('click', closePicker);
 
         document.body.appendChild(backdrop);
+        markToolashaSurface(popup, 'popover');
         document.body.appendChild(popup);
         renderList('');
         searchInput.focus();
@@ -2564,6 +2568,7 @@ export class SimEditor {
         backdrop.addEventListener('click', closeEditor);
 
         document.body.appendChild(backdrop);
+        markToolashaSurface(popup, 'popover');
         document.body.appendChild(popup);
         renderRows();
     }

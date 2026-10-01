@@ -14,6 +14,7 @@ import { createTimerRegistry } from '../../utils/timer-registry.js';
 import { onDetailPanel, resolveDetailPanel } from '../../utils/action-panel-helper.js';
 import { PANEL_Z_CAP } from '../../utils/panel-z-index.js';
 import { release, reserve } from '../../utils/inventory-reservations.js';
+import { markToolashaSurface } from '../../utils/surface-marker.js';
 
 const PRODUCTION_TYPES = [
     '/action_types/brewing',
@@ -280,6 +281,7 @@ function showBreakdownModal(budget, result) {
         modal.appendChild(note);
     }
     overlay.appendChild(modal);
+    markToolashaSurface(overlay, 'modal');
     document.body.appendChild(overlay);
 
     // close() is reachable three ways (×, backdrop click, Escape), but only the Escape path used

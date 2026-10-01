@@ -22,6 +22,7 @@ import { calculateTaskTokenValue } from './task-profit-calculator.js';
 import { readVisibleTaskRatings } from './task-profit-display.js';
 import { isCardInConfirmState, armConfirmSettleWatch, onConfirmFlowSettled } from './task-card-state.js';
 import { PANEL_Z_CAP } from '../../utils/panel-z-index.js';
+import { markToolashaSurface } from '../../utils/surface-marker.js';
 
 const STORAGE_KEY_PREFIX = 'taskAutoRerollHrids';
 const PROTECTED_KEY_PREFIX = 'taskProtectedHrids';
@@ -594,6 +595,7 @@ class TaskAutoReroll {
         popup.appendChild(header);
         popup.appendChild(searchDiv);
         popup.appendChild(listContainer);
+        markToolashaSurface(popup, 'popover');
         document.body.appendChild(popup);
 
         renderList('');

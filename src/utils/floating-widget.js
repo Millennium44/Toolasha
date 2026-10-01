@@ -22,6 +22,7 @@
 
 import config from '../core/config.js';
 import storage from '../core/storage.js';
+import { markToolashaSurface } from './surface-marker.js';
 
 const LABEL_CSS = 'display:flex; align-items:center; gap:6px; font-size:11px; white-space:nowrap;';
 
@@ -140,6 +141,7 @@ export function createFloatingWidget({
 } = {}) {
     const element = document.createElement('div');
     element.id = id;
+    markToolashaSurface(element, 'panel');
     element.style.cssText =
         `position:fixed; top:${top}; right:${right}; z-index:${zIndex || config.Z_FLOATING_PANEL || 9000}; ` +
         'display:flex; flex-direction:column; align-items:stretch; gap:6px; padding:5px 9px; border-radius:7px; ' +
