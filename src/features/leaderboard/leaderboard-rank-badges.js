@@ -703,6 +703,11 @@ class LeaderboardRankBadges {
         this.boards = {};
     }
 
+    /** Test-only: drops the account-wide record from memory so cases stay isolated. */
+    resetRecordForTests() {
+        this.record.reset();
+    }
+
     cleanup() {
         this.unwatchSetting?.();
         this.unwatchSetting = null;
@@ -710,8 +715,8 @@ class LeaderboardRankBadges {
         // The open view survives a settings restart (the game does not resend the board it is showing)
         // and is forgotten only here
         this.opened = {};
-        // A full teardown is the one place the account's record is dropped from memory
-        this.record.reset();
+        // The record is account-wide and survives a character switch: resetting it here would drop a save still
+        // awaiting its read (storage.flushAll cannot see it). The next initialize folds storage under memory.
         this.storedFuture = false;
         this.messageSeen = false;
         this.boardType = 'standard';
