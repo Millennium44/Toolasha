@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Chat history shared between characters
+
+- Saved chat history for public channels is now shared by all your characters, and guild chat by characters in the same guild, so it is stored once instead of per character; party and whispers stay per character. Existing history is merged in on first load, and several game tabs saving at once merge instead of overwriting each other.
+
 ### Chat history keeps its order and its older lines
 
 - Restored chat history no longer shows lines newer than where the game's own messages begin, so lines are no longer out of order or shown twice.
