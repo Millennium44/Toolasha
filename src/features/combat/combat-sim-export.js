@@ -9,6 +9,7 @@ import dataManager from '../../core/data-manager.js';
 import storage from '../../core/storage.js';
 import { runningCombatAction } from '../../utils/combat-actions.js';
 import { BATTLE_BRIDGE_KEY, battleBridgeKeyFor } from '../../utils/battle-bridge-keys.js';
+import { gmGetValue } from '../../utils/gm-traffic.js';
 import { sharedProfileStatus, sharedProfileWarning } from '../../utils/shared-profile-status.js';
 
 /**
@@ -62,7 +63,7 @@ export function checkBridgeStamp(key, label, { enforceOwner, expectedCharacterId
 
     let raw = null;
     try {
-        raw = GM_getValue(`${key}_meta`, null);
+        raw = gmGetValue(`${key}_meta`, null);
     } catch {
         raw = null;
     }
@@ -124,7 +125,7 @@ export function getCharacterData() {
     // Cross-domain fallback: read from GM storage (saved by game page)
     if (typeof GM_getValue !== 'undefined') {
         try {
-            const raw = GM_getValue('toolasha_init_character_data', null);
+            const raw = gmGetValue('toolasha_init_character_data', null);
             if (raw && checkBridgeStamp('toolasha_init_character_data', 'Character data', { enforceOwner: true })) {
                 return JSON.parse(raw);
             }
@@ -144,10 +145,10 @@ export function getCharacterData() {
  */
 function bridgedSimCharacterId() {
     try {
-        const raw = GM_getValue('toolasha_init_character_data', null);
+        const raw = gmGetValue('toolasha_init_character_data', null);
         const payloadId = (raw && JSON.parse(raw)?.character?.id) || null;
         if (payloadId) return payloadId;
-        const meta = JSON.parse(GM_getValue('toolasha_init_character_data_meta', null) || 'null');
+        const meta = JSON.parse(gmGetValue('toolasha_init_character_data_meta', null) || 'null');
         return meta?.characterId || null;
     } catch {
         return null;
@@ -170,7 +171,7 @@ export function getBattleData() {
             const simCharacterId = bridgedSimCharacterId();
             if (simCharacterId != null) {
                 const slot = battleBridgeKeyFor(simCharacterId);
-                const own = GM_getValue(slot, null);
+                const own = gmGetValue(slot, null);
                 if (
                     own &&
                     checkBridgeStamp(slot, 'Battle data', { enforceOwner: true, expectedCharacterId: simCharacterId })
@@ -178,7 +179,7 @@ export function getBattleData() {
                     return JSON.parse(own);
                 }
             }
-            const raw = GM_getValue(BATTLE_BRIDGE_KEY, null);
+            const raw = gmGetValue(BATTLE_BRIDGE_KEY, null);
             if (
                 raw &&
                 checkBridgeStamp(BATTLE_BRIDGE_KEY, 'Battle data', {
@@ -207,7 +208,7 @@ export function getClientData() {
     if (data) return data;
     if (typeof GM_getValue !== 'undefined') {
         try {
-            const raw = GM_getValue('toolasha_init_client_data', null);
+            const raw = gmGetValue('toolasha_init_client_data', null);
             if (raw) {
                 checkBridgeStamp('toolasha_init_client_data', 'Client data', { enforceOwner: false });
                 return JSON.parse(raw);
@@ -237,7 +238,7 @@ export async function getProfileList() {
     // Cross-domain fallback: read from GM storage (saved by game page)
     if (typeof GM_getValue !== 'undefined') {
         try {
-            const raw = GM_getValue('toolasha_profile_list', null);
+            const raw = gmGetValue('toolasha_profile_list', null);
             if (raw) {
                 checkBridgeStamp('toolasha_profile_list', 'Profile list', { enforceOwner: false });
                 return JSON.parse(raw);

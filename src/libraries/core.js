@@ -31,6 +31,7 @@ import {
 import tooltipObserver from '../core/tooltip-observer.js';
 import * as dualInstallGuard from '../core/dual-install-guard.js';
 import performanceMonitor, { installIntervalTracing } from '../utils/performance-monitor.js';
+import * as gmTraffic from '../utils/gm-traffic.js';
 
 // API modules
 import marketAPI from '../api/marketplace.js';
@@ -75,6 +76,7 @@ toolashaRoot.Core = {
     networkAlert,
     performanceMonitor,
     installIntervalTracing,
+    gmTraffic,
 };
 
 console.log('[Toolasha] Core library loaded');
