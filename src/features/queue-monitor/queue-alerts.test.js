@@ -48,6 +48,7 @@ beforeEach(() => {
     game.notified = [];
     game.settings = { notifications_otherCharacterIdle: true };
     queueAlerts.disable();
+    queueAlerts.announced.clear();
 });
 
 describe('queue alerts', () => {
@@ -120,6 +121,18 @@ describe('queue alerts', () => {
     test('initialize checks immediately, for an alt that stopped while the page was shut', () => {
         game.snapshots = [snapshot('Alt', { seconds: 60, agoMs: 3600_000 })];
 
+        queueAlerts.initialize();
+
+        expect(game.notified).toHaveLength(1);
+        queueAlerts.disable();
+    });
+
+    test('a disable and re-initialize (character switch) does not re-announce', () => {
+        game.snapshots = [snapshot('Alt', { seconds: 60, agoMs: 3600_000 })];
+        queueAlerts.initialize();
+        expect(game.notified).toHaveLength(1);
+
+        queueAlerts.disable();
         queueAlerts.initialize();
 
         expect(game.notified).toHaveLength(1);
