@@ -236,6 +236,20 @@ describe('getBattleData on a simulator page', () => {
         expect(getBattleData().players[0].character.id).toBe('char-b');
     });
 
+    test("a stale owner stamp beside a new character snapshot does not pick the previous character's battle", () => {
+        store({
+            // The snapshot for B landed but its stamp write failed, leaving A's
+            toolasha_init_character_data: JSON.stringify({ character: { id: 'char-b', name: 'char-b' } }),
+            toolasha_init_character_data_meta: metaFor('char-a'),
+            'toolasha_new_battle:char-b': battle('char-b'),
+            'toolasha_new_battle:char-b_meta': metaFor('char-b'),
+            'toolasha_new_battle:char-a': battle('char-a'),
+            'toolasha_new_battle:char-a_meta': metaFor('char-a'),
+        });
+
+        expect(getBattleData().players[0].character.id).toBe('char-b');
+    });
+
     test('falls back to the legacy slot only when its owner is the simulator character', () => {
         store({
             ...simOpenedFor('char-b'),

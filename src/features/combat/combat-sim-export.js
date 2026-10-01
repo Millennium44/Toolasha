@@ -138,15 +138,17 @@ export function getCharacterData() {
 
 /**
  * The character a simulator page was opened for, from the character snapshot the game tab writes
- * only when it opens a simulator. Its owner stamp is read first; the payload's own id is the fallback.
+ * only when it opens a simulator. The payload's own id comes first: the owner stamp is a separate
+ * write that can fail and leave the previous character's stamp beside a new payload.
  * @returns {string|number|null}
  */
 function bridgedSimCharacterId() {
     try {
-        const meta = JSON.parse(GM_getValue('toolasha_init_character_data_meta', null) || 'null');
-        if (meta?.characterId) return meta.characterId;
         const raw = GM_getValue('toolasha_init_character_data', null);
-        return (raw && JSON.parse(raw)?.character?.id) || null;
+        const payloadId = (raw && JSON.parse(raw)?.character?.id) || null;
+        if (payloadId) return payloadId;
+        const meta = JSON.parse(GM_getValue('toolasha_init_character_data_meta', null) || 'null');
+        return meta?.characterId || null;
     } catch {
         return null;
     }
