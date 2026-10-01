@@ -6,6 +6,11 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Audit round: idle alerts and the skilling optimizer
+
+- The idle-alt alert no longer repeats for the same alt every time you switch characters.
+- Closing a skilling optimizer picker right after opening it no longer leaves behind a listener that closes the next picker when you click inside it.
+
 ### Rank badges cover every player leaderboard
 
 - Rank badges now include the Collection Points, Bestiary Points and Labyrinth Points leaderboards, which were missing (reported by a player).
