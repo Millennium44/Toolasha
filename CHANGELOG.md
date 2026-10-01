@@ -9,6 +9,7 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 ### PFormance shows Tampermonkey traffic and every open tab
 
 - With the PFormance extras on (◎), the panel counts every Toolasha save, read, delete and network request through Tampermonkey with their sizes and hourly rate, and lists every open game tab with its character, uptime and traffic.
+- The PFormance extras (◎) toggle is now remembered across reloads; before, it silently reset.
 
 ### Fewer Tampermonkey storage writes in combat
 
