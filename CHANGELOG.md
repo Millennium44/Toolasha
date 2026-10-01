@@ -6,8 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
-### Audit round: rank badges and guild history
+### Rank badges and guild history keep what they saved
 
+- Rank badges no longer lose cached leaderboards when another tab or device saved boards, when storage briefly fails to read, or when you change a badge setting or character mid-save.
+- Switching characters while the guild leaderboard is still loading no longer brings back the previous character's guild and member history.
 - The rank-badge cache now folds what is stored into each save instead of overwriting it, so boards saved by another tab or a sync, or an unreadable store, no longer wipe cached boards.
 - A character switch while the guild XP tracker is still loading no longer restores the previous character's guild name and member history.
 
