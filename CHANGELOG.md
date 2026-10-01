@@ -6,6 +6,12 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Mana planner, Bulk Sell and ledger leftovers
+
+- The mana planner no longer subtracts natural regen for time you spent dead before respawning, so its target after a death is not too low.
+- Bulk Sell's vendor Confirm checks the item menu's name exactly, so a similarly named item can never be sold in its place.
+- On the test server, a trial week whose newest cycle already ran every trial is counted as finished.
+
 ### Audit round: Bulk Sell
 
 - Bulk Sell's vendor Confirm stops waiting if you click the game's own sell button during its arm-and-confirm step, so that sale can't be sent twice.

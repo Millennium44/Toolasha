@@ -991,6 +991,19 @@ class BulkSellAssistant {
     }
 
     /**
+     * The item name in an item menu's header, which reads "<count> <Item Name>".
+     * Compared for equality: a substring match let a queued "Milk" pass for a
+     * "Verdant Milk" menu.
+     * @param {HTMLElement} menu
+     * @returns {string|null} Name with its leading count removed, or null when no header is found
+     */
+    _menuTitleName(menu) {
+        const header = menu.querySelector('[class*="Item_name"]');
+        const text = (header?.textContent || '').trim();
+        return text ? text.replace(/^[\d,.]+[KMB]?\s+/, '') : null;
+    }
+
+    /**
      * The enhancement level the modal is set to.
      *
      * The label is a *sibling* of the field's wrapper in the game's markup, not
@@ -1119,8 +1132,8 @@ class BulkSellAssistant {
      *
      * Selectors (assumed from the game's markup, must be checked live): the menu
      * is `[class*="Item_actionMenu"]` (the one `_openVendorSell` waits for); the
-     * item is read from its icon `svg use` href, falling back to the queued
-     * item's name appearing in the menu text; the quantity is the menu's first
+     * item is read from its icon `svg use` href, falling back to the header
+     * name equalling the queued item's name; the quantity is the menu's first
      * input; the button is found by its label `Sell For <amount> Coin(s)`, never
      * by position.
      *
@@ -1144,7 +1157,7 @@ class BulkSellAssistant {
                 const name = dataManager.getInitClientData()?.itemDetailMap?.[hrid]?.name || hrid.split('/').pop();
                 return { why: `the item menu is for ${name}, not ${this.current.name}` };
             }
-        } else if (!this.current.name || !(menu.textContent || '').includes(this.current.name)) {
+        } else if (!this.current.name || this._menuTitleName(menu) !== this.current.name) {
             return { why: 'the item menu does not say what it is selling' };
         }
 
