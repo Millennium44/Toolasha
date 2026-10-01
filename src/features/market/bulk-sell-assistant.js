@@ -1253,7 +1253,18 @@ class BulkSellAssistant {
         let ownClick = false;
         let menuClicked = false;
         const onClick = (event) => {
-            if (!ownClick && event.target?.closest?.('[class*="Item_actionMenu"]')) menuClicked = true;
+            if (ownClick || !event.target?.closest?.('[class*="Item_actionMenu"]')) return;
+            menuClicked = true;
+            // The player's click on the armed button is the sale itself. It is let
+            // through; the guard goes up now (a listener added mid-dispatch skips
+            // this event) so a second click or a double-click's other half is
+            // swallowed, and the step counts as sent so our own press never follows.
+            const sold = event.target.closest('button');
+            if (sold && /^confirm\s+sell for\b/i.test(sold.textContent.trim())) {
+                this._confirmedStep = key;
+                this._guardSale(sold);
+                this._render();
+            }
         };
         document.addEventListener('click', onClick, true);
         try {
