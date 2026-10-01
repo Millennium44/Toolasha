@@ -769,6 +769,28 @@ describe('saveCombatSimData GM-storage bridge stamping', () => {
         }
     });
 
+    test('a fingerprint whose payload is missing does not skip the client data write', () => {
+        const message = msg('init_client_data', { levelExperienceTable: [1, 2] });
+        const store = {};
+        globalThis.GM_setValue = vi.fn((k, v) => {
+            store[k] = v;
+        });
+        globalThis.GM_getValue = vi.fn((k, d) => (k in store ? store[k] : d));
+        try {
+            webSocketHook.processMessage(message);
+            webSocketHook.saveCombatSimSnapshot({ character: {} }, { characterId: 1 });
+            // The small fingerprint survived (synced) but the multi-MB payload did not
+            delete store.toolasha_init_client_data;
+            globalThis.GM_setValue.mockClear();
+
+            webSocketHook.saveCombatSimSnapshot({ character: {} }, { characterId: 1 });
+            expect(store.toolasha_init_client_data).toBe(message);
+        } finally {
+            delete globalThis.GM_getValue;
+            webSocketHook.pendingClientData = null;
+        }
+    });
+
     test('stamps toolasha_init_client_data and toolasha_new_battle with the last character seen on this tab', async () => {
         webSocketHook.processMessage(msg('init_character_data', { character: { id: 'char-7', name: 'Zog' } }));
         await new Promise((r) => setTimeout(r, 0));

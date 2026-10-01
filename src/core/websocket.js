@@ -959,10 +959,19 @@ class WebSocketHook {
                 }
                 pending.fingerprint = `${text.length}:${hash >>> 0}`;
             }
-            const stored = typeof GM_getValue === 'undefined' ? null : GM_getValue(CLIENT_DATA_FINGERPRINT_KEY, null);
-            if (stored === pending.fingerprint) return false;
+            // The small fingerprint can survive or sync without its multi-MB companion (see
+            // settings-mirror.js), so the shortcut also needs the stored payload to be this one.
+            // Only runs at sim open; a string compare is cheap next to the write it saves.
+            if (
+                typeof GM_getValue !== 'undefined' &&
+                GM_getValue(CLIENT_DATA_FINGERPRINT_KEY, null) === pending.fingerprint &&
+                GM_getValue('toolasha_init_client_data', null) === pending.message
+            ) {
+                return false;
+            }
             GM_setValue('toolasha_init_client_data', pending.message);
-            this.writeBridgeMeta('toolasha_init_client_data_meta');
+            // A failed meta stamp leaves the fingerprint unwritten so the next sim open retries
+            if (!this.writeBridgeMeta('toolasha_init_client_data_meta')) return false;
             GM_setValue(CLIENT_DATA_FINGERPRINT_KEY, pending.fingerprint);
             return true;
         } catch (error) {
