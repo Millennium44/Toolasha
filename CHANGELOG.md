@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Trial ledger on the test server counts every finished cycle
+
+- On the test server, the trial ledger now places older trials that lack a cycle tag by when they were recorded, and counts a cycle as finished an hour after its fight, so a running week no longer reads as fewer cycles than it ran.
+
 ### Market stats note no longer cut off
 
 - The market stats overlay's "no trades — ask/bid only" note was hidden under the order book; the affected row is now marked with * and the note shows when you hover it.
