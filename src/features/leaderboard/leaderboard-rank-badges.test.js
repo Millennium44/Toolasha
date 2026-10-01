@@ -224,6 +224,27 @@ describe('leaderboard rank badges', () => {
         expect(Object.keys(game.saved.rankBoards)).toEqual(['standard|foraging']);
     });
 
+    test('a future-dated stored board does not outrank a board captured after the load', async () => {
+        game.mode = 'local';
+        game.saved.rankBoards = {
+            'standard|milking': { at: Date.now() + 3 * 86400000, source: 'local', rows: [['Old', 1]] },
+        };
+        await leaderboardRankBadges.initialize();
+        await vi.advanceTimersByTimeAsync(1000);
+
+        game.wsHandlers.leaderboard_updated({
+            leaderboardCategory: 'milking',
+            gameModeFilter: 'standard',
+            leaderboard: { rows: [{ name: 'Alice', rank: 7 }] },
+        });
+        await flush();
+        await vi.advanceTimersByTimeAsync(1000);
+        await flush();
+
+        expect(game.saved.rankBoards['standard|milking'].rows).toEqual([['Alice', 7]]);
+        expect(game.saved.rankBoards['standard|milking'].at).toBeLessThanOrEqual(Date.now());
+    });
+
     test('the tooltip age is recomputed on hover, not frozen at decoration', async () => {
         game.mode = 'local';
         await leaderboardRankBadges.initialize();

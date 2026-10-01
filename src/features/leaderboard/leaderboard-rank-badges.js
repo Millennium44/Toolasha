@@ -116,6 +116,16 @@ const STYLE_TEXT = `
 @media (prefers-reduced-motion:reduce){[${BADGE_ATTR}][data-top-five]::after{animation:none;display:none}}
 `;
 
+/**
+ * @param {*} stored - A cache as read from storage
+ * @returns {boolean} Whether any board is stamped later than now
+ */
+function hasFutureBoard(stored) {
+    if (!stored || typeof stored !== 'object') return false;
+    const now = Date.now();
+    return Object.values(stored).some((board) => Number.isFinite(board?.at) && board.at > now);
+}
+
 registerSyncMerge({ store: STORE_NAME, key: STORAGE_KEY, merge: mergeBoards, label: 'Leaderboard rank badges' });
 
 /**
@@ -255,9 +265,14 @@ class LeaderboardRankBadges {
             store: STORE_NAME,
             scoped: false,
             empty: () => ({}),
-            merge: mergeBoards,
+            merge: (stored, memory) => {
+                if (hasFutureBoard(stored)) this.storedFuture = true;
+                return mergeBoards(stored, memory);
+            },
             label: 'LeaderboardRankBadges',
         });
+        // Set when a fold read a board stamped in the future; see restart()
+        this.storedFuture = false;
         this.index = new Map();
         this.spriteUrls = { skills: null, misc: null };
         this.timers = createTimerRegistry();
@@ -333,8 +348,15 @@ class LeaderboardRankBadges {
 
         this.installStyle();
         this.record.reset();
-        await this.record.load();
+        const readable = await this.record.load();
         if (runId !== this.runId) return;
+        // The load capped a future-dated board in memory only. Left stored, every later save re-reads the raw stamp,
+        // caps it to a later "now" and lets it overwrite a board captured in between.
+        if (readable && this.storedFuture) {
+            this.storedFuture = false;
+            await this.record.save({ overwrite: true });
+            if (runId !== this.runId) return;
+        }
         this.boards = this.record.get();
         this.rebuildIndex();
 
