@@ -1293,8 +1293,21 @@ describe('confirming from the strip', () => {
 
             expect(armClicks).toBe(1);
             expect(gameClicks).toBe(1);
-            expect(bulkSell._confirmSent()).toBe(false);
-            expect(bulkSell.confirmNote).toMatch(/clicked while Confirm waited/);
+            expect(bulkSell._confirmSent()).toBe(true);
+        });
+
+        test('a second player click after the armed-button click during the wait sends no second sale', async () => {
+            const menu = openMenu();
+            vendorRun();
+            const sell = menu.querySelector('.Button_sell__x');
+
+            confirmBtn().click();
+            sell.click();
+            sell.click();
+            await vi.advanceTimersByTimeAsync(1200);
+
+            expect(gameClicks).toBe(1);
+            bulkSell._releaseSaleGuard();
         });
 
         test('a player click on the still-armed button after our press sends no second sale', async () => {
