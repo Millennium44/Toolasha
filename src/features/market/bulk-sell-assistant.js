@@ -1346,15 +1346,21 @@ class BulkSellAssistant {
      * nothing yet to confirm and skipping is the other button's job.
      */
     _onMainClick() {
-        this._navigatedSinceClick = false;
+        // The flag is cleared only where the click is consumed: an ignored click
+        // (a double-click's second press while `preparing`) must not erase the
+        // navigation the first press already made, or a book that then fails
+        // would auto-open the next one.
         if (this.state === 'idle' || this.state === 'done') {
+            this._navigatedSinceClick = false;
             this._start();
         } else if (this.state === 'awaiting_next') {
+            this._navigatedSinceClick = false;
             this.index++;
             this.state = 'preparing';
             this._render();
             this._prepareCurrent();
         } else if (this.state === 'awaiting_confirm') {
+            this._navigatedSinceClick = false;
             this._onConfirmClick();
         }
     }
