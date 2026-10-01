@@ -66,7 +66,7 @@ vi.mock('../../core/storage.js', () => ({
 import bleedCapture from '../../utils/__fixtures__/labyrinth-pyre-hunter-bleed.json';
 
 const manaTracker = (await import('./mana-tracker.js')).default;
-const { manaPanel, resetManaTally, resetMpPlanner, manaPerMinuteMeasured, mpSupplyPlan } =
+const { manaPanel, resetManaTally, resetMpPlanner, manaPerMinuteMeasured, mpSupplyPlan, naturalRegenPerMinute } =
     await import('./mana-tracker.js');
 
 const MINUTE_NS = 60e9;
@@ -484,5 +484,91 @@ describe('natural regeneration', () => {
 
         expect(manaPanel.panel.querySelector('[data-mp-target]').value).toBe('600');
         expect(text()).not.toContain('Natural regen');
+    });
+});
+
+describe('natural regeneration while dead', () => {
+    // 2,000 max MP at the 1% floor: 20 per tick, 120 MP/min while alive
+    const battle = () => ({
+        players: [{ character: { id: 'char1' }, maxManapoints: 2000, combatDetails: { combatStats: {} } }],
+    });
+    const cast = () => game.handlers['battle_consumable_ability_updated']({ ability: '/abilities/fireball' });
+    const hp = (cHP, slot = '0') => game.handlers['battle_updated']({ pMap: { [slot]: { cHP } } });
+    /** Cast every 10 s for the given seconds */
+    const castFor = (seconds) => {
+        for (let i = 0; i < seconds / 10; i++) {
+            vi.advanceTimersByTime(10_000);
+            cast();
+        }
+    };
+
+    test('two dead minutes of a ten-minute span leave eight minutes of regen', () => {
+        game.handlers['new_battle'](battle());
+        castFor(170);
+        vi.advanceTimersByTime(10_000);
+        hp(0);
+        vi.advanceTimersByTime(120_000);
+        game.handlers['new_battle'](battle());
+        castFor(300);
+
+        expect(naturalRegenPerMinute()).toBeCloseTo(96, 6);
+    });
+
+    test('no death leaves the deduction unchanged', () => {
+        game.handlers['new_battle'](battle());
+        castFor(600);
+        hp(500);
+
+        expect(naturalRegenPerMinute()).toBe(120);
+    });
+
+    test('a death before a five-minute gap is clipped to the stretch and never goes negative', () => {
+        game.handlers['new_battle'](battle());
+        castFor(60);
+        hp(0);
+        vi.advanceTimersByTime(400_000);
+        game.handlers['new_battle'](battle());
+        castFor(120);
+
+        // The 400 s silence is neither observed time nor dead time: 180 s observed, none of it dead
+        expect(naturalRegenPerMinute()).toBe(120);
+    });
+
+    test('a death still open at the end of the span counts only up to the last counted event', () => {
+        game.handlers['new_battle'](battle());
+        castFor(120);
+        hp(0);
+        vi.advanceTimersByTime(60_000);
+        hp(0);
+
+        expect(naturalRegenPerMinute()).toBe(120);
+    });
+
+    test('rising above 0 HP closes the interval, and another slot dying is not the player', () => {
+        game.handlers['new_battle'](battle());
+        castFor(60);
+        hp(0, '1');
+        castFor(60);
+        hp(0);
+        vi.advanceTimersByTime(60_000);
+        game.handlers['new_battle'](battle());
+        castFor(60);
+        hp(300);
+
+        // 180 s observed (0-180 plus the 60 s dead window inside it): 60 s dead
+        expect(naturalRegenPerMinute()).toBeCloseTo(120 * (1 - 60 / 240), 6);
+    });
+
+    test('resetting the tally forgets dead time', () => {
+        game.handlers['new_battle'](battle());
+        castFor(60);
+        hp(0);
+        vi.advanceTimersByTime(60_000);
+        game.handlers['new_battle'](battle());
+        resetManaTally();
+        game.handlers['new_battle'](battle());
+        castFor(120);
+
+        expect(naturalRegenPerMinute()).toBe(120);
     });
 });
