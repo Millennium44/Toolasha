@@ -5007,9 +5007,11 @@ class CombatSimUI {
                 // zone with a row in this run's table has any to show
                 const detailKey = segment.zoneHrid;
                 const expandable = this._allZonesDetailRows?.has(detailKey);
-                const isOpen = expandable && this._bestiaryPlanOpen?.has(detailKey);
+                // Open state is per step: a zone revisited non-adjacently shares figures, not a disclosure
+                const openKey = `${index}|${detailKey}`;
+                const isOpen = expandable && this._bestiaryPlanOpen?.has(openKey);
                 const rowAttrs = expandable
-                    ? ` class="mwi-csim-plan-row" data-key="${esc(detailKey)}" tabindex="0" role="button" ` +
+                    ? ` class="mwi-csim-plan-row" data-key="${esc(detailKey)}" data-open-key="${esc(openKey)}" tabindex="0" role="button" ` +
                       `aria-expanded="${isOpen ? 'true' : 'false'}" title="Show this zone's sim results" ` +
                       `style="cursor:pointer; border-bottom:1px solid #1a1a1a;${stripe}"`
                     : ` style="border-bottom:1px solid #1a1a1a;${stripe}"`;
@@ -5166,13 +5168,14 @@ class CombatSimUI {
      */
     _toggleBestiaryDetail(tr) {
         const key = tr.dataset.key;
+        const openKey = tr.dataset.openKey || key;
         if (!this._bestiaryPlanOpen) this._bestiaryPlanOpen = new Set();
-        const open = !this._bestiaryPlanOpen.has(key);
+        const open = !this._bestiaryPlanOpen.has(openKey);
         const next = tr.nextElementSibling;
         if (open) {
             const html = this._bestiaryDetailRowHtml(key);
             if (!html) return;
-            this._bestiaryPlanOpen.add(key);
+            this._bestiaryPlanOpen.add(openKey);
             if (!(next && next.classList.contains('mwi-csim-plan-detail'))) {
                 // A bare <tr> only parses inside a table section
                 const holder = document.createElement('tbody');
@@ -5180,7 +5183,7 @@ class CombatSimUI {
                 tr.after(...holder.children);
             }
         } else {
-            this._bestiaryPlanOpen.delete(key);
+            this._bestiaryPlanOpen.delete(openKey);
             if (next && next.classList.contains('mwi-csim-plan-detail')) next.remove();
         }
         tr.setAttribute('aria-expanded', open ? 'true' : 'false');

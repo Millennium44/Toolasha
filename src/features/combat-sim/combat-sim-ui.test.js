@@ -6818,6 +6818,31 @@ describe('the Bestiary plan step detail row', () => {
         expect(detailEls()).toHaveLength(0);
     });
 
+    test('a zone revisited at another step opens and closes independently of its first visit', () => {
+        const real = ui._currentBestiaryPlan();
+        const seg = real.segments[0];
+        const other = { ...seg, zoneHrid: `${seg.zoneHrid}-other`, name: 'Other' };
+        vi.spyOn(ui, '_currentBestiaryPlan').mockReturnValue({
+            ...real,
+            segments: [seg, other, { ...seg }],
+        });
+        ui._drawBestiaryPlan();
+        const rows = () => [...ui.panel.querySelectorAll('tr.mwi-csim-plan-row')];
+        expect(rows()).toHaveLength(2);
+
+        click(rows()[0]);
+        expect(rows().map((r) => r.getAttribute('aria-expanded'))).toEqual(['true', 'false']);
+        expect(detailEls()).toHaveLength(1);
+
+        click(rows()[1]);
+        expect(rows().map((r) => r.getAttribute('aria-expanded'))).toEqual(['true', 'true']);
+        expect(detailEls()).toHaveLength(2);
+
+        click(rows()[1]);
+        expect(rows().map((r) => r.getAttribute('aria-expanded'))).toEqual(['true', 'false']);
+        expect(detailEls()).toHaveLength(1);
+    });
+
     test('Enter and Space toggle from the keyboard', () => {
         key(rowEl(), 'Enter');
         expect(detailEls()).toHaveLength(1);
