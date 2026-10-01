@@ -995,14 +995,7 @@ class SkillingSimulatorUI {
         document.body.appendChild(popup);
         this._picker = popup;
 
-        const closeHandler = (e) => {
-            if (!popup.contains(e.target) && e.target !== anchorEl) {
-                this._closePicker();
-                document.removeEventListener('click', closeHandler, true);
-            }
-        };
-        setTimeout(() => document.addEventListener('click', closeHandler, true), 100);
-        this._pickerCleanup = () => document.removeEventListener('click', closeHandler, true);
+        this._armOutsideClose(popup, anchorEl);
 
         search.focus();
     }
@@ -1045,6 +1038,27 @@ class SkillingSimulatorUI {
         }
 
         return row;
+    }
+
+    /**
+     * Close the open picker on the next click outside it. The listener is attached after a short
+     * delay so the click that opened the picker does not close it; the teardown cancels that
+     * pending attach too, otherwise a picker closed inside the delay (a double-click on a slot
+     * button) leaves a stray listener that closes whichever picker is open on its next click.
+     * @param {HTMLElement} popup
+     * @param {HTMLElement} anchorEl - Opening button; clicks on it are not "outside"
+     */
+    _armOutsideClose(popup, anchorEl) {
+        const closeHandler = (e) => {
+            if (!popup.contains(e.target) && e.target !== anchorEl) {
+                this._closePicker();
+            }
+        };
+        const timerId = setTimeout(() => document.addEventListener('click', closeHandler, true), 100);
+        this._pickerCleanup = () => {
+            clearTimeout(timerId);
+            document.removeEventListener('click', closeHandler, true);
+        };
     }
 
     _closePicker() {
@@ -1171,14 +1185,7 @@ class SkillingSimulatorUI {
         this._picker = popup;
         searchInput.focus();
 
-        const closeHandler = (e) => {
-            if (!popup.contains(e.target) && e.target !== anchorBtn) {
-                this._closePicker();
-                document.removeEventListener('click', closeHandler, true);
-            }
-        };
-        setTimeout(() => document.addEventListener('click', closeHandler, true), 100);
-        this._pickerCleanup = () => document.removeEventListener('click', closeHandler, true);
+        this._armOutsideClose(popup, anchorBtn);
     }
 
     // -------------------------------------------------------------------------
