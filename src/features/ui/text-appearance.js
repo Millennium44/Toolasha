@@ -36,6 +36,7 @@
  */
 
 import config from '../../core/config.js';
+import overlayPanel from './overlay-panel.js';
 import { addStyles, removeStyles } from '../../utils/dom.js';
 
 const STYLE_ID = 'toolasha-text-appearance';
@@ -85,8 +86,34 @@ const SELF_SCALED = ['#toolasha-settings-content'];
 /** The resize grip is sized and placed against the unzoomed root */
 const NOT_SCALED = ':not(.toolasha-resize-grip)';
 
-/** Text that is monospace on purpose keeps its face when a font is chosen */
-const KEEP_FACE = ':not(code):not(pre):not(kbd):not(samp):not([style*="monospace"])';
+/**
+ * Elements that are monospace on purpose: the tags, and anything whose inline style names a monospace
+ * family (most Toolasha panels style inline, so `[style*="monospace"]` also catches `ui-monospace`).
+ */
+const MONO_ROOTS = 'code, pre, kbd, samp, [style*="monospace"]';
+
+/** Not itself monospace: the game's body text uses this form, where an ancestor walk on every element is too dear */
+const KEEP_FACE_SELF = ':not(code):not(pre):not(kbd):not(samp):not([style*="monospace"])';
+
+/**
+ * Not monospace and not inside something monospace. CSS has no ancestor-exclusion shorthand, but
+ * `:not(<complex selector>)` is selectors level 4: `:not(:is(...) *)` drops every descendant. Without
+ * it a monospace container's children (the combat sim's event log rows) took the chosen face with
+ * `!important` while the container itself kept its own.
+ */
+const KEEP_FACE = `${KEEP_FACE_SELF}:not(:is(${MONO_ROOTS}) *)`;
+
+/**
+ * A dialog is zoomed with its margins, so at 110% to 150% its 320px minimum can exceed a phone's width and
+ * the centered backdrop clips both sides. Percentages resolve against the unzoomed backdrop, which `vw`
+ * (multiplied by the zoom) would not, so the dialog is capped to its container and scrolls past that.
+ * The pixel figures are the dialog's own 320px / 460px content widths plus its 32px padding and 2px border,
+ * restated because the cap is border-box.
+ */
+const DIALOG_FIT =
+    '[data-toolasha-surface="dialog"] > * { box-sizing: border-box !important; ' +
+    'min-width: min(354px, 100%) !important; max-width: min(494px, 100%) !important; ' +
+    'max-height: 100% !important; overflow-y: auto !important; }';
 
 /** Offered game text sizes, in percent. Never below 100: the game's own text is the floor */
 export const GAME_TEXT_SCALES = [100, 110, 125, 150];
@@ -151,7 +178,7 @@ const GAME_INHERITED_TEXT = moduleClass('Chat_chatChannel__');
 const GAME_FIXED_LAYOUTS = moduleClass('Item_itemContainer__');
 
 /** Game text that is monospace on purpose */
-const KEEP_GAME_FACE = `${KEEP_FACE}:not([class*="_itemKey__"])`;
+const KEEP_GAME_FACE = `${KEEP_FACE_SELF}:not([class*="_itemKey__"])`;
 
 /**
  * Read a percentage setting back as a multiplier.
@@ -208,6 +235,7 @@ export function buildToolashaTextCSS() {
         const targets = zoomTargets();
         parts.push(`${targets.join(',\n')} { zoom: ${num(scale)}; }`);
         parts.push(`${targets.map((target) => `${target} canvas`).join(',\n')} { zoom: ${num(1 / scale)}; }`);
+        parts.push(DIALOG_FIT);
     }
 
     const stack = FONT_STACKS[config.getSettingValue('ui_fontFamily', 'default')];
@@ -257,6 +285,23 @@ export function buildGameTextCSS() {
     return parts.join('\n');
 }
 
+/**
+ * Refit the overlay once the new stylesheet has laid out. A docked overlay's height comes only from
+ * its own `_fitDock`, and a zoom or font change moves its content without resizing any box it
+ * observes.
+ */
+function refitOverlayAfterLayout() {
+    const refit = () => {
+        try {
+            overlayPanel.refit();
+        } catch (error) {
+            console.error('[TextAppearance] Overlay refit failed:', error);
+        }
+    };
+    if (typeof requestAnimationFrame === 'function') requestAnimationFrame(refit);
+    else refit();
+}
+
 const textAppearance = {
     watchers: null,
 
@@ -269,7 +314,10 @@ const textAppearance = {
     initialize() {
         if (!this.watchers) {
             this.watchers = WATCHED.map((key) => {
-                const handler = () => this.apply();
+                const handler = () => {
+                    this.apply();
+                    refitOverlayAfterLayout();
+                };
                 config.onSettingChange(key, handler);
                 return { key, handler };
             });

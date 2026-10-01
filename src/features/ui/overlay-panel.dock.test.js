@@ -154,6 +154,22 @@ describe('docked into the character column', () => {
         expect(Number.parseInt(column.style.height, 10)).toBeLessThan(tall);
     });
 
+    test('refit() re-fits a docked panel without a window resize, and is a no-op while closed', () => {
+        const column = buildColumn();
+        window.innerHeight = 900;
+        expect(() => overlayPanel.refit()).not.toThrow();
+
+        overlayPanel.settings.docked = true;
+        overlayPanel.show();
+        const tall = Number.parseInt(column.style.height, 10);
+
+        // What a text scale change leaves behind: nothing resized, so no observer fires
+        window.innerHeight = 500;
+        overlayPanel.refit();
+
+        expect(Number.parseInt(column.style.height, 10)).toBeLessThan(tall);
+    });
+
     test('the column is handed back its own height when the panel leaves', () => {
         const column = buildColumn();
         overlayPanel.settings.docked = true;

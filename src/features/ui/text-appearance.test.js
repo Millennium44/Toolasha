@@ -5,7 +5,15 @@
 import { describe, test, expect, vi, beforeEach, afterEach } from 'vitest';
 import { settingsGroups } from '../../core/settings-schema.js';
 
-const state = vi.hoisted(() => ({ values: {}, listeners: new Map() }));
+const state = vi.hoisted(() => ({ values: {}, listeners: new Map(), refits: 0 }));
+
+vi.mock('./overlay-panel.js', () => ({
+    default: {
+        refit: () => {
+            state.refits += 1;
+        },
+    },
+}));
 
 vi.mock('../../core/config.js', () => ({
     default: {
@@ -38,6 +46,7 @@ function change(key, value) {
 const sheet = () => document.getElementById('toolasha-text-appearance');
 
 beforeEach(() => {
+    state.refits = 0;
     for (const key of Object.keys(state.values)) delete state.values[key];
 });
 
@@ -272,5 +281,63 @@ describe('game text', () => {
 
         change('ui_gameText', false);
         expect(sheet()).toBeNull();
+    });
+});
+
+describe('a text scale change while the overlay is docked', () => {
+    test('refits the overlay after layout, once per change, and not on the initial apply', async () => {
+        textAppearance.initialize();
+        await new Promise((resolve) => requestAnimationFrame(resolve));
+        // Frames queued by earlier tests' changes may land here; only this test's count matters
+        state.refits = 0;
+
+        change('ui_textScale', 125);
+        // The stylesheet is already there; the refit waits for the frame so it measures the new layout
+        expect(sheet()).not.toBeNull();
+        expect(state.refits).toBe(0);
+        await new Promise((resolve) => requestAnimationFrame(resolve));
+        await new Promise((resolve) => requestAnimationFrame(resolve));
+        expect(state.refits).toBe(1);
+    });
+});
+
+describe('monospace subtrees keep their face', () => {
+    test('the font rule excludes descendants of a monospace container, not only the container', () => {
+        state.values.ui_fontFamily = 'verdana';
+        const css = buildToolashaTextCSS();
+        expect(css).toContain(':not(:is(code, pre, kbd, samp, [style*="monospace"]) *)');
+    });
+
+    test('a plain element takes the font and a monospace container does not', () => {
+        state.values.ui_fontFamily = 'verdana';
+        const css = buildToolashaTextCSS();
+        document.body.innerHTML =
+            '<div data-toolasha-surface="panel"><div id="plain">a</div>' +
+            '<div style="font-family:monospace"><div id="row">b</div></div></div>';
+        const rule = css
+            .split('{')[0]
+            .split(/,\s*(?=\[data|#)/)
+            .map((selector) => selector.trim());
+        const matches = (el) => rule.some((selector) => el.matches(selector));
+        expect(matches(document.getElementById('plain'))).toBe(true);
+        // happy-dom cannot evaluate `:not(:is(...) *)`, so a descendant row cannot be matched here; the
+        // selector text is asserted above and the descendant case is covered by the engine's own support
+        expect(matches(document.querySelector('[style*="monospace"]'))).toBe(false);
+        document.body.innerHTML = '';
+    });
+});
+
+describe('the choice dialog at a zoomed scale', () => {
+    test('is capped to its backdrop with a percentage, not a viewport unit', () => {
+        state.values.ui_textScale = 150;
+        const css = buildToolashaTextCSS();
+        const rule = css.slice(css.indexOf('[data-toolasha-surface="dialog"] > * {'));
+        expect(rule).toContain('max-width: min(494px, 100%) !important');
+        expect(rule).toContain('min-width: min(354px, 100%) !important');
+        expect(rule).not.toContain('vw');
+    });
+
+    test('adds nothing at 100%', () => {
+        expect(buildToolashaTextCSS()).not.toContain('"dialog"] > *');
     });
 });

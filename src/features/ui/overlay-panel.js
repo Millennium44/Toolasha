@@ -890,6 +890,16 @@ class OverlayPanel {
         else run();
     }
 
+    /**
+     * Fit and redraw after something outside the panel changed the size of its content, such
+     * as the text scale. Neither the refresh tick nor the observers re-measure the dock for
+     * that: the tick avoids `_fitDock` and the observed boxes keep their size. No-op while closed.
+     */
+    refit() {
+        if (!this.panel) return;
+        this._onViewportChange();
+    }
+
     /** The window changed shape: fit to it, then redraw for what is left */
     _onViewportChange() {
         if (!this.panel) return;
