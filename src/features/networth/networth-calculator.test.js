@@ -195,6 +195,77 @@ describe('calculateItemValue', () => {
         expect(value).toBe(5000);
     });
 
+    describe('high-enhancement cost rule against the value source', () => {
+        // The game stores one array of values per item, indexed by enhancement level
+        const swordValues = () => {
+            const levels = [];
+            levels[15] = 777000;
+            return { marketValuesVersion: 1, marketItemValues: { '/items/sword': levels } };
+        };
+
+        beforeEach(() => {
+            mocks.settings.networth_highEnhancementUseCost = true;
+            mocks.settings.networth_highEnhancementMinLevel = 13;
+            mocks.itemPrices['/items/sword'] = { ask: 999999999, bid: 1 };
+            mocks.enhancementPaths['/items/sword:15'] = 50000;
+            mocks.marketValues = swordValues();
+        });
+
+        test("officialValue at +15 uses the game's value, not the enhancement cost", async () => {
+            mocks.settings.networth_valueSource = 'officialValue';
+            const value = await calculateItemValue({ itemHrid: '/items/sword', enhancementLevel: 15, count: 2 });
+            expect(value).toBe(1554000);
+        });
+
+        test('orderBook at +15 still uses the enhancement cost', async () => {
+            mocks.settings.networth_valueSource = 'orderBook';
+            const value = await calculateItemValue({ itemHrid: '/items/sword', enhancementLevel: 15, count: 1 });
+            expect(value).toBe(50000);
+        });
+
+        test('officialValue with no value for that level falls back to the enhancement cost', async () => {
+            mocks.settings.networth_valueSource = 'officialValue';
+            mocks.enhancementPaths['/items/sword:16'] = 90000;
+            const value = await calculateItemValue({ itemHrid: '/items/sword', enhancementLevel: 16, count: 1 });
+            expect(value).toBe(90000);
+        });
+
+        test('officialValue sweep keeps a valued +15 off the worker and sends an unvalued +16 to it', async () => {
+            mocks.settings.networth_valueSource = 'officialValue';
+            mocks.settings.networth_pricingMode = 'ask';
+            mocks.itemDetails['/items/sword'] = { itemLevel: 10, name: 'Sword' };
+            mocks.initData = { houseRoomDetailMap: {}, actionDetailMap: {} };
+            mocks.enhancementPaths['/items/sword:16'] = 90000;
+            mocks.combinedData = {
+                characterItems: [
+                    {
+                        itemHrid: '/items/sword',
+                        enhancementLevel: 15,
+                        count: 1,
+                        itemLocationHrid: '/item_locations/inventory',
+                    },
+                    {
+                        itemHrid: '/items/sword',
+                        enhancementLevel: 16,
+                        count: 1,
+                        itemLocationHrid: '/item_locations/inventory',
+                    },
+                ],
+                myMarketListings: [],
+                characterHouseRoomMap: {},
+                characterAbilities: [],
+                abilityCombatTriggersMap: {},
+                itemDetailMap: mocks.itemDetails,
+            };
+            workerBatch.mockClear();
+            workerBatch.mockResolvedValue([123]);
+            await calculateNetworth();
+
+            const workerItems = workerBatch.mock.calls[0][0];
+            expect(workerItems.map((i) => i.enhancementLevel)).toEqual([16]);
+        });
+    });
+
     test('high-enhancement items use enhancement cost even when a market price exists, once the setting is on', async () => {
         mocks.settings.networth_highEnhancementUseCost = true;
         mocks.settings.networth_highEnhancementMinLevel = 13;
