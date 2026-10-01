@@ -6754,6 +6754,107 @@ describe('the Bestiary plan step ▶ open button', () => {
     });
 });
 
+describe('the Bestiary plan step detail row', () => {
+    const HOUR_NS = 3600 * 1e9;
+    const result = (name, deaths) => ({
+        zone: { name, difficultyTier: 0, zoneHrid: `/actions/combat/${name.toLowerCase()}` },
+        simResult: {
+            simulatedTime: HOUR_NS,
+            encounters: 10,
+            deaths: { player1: 0, ...deaths },
+            experienceGained: { player1: { defense: 2500000 } },
+        },
+        revenue: {
+            netPerHour: 1500000,
+            revenuePerHour: 1800000,
+            costPerHour: 300000,
+            dropEntries: [{ itemHrid: '/items/honey', name: 'Honey', countPerHour: 42 }],
+        },
+    });
+    const gameData = { combatMonsterDetailMap: { '/monsters/fly': { name: 'Fly' } } };
+    const click = (el) => el.dispatchEvent(new window.Event('click', { bubbles: true }));
+    const key = (el, k) => el.dispatchEvent(new window.KeyboardEvent('keydown', { key: k, bubbles: true }));
+    const rowEl = () => ui.panel.querySelector('tr.mwi-csim-plan-row');
+    const detailEls = () => ui.panel.querySelectorAll('tr.mwi-csim-plan-detail');
+    const plan = () => {
+        ui.panel.querySelector('#mwi-csim-bestiary-plan-value').value = '1';
+        click(ui.panel.querySelector('#mwi-csim-bestiary-plan-btn'));
+    };
+
+    beforeEach(async () => {
+        ui.buildPanel();
+        ui._allZonesSortCol = null;
+        ui._bestiaryPlanHours = undefined;
+        ui._bestiaryPlanTolerance = undefined;
+        mocks.monsters = [{ monsterHrid: '/monsters/fly', count: 8 }];
+        await ui._displayAllZonesResults([result('Farm', { '/monsters/fly': 10 })], 1, gameData);
+        plan();
+    });
+
+    afterEach(() => {
+        ui.destroy();
+        mocks.monsters = null;
+        vi.restoreAllMocks();
+    });
+
+    test('a row click expands the zone sweep figures, a second click collapses', () => {
+        expect(rowEl().getAttribute('aria-expanded')).toBe('false');
+        expect(detailEls()).toHaveLength(0);
+
+        click(rowEl());
+        expect(rowEl().getAttribute('aria-expanded')).toBe('true');
+        expect(detailEls()).toHaveLength(1);
+        const text = detailEls()[0].textContent;
+        expect(text).toContain('Total XP/hr');
+        expect(text).toContain('2.5M');
+        expect(text).toContain('Profit/hr');
+        expect(text).toContain('1.5M');
+        expect(text).toContain('Rev/hr');
+        expect(text).toContain('Cost/hr');
+        expect(text).toContain('Honey 42/hr');
+
+        click(rowEl());
+        expect(rowEl().getAttribute('aria-expanded')).toBe('false');
+        expect(detailEls()).toHaveLength(0);
+    });
+
+    test('Enter and Space toggle from the keyboard', () => {
+        key(rowEl(), 'Enter');
+        expect(detailEls()).toHaveLength(1);
+        key(rowEl(), ' ');
+        expect(detailEls()).toHaveLength(0);
+        key(rowEl(), 'a');
+        expect(detailEls()).toHaveLength(0);
+    });
+
+    test('an open row stays open through a redraw of the same plan and closes on a new plan', () => {
+        click(rowEl());
+        ui._drawBestiaryPlan();
+        expect(detailEls()).toHaveLength(1);
+        expect(rowEl().getAttribute('aria-expanded')).toBe('true');
+
+        plan();
+        expect(detailEls()).toHaveLength(0);
+        expect(rowEl().getAttribute('aria-expanded')).toBe('false');
+    });
+
+    test('the best single zone name shows the same figures', () => {
+        const single = ui.panel.querySelector('.mwi-csim-plan-single');
+        expect(single).not.toBeNull();
+        click(single);
+        expect(ui.panel.querySelector('#mwi-csim-bestiary-plan-single-detail').textContent).toContain('Honey 42/hr');
+        click(single);
+        expect(ui.panel.querySelector('#mwi-csim-bestiary-plan-single-detail').textContent).toBe('');
+    });
+
+    test('Copy text is the plan only, whether or not a row is open', () => {
+        const before = ui._bestiaryPlanText();
+        click(rowEl());
+        expect(ui._bestiaryPlanText()).toBe(before);
+        expect(before).not.toContain('Honey');
+    });
+});
+
 describe('planning to a points target from the panel', () => {
     const HOUR_NS = 3600 * 1e9;
     const result = (name, deaths, tier = 0) => ({
