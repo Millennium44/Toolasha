@@ -1220,10 +1220,15 @@ describe('confirming from the strip', () => {
             armedLabel = 'Confirm Sell For 400K Coins',
             neverArms = false,
             enhanced = false,
+            icon = true,
+            title = null,
         } = {}) => {
             const menu = document.createElement('div');
             menu.className = 'Item_actionMenu__q';
-            menu.innerHTML = `<div><svg><use href="/static/media/items.svg#${item}"></use></svg>Cheese</div>`;
+            menu.innerHTML = icon
+                ? `<div><svg><use href="/static/media/items.svg#${item}"></use></svg>Cheese</div>`
+                : '<div>Cheese</div>';
+            if (title !== null) menu.insertAdjacentHTML('afterbegin', `<div class="Item_name__x">${title}</div>`);
             if (enhanced) menu.insertAdjacentHTML('beforeend', '<div class="Item_enhancementLevel__e">+3</div>');
             const input = document.createElement('input');
             input.value = String(qty);
@@ -1371,6 +1376,29 @@ describe('confirming from the strip', () => {
 
             closeModalAndSettle(menu);
             expect(bulkSell.state).toBe('awaiting_next');
+        });
+
+        test('without an icon the header name must equal the queued name', async () => {
+            openMenu({ icon: false, title: '18 Verdant Cheese' });
+            vendorRun();
+            await pressAndSettle();
+            expect(gameClicks).toBe(0);
+            expect(bulkSell.confirmNote).toMatch(/does not say what it is selling/);
+        });
+
+        test('without an icon an exact header is accepted', async () => {
+            openMenu({ icon: false, title: '18 Cheese' });
+            vendorRun();
+            await pressAndSettle();
+            expect(gameClicks).toBe(1);
+        });
+
+        test('without an icon or a header the sale is refused', async () => {
+            openMenu({ icon: false });
+            vendorRun();
+            await pressAndSettle();
+            expect(gameClicks).toBe(0);
+            expect(bulkSell.confirmNote).toMatch(/does not say what it is selling/);
         });
 
         test('an exact, unabbreviated total is accepted', async () => {
