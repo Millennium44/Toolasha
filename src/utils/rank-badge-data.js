@@ -37,7 +37,10 @@ export const RANK_CATEGORIES = Object.freeze([
     'ranged',
     'magic',
     'task_points',
+    'labyrinth_points',
     'labyrinth_depth',
+    'collection_points',
+    'bestiary_points',
     'fame_points',
 ]);
 

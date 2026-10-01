@@ -539,7 +539,7 @@ describe('next board button', () => {
         expect(bar()).not.toBeNull();
         expect(content.previousElementSibling).toBe(bar());
         expect(bar().textContent).toContain('Next board ▸ Total Level');
-        expect(bar().textContent).toContain('0/21 boards cached');
+        expect(bar().textContent).toContain('0/24 boards cached');
 
         const stray = document.createElement('div');
         stray.className = 'LeaderboardPanel_content__z';
@@ -577,7 +577,7 @@ describe('next board button', () => {
         game.wsHandlers.leaderboard_updated({ ...board('total_level'), leaderboardType: 'steam_standard' });
         await flush();
         expect(bar().style.display).toBe('flex');
-        expect(bar().textContent).toContain('1/21 Steam boards opened');
+        expect(bar().textContent).toContain('1/24 Steam boards opened');
         expect(bar().textContent).toContain('Next board ▸ Milking');
 
         game.wsHandlers.leaderboard_updated({
@@ -601,14 +601,14 @@ describe('next board button', () => {
         game.wsHandlers.leaderboard_updated({ ...board('total_level'), leaderboardType: 'steam_standard' });
         await flush();
         const status = bar().children[1];
-        expect(status.textContent).toBe('1/21 Steam boards opened');
+        expect(status.textContent).toBe('1/24 Steam boards opened');
         expect(status.title).toContain('feeds EXP history');
 
         game.xpTracker = false;
         for (const callback of game.settingWatchers) callback();
         await vi.advanceTimersByTimeAsync(0);
         const off = bar().children[1];
-        expect(off.textContent).toBe('1/21 Steam boards opened (EXP tracking is off)');
+        expect(off.textContent).toBe('1/24 Steam boards opened (EXP tracking is off)');
         expect(off.title).toContain('setting is off');
         expect(off.title).not.toContain('feeds EXP history');
         game.xpTracker = true;
@@ -701,7 +701,7 @@ describe('next board button', () => {
         expect(clicks).toEqual(['Milking']);
         game.wsHandlers.leaderboard_updated({ ...board('milking'), leaderboardType: 'steam_standard' });
         await flush();
-        expect(bar().textContent).toContain('2/21 Steam boards opened');
+        expect(bar().textContent).toContain('2/24 Steam boards opened');
         expect(button.textContent).toContain('Foraging');
 
         // Ironcow (Steam) is its own view
@@ -710,7 +710,7 @@ describe('next board button', () => {
             leaderboardType: 'steam_ironcow',
         });
         await flush();
-        expect(bar().textContent).toContain('1/21 Steam boards opened');
+        expect(bar().textContent).toContain('1/24 Steam boards opened');
     });
 
     test('insertion is idempotent across re-renders', async () => {
@@ -734,7 +734,7 @@ describe('next board button', () => {
         // The game answers with the board that was opened, then the next press moves on
         game.wsHandlers.leaderboard_updated(board('total_level'));
         await flush();
-        expect(bar().textContent).toContain('1/21 boards cached');
+        expect(bar().textContent).toContain('1/24 boards cached');
         expect(button.textContent).toContain('Milking');
         button.click();
         expect(clicks).toEqual(['Total Level', 'Milking']);

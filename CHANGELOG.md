@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Rank badges cover every player leaderboard
+
+- Rank badges now include the Collection Points, Bestiary Points and Labyrinth Points leaderboards, which were missing (reported by a player).
+
 ### Character panel tabs no longer squeezed
 
 - With the Toolasha tab kept in the character panel, the other tabs (Equipment, Abilities, House and so on) keep their full width and scroll instead of being squeezed until their names are cut off. The one-row rules now apply only to the inventory's icon row.

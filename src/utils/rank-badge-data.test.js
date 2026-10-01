@@ -111,6 +111,21 @@ describe('parseLocalBoard', () => {
         expect(parsed.board).toEqual({ at: NOW, source: 'local', rows: [['Alice', 2]] });
     });
 
+    test.each(['labyrinth_points', 'collection_points', 'bestiary_points'])(
+        'reads the %s board and badges a player',
+        (c) => {
+            expect(RANK_CATEGORIES).toContain(c);
+            const parsed = parseLocalBoard(localMessage({ leaderboardCategory: c }), NOW);
+            expect(parsed.key).toBe(`standard|${c}`);
+            const index = buildNameIndex({ [parsed.key]: parsed.board });
+            expect(bestEntry(index.get('alice'))).toMatchObject({ category: c, rank: 2 });
+        }
+    );
+
+    test('every game player board has a badge category', () => {
+        expect(RANK_CATEGORIES).toHaveLength(24);
+    });
+
     test('takes the type from leaderboardType when present', () => {
         expect(parseLocalBoard(localMessage({ leaderboardType: 'ironcow', gameModeFilter: undefined }), NOW).key).toBe(
             'ironcow|milking'

@@ -82,6 +82,8 @@ const PANELS_CLASS = 'TabsComponent_tabPanelsContainer';
 const TAB_ALIASES = Object.freeze({
     fame_points: ['fame points'],
     labyrinth_depth: ['labyrinth depth', 'labyrinth'],
+    collection_points: ['collection', 'collections'],
+    bestiary_points: ['bestiary'],
     task_points: ['tasks'],
     defense: ['defence'],
 });
@@ -100,7 +102,11 @@ const TAB_SELECTOR = '[role="tab"], [class*="MuiTab-root"], [role="option"], [ro
 const MISC_SYMBOLS = Object.freeze({
     total_level: 'leaderboard',
     task_points: 'tasks',
+    labyrinth_points: 'labyrinth',
     labyrinth_depth: 'labyrinth',
+    // The misc sprite has no collection or bestiary glyph (checked against the live sheet); closest stand-ins
+    collection_points: 'inventory_all',
+    bestiary_points: 'combat',
     fame_points: 'experience',
 });
 
