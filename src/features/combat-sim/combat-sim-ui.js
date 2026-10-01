@@ -3876,7 +3876,13 @@ class CombatSimUI {
         }
     }
 
-    async _displayAllZonesResults(zoneResults, hours, gameData, playerHrid = this._activePlayerTab || 'player1') {
+    async _displayAllZonesResults(
+        zoneResults,
+        hours,
+        gameData,
+        playerHrid = this._activePlayerTab || 'player1',
+        { newRun = false } = {}
+    ) {
         const container = this.panel?.querySelector('#mwi-csim-results');
         if (!container) return;
         const ownerId = dataManager.getCurrentCharacterId();
@@ -4245,7 +4251,7 @@ class CombatSimUI {
             if (!this._allZonesDetailRows.has(key)) this._allZonesDetailRows.set(key, row);
         }
         this._allZonesDetailCols = cols;
-        this._bestiaryPlanOpen = new Set();
+        if (newRun || !this._bestiaryPlanOpen) this._bestiaryPlanOpen = new Set();
 
         // Find max values per numeric column for highlighting
         const maxVals = {};
@@ -6385,7 +6391,7 @@ class CombatSimUI {
 
             this._allZonesSortCol = 'score';
             this._allZonesSortAsc = false;
-            await this._displayAllZonesResults(zoneResults, hours, gameData, playerHrid);
+            await this._displayAllZonesResults(zoneResults, hours, gameData, playerHrid, { newRun: true });
             if (!this._isCurrentRun(ownerId, startToken)) return;
 
             // Outlives the panel: the ranked action list reads this to put combat
