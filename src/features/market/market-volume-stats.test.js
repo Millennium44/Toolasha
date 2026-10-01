@@ -75,6 +75,11 @@ function panelText() {
     return document.querySelector('.mwi-volume-stats')?.textContent ?? '';
 }
 
+/** Hover notes on the stats rows, in row order */
+function rowNotes() {
+    return [...document.querySelectorAll('.mwi-volume-stats table tr[title]')].map((tr) => tr.title);
+}
+
 beforeEach(() => {
     settings.market_pooledHistory = true;
     settings.market_volumeStats = true;
@@ -186,9 +191,9 @@ describe('rendering', () => {
             false
         );
 
-        const text = panelText();
-        expect(text).not.toContain('no trades');
-        expect(text).toContain('trade prices unavailable');
+        const notes = rowNotes();
+        expect(notes.join(' ')).not.toContain('No trades');
+        expect(notes.join(' ')).toContain('Trade prices unavailable');
     });
 
     test('an item with ask/bid history but no trades in the window still renders the table, not "No trades"', async () => {
@@ -216,15 +221,15 @@ describe('rendering', () => {
         expect(text).not.toContain('No trades in this window');
         expect(text).not.toContain('could not be drawn');
         expect(text).toContain('1d');
-        // The per-window note names which windows had nothing traded
-        expect(text).toContain('no trades');
-        expect(text).toContain('ask/bid only');
+        // The note rides on the row it describes, as a marker and a hover, not as a line of its own
+        expect(rowNotes()).toContain('No trades in the last day — figures are from the ask/bid only.');
+        expect(text).not.toContain('ask/bid only');
         // Ask/bid mid fallback for Average/Median, "—/—" (no basis) for Min/Max,
         // not a zero read as real data.
         const rows = [...document.querySelectorAll('.mwi-volume-stats table tr')].map((tr) =>
             [...tr.querySelectorAll('td')].map((td) => td.textContent)
         );
-        const oneDayRow = rows.find((r) => r[0] === '1d');
+        const oneDayRow = rows.find((r) => r[0] === '1d*');
         const [, avgCell, medianCell, volumeCell, buySellCell, minMaxCell] = oneDayRow;
         expect(avgCell).toBe('615M');
         expect(medianCell).toBe('615M');
@@ -250,7 +255,7 @@ describe('rendering', () => {
         expect(text).not.toContain('could not be drawn');
         // The note names the hidden columns to explain why they are gone, so it
         // is the header row — not the whole panel's text — that must lack them.
-        expect(text).toContain('no volume data');
+        expect(document.querySelector('.mwi-volume-stats').title).toContain('no volume data');
         const headerCells = [...document.querySelectorAll('.mwi-volume-stats table tr:first-child td')].map(
             (td) => td.textContent
         );

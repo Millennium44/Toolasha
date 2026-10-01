@@ -551,8 +551,22 @@ class MarketVolumeStats {
         );
 
         const header = columns.map((c) => `<td style="padding:0 6px 3px;text-align:center;">${c.label}</td>`).join('');
+        // No priced trade is not the same as no trade: a volume-bearing source can report
+        // traded volume for hours whose trade price is unavailable.
+        // The overlay fills the gap above the order book exactly, so these notes ride on the row
+        // they describe (a marker plus a hover) rather than a line of their own, which the order
+        // book's header drew over.
+        const rowNote = ({ days, stats }) => {
+            if (!stats.hasData || stats.hasTrades) return null;
+            const span = days === 1 ? 'the last day' : `the last ${days} days`;
+            return stats.volume > 0
+                ? `Trade prices unavailable in ${span} — average from the ask/bid.`
+                : `No trades in ${span} — figures are from the ask/bid only.`;
+        };
+        const escapeAttr = (text) => text.replace(/&/g, '&amp;').replace(/"/g, '&quot;');
         const rows = windows
-            .map(({ days, stats }) => {
+            .map((entry) => {
+                const { days, stats } = entry;
                 const cells = columns
                     .map((c) => {
                         const value = c.read(stats);
@@ -560,29 +574,19 @@ class MarketVolumeStats {
                         return `<td style="padding:1px 6px;text-align:center;color:${c.color};">${text}</td>`;
                     })
                     .join('');
-                return `<tr><td style="padding:1px 6px 1px 0;color:${ROW_COLORS[days]};font-weight:bold;">${days}d</td>${cells}</tr>`;
+                const note = rowNote(entry);
+                const title = note ? ` title="${escapeAttr(note)}"` : '';
+                const marker = note ? '<span style="color:#AAAAAA;font-weight:normal;">*</span>' : '';
+                const labelStyle = `padding:1px 6px 1px 0;color:${ROW_COLORS[days]};font-weight:bold;${
+                    note ? 'opacity:0.75;' : ''
+                }`;
+                return `<tr${title}><td style="${labelStyle}">${days}d${marker}</td>${cells}</tr>`;
             })
             .join('');
 
-        // No priced trade is not the same as no trade: a volume-bearing source can report
-        // traded volume for hours whose trade price is unavailable
-        const quoteOnly = windows.filter(({ stats }) => stats.hasData && !stats.hasTrades);
-        const noTradeDays = quoteOnly.filter(({ stats }) => !(stats.volume > 0)).map(({ days }) => `${days}d`);
-        const unpricedTradeDays = quoteOnly.filter(({ stats }) => stats.volume > 0).map(({ days }) => `${days}d`);
-
-        const notes = [];
-        if (!source.hasVolume) {
-            notes.push(`${source.label} has no volume data — Volume and Bought/Sold are not shown.`);
-        }
-        if (noTradeDays.length) {
-            notes.push(`${noTradeDays.join('/')}: no trades — ask/bid only.`);
-        }
-        if (unpricedTradeDays.length) {
-            notes.push(`${unpricedTradeDays.join('/')}: trade prices unavailable — average from ask/bid.`);
-        }
-        const note = notes.length
-            ? `<div style="color:#AAAAAA;font-size:10px;margin-top:2px;">${notes.join(' ')}</div>`
-            : '';
+        const sourceNote = source.hasVolume
+            ? ''
+            : `${source.label} has no volume data — Volume and Bought/Sold are not shown. `;
 
         panel.innerHTML =
             `<div style="position:relative;">` +
@@ -590,10 +594,12 @@ class MarketVolumeStats {
             `style="position:absolute;top:2px;left:2px;background:none;border:none;color:#AAAAAA;` +
             `cursor:pointer;font-size:13px;padding:0;line-height:1;z-index:1;">⚙</button>` +
             `<table style="border-collapse:collapse;font-size:13px;">` +
-            `<tr style="color:#AAAAAA;font-size:11px;"><td style="width:16px;"></td>${header}</tr>${rows}</table>${note}` +
+            `<tr style="color:#AAAAAA;font-size:11px;"><td style="width:16px;"></td>${header}</tr>${rows}</table>` +
             `</div>`;
 
         panel.title =
+            sourceNote +
+            (windows.some((entry) => rowNote(entry)) ? 'Rows marked * had no priced trade; hover one for why. ' : '') +
             'Bought/Sold is estimated from where each hour’s trades sat between the ask and the bid; ' +
             'the pooled data does not record which side traded.';
 
