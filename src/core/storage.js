@@ -1449,6 +1449,119 @@ class Storage {
     }
 
     /**
+     * Read a key, compute its next value, and write it, in one readwrite transaction.
+     *
+     * For a record several tabs write. IndexedDB runs readwrite transactions over
+     * the same store one at a time across every connection on the origin, so no
+     * other tab's write can land between this read and this write — which a
+     * `tryGet` followed by a `set` cannot promise: both tabs read, both write, and
+     * the second write erases the first one's lines.
+     *
+     * The transaction is opened before the first `await` whenever the connection is
+     * up, so a `storage.onBeforeTeardown` listener can call this and still land.
+     * After the teardown close it answers null: a read-merge-write cannot be queued.
+     *
+     * `mutate` runs inside the transaction and must be synchronous; it is handed
+     * the stored value (`undefined` when nothing is stored) and returns the value
+     * to write, or `undefined` to write nothing. A value still queued by the
+     * debounced `set` for the same key is newer than the disk, so it is what
+     * `mutate` is handed, and the queued write is folded into this one.
+     * @param {string} key - Storage key
+     * @param {(current: *, found: boolean) => *} mutate - Next value from the current one
+     * @param {string} storeName - Object store name (default: 'settings')
+     * @returns {Promise<{written: boolean, value: *}|null>} What is stored afterwards, or null when
+     *   the read or the write failed (nothing was written)
+     */
+    async update(key, mutate, storeName = 'settings') {
+        if (typeof mutate !== 'function') return null;
+        if (this._refuseDuringRestore(key, storeName, 'save')) return null;
+        if (this._closingForTeardown) return null;
+        if (!this.db && !(await this._awaitConnection())) {
+            console.warn(`[Storage] Database not available, cannot update key: ${key}`);
+            return null;
+        }
+        if (this._refuseDuringRestore(key, storeName, 'save')) return null;
+
+        const superseded = this._supersedePending(`${storeName}:${key}`);
+        const result = await this._guardedWrite('update', key, storeName, null, () =>
+            this._runUpdate(key, mutate, storeName, superseded)
+        );
+        for (const resolve of superseded?.resolvers || []) resolve(Boolean(result));
+        // The queued value was the newest word on the key; a failed update must not drop it.
+        if (!result && superseded) this._debouncedSave(key, superseded.value, storeName);
+        return result;
+    }
+
+    /**
+     * The body of `update`, without the watchdog.
+     * @param {string} key - Storage key
+     * @param {Function} mutate - See `update`
+     * @param {string} storeName - Object store name
+     * @param {{value: *}|null} queued - A debounced write `update` took over, if any
+     * @returns {Promise<{written: boolean, value: *}|null>} See `update`
+     * @private
+     */
+    _runUpdate(key, mutate, storeName, queued) {
+        return new Promise((resolve) => {
+            let settled = false;
+            const settle = (outcome, error) => {
+                if (settled) return;
+                settled = true;
+                if (!outcome && this._isQuotaError(error)) this._handleQuotaExceeded(key, storeName, error);
+                resolve(outcome);
+            };
+
+            try {
+                const transaction = this.db.transaction([storeName], 'readwrite');
+                const store = transaction.objectStore(storeName);
+                const read = store.get(key);
+
+                read.onsuccess = () => {
+                    let next;
+                    try {
+                        const found = queued ? true : read.result !== undefined;
+                        next = mutate(queued ? queued.value : read.result, found);
+                    } catch (error) {
+                        console.error(`[Storage] Update of key ${key} failed while computing its value:`, error);
+                        try {
+                            transaction.abort();
+                        } catch {
+                            // Already finished; nothing was written either way.
+                        }
+                        settle(null, null);
+                        return;
+                    }
+                    // Declining to change a value that was only queued still owes the queue its write.
+                    if (next === undefined && queued) next = queued.value;
+                    if (next === undefined) {
+                        settle({ written: false, value: read.result }, null);
+                        return;
+                    }
+                    const write = store.put(next, key);
+                    write.onsuccess = () => settle({ written: true, value: next }, null);
+                    write.onerror = () => {
+                        console.error(`[Storage] Failed to update key ${key}:`, write.error);
+                        settle(null, write.error);
+                    };
+                };
+
+                read.onerror = () => {
+                    console.error(`[Storage] Failed to read key ${key} for update:`, read.error);
+                    settle(null, read.error);
+                };
+
+                transaction.onabort = () => {
+                    console.error(`[Storage] Update transaction aborted for key ${key}:`, transaction.error);
+                    settle(null, transaction.error);
+                };
+            } catch (error) {
+                console.error(`[Storage] Update transaction failed for key ${key}:`, error);
+                settle(null, error);
+            }
+        });
+    }
+
+    /**
      * Whether an error is the browser saying "no room".
      *
      * Chromium throws `QuotaExceededError`, Firefox has historically used

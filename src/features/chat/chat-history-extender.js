@@ -1509,6 +1509,8 @@ class ChatHistoryExtender {
         this.deletedIds = null;
         this._onChatMessageReceived = null;
         this._onChatMessageUpdated = null;
+        /** @type {Function|null} The `guild_characters_updated` listener */
+        this._onGuildCharacters = null;
         this._onPageLeaving = null;
         this._onVisibilityChange = null;
         /** @type {Function|null} Unsubscribes the pre-teardown flush */
@@ -1542,6 +1544,10 @@ class ChatHistoryExtender {
         webSocketHook.on('chat_message_received', this._onChatMessageReceived);
         this._onChatMessageUpdated = (data) => this._handleMessageUpdated(data?.message);
         webSocketHook.on('chat_message_updated', this._onChatMessageUpdated);
+        // The guild's chat lives in that guild's record; the login's copy of the
+        // character does not follow a guild change, the roster does.
+        this._onGuildCharacters = (data) => chatHistoryPersistence.noteGuildRoster(data?.guildCharacterMap);
+        webSocketHook.on('guild_characters_updated', this._onGuildCharacters);
 
         // Recording is coalesced for a few seconds; these are the moments that
         // window has to be closed early. A socket closing is how a server
@@ -1674,6 +1680,7 @@ class ChatHistoryExtender {
             // check would keep treating it as deleted regardless.
             this.deletedIds?.remove(message.id);
             this.messageIds?.markUndeleted(message.id);
+            if (message.chan) chatHistoryPersistence.forgetDeletion(tabKeyForChannel(message.chan), message.id);
             for (const handler of this.activeHandlers) {
                 const live = handler.findLiveMessageNode(key);
                 if (live) delete live.dataset.mwiSkipStore;
@@ -1758,6 +1765,10 @@ class ChatHistoryExtender {
             if (this._onChatMessageUpdated) {
                 webSocketHook.off('chat_message_updated', this._onChatMessageUpdated);
                 this._onChatMessageUpdated = null;
+            }
+            if (this._onGuildCharacters) {
+                webSocketHook.off('guild_characters_updated', this._onGuildCharacters);
+                this._onGuildCharacters = null;
             }
             if (this._onPageLeaving) {
                 window.removeEventListener('pagehide', this._onPageLeaving);

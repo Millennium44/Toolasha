@@ -74,6 +74,28 @@
  * reports; keeping the record in `settings` puts it under the key-prefix
  * exclusion that already exists and is already applied on both paths.
  *
+ * ## Which record a tab lives in
+ *
+ * Three kinds of record, all under {@link CHAT_HISTORY_KEY_BASE}:
+ *
+ * - `_public` — the public channels ({@link tabScope}), one record for every
+ *   character this browser profile plays, since they all see the same lines;
+ * - `_guild_<guildId>` — Guild chat, one record per guild, so characters in the
+ *   same guild share it and a character in another guild never reads it;
+ * - `_<characterId>` — everything else: Party, whispers, Local, Mod, and any tab
+ *   whose label cannot be told apart from a whisper partner's name.
+ *
+ * A shared record has several writers — one per open game tab — so it is never
+ * overwritten: every write is a read-merge-write in one IndexedDB readwrite
+ * transaction (`storage.update`), which IndexedDB serialises across every
+ * connection on the origin. A deletion is kept in the record as a tombstone
+ * (`deleted`), because a merge would otherwise put the line straight back from
+ * whichever tab still holds it. The per-character record keeps its one writer
+ * and is still written whole.
+ *
+ * The first load after this existed moves a character's copies of shared tabs
+ * out of its own record — see {@link ChatHistoryPersistence#load}.
+ *
  * ## Caps
  *
  * Markup for a dozen tabs at 150 messages each is not small, so three caps hold
@@ -81,7 +103,8 @@
  * counts lines older than the live backlog the game still shows (reported by
  * the extender, kept in the record's `live` map). See
  * {@link MAX_MESSAGE_CHARS}, {@link MAX_MESSAGES_PER_TAB} and
- * {@link MAX_TOTAL_CHARS}.
+ * {@link MAX_TOTAL_CHARS}. The total applies per record, so a profile holds at
+ * most one budget for the public channels, one per guild and one per character.
  *
  * ## Message identity and deletion
  *
@@ -801,6 +824,348 @@ function mergeMessage(list, html) {
 }
 
 /**
+ * Merge one tab's list into another without losing either's order.
+ *
+ * Every line of `incoming` the base already holds is an anchor. A line the base
+ * lacks goes just before the next anchor after it — so an old line another tab
+ * has since trimmed goes back to the front, where the cap takes it again, and a
+ * line between two shared ones stays between them — or, with no anchor after
+ * it, at the end: after whatever another tab wrote meanwhile, which is the
+ * order the writes landed in. With no anchor at all the lists are disjoint, and
+ * `incomingNewer` decides which goes first. Duplicates fold as
+ * {@link mergeMessage} folds them.
+ *
+ * @param {Array<string>} base - Not mutated
+ * @param {Array<string>} incoming - Not mutated
+ * @param {boolean} [incomingNewer=true] - Order for two lists that share no line
+ * @returns {Array<string>} A fresh list
+ */
+export function mergeLists(base, incoming, incomingNewer = true) {
+    const out = [];
+    const index = new Map();
+    for (const html of base || []) {
+        if (typeof html !== 'string') continue;
+        const identity = messageIdentity(html);
+        if (identity && index.has(identity)) continue;
+        if (identity) index.set(identity, out.length);
+        out.push(html);
+    }
+
+    const before = new Map();
+    const added = new Set();
+    let waiting = [];
+    let anchored = false;
+    for (const html of incoming || []) {
+        if (typeof html !== 'string' || !html) continue;
+        const identity = messageIdentity(html);
+        const at = identity ? index.get(identity) : undefined;
+        if (at !== undefined) {
+            anchored = true;
+            if (waiting.length) {
+                before.set(at, [...(before.get(at) || []), ...waiting]);
+                waiting = [];
+            }
+            const held = out[at];
+            if (held !== html && !(extractStoredMessageId(held) && !extractStoredMessageId(html))) out[at] = html;
+            continue;
+        }
+        if (identity) {
+            if (added.has(identity)) continue;
+            added.add(identity);
+        }
+        waiting.push(html);
+    }
+
+    const merged = [];
+    if (!anchored && !incomingNewer) merged.push(...waiting);
+    out.forEach((html, i) => {
+        if (before.has(i)) merged.push(...before.get(i));
+        merged.push(html);
+    });
+    if (anchored || incomingNewer) merged.push(...waiting);
+    return merged;
+}
+
+/** Message ids a shared record remembers as deleted, newest last. */
+const MAX_TOMBSTONES = 500;
+
+/**
+ * The deletion tombstones a stored record carries.
+ * @param {*} record
+ * @returns {Array<string>}
+ */
+function tombstonesFrom(record) {
+    const stored = record && record.v === RECORD_VERSION && Array.isArray(record.deleted) ? record.deleted : [];
+    return stored.filter((id) => typeof id === 'string' && id);
+}
+
+/**
+ * Two tombstone lists as one, oldest dropped past {@link MAX_TOMBSTONES}.
+ * @param {Array<string>} a
+ * @param {Array<string>} b
+ * @returns {Array<string>}
+ */
+function unionTombstones(a, b) {
+    const seen = new Set();
+    const out = [];
+    for (const id of [...(a || []), ...(b || [])]) {
+        if (typeof id !== 'string' || !id || seen.has(id)) continue;
+        seen.add(id);
+        out.push(id);
+    }
+    return out.slice(-MAX_TOMBSTONES);
+}
+
+/**
+ * Remove every message a tombstone names, in place.
+ * @param {Record<string, Array<string>>} tabs - Mutated
+ * @param {Set<string>} deleted
+ */
+function dropDeleted(tabs, deleted) {
+    if (!deleted.size) return;
+    for (const [key, list] of Object.entries(tabs)) {
+        const kept = list.filter((html) => !deleted.has(extractStoredMessageId(html)));
+        if (kept.length) tabs[key] = kept;
+        else delete tabs[key];
+    }
+}
+
+/**
+ * A shared record with one writer's lines merged in: what `storage.update`
+ * writes, computed from what the transaction read.
+ *
+ * Live counts take the larger of the stored and the incoming figure. Several
+ * game tabs show the same channel, and the game keeps about the same backlog in
+ * each; the larger one never trims history a tab still needs, and the figure is
+ * bounded by {@link MAX_LIVE_ALLOWANCE} whatever it says.
+ *
+ * `at` remembers, per tab, the newest time a writer merged into it. It is only
+ * consulted for two lists that share no line (see {@link mergeLists}): a
+ * character's record from last week merged in after this week's lines goes
+ * first, not last.
+ *
+ * @param {*} stored - The record as read, or undefined
+ * @param {{tabs: Record<string, Array<string>>, live?: Record<string, number>, deleted?: Array<string>,
+ *   undeleted?: Array<string>, at: number}} incoming
+ * @param {number} perTab - Message cap per tab
+ * @returns {{v: number, savedAt: number, tabs: Record<string, Array<string>>, live: Record<string, number>, deleted: Array<string>, at: Record<string, number>}}
+ */
+export function mergeSharedRecord(stored, incoming, perTab = MAX_MESSAGES_PER_TAB) {
+    const live = liveFromRecord(stored);
+    for (const [key, count] of Object.entries(incoming.live || {})) {
+        if (typeof count === 'number' && Number.isFinite(count)) live[key] = Math.max(live[key] ?? 0, clampLive(count));
+    }
+    const tabs = tabsFromRecord(stored, perTab, live);
+
+    const storedAt =
+        stored && stored.v === RECORD_VERSION && stored.at && typeof stored.at === 'object' ? stored.at : {};
+    const at = {};
+    for (const [key, value] of Object.entries(storedAt)) {
+        if (typeof value === 'number' && Number.isFinite(value)) at[key] = value;
+    }
+    const incomingAt = Number(incoming.at) || 0;
+    for (const [key, list] of Object.entries(incoming.tabs || {})) {
+        if (!String(key).startsWith(TAB_KEY_PREFIX) || !Array.isArray(list)) continue;
+        tabs[key] = mergeLists(tabs[key] || [], list, incomingAt >= (at[key] ?? 0));
+        at[key] = Math.max(at[key] ?? 0, incomingAt);
+        if (!tabs[key].length) delete tabs[key];
+    }
+
+    // An undelete takes its id back out: the line may be recorded again.
+    const undeleted = new Set(incoming.undeleted || []);
+    const deleted = unionTombstones(tombstonesFrom(stored), incoming.deleted).filter((id) => !undeleted.has(id));
+    dropDeleted(tabs, new Set(deleted));
+    applyCaps(tabs, perTab, live);
+
+    const keptAt = {};
+    for (const key of Object.keys(tabs)) if (at[key] !== undefined) keptAt[key] = at[key];
+    return { v: RECORD_VERSION, savedAt: Date.now(), tabs, live: liveForRecord(live, tabs), deleted, at: keptAt };
+}
+
+/**
+ * Read-merge-write a shared record in one transaction.
+ *
+ * The call into storage is made before this function's first `await`, so a
+ * page-close listener that calls it still opens its transaction in time. A
+ * storage without `update` (a test double) gets a read and a write instead —
+ * not atomic across tabs, and nothing the real storage does.
+ *
+ * @param {string} key
+ * @param {(current: *) => *} mutate - Synchronous; the value to write
+ * @returns {Promise<{written: boolean, value: *}|null>} What is stored, or null when nothing could be
+ */
+async function updateRecord(key, mutate) {
+    if (typeof storage.update === 'function') {
+        try {
+            return await storage.update(key, mutate, CHAT_HISTORY_STORE);
+        } catch (error) {
+            console.error('[ChatHistoryPersistence] Could not update a shared chat history record:', error);
+            return null;
+        }
+    }
+    const read = await readStoredRecord(key);
+    if (!read.ok) return null;
+    try {
+        const value = mutate(read.record ?? undefined);
+        if (value === undefined) return { written: false, value: read.record };
+        return (await storage.set(key, value, CHAT_HISTORY_STORE, true)) === true ? { written: true, value } : null;
+    } catch (error) {
+        console.error('[ChatHistoryPersistence] Could not update a shared chat history record:', error);
+        return null;
+    }
+}
+
+/** The account-wide record of the public channels. */
+export const PUBLIC_RECORD_KEY = `${CHAT_HISTORY_KEY_BASE}_public`;
+
+/**
+ * The record of one guild's chat.
+ * @param {string|number} guildId
+ * @returns {string}
+ */
+export function guildRecordKey(guildId) {
+    return `${CHAT_HISTORY_KEY_BASE}_guild_${guildId}`;
+}
+
+/** The game's guild channel. */
+const GUILD_CHANNEL = '/chat_channel_types/guild';
+
+/**
+ * Channels every character sees the same lines in. Party, Whisper, Local and Mod
+ * are not here: Party and Whisper are the character's own, and Local and Mod are
+ * not known well enough to share — kept per character until they are.
+ */
+const PUBLIC_CHANNELS = new Set(
+    [
+        'global',
+        'general',
+        'trade',
+        'beginner',
+        'recruit',
+        'help',
+        'ironcow',
+        'chinese',
+        'russian',
+        'korean',
+        'japanese',
+        'portuguese',
+        'spanish',
+        'french',
+        'german',
+    ].map((name) => `/chat_channel_types/${name}`)
+);
+
+/**
+ * Button labels of the public channels, for a `tab2:name:` key: what a tab is
+ * keyed by when no `data-mention-channel` names its channel (the mention tracker
+ * switched off, or a channel it does not map). A label is the button's text, so
+ * a whisper tab named after a player called `Help` reads the same; that tab
+ * already shares its record with the Help tab today, and sharing moves it to
+ * the account's other characters, not off the device.
+ */
+const PUBLIC_LABELS = new Set([
+    'Global',
+    'General',
+    'English',
+    'Trade',
+    'Beginner',
+    'Recruit',
+    'Help',
+    'Ironcow',
+    '中文',
+    'Русский',
+    '한국어',
+    '日本語',
+    'Português',
+    'Español',
+    'Français',
+    'Deutsch',
+]);
+
+/**
+ * Which kind of record a tab's history belongs in.
+ * @param {string} tabKey - From `chatTabKey`
+ * @returns {'public'|'guild'|'character'}
+ */
+export function tabScope(tabKey) {
+    const key = String(tabKey || '');
+    const channelPrefix = `${TAB_KEY_PREFIX}ch:`;
+    const namePrefix = `${TAB_KEY_PREFIX}name:`;
+    if (key.startsWith(channelPrefix)) {
+        const channel = key.slice(channelPrefix.length);
+        if (channel === GUILD_CHANNEL) return 'guild';
+        return PUBLIC_CHANNELS.has(channel) ? 'public' : 'character';
+    }
+    if (key.startsWith(namePrefix)) {
+        const label = key.slice(namePrefix.length);
+        if (label === 'Guild') return 'guild';
+        return PUBLIC_LABELS.has(label) ? 'public' : 'character';
+    }
+    return 'character';
+}
+
+/**
+ * The logged-in character's guild id, or null when it is not known.
+ *
+ * Read from `init_character_data` as the data manager holds it: the character's
+ * own `guildCharacterMap` row (the same `guildID` the guild XP tracker keys its
+ * records by), then `guild.id`. A `characterData` belonging to someone else —
+ * it is replaced after `character_switched` fires — answers null rather than
+ * the departing character's guild.
+ *
+ * @returns {string|null}
+ */
+export function currentGuildId() {
+    try {
+        const characterId = dataManager.getCurrentCharacterId?.();
+        const data = dataManager.characterData;
+        if (!characterId || !data) return null;
+        const owner = data.character?.id;
+        if (owner != null && String(owner) !== String(characterId)) return null;
+        const guildId = data.guildCharacterMap?.[characterId]?.guildID ?? data.guild?.id ?? null;
+        return guildId == null || guildId === '' ? null : String(guildId);
+    } catch {
+        return null;
+    }
+}
+
+/**
+ * Where each record a session reads and writes lives. Fixed when the session's
+ * read starts, so a write after a character switch still names the character
+ * it was recorded for.
+ * @typedef {{charKey: string, guildKey: string|null}} RecordContext
+ */
+
+/**
+ * The record a tab's history is written to.
+ * @param {string} tabKey
+ * @param {RecordContext} context
+ * @returns {string}
+ */
+export function recordKeyFor(tabKey, context) {
+    const scope = tabScope(tabKey);
+    if (scope === 'public') return PUBLIC_RECORD_KEY;
+    if (scope === 'guild' && context.guildKey) return context.guildKey;
+    return context.charKey;
+}
+
+/**
+ * Split a `{tabKey: [html]}` map by the record each tab is written to.
+ * @param {Record<string, Array<string>>} tabs - Lists are shared, not copied
+ * @param {RecordContext} context
+ * @returns {Record<string, Record<string, Array<string>>>}
+ */
+function groupByRecord(tabs, context) {
+    const groups = {};
+    for (const [tabKey, list] of Object.entries(tabs || {})) {
+        const key = recordKeyFor(tabKey, context);
+        if (!groups[key]) groups[key] = {};
+        groups[key][tabKey] = list;
+    }
+    return groups;
+}
+
+/**
  * Wait for a promise to settle, whichever way, without letting it throw here.
  * @param {Promise<*>|null} promise
  * @returns {Promise<void>}
@@ -878,7 +1243,8 @@ function liveForRecord(live, tabs) {
 }
 
 /**
- * The per-character record of preserved chat, and the reads and writes over it.
+ * The records of preserved chat — the character's own and the shared ones — and
+ * the reads and writes over them.
  *
  * ## The working record is not the record until the first read has merged
  *
@@ -931,6 +1297,95 @@ class ChatHistoryPersistence {
          */
         this.liveCounts = {};
         this.getMaxHistory = () => MAX_MESSAGES_PER_TAB;
+        /** @type {RecordContext|null} Which records this session reads and writes; set when its read starts */
+        this.context = null;
+        /** @type {Set<string>} Tabs recorded into or purged since their record was last written */
+        this.dirtyTabs = new Set();
+        /** @type {Map<string, Array<string>>} Ids deleted this session, per tab, for the shared records */
+        this.tombstones = new Map();
+        /** @type {Map<string, Array<string>>} Ids undeleted this session, per tab: taken out of a record's tombstones */
+        this.undeleted = new Map();
+        /**
+         * A character's copies of shared tabs whose move into the shared record
+         * failed: written back into its own record so nothing is lost before the
+         * next load tries again.
+         * @type {Record<string, Array<string>>|null}
+         */
+        this.heldLegacy = null;
+        /** @type {string|null} The guild the socket last named for this character, over `characterData`'s */
+        this.guildOverride = null;
+    }
+
+    /**
+     * Where this session's records are, as of now.
+     * @returns {RecordContext}
+     */
+    _contextNow() {
+        const guildId = this.guildOverride ?? currentGuildId();
+        return {
+            charKey: characterKey(CHAT_HISTORY_KEY_BASE),
+            guildKey: guildId ? guildRecordKey(guildId) : null,
+        };
+    }
+
+    /**
+     * Apply the caps to the working record one record's tabs at a time: the
+     * total is a per-record budget, and the working record holds several.
+     */
+    _capMemory() {
+        if (!this.tabs) return;
+        const context = this.context || this._contextNow();
+        const perTab = this.getMaxHistory();
+        for (const group of Object.values(groupByRecord(this.tabs, context))) {
+            const keys = Object.keys(group);
+            applyCaps(group, perTab, this.liveCounts);
+            for (const key of keys) {
+                if (group[key]) this.tabs[key] = group[key];
+                else delete this.tabs[key];
+            }
+        }
+    }
+
+    /**
+     * Learn the character's guild from a `guild_characters_updated` roster.
+     *
+     * `characterData` is the login's copy and does not follow a guild change, so
+     * the socket's word is kept over it. Only the character's own row counts — a
+     * roster delta about another member says nothing about this one. A change
+     * while a session is running writes the old guild's lines under the old
+     * guild first, then drops them from the working record: the next guild's
+     * record must not receive them.
+     *
+     * @param {Record<string, {guildID?: string|number}>|null|undefined} guildCharacterMap
+     */
+    noteGuildRoster(guildCharacterMap) {
+        if (!this.enabled || !guildCharacterMap || typeof guildCharacterMap !== 'object') return;
+        const characterId = dataManager.getCurrentCharacterId?.();
+        const guildId = characterId ? guildCharacterMap[characterId]?.guildID : null;
+        if (guildId == null || guildId === '') return;
+        this.guildOverride = String(guildId);
+
+        const context = this.context;
+        const guildKey = guildRecordKey(this.guildOverride);
+        if (!context || context.guildKey === guildKey) return;
+
+        // Issued before the context moves: `flush` groups the working record by
+        // the context it finds, synchronously.
+        if (this.tabs) {
+            for (const tabKey of Object.keys(this.tabs)) {
+                if (tabScope(tabKey) === 'guild') this.dirtyTabs.add(tabKey);
+            }
+            this.flush(true).catch(() => {});
+        }
+        for (const tabKey of Object.keys(this.tabs || {})) {
+            if (tabScope(tabKey) !== 'guild') continue;
+            delete this.tabs[tabKey];
+            if (this.snapshot) delete this.snapshot[tabKey];
+            delete this.liveCounts[tabKey];
+            this.dirtyTabs.delete(tabKey);
+            this.tombstones.delete(tabKey);
+        }
+        this.context = { ...context, guildKey };
     }
 
     /**
@@ -1001,6 +1456,14 @@ class ChatHistoryPersistence {
      * Never awaited on the path that makes chat usable: callers fire it and
      * fill their buffer when it lands.
      *
+     * Reads three records — the character's, the public one and its guild's —
+     * and answers with their tabs as one map. The first time a character's own
+     * record still holds public or guild tabs (every record written before the
+     * shared records existed), they are merged into the shared records first.
+     * That is idempotent, so it needs no lock against another game tab doing
+     * the same; the character's next write leaves them out and sets
+     * `sharedMigrated`, after which there is nothing left to move.
+     *
      * @returns {Promise<Record<string, Array<string>>>} What was stored, oldest first per tab
      */
     async load() {
@@ -1019,13 +1482,17 @@ class ChatHistoryPersistence {
         // whispers included, rendered in another's tabs and written over their
         // record for good.
         const ticket = captureOwner(this);
-        // Taken now, synchronously: the key is this character's now, and the
-        // flush to wait for is the one that was in flight when this began.
-        const key = characterKey(CHAT_HISTORY_KEY_BASE);
+        // Taken now, synchronously: the keys are this character's and this
+        // guild's now, and the flush to wait for is the one that was in flight
+        // when this began.
+        const context = this._contextNow();
+        this.context = context;
+        const keys = [context.charKey, PUBLIC_RECORD_KEY];
+        if (context.guildKey) keys.push(context.guildKey);
         const prior = this.finalFlush;
         const loading = (async () => {
             await settleQuietly(prior);
-            const read = await readStoredRecord(key);
+            const reads = await Promise.all(keys.map((key) => readStoredRecord(key)));
             // Before the first thing this tail touches. The generation is what
             // catches the switch: `disable()` runs on `character_switching`,
             // which fires before `getCurrentCharacterId()` moves, so an id
@@ -1034,7 +1501,7 @@ class ChatHistoryPersistence {
             // A failed read is not an empty record. Treating it as one made
             // the next write replace whatever is on disk with this session's
             // lines; left unloaded, every write goes through a fresh read.
-            if (!read.ok) {
+            if (reads.some((read) => !read.ok)) {
                 // Not cached: a tab mounted or a deletion purged after storage
                 // recovers has to read again, or history stays unrestored and
                 // the purge never reaches disk for the rest of the session. A
@@ -1045,9 +1512,53 @@ class ChatHistoryPersistence {
                 if (this.loadPromise === loading) this.loadPromise = null;
                 return {};
             }
+            const records = Object.fromEntries(keys.map((key, i) => [key, reads[i].record]));
+            const perTab = this.getMaxHistory();
+
+            // The move into the shared records. A character's own record held
+            // every tab before they existed; the shared tabs in it are merged
+            // into their shared record (a merge, so two game tabs doing this at
+            // once, or one doing it twice, lose and duplicate nothing) and left
+            // out of the working record, so the next write of the character's
+            // record drops them. One that could not be merged stays held and is
+            // written back where it was.
+            const own = records[context.charKey];
+            const legacy = groupByRecord(tabsFromRecord(own, perTab, liveFromRecord(own)), context);
+            delete legacy[context.charKey];
+            this.heldLegacy = null;
+            const moving = Object.entries(legacy);
+            if (moving.length) {
+                const ownLive = liveFromRecord(own);
+                const savedAt = Number(own?.savedAt) || 0;
+                const moved = await Promise.all(
+                    moving.map(([key, tabs]) =>
+                        updateRecord(key, (stored) =>
+                            mergeSharedRecord(stored, { tabs, live: liveForRecord(ownLive, tabs), at: savedAt }, perTab)
+                        )
+                    )
+                );
+                if (!stillOurs(ticket)) return {};
+                moving.forEach(([key, tabs], i) => {
+                    if (moved[i]) records[key] = moved[i].value;
+                    else this.heldLegacy = { ...(this.heldLegacy || {}), ...tabs };
+                });
+                // The character's own record still holds the moved copies until it is written.
+                this.dirty = true;
+            }
+
             // What this session has reported wins over what was stored.
-            this.liveCounts = { ...liveFromRecord(read.record), ...this.liveCounts };
-            const loaded = tabsFromRecord(read.record, this.getMaxHistory(), this.liveCounts);
+            const storedLive = {};
+            for (const key of keys) Object.assign(storedLive, liveFromRecord(records[key]));
+            this.liveCounts = { ...storedLive, ...this.liveCounts };
+            // A guild change during the read moved the context on; the old
+            // guild's record is no longer this session's to show.
+            const current = this.context || context;
+            const loaded = {};
+            for (const key of keys) {
+                for (const [tabKey, list] of Object.entries(tabsFromRecord(records[key], perTab, this.liveCounts))) {
+                    if (recordKeyFor(tabKey, current) === key) loaded[tabKey] = list;
+                }
+            }
             // Taken before the merge below, which writes into `loaded` itself —
             // a snapshot taken after it held what was recorded during the read,
             // and a restore rendered those a second time.
@@ -1067,7 +1578,7 @@ class ChatHistoryPersistence {
                     for (const html of list) mergeMessage(this.tabs[key], html);
                     if (!this.tabs[key].length) delete this.tabs[key];
                 }
-                applyCaps(this.tabs, this.getMaxHistory(), this.liveCounts);
+                this._capMemory();
             }
             // The timer stood down while the read was open; this is the write
             // it was holding back.
@@ -1122,7 +1633,8 @@ class ChatHistoryPersistence {
         // message already held is updated in place rather than appended.
         const outcome = mergeMessage(this.tabs[tabKey], html);
         if (outcome === 'same') return;
-        if (outcome === 'appended') applyCaps(this.tabs, this.getMaxHistory(), this.liveCounts);
+        if (outcome === 'appended') this._capMemory();
+        this.dirtyTabs.add(tabKey);
         this.dirty = true;
         this._scheduleWrite();
     }
@@ -1200,31 +1712,142 @@ class ChatHistoryPersistence {
 
         if (!this.loaded) return this._mergeIntoStored(immediate);
 
-        applyCaps(this.tabs, this.getMaxHistory(), this.liveCounts);
+        // Everything up to the writes is synchronous: the page-close listener
+        // and a guild change both rely on the writes being issued, against this
+        // context, before this returns.
+        const context = this.context;
+        this._capMemory();
+        const groups = groupByRecord(this.tabs, context);
+        const sharedKeys = new Set();
+        for (const tabKey of this.dirtyTabs) {
+            const key = recordKeyFor(tabKey, context);
+            if (key !== context.charKey) sharedKeys.add(key);
+        }
         // Cleared before the await so a line recorded while the write is in
         // flight marks the record dirty again; restored if the write fails.
+        const dirtyTabs = this.dirtyTabs;
+        this.dirtyTabs = new Set();
         this.dirty = false;
         const ticket = captureOwner(this);
-        let accepted = false;
+
+        // The character's own record has one writer and is written whole, as it
+        // always was — and on every flush, because the first one after a load
+        // that moved shared tabs out is what removes them from it.
+        const ownTabs = { ...(this.heldLegacy || {}), ...(groups[context.charKey] || {}) };
+        const writes = [this._writeOwn(context.charKey, ownTabs, immediate)];
+        for (const key of sharedKeys) {
+            if (
+                groups[key] ||
+                this._tombstonesFor(key, context).length ||
+                this._tombstonesFor(key, context, this.undeleted).length
+            ) {
+                writes.push(this._writeShared(key, groups[key] || {}, context, ticket));
+            }
+        }
+
+        const accepted = (await Promise.all(writes)).every(Boolean);
+        if (!accepted && stillOurs(ticket)) {
+            this.dirty = true;
+            for (const tabKey of dirtyTabs) this.dirtyTabs.add(tabKey);
+        }
+        return accepted;
+    }
+
+    /**
+     * Write the character's own record whole.
+     * @param {string} key
+     * @param {Record<string, Array<string>>} tabs
+     * @param {boolean} immediate - Skip storage's own write debounce
+     * @returns {Promise<boolean>} Whether the write was accepted
+     */
+    async _writeOwn(key, tabs, immediate) {
         try {
-            accepted =
+            // `set` reports a refused write by resolving false, not by throwing.
+            return (
                 (await storage.set(
-                    characterKey(CHAT_HISTORY_KEY_BASE),
+                    key,
                     {
                         v: RECORD_VERSION,
                         savedAt: Date.now(),
-                        tabs: this.tabs,
-                        live: liveForRecord(this.liveCounts, this.tabs),
+                        tabs,
+                        live: liveForRecord(this.liveCounts, tabs),
+                        // Marks the move into the shared records as done; see `load()`.
+                        sharedMigrated: !this.heldLegacy,
                     },
                     CHAT_HISTORY_STORE,
                     immediate
-                )) === true;
+                )) === true
+            );
         } catch (error) {
             console.error('[ChatHistoryPersistence] Could not write chat history:', error);
+            return false;
         }
-        // `set` reports a refused write by resolving false, not by throwing.
-        if (!accepted && stillOurs(ticket)) this.dirty = true;
-        return accepted;
+    }
+
+    /**
+     * Ids this session deleted from the tabs that live in one record.
+     * @param {string} key - Record key
+     * @param {RecordContext} context
+     * @param {Map<string, Array<string>>} [from] - {@link ChatHistoryPersistence#tombstones}, or the undeletes
+     * @returns {Array<string>}
+     */
+    _tombstonesFor(key, context, from = this.tombstones) {
+        const ids = [];
+        for (const [tabKey, list] of from) {
+            if (recordKeyFor(tabKey, context) === key) ids.push(...list);
+        }
+        return ids;
+    }
+
+    /**
+     * Read-merge-write one shared record, then take what the other game tabs
+     * had written into the working record, so a restore shows it and the next
+     * merge carries less.
+     *
+     * The transaction is opened before this function's first `await`.
+     *
+     * @param {string} key - Record key
+     * @param {Record<string, Array<string>>} tabs - This session's lines for that record
+     * @param {RecordContext} context
+     * @param {*} ticket - The owning session, from `captureOwner`
+     * @returns {Promise<boolean>} Whether the write was accepted
+     */
+    async _writeShared(key, tabs, context, ticket) {
+        const incoming = {
+            tabs: Object.fromEntries(Object.entries(tabs).map(([tabKey, list]) => [tabKey, [...list]])),
+            live: liveForRecord(this.liveCounts, tabs),
+            deleted: this._tombstonesFor(key, context),
+            undeleted: this._tombstonesFor(key, context, this.undeleted),
+            at: Date.now(),
+        };
+        const perTab = this.getMaxHistory();
+        const result = await updateRecord(key, (stored) => mergeSharedRecord(stored, incoming, perTab));
+        if (!result) return false;
+        // A switch or a guild change since the write was issued: the working
+        // record is no longer the one these lines belong to.
+        if (stillOurs(ticket) && this.context === context && this.tabs) this._adopt(key, result.value, context);
+        return true;
+    }
+
+    /**
+     * Fold a shared record as written back into the working record.
+     * @param {string} key - Record key
+     * @param {*} written - The record `storage.update` wrote
+     * @param {RecordContext} context
+     */
+    _adopt(key, written, context) {
+        const stored = written && written.tabs && typeof written.tabs === 'object' ? written.tabs : {};
+        const deleted = new Set(tombstonesFrom(written));
+        const tabKeys = new Set([...Object.keys(stored), ...Object.keys(this.tabs)]);
+        for (const tabKey of tabKeys) {
+            if (recordKeyFor(tabKey, context) !== key) continue;
+            const merged = mergeLists(stored[tabKey] || [], this.tabs[tabKey] || [], true).filter(
+                (html) => !deleted.has(extractStoredMessageId(html))
+            );
+            if (merged.length) this.tabs[tabKey] = merged;
+            else delete this.tabs[tabKey];
+        }
+        this._capMemory();
     }
 
     /**
@@ -1242,10 +1865,12 @@ class ChatHistoryPersistence {
      * @returns {Promise<boolean>} Whether the write was attempted and accepted
      */
     async _mergeIntoStored(immediate) {
-        const key = characterKey(CHAT_HISTORY_KEY_BASE);
+        const context = this.context || this._contextNow();
+        const key = context.charKey;
         const perTab = this.getMaxHistory();
         const sessionLive = { ...this.liveCounts };
-        const pending = Object.entries(this.tabs).map(([tabKey, list]) => [tabKey, [...list]]);
+        const groups = groupByRecord(this.tabs, context);
+        const pending = Object.entries(groups[key] || {}).map(([tabKey, list]) => [tabKey, [...list]]);
         // An earlier session's final write, captured before this one's own
         // flush is tracked — waiting on itself would never finish.
         const prior = this.finalFlush;
@@ -1254,6 +1879,39 @@ class ChatHistoryPersistence {
         // what schedules the write that clears it.
         this.dirty = true;
 
+        // Shared records are a merge whichever path writes them, so they need no
+        // read of their own first; issued now, before the first await, which is
+        // also what lets the page-close flush land them. An earlier session's
+        // final write to the same record opened its transaction earlier, and
+        // IndexedDB commits them in that order.
+        const shared = [];
+        for (const [recordKey, tabs] of Object.entries(groups)) {
+            if (recordKey === key) continue;
+            const incoming = {
+                tabs: Object.fromEntries(Object.entries(tabs).map(([tabKey, list]) => [tabKey, [...list]])),
+                live: liveForRecord(sessionLive, tabs),
+                deleted: this._tombstonesFor(recordKey, context),
+                undeleted: this._tombstonesFor(recordKey, context, this.undeleted),
+                at: Date.now(),
+            };
+            shared.push(updateRecord(recordKey, (stored) => mergeSharedRecord(stored, incoming, perTab)));
+        }
+        const own = this._mergeOwnIntoStored(key, pending, perTab, sessionLive, prior, immediate);
+        const results = await Promise.all([own, ...shared]);
+        return results.every(Boolean);
+    }
+
+    /**
+     * The character's own half of {@link ChatHistoryPersistence#_mergeIntoStored}.
+     * @param {string} key - The character's record key
+     * @param {Array<[string, Array<string>]>} pending - Its tabs' lines, copied
+     * @param {number} perTab - Message cap per tab
+     * @param {Record<string, number>} sessionLive - Live counts this session reported
+     * @param {Promise<boolean>|null} prior - An earlier session's final write
+     * @param {boolean} immediate - Skip storage's own write debounce
+     * @returns {Promise<boolean>} Whether the write was attempted and accepted
+     */
+    async _mergeOwnIntoStored(key, pending, perTab, sessionLive, prior, immediate) {
         await settleQuietly(prior);
         const read = await readStoredRecord(key);
         if (!read.ok) {
@@ -1317,17 +1975,56 @@ class ChatHistoryPersistence {
         // promise if a read is already running, the same race `load()`'s own
         // "pending" merge exists to survive, just from the other direction.
         await this.load();
-        if (!this.tabs || !this.tabs[tabKey]) return false;
+        if (!this.tabs) return false;
 
         const key = String(id);
+        // A shared record can hold the line though this tab never saw it — another
+        // game tab recorded it — and a merge would put back whatever was only
+        // filtered here, so the deletion is written down as a tombstone too.
+        const shared = tabScope(tabKey) !== 'character';
+        if (shared) {
+            const ids = this.tombstones.get(tabKey) || [];
+            if (!ids.includes(key)) this.tombstones.set(tabKey, [...ids, key].slice(-MAX_TOMBSTONES));
+            this.undeleted.set(
+                tabKey,
+                (this.undeleted.get(tabKey) || []).filter((other) => other !== key)
+            );
+            this.dirtyTabs.add(tabKey);
+            this.dirty = true;
+            this._scheduleWrite();
+        }
+        if (!this.tabs[tabKey]) return false;
+
         const before = this.tabs[tabKey].length;
         this.tabs[tabKey] = this.tabs[tabKey].filter((html) => extractStoredMessageId(html) !== key);
         if (this.tabs[tabKey].length === before) return false;
 
         if (!this.tabs[tabKey].length) delete this.tabs[tabKey];
+        this.dirtyTabs.add(tabKey);
         this.dirty = true;
         this._scheduleWrite();
         return true;
+    }
+
+    /**
+     * Take a deletion back: a moderator's undelete. Nothing is restored — the
+     * markup is gone — but the tombstone must go, or the line could never be
+     * recorded again: every merge of a shared record would filter it out.
+     * @param {string} tabKey - `tab2:ch:<channel>`
+     * @param {string|number} id - The game's message id
+     */
+    forgetDeletion(tabKey, id) {
+        if (!this.enabled || !tabKey || id == null || tabScope(tabKey) === 'character') return;
+        const key = String(id);
+        this.tombstones.set(
+            tabKey,
+            (this.tombstones.get(tabKey) || []).filter((other) => other !== key)
+        );
+        const ids = this.undeleted.get(tabKey) || [];
+        if (!ids.includes(key)) this.undeleted.set(tabKey, [...ids, key].slice(-MAX_TOMBSTONES));
+        this.dirtyTabs.add(tabKey);
+        this.dirty = true;
+        this._scheduleWrite();
     }
 
     /** Drop the session's state. Storage is left alone — a disable is not a wipe. */
@@ -1347,6 +2044,12 @@ class ChatHistoryPersistence {
         this.liveCounts = {};
         this.enabled = false;
         this.getMaxHistory = () => MAX_MESSAGES_PER_TAB;
+        this.context = null;
+        this.dirtyTabs = new Set();
+        this.tombstones = new Map();
+        this.undeleted = new Map();
+        this.heldLegacy = null;
+        this.guildOverride = null;
     }
 }
 
