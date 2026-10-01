@@ -2125,6 +2125,41 @@ describe('restored history ends where the live backlog begins', () => {
         expect(liveTexts(container)).toEqual([text(LIVE_2)]);
     });
 
+    describe('two genuine messages sharing an identity', () => {
+        // Same second, sender and text: the store keeps one entry, at the earlier one's position.
+        const DUP = ['9:56:21 AM', 'Benny', 'gg'];
+        const MID_1 = ['9:56:21 AM', 'Kasvitatti', 'between one'];
+        const MID_2 = ['9:56:21 AM', 'Spice', 'between two'];
+
+        beforeEach(() => {
+            db.settings[STORAGE_KEY].tabs[GUILD_KEY] = [OLD_1, DUP, MID_1, MID_2, LIVE_2].map((parts) =>
+                lineHTML(...parts)
+            );
+        });
+
+        test('the lines between the earlier copy and the live one are restored', async () => {
+            const container = buildGuildChat();
+            container.append(line(...DUP), line(...LIVE_2));
+            chatHistoryExtender.initialize();
+            await settle();
+
+            expect(bufferTexts(container)).toEqual([text(OLD_1), text(MID_1), text(MID_2)]);
+            expect(liveTexts(container)).toEqual([text(DUP), text(LIVE_2)]);
+        });
+
+        test('and when the backlog renders after the restore landed', async () => {
+            const container = buildGuildChat();
+            chatHistoryExtender.initialize();
+            await settle();
+            expect(bufferTexts(container)).toHaveLength(5);
+
+            container.append(line(...DUP), line(...LIVE_2));
+            await settle();
+
+            expect(bufferTexts(container)).toEqual([text(OLD_1), text(MID_1), text(MID_2)]);
+        });
+    });
+
     test('a record a build before the badge fix stored each badged line in twice restores and keeps it once', async () => {
         // That build stored a line at render and again at eviction, and the badge (its rank changing in
         // between) made each copy a message of its own: two or three entries for one line, filling the cap
@@ -2291,6 +2326,35 @@ describe('the cap counts lines older than the game’s live backlog', () => {
 
         expect(db.settings[STORAGE_KEY].tabs[KEY]).toHaveLength(CAP + LIVE);
         expect(db.settings[STORAGE_KEY].live[KEY]).toBe(LIVE);
+    });
+
+    test('a tab reopened with a larger backlog than it was saved with does not lose its oldest entries', async () => {
+        const SAVED_LIVE = 3;
+        const NOW_LIVE = 8;
+        db.settings[STORAGE_KEY] = {
+            v: 1,
+            savedAt: 1,
+            tabs: { [KEY]: Array.from({ length: CAP + SAVED_LIVE }, (_, i) => html(i)) },
+            live: { [KEY]: SAVED_LIVE },
+        };
+        const [container] = buildChat(['General', 'Other'], 1);
+        const other = makeMessage('[1/2 11:00:00] other tab line');
+        container.appendChild(other);
+        chatHistoryExtender.initialize();
+        await settle();
+
+        // To General, whose pane now renders more lines than it was saved with
+        container.removeChild(other);
+        container.append(...Array.from({ length: NOW_LIVE }, (_, i) => makeMessage(line(50 + i))));
+        selectTab(0);
+        await settle();
+        await chatHistoryPersistence.flush();
+
+        const stored = db.settings[STORAGE_KEY].tabs[KEY];
+        // The cap is CAP older lines plus what is live now; the allowance of 3 would have cut it to CAP + 3.
+        expect(stored).toHaveLength(CAP + NOW_LIVE);
+        expect(stored.at(-1)).toContain(line(50 + NOW_LIVE - 1));
+        expect(db.settings[STORAGE_KEY].live[KEY]).toBe(NOW_LIVE);
     });
 
     test('a tab with no known live count gets the full allowance, not a bare cap', () => {
