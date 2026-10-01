@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Chat history and rank badges
+
+- Chat history no longer saves rank badges with its messages, so restored lines no longer show an old rank, or a badge after badges are turned off, and a badged message is no longer stored or restored twice beside the live line.
+
 ### Audit round: idle alerts and the skilling optimizer
 
 - The idle-alt alert no longer repeats for the same alt every time you switch characters.
