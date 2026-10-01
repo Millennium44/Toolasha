@@ -165,7 +165,8 @@ class PFormancePanel {
         // Read once per open, in show(); a mocked or absent config must not
         // take the panel with it
         this.attributionEnabled = false;
-        // Always joined from initialize(), independent of the extras, so this
+        // Joined through joinTabCensus() (settings-ui, always on) and again from
+        // initialize()/show(), independent of the extras, so this
         // tab answers another tab's poll. Polling itself is only while the panel
         // is open with the extras on (_syncPolling).
         this.tabCensus = null;
@@ -223,6 +224,20 @@ class PFormancePanel {
     disable() {
         unregisterCommand('PFormance');
         this._removePanel();
+        this.leaveTabCensus();
+    }
+
+    /**
+     * Join the tab census so this tab answers other tabs' polls. Idempotent, one message
+     * listener and no timer. Called from settings-ui's initialize(), which always runs, so a
+     * tab with the command palette off that never opened this panel still lists.
+     */
+    joinTabCensus() {
+        this._joinTabCensus();
+    }
+
+    /** Leave the census and stop answering polls. Safe when never joined. */
+    leaveTabCensus() {
         this.tabCensus?.stop();
         this.tabCensus = null;
     }

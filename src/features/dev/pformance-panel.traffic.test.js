@@ -148,6 +148,24 @@ describe('Tampermonkey traffic and all-tabs sections', () => {
         expect(pformancePanel.tabCensus?.isRunning()).toBe(true);
     });
 
+    test('joinTabCensus() joins without initialize() or show(), once, and leaveTabCensus() stops it', () => {
+        pformancePanel.joinTabCensus();
+        pformancePanel.joinTabCensus();
+        expect(FakeChannel.all.length).toBe(1);
+        expect(pformancePanel.tabCensus.isRunning()).toBe(true);
+        expect(pformancePanel.tabCensus.isPolling()).toBe(false);
+
+        // The later joins reuse the same census
+        pformancePanel.initialize();
+        pformancePanel.show();
+        expect(FakeChannel.all.length).toBe(1);
+
+        pformancePanel.leaveTabCensus();
+        expect(FakeChannel.all[0].closed).toBe(true);
+        expect(pformancePanel.tabCensus).toBeNull();
+        pformancePanel.leaveTabCensus();
+    });
+
     test('toggling the extras button starts and stops polling, not the channel', () => {
         pformancePanel.initialize();
         pformancePanel.show();
