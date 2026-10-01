@@ -828,13 +828,23 @@ class ChatTabHandler {
      * Take out of the buffer any message the game has just rendered live again
      * — a restored copy of a line that was still on screen when it was saved,
      * which the game re-renders after a reload or when its tab is reopened.
+     * Every restored line after the first such copy goes too: the backlog
+     * rendered after the restore landed, and those lines are not older than it.
      * @param {Set<string>} identities - Of the messages just rendered live
      */
     _dropBufferedDuplicates(identities) {
         if (!identities.size) return;
+        // Restored history ends at the first line rendered live again, as in
+        // `restore`: whatever was restored after it is not older than live.
+        let restoredTail = false;
         for (const node of this._messageNodes()) {
+            const restored = Boolean(
+                node.compareDocumentPosition(this.restoreAnchor) & Node.DOCUMENT_POSITION_FOLLOWING
+            );
             const identity = this._bufferIdentity(node);
-            if (!identity || !identities.has(identity)) continue;
+            const renderedLive = Boolean(identity) && identities.has(identity);
+            if (renderedLive && restored) restoredTail = true;
+            if (!renderedLive && !(restored && restoredTail)) continue;
             node.querySelectorAll('[data-mwi-uid]').forEach((u) => {
                 this.interactionCache.delete(u.getAttribute('data-mwi-uid'));
             });
@@ -964,7 +974,10 @@ class ChatTabHandler {
             return 0;
         }
 
-        const stored = loaded[tabKey];
+        // The working record, not the first read's snapshot: a restore after a
+        // tab switch has to include what this tab evicted since that read, which
+        // the switch has just cleared out of the buffer.
+        const stored = chatHistoryPersistence.messagesFor(tabKey) ?? loaded[tabKey];
         if (!Array.isArray(stored) || !stored.length) return 0;
 
         // Messages are recorded while they are still live, so what is on disk
@@ -980,11 +993,15 @@ class ChatTabHandler {
         let restored = 0;
         for (const html of stored) {
             try {
-                if (live.has(messageIdentity(html))) continue;
+                // The record is in the order lines were seen, so the first one
+                // still on screen is where restored history ends. A later line
+                // the game no longer shows (deleted, or never sent back after a
+                // reload) would sit above older live lines.
+                if (live.has(messageIdentity(html))) break;
                 // A deletion that arrived while the `load()` above was still
-                // in flight has already purged `chatHistoryPersistence.tabs`
-                // — a different in-memory object than the snapshot `stored`
-                // was read from, and untouched by that purge (see
+                // in flight purges `chatHistoryPersistence.tabs` only once its
+                // own wait on that read resumes, which can be after this one;
+                // the snapshot fallback is never purged at all (see
                 // DeletedMessageIds' class doc). Without this check, that
                 // deleted message would be restored anyway.
                 if (this.deletedIds?.has(extractStoredMessageId(html))) continue;

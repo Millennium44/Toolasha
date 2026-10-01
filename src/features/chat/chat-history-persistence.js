@@ -796,7 +796,19 @@ function tabsFromRecord(record, perTab) {
     // A record from a version we do not understand is discarded rather than
     // half-read; the cost is one session's history.
     const stored = record && record.v === RECORD_VERSION && record.tabs ? record.tabs : {};
-    return applyCaps(dropForeignKeys(stored), perTab);
+    const tabs = dropForeignKeys(stored);
+    // Builds before rank badges were left out of the identity stored one line
+    // up to once per badge state it was seen in. Folded here, those copies stop
+    // rendering twice and stop holding the cap against older history.
+    for (const [key, list] of Object.entries(tabs)) {
+        if (!Array.isArray(list)) continue;
+        const unique = [];
+        for (const html of list) {
+            if (typeof html === 'string') mergeMessage(unique, html);
+        }
+        tabs[key] = unique;
+    }
+    return applyCaps(tabs, perTab);
 }
 
 /**
@@ -875,12 +887,12 @@ class ChatHistoryPersistence {
     /**
      * Read the record, and answer with what was on disk.
      *
-     * The answer is a *snapshot*, deliberately not the working record. A tab's
-     * restore is fire-and-forget while its buffer is already taking evictions,
-     * so a message evicted during the read is appended to the working record
-     * before the restore walks it — and a restore walking the working record
-     * rendered that message a second time, above the clone the buffer had
-     * already made of it.
+     * The answer is a *snapshot*, fixed at the read, and is what tells a
+     * caller the read succeeded. A restore renders the working record instead
+     * ({@link ChatHistoryPersistence#messagesFor}), which also holds what was
+     * recorded since; it leaves out what its tab is showing live or already
+     * holds in its buffer, so a message evicted during the read is not
+     * rendered a second time above the buffer's clone of it.
      *
      * Never awaited on the path that makes chat usable: callers fire it and
      * fill their buffer when it lands.
@@ -967,6 +979,21 @@ class ChatHistoryPersistence {
         this.loadPromise = loading;
 
         return this.loadPromise;
+    }
+
+    /**
+     * A tab's messages in the working record, once the first read has merged.
+     *
+     * What a restore after a tab switch renders. The snapshot `load()` answers
+     * with is fixed at the first read, so it lacks every line this session
+     * evicted since — and a switch empties the buffer that was showing them.
+     *
+     * @param {string} tabKey
+     * @returns {Array<string>|null} A copy, oldest first; null before the first read has merged
+     */
+    messagesFor(tabKey) {
+        if (!this.loaded || !this.tabs) return null;
+        return [...(this.tabs[tabKey] || [])];
     }
 
     /**

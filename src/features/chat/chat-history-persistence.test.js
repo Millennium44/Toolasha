@@ -1971,3 +1971,213 @@ describe('a rank badge beside a sender name', () => {
         expect(openPlayerProfile).toHaveBeenCalledWith('Spice', expect.anything());
     });
 });
+
+/**
+ * Restored history is everything older than the game's own live backlog, and only that.
+ *
+ * The record holds lines that were live when they were saved, so it overlaps whatever the game renders
+ * after a reload, and the overlap is not always exact: a line the game no longer renders (deleted, or a
+ * client-only line the server never sends back) sits in the record between lines it does render. Above the
+ * live backlog it is out of order, so it is not restored.
+ */
+describe('restored history ends where the live backlog begins', () => {
+    const GUILD = '/chat_channel_types/guild';
+    const GUILD_KEY = tabKeyForChannel(GUILD);
+
+    /** The Guild tab open, a whisper tab beside it, one pane. */
+    function buildGuildChat() {
+        document.body.innerHTML = '<div id="root"><div class="Chat_tabsComponentContainer__x"></div></div>';
+        const strip = document.querySelector('.Chat_tabsComponentContainer__x');
+        const guild = document.createElement('button');
+        guild.setAttribute('role', 'tab');
+        guild.setAttribute('data-mention-channel', GUILD);
+        guild.setAttribute('aria-selected', 'true');
+        guild.textContent = 'Guild';
+        const whisper = document.createElement('button');
+        whisper.setAttribute('role', 'tab');
+        whisper.setAttribute('aria-selected', 'false');
+        whisper.textContent = 'Whisper';
+        strip.append(guild, whisper);
+        const container = document.createElement('div');
+        container.className = 'ChatHistory_chatHistory__abc';
+        document.getElementById('root').appendChild(container);
+        return container;
+    }
+
+    /** @param {'Guild'|'Whisper'} label */
+    function openTab(label) {
+        for (const button of document.querySelectorAll('button[role="tab"]')) {
+            button.setAttribute('aria-selected', button.textContent === label ? 'true' : 'false');
+        }
+    }
+
+    /**
+     * A player chat line in the game's markup: timestamp, clickable sender, body.
+     * @param {string} time - e.g. `9:55:47 AM`
+     * @param {string} sender
+     * @param {string} body
+     * @returns {string} HTML
+     */
+    const lineHTML = (time, sender, body) =>
+        '<div class="ChatMessage_chatMessage__2wc4V">' +
+        `<span class="ChatMessage_timestamp__3VbX6">[10/1 ${time}]</span> ` +
+        '<span class="ChatMessage_name__1UZ8t ChatMessage_clickable__3Nt2s">' +
+        '<div class="CharacterName_characterName__2FqyZ">' +
+        `<div class="CharacterName_name__1amXp" data-name="${sender}"><span>${sender}</span></div></div></span>` +
+        `<span>: </span><span>${body}</span></div>`;
+
+    const line = (time, sender, body) => {
+        const host = document.createElement('div');
+        host.innerHTML = lineHTML(time, sender, body);
+        return host.firstElementChild;
+    };
+
+    const OLD_1 = ['9:55:47 AM', 'Kasvitatti', 'morning all'];
+    const OLD_2 = ['9:56:17 AM', 'Kasvitatti', 'anyone up for a run'];
+    const LIVE_1 = ['9:56:21 AM', 'Benny', 'sure'];
+    const GONE = ['12:50:31 PM', 'Spice', 'this line is no longer sent'];
+    const LIVE_2 = ['2:51:36 PM', 'Benny', 'Gzz poma'];
+
+    const text = (parts) => line(...parts).textContent;
+    const bufferTexts = (container) =>
+        [...container.querySelectorAll('.mwi-history-buffer [class*="ChatMessage_chatMessage"]')].map(
+            (el) => el.textContent
+        );
+    const liveTexts = (container) =>
+        [...container.children]
+            .filter((el) => el.className.includes('ChatMessage_chatMessage'))
+            .map((el) => el.textContent);
+
+    beforeEach(() => {
+        settingValues.chatHistoryExtender = true;
+        settingValues.chatHistoryExtender_maxHistory = null;
+        observerReady.handlers = [];
+        observerReady.domReady = true;
+        db.settings = {
+            [STORAGE_KEY]: {
+                v: 1,
+                savedAt: 1,
+                tabs: { [GUILD_KEY]: [OLD_1, OLD_2, LIVE_1, GONE, LIVE_2].map((parts) => lineHTML(...parts)) },
+            },
+        };
+        db.quota = false;
+        db.writes = 0;
+        openPlayerProfile.mockClear();
+    });
+
+    afterEach(async () => {
+        await chatHistoryExtender.disable();
+        chatHistoryPersistence.reset();
+        document.body.innerHTML = '';
+    });
+
+    test('a stored line newer than the start of the live backlog is not restored above it', async () => {
+        const container = buildGuildChat();
+        container.append(line(...LIVE_1), line(...LIVE_2));
+        chatHistoryExtender.initialize();
+        await settle();
+
+        expect(bufferTexts(container)).toEqual([text(OLD_1), text(OLD_2)]);
+        expect(liveTexts(container)).toEqual([text(LIVE_1), text(LIVE_2)]);
+    });
+
+    test('the same holds when the backlog renders after the restore has landed', async () => {
+        const container = buildGuildChat();
+        chatHistoryExtender.initialize();
+        await settle();
+        expect(bufferTexts(container)).toHaveLength(5);
+
+        container.append(line(...LIVE_1), line(...LIVE_2));
+        await settle();
+
+        expect(bufferTexts(container)).toEqual([text(OLD_1), text(OLD_2)]);
+    });
+
+    test('a tab round trip keeps the lines this session evicted', async () => {
+        // Nothing of today's on disk yet: the live lines are first seen this session
+        db.settings[STORAGE_KEY].tabs[GUILD_KEY] = [OLD_1, OLD_2].map((parts) => lineHTML(...parts));
+        const container = buildGuildChat();
+        const live1 = line(...LIVE_1);
+        const live2 = line(...LIVE_2);
+        container.append(live1, live2);
+        chatHistoryExtender.initialize();
+        await settle();
+
+        await evict(container, live1);
+        expect(bufferTexts(container)).toEqual([text(OLD_1), text(OLD_2), text(LIVE_1)]);
+
+        // To the whisper tab: the pane's contents are swapped in one commit
+        const whisper = line('3:00:00 PM', 'Spice', 'psst');
+        container.removeChild(live2);
+        container.appendChild(whisper);
+        openTab('Whisper');
+        await settle();
+        expect(bufferTexts(container)).not.toContain(text(LIVE_1));
+
+        // And back: the game renders what it still holds, which no longer includes the evicted line
+        container.removeChild(whisper);
+        container.appendChild(line(...LIVE_2));
+        openTab('Guild');
+        await settle();
+
+        expect(bufferTexts(container)).toEqual([text(OLD_1), text(OLD_2), text(LIVE_1)]);
+        expect(liveTexts(container)).toEqual([text(LIVE_2)]);
+    });
+
+    test('a record a build before the badge fix stored each badged line in twice restores and keeps it once', async () => {
+        // That build stored a line at render and again at eviction, and the badge (its rank changing in
+        // between) made each copy a message of its own: two or three entries for one line, filling the cap
+        const badged = (parts, rank) =>
+            lineHTML(...parts).replace(
+                '</div></div></span>',
+                `</div><span data-toolasha-rank-badge="gold"><svg viewBox="0 0 40 40"><use href="/static/skills.svg#milking"></use></svg>${rank}</span></div></span>`
+            );
+        db.settings[STORAGE_KEY].tabs[GUILD_KEY] = [
+            lineHTML(...OLD_1),
+            badged(OLD_1, 12),
+            badged(OLD_1, 11),
+            lineHTML(...OLD_2),
+            lineHTML(...LIVE_1),
+            badged(LIVE_1, 4),
+        ];
+        const container = buildGuildChat();
+        container.append(line(...LIVE_1));
+        chatHistoryExtender.initialize();
+        await settle();
+
+        expect(bufferTexts(container)).toEqual([text(OLD_1), text(OLD_2)]);
+
+        chatHistoryPersistence.record(GUILD_KEY, serializeMessage(line('3:00:00 PM', 'Spice', 'new')));
+        await chatHistoryPersistence.flush();
+        expect(db.settings[STORAGE_KEY].tabs[GUILD_KEY]).toHaveLength(4);
+    });
+
+    test('a restored sender name opens the profile, after a tab round trip too', async () => {
+        const container = buildGuildChat();
+        const live = line(...LIVE_1);
+        container.appendChild(live);
+        chatHistoryExtender.initialize();
+        await settle();
+
+        const clickName = () => {
+            const name = container.querySelector('.mwi-history-buffer [class*="CharacterName_name"] span');
+            name.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+        };
+        clickName();
+        expect(openPlayerProfile).toHaveBeenCalledWith('Kasvitatti', expect.anything());
+
+        const whisper = line('3:00:00 PM', 'Spice', 'psst');
+        container.removeChild(live);
+        container.appendChild(whisper);
+        openTab('Whisper');
+        await settle();
+        container.removeChild(whisper);
+        container.appendChild(line(...LIVE_1));
+        openTab('Guild');
+        await settle();
+
+        openPlayerProfile.mockClear();
+        clickName();
+        expect(openPlayerProfile).toHaveBeenCalledWith('Kasvitatti', expect.anything());
+    });
+});
