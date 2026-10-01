@@ -1098,10 +1098,16 @@ export function ledgerCyclesByAnchor(records, { perCycle = isTestServer() } = {}
  * @param {number|null} [options.window] - Cycles in the window, as {@link LEDGER_WINDOWS} offers; null for all
  * @param {number} [options.now] - Clock, for deciding which cycles have run
  * @param {boolean} [options.daily] - Whether cycles are daily; the test server, by default
+ * @param {number|null} [options.first] - When the ledger first recorded anything for this scope
+ *   ({@link loadLedgerFirstRecord}). Cycles before the one holding it are not counted, neither
+ *   as expected nor as missed: the ledger cannot have missed what ran before it existed
  * @returns {{watched: number, expected: number, missed: number, inProgress: boolean, daily: boolean,
  *   fraction: number|null}} The coverage, over the cycles that have run
  */
-export function observedCoverage(cycles, { window = null, now = Date.now(), daily = isTestServer() } = {}) {
+export function observedCoverage(
+    cycles,
+    { window = null, now = Date.now(), daily = isTestServer(), first = null } = {}
+) {
     const list = (cycles || []).filter(Boolean);
 
     const watchedFrom = new Set();
@@ -1117,7 +1123,9 @@ export function observedCoverage(cycles, { window = null, now = Date.now(), dail
     let watched = 0;
     let expected = 0;
     let inProgress = false;
+    const firstFrom = Number.isFinite(first) ? scheduledCycle(first, daily).from : -Infinity;
     for (const slot of ledgerWindowCycles(window, { now, daily, since })) {
+        if (slot.from < firstFrom) continue;
         if (now < slot.end) {
             inProgress = true;
             continue;
@@ -1257,6 +1265,37 @@ export async function loadLedgerCycles(guildName, characterId = null, { cycles =
     } catch (error) {
         console.error('[GuildTrialLedger] Reading the ledger failed:', error);
         return [];
+    }
+}
+
+/**
+ * When the ledger first recorded anything for a scope.
+ *
+ * Coverage counts cycles watched out of the cycles that ran, and a cycle that
+ * ran before the first record cannot have been missed: the ledger was not
+ * there. The keys name the oldest week without reading every record. Live that
+ * week's start is the answer (the first cycle counts whole). The test server's
+ * week holds several daily cycles, so the oldest record is read for its
+ * earliest trial and the first cycle counts from there.
+ *
+ * @param {string|null} guildName - Guild name, or null before it is known
+ * @param {string|number|null} [characterId] - The viewing character, for the fallback scope
+ * @returns {Promise<number|null>} Epoch ms, or null when nothing is recorded or it cannot be read
+ */
+export async function loadLedgerFirstRecord(guildName, characterId = null) {
+    const scope = ledgerScope(guildName, characterId);
+    try {
+        const keys = await storage.getAllKeys(LEDGER_STORE);
+        const [oldest] = ledgerCyclesInKeys(keys, scope);
+        if (oldest === undefined) return null;
+        if (!isTestServer()) return oldest;
+        const record = await storage.get(ledgerCycleKey(scope, oldest), LEDGER_STORE, null);
+        const places = record && typeof record === 'object' ? ledgerCyclesByAnchor([record], { perCycle: true }) : [];
+        const placed = places.flatMap((cycle) => cyclePlaces(cycle));
+        return placed.length ? Math.min(...placed) : oldest;
+    } catch (error) {
+        console.error('[GuildTrialLedger] Reading the ledger start failed:', error);
+        return null;
     }
 }
 

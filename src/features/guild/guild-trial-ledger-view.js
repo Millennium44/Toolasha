@@ -37,6 +37,7 @@ import {
     ledgerCsvRows,
     ledgerTotalsRow,
     loadLedgerCycles,
+    loadLedgerFirstRecord,
     observedCoverage,
     sortLedgerRows,
 } from './guild-trial-ledger.js';
@@ -77,6 +78,7 @@ const STATUS_MARK = { ok: '✓', gap: '✗', unknown: '?' };
 const state = {
     /** Cycle records as last read; the panel never reads storage while drawing */
     cycles: [],
+    firstRecord: null,
     /** Whether a read has happened at all, so "empty" and "not looked yet" differ */
     loaded: false,
     /** Which {@link LEDGER_WINDOWS} key is selected */
@@ -113,6 +115,7 @@ let refreshGeneration = 0;
 /** Reset every remembered thing. Exported for tests, which must not inherit a run. */
 export function resetLedgerView() {
     state.cycles = [];
+    state.firstRecord = null;
     state.loaded = false;
     state.window = '4';
     state.sortKey = 'damageShare';
@@ -169,6 +172,7 @@ export async function refreshLedgerView() {
 
     try {
         const cycles = await loadLedgerCycles(guild, characterId, { cycles: chosen.cycles });
+        const firstRecord = await loadLedgerFirstRecord(guild, characterId);
         const record = await loadLoadouts(characterId, guild);
         // The accuracy card reads a different pair of stores from the ledger's:
         // this week's measured-vs-reported blob, which the ladder's rollover
@@ -189,6 +193,7 @@ export async function refreshLedgerView() {
         if (characterId !== (dataManager.getCurrentCharacterId?.() ?? null)) return;
 
         state.cycles = cycles;
+        state.firstRecord = firstRecord;
         state.loaded = true;
         state.accuracy = summarizeWeekAccuracy(stats?.trials);
         state.accuracyTrend = archivedAccuracyTrend(trialRecord?.history);
@@ -255,6 +260,7 @@ export function filterLedgerRows(rows, query) {
  */
 export function buildLedgerTable({
     cycles = state.cycles,
+    firstRecord = state.firstRecord,
     roster = null,
     sortKey = state.sortKey,
     sortDirection = state.sortDirection,
@@ -268,7 +274,7 @@ export function buildLedgerTable({
         trialsRun: folded.trialsRun,
         trialsKnown: folded.trialsKnown,
         cycles: folded.cycles,
-        coverage: observedCoverage(cycles, { window: windowCycles, now }),
+        coverage: observedCoverage(cycles, { window: windowCycles, now, first: firstRecord }),
     };
 }
 

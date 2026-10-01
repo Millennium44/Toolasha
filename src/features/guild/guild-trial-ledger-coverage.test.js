@@ -39,6 +39,7 @@ const {
     ledgerCycleKey,
     ledgerCyclesByAnchor,
     loadLedgerCycles,
+    loadLedgerFirstRecord,
     observedCoverage,
 } = await import('./guild-trial-ledger.js');
 
@@ -137,6 +138,34 @@ describe('the ledger as stored on the test server on 2026-10-01', () => {
         expect(coverage).toEqual({ watched: 3, expected: 4, missed: 1, inProgress: true, daily: true, fraction: 0.75 });
         // One trial per watched cycle: the table's count and the coverage line agree
         expect(foldLedgerCycles(window).trialsRun).toBe(coverage.watched);
+    });
+
+    test('the window starts at the first record: days before the ledger existed are neither expected nor missed', async () => {
+        // The oldest stored week starts 1789689600000; its first fight is 1789770346166
+        const first = await loadLedgerFirstRecord(SCOPE);
+        expect(first).toBe(1789770346166);
+        const window = await loadLedgerCycles(SCOPE, null, { cycles: 30, now: CAPTURED_AT });
+        const coverage = observedCoverage(window, { window: 30, now: CAPTURED_AT, first });
+        // 13 days from the first fight to now, 8 with a record; the 17 days a 30-day window would
+        // reach back past it are not counted
+        expect(coverage).toMatchObject({ watched: 8, expected: 13, missed: 5 });
+        const unclamped = observedCoverage(window, { window: 30, now: CAPTURED_AT });
+        expect(unclamped.expected).toBe(30);
+    });
+
+    test('live: a first record two weeks old gives at most two expected weeks', async () => {
+        server.test = false;
+        const now = CAPTURED_AT;
+        const first = await loadLedgerFirstRecord(SCOPE);
+        expect(first).toBe(LAST_WEEK);
+        const window = await loadLedgerCycles(SCOPE, null, { cycles: 12, now });
+        const coverage = observedCoverage(window, { window: 12, now, first });
+        expect(coverage.expected).toBeLessThanOrEqual(2);
+        expect(coverage).toMatchObject({ watched: 1, expected: 1, missed: 0, inProgress: true });
+    });
+
+    test('a scope with no records has no first record', async () => {
+        expect(await loadLedgerFirstRecord('nobody')).toBeNull();
     });
 
     test('every day in a longer window with no record counts as missed', async () => {

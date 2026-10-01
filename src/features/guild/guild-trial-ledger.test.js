@@ -758,6 +758,20 @@ describe('observedCoverage', () => {
             });
         });
 
+        test('weeks before the first record are neither expected nor missed', () => {
+            const first = thisWeek - 2 * WEEK_MS;
+            const cycles = [week(2), week(1)];
+            expect(observedCoverage(cycles, { window: 12, now, daily: false, first })).toMatchObject({
+                watched: 2,
+                expected: 2,
+                missed: 0,
+            });
+            // The first week counts whole: a mid-week first record still opens its week
+            expect(
+                observedCoverage([week(1)], { window: 12, now, daily: false, first: first + 3 * DAY })
+            ).toMatchObject({ watched: 1, expected: 2, missed: 1 });
+        });
+
         test('the week in progress is left out even when its fight was seen', () => {
             const coverage = observedCoverage([week(1), week(0)], { window: 1, now, daily: false });
             expect(coverage).toMatchObject({ watched: 1, expected: 1, inProgress: true, fraction: 1 });
