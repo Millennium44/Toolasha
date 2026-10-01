@@ -10,6 +10,7 @@ import { constructExportObject, checkBridgeStamp, getLastBridgeIssue } from './c
 import config from '../../core/config.js';
 import { setReactInputValue } from '../../utils/react-input.js';
 import { createTimerRegistry } from '../../utils/timer-registry.js';
+import { gmGetValue } from '../../utils/gm-traffic.js';
 import dataManager from '../../core/data-manager.js';
 import { createCalculatorUI, extractExpRates } from '../combat-sim-integration/skill-calculator-ui.js';
 
@@ -629,7 +630,7 @@ export function getCharacterDataFromStorage() {
     if (data) return data;
     if (typeof GM_getValue !== 'undefined') {
         try {
-            const raw = GM_getValue('toolasha_init_character_data', null);
+            const raw = gmGetValue('toolasha_init_character_data', null);
             if (raw && checkBridgeStamp('toolasha_init_character_data', 'Character data', { enforceOwner: true })) {
                 return JSON.parse(raw);
             }
@@ -656,7 +657,7 @@ export function getClientDataFromStorage() {
     if (data) return data;
     if (typeof GM_getValue !== 'undefined') {
         try {
-            const raw = GM_getValue('toolasha_init_client_data', null);
+            const raw = gmGetValue('toolasha_init_client_data', null);
             if (raw) {
                 checkBridgeStamp('toolasha_init_client_data', 'Client data', { enforceOwner: false });
                 return JSON.parse(raw);

@@ -176,6 +176,15 @@ class SettingsUI {
             console.error('[SettingsUI] Starting cross-device sync failed:', error);
         });
 
+        // Joins the tab census for the PFormance all-tabs list. Here rather than
+        // in the panel's own initialize(), which only the command palette calls
+        // and which returns early with that feature off.
+        try {
+            pformancePanel.joinTabCensus();
+        } catch (error) {
+            console.error('[SettingsUI] Joining the tab census failed:', error);
+        }
+
         // Wait for game's settings panel to load
         this.observeSettingsPanel();
 
@@ -4174,6 +4183,8 @@ class SettingsUI {
             dataManager.off('character_initialized', this.characterSwitchHandler);
             this.characterSwitchHandler = null;
         }
+
+        pformancePanel.leaveTabCensus();
 
         this.timerRegistry.clearAll();
     }

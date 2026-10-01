@@ -27,6 +27,10 @@
  * A second setting, `leaderboardRankBadgesSteam` (default off, Local only), files Steam boards
  * under their own slots (`steam_standard`, `steam_ironcow`) and lets badges use them, labelled Steam.
  *
+ * Two more settings (both default off, live, no restart) refine Steam badges: `leaderboardRankBadgesSteamMark`
+ * puts an S on a pill whose rank is a Steam one, and `leaderboardRankBadgesPreferStandard` shows the best
+ * non-Steam rank instead of a better Steam one. Both are inert while Steam boards are not included.
+ *
  * The badge shows one entry per player: their best rank across every board.
  * The tooltip lists up to five, each with the age of its snapshot.
  */
@@ -63,6 +67,8 @@ import {
 const SETTING_KEY = 'leaderboardRankBadges';
 const XP_TRACKER_KEY = 'leaderboardXPTracker';
 const STEAM_SETTING_KEY = 'leaderboardRankBadgesSteam';
+const STEAM_MARK_KEY = 'leaderboardRankBadgesSteamMark';
+const PREFER_STANDARD_KEY = 'leaderboardRankBadgesPreferStandard';
 const STORE_NAME = 'leaderboardHistory';
 const STORAGE_KEY = 'rankBoards';
 
@@ -72,6 +78,8 @@ export const RANK_SERVER_INTERVAL_MS = 15 * 60 * 1000;
 
 const STYLE_ID = 'toolasha-rank-badge-style';
 const BADGE_ATTR = RANK_BADGE_ATTR;
+// The "S" inside a pill whose rank is a Steam one: a letter and a divider, so it reads without relying on color
+const STEAM_MARK_ATTR = 'data-steam-mark';
 const SVG_NS = 'http://www.w3.org/2000/svg';
 const TOOLTIP_ENTRIES = 5;
 const BAR_ATTR = 'data-toolasha-rank-cycle';
@@ -113,6 +121,7 @@ const MISC_SYMBOLS = Object.freeze({
 
 const STYLE_TEXT = `
 [${BADGE_ATTR}]{box-sizing:border-box;display:inline-flex;align-items:center;gap:1px;height:15px;margin-inline-start:4px;padding:0 3px 0 1px;border:1px solid;border-radius:999px;background:rgba(12,16,28,.78);color:#eef2ff;font:600 9px/1 system-ui,sans-serif;white-space:nowrap;vertical-align:middle;position:relative;overflow:hidden}
+[${BADGE_ATTR}] [${STEAM_MARK_ATTR}]{flex:none;margin-inline:1px;padding-inline-end:2px;border-inline-end:1px solid currentColor;font-size:8px;font-weight:700;opacity:.85}
 [${BADGE_ATTR}] svg{display:block;flex:none;width:11px;height:11px}
 [${BADGE_ATTR}="rainbow"]{border-color:transparent;background:linear-gradient(rgba(12,16,28,.9),rgba(12,16,28,.9)) padding-box,linear-gradient(105deg,#ff5f6d,#ffd166,#67e8a5,#5cb8ff,#c77dff,#ff6ec7) border-box}
 [${BADGE_ATTR}="gold"]{border-color:#d9aa38;color:#ffe8a3}
@@ -262,6 +271,8 @@ class LeaderboardRankBadges {
         // Whether any leaderboard_updated arrived: a message always outranks inferring the view from the tabs
         this.messageSeen = false;
         this.includeSteam = false;
+        this.markSteam = false;
+        this.preferStandard = false;
         this.runId = 0;
         this.mode = 'off';
         this.boards = {};
@@ -333,6 +344,9 @@ class LeaderboardRankBadges {
         const unwatch = [
             config.onSettingChange(SETTING_KEY, onChange),
             config.onSettingChange(STEAM_SETTING_KEY, onChange),
+            // Presentation only: no restart, so no badge blinks out and no board load races a save
+            config.onSettingChange(STEAM_MARK_KEY, () => this.applyPresentation()),
+            config.onSettingChange(PREFER_STANDARD_KEY, () => this.applyPresentation()),
             // Only the Steam status wording depends on it
             config.onSettingChange(XP_TRACKER_KEY, () => this.refreshCycleBars()),
         ];
@@ -346,10 +360,36 @@ class LeaderboardRankBadges {
         return value === 'local' || value === 'server' ? value : 'off';
     }
 
+    /** Reads the two Steam presentation options; both are inert unless Steam boards are included. */
+    readPresentation() {
+        this.markSteam = this.includeSteam && config.getSettingValue(STEAM_MARK_KEY, false) === true;
+        this.preferStandard = this.includeSteam && config.getSettingValue(PREFER_STANDARD_KEY, false) === true;
+    }
+
+    /** Applies a changed presentation option to the badges already drawn. */
+    applyPresentation() {
+        if (this.mode === 'off') return;
+        this.readPresentation();
+        this.decorateAll(true);
+    }
+
+    /**
+     * The entry the pill shows and the tooltip order: the shown entry leads, so the tooltip's first line is
+     * always the pill's own rank. Without prefer-standard this is the list unchanged.
+     * @param {Array<Object>} entries - From the name index, best first
+     * @returns {{best: Object|null, ordered: Array<Object>}}
+     */
+    pickEntry(entries) {
+        const best = bestEntry(entries, { preferStandard: this.preferStandard });
+        if (!best) return { best: null, ordered: [] };
+        return { best, ordered: [best, ...entries.filter((entry) => entry !== best)] };
+    }
+
     async restart() {
         this.stop();
         this.mode = this.readMode();
         this.includeSteam = this.mode === 'local' && config.getSettingValue(STEAM_SETTING_KEY, false) === true;
+        this.readPresentation();
         if (this.mode === 'off') return;
         const runId = ++this.runId;
 
@@ -645,12 +685,13 @@ class LeaderboardRankBadges {
             return;
         }
         const entries = this.index.get(normalizeName(name));
-        const best = bestEntry(entries);
+        const { best, ordered } = this.pickEntry(entries);
         if (!best) {
             existing?.remove();
             return;
         }
-        const signature = `${name}|${entries[0].type}|${best.category}|${best.rank}|${best.at}`;
+        const marked = this.markSteam && isSteamBoardType(best.type);
+        const signature = `${name}|${best.type}|${best.category}|${best.rank}|${best.at}|${marked}`;
         if (existing && !force && existing.dataset.signature === signature) return;
 
         const badge = existing || document.createElement('span');
@@ -658,13 +699,13 @@ class LeaderboardRankBadges {
         badge.dataset.signature = signature;
         if (best.rank <= 5) badge.setAttribute('data-top-five', '');
         else badge.removeAttribute('data-top-five');
-        badge.title = describeEntries(entries, Date.now());
+        badge.title = describeEntries(ordered, Date.now());
         badge.dataset.nameKey = normalizeName(name);
         if (!existing) {
             // The age in the tooltip is read at inspection, not baked in at decoration
             const refresh = () => {
                 const current = this.index.get(badge.dataset.nameKey);
-                if (current?.length) badge.title = describeEntries(current, Date.now());
+                if (current?.length) badge.title = describeEntries(this.pickEntry(current).ordered, Date.now());
             };
             badge.addEventListener('mouseenter', refresh);
             badge.addEventListener('focus', refresh);
@@ -673,6 +714,14 @@ class LeaderboardRankBadges {
         badge.replaceChildren();
         const icon = this.buildIcon(best.category);
         if (icon) badge.appendChild(icon);
+        if (marked) {
+            // aria-hidden: the tooltip already names the board, and a lone "S" read aloud says nothing
+            const mark = document.createElement('span');
+            mark.setAttribute(STEAM_MARK_ATTR, '');
+            mark.setAttribute('aria-hidden', 'true');
+            mark.textContent = 'S';
+            badge.appendChild(mark);
+        }
         badge.appendChild(document.createTextNode(String(best.rank)));
         if (!existing) nameEl.insertAdjacentElement('afterend', badge);
     }

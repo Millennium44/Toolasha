@@ -142,6 +142,17 @@ export const settingsGroups = {
                     'or opened is lost. Only if that has not worked a few seconds later does the page reload. A ' +
                     'page that comes back broken always asks rather than trying again.',
             },
+            // Toggled by the PFormance panel's header button, never listed as a row. It
+            // has to exist here: the config store only writes keys the schema declares,
+            // so without this the button's choice was silently dropped.
+            pformanceAttribution: {
+                id: 'pformanceAttribution',
+                label: 'PFormance attribution extras',
+                type: 'checkbox',
+                default: false,
+                hidden: true,
+                help: 'Extra diagnostics in the PFormance panel: stall attribution, leak canary, heap trend, Tampermonkey traffic and the all-tabs list.',
+            },
         },
     },
 
@@ -3937,6 +3948,28 @@ export const settingsGroups = {
                     'With Local only rank badges, Steam boards you open also count toward badges. Their ' +
                     'ranks are kept apart from the global boards and labelled Standard (Steam) or Ironcow (Steam) ' +
                     'in the badge tooltip. Has no effect with the MWITools data server or with badges Off.',
+            },
+            leaderboardRankBadgesSteamMark: {
+                id: 'leaderboardRankBadgesSteamMark',
+                label: 'Rank badges: mark Steam ranks with an S',
+                type: 'checkbox',
+                default: false,
+                help:
+                    'When the rank on a badge comes from a Steam board, shows a small S before the number so it ' +
+                    'is not mistaken for a global rank. The tooltip names the board either way. Only matters ' +
+                    'while Steam leaderboards are included above.',
+                requires: 'leaderboardRankBadgesSteam',
+            },
+            leaderboardRankBadgesPreferStandard: {
+                id: 'leaderboardRankBadgesPreferStandard',
+                label: 'Rank badges: prefer the standard rank over Steam',
+                type: 'checkbox',
+                default: false,
+                help:
+                    'A player with any non-Steam rank shows their best non-Steam rank on the badge, even when a ' +
+                    'Steam rank is better; the Steam rank stays in the tooltip. A player with only Steam ranks ' +
+                    'still shows the Steam one. Only matters while Steam leaderboards are included above.',
+                requires: 'leaderboardRankBadgesSteam',
             },
         },
     },

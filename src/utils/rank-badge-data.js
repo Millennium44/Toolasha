@@ -419,8 +419,16 @@ export function buildNameIndex(boards, { includeSteam = false } = {}) {
 /**
  * The entry a player's badge shows: their best rank on any board.
  * @param {Array<Object>|undefined} entries - A list from {@link buildNameIndex}
+ * @param {{preferStandard?: boolean}} [options] - `preferStandard` shows the best non-Steam entry even when a
+ *   Steam one ranks better, and falls back to the best Steam entry only when there is no other
  * @returns {Object|null}
  */
-export function bestEntry(entries) {
-    return entries?.length ? entries[0] : null;
+export function bestEntry(entries, { preferStandard = false } = {}) {
+    if (!entries?.length) return null;
+    if (preferStandard) {
+        // The list is sorted best first, so the first non-Steam entry is the best non-Steam one
+        const standard = entries.find((entry) => !isSteamBoardType(entry.type));
+        if (standard) return standard;
+    }
+    return entries[0];
 }
