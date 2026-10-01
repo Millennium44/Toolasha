@@ -2376,6 +2376,48 @@ describe('the cap counts lines older than the game’s live backlog', () => {
         expect(db.settings[STORAGE_KEY].live[KEY]).toBe(NOW_LIVE);
     });
 
+    test('a first load merges a pane that already has its backlog under that pane’s count, not the saved one', async () => {
+        const SAVED_LIVE = 3;
+        db.settings[STORAGE_KEY] = {
+            v: 1,
+            savedAt: 1,
+            tabs: { [KEY]: Array.from({ length: CAP + SAVED_LIVE }, (_, i) => html(i)) },
+            live: { [KEY]: SAVED_LIVE },
+        };
+        const [container] = buildChat(['General']);
+        container.append(...Array.from({ length: LIVE }, (_, i) => makeMessage(line(50 + i))));
+        chatHistoryExtender.initialize();
+        await settle();
+        await chatHistoryPersistence.flush();
+
+        const stored = db.settings[STORAGE_KEY].tabs[KEY];
+        // CAP older lines plus the 8 live; the saved allowance of 3 would have kept CAP + 3.
+        expect(stored).toHaveLength(CAP + LIVE);
+        expect(stored.at(-1)).toContain(line(50 + LIVE - 1));
+        expect(db.settings[STORAGE_KEY].live[KEY]).toBe(LIVE);
+    });
+
+    test('a saved overlap is released when the backlog is already smaller than the saved allowance', async () => {
+        const SAVED_LIVE = 20;
+        const NOW_LIVE = 5;
+        db.settings[STORAGE_KEY] = {
+            v: 1,
+            savedAt: 1,
+            tabs: { [KEY]: Array.from({ length: CAP + SAVED_LIVE }, (_, i) => html(i)) },
+            live: { [KEY]: SAVED_LIVE },
+        };
+        const [container] = buildChat(['General']);
+        // The newest NOW_LIVE stored lines are what the game shows again.
+        container.append(
+            ...Array.from({ length: NOW_LIVE }, (_, i) => makeMessage(line(CAP + SAVED_LIVE - NOW_LIVE + i)))
+        );
+        chatHistoryExtender.initialize();
+        await settle();
+
+        // Nothing waits to be matched against a backlog that is already there, so the cap is bare.
+        expect(bufferTexts(container)).toHaveLength(CAP);
+    });
+
     test('a tab with no known live count gets the full allowance, not a bare cap', () => {
         const tabs = { [KEY]: Array.from({ length: 400 }, (_, i) => `<div>${i}</div>`) };
         applyCaps(tabs, 10, {});

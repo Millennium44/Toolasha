@@ -1068,7 +1068,10 @@ class ChatTabHandler {
         // buffer. An empty pane is not a report that nothing is live — it is
         // a backlog that has not arrived — so it must not overwrite the saved
         // figure, which the cap and the trim below both still need.
-        this._restoredAllowance = chatHistoryPersistence.liveCountFor(tabKey) ?? 0;
+        // A pane that already shows a backlog has answered for itself: the saved
+        // figure is stale, and holding it would keep the overlap of lines the
+        // backlog never duplicates past the cap for good.
+        this._restoredAllowance = liveNow > 0 ? liveNow : (chatHistoryPersistence.liveCountFor(tabKey) ?? 0);
         if (liveNow > 0) chatHistoryPersistence.setLiveCount(tabKey, liveNow);
         const buffered = new Set();
         for (const node of this._messageNodes()) {
@@ -1582,6 +1585,18 @@ class ChatHistoryExtender {
             );
             this.tabHandlers.set(containerEl, handler);
             this.activeHandlers.add(handler);
+            // The pane's own count, reported before the scan below records any of
+            // it: the first load merges those recordings under the cap, and until
+            // this is said the cap only knows the saved allowance. Only a raise,
+            // as in a switch batch; an empty pane is a backlog yet to arrive, not
+            // a report of none.
+            if (handler.tabKey) {
+                const count = handler._liveMessageNodes().length;
+                const saved = chatHistoryPersistence.liveCountFor(handler.tabKey);
+                if (count > 0 && (saved === null || count > saved)) {
+                    chatHistoryPersistence.setLiveCount(handler.tabKey, count);
+                }
+            }
             containerEl.querySelectorAll('[class*="ChatMessage_chatMessage"]').forEach((msg) => {
                 handler.hydrateMessage(msg);
                 // Tagged before it is recorded, the same order `_onMutation`
