@@ -2943,6 +2943,11 @@ class DungeonTracker {
             this.restoredMidRun = false;
             this.joinedMidRun = false;
             this.recentChatMessages = [];
+            // A held cancel already knows how it ended and how long it ran: write it rather than drop it
+            // with its timer. An end nothing has explained is still dropped, and `flushHeldEnd` refuses a
+            // write once the character has changed. A page closing never reaches here, so a cancel held
+            // across a reload is still lost (the run store is a read-merge-write that cannot finish there).
+            if (this.unsettledEnd) this.flushHeldEnd(this.unsettledEnd);
             this.unsettledEnd = null;
             this.chatClockSamples = [];
 

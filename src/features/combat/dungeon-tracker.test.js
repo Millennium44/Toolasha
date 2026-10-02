@@ -4998,6 +4998,33 @@ describe('recording failed and canceled runs', () => {
         expect(game.savedRuns[0].run).toMatchObject({ result: 'cancel', duration: 178_000, validated: true });
     });
 
+    test('a cancel still held when the tracker is torn down is written, not dropped', async () => {
+        beTracking({ anchoredAt: '2026-08-04T10:00:02.000Z', keyCountsMap: PARTY, wavesCompleted: 3 });
+        tracker.onChatMessage(partyMessage('systemChatMessage.partyBattleEnded', '2026-08-04T10:03:00.000Z'));
+        await flush();
+        dungeonDone();
+        await flush();
+        expect(game.savedRuns).toEqual([]);
+
+        // A switch or disable inside the window, before it closes
+        await tracker.cleanup();
+        await flush();
+
+        expect(game.savedRuns).toHaveLength(1);
+        expect(game.savedRuns[0].run).toMatchObject({ result: 'cancel', duration: 178_000 });
+    });
+
+    test('an unexplained end held at teardown is still dropped', async () => {
+        beTracking({ anchoredAt: '2026-08-04T10:00:02.000Z', keyCountsMap: PARTY, wavesCompleted: 4 });
+        dungeonDone();
+        await flush();
+
+        await tracker.cleanup();
+        await flush();
+
+        expect(game.savedRuns).toEqual([]);
+    });
+
     test('an early exit the chat explains only afterwards is still recorded', async () => {
         beTracking({ anchoredAt: '2026-08-04T10:00:02.000Z', keyCountsMap: PARTY, wavesCompleted: 4 });
 
