@@ -262,7 +262,10 @@ class CombatStatsDataCollector {
         if (!socket || socket !== this.sessionSocket) return;
         const session = this.latestCombatData;
         if (!session || session.restored) return;
-        if (!this.currentCombatAction()) return;
+        // The running combat action must be this session's: after a switch to another zone, the old
+        // session is over even before the new one's first battle replaces the snapshot
+        const running = this.currentCombatAction();
+        if (!running || (session.actionHrid && running !== session.actionHrid)) return;
         this.connectionInterrupted = true;
         session.connectionInterrupted = true;
         return this.persistInterruptedSnapshot(this.sessionOwner, session);

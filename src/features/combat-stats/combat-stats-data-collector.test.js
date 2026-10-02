@@ -382,6 +382,18 @@ describe('connection-interrupted flag', () => {
         expect(collector.isConnectionInterrupted()).toBe(true);
     });
 
+    test('a close after switching to another zone, before its first battle, does not flag the old session', async () => {
+        fighting(ZONE);
+        store.socket = FIRST;
+        await wave();
+        fighting('/actions/combat/smelly_planet');
+
+        collector.onSocketClosed(FIRST);
+
+        expect(collector.isConnectionInterrupted()).toBe(false);
+        expect(collector.getLatestData()?.connectionInterrupted).toBeUndefined();
+    });
+
     test('a close while idle after combat stopped flags nothing', async () => {
         fighting(ZONE);
         store.socket = FIRST;
