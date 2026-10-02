@@ -52,6 +52,7 @@
  */
 
 import { runTime } from './dungeon-tracker-storage.js';
+import { isKnownRunResult } from '../../utils/dungeon-run-result.js';
 
 /** Marks a file as one of these backups. */
 export const DUNGEON_RUNS_BACKUP_FORMAT = 'toolasha-dungeon-runs';
@@ -420,6 +421,12 @@ export function validateImportedRun(run, maxRunMs = MAX_PLAUSIBLE_RUN_MS, now = 
     // hostile backup and markup injection at that sink.
     if (run.tier !== undefined && run.tier !== null && !Number.isInteger(run.tier)) {
         return { ok: false, reason: 'tier must be an integer, or absent' };
+    }
+
+    // A clear has no result; a recorded attempt has 'fail' or 'cancel'. Nothing
+    // else is ever written, and the views only ever match those exact values.
+    if (!isKnownRunResult(run.result)) {
+        return { ok: false, reason: "result must be 'fail', 'cancel', or absent" };
     }
 
     const duration = Number(run.duration);

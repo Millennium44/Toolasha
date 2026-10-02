@@ -32,6 +32,7 @@ const game = vi.hoisted(() => ({
     dmHandlers: {},
     savedRuns: [],
     historyRuns: [],
+    recordAttempts: false,
 }));
 
 const mockStorage = vi.hoisted(() => {
@@ -106,6 +107,8 @@ vi.mock('../../core/data-manager.js', () => ({
 }));
 
 vi.mock('../../core/storage.js', () => ({ default: mockStorage }));
+
+vi.mock('./dungeon-run-attempt-setting.js', () => ({ recordingAttempts: () => game.recordAttempts }));
 
 vi.mock('./dungeon-tracker-storage.js', () => ({
     default: {
@@ -218,6 +221,7 @@ function resetTracker() {
     tracker.joinedMidRun = false;
     tracker.characterId = null;
     tracker.recentChatMessages = [];
+    tracker.unsettledEnd = null;
     tracker._lastCompletionTime = 0;
     tracker._emptyRestore = null;
     tracker.hibernationDetected = false;
@@ -256,6 +260,7 @@ beforeEach(() => {
     game.dmHandlers = {};
     game.savedRuns = [];
     game.historyRuns = [];
+    game.recordAttempts = false;
     resetTracker();
 });
 
@@ -2342,6 +2347,38 @@ describe('rebuilding history from the chat log', () => {
         ]);
 
         expect((await tracker.backfillFromChatHistory()).runsAdded).toBe(0);
+    });
+
+    test('with failed runs recorded, a fail and a cancel are saved as what they were', async () => {
+        game.recordAttempts = true;
+        chatLog([
+            { text: '[08/04 10:00:00 AM] Battle started: Chimerical Den' },
+            { text: '[08/04 10:00:05 AM] Key counts: [Alice - 12]' },
+            { text: '[08/04 10:02:00 AM] Party failed on wave 7' },
+            { text: '[08/04 10:03:00 AM] Battle started: Chimerical Den' },
+            { text: '[08/04 10:03:05 AM] Key counts: [Alice - 11]' },
+            { text: '[08/04 10:04:05 AM] Battle ended: Chimerical Den' },
+        ]);
+
+        await tracker.backfillFromChatHistory();
+
+        expect(game.savedRuns.map(({ run }) => [run.result, run.duration, run.dungeonName])).toEqual([
+            ['fail', 115_000, 'Chimerical Den'],
+            ['cancel', 60_000, 'Chimerical Den'],
+        ]);
+    });
+
+    test('with failed runs recorded, a ready-check that fell through a second later is still nothing', async () => {
+        game.recordAttempts = true;
+        chatLog([
+            { text: '[08/04 10:00:00 AM] Battle started: Chimerical Den' },
+            { text: '[08/04 10:00:05 AM] Key counts: [Alice - 12]' },
+            { text: '[08/04 10:00:06 AM] Battle ended: Chimerical Den' },
+        ]);
+
+        await tracker.backfillFromChatHistory();
+
+        expect(game.savedRuns).toEqual([]);
     });
 
     test('a run after a canceled Pirate Cove is filed under the Sinister Circus the party started next', async () => {
@@ -4883,5 +4920,161 @@ describe('a run that is over but was never seen to end', () => {
         expect(tracker.currentRun.currentWave).toBe(2);
         expect(tracker.currentRun.startTime).toBe(t0 + 33_000);
         expect(tracker.getCurrentRun().totalElapsed).toBe(0);
+    });
+});
+
+describe('recording failed and canceled runs', () => {
+    const PARTY = { Aster: 12, Briar: 3 };
+
+    function partyMessage(m, isoTime) {
+        return { message: { chan: '/chat_channel_types/party', isSystemMessage: true, m, t: isoTime } };
+    }
+
+    function dungeonDone() {
+        tracker.onActionsUpdated({ endCharacterActions: [{ actionHrid: DEN, difficultyTier: 0, isDone: true }] });
+    }
+
+    beforeEach(() => {
+        game.recordAttempts = true;
+    });
+
+    test('a party wipe is saved as a fail, timed by the server from the run’s opening key count', async () => {
+        beTracking({ anchoredAt: '2026-08-04T10:00:02.000Z', keyCountsMap: PARTY, wavesCompleted: 7 });
+
+        tracker.onChatMessage(partyMessage('systemChatMessage.partyWaveFailed', '2026-08-04T10:04:00.000Z'));
+        await flush();
+
+        expect(tracker.isTracking).toBe(false);
+        expect(game.savedRuns).toHaveLength(1);
+        const { teamKey, run } = game.savedRuns[0];
+        expect(teamKey).toBe('Aster,Briar');
+        expect(run).toMatchObject({
+            result: 'fail',
+            duration: 238_000,
+            timestamp: '2026-08-04T10:00:02.000Z',
+            dungeonName: 'Chimerical Den',
+            dungeonHrid: DEN,
+            tier: 0,
+            validated: true,
+            wavesCompleted: 7,
+        });
+    });
+
+    test('nothing is saved while the setting is off', async () => {
+        game.recordAttempts = false;
+        beTracking({ anchoredAt: '2026-08-04T10:00:02.000Z', keyCountsMap: PARTY });
+
+        tracker.onChatMessage(partyMessage('systemChatMessage.partyWaveFailed', '2026-08-04T10:04:00.000Z'));
+        await flush();
+
+        expect(tracker.isTracking).toBe(false);
+        expect(game.savedRuns).toEqual([]);
+    });
+
+    test('a battle ended mid-run makes the early exit a cancel, ending at the message', async () => {
+        beTracking({ anchoredAt: '2026-08-04T10:00:02.000Z', keyCountsMap: PARTY, wavesCompleted: 3 });
+
+        tracker.onChatMessage(partyMessage('systemChatMessage.partyBattleEnded', '2026-08-04T10:03:00.000Z'));
+        await flush();
+        // The run is left to the action feed, as it always was
+        expect(tracker.isTracking).toBe(true);
+
+        dungeonDone();
+        await flush();
+
+        expect(tracker.isTracking).toBe(false);
+        expect(game.savedRuns).toHaveLength(1);
+        expect(game.savedRuns[0].run).toMatchObject({ result: 'cancel', duration: 178_000, validated: true });
+    });
+
+    test('an early exit the chat explains only afterwards is still recorded', async () => {
+        beTracking({ anchoredAt: '2026-08-04T10:00:02.000Z', keyCountsMap: PARTY, wavesCompleted: 4 });
+
+        dungeonDone();
+        await flush();
+        expect(tracker.isTracking).toBe(false);
+        expect(game.savedRuns).toEqual([]);
+
+        tracker.onChatMessage(partyMessage('systemChatMessage.partyWaveFailed', '2026-08-04T10:04:30.000Z'));
+        await flush();
+
+        expect(game.savedRuns).toHaveLength(1);
+        expect(game.savedRuns[0].run).toMatchObject({ result: 'fail', duration: 268_000, wavesCompleted: 4 });
+    });
+
+    test('an early exit nothing explains in time is not recorded', async () => {
+        beTracking({ anchoredAt: '2026-08-04T10:00:02.000Z', keyCountsMap: PARTY, wavesCompleted: 4 });
+
+        dungeonDone();
+        await flush();
+        // Long after, a message about something else entirely
+        vi.setSystemTime(Date.parse('2026-08-04T10:10:00.000Z'));
+        tracker.onChatMessage(partyMessage('systemChatMessage.partyWaveFailed', '2026-08-04T10:10:00.000Z'));
+        await flush();
+
+        expect(game.savedRuns).toEqual([]);
+    });
+
+    test('a ready-check that falls through a second later is no attempt', async () => {
+        beTracking({ anchoredAt: '2026-08-04T10:00:02.000Z', keyCountsMap: PARTY, wavesCompleted: 0 });
+
+        tracker.onChatMessage(partyMessage('systemChatMessage.partyBattleEnded', '2026-08-04T10:00:03.000Z'));
+        await flush();
+
+        expect(tracker.isTracking).toBe(false);
+        expect(game.savedRuns).toEqual([]);
+    });
+
+    test('a flee before the first wave clears is a cancel once it has cost real time', async () => {
+        beTracking({ anchoredAt: '2026-08-04T10:00:02.000Z', keyCountsMap: PARTY, wavesCompleted: 0 });
+
+        tracker.onChatMessage(partyMessage('systemChatMessage.partyBattleEnded', '2026-08-04T10:01:00.000Z'));
+        await flush();
+
+        expect(game.savedRuns).toHaveLength(1);
+        expect(game.savedRuns[0].run).toMatchObject({ result: 'cancel', duration: 58_000, wavesCompleted: 0 });
+    });
+
+    test('a solo death is a fail on the wall clock, filed under the one player', async () => {
+        game.actions = [{ actionHrid: DEN, difficultyTier: 0, ordinal: 0, isDone: false, maxCount: 0 }];
+        beTracking({ currentWave: 10, wavesCompleted: 9, maxWaves: 10, battleId: 1, partyNames: ['Marketcow'] });
+
+        await tracker.onNewBattle({
+            wave: 1,
+            battleId: 2,
+            combatStartTime: '2026-08-04T10:05:00.000Z',
+            players: [{ character: { name: 'Marketcow' } }],
+        });
+        await flush();
+
+        expect(game.savedRuns).toHaveLength(1);
+        expect(game.savedRuns[0].teamKey).toBe('Marketcow');
+        expect(game.savedRuns[0].run).toMatchObject({
+            result: 'fail',
+            duration: 5 * 60_000,
+            validated: false,
+            source: 'tracker',
+        });
+        // And the next run still starts
+        expect(tracker.isTracking).toBe(true);
+        expect(tracker.currentRun.wavesCompleted).toBe(0);
+    });
+
+    test('a run joined part-way, with no start to measure from, is not recorded', async () => {
+        beTracking({ joinedMidRun: true, keyCountsMap: PARTY, anchoredAt: '2026-08-04T10:00:02.000Z' });
+
+        tracker.onChatMessage(partyMessage('systemChatMessage.partyWaveFailed', '2026-08-04T10:04:00.000Z'));
+        await flush();
+
+        expect(game.savedRuns).toEqual([]);
+    });
+
+    test('a run that cannot say who was in it is not recorded', async () => {
+        beTracking({ wavesCompleted: 3 });
+
+        tracker.onChatMessage(partyMessage('systemChatMessage.partyWaveFailed', '2026-08-04T10:04:00.000Z'));
+        await flush();
+
+        expect(game.savedRuns).toEqual([]);
     });
 });

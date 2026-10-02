@@ -23,6 +23,8 @@ import { trendsFor, directionMarker, NOT_ENOUGH_RUNS, TREND_WINDOW } from './dun
 import { toCsv, csvFilename, downloadCsv, downloadFile } from '../../utils/csv-export.js';
 import { formatDateTime } from '../../utils/formatters.js';
 import { openPlayerProfile, VALID_PLAYER_NAME_RE } from '../../utils/profile-command.js';
+import { isCanceledRun, isClearRun, isFailedRun, summarizeAttempts } from '../../utils/dungeon-run-result.js';
+import { recordingAttempts } from './dungeon-run-attempt-setting.js';
 
 /**
  * How many of a group's runs the list actually renders, most recent first.
@@ -49,6 +51,7 @@ export const DUNGEON_RUN_CSV_COLUMNS = [
     { key: 'teamSize', label: 'Team Size' },
     { key: 'keyCounts', label: 'Key Counts' },
     { key: 'validated', label: 'Server-timed' },
+    { key: 'result', label: 'Result' },
 ];
 
 /**
@@ -94,6 +97,8 @@ export function buildRunHistoryRows(runs) {
             // Party runs are timed by the server's own "Key counts" timestamps;
             // a solo run only has this client's wall clock behind it
             validated: run.validated !== false,
+            // 'clear' for every run without a result: that is every older record
+            result: isFailedRun(run) ? 'fail' : isCanceledRun(run) ? 'cancel' : 'clear',
         };
     });
 }
@@ -225,17 +230,32 @@ class DungeonTrackerUIHistory {
     }
 
     /**
-     * Calculate stats for a set of runs
-     * @param {Array} runs - Array of runs
+     * Calculate stats for a set of runs.
+     *
+     * Average, fastest and slowest are a clear's, whatever else the list holds.
+     * Failed and canceled attempts (present only while they are recorded) are
+     * counted beside them: a fail count and rate, which leave cancels out, and a
+     * time per clear, which does not.
+     *
+     * @param {Array} attempts - Array of runs, possibly with failed and canceled attempts
      * @returns {Object} Stats object
      */
-    calculateStatsForRuns(runs) {
-        if (!runs || runs.length === 0) {
+    calculateStatsForRuns(attempts) {
+        const runs = (attempts || []).filter(isClearRun);
+        const summary = summarizeAttempts(attempts);
+        const attemptStats = {
+            failCount: summary.fails,
+            cancelCount: summary.cancels,
+            failRate: summary.failRate,
+            timePerClear: summary.timePerClearMs,
+        };
+        if (runs.length === 0) {
             return {
                 totalRuns: 0,
                 avgTime: 0,
                 fastestTime: 0,
                 slowestTime: 0,
+                ...attemptStats,
             };
         }
 
@@ -254,6 +274,7 @@ class DungeonTrackerUIHistory {
             avgTime: Math.floor(total / runs.length),
             fastestTime,
             slowestTime,
+            ...attemptStats,
         };
     }
 
@@ -289,8 +310,10 @@ class DungeonTrackerUIHistory {
             // character filter says the panel is speaking for. Everything below
             // — the dungeon and team dropdowns included — is built from that
             // narrowed list, so the choices offered are choices that have runs.
+            // Failed and canceled attempts are listed too while they are being
+            // recorded; every figure built from the list keeps to clears.
             const allRuns = filterRunsForCharacter(
-                await dungeonTrackerStorage.getAllRuns(),
+                await dungeonTrackerStorage.getAllRuns({ includeAttempts: recordingAttempts() }),
                 this.state.filterCharacter,
                 character
             );
@@ -347,7 +370,8 @@ class DungeonTrackerUIHistory {
             // the filters allowed rather than from whichever grouping the
             // panel happens to be showing. Memoised on the run list, so a
             // redraw that changed nothing recomputes nothing.
-            const { groups: trendGroups, deltas } = trendsFor(filteredRuns);
+            // Clears only: an attempt's length is no trend in clear time.
+            const { groups: trendGroups, deltas } = trendsFor(filteredRuns.filter(isClearRun));
 
             // The groups get a container of their own inside the list:
             // "Show N more" redraws just that subtree, so the bars prepended
@@ -969,7 +993,7 @@ class DungeonTrackerUIHistory {
                                 ${this.renderGroupLabel(group)}
                             </div>
                             <div style="font-size: 10px; color: #aaa;">
-                                Runs: ${group.stats.totalRuns} | Avg: ${avgTime} | Best: ${bestTime} | Worst: ${worstTime}
+                                Runs: ${group.stats.totalRuns} | Avg: ${avgTime} | Best: ${bestTime} | Worst: ${worstTime}${this.renderAttemptSummary(group.stats)}
                             </div>
                         </div>
                         <span class="mwi-dt-group-toggle" style="color: #aaa; font-size: 10px;">${toggleIcon}</span>
@@ -1057,6 +1081,28 @@ class DungeonTrackerUIHistory {
     }
 
     /**
+     * A group's fail figures, for the end of its summary line. Empty when it
+     * has no failed or canceled attempts, which is always the case while they
+     * are not recorded.
+     * @param {Object} stats - From `calculateStatsForRuns`
+     * @returns {string} HTML, or ''
+     */
+    renderAttemptSummary(stats) {
+        let html = '';
+        if (stats.failCount > 0) {
+            const rate = stats.failRate === null ? '' : ` (${Math.round(stats.failRate * 100)}%)`;
+            html += ` | <span style="color: #ff6b6b;">Fails: ${stats.failCount}${rate}</span>`;
+        }
+        if (stats.cancelCount > 0) {
+            html += ` | <span style="color: #ffd700;">Canceled: ${stats.cancelCount}</span>`;
+        }
+        if (html && stats.timePerClear > 0) {
+            html += ` | Per clear: ${this.formatTime(stats.timePerClear)}`;
+        }
+        return html;
+    }
+
+    /**
      * The key one group's per-panel state (expanded, pages shown) lives under.
      * Carries the grouping mode so a page count from one Group By mode never
      * lands on a same-keyed group of the other.
@@ -1124,6 +1170,16 @@ class DungeonTrackerUIHistory {
             const dateTime = formatDateTime(dateObj);
             const dungeonLabel = run.dungeonName || 'Unknown';
             const delta = deltas?.get(runIdentity(run)) || null;
+            // A failed or canceled attempt is listed with the clears but marked
+            // and dimmed, so its time is never read as a clear's
+            const failed = isFailedRun(run);
+            const attempt = failed || isCanceledRun(run);
+            const waves = Number.isInteger(run.wavesCompleted) ? ` w${run.wavesCompleted}` : '';
+            const resultBadge = attempt
+                ? `<span style="color: ${failed ? '#ff6b6b' : '#ffd700'}; font-size: 9px; font-weight: bold; margin-right: 4px;"` +
+                  ` title="${failed ? 'Failed run' : 'Canceled run'}${waves ? `, ${run.wavesCompleted} waves cleared` : ''}">` +
+                  `${failed ? 'FAILED' : 'CANCELED'}${waves}</span>`
+                : '';
 
             html += `
                 <div style="
@@ -1135,8 +1191,8 @@ class DungeonTrackerUIHistory {
                     font-size: 10px;
                 " data-run-timestamp="${this.escapeHtml(run.timestamp)}" data-run-identity="${this.escapeHtml(JSON.stringify(runIdentity(run)))}">
                     <span style="color: #aaa; min-width: 25px;">#${runNumber}</span>
-                    <span style="color: #fff; flex: 1; text-align: center;">
-                        ${timeStr}${timeMark} <span style="color: #888; font-size: 9px;">(${dateTime})</span>
+                    <span style="color: ${attempt ? '#888' : '#fff'}; flex: 1; text-align: center;">
+                        ${resultBadge}${timeStr}${timeMark} <span style="color: #888; font-size: 9px;">(${dateTime})</span>
                     </span>
                     ${this.renderDeltaMarker(delta)}
                     <span style="color: #888; margin-right: 6px; font-size: 9px;">${this.escapeHtml(dungeonLabel)}</span>

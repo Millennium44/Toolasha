@@ -13,7 +13,10 @@ import { describe, test, expect, beforeEach, afterEach, vi } from 'vitest';
 
 const world = vi.hoisted(() => ({
     character: { id: 'market123', name: 'Marketcow' },
+    recordAttempts: false,
 }));
+
+vi.mock('./dungeon-run-attempt-setting.js', () => ({ recordingAttempts: () => world.recordAttempts }));
 
 vi.mock('./dungeon-tracker-storage.js', () => ({
     default: {
@@ -90,6 +93,7 @@ function render(history, groups) {
 beforeEach(() => {
     document.body.innerHTML = '<div class="Chat_chatInputContainer__c"><input /></div>';
     world.character = { id: 'market123', name: 'Marketcow' };
+    world.recordAttempts = false;
     dungeonTrackerStorage.getRunsForCharacterOrNull.mockReset().mockResolvedValue([]);
     dungeonTrackerStorage.importRuns.mockReset().mockResolvedValue({ added: 0, alreadyPresent: 0, ok: true });
     dungeonTrackerChatAnnotations.refreshRunCounts.mockReset().mockResolvedValue(undefined);
@@ -481,6 +485,7 @@ describe('the CSV export', () => {
                 teamSize: 2,
                 keyCounts: 'Aster: 2; Briar: 3',
                 validated: true,
+                result: 'clear',
             },
             {
                 timestamp: '2026-08-03T09:30:00.000Z',
@@ -493,6 +498,8 @@ describe('the CSV export', () => {
                 // Only an explicit `validated: false` is unvalidated; a legacy run
                 // carrying no such field is left as the trusted kind it always was
                 validated: true,
+                // No result is a clear: every record from before attempts existed
+                result: 'clear',
             },
         ]);
     });
@@ -1231,5 +1238,73 @@ describe('filter dropdowns and an auto-scoped run with no history yet', () => {
         await history.update(buildFilterContainer());
 
         expect(history.consumeFilterReset()).toBe(false);
+    });
+});
+
+describe('failed and canceled attempts in the history', () => {
+    const at = (minute) => `2026-08-04T10:${String(minute).padStart(2, '0')}:00.000Z`;
+    const clear = (duration, minute) => ({ ...run('Aster,Briar'), duration, timestamp: at(minute) });
+    const attempt = (result, duration, minute, extra = {}) => ({ ...clear(duration, minute), result, ...extra });
+
+    test('average, fastest and slowest are a clear’s; fails and cancels are counted beside them', () => {
+        const history = new DungeonTrackerUIHistory(freshState('team'), (ms) => `${ms}ms`);
+        const stats = history.calculateStatsForRuns([
+            clear(300_000, 1),
+            clear(500_000, 2),
+            attempt('fail', 100_000, 3),
+            attempt('cancel', 60_000, 4),
+        ]);
+
+        expect(stats).toMatchObject({
+            totalRuns: 2,
+            avgTime: 400_000,
+            fastestTime: 300_000,
+            slowestTime: 500_000,
+            failCount: 1,
+            cancelCount: 1,
+            // One fail in three outcomes: the cancel is no failure
+            failRate: 1 / 3,
+            // All 960 s spent, over the two clears it bought
+            timePerClear: 480_000,
+        });
+    });
+
+    test('a list of clears alone reads exactly as it always did', () => {
+        const history = new DungeonTrackerUIHistory(freshState('team'), (ms) => `${ms}ms`);
+        const runList = render(history, history.groupByTeam([clear(300_000, 1), clear(500_000, 2)]));
+
+        expect(runList.textContent).not.toMatch(/Fails|Canceled|FAILED|CANCELED|Per clear/);
+    });
+
+    test('an attempt is marked in the list and its group summary counts it', () => {
+        const history = new DungeonTrackerUIHistory(freshState('team'), (ms) => `${ms}ms`);
+        const runList = render(
+            history,
+            history.groupByTeam([clear(300_000, 1), attempt('fail', 100_000, 2, { wavesCompleted: 7 })])
+        );
+
+        expect(runList.textContent).toContain('FAILED w7');
+        expect(runList.textContent).toContain('Fails: 1 (50%)');
+        expect(runList.textContent).toContain('Runs: 1 |');
+    });
+
+    test('attempts are read from the store only while they are being recorded', async () => {
+        const container = document.createElement('div');
+        container.innerHTML = '<div id="mwi-dt-run-list"></div>';
+        document.body.appendChild(container);
+        const history = new DungeonTrackerUIHistory(freshState('team'), (ms) => `${ms}ms`);
+
+        dungeonTrackerStorage.getAllRuns.mockClear();
+        await history.update(container);
+        expect(dungeonTrackerStorage.getAllRuns).toHaveBeenLastCalledWith({ includeAttempts: false });
+
+        world.recordAttempts = true;
+        await history.update(container);
+        expect(dungeonTrackerStorage.getAllRuns).toHaveBeenLastCalledWith({ includeAttempts: true });
+    });
+
+    test('the CSV says how each run ended', () => {
+        const rows = buildRunHistoryRows([clear(300_000, 1), attempt('fail', 1, 2), attempt('cancel', 1, 3)]);
+        expect(rows.map((row) => row.result)).toEqual(['clear', 'fail', 'cancel']);
     });
 });

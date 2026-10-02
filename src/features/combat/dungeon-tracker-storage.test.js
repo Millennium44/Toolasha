@@ -2053,3 +2053,92 @@ describe('removing one run survives a pull', () => {
         ]);
     });
 });
+
+describe('failed and canceled attempts', () => {
+    const clear = (duration, at) => ({
+        dungeonName: 'Chimerical Den',
+        teamKey: 'A,B',
+        timestamp: `2026-01-0${at}T00:00:00.000Z`,
+        duration,
+    });
+
+    beforeEach(() => {
+        game.saved = {};
+    });
+
+    test('a clear is stored without a result, in the shape every older record has', async () => {
+        seedRuns([]);
+        await dungeonTrackerStorage.saveTeamRun('A,B', {
+            timestamp: '2026-01-05T00:00:00Z',
+            duration: 12000,
+            dungeonName: 'Chimerical Den',
+        });
+
+        const [saved] = await dungeonTrackerStorage.getAllRuns();
+        expect(saved).not.toHaveProperty('result');
+        expect(saved).not.toHaveProperty('wavesCompleted');
+    });
+
+    test('an attempt keeps its result and wave count', async () => {
+        seedRuns([]);
+        await dungeonTrackerStorage.saveTeamRun('A,B', {
+            timestamp: '2026-01-05T00:00:00Z',
+            duration: 120_000,
+            dungeonName: 'Chimerical Den',
+            result: 'fail',
+            wavesCompleted: 7,
+        });
+
+        const [saved] = await dungeonTrackerStorage.getAllRuns({ includeAttempts: true });
+        expect(saved).toMatchObject({ result: 'fail', wavesCompleted: 7 });
+    });
+
+    test('a result no version writes is not stored', async () => {
+        seedRuns([]);
+        await dungeonTrackerStorage.saveTeamRun('A,B', {
+            timestamp: '2026-01-05T00:00:00Z',
+            duration: 120_000,
+            dungeonName: 'Chimerical Den',
+            result: 'exploded',
+        });
+
+        const [saved] = await dungeonTrackerStorage.getAllRuns();
+        expect(saved).not.toHaveProperty('result');
+    });
+
+    test('every reader gets clears only unless it asks for attempts', async () => {
+        seedRuns([
+            clear(100_000, 1),
+            { ...clear(30_000, 2), result: 'fail' },
+            { ...clear(20_000, 3), result: 'cancel' },
+            // A record from before results existed, and one saying so outright
+            clear(110_000, 4),
+            { ...clear(90_000, 5), result: 'clear' },
+        ]);
+
+        expect(await dungeonTrackerStorage.getAllRuns()).toHaveLength(3);
+        expect(await dungeonTrackerStorage.getAllRuns({ includeAttempts: true })).toHaveLength(5);
+        expect(await dungeonTrackerStorage.getFilteredRuns({ dungeonName: 'Chimerical Den' })).toHaveLength(3);
+
+        const stats = await dungeonTrackerStorage.getStatsByName('Chimerical Den');
+        expect(stats.totalRuns).toBe(3);
+        expect(stats.avgTime).toBe(100_000);
+        expect(stats.fastestTime).toBe(90_000);
+
+        const [team] = await dungeonTrackerStorage.getAllTeamStats();
+        expect(team).toMatchObject({ runCount: 3, avgTime: 100_000, bestTime: 90_000, worstTime: 110_000 });
+    });
+
+    test('the outlier scrub neither counts attempts toward the median nor removes them', async () => {
+        seedRuns([
+            ...[100, 110, 90, 105, 95].map((d, i) => clear(d, i + 1)),
+            // Far past three times a clear, but an attempt is not judged as one
+            { ...clear(5000, 6), result: 'fail' },
+            { ...clear(6000, 7), result: 'cancel' },
+            { ...clear(7000, 8), result: 'cancel' },
+        ]);
+
+        expect(await dungeonTrackerStorage.scrubOutlierRuns()).toBe(0);
+        expect(await dungeonTrackerStorage.getAllRuns({ includeAttempts: true })).toHaveLength(8);
+    });
+});

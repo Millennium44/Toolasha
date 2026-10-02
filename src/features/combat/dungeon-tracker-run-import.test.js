@@ -451,3 +451,26 @@ describe('serializeBackupWithinLimits', () => {
         expect(validateDungeonRunsEnvelope(JSON.parse(text))).toEqual({ ok: true });
     });
 });
+
+describe('a backed-up run’s result', () => {
+    const base = () => ({
+        dungeonName: 'Chimerical Den',
+        teamKey: 'Aster,Briar',
+        duration: 300_000,
+        timestamp: '2026-08-04T10:00:00.000Z',
+    });
+
+    test('a clear (no result), a fail and a cancel are all accepted', () => {
+        const now = Date.parse('2026-09-01T00:00:00.000Z');
+        for (const result of [undefined, null, 'clear', 'fail', 'cancel']) {
+            expect(validateImportedRun({ ...base(), result }, undefined, now)).toEqual({ ok: true });
+        }
+    });
+
+    test('any other result is refused', () => {
+        const now = Date.parse('2026-09-01T00:00:00.000Z');
+        for (const result of ['FAIL', '<b>', 1, {}]) {
+            expect(validateImportedRun({ ...base(), result }, undefined, now).ok).toBe(false);
+        }
+    });
+});
