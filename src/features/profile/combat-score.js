@@ -1681,12 +1681,18 @@ class CombatScore {
         const copyBtn = preview.querySelector('#mwi-party-export-copy-btn');
         copyBtn.addEventListener('click', async (e) => {
             e.stopPropagation();
-            if (rosterKey(describePartyProfiles(dataManager.characterData, [])) !== previewedRoster) {
+            const rosterUnchanged = () =>
+                rosterKey(describePartyProfiles(dataManager.characterData, [])) === previewedRoster;
+            if (!rosterUnchanged()) {
                 // The party changed since the preview was drawn: show the new one instead of copying
                 await this.showPartyExportPreview(snapshotName, panel);
                 return;
             }
-            const copied = await this.handleExportFullParty(snapshotName, copyBtn, characterId);
+            const copied = await this.handleExportFullParty(snapshotName, copyBtn, characterId, rosterUnchanged);
+            if (copied === 'roster-changed') {
+                await this.showPartyExportPreview(snapshotName, panel);
+                return;
+            }
             if (copied) {
                 const closeTimeout = setTimeout(closePreview, 1200);
                 this.timerRegistry.registerTimeout(closeTimeout);
@@ -1700,9 +1706,12 @@ class CombatScore {
      * @param {string} snapshotName - Saved combat loadout to wear on your own character
      * @param {Element} button - The preview's Copy button, for status feedback
      * @param {string|number|null} characterId - The character the preview was opened for
-     * @returns {Promise<boolean>} Whether the export reached the clipboard
+     * @param {Function} [rosterUnchanged] - Re-checked after the export is built: the build reads the
+     *   party again after an await, and a change in between must not reach the clipboard
+     * @returns {Promise<boolean|'roster-changed'>} Whether the export reached the clipboard, or
+     *   'roster-changed' when the party moved while it was being built
      */
-    async handleExportFullParty(snapshotName, button, characterId) {
+    async handleExportFullParty(snapshotName, button, characterId, rosterUnchanged = null) {
         const originalText = button.textContent;
         const originalBg = button.style.background;
 
@@ -1720,6 +1729,7 @@ class CombatScore {
                 this.showButtonStatus(button, '✗ No Data', config.COLOR_LOSS, originalText, originalBg);
                 return false;
             }
+            if (rosterUnchanged && !rosterUnchanged()) return 'roster-changed';
 
             await navigator.clipboard.writeText(JSON.stringify(team));
             this.showButtonStatus(button, '✓ Copied', config.COLOR_PROFIT, originalText, originalBg);

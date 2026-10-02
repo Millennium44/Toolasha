@@ -73,6 +73,7 @@ vi.mock('../combat/combat-sim-export-metz.js', () => ({
     applyLoadoutOverrideToMetzCharacter: (character, override) => ({ ...character, override }),
     constructMetzTeamExport: async (expectedCharacterId, options) => {
         stub.teamCalls.push({ expectedCharacterId, options });
+        stub.onTeamBuild?.();
         return [{ name: 'Me', override: options?.selfLoadoutOverride }, { name: 'Teammate' }];
     },
     describePartyProfiles: () => stub.partyMembers,
@@ -817,6 +818,36 @@ describe('sim export split button', () => {
             expect(stub.teamCalls).toHaveLength(0);
             expect(clipboardText).toBeNull();
             expect(document.querySelector('#mwi-party-export-preview').textContent).toContain('Newcomer');
+        });
+
+        test('a party that changes while the export is being built is not copied either', async () => {
+            combatScore.showScorePanel(profileData(stub.currentCharacterId), scoreData, document.createElement('div'));
+            await flush();
+
+            document.querySelector('.mwi-combat-sim-party-export-option[data-name="Raid"]').click();
+            await flush();
+            // Someone joins while the export reads the party again
+            stub.onTeamBuild = () => {
+                stub.partyMembers = [
+                    ...stub.partyMembers,
+                    {
+                        characterId: 'party-3',
+                        name: 'Newcomer',
+                        profile: {},
+                        status: { found: true, ageMs: 60 * 1000, gearless: false, stale: false },
+                        warning: null,
+                    },
+                ];
+            };
+            try {
+                document.querySelector('#mwi-party-export-copy-btn').click();
+                await flush();
+
+                expect(clipboardText).toBeNull();
+                expect(document.querySelector('#mwi-party-export-preview').textContent).toContain('Newcomer');
+            } finally {
+                stub.onTeamBuild = null;
+            }
         });
 
         test('copying exports the team for this character with the saved loadout on yourself', async () => {
