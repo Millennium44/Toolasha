@@ -236,7 +236,8 @@ function buildSelfMetzCharacter(characterObj, clientObj) {
  * Shared by the team export (which turns it into warnings) and the profile panel's "export full
  * party" preview (which lists every member's profile age before anything is copied).
  *
- * @param {Object} characterObj - The character whose party is read (`partyInfo.partySlotMap`)
+ * @param {Object} characterObj - The character whose party is read: the live roster when it is
+ *   `dataManager.characterData`, else its `partyInfo.partySlotMap`
  * @param {Array<Object>} profileList - Cached `profile_list` entries
  * @param {number} [now=Date.now()] - Reference time for profile ages
  * @returns {Array<{characterId: string|number, name: string, profile: Object|null,
@@ -246,7 +247,14 @@ function buildSelfMetzCharacter(characterObj, clientObj) {
 export function describePartyProfiles(characterObj, profileList, now = Date.now()) {
     const ownerId = characterObj?.character?.id;
     const members = [];
-    for (const member of Object.values(characterObj?.partyInfo?.partySlotMap || {})) {
+    // The live character's `partySlotMap` is frozen at login and emptied for a whole battle, so the
+    // roster comes from dataManager (which prefers the one `new_battle` named). A bridged character
+    // (simulator page) has no live roster; its slot map is all there is.
+    const roster =
+        characterObj && characterObj === dataManager.characterData
+            ? dataManager.getPartyMembers().members
+            : Object.values(characterObj?.partyInfo?.partySlotMap || {});
+    for (const member of roster) {
         if (!member?.characterID || sameCharacterId(member.characterID, ownerId)) continue;
         const profile =
             (profileList || []).find((entry) => sameCharacterId(entry?.characterID, member.characterID)) || null;

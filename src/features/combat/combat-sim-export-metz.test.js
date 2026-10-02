@@ -11,6 +11,7 @@ const mocks = vi.hoisted(() => ({
     partyEquipment: [],
     partySkills: [],
     profiles: null,
+    battleRoster: null,
 }));
 
 vi.mock('../../core/data-manager.js', () => ({
@@ -20,6 +21,18 @@ vi.mock('../../core/data-manager.js', () => ({
         },
         getInventory: vi.fn(() => mocks.inventory),
         getMooPassBuffs: vi.fn(() => mocks.mooPassBuffs),
+        // Mirrors the real one: the battle roster wins, else the login slot map
+        getPartyMembers: vi.fn(() => {
+            if (mocks.battleRoster?.length) return { members: mocks.battleRoster, source: 'battle', updatedAt: 1 };
+            const slots = mocks.characterData?.partyInfo?.partySlotMap || {};
+            return {
+                members: Object.values(slots)
+                    .filter((member) => member?.characterID)
+                    .map((member) => ({ characterID: member.characterID, characterName: member.characterName || '' })),
+                source: 'login',
+                updatedAt: null,
+            };
+        }),
     },
 }));
 
@@ -79,6 +92,30 @@ describe('Metz combat export', () => {
         mocks.partyEquipment = [];
         mocks.partySkills = [];
         mocks.profiles = null;
+        mocks.battleRoster = null;
+    });
+
+    test('mid-battle the team and the preview read the battle roster, not the emptied slot map', async () => {
+        // The game empties partySlotMap for a whole battle; new_battle names the party
+        mocks.characterData = baseCharacter({ partyInfo: { partySlotMap: {} } });
+        mocks.battleRoster = [
+            { characterID: 'self-1', characterName: 'Self' },
+            { characterID: 'party-1', characterName: 'Teammate' },
+        ];
+
+        const team = await constructMetzTeamExport('self-1');
+        const members = describePartyProfiles(mocks.characterData, [{ characterID: 'party-1' }]);
+
+        expect(team.map((entry) => entry.name)).toEqual(['Self', 'Teammate']);
+        expect(members.map((member) => member.characterId)).toEqual(['party-1']);
+    });
+
+    test('a bridged character (not the live one) still reads its own slot map', () => {
+        const bridged = baseCharacter({ partyInfo: { partySlotMap: { 1: { characterID: 'party-9' } } } });
+        mocks.characterData = baseCharacter();
+        mocks.battleRoster = [{ characterID: 'party-1', characterName: 'Teammate' }];
+
+        expect(describePartyProfiles(bridged, []).map((member) => member.characterId)).toEqual(['party-9']);
     });
 
     test('moves live tools into skilling and keeps only filled combat slots', async () => {
