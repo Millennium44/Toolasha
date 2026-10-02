@@ -801,13 +801,12 @@ class TaskProfitDisplay {
      * pass instead of booking another one.
      */
     _scheduleCardRefresh() {
-        if (this._cardRefreshTimer) clearTimeout(this._cardRefreshTimer);
-        this._cardRefreshTimer = setTimeout(() => {
+        if (this._cardRefreshTimer) this.timerRegistry.cancelTimeout(this._cardRefreshTimer);
+        this._cardRefreshTimer = this.timerRegistry.scheduleTimeout(() => {
             this._cardRefreshTimer = null;
             this.updateTaskProfits();
             this.updateQueuedIndicators();
         }, CARD_REFRESH_MS);
-        this.timerRegistry.registerTimeout(this._cardRefreshTimer);
     }
 
     /**

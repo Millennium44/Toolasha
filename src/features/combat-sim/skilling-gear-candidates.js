@@ -260,9 +260,8 @@ export function isCombatOnlyItem(itemDetail) {
 export function canEquip(itemDetail, levels) {
     const read = (hrid) => (levels instanceof Map ? levels.get(hrid) : levels?.[hrid]) ?? 1;
     for (const requirement of itemDetail?.equipmentDetail?.levelRequirements || []) {
-        if (!requirement.levelTypeHrid) continue;
-        const skillHrid = requirement.levelTypeHrid.replace('/level_types/', '/skills/');
-        if (read(skillHrid) < requirement.level) return false;
+        if (!requirement.skillHrid) continue;
+        if (read(requirement.skillHrid) < requirement.level) return false;
     }
     return true;
 }

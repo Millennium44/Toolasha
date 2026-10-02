@@ -49,7 +49,12 @@ vi.mock('../../utils/dom-observer-helpers.js', () => ({
     }),
 }));
 vi.mock('../../utils/timer-registry.js', () => ({
-    createTimerRegistry: vi.fn(() => ({ clearAll: vi.fn(), registerTimeout: vi.fn() })),
+    createTimerRegistry: vi.fn(() => ({
+        clearAll: vi.fn(),
+        registerTimeout: vi.fn(),
+        scheduleTimeout: (fn, ms) => setTimeout(fn, ms),
+        cancelTimeout: (id) => clearTimeout(id),
+    })),
 }));
 vi.mock('./action-filter.js', () => ({ default: { initialize: vi.fn(), cleanup: vi.fn(), registerPanel: vi.fn() } }));
 vi.mock('../../utils/game-lookups.js', () => ({

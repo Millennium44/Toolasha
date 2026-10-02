@@ -943,6 +943,30 @@ export function removeTab(config, tabId) {
 }
 
 /**
+ * Create one top-level tab per category, populated with its items. Categories with no items, and
+ * categories whose name already matches a tab anywhere in the tree, are skipped, so running it
+ * again never duplicates a tab.
+ * @param {Object} config
+ * @param {Array<{name: string, items: string[]}>} categories
+ * @returns {{ config: Object, added: number }} `added`: how many tabs were created
+ */
+export function importCategoryTabs(config, categories) {
+    let c = clone(config);
+    const existingNames = new Set();
+    _walkTabs(c.tabs, (tab) => existingNames.add(tab.name));
+    let added = 0;
+    for (const cat of categories) {
+        if (!cat?.name || !cat.items?.length || existingNames.has(cat.name)) continue;
+        const result = addTab(c, null, cat.name);
+        c = result.config;
+        for (const hrid of cat.items) c = addItem(c, result.tabId, hrid);
+        existingNames.add(cat.name);
+        added++;
+    }
+    return { config: c, added };
+}
+
+/**
  * Rename a tab
  * @param {Object} config
  * @param {string} tabId

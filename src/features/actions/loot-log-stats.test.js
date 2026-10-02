@@ -643,6 +643,23 @@ describe('buildLootLogSummaryText, the copy-button text', () => {
         expect(withoutProfit).not.toContain('Profit:');
     });
 
+    test('totals follow the number-format setting instead of always abbreviating', async () => {
+        const { default: config } = await import('../../core/config.js');
+        config.getSettingValue.mockImplementation((key, fallback) =>
+            key === 'formatting_useKMBFormat' ? 'full' : fallback
+        );
+        try {
+            const text = buildLootLogSummaryText(
+                { actionHrid: '/actions/woodcutting/tree', actionCount: 1, drops: { '/items/log': 100000 } },
+                resolve
+            );
+            expect(text).toContain('Total: 4,000,000/3,000,000');
+            expect(text).not.toContain('4.0M');
+        } finally {
+            config.getSettingValue.mockReset();
+        }
+    });
+
     test('a session with no drops is still one line naming the action', () => {
         const text = buildLootLogSummaryText(
             { actionHrid: '/actions/woodcutting/tree', actionCount: 5, drops: {} },
