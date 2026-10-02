@@ -1044,22 +1044,25 @@ describe('routing chat messages', () => {
         expect(completions[0].partyMessageDuration).toBe(272_000); // 10:00:02 → 10:04:34
     });
 
-    test('a party failure ends the run', async () => {
-        beTracking();
-        tracker.onChatMessage({
-            message: {
-                chan: '/chat_channel_types/party',
-                isSystemMessage: true,
-                m: 'systemChatMessage.partyFailed',
-                t: '2026-08-04T10:04:00.000Z',
-            },
-        });
-        await flush();
+    test.each(['systemChatMessage.partyWaveFailed', 'systemChatMessage.partyFailed'])(
+        'a party failure (%s) ends the run',
+        async (key) => {
+            beTracking();
+            tracker.onChatMessage({
+                message: {
+                    chan: '/chat_channel_types/party',
+                    isSystemMessage: true,
+                    m: key,
+                    t: '2026-08-04T10:04:00.000Z',
+                },
+            });
+            await flush();
 
-        expect(tracker.isTracking).toBe(false);
-        expect(tracker.currentRun).toBeNull();
-        expect(game.savedRuns).toHaveLength(0);
-    });
+            expect(tracker.isTracking).toBe(false);
+            expect(tracker.currentRun).toBeNull();
+            expect(game.savedRuns).toHaveLength(0);
+        }
+    );
 
     test('a battle started for another dungeon ends the run', async () => {
         beTracking({ dungeonHrid: DEN });

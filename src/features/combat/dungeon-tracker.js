@@ -1321,8 +1321,10 @@ class DungeonTracker {
             return;
         }
 
-        // Handle "Party failed" messages
-        if (message.m === 'systemChatMessage.partyFailed') {
+        // Handle "Party failed" messages ("Party failed on wave N."). The game's
+        // locale key is reported to be partyWaveFailed; partyFailed is kept too
+        // because no capture in hand pins the key down either way.
+        if (message.m === 'systemChatMessage.partyWaveFailed' || message.m === 'systemChatMessage.partyFailed') {
             this.onPartyFailed(timestamp, message);
             return;
         }
