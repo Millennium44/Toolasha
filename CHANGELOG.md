@@ -6,6 +6,12 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Leftover fixes: party export, storage-full recovery, +13 badges
+
+- The single-character sim export keeps your teammates when exported mid-dungeon.
+- Recording resumes on its own once a save succeeds after storage filled up, with no reload needed.
+- Inventory badges and sort price +13 and above gear the same way net worth does when it uses official values.
+
 ### Audit round: page-close saves, text size and net worth
 
 - Closing a tab while a save is in progress no longer loses everything else waiting to be saved.
