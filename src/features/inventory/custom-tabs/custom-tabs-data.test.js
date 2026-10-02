@@ -1096,6 +1096,48 @@ describe('Clear All', () => {
         expect(merge(cleared, stale).tabs).toEqual([]);
     });
 
+    test('a child deleted before the clear stays gone when its revived parent still carries it', () => {
+        const kid = tab('kid', { updatedAt: 10 });
+        const parent = tab('top', { updatedAt: 10, children: [kid] });
+        // The child is deleted alone at 50, then the whole layout is cleared
+        const before = layout([tab('top', { updatedAt: 60 })], { removed: { kid: 50 } });
+        const cleared = clearAllTabs(before, NOW);
+        const record = Object.values(cleared.clearedAll)[0];
+        expect(record.prior).toEqual(['kid']);
+        expect(cleared.removed.kid).toBe(50);
+        // A stale peer edits the parent after the clear while still holding the child
+        const stale = layout([{ ...parent, updatedAt: record.at + 50 }]);
+        for (const first of [merge(stale, cleared), merge(cleared, stale)]) {
+            expect(ids(first)).toEqual(['top']);
+            expect(first.tabs[0].children).toEqual([]);
+            expect(first.removed.kid).toBe(50);
+            // Stable across a second fold, from either side
+            for (const again of [merge(stale, first), merge(first, stale)]) {
+                expect(again.tabs[0].children).toEqual([]);
+                expect(again.removed.kid).toBe(50);
+            }
+        }
+    });
+
+    test('a prior id whose copy was edited after the clear survives', () => {
+        const before = layout([tab('top', { updatedAt: 60 })], { removed: { kid: 50 } });
+        const cleared = clearAllTabs(before, NOW);
+        const at = Object.values(cleared.clearedAll)[0].at;
+        const stale = layout([
+            tab('top', { updatedAt: at + 50, children: [tab('kid', { name: 'back', updatedAt: at + 60 })] }),
+        ]);
+        const merged = merge(stale, cleared);
+        expect(merged.tabs[0].children.map((t) => t.name)).toEqual(['back']);
+    });
+
+    test('a record written before `prior` existed still reads as all-live', () => {
+        const kid = tab('kid', { updatedAt: 10 });
+        const parent = tab('top', { updatedAt: NOW + 50, children: [kid] });
+        const old = layout([], { clearedAll: { op: { at: NOW, ids: ['top', 'kid'] } } });
+        const merged = merge(layout([parent]), old);
+        expect(merged.tabs[0].children.map((t) => t.id)).toEqual(['kid']);
+    });
+
     // Failure mode 8
     test('never lowers a deletion already on file from a clock running ahead', () => {
         const ahead = NOW + 60 * 60_000;

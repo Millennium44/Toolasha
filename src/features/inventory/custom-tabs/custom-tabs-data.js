@@ -117,14 +117,17 @@ function unionTombstones(a, b) {
 }
 
 /**
- * A config's Clear All records (`opId → { at, ids }`), malformed entries dropped.
+ * A config's Clear All records (`opId → { at, ids, prior }`), malformed entries dropped.
  *
  * A record is one Clear All, written once by `clearAllTabs` and never edited:
  * every copy of a tab named in `ids` whose stamp is below `at` is deleted by it.
  * It names ids, never a time range, so a tab the clearing device did not know
- * about is untouched however the clocks disagree.
+ * about is untouched however the clocks disagree. `prior` is the subset of
+ * `ids` that was already tombstoned when the clear ran; those were not taken by
+ * the clear, so a revived ancestor must not bring them back (`applyClears`).
+ * Records written before `prior` existed have none and read as all-live.
  * @param {Object} config
- * @returns {Object<string, {at: number, ids: string[]}>}
+ * @returns {Object<string, {at: number, ids: string[], prior: string[]}>}
  */
 function clearRecordsOf(config) {
     const records = config?.clearedAll;
@@ -133,7 +136,8 @@ function clearRecordsOf(config) {
     for (const [opId, record] of Object.entries(records)) {
         const at = Number(record?.at);
         if (!Number.isFinite(at) || !Array.isArray(record?.ids)) continue;
-        out[opId] = { at, ids: record.ids.filter((id) => typeof id === 'string') };
+        const named = (list) => (Array.isArray(list) ? list.filter((id) => typeof id === 'string') : []);
+        out[opId] = { at, ids: named(record.ids), prior: named(record.prior) };
     }
     return out;
 }
@@ -143,7 +147,7 @@ function clearRecordsOf(config) {
  * the same id on both sides is the same record; ours is kept.
  * @param {Object} a
  * @param {Object} b
- * @returns {Object<string, {at: number, ids: string[]}>}
+ * @returns {Object<string, {at: number, ids: string[], prior: string[]}>}
  */
 function unionClearRecords(a, b) {
     return { ...a, ...b };
@@ -163,6 +167,20 @@ function clearTimesOf(records) {
 }
 
 /**
+ * The Clear All time per tab id that a record names as already deleted before
+ * it ran (`prior`), the latest record winning.
+ * @param {Object<string, {at: number, prior: string[]}>} records
+ * @returns {Map<string, number>}
+ */
+function priorTimesOf(records) {
+    const times = new Map();
+    for (const { at, prior } of Object.values(records)) {
+        for (const id of prior) if (!(times.get(id) >= at)) times.set(id, at);
+    }
+    return times;
+}
+
+/**
  * Apply Clear All records to a subtree: drop every copy stamped before the
  * clear that named it. Mirrors `applyTombstones` in one respect - a surviving
  * ancestor (edited after the clear) brings back the descendants that same
@@ -171,13 +189,22 @@ function clearTimesOf(records) {
  * cannot tell a legacy tab from a stale one; a record names exactly the ids
  * the player cleared, and sparing them would let the read-back fold of the
  * pre-clear copy undo a Clear All of a legacy layout on its first save.
+ *
+ * A `prior` id (already tombstoned when the clear ran) is judged on its own
+ * stamp alone: the revival rule exists for tabs the clear took together with
+ * their parent, and a tab deleted before the clear was never part of that.
+ * Dropping it here also leaves its older tombstone untouched, since
+ * `applyTombstones` never sees the tab.
  * @param {Object} tab
  * @param {Map<string, number>} clearAt
+ * @param {Map<string, number>} priorAt
  * @param {number} [revivedAt] - Clear an ancestor survived
  * @returns {Object|null}
  */
-function applyClears(tab, clearAt, revivedAt = -1) {
+function applyClears(tab, clearAt, priorAt, revivedAt = -1) {
     if (!tab || typeof tab !== 'object') return null;
+    const before = priorAt.get(tab.id);
+    if (before !== undefined && stampOf(tab) < before) return null;
     const at = clearAt.get(tab.id);
     let revived = revivedAt;
     if (at !== undefined) {
@@ -187,7 +214,7 @@ function applyClears(tab, clearAt, revivedAt = -1) {
     }
     const children = Array.isArray(tab.children) ? tab.children : null;
     if (!children || children.length === 0) return tab;
-    const kept = children.map((child) => applyClears(child, clearAt, revived)).filter(Boolean);
+    const kept = children.map((child) => applyClears(child, clearAt, priorAt, revived)).filter(Boolean);
     if (kept.length === children.length && kept.every((child, i) => child === children[i])) return tab;
     return { ...tab, children: kept };
 }
@@ -510,9 +537,10 @@ function mergeConfigs(stored, memory) {
     // only what is left, so a large clear never dilutes the ratio for an unrelated deletion.
     const clearRecords = unionClearRecords(clearRecordsOf(theirs), clearRecordsOf(ours));
     const clearAt = clearTimesOf(clearRecords);
+    const priorAt = priorTimesOf(clearRecords);
     if (clearAt.size > 0) {
         for (const [id, tab] of [...byId]) {
-            const kept = applyClears(tab, clearAt);
+            const kept = applyClears(tab, clearAt, priorAt);
             if (kept) byId.set(id, kept);
             else byId.delete(id);
         }
@@ -1056,7 +1084,7 @@ export function removeTab(config, tabId) {
 /**
  * Remove every tab, as one operation that survives sync.
  *
- * Writes a Clear All record (`clearedAll[opId] = { at, ids }`, see
+ * Writes a Clear All record (`clearedAll[opId] = { at, ids, prior }`, see
  * `applyClears`) naming every tab id this config knows: each live tab, nested
  * ones included, and each id already tombstoned, so a stale peer still
  * carrying a tab deleted earlier cannot bring it back past the mass-delete cap
@@ -1082,13 +1110,15 @@ export function clearAllTabs(config, now = Date.now()) {
     for (const tab of live) at = Math.max(at, stampOf(tab) + 1);
     for (const when of Object.values(c.removed)) at = Math.max(at, (Number(when) || 0) + 1);
     for (const { at: earlier } of Object.values(clearRecordsOf(c))) at = Math.max(at, earlier + 1);
-    const ids = new Set(Object.keys(c.removed));
+    const prior = new Set(Object.keys(c.removed));
+    const ids = new Set(prior);
     for (const tab of live) {
         ids.add(tab.id);
+        prior.delete(tab.id);
         c.removed[tab.id] = at;
     }
     if (ids.size === 0) return c;
-    c.clearedAll = { ...clearRecordsOf(c), [makeId()]: { at, ids: [...ids] } };
+    c.clearedAll = { ...clearRecordsOf(c), [makeId()]: { at, ids: [...ids], prior: [...prior] } };
     c.tabs = [];
     c.selectedTabId = null;
     c.orderUpdatedAt = Math.max(Number(c.orderUpdatedAt) || 0, now);
