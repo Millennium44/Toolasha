@@ -184,3 +184,104 @@ describe('getCleanupRegistryCensus', () => {
         expect(getCleanupRegistryCensus().listeners).not.toBe(999);
     });
 });
+
+/**
+ * Per-registration release: a feature that registers per mount of a game panel
+ * releases the previous mount instead of holding every mount until cleanupAll.
+ */
+describe('unregister functions', () => {
+    test('a listener unregister removes just that listener, once', () => {
+        const registry = createCleanupRegistry();
+        const target = makeTarget();
+        const a = () => {};
+        const b = () => {};
+        const before = getCleanupRegistryCensus().listeners;
+        const unregisterA = registry.registerListener(target, 'click', a);
+        registry.registerListener(target, 'click', b);
+
+        unregisterA();
+        unregisterA();
+        expect(target.removeEventListener).toHaveBeenCalledTimes(1);
+        expect(target.removeEventListener).toHaveBeenCalledWith('click', a, undefined);
+        expect(getCleanupRegistryCensus().listeners).toBe(before + 1);
+
+        registry.cleanupAll();
+        expect(target.removeEventListener).toHaveBeenCalledTimes(2);
+        expect(target.removeEventListener).toHaveBeenLastCalledWith('click', b, undefined);
+        expect(getCleanupRegistryCensus().listeners).toBe(before);
+    });
+
+    test('an observer unregister disconnects it and cleanupAll does not disconnect it again', () => {
+        const registry = createCleanupRegistry();
+        const observer = { disconnect: vi.fn() };
+        const unregister = registry.registerObserver(observer);
+
+        unregister();
+        registry.cleanupAll();
+        expect(observer.disconnect).toHaveBeenCalledTimes(1);
+    });
+
+    test('timer unregisters clear the timer', () => {
+        vi.useFakeTimers();
+        try {
+            const registry = createCleanupRegistry();
+            const tick = vi.fn();
+            const unregisterInterval = registry.registerInterval(setInterval(tick, 10));
+            const fire = vi.fn();
+            const unregisterTimeout = registry.registerTimeout(setTimeout(fire, 10));
+
+            unregisterInterval();
+            unregisterTimeout();
+            vi.advanceTimersByTime(50);
+            expect(tick).not.toHaveBeenCalled();
+            expect(fire).not.toHaveBeenCalled();
+        } finally {
+            vi.useRealTimers();
+        }
+    });
+
+    test('a cleanup unregister runs it now; the same function registered twice is two entries', () => {
+        const registry = createCleanupRegistry();
+        const cleanup = vi.fn();
+        const unregisterFirst = registry.registerCleanup(cleanup);
+        registry.registerCleanup(cleanup);
+
+        unregisterFirst();
+        expect(cleanup).toHaveBeenCalledTimes(1);
+
+        registry.cleanupAll();
+        expect(cleanup).toHaveBeenCalledTimes(2);
+    });
+
+    test('unregister after cleanupAll is a no-op and the census does not go negative', () => {
+        const registry = createCleanupRegistry();
+        const observer = { disconnect: vi.fn() };
+        const before = getCleanupRegistryCensus().observers;
+        const unregister = registry.registerObserver(observer);
+
+        registry.cleanupAll();
+        unregister();
+        expect(observer.disconnect).toHaveBeenCalledTimes(1);
+        expect(getCleanupRegistryCensus().observers).toBe(before);
+    });
+
+    test('a cleanup that unregisters another entry during cleanupAll releases each exactly once', () => {
+        const registry = createCleanupRegistry();
+        const later = vi.fn();
+        let unregisterLater = null;
+        registry.registerCleanup(() => unregisterLater());
+        unregisterLater = registry.registerCleanup(later);
+
+        registry.cleanupAll();
+        expect(later).toHaveBeenCalledTimes(1);
+    });
+
+    test('invalid registrations still return a callable unregister', () => {
+        const registry = createCleanupRegistry();
+        expect(() => registry.registerListener(null, 'click', () => {})()).not.toThrow();
+        expect(() => registry.registerObserver(null)()).not.toThrow();
+        expect(() => registry.registerInterval(0)()).not.toThrow();
+        expect(() => registry.registerTimeout(0)()).not.toThrow();
+        expect(() => registry.registerCleanup(null)()).not.toThrow();
+    });
+});

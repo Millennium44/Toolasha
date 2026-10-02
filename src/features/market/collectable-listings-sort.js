@@ -21,7 +21,8 @@ class CollectableListingsSort {
     constructor() {
         this.isInitialized = false;
         this.cleanupRegistry = createCleanupRegistry();
-        this.tbodyObservers = new WeakMap();
+        this.currentTbody = null;
+        this.releaseCurrentObserver = null;
     }
 
     initialize() {
@@ -62,14 +63,20 @@ class CollectableListingsSort {
             return;
         }
 
-        if (!this.tbodyObservers.has(tbody)) {
+        if (tbody !== this.currentTbody) {
+            // A new tbody means the game remounted the table (reopening the marketplace,
+            // switching tabs). Only one My Listings table is ever on screen, so release the
+            // previous mount's observer: its callback closes over the old table, and holding
+            // it in the registry pinned every detached copy until the feature was disabled.
+            this._releaseObserver();
+
             // subtree: true is required — React reuses the same <tr> when a listing's status
             // flips to Filled and just swaps in a Collect button inside it, rather than
             // replacing the row itself, so a childList-only watch on tbody never sees it.
             const observer = new MutationObserver(() => this._reorder(tableNode));
             observer.observe(tbody, { childList: true, subtree: true });
-            this.tbodyObservers.set(tbody, observer);
-            this.cleanupRegistry.registerCleanup(() => observer.disconnect());
+            this.currentTbody = tbody;
+            this.releaseCurrentObserver = this.cleanupRegistry.registerObserver(observer);
         }
 
         this._reorder(tableNode);
@@ -134,9 +141,18 @@ class CollectableListingsSort {
         }
     }
 
+    _releaseObserver() {
+        if (this.releaseCurrentObserver) {
+            this.releaseCurrentObserver();
+        }
+        this.releaseCurrentObserver = null;
+        this.currentTbody = null;
+    }
+
     cleanup() {
         this.cleanupRegistry.cleanupAll();
-        this.tbodyObservers = new WeakMap();
+        this.releaseCurrentObserver = null;
+        this.currentTbody = null;
         this.isInitialized = false;
     }
 }
