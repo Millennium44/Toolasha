@@ -1014,6 +1014,12 @@ export function clearAllTabs(config) {
         c.removed[tab.id] = at;
         c.clearedTabIds[tab.id] = at;
     });
+    // Tabs deleted before the clear are part of the reset too: re-affirmed under the same deletion, so a
+    // stale peer still carrying them cannot trip the mass-delete cap and bring them back
+    for (const id of Object.keys(c.removed)) {
+        c.removed[id] = at;
+        c.clearedTabIds[id] = at;
+    }
     c.tabs = [];
     c.selectedTabId = null;
     c.orderUpdatedAt = now;

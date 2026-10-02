@@ -1666,6 +1666,25 @@ describe('clearAllTabs and importCategoryTabs', () => {
         expect(merged.tabs[0].children.map((t) => t.id)).toEqual(['kid']);
     });
 
+    test('tabs deleted before a Clear All stay gone when a stale peer still carries them', async () => {
+        const { clearAllTabs } = await import('./custom-tabs-data.js');
+        const { mergeForKey } = await import('../../../utils/sync-merge-registry.js');
+        const merge = mergeForKey('settings', 'char1_inventoryTabs_config').merge;
+        const tabOf = (id) => ({ id, name: id, items: [], children: [], updatedAt: 100 });
+        // o1–o3 were deleted earlier; k is the one tab left when Clear All runs
+        const before = {
+            version: 1,
+            selectedTabId: null,
+            tabs: [tabOf('k')],
+            removed: { o1: 200, o2: 200, o3: 200 },
+        };
+        const cleared = clearAllTabs(before);
+        expect(Object.keys(cleared.clearedTabIds).sort()).toEqual(['k', 'o1', 'o2', 'o3']);
+
+        const stale = { version: 1, selectedTabId: null, tabs: ['o1', 'o2', 'o3', 'k'].map(tabOf) };
+        expect(merge(stale, cleared).tabs).toEqual([]);
+    });
+
     test('importCategoryTabs makes one tab per non-empty category and skips existing names', async () => {
         const { importCategoryTabs } = await import('./custom-tabs-data.js');
         const { c } = base();
