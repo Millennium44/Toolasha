@@ -1289,6 +1289,19 @@ describe('confirming from the strip', () => {
             await vi.advanceTimersByTimeAsync(1200);
         };
 
+        test('the armed button stands a moment before it is pressed, since the game ignores an instant confirm', async () => {
+            openMenu();
+            vendorRun();
+
+            confirmBtn().click();
+            await vi.advanceTimersByTimeAsync(150);
+            expect(armClicks).toBe(1);
+            expect(gameClicks).toBe(0);
+
+            await vi.advanceTimersByTimeAsync(600);
+            expect(gameClicks).toBe(1);
+        });
+
         test('an unarmed button is armed by one click, then sold by one more', async () => {
             openMenu();
             vendorRun();

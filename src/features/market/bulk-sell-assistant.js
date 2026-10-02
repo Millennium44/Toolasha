@@ -60,6 +60,12 @@ import { clickThroughReact } from '../../utils/react-click.js';
 /** Bound on waiting for the vendor button to relabel after its arming click */
 const VENDOR_ARM_WAIT_MS = 1000;
 const VENDOR_ARM_POLL_MS = 50;
+/**
+ * How long the armed button must have stood before it is pressed. The game ignores a Confirm Sell For
+ * that lands within a few tens of milliseconds of the arming click (measured on the test server
+ * 2026-10-02: pressed 60 ms after arming, nothing sold; ~300 ms after, it sold every time)
+ */
+const VENDOR_CONFIRM_SETTLE_MS = 400;
 
 const BUTTON_ID = 'mwi-bulk-sell-btn';
 const CHIP_ID = 'mwi-bulk-sell-chip';
@@ -1328,7 +1334,22 @@ class BulkSellAssistant {
                 this._render();
                 return;
             }
-            this._pressConfirm(result.button);
+            // Let the armed button stand before pressing it (see VENDOR_CONFIRM_SETTLE_MS), then check
+            // again that nothing moved meanwhile
+            await new Promise((resolve) => setTimeout(resolve, VENDOR_CONFIRM_SETTLE_MS));
+            if (this.state !== 'awaiting_confirm' || this._stepKey() !== key || this._confirmSent()) return;
+            if (menuClicked) {
+                this.confirmNote = 'the item menu was clicked while Confirm waited, so it pressed nothing';
+                this._render();
+                return;
+            }
+            const settled = this._confirmTarget();
+            if (settled.why || !settled.armed) {
+                this.confirmNote = settled.why || 'the Sell For button was no longer armed, so it pressed nothing';
+                this._render();
+                return;
+            }
+            this._pressConfirm(settled.button);
         } finally {
             document.removeEventListener('click', onClick, true);
             this._vendorArming = false;
