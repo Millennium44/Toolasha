@@ -1011,6 +1011,7 @@ performanceMonitor.readCountSources = readCountSources;
 // `.cleanupRegistry`) and reach this module's live copy only through the
 // instance, never through a named import of `labelTimer` itself.
 performanceMonitor.labelTimer = labelTimer;
+performanceMonitor.unlabelTimer = unlabelTimer;
 
 // Identifiers a call in a handler body shares with every other handler body,
 // so finding one first says nothing about which timer this is. Keywords are
@@ -1137,6 +1138,17 @@ const timerLabels = new Map();
 export function labelTimer(id, label) {
     if (!id || !label) return;
     timerLabels.set(id, label);
+}
+
+/**
+ * Release the label of a timer that has fired on its own. A timer that is
+ * cleared is released by the traced `clearTimeout`; one that simply runs is not,
+ * so a registry that schedules its own timeouts calls this when they fire.
+ * @param {number} id - The id returned by `setTimeout`
+ */
+export function unlabelTimer(id) {
+    if (!id) return;
+    timerLabels.delete(id);
 }
 
 /**

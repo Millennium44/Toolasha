@@ -49,6 +49,8 @@ export function getCleanupRegistryCensus() {
  *   registerObserver: (observer: MutationObserver|{ disconnect: Function }) => (() => void),
  *   registerInterval: (intervalId: number, label?: string) => (() => void),
  *   registerTimeout: (timeoutId: number, label?: string) => (() => void),
+ *   scheduleTimeout: (fn: Function, ms?: number, label?: string) => number,
+ *   cancelTimeout: (timeoutId: number) => void,
  *   registerCleanup: (cleanupFn: Function) => (() => void),
  *   cleanupAll: () => void
  * }} Cleanup registry API
@@ -57,7 +59,8 @@ export function createCleanupRegistry() {
     const listeners = [];
     const observers = [];
     const intervals = [];
-    const timeouts = [];
+    // A Set so a fired or cancelled timer is dropped in O(1).
+    const timeouts = new Set();
     const customCleanups = [];
     const noop = () => {};
 
@@ -122,16 +125,52 @@ export function createCleanupRegistry() {
         return makeUnregister(intervals, intervalId, 'intervals', () => clearInterval(intervalId), 'interval');
     };
 
+    const dropTimeout = (timeoutId) => {
+        if (!timeouts.delete(timeoutId)) return false;
+        census.timeouts -= 1;
+        performanceMonitor.unlabelTimer?.(timeoutId);
+        return true;
+    };
+
+    /**
+     * Hold a timeout id until `cleanupAll` or the returned unregister. The id
+     * stays listed after the timer fires; new code should prefer
+     * `scheduleTimeout`, which drops its entry when the timer fires.
+     */
     const registerTimeout = (timeoutId, label) => {
         if (!timeoutId) {
             console.warn('[CleanupRegistry] registerTimeout called with invalid timeout id');
             return noop;
         }
 
-        timeouts.push(timeoutId);
-        census.timeouts += 1;
+        if (!timeouts.has(timeoutId)) {
+            timeouts.add(timeoutId);
+            census.timeouts += 1;
+        }
         if (label) performanceMonitor.labelTimer(timeoutId, label);
-        return makeUnregister(timeouts, timeoutId, 'timeouts', () => clearTimeout(timeoutId), 'timeout');
+        return () => {
+            if (timeouts.has(timeoutId)) cancelTimeout(timeoutId);
+        };
+    };
+
+    /**
+     * `setTimeout` whose registry entry is dropped when it fires. The entry goes
+     * before `fn` runs, so `fn` may schedule again (or throw) without leaving
+     * this one behind. Returns the id, so `clearTimeout(id)` still works.
+     */
+    const scheduleTimeout = (fn, ms, label) => {
+        const timeoutId = setTimeout(() => {
+            dropTimeout(timeoutId);
+            fn();
+        }, ms);
+        registerTimeout(timeoutId, label);
+        return timeoutId;
+    };
+
+    /** Clear a timeout and drop its entry (the debounce counterpart of `scheduleTimeout`). */
+    const cancelTimeout = (timeoutId) => {
+        clearTimeout(timeoutId);
+        dropTimeout(timeoutId);
     };
 
     const registerCleanup = (cleanupFn) => {
@@ -152,7 +191,8 @@ export function createCleanupRegistry() {
     // that calls another entry's unregister mid-teardown finds it already gone
     // (a no-op) instead of splicing the array this loop is walking.
     const releaseAll = (array, kind, release, failure) => {
-        const pending = array.splice(0);
+        const pending = Array.isArray(array) ? array.splice(0) : [...array];
+        if (!Array.isArray(array)) array.clear();
         census[kind] -= pending.length;
         pending.forEach((entry) => {
             try {
@@ -181,6 +221,8 @@ export function createCleanupRegistry() {
         registerObserver,
         registerInterval,
         registerTimeout,
+        scheduleTimeout,
+        cancelTimeout,
         registerCleanup,
         cleanupAll,
     };

@@ -79,3 +79,75 @@ describe('getTimerRegistryCensus', () => {
         expect(getTimerRegistryCensus()).toEqual(before);
     });
 });
+
+describe('scheduleTimeout / cancelTimeout', () => {
+    test('the entry is gone after the timer fires, and the census is exact', () => {
+        vi.useFakeTimers();
+        const registry = createTimerRegistry();
+        const before = getTimerRegistryCensus().timeouts;
+        const fn = vi.fn();
+
+        const id = registry.scheduleTimeout(fn, 100, 'test:fire');
+        expect(getTimerRegistryCensus().timeouts).toBe(before + 1);
+
+        vi.advanceTimersByTime(100);
+        expect(fn).toHaveBeenCalledTimes(1);
+        expect(getTimerRegistryCensus().timeouts).toBe(before);
+
+        // Nothing left to clear.
+        const clearSpy = vi.spyOn(globalThis, 'clearTimeout');
+        registry.clearAll();
+        expect(clearSpy).not.toHaveBeenCalledWith(id);
+        clearSpy.mockRestore();
+        vi.useRealTimers();
+    });
+
+    test('the entry is dropped even when the callback throws or reschedules', () => {
+        vi.useFakeTimers();
+        const registry = createTimerRegistry();
+        const before = getTimerRegistryCensus().timeouts;
+        registry.scheduleTimeout(() => {
+            registry.scheduleTimeout(() => {}, 50);
+        }, 10);
+        vi.advanceTimersByTime(10);
+        expect(getTimerRegistryCensus().timeouts).toBe(before + 1);
+        vi.advanceTimersByTime(50);
+        expect(getTimerRegistryCensus().timeouts).toBe(before);
+
+        registry.scheduleTimeout(() => {
+            throw new Error('boom');
+        }, 10);
+        expect(() => vi.advanceTimersByTime(10)).toThrow('boom');
+        expect(getTimerRegistryCensus().timeouts).toBe(before);
+        vi.useRealTimers();
+    });
+
+    test('cancelTimeout stops the timer and drops the entry', () => {
+        vi.useFakeTimers();
+        const registry = createTimerRegistry();
+        const before = getTimerRegistryCensus().timeouts;
+        const fn = vi.fn();
+        const id = registry.scheduleTimeout(fn, 100);
+        registry.cancelTimeout(id);
+        expect(getTimerRegistryCensus().timeouts).toBe(before);
+        vi.advanceTimersByTime(500);
+        expect(fn).not.toHaveBeenCalled();
+        registry.cancelTimeout(id); // a second cancel does not drive the census negative
+        expect(getTimerRegistryCensus().timeouts).toBe(before);
+        vi.useRealTimers();
+    });
+
+    test('clearAll still cancels pending scheduled timeouts', () => {
+        vi.useFakeTimers();
+        const registry = createTimerRegistry();
+        const before = getTimerRegistryCensus().timeouts;
+        const fn = vi.fn();
+        registry.scheduleTimeout(fn, 100);
+        registry.scheduleTimeout(fn, 200);
+        registry.clearAll();
+        expect(getTimerRegistryCensus().timeouts).toBe(before);
+        vi.advanceTimersByTime(500);
+        expect(fn).not.toHaveBeenCalled();
+        vi.useRealTimers();
+    });
+});
