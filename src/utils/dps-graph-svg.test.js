@@ -83,3 +83,22 @@ describe('dpsGraphSVG right axis', () => {
         expect(texts(host, 'right').length).toBeGreaterThan(1);
     });
 });
+
+describe('dpsGraphSVG small and empty ranges', () => {
+    const labels = (host, side) => [...host.querySelectorAll(`text[data-axis="${side}"]`)].map((t) => t.textContent);
+
+    // Labels are whole numbers, so a sub-unit gridline step printed "0 0 0 1 1 1" down the axis
+    test.each([
+        ['every series hidden', []],
+        ['all zero', [{ values: [0, 0, 0], color: '#ef5350' }]],
+        ['a peak of two', [{ values: [0, 2, 1], color: '#ef5350' }]],
+        ['party only, zero', [{ values: [0, 0, 0], color: '#e8ecf5', axis: 'right' }]],
+    ])('%s: no axis label repeats', (_name, lines) => {
+        const host = parse(dpsGraphSVG({ xs: [0, 1, 2], lines }));
+        for (const side of ['left', 'right']) {
+            const column = labels(host, side);
+            expect(new Set(column).size).toBe(column.length);
+        }
+        expect(labels(host, 'left').length + labels(host, 'right').length).toBeGreaterThan(1);
+    });
+});
