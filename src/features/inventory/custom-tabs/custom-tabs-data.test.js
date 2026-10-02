@@ -974,6 +974,28 @@ describe('the mass-delete cap', () => {
         warn.mockRestore();
     });
 
+    test('a large Clear All does not dilute the cap for an unrelated mass deletion beside it', () => {
+        const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+        const staleIds = Array.from({ length: 100 }, (_, i) => `old${i}`);
+        const cleared = Object.fromEntries(staleIds.map((id) => [id, 500]));
+        const carrier = {
+            version: 1,
+            selectedTabId: null,
+            tabs: [...staleIds.map((id) => tab(id)), tab('p1'), tab('p2'), tab('p3'), tab('p4')],
+        };
+        const deleted = {
+            version: 1,
+            selectedTabId: null,
+            tabs: [],
+            removed: { ...cleared, p1: 500, p2: 500, p3: 500 },
+            clearedTabIds: cleared,
+        };
+        const merged = merge(carrier, deleted);
+        // Clear All's own ids go; three of the four other tabs at once is still refused
+        expect(merged.tabs.map((t) => t.id)).toEqual(['p1', 'p2', 'p3', 'p4']);
+        warn.mockRestore();
+    });
+
     test('two of two still applies — nothing worth protecting in a majority of two', () => {
         const carrier = { version: 1, selectedTabId: null, tabs: [tab('a'), tab('b')] };
         const deleted = { version: 1, selectedTabId: null, tabs: [], removed: { a: 500, b: 500 } };

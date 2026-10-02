@@ -464,8 +464,11 @@ function mergeConfigs(stored, memory) {
     const clearedIds = unionTombstones(clearedIdsOf(theirs), clearedIdsOf(ours));
     const beforeIds = _tabIds([...byId.values()]);
     const afterIds = new Set(_tabIds([...trialById.values()]));
-    const before = beforeIds.length;
-    const dropped = beforeIds.filter((id) => !afterIds.has(id) && !(id in clearedIds)).length;
+    // Cleared ids sit out of both counts: a large Clear All must not dilute the ratio that would catch
+    // an unrelated mass deletion in the same fold
+    const guarded = beforeIds.filter((id) => !(id in clearedIds));
+    const before = guarded.length;
+    const dropped = guarded.filter((id) => !afterIds.has(id)).length;
     const capped = dropped > 2 && dropped * 2 > before;
     let removed = union;
     if (capped) {
