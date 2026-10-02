@@ -26,6 +26,8 @@ const world = vi.hoisted(() => ({
     // across the switch — the panel-shell reopen path a character switch
     // takes only when it finds something to reopen.
     reopenOnSwitch: false,
+    // Subscribers to the tracker's own-guild notification
+    guildListeners: [],
     // The week's measured-vs-reported blob and the trial record whose `history`
     // carries the archived cycles, for the accuracy card
     trialStats: { weekStart: 0, trials: {} },
@@ -60,12 +62,20 @@ vi.mock('./guild-xp-tracker.js', () => ({
     guildXPTracker: {
         getOwnGuildName: () => world.guildName,
         getMemberList: () => world.members,
+        onOwnGuildChange: (callback) => {
+            world.guildListeners.push(callback);
+            return () => {
+                world.guildListeners = world.guildListeners.filter((entry) => entry !== callback);
+            };
+        },
     },
 }));
 vi.mock('./guild-loadouts.js', () => ({ loadLoadouts: async () => world.loadouts }));
 vi.mock('./guild-trial-ledger.js', async (importOriginal) => ({
     ...(await importOriginal()),
-    loadLedgerCycles: async () => {
+    loadLedgerCycles: async (guild) => {
+        // The real read keys on the guild: no guild, no cycles
+        if (!guild) return [];
         // A queued answer, optionally gated so a test can control which of two
         // concurrent reads resolves first; falls back to the plain `world.cycles`
         const next = world.cyclesQueue?.shift();
@@ -146,6 +156,7 @@ beforeEach(() => {
     world.loadouts = { players: {} };
     world.rows = [];
     world.reopenOnSwitch = false;
+    world.guildListeners = [];
     world.trialStats = { weekStart: WEEK, trials: {} };
     world.trialRecord = { weekStart: WEEK, tiles: {}, history: [] };
     world.cycles = [
@@ -504,6 +515,26 @@ describe('the panel', () => {
         expect(text).toContain('Testmaxxing');
         expect(text).not.toContain('Alice');
         expect(text).toContain('Zed');
+    });
+
+    // The panel is restored open on page load before the guild's data has arrived, so its one refresh
+    // ran with no guild name and nothing told it to draw again.
+    test('a panel drawn before the guild is known refreshes once the tracker reports it', async () => {
+        const { default: feature } = await import('./guild-trial-ledger-view.js');
+        world.guildName = null;
+        await feature.initialize();
+        guildTrialLedgerPanel.show({ remember: false });
+        expect(guildTrialLedgerPanel.panel.textContent).toContain('Guild trials');
+        expect(guildTrialLedgerPanel.panel.textContent).toContain('Attendance and contribution (0)');
+
+        world.guildName = 'Nine Lives';
+        expect(world.guildListeners).toHaveLength(1);
+        world.guildListeners[0]('Nine Lives');
+        await vi.waitFor(() => expect(guildTrialLedgerPanel.panel.textContent).toContain('Alice'));
+        expect(guildTrialLedgerPanel.panel.textContent).toContain('Nine Lives');
+
+        feature.cleanup();
+        expect(world.guildListeners).toHaveLength(0);
     });
 
     test('the composition box starts from the last recorded cycle', async () => {

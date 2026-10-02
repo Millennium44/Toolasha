@@ -1038,14 +1038,22 @@ export function registerTrialLedgerRow() {
     });
 }
 
+/** @type {(function(): void)|null} Unsubscribes from the tracker's own-guild notifications */
+let offOwnGuildChange = null;
+
 export default {
     name: 'Guild Trial Ledger',
     initialize: async () => {
         if (!config.getSetting('guildTrialLedger', true)) return;
         registerTrialLedgerRow();
+        // The panel can be restored open before the guild arrives; draw again once it is known or changes
+        offOwnGuildChange?.();
+        offOwnGuildChange = guildXPTracker.onOwnGuildChange?.(() => refreshLedgerView()) || null;
         await refreshLedgerView();
     },
     cleanup: () => {
+        offOwnGuildChange?.();
+        offOwnGuildChange = null;
         guildTrialLedgerPanel.hide({ remember: false });
         resetLedgerView();
     },

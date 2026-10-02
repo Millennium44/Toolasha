@@ -504,6 +504,8 @@ class GuildXPTracker {
         this.memberXPHistory = {}; // characterID → [{t, xp}]
         this.memberMeta = {}; // characterID → {name, gameMode, joinTime, invitedBy, ...}
         this.unregisterHandlers = [];
+        /** @type {Set<function(string|null): void>} Subscribers told when the own guild name changes */
+        this.ownGuildListeners = new Set();
         /** One save chain per storage key, so read-merge-writes never interleave */
         this._saveChains = new Map();
         /** History loads still in flight; see `_trackLoad` */
@@ -787,6 +789,7 @@ class GuildXPTracker {
         const previousGuildName = this.ownGuildName;
         const previousGuildID = this.ownGuildID;
         this.ownGuildName = guildName;
+        this._notifyOwnGuildChange(previousGuildName);
         this.ownGuildLevel = typeof guild.level === 'number' ? guild.level : null;
         this.guildCreatedAt = guild.createdAt;
         this.guildType = guild.guildType || null;
@@ -952,6 +955,7 @@ class GuildXPTracker {
         const name = guild.name;
         const previous = this.ownGuildName;
         this.ownGuildName = name;
+        this._notifyOwnGuildChange(previous);
         this.ownGuildLevel = typeof guild.level === 'number' ? guild.level : this.ownGuildLevel;
         this.guildCreatedAt = guild.createdAt;
         if (!this._recordsHistory()) {
@@ -1175,6 +1179,32 @@ class GuildXPTracker {
      */
     getMemberMeta(characterID) {
         return this.memberMeta[characterID] || null;
+    }
+
+    /**
+     * Subscribe to the own guild name becoming known or changing. A panel restored on page load draws before the
+     * guild arrives, and nothing else tells it to draw again.
+     * @param {function(string|null): void} callback - Called with the new name
+     * @returns {function(): void} Unsubscribe
+     */
+    onOwnGuildChange(callback) {
+        this.ownGuildListeners.add(callback);
+        return () => this.ownGuildListeners.delete(callback);
+    }
+
+    /**
+     * Tell subscribers the guild name changed, if it did.
+     * @param {string|null} previous - The name before this update
+     */
+    _notifyOwnGuildChange(previous) {
+        if (previous === this.ownGuildName) return;
+        for (const callback of [...this.ownGuildListeners]) {
+            try {
+                callback(this.ownGuildName);
+            } catch (error) {
+                console.error('[GuildXPTracker] Own-guild listener failed:', error);
+            }
+        }
     }
 
     /**
