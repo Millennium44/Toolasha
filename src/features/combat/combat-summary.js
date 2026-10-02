@@ -302,10 +302,9 @@ class CombatSummary {
             }
         } else if (tryTimes <= 10) {
             // Retry if element not found
-            const retryTimeout = setTimeout(() => {
+            this.timerRegistry.scheduleTimeout(() => {
                 this.findAndInjectSummary(message, totalPriceAsk, totalPriceBid, totalSkillsExp, tryTimes);
             }, 200);
-            this.timerRegistry.registerTimeout(retryTimeout);
         } else {
             console.error('[Combat Summary] Battle panel not found after 10 tries');
         }

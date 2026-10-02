@@ -21,7 +21,12 @@ vi.mock('../../core/websocket.js', () => ({ default: { on: () => {}, off: () => 
 vi.mock('../../core/data-manager.js', () => ({ default: {} }));
 vi.mock('../../utils/market-data.js', () => ({ getItemPrice: () => 1 }));
 vi.mock('../../utils/timer-registry.js', () => ({
-    createTimerRegistry: () => ({ registerTimeout: () => {}, clearAll: () => {} }),
+    createTimerRegistry: () => ({
+        registerTimeout: () => {},
+        scheduleTimeout: (fn, ms) => setTimeout(fn, ms),
+        cancelTimeout: (id) => clearTimeout(id),
+        clearAll: () => {},
+    }),
 }));
 vi.mock('./party-luck.js', () => ({ partyLuck: () => game.party }));
 vi.mock('../../utils/overlay-rows.js', () => ({
