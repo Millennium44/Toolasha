@@ -1444,8 +1444,11 @@ describe('achievements section', () => {
 
         editor.setAchievementScenario(dto, 'current');
         expect(granted()).toEqual(['/buff_types/damage']);
-        expect(dto.achievementScenario).toBeUndefined();
         expect(editor.getAchievementMode(dto)).toBe('current');
+
+        // Back to Custom restores the set made before the detour through Current
+        editor.setAchievementScenario(dto, 'custom');
+        expect(granted().sort()).toEqual(['/buff_types/damage', '/buff_types/rare_find']);
     });
 
     test('Custom after None starts from the loaded player, and keeps a custom set made earlier', () => {

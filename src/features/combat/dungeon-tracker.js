@@ -1415,8 +1415,8 @@ class DungeonTracker {
             this.pendingNextRunFirstKeyCount = null;
         }
 
-        // A solo run is not the party's: this is a party member's own dungeon, posted to the same channel
-        if (this.isTracking && this.isSoloRun()) return;
+        // A solo run is not the party's, and a paused run is not being fought: neither is what this ended
+        if (this.isTracking && (this.isSoloRun() || this.isPaused())) return;
         if (!this.isTracking || !this.currentRun || this.predatesCurrentRun(timestamp)) {
             // The action feed may already have ended the run, unable to say why
             this.settleUnsettledEnd(RUN_RESULT_CANCEL, timestamp);
@@ -1527,8 +1527,9 @@ class DungeonTracker {
      * @param {Object} _message - Message object
      */
     onPartyFailed(timestamp, _message) {
-        // A solo run is not the party's: this is a party member's own dungeon, posted to the same channel
-        if (this.isTracking && this.isSoloRun()) return;
+        // A solo run is not the party's: this is a party member's own dungeon, posted to the same channel.
+        // Nor can a paused run fail: it is not being fought, and it may yet resume
+        if (this.isTracking && (this.isSoloRun() || this.isPaused())) return;
         if (!this.isTracking || !this.currentRun || this.predatesCurrentRun(timestamp)) {
             // The action feed may already have ended the run, unable to say why
             this.settleUnsettledEnd(RUN_RESULT_FAIL, timestamp);

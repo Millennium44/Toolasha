@@ -2909,7 +2909,10 @@ export class SimEditor {
         const types = mode === 'custom' ? [...(customTypes ?? lastCustom ?? activeAchievementBuffTypes(original))] : [];
         Object.assign(dto, resolveAchievementScenario(original, mode, types));
         if (mode === 'current') {
-            delete dto.achievementScenario;
+            // Current is the loaded player, so nothing is resolved, but a custom set made earlier is kept
+            // for a later return to Custom
+            if (lastCustom) dto.achievementScenario = { mode: 'current', lastCustomTypes: lastCustom };
+            else delete dto.achievementScenario;
         } else {
             dto.achievementScenario = {
                 mode,

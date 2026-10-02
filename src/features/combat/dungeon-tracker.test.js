@@ -4433,6 +4433,38 @@ describe('a dungeon displaced by "Start Now"', () => {
         expect(game.savedRuns[0].run).toMatchObject({ result: 'cancel', duration: PAUSED_AT - T0, validated: false });
     });
 
+    test('a party failure or battle end arriving while the Den is paused leaves it paused', async () => {
+        game.recordAttempts = true;
+        midDen();
+        tracker.currentRun.keyCountsMap = { Aster: 12 };
+        tracker.currentRun.partyNames = ['Aster', 'Briar'];
+        startMilkingNow();
+        await flush();
+
+        tracker.onChatMessage({
+            message: {
+                chan: '/chat_channel_types/party',
+                isSystemMessage: true,
+                m: 'systemChatMessage.partyWaveFailed',
+                t: new Date(PAUSED_AT + 1000).toISOString(),
+            },
+        });
+        tracker.onChatMessage({
+            message: {
+                chan: '/chat_channel_types/party',
+                isSystemMessage: true,
+                m: 'systemChatMessage.partyBattleEnded',
+                t: new Date(PAUSED_AT + 2000).toISOString(),
+            },
+        });
+        vi.advanceTimersByTime(30_000);
+        await flush();
+
+        expect(tracker.isTracking).toBe(true);
+        expect(tracker.isPaused()).toBe(true);
+        expect(game.savedRuns).toEqual([]);
+    });
+
     test('the Den vanishing without a done flag while paused ends the run too', async () => {
         midDen();
         startMilkingNow();
