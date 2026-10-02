@@ -115,6 +115,16 @@ vi.mock('../inventory/watchlist.js', () => ({
     watchlistEntries: () => game.watched.map((hrid) => ({ hrid, name: hrid.split('/').pop() })),
 }));
 
+// The vendor confirm goes through the game's React handler; here it still clicks, so the counts hold
+const reactClicks = vi.hoisted(() => ({ calls: [] }));
+vi.mock('../../utils/react-click.js', () => ({
+    clickThroughReact: (element, options) => {
+        reactClicks.calls.push({ element, options });
+        element.click();
+        return 'dom';
+    },
+}));
+
 const { default: bulkSell } = await import('./bulk-sell-assistant.js');
 
 const inventory = (itemHrid, count = 5, enhancementLevel = 0) => ({
@@ -921,6 +931,17 @@ describe('confirming from the strip', () => {
         expect(bulkSell.state).toBe('awaiting_next');
     });
 
+    test("a market modal confirm keeps the plain click, not the game's handler", () => {
+        reactClicks.calls = [];
+        const modal = openModal();
+        runAtStep0();
+
+        confirmBtn().click();
+        expect(gameClicks).toBe(1);
+        expect(reactClicks.calls).toHaveLength(0);
+        closeModalAndSettle(modal);
+    });
+
     test("the game's own button still confirms, and lands in the same place", () => {
         const first = openModal();
         runAtStep0();
@@ -1276,6 +1297,17 @@ describe('confirming from the strip', () => {
             await pressAndSettle();
             expect(armClicks).toBe(1);
             expect(gameClicks).toBe(1);
+        });
+
+        test("the sale is pressed through the game's handler, since it ignores an untrusted click", async () => {
+            reactClicks.calls = [];
+            openMenu({ label: 'Confirm Sell For 400K Coins' });
+            vendorRun();
+
+            await pressAndSettle();
+            expect(reactClicks.calls).toHaveLength(1);
+            expect(reactClicks.calls[0].element.textContent).toBe('Confirm Sell For 400K Coins');
+            expect(reactClicks.calls[0].options).toEqual({ reactFirst: true });
         });
 
         test('an already-armed button is pressed once, with no arming click', async () => {

@@ -55,6 +55,7 @@ import { holdKey, collectHeldKeys } from './bulk-sell-holds.js';
 import { watchlistEntries } from '../inventory/watchlist.js';
 import bundledLoadoutSnapshot from '../combat/loadout-snapshot.js';
 import { loadoutSnapshot } from '../../utils/bundle-bridge.js';
+import { clickThroughReact } from '../../utils/react-click.js';
 
 /** Bound on waiting for the vendor button to relabel after its arming click */
 const VENDOR_ARM_WAIT_MS = 1000;
@@ -1255,7 +1256,12 @@ class BulkSellAssistant {
         this._render();
         // Read before the click: the label is what says this is the vendor sale
         const vendorSale = /^confirm\s+sell for\b/i.test(button.textContent.trim());
-        button.click();
+        // The vendor's Confirm Sell For handler ignores a click without isTrusted (measured on the
+        // test server, 2026-10-02), as the task reroll spend buttons do, so it is pressed through the
+        // game's React handler the way the reroll walk presses those. Still one press of ours for one
+        // sale. Market modal confirms accept a plain click.
+        if (vendorSale) clickThroughReact(button, { reactFirst: true });
+        else button.click();
         // Both routes (already armed, or armed by us) end here, so one place guards them
         if (vendorSale) this._guardSale(button);
     }
