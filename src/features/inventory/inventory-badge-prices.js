@@ -8,12 +8,12 @@ import config from '../../core/config.js';
 import domObserver from '../../core/dom-observer.js';
 import marketAPI from '../../api/marketplace.js';
 import { formatKMB } from '../../utils/formatters.js';
-import { tileBadgeFontCSS, PAIRED_BADGE_ZOOM_CAP } from '../../utils/tile-badge-text.js';
 import dataManager from '../../core/data-manager.js';
 import inventoryBadgeManager from './inventory-badge-manager.js';
 import { BADGE_MODE_SETTING, showsItemPriceBadges } from './inventory-badge-mode.js';
 import inventorySort from './inventory-sort.js';
 import { createTimerRegistry } from '../../utils/timer-registry.js';
+import { tileBadgeFontCSS, PAIRED_BADGE_ZOOM_CAP } from '../../utils/tile-badge-text.js';
 
 /**
  * InventoryBadgePrices class manages price badge overlays on inventory items

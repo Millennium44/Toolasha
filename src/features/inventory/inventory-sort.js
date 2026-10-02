@@ -7,13 +7,13 @@ import config from '../../core/config.js';
 import domObserver from '../../core/dom-observer.js';
 import marketAPI from '../../api/marketplace.js';
 import { formatKMB } from '../../utils/formatters.js';
-import { tileBadgeFontCSS } from '../../utils/tile-badge-text.js';
 import dataManager from '../../core/data-manager.js';
 import inventoryBadgeManager from './inventory-badge-manager.js';
 import { BADGE_MODE_SETTING, stackBadgeValueKey } from './inventory-badge-mode.js';
 import { createTimerRegistry } from '../../utils/timer-registry.js';
 import { readScoped, writeScoped } from '../../utils/character-key.js';
 import { captureOwner, stillOurs, noteTeardown } from '../../utils/init-ownership.js';
+import { tileBadgeFontCSS } from '../../utils/tile-badge-text.js';
 
 /**
  * Wait for `promise`, but never past `timeoutMs`.
