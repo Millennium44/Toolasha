@@ -3,7 +3,7 @@
  */
 
 import { describe, test, expect, afterEach } from 'vitest';
-import { extractExpRates } from './skill-calculator-ui.js';
+import { createCalculatorUI, extractExpRates } from './skill-calculator-ui.js';
 
 /**
  * Builds the `#simulationResultExperienceGain` structure the combat sim
@@ -57,5 +57,64 @@ describe('extractExpRates', () => {
             ['Defense Experience', '1,234,567'],
         ]);
         expect(extractExpRates()).toEqual({ melee: 12345, defense: 1234567 });
+    });
+});
+
+describe('createCalculatorUI mode switching', () => {
+    const levelExpTable = {};
+    for (let level = 1; level <= 201; level++) levelExpTable[level] = (level - 1) * 1000;
+    const characterSkills = [
+        { skillHrid: '/skills/attack', level: 10, experience: levelExpTable[10] },
+        { skillHrid: '/skills/melee', level: 10, experience: levelExpTable[10] },
+    ];
+    const expRates = { attack: 1000, melee: 500 };
+
+    function build(previous = null) {
+        const container = document.createElement('div');
+        document.body.appendChild(container);
+        return createCalculatorUI(container, characterSkills, expRates, levelExpTable, previous);
+    }
+
+    afterEach(() => {
+        document.body.innerHTML = '';
+    });
+
+    test('starts on the days projection', () => {
+        const ui = build();
+        expect(ui.resultsHeader.textContent).toBe('After 1 days:');
+    });
+
+    test('a focus event alone on a skill input switches to that skill ETA', () => {
+        const ui = build();
+        ui.skillInputs.attack.dispatchEvent(new Event('focus'));
+        expect(ui.resultsHeader.textContent).toBe('Attack to level 11 takes:');
+    });
+
+    test('a change event switches too, even though focus is elsewhere', () => {
+        const ui = build();
+        ui.daysInput.focus();
+        ui.skillInputs.melee.value = '15';
+        ui.skillInputs.melee.dispatchEvent(new Event('change'));
+        expect(document.activeElement).toBe(ui.daysInput);
+        expect(ui.resultsHeader.textContent).toBe('Melee to level 15 takes:');
+    });
+
+    test('touching the days input goes back to the projection', () => {
+        const ui = build();
+        ui.skillInputs.attack.dispatchEvent(new Event('focus'));
+        ui.daysInput.dispatchEvent(new Event('focus'));
+        expect(ui.resultsHeader.textContent).toBe('After 1 days:');
+    });
+
+    test('a rebuild keeps the targets and the active skill', () => {
+        const first = build();
+        first.skillInputs.melee.value = '20';
+        first.skillInputs.melee.dispatchEvent(new Event('input'));
+        document.body.innerHTML = '';
+
+        const second = build(first.getState());
+
+        expect(second.skillInputs.melee.value).toBe('20');
+        expect(second.resultsHeader.textContent).toBe('Melee to level 20 takes:');
     });
 });
