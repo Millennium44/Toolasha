@@ -111,7 +111,8 @@ const TAB_SELECTOR = '[role="tab"], [class*="MuiTab-root"], [role="option"], [ro
 const MISC_SYMBOLS = Object.freeze({
     total_level: 'leaderboard',
     task_points: 'tasks',
-    labyrinth_points: 'labyrinth',
+    // White maze for points and the blue one for depth, so the two labyrinth boards' badges differ
+    labyrinth_points: 'item_category_labyrinth',
     labyrinth_depth: 'labyrinth',
     // The misc sprite has no collection or bestiary glyph (checked against the live sheet); closest stand-ins.
     // Collection's badge icon comes from the chat icons instead (CHAT_SYMBOLS); this entry is the tab match only
@@ -123,10 +124,11 @@ const MISC_SYMBOLS = Object.freeze({
 /**
  * Badge icons taken from the game's chat icon sprite, which wins over MISC_SYMBOLS for the badge. The misc
  * sheet's four-square inventory glyph read as no icon at all at badge size; the blue book is the game's own
- * and reads as a collection log.
+ * and reads as a collection log. Fame takes the holy supporter mark.
  */
 const CHAT_SYMBOLS = Object.freeze({
     collection_points: 'book',
+    fame_points: 'holy_supporter',
 });
 
 const STYLE_TEXT = `

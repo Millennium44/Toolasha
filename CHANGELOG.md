@@ -6,9 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
-### Collection Points badge icon
+### Clearer rank badge icons
 
 - Collection Points rank badges show a blue book instead of the four-square icon, which was hard to make out at badge size.
+- Labyrinth Points badges now show a white maze and Labyrinth Depth the blue one, so the two boards can be told apart, and Fame badges show the holy supporter mark.
 
 <!-- shipped in 3.63.0 -->
 

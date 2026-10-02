@@ -207,6 +207,25 @@ describe('leaderboard rank badges', () => {
         expect(el.nextElementSibling.querySelector('use').getAttribute('href')).toBe('/static/chatIcons.svg#book');
     });
 
+    test('the two labyrinth boards and fame draw distinct icons', async () => {
+        game.mode = 'local';
+        await leaderboardRankBadges.initialize();
+        const icon = async (category) => {
+            const el = nameEl(`P_${category}`);
+            game.wsHandlers.leaderboard_updated({
+                leaderboardCategory: category,
+                gameModeFilter: 'standard',
+                leaderboard: { rows: [{ name: `P_${category}`, rank: 3 }] },
+            });
+            await flush();
+            return el.nextElementSibling.querySelector('use').getAttribute('href');
+        };
+
+        expect(await icon('labyrinth_points')).toBe('/static/misc.svg#item_category_labyrinth');
+        expect(await icon('labyrinth_depth')).toBe('/static/misc.svg#labyrinth');
+        expect(await icon('fame_points')).toBe('/static/chatIcons.svg#holy_supporter');
+    });
+
     test('a save keeps boards another tab or a sync pull stored meanwhile, and badges them', async () => {
         game.mode = 'local';
         await leaderboardRankBadges.initialize();
