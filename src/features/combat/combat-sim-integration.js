@@ -606,13 +606,20 @@ async function handleSimResults(resultsPanel) {
         });
 
         // Remove existing calculator if present
+        const previousState = calculatorUIElements?.getState?.() ?? null;
         const existing = document.getElementById('mwi-skill-calculator');
         if (existing) {
             existing.remove();
         }
 
         // Create new calculator UI
-        calculatorUIElements = createCalculatorUI(resultsPanel, characterSkills, expRates, levelExpTable);
+        calculatorUIElements = createCalculatorUI(
+            resultsPanel,
+            characterSkills,
+            expRates,
+            levelExpTable,
+            previousState
+        );
     } catch (error) {
         console.error('[Toolasha Combat Sim Calculator] Failed to handle sim results:', error);
     }
