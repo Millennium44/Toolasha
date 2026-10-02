@@ -98,7 +98,8 @@
  *
  * The first load after this existed moves a character's copies of shared tabs
  * out of its own record — see {@link ChatHistoryPersistence#load}. Its Guild tab
- * names no guild, so it moves only once a guild's record shares a line with it;
+ * names no guild, so it moves only once a guild's record shares enough lines
+ * with it to prove where it came from (see `GUILD_PROOF_MATCHES`);
  * until then the character's own record holds it (`guildLegacy`), shown to that
  * character alone.
  *
@@ -1344,15 +1345,30 @@ function guildLegacyFrom(record, perTab) {
 }
 
 /**
- * Whether a character's held guild lines are provably from a guild's chat: one
- * of them is also in that guild's shared record, which only that guild's members
- * write. A line's identity is its sender, time and text, and a player is in one
- * guild at a time, so two guilds never share one.
+ * Matching lines, each sent at a different second, a guild's record must share
+ * with a character's held guild lines before they are taken as that guild's.
+ *
+ * One line is weak proof. Its identity is its stamp (no year), sender and text,
+ * and two different messages can share all three: a line from a year ago, a
+ * templated system line, the same short reply from the same player. Holding the
+ * lines when the proof is short costs nothing, since they stay in the
+ * character's record and are shown to that character; moving them into the
+ * wrong guild shows another guild's chat to every member of this one. Three
+ * matches at three different seconds take three such coincidences at once,
+ * while a character who was in the guild shares far more — the game's own
+ * guild backlog, recorded by both, is around a hundred lines.
+ */
+const GUILD_PROOF_MATCHES = 3;
+
+/**
+ * Whether a character's held guild lines are provably from a guild's chat: at
+ * least {@link GUILD_PROOF_MATCHES} of them, sent at different seconds, are also
+ * in that guild's shared record, which only that guild's members write.
  * @param {Record<string, Array<string>>} held
  * @param {*} guildRecord - The guild's shared record as read
  * @returns {boolean}
  */
-function sharesGuildLine(held, guildRecord) {
+function provesGuildOrigin(held, guildRecord) {
     const known = new Set();
     const tabs = guildRecord && guildRecord.v === RECORD_VERSION && guildRecord.tabs ? guildRecord.tabs : {};
     for (const list of Object.values(tabs)) {
@@ -1363,7 +1379,18 @@ function sharesGuildLine(held, guildRecord) {
         }
     }
     if (!known.size) return false;
-    return Object.values(held).some((list) => list.some((html) => known.has(messageIdentity(html))));
+    const seconds = new Set();
+    for (const list of Object.values(held)) {
+        for (const html of list) {
+            const identity = messageIdentity(html);
+            if (!identity || !known.has(identity)) continue;
+            // Two matches at one second may be one message seen twice; only distinct seconds add proof.
+            const close = identity.startsWith('[') ? identity.indexOf(']') : -1;
+            seconds.add(close > 0 ? identity.slice(0, close + 1) : identity);
+            if (seconds.size >= GUILD_PROOF_MATCHES) return true;
+        }
+    }
+    return false;
 }
 
 /**
@@ -1784,7 +1811,7 @@ class ChatHistoryPersistence {
             // character may have changed guilds since they were written: grouped
             // under today's guild they would land in a guild that never saw them.
             // They are held in the character's own record instead, and move only
-            // once that guild's record shares a line with them.
+            // once that guild's record shares enough of them to prove it.
             let guildHeld = guildLegacyFrom(own, perTab);
             const heldBefore = Object.keys(guildHeld).length;
             let heldChanged = false;
@@ -1796,7 +1823,7 @@ class ChatHistoryPersistence {
                 heldChanged = true;
             }
             if (context.guildKey && Object.keys(guildHeld).length) {
-                if (sharesGuildLine(guildHeld, records[context.guildKey])) {
+                if (provesGuildOrigin(guildHeld, records[context.guildKey])) {
                     legacy[context.guildKey] = guildHeld;
                     guildHeld = {};
                     heldChanged = heldChanged || heldBefore > 0;
