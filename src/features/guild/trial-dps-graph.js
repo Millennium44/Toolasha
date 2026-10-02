@@ -22,7 +22,7 @@
 
 import config from '../../core/config.js';
 import { guildTrialRecorder } from './guild-trial-recorder.js';
-import { BOARD_COLORS, boardNoteHTML } from '../../utils/damage-board.js';
+import { BOARD_COLORS, boardNoteHTML, escapeText } from '../../utils/damage-board.js';
 import { dpsGraphSVG, graphButtonsHTML, PARTY_COLOR } from '../../utils/dps-graph-svg.js';
 import { playerColor, resolveRosterColors } from '../../utils/player-colors.js';
 
@@ -38,6 +38,17 @@ export const TRIAL_GRAPH_VIEWS = [
 ];
 
 let view = 'shown';
+
+/**
+ * Series switched off from the legend: player names, and {@link PARTY_KEY} for the party.
+ * Kept for the session only (not persisted), so it survives redraws, tab switches and the board being
+ * closed and reopened, and is read by `ratesGraphHTML` (what is drawn and which scales are used) and
+ * `wireTrialDpsGraph` (the toggle). A name that is no longer on the chart is harmless.
+ */
+const hiddenSeries = new Set();
+
+/** The party's key in {@link hiddenSeries}; a leading space cannot be a player's name */
+const PARTY_KEY = ' party';
 
 /** Tier changes seen on the live breakdown: `{seconds, tier}` */
 let tierMarks = [];
@@ -246,6 +257,22 @@ export function savedTrialGraphHTML(graph, { draw = true } = {}) {
 }
 
 /**
+ * One legend entry: a button that hides or shows its series.
+ * @param {{key: string, color: string, label: string}} entry - The series
+ * @returns {string} HTML
+ */
+function legendChipHTML(entry) {
+    const off = hiddenSeries.has(entry.key);
+    return (
+        `<button data-trial-graph-series="${escapeText(entry.key)}" aria-pressed="${off ? 'false' : 'true'}" ` +
+        `style="cursor:pointer; padding:0 5px; border-radius:3px; font-size:9px; line-height:1.5; ` +
+        `color:${off ? BOARD_COLORS.dim : entry.color}; background:transparent; ` +
+        `border:1px solid ${off ? 'rgba(255,255,255,0.15)' : entry.color};` +
+        `${off ? ' text-decoration:line-through; opacity:0.6;' : ''}">${escapeText(entry.label)}</button>`
+    );
+}
+
+/**
  * The chart and its legend, off rates between readings.
  * @param {Object} rates - From {@link trialRates} or {@link thinTrialRates}
  * @param {Array<{seconds: number, tier: number}>} marks - Tier changes to label
@@ -256,8 +283,22 @@ function ratesGraphHTML(rates, marks) {
     const playerCount = Number.isFinite(rates.playerCount) ? rates.playerCount : ranked.length;
     const top = ranked.slice(0, TOP_PLAYERS);
     resolveRosterColors(ranked);
-    const lines = top.map((name) => ({ values: rates.players[name], color: playerColor(name), label: name })).reverse();
-    lines.push({ values: rates.party, color: PARTY_COLOR, width: 1.8, label: 'Party' });
+    // Players share the left axis. The party is several times any one of them, so it has its own on the right
+    // rather than flattening them
+    const series = top.map((name) => ({
+        key: name,
+        values: rates.players[name],
+        color: playerColor(name),
+        label: name,
+    }));
+    const partySeries = { key: PARTY_KEY, values: rates.party, color: PARTY_COLOR, label: 'Party' };
+    const lines = series
+        .filter((entry) => !hiddenSeries.has(entry.key))
+        .map(({ values, color, label }) => ({ values, color, label }))
+        .reverse();
+    if (!hiddenSeries.has(PARTY_KEY)) {
+        lines.push({ values: rates.party, color: PARTY_COLOR, width: 1.4, dash: '5 2', label: 'Party', axis: 'right' });
+    }
 
     const seen = marks || [];
     const labelled = seen.map((mark) => ({ x: mark.seconds, label: `T${mark.tier}` }));
@@ -276,11 +317,14 @@ function ratesGraphHTML(rates, marks) {
     }
 
     const svg = dpsGraphSVG({ xs: rates.xs, lines, markers, xTicks });
+    const chips = [partySeries, ...series].map((entry) => legendChipHTML(entry)).join('');
     const legend =
+        `<div style="display:flex; flex-wrap:wrap; gap:3px; margin-top:3px;">${chips}</div>` +
         `<div style="color:${BOARD_COLORS.dim}; font-size:9px; line-height:1.4; margin-top:2px;">` +
-        `White is the party; the ${Math.min(TOP_PLAYERS, playerCount)} leading players of ${playerCount} ` +
-        'are drawn in their own colors. One point per recorder reading, on the watched clock; dashed lines are ' +
-        'wave or tier changes, labelled where the tier was seen.</div>';
+        `The dashed white line is the party, on the right-hand scale; the ${Math.min(TOP_PLAYERS, playerCount)} ` +
+        `leading players of ${playerCount} are drawn in their own colors on the left-hand one. Click a name to ` +
+        'hide or show it; the scales follow what is showing. One point per recorder reading, on the watched ' +
+        'clock; dotted verticals are wave or tier changes, labelled where the tier was seen.</div>';
     return `${svg}${legend}`;
 }
 
@@ -296,11 +340,20 @@ export function wireTrialDpsGraph(body, redraw) {
             redraw();
         });
     });
+    body?.querySelectorAll?.('[data-trial-graph-series]').forEach((button) => {
+        button.addEventListener('click', () => {
+            const key = button.dataset.trialGraphSeries;
+            if (hiddenSeries.has(key)) hiddenSeries.delete(key);
+            else hiddenSeries.add(key);
+            redraw();
+        });
+    });
 }
 
 /** Back to the opening state — for tests */
 export function _resetTrialDpsGraph() {
     view = 'shown';
+    hiddenSeries.clear();
     tierMarks = [];
     lastTier = null;
     lastSeconds = null;

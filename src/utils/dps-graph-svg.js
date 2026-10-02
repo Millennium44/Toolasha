@@ -70,8 +70,10 @@ export function niceStep(max, ticks = 3) {
  *
  * @param {Object} chart - What to draw
  * @param {number[]} chart.xs - X per point, ascending
- * @param {Array<{values: number[], color: string, width?: number, label?: string}>} chart.lines - Drawn in
- *   order, so the last is on top
+ * @param {Array<{values: number[], color: string, width?: number, label?: string, dash?: string,
+ *   axis?: 'left'|'right'}>} chart.lines - Drawn in order, so the last is on top. A line with `axis: 'right'`
+ *   is scaled on its own right-hand axis (labelled in its color); every other line shares the left one. With no
+ *   left-hand lines the right axis carries the gridlines
  * @param {Array<{from: number, to: number}>} [chart.bands] - X ranges shaded as boss fights
  * @param {Array<{x: number, label?: string}>} [chart.markers] - Vertical boundaries, labelled at the top
  * @param {Array<{x: number, label: string}>} [chart.xTicks] - Labels along the bottom
@@ -82,40 +84,69 @@ export function niceStep(max, ticks = 3) {
 export function dpsGraphSVG({ xs, lines, bands = [], markers = [], xTicks = [], width = 300, height = 96 }) {
     if (!Array.isArray(xs) || xs.length < 2) return '';
 
-    const pad = { left: 30, right: 4, top: 8, bottom: 12 };
+    const rightLines = lines.filter((line) => line.axis === 'right');
+    const leftLines = lines.filter((line) => line.axis !== 'right');
+    const rightColor = rightLines[0]?.color || '#9ca3af';
+
+    const pad = { left: 30, right: rightLines.length ? 30 : 4, top: 8, bottom: 12 };
     const plotWidth = width - pad.left - pad.right;
     const plotHeight = height - pad.top - pad.bottom;
     const x0 = xs[0];
     const span = xs[xs.length - 1] - x0 || 1;
 
-    const max = Math.max(1, ...lines.flatMap((line) => line.values.filter(Number.isFinite)));
-    const step = niceStep(max);
-    const top = Math.ceil(max / step) * step;
+    /**
+     * A value range for a set of lines: the largest value, rounded up to a gridline.
+     * @param {Array<Object>} set - Lines sharing the range
+     * @returns {{step: number, top: number}}
+     */
+    const scaleOf = (set) => {
+        const max = Math.max(1, ...set.flatMap((line) => line.values.filter(Number.isFinite)));
+        const step = niceStep(max);
+        return { step, top: Math.ceil(max / step) * step };
+    };
+    const left = scaleOf(leftLines);
+    const right = scaleOf(rightLines);
+    const scaleFor = (line) => (line.axis === 'right' ? right : left);
+    // Gridlines follow the left axis, or the right when it is the only one with lines
+    const gridScale = leftLines.length || !rightLines.length ? left : right;
 
     const px = (x) => (pad.left + ((x - x0) / span) * plotWidth).toFixed(1);
-    const py = (v) => (pad.top + plotHeight * (1 - Math.max(0, v) / top)).toFixed(1);
+    const pyIn = (scale, v) => (pad.top + plotHeight * (1 - Math.max(0, v) / scale.top)).toFixed(1);
     const bottom = pad.top + plotHeight;
 
     const parts = [];
 
     for (const band of bands) {
-        const left = Number(px(Math.max(x0, band.from)));
-        const right = Number(px(Math.min(xs[xs.length - 1], band.to)));
-        if (right <= left) continue;
+        const bandLeft = Number(px(Math.max(x0, band.from)));
+        const bandRight = Number(px(Math.min(xs[xs.length - 1], band.to)));
+        if (bandRight <= bandLeft) continue;
         parts.push(
-            `<rect data-band x="${left.toFixed(1)}" y="${pad.top}" width="${(right - left).toFixed(1)}" ` +
+            `<rect data-band x="${bandLeft.toFixed(1)}" y="${pad.top}" width="${(bandRight - bandLeft).toFixed(1)}" ` +
                 `height="${plotHeight}" fill="${BOSS_COLOR}" fill-opacity="0.16"></rect>`
         );
     }
 
-    for (let v = 0; v <= top + step / 2; v += step) {
-        const y = py(v);
+    for (let v = 0; v <= gridScale.top + gridScale.step / 2; v += gridScale.step) {
+        const y = pyIn(gridScale, v);
         parts.push(
             `<line x1="${pad.left}" y1="${y}" x2="${width - pad.right}" y2="${y}" stroke="#ffffff" ` +
-                `stroke-opacity="0.08" stroke-dasharray="3 3"></line>` +
-                `<text x="${pad.left - 3}" y="${(Number(y) + 3).toFixed(1)}" text-anchor="end" font-size="8" ` +
-                `fill="#9ca3af">${escapeText(formatKMB(Math.round(v)))}</text>`
+                `stroke-opacity="0.08" stroke-dasharray="3 3"></line>`
         );
+        if (leftLines.length || !rightLines.length) {
+            parts.push(
+                `<text data-axis="left" x="${pad.left - 3}" y="${(Number(y) + 3).toFixed(1)}" text-anchor="end" ` +
+                    `font-size="8" fill="#9ca3af">${escapeText(formatKMB(Math.round(v)))}</text>`
+            );
+        }
+    }
+    if (rightLines.length) {
+        for (let v = 0; v <= right.top + right.step / 2; v += right.step) {
+            parts.push(
+                `<text data-axis="right" x="${width - pad.right + 3}" y="${(Number(pyIn(right, v)) + 3).toFixed(1)}" ` +
+                    `text-anchor="start" font-size="8" fill="${escapeText(rightColor)}">` +
+                    `${escapeText(formatKMB(Math.round(v)))}</text>`
+            );
+        }
     }
 
     for (const marker of markers) {
@@ -138,10 +169,11 @@ export function dpsGraphSVG({ xs, lines, bands = [], markers = [], xTicks = [], 
     }
 
     for (const line of lines) {
-        const coords = xs.map((x, i) => `${px(x)},${py(Number(line.values[i]) || 0)}`).join(' ');
+        const scale = scaleFor(line);
+        const coords = xs.map((x, i) => `${px(x)},${pyIn(scale, Number(line.values[i]) || 0)}`).join(' ');
         parts.push(
             `<polyline points="${coords}" fill="none" stroke="${escapeText(line.color)}" ` +
-                `stroke-width="${line.width || 1.2}" stroke-linejoin="round" stroke-linecap="round">` +
+                `stroke-width="${line.width || 1.2}"${line.dash ? ` stroke-dasharray="${escapeText(line.dash)}"` : ''} stroke-linejoin="round" stroke-linecap="round">` +
                 (line.label ? `<title>${escapeText(line.label)}</title>` : '') +
                 `</polyline>`
         );
