@@ -674,6 +674,33 @@ describe('calculateSlotUpgradeCost', () => {
         expect(calculateSlotUpgradeCost(VERDANT_TOOL, 12, null)).toBeNull();
     });
 
+    test('an untradable current item has no sale value: the full buy price, never an estimate or unpriced', () => {
+        priceBook.entries[`buy:${VERDANT_TOOL}@10`] = 750;
+        // Even a production-cost estimate for the worn piece must not be netted
+        priceBook.craftCost[CHEESE_TOOL] = 200;
+        game.initClientData.itemDetailMap[CHEESE_TOOL].isTradable = false;
+
+        const cost = calculateSlotUpgradeCost(VERDANT_TOOL, 10, { itemHrid: CHEESE_TOOL, enhancementLevel: 3 });
+
+        expect(cost).toBe(750);
+        expect(priceBook.calls.some((c) => c.options.side === 'sell')).toBe(false);
+    });
+
+    test('an untradable current item with no sell quote does not make the cost unpriced', () => {
+        priceBook.entries[`buy:${VERDANT_TOOL}@10`] = 750;
+        game.initClientData.itemDetailMap[CHEESE_TOOL].isTradable = false;
+
+        expect(calculateSlotUpgradeCost(VERDANT_TOOL, 10, { itemHrid: CHEESE_TOOL, enhancementLevel: 3 })).toBe(750);
+    });
+
+    test('a tradable current item is still netted', () => {
+        priceBook.entries[`buy:${VERDANT_TOOL}@10`] = 750;
+        priceBook.entries[`sell:${CHEESE_TOOL}@3`] = 200;
+        game.initClientData.itemDetailMap[CHEESE_TOOL].isTradable = true;
+
+        expect(calculateSlotUpgradeCost(VERDANT_TOOL, 10, { itemHrid: CHEESE_TOOL, enhancementLevel: 3 })).toBe(550);
+    });
+
     test('an unpriceable current item makes the net cost unknown rather than the gross price', () => {
         priceBook.entries[`buy:${VERDANT_TOOL}@10`] = 750;
         const cost = calculateSlotUpgradeCost(VERDANT_TOOL, 10, { itemHrid: CHEESE_TOOL, enhancementLevel: 3 });

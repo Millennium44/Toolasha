@@ -382,6 +382,9 @@ export function buildAchievableEquipment(slots, enhancementLevels, loadoutItemMa
  * Both legs resolve under the player's own pricing mode (`context: 'profit'`), so a comparison
  * never charges one side at the user's mode and credits the other at a different one.
  *
+ * A current item that is not tradable (`isTradable === false`) has no sale value and is not
+ * netted: it cannot be sold, so the full buy price stands.
+ *
  * Returns null when either leg has no resolvable price: an unpriceable upgrade is reported as
  * unpriceable rather than costed at zero, matching the optimizer's existing treatment of
  * unpriced materials.
@@ -397,8 +400,8 @@ export function calculateSlotUpgradeCost(itemHrid, enhancementLevel, currentEqui
     let buyPrice = null;
     if (enhancementLevel > 0) {
         // Only a quote at the level itself prices an enhanced piece. resolveItemPrice's shop floor
-        // and production-cost fallback ignore the level, so for a craftable item with no +N listing
-        // it would quote the +0 craft as the +N piece and this fallback would never run.
+        // ignores the level, so a shop-sold item with no +N listing would be quoted at its +0 shop
+        // price as the +N piece and this fallback would never run.
         buyPrice = getItemPrice(itemHrid, { context: 'profit', side: 'buy', enhancementLevel });
         if (typeof buyPrice !== 'number') {
             buyPrice = null;
@@ -416,6 +419,12 @@ export function calculateSlotUpgradeCost(itemHrid, enhancementLevel, currentEqui
     if (typeof buyPrice !== 'number') return null;
 
     if (!currentEquipped?.itemHrid) return buyPrice;
+
+    // An untradable current piece (refined gear, for one) can never be sold, so selling it recovers
+    // nothing: the full buy price is the real cost. Not netted, and not "unpriced" either, which a
+    // production-cost estimate or missing quote for it would otherwise cause.
+    const currentDetail = dataManager.getInitClientData()?.itemDetailMap?.[currentEquipped.itemHrid];
+    if (currentDetail?.isTradable === false) return buyPrice;
 
     const sell = resolveItemPrice(currentEquipped.itemHrid, {
         context: 'profit',
