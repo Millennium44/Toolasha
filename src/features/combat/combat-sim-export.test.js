@@ -575,6 +575,26 @@ describe('party members whose cached profile cannot be trusted', () => {
             expect(result.difficultyTier).toBe(1);
         });
 
+        test('the running fight beats a stale login-time party zone and tier', async () => {
+            const char = midBattleCharacter();
+            // Logged in while the party was set to fly T0; it has since moved on
+            char.partyInfo.party = { actionHrid: '/actions/combat/fly', difficultyTier: 0 };
+            dataManagerMock.characterData = char;
+            dataManagerMock.getCurrentCharacterId.mockReturnValue('char-mine');
+            dataManagerMock.getPartyMembers.mockReturnValue({ members: BATTLE_ROSTER, source: 'battle', updatedAt: 1 });
+            dataManagerMock.getCurrentActions.mockReturnValue([
+                { actionHrid: '/actions/combat/smelly_planet', difficultyTier: 2, isDone: false },
+            ]);
+            globalThis.GM_getValue = vi.fn((key) =>
+                key === 'toolasha_profile_list' ? JSON.stringify(profiles(Date.now())) : null
+            );
+
+            const result = await constructExportObject();
+
+            expect(result.difficultyTier).toBe(2);
+            expect(JSON.stringify(result)).toContain('smelly_planet');
+        });
+
         test('a one-member battle roster is a solo fight, not a party', async () => {
             dataManagerMock.characterData = midBattleCharacter();
             dataManagerMock.getCurrentCharacterId.mockReturnValue('char-mine');

@@ -530,8 +530,13 @@ class InventoryBadgeManager {
                 continue;
             }
 
-            // Handle openable containers (chests, crates, caches)
-            if (itemDetails?.isOpenable && expectedValueCalculator.isInitialized) {
+            // Handle openable containers (chests, crates, caches). In official-value mode a published
+            // value comes first, as in net worth, which only falls back to the expected value
+            if (
+                itemDetails?.isOpenable &&
+                expectedValueCalculator.isInitialized &&
+                officialValueOverride(itemHrid, 0) === null
+            ) {
                 const evData = expectedValueCalculator.calculateExpectedValue(itemHrid);
                 if (evData && evData.expectedValue > 0) {
                     let netValue = evData.expectedValue;

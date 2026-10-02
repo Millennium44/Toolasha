@@ -884,15 +884,15 @@ export async function constructExportObject(externalProfileId = null, singlePlay
         // Smaller parties fit within the sim's default 3-slot mode without needing dungeon toggle.
         isParty = slotIndex - 1 === 5;
 
-        // Get party zone and tier
-        // The login-time `party` is as stale as the slot map; a live roster falls back to the running action.
-        const partyAction = characterObj.partyInfo?.party?.actionHrid
-            ? null
-            : runningCombatAction(isLiveCharacter(characterObj) ? dataManager.getCurrentActions?.() : null, {
-                  includeFinished: true,
-              });
-        zone = characterObj.partyInfo?.party?.actionHrid || partyAction?.actionHrid || '/actions/combat/fly';
-        difficultyTier = characterObj.partyInfo?.party?.difficultyTier || partyAction?.difficultyTier || 0;
+        // Get party zone and tier. The login-time `party` is as stale as the slot map: for the live
+        // character the running combat action wins, and `party` is only the fallback (and all a bridged
+        // export has)
+        const running = isLiveCharacter(characterObj)
+            ? runningCombatAction(dataManager.getCurrentActions?.(), { includeFinished: true })
+            : null;
+        const loginParty = characterObj.partyInfo?.party;
+        zone = running?.actionHrid || loginParty?.actionHrid || '/actions/combat/fly';
+        difficultyTier = running ? running.difficultyTier || 0 : loginParty?.difficultyTier || 0;
         isZoneDungeon = clientObj?.actionDetailMap?.[zone]?.combatZoneInfo?.isDungeon || false;
     }
 

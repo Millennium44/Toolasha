@@ -62,7 +62,14 @@ vi.mock('../enhancement/tooltip-enhancement.js', () => ({
 }));
 vi.mock('../../utils/enhancement-config.js', () => ({ getEnhancingParams: () => ({}) }));
 vi.mock('../networth/networth-cache.js', () => ({ default: { get: () => null, set: () => {} } }));
-vi.mock('../market/expected-value-calculator.js', () => ({ default: { isInitialized: false } }));
+vi.mock('../market/expected-value-calculator.js', () => ({
+    default: {
+        get isInitialized() {
+            return mocks.evReady === true;
+        },
+        calculateExpectedValue: (hrid) => (mocks.ev?.[hrid] ? { expectedValue: mocks.ev[hrid] } : null),
+    },
+}));
 vi.mock('../../utils/market-data.js', () => ({ getItemPrice: (hrid) => mocks.prices[hrid] ?? null }));
 vi.mock('../../utils/number-parser.js', () => ({
     parseItemCount: (text) => parseInt(text, 10) || 0,
@@ -546,6 +553,36 @@ describe('high-enhancement equipment follows the net worth value source', () => 
         mocks.officialValues[`${HRID}:14`] = 9000;
         const d = await price();
         expect([d.askPrice, d.bidPrice]).toEqual(['9000', '9000']);
+    });
+
+    test('official-value mode prices an openable container by its official value, not its expected value', async () => {
+        const CHEST = '/items/chimerical_chest';
+        mocks.initData = { itemDetailMap: { [CHEST]: { name: 'Chest', isOpenable: true } } };
+        mocks.inventory = [
+            { itemHrid: CHEST, itemLocationHrid: '/item_locations/inventory', count: 1, enhancementLevel: 0 },
+        ];
+        mocks.settings.networth_valueSource = 'officialValue';
+        mocks.officialValues[`${CHEST}:0`] = 1234;
+        mocks.evReady = true;
+        mocks.ev = { [CHEST]: 99999 };
+        const el = document.createElement('div');
+        el.className = 'Item_itemContainer';
+        el.appendChild(document.createElement('svg')).setAttribute('aria-label', 'Chest');
+        const countEl = document.createElement('div');
+        countEl.className = 'Item_count';
+        countEl.textContent = '1';
+        el.appendChild(countEl);
+        try {
+            await inventoryBadgeManager.calculateItemPrices(
+                [el],
+                mocks.inventory,
+                new Map([[`${CHEST}|1|0`, mocks.inventory[0]]])
+            );
+            expect([el.dataset.askPrice, el.dataset.bidPrice]).toEqual(['1234', '1234']);
+        } finally {
+            mocks.evReady = false;
+            mocks.ev = null;
+        }
     });
 
     test('order-book mode is unchanged: cost rule even when an official value exists', async () => {
