@@ -532,6 +532,22 @@ describe('high-enhancement equipment follows the net worth value source', () => 
         expect([d.askPrice, d.bidPrice]).toEqual(['5000', '5000']);
     });
 
+    test('official-value mode with the cost rule off still prices by the official value', async () => {
+        mocks.settings.networth_valueSource = 'officialValue';
+        mocks.settings.networth_highEnhancementUseCost = false;
+        mocks.officialValues[`${HRID}:14`] = 9000;
+        const d = await price();
+        expect([d.askPrice, d.bidPrice]).toEqual(['9000', '9000']);
+    });
+
+    test('official-value mode below the cost-rule level prices by the official value, not the book', async () => {
+        mocks.settings.networth_valueSource = 'officialValue';
+        mocks.settings.networth_highEnhancementMinLevel = 15;
+        mocks.officialValues[`${HRID}:14`] = 9000;
+        const d = await price();
+        expect([d.askPrice, d.bidPrice]).toEqual(['9000', '9000']);
+    });
+
     test('order-book mode is unchanged: cost rule even when an official value exists', async () => {
         mocks.officialValues[`${HRID}:14`] = 9000;
         const d = await price();

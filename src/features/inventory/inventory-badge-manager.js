@@ -560,17 +560,20 @@ class InventoryBadgeManager {
             let askPrice = 0;
             let bidPrice = 0;
 
-            // Determine pricing method
-            if (isEquipment && useHighEnhancementCost && enhancementLevel >= minLevel) {
-                // Official-value mode: the game's figure beats the cost rule, exactly as in net worth
-                const officialValue = officialValueOverride(itemHrid, enhancementLevel);
-                // Use enhancement cost calculation for high-level equipment
-                const cachedCost = officialValue === null ? networthCache.get(itemHrid, enhancementLevel) : null;
+            // Official-value mode: the game's figure prices the item at every level, ahead of the cost
+            // rule and the order book alike, exactly as net worth does. Null in order-book mode, for an
+            // Iron Cow character, or when the game publishes no value, which leaves the chain below.
+            const officialValue = officialValueOverride(itemHrid, enhancementLevel);
 
-                if (officialValue !== null) {
-                    askPrice = officialValue;
-                    bidPrice = officialValue;
-                } else if (cachedCost !== null) {
+            // Determine pricing method
+            if (officialValue !== null) {
+                askPrice = officialValue;
+                bidPrice = officialValue;
+            } else if (isEquipment && useHighEnhancementCost && enhancementLevel >= minLevel) {
+                // Use enhancement cost calculation for high-level equipment
+                const cachedCost = networthCache.get(itemHrid, enhancementLevel);
+
+                if (cachedCost !== null) {
                     // Use cached value for both ask and bid
                     askPrice = cachedCost;
                     bidPrice = cachedCost;
