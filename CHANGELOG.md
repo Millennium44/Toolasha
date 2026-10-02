@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Chat history shared between characters
+
+- Saved chat history for public channels is now shared by all your characters, and guild chat by characters in the same guild, so it is stored once instead of per character; party and whispers stay per character. History saved before the update stays with each character and ages out as shared history builds up, and several game tabs saving at once merge instead of overwriting each other.
+
 ### Trial ledger on the test server counts every finished cycle
 
 - The trial ledger's coverage now counts cycles watched out of the cycles that ran ("Watched 6 of 8 cycles (2 missed)"), so a cycle nobody recorded shows as missed; before, it compared recorded fights to two trials per cycle and could never pass 50%.

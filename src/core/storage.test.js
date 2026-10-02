@@ -467,6 +467,163 @@ describe('Storage.getMany', () => {
 });
 
 /**
+ * A record several tabs write (the shared chat history) needs its read and its
+ * write in one transaction: IndexedDB runs readwrite transactions over a store
+ * one at a time, so nothing lands between them.
+ */
+describe('Storage.update', () => {
+    beforeEach(() => {
+        storage.db = null;
+        storage._closingForTeardown = false;
+    });
+
+    afterEach(() => {
+        storage.db = null;
+        storage._closingForTeardown = false;
+    });
+
+    test('reads and writes in one readwrite transaction, opened before the first await', async () => {
+        const { db, dataByStore } = createFakeDb(['settings'], { settings: { lines: ['a'] } });
+        storage.db = db;
+        const transactions = vi.spyOn(db, 'transaction');
+
+        const pending = storage.update('lines', (current) => [...current, 'b'], 'settings');
+        // A page-close listener gets nothing after its first await; the transaction must exist already.
+        expect(transactions).toHaveBeenCalledTimes(1);
+        expect(transactions).toHaveBeenCalledWith(['settings'], 'readwrite');
+
+        await expect(pending).resolves.toEqual({ written: true, value: ['a', 'b'] });
+        expect(dataByStore.get('settings').get('lines')).toEqual(['a', 'b']);
+    });
+
+    test('two updates issued together both land: neither reads before the other writes', async () => {
+        const { db, dataByStore } = createFakeDb(['settings'], { settings: { lines: [] } });
+        storage.db = db;
+
+        await Promise.all([
+            storage.update('lines', (current) => [...current, 'from tab A'], 'settings'),
+            storage.update('lines', (current) => [...current, 'from tab B'], 'settings'),
+        ]);
+
+        expect(dataByStore.get('settings').get('lines')).toEqual(['from tab A', 'from tab B']);
+    });
+
+    test('a key that is not stored is handed over as undefined', async () => {
+        const { db, dataByStore } = createFakeDb(['settings']);
+        storage.db = db;
+        const mutate = vi.fn(() => 'first');
+
+        await storage.update('fresh', mutate, 'settings');
+
+        expect(mutate).toHaveBeenCalledWith(undefined, false);
+        expect(dataByStore.get('settings').get('fresh')).toBe('first');
+    });
+
+    test('answering undefined writes nothing', async () => {
+        const { db, dataByStore } = createFakeDb(['settings'], { settings: { kept: 1 } });
+        storage.db = db;
+
+        await expect(storage.update('kept', () => undefined, 'settings')).resolves.toEqual({
+            written: false,
+            value: 1,
+        });
+        expect(dataByStore.get('settings').get('kept')).toBe(1);
+    });
+
+    test('a mutate that throws writes nothing and answers null', async () => {
+        vi.spyOn(console, 'error').mockImplementation(() => {});
+        const { db, dataByStore } = createFakeDb(['settings'], { settings: { kept: 1 } });
+        storage.db = db;
+
+        await expect(
+            storage.update(
+                'kept',
+                () => {
+                    throw new Error('bad record');
+                },
+                'settings'
+            )
+        ).resolves.toBeNull();
+        expect(dataByStore.get('settings').get('kept')).toBe(1);
+    });
+
+    test('a put that succeeds in a transaction that then aborts is reported as not written', async () => {
+        vi.spyOn(console, 'error').mockImplementation(() => {});
+        const disk = new Map([['lines', ['a']]]);
+        let txn = null;
+        storage.db = {
+            objectStoreNames: ['settings'],
+            transaction() {
+                txn = { oncomplete: null, onerror: null, onabort: null, error: null };
+                const pending = [];
+                const store = {
+                    get(key) {
+                        const request = { onsuccess: null, onerror: null, result: undefined };
+                        pending.push(() => {
+                            request.result = disk.get(key);
+                            request.onsuccess?.();
+                        });
+                        return request;
+                    },
+                    put() {
+                        // The request succeeds, and the value never reaches disk.
+                        const request = { onsuccess: null, onerror: null };
+                        pending.push(() => request.onsuccess?.());
+                        return request;
+                    },
+                };
+                queueMicrotask(() => {
+                    for (const run of pending) run();
+                    queueMicrotask(() => {
+                        txn.error = new DOMException('commit failed', 'UnknownError');
+                        txn.onabort?.();
+                    });
+                });
+                txn.objectStore = () => store;
+                return txn;
+            },
+        };
+
+        await expect(storage.update('lines', (current) => [...current, 'b'], 'settings')).resolves.toBeNull();
+        expect(disk.get('lines')).toEqual(['a']);
+    });
+
+    test('a written value is reported only once its transaction completes', async () => {
+        const { db } = createFakeDb(['settings'], { settings: { lines: [] } });
+        storage.db = db;
+        const transaction = db.transaction.bind(db);
+        const completed = [];
+        vi.spyOn(db, 'transaction').mockImplementation((...args) => {
+            const txn = transaction(...args);
+            const wrap = (fn) => () => {
+                completed.push('complete');
+                fn?.();
+            };
+            return new Proxy(txn, {
+                set(target, prop, value) {
+                    target[prop] = prop === 'oncomplete' ? wrap(value) : value;
+                    return true;
+                },
+            });
+        });
+
+        const result = await storage.update('lines', () => ['x'], 'settings');
+        expect(result).toEqual({ written: true, value: ['x'] });
+        expect(completed).toEqual(['complete']);
+    });
+
+    test('after the teardown close it refuses, since a read-merge-write cannot be queued', async () => {
+        const { db } = createFakeDb(['settings']);
+        storage.db = db;
+        storage._closingForTeardown = true;
+        const transactions = vi.spyOn(db, 'transaction');
+
+        await expect(storage.update('lines', () => ['x'], 'settings')).resolves.toBeNull();
+        expect(transactions).not.toHaveBeenCalled();
+    });
+});
+
+/**
  * A database whose writes are refused for space, and whose deletes still work —
  * the shape of a full origin, where freeing something is the only way out.
  * @param {*} error - The error every put reports

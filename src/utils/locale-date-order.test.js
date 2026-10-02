@@ -8,7 +8,13 @@
  */
 
 import { describe, test, expect, afterEach, beforeEach } from 'vitest';
-import { detectDayFirst, isDayFirstLocale, chatStampToDate, _resetDateFieldOrder } from './locale-date-order.js';
+import {
+    detectDayFirst,
+    isDayFirstLocale,
+    chatStampToDate,
+    leadingChatStampFields,
+    _resetDateFieldOrder,
+} from './locale-date-order.js';
 
 afterEach(() => _resetDateFieldOrder());
 
@@ -84,5 +90,27 @@ describe('reading a chat stamp as a date', () => {
     test('a stamp a little ahead of a slow clock stays in this year', () => {
         const slow = new Date(2028, 5, 10, 12, 0, 0);
         expect(stamp({ first: 10, second: 6, hour: 12, minute: 5 }, slow)).toEqual(new Date(2028, 5, 10, 12, 5, 0, 0));
+    });
+});
+
+describe('the stamp a chat line opens with', () => {
+    test('reads the slash, dash and dot layouts', () => {
+        expect(leadingChatStampFields('[10/1 7:42:44 AM] Gil: hi')).toEqual({
+            first: 10,
+            second: 1,
+            ambiguousOrder: true,
+            hour: 7,
+            minute: 42,
+            sec: 44,
+            period: 'AM',
+        });
+        expect(leadingChatStampFields('[01-10 19:42:44] Gil: hi')).toMatchObject({ first: 1, second: 10 });
+        expect(leadingChatStampFields('[1.10. 19:42:44] Gil: hi')).toMatchObject({ ambiguousOrder: false });
+    });
+
+    test('ignores a stamp that is not at the start, and a line with none', () => {
+        expect(leadingChatStampFields('Gil: see [10/1 7:42:44 AM]')).toBeNull();
+        expect(leadingChatStampFields('no stamp')).toBeNull();
+        expect(leadingChatStampFields(null)).toBeNull();
     });
 });

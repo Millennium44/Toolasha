@@ -53,7 +53,12 @@ vi.mock('../../core/storage.js', () => ({
     },
 }));
 
-import { CHAT_HISTORY_KEY_BASE, CHAT_HISTORY_STORE } from './chat-history-persistence.js';
+import {
+    CHAT_HISTORY_KEY_BASE,
+    CHAT_HISTORY_STORE,
+    guildRecordKey,
+    PUBLIC_RECORD_KEY,
+} from './chat-history-persistence.js';
 import { applyPayload, buildPayloadJSON } from '../sync/sync-payload.js';
 import { readFileSync } from 'node:fs';
 import settingsStorage from '../../core/settings-storage.js';
@@ -61,6 +66,9 @@ import { DEVICE_LOCAL_KEY_PREFIXES } from '../../utils/full-backup.js';
 
 const HISTORY_KEY = `${CHAT_HISTORY_KEY_BASE}_char1`;
 const WHISPER = 'meet me at the tower';
+/** The shared records: public channels for the profile, and one per guild. */
+const SHARED_KEYS = [PUBLIC_RECORD_KEY, guildRecordKey('g1')];
+const GUILD_LINE = 'raid at nine, guild only';
 
 describe('chat history never reaches a sync payload', () => {
     beforeEach(() => {
@@ -73,6 +81,21 @@ describe('chat history never reaches a sync payload', () => {
                     savedAt: 1,
                     tabs: { 'tab:Whispers': [`<div class="ChatMessage_chatMessage__z">${WHISPER}</div>`] },
                 },
+                ...Object.fromEntries(
+                    SHARED_KEYS.map((key) => [
+                        key,
+                        {
+                            v: 1,
+                            savedAt: 1,
+                            tabs: {
+                                'tab2:ch:/chat_channel_types/guild': [
+                                    `<div class="ChatMessage_chatMessage__z">${GUILD_LINE}</div>`,
+                                ],
+                            },
+                            deleted: [],
+                        },
+                    ])
+                ),
             },
             dungeonRuns: { runs_char1: [] },
         };
@@ -84,7 +107,7 @@ describe('chat history never reaches a sync payload', () => {
         // `buildPayloadJSON('everything')` walks every store `listStores()`
         // reports and only the settings store is redacted.
         expect(CHAT_HISTORY_STORE).toBe('settings');
-        expect(HISTORY_KEY.startsWith('toolasha_local_')).toBe(true);
+        for (const key of [HISTORY_KEY, ...SHARED_KEYS]) expect(key.startsWith('toolasha_local_')).toBe(true);
     });
 
     test.each(['settings', 'everything'])('an upload at scope %s carries none of it', async (scope) => {
@@ -94,6 +117,7 @@ describe('chat history never reaches a sync payload', () => {
         expect(json).not.toContain('toolasha_local_');
         expect(json).not.toContain(WHISPER);
         expect(json).not.toContain('tab:Whispers');
+        expect(json).not.toContain(GUILD_LINE);
 
         // …and the payload is otherwise a real one, so the assertions above are
         // not passing because nothing was built.
@@ -128,6 +152,8 @@ describe('chat history never reaches a sync payload', () => {
         const json = await exportEverythingJSON();
         expect(json).not.toContain(WHISPER);
         expect(json).not.toContain(HISTORY_KEY);
+        expect(json).not.toContain(GUILD_LINE);
+        for (const key of SHARED_KEYS) expect(json).not.toContain(key);
         expect(json).toContain('dungeonRuns');
     });
 });

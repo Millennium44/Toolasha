@@ -100,6 +100,10 @@ const utilsExternalGlobals = new Map([
     // prices its key shortfall with it. One copy so the two cannot quote
     // different costs for the same key, and so its craft memo is shared.
     [normalize(join(__dirname, 'src/utils/key-cost.js')), 'Toolasha.Utils.keyCost'],
+    // Chat stamps read as dates: the dungeon tracker (combat) and the chat
+    // history's send-order sort (ui). One copy so both resolve the client's
+    // month/day order once, from the same cache.
+    [normalize(join(__dirname, 'src/utils/locale-date-order.js')), 'Toolasha.Utils.localeDateOrder'],
     // What a refined (★) item cost to obtain — the philo calculator (market)
     // and the alchemy history viewers (ui) price the same cape with it, and its
     // map of which action refines what is built once.
