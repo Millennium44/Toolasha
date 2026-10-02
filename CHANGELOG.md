@@ -6,6 +6,13 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Chat history keeps its order and its older lines
+
+- Restored chat history no longer shows lines newer than where the game's own messages begin, so lines are no longer out of order or shown twice.
+- Switching to another chat tab and back no longer drops the lines that scrolled out of the game's chat during the session.
+- Duplicates the previous version stored for players with rank badges are folded on load, so they no longer crowd older history out of the saved limit.
+- The saved-history limit now counts only lines older than what the game is still showing, so a busy tab keeps your full history setting's worth of older lines after a reload; the total saved per character rises from 256 KB to 1 MB to make room.
+
 ### Trial damage chart shows the players again
 
 - The trial damage chart puts the party's DPS on its own right-hand scale so the leading players' lines are readable instead of flat at zero, and clicking a name in the new legend hides or shows that line.
