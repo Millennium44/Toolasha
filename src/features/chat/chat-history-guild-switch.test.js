@@ -186,6 +186,51 @@ describe('a guild change with the Guild pane mounted', () => {
         await expectCleanSwitch();
     });
 
+    test('lines the new guild showed before the roster never reach the old guild record', async () => {
+        await rerender();
+        // The pane re-rendered first: its new lines arrive while the context still names g1.
+        container.appendChild(makeMessage('g2 second', 21));
+        await settle();
+        await chatHistoryPersistence.flush();
+        expect(recordHas(guildRecordKey('g1'), 'g2 live')).toBe(false);
+        expect(recordHas(guildRecordKey('g1'), 'g2 second')).toBe(false);
+
+        wsHandlers.guild_characters_updated(rosterFor('g2'));
+        await settle();
+        await chatHistoryPersistence.flush();
+
+        for (const text of ['g2 live', 'g2 second']) {
+            expect(recordHas(guildRecordKey('g1'), text)).toBe(false);
+            expect(recordHas(guildRecordKey('g2'), text)).toBe(true);
+        }
+        // What the old guild did show is still its own.
+        expect(recordHas(guildRecordKey('g1'), 'g1 one')).toBe(true);
+        expect(recordHas(guildRecordKey('g2'), 'g1 one')).toBe(false);
+        expect(shown()).toEqual(expect.arrayContaining(['g2 history', 'g2 live', 'g2 second']));
+    });
+
+    test('a re-render that was no guild change merges back into the same guild once the window passes', async () => {
+        vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'], shouldAdvanceTime: true });
+        try {
+            await rerender();
+            await chatHistoryPersistence.flush();
+            expect(recordHas(guildRecordKey('g1'), 'g2 live')).toBe(false);
+            vi.advanceTimersByTime(20000);
+            await chatHistoryPersistence.flush();
+            expect(recordHas(guildRecordKey('g1'), 'g2 live')).toBe(true);
+        } finally {
+            vi.useRealTimers();
+        }
+    });
+
+    test('a roster that names the same guild releases the held lines to it', async () => {
+        await rerender();
+        wsHandlers.guild_characters_updated(rosterFor('g1'));
+        await settle();
+        await chatHistoryPersistence.flush();
+        expect(recordHas(guildRecordKey('g1'), 'g2 live')).toBe(true);
+    });
+
     test('an eviction after the switch has been handled is recorded again', async () => {
         wsHandlers.guild_characters_updated(rosterFor('g2'));
         await settle();
