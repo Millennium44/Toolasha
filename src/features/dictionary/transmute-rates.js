@@ -6,7 +6,7 @@
 import config from '../../core/config.js';
 import domObserver from '../../core/dom-observer.js';
 import dataManager from '../../core/data-manager.js';
-import { createTimerRegistry } from '../../utils/timer-registry.js';
+import { getItemHridFromName } from '../../utils/game-lookups.js';
 
 /**
  * TransmuteRates class manages success rate display in Item Dictionary
@@ -16,8 +16,6 @@ class TransmuteRates {
         this.unregisterHandlers = [];
         this.isInitialized = false;
         this.injectTimeout = null;
-        this.nameToHridCache = new Map();
-        this.timerRegistry = createTimerRegistry();
     }
 
     /**
@@ -71,7 +69,6 @@ class TransmuteRates {
                 this.injectTimeout = setTimeout(() => {
                     this.injectRates(section);
                 }, 50);
-                this.timerRegistry.registerTimeout(this.injectTimeout);
             }
         });
         this.unregisterHandlers.push(unregister);
@@ -100,21 +97,10 @@ class TransmuteRates {
             return;
         }
 
-        // Build name->HRID cache once for O(1) lookups
-        if (this.nameToHridCache.size === 0) {
-            for (const [hrid, item] of Object.entries(gameData.itemDetailMap)) {
-                this.nameToHridCache.set(item.name, hrid);
-                // Add ★ ↔ (R) variants so both display formats resolve
-                if (item.name.includes('(R)')) {
-                    this.nameToHridCache.set(item.name.replace(/\s*\(R\)/, ' ★'), hrid);
-                } else if (item.name.includes('★')) {
-                    this.nameToHridCache.set(item.name.replace(/\s*★/, ' (R)'), hrid);
-                }
-            }
-        }
-
-        // Find current item HRID by name (O(1) lookup)
-        const currentItemHrid = this.nameToHridCache.get(currentItemName);
+        // Resolved per call against the live detail map (memoized by map identity in
+        // game-lookups), so a replaced init_client_data is never read through a stale
+        // name table, and a duplicated display name resolves first-wins like every other lookup.
+        const currentItemHrid = getItemHridFromName(currentItemName);
 
         if (!currentItemHrid) {
             return;
@@ -138,8 +124,8 @@ class TransmuteRates {
 
             const sourceItemName = nameElem.textContent.trim();
 
-            // Find source item HRID by name (O(1) lookup)
-            const sourceItemHrid = this.nameToHridCache.get(sourceItemName);
+            // Find source item HRID by name
+            const sourceItemHrid = getItemHridFromName(sourceItemName);
 
             if (!sourceItemHrid) {
                 continue;
@@ -212,16 +198,13 @@ class TransmuteRates {
         try {
             // Clear any pending injection timeouts
             clearTimeout(this.injectTimeout);
-            this.timerRegistry.clearAll();
+            this.injectTimeout = null;
 
             this.unregisterHandlers.forEach((unregister) => unregister());
             this.unregisterHandlers = [];
 
             // Remove all injected rate displays
             document.querySelectorAll('.mwi-transmute-rate').forEach((elem) => elem.remove());
-
-            // Clear cache
-            this.nameToHridCache.clear();
 
             this.isInitialized = false;
         } catch (error) {

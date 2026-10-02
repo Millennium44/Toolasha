@@ -6,6 +6,7 @@
 import config from '../../core/config.js';
 import tooltipObserver from '../../core/tooltip-observer.js';
 import { navigateToItem } from '../../utils/item-navigation.js';
+import { getItemHridFromName } from '../../utils/game-lookups.js';
 
 class AltClickNavigation {
     constructor() {
@@ -134,11 +135,14 @@ class AltClickNavigation {
             // Try to extract from ItemTooltipText_name div
             const nameElement = info.nameEl?.querySelector('span');
             if (nameElement) {
-                const itemName = nameElement.textContent.trim();
+                // The tooltip title carries the enhancement level ("Griffin Bulwark +5")
+                const itemName = nameElement.textContent.trim().replace(/\s*\+\d+$/, '');
 
-                // Convert name to HRID format (lowercase, replace spaces with underscores)
-                const itemHrid = `/items/${itemName.toLowerCase().replace(/\s+/g, '_')}`;
-                this.currentItemHrid = itemHrid;
+                // Resolve through game data: a slug of the name breaks on apostrophes
+                // ("Collector's Boots") and on refined names ("Foo (R)"/"Foo ★").
+                // The slug is only the offline guess when the data cannot place it.
+                this.currentItemHrid =
+                    getItemHridFromName(itemName) || `/items/${itemName.toLowerCase().replace(/\s+/g, '_')}`;
             }
         } catch (error) {
             console.error('[AltClickNav] Error parsing tooltip:', error);
