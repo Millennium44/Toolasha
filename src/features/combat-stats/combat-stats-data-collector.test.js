@@ -462,6 +462,27 @@ describe('connection-interrupted flag', () => {
         expect(store.writes[0][1]).not.toHaveProperty('restored');
     });
 
+    test('a marked session restored after a reload keeps the mark on its next battle', async () => {
+        fighting(ZONE);
+        store.socket = FIRST;
+        await wave();
+        await collector.onSocketClosed(FIRST);
+        const persisted = store.writes.at(-1)[1];
+
+        // Reload: everything in memory is gone, the stored snapshot carries the mark
+        collector.onCharacterSwitching();
+        collector.isInitialized = false;
+        _resetReadProbe();
+        store.saved = persisted;
+        await collector.initialize();
+
+        store.socket = SECOND;
+        await wave('2026-08-03T01:00:00Z', 2);
+
+        expect(collector.isConnectionInterrupted()).toBe(true);
+        expect(collector.getLatestData().connectionInterrupted).toBe(true);
+    });
+
     test('the mark is not written under a character who became current while the probe was open', async () => {
         fighting(ZONE);
         store.socket = FIRST;

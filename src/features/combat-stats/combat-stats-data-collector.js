@@ -1051,6 +1051,9 @@ class CombatStatsDataCollector {
             // restored run was silently dropped instead of archived, and its
             // loot never reached the gold attribution's combat row.
             this.sessionKey = sessionKey(this.latestCombatData);
+            // A restored session still in progress keeps its interruption: the next new_battle of the same
+            // session builds its snapshot from this flag, and would otherwise overwrite the stored mark
+            if (data.connectionInterrupted === true) this.connectionInterrupted = true;
         }
         return this.latestCombatData;
     }
