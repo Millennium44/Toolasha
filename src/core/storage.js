@@ -356,6 +356,7 @@ class Storage {
         this.quotaExceeded = false;
         this._quotaExceededAt = null;
         this._quotaFailures = 0;
+        this._roomSeenAfterFailures = null; // `_quotaFailures` when a write last committed inside the window
         this._lastQuotaTarget = null; // {key, storeName} of the write that failed
         this._quotaListeners = new Set();
         /**
@@ -1654,6 +1655,15 @@ class Storage {
      * @returns {boolean} True while storage is known to be full
      */
     isQuotaExceeded() {
+        // A write that committed inside the recheck window, with no failure since, proved there is room:
+        // once the window has passed the flag clears on the next read, without waiting for another write
+        if (
+            this.quotaExceeded &&
+            this._roomSeenAfterFailures === this._quotaFailures &&
+            Date.now() - (this._quotaExceededAt ?? 0) >= QUOTA_RECHECK_MS
+        ) {
+            this.clearQuotaState();
+        }
         return this.quotaExceeded;
     }
 
@@ -1677,6 +1687,7 @@ class Storage {
     clearQuotaState() {
         this.quotaExceeded = false;
         this._lastQuotaTarget = null;
+        this._roomSeenAfterFailures = null;
     }
 
     /**
@@ -1697,7 +1708,12 @@ class Storage {
     _noteWriteCommitted(failuresAtStart) {
         if (!this.quotaExceeded) return;
         if (this._quotaFailures !== failuresAtStart) return;
-        if (Date.now() - (this._quotaExceededAt ?? 0) < QUOTA_RECHECK_MS) return;
+        if (Date.now() - (this._quotaExceededAt ?? 0) < QUOTA_RECHECK_MS) {
+            // Too soon to clear, but not forgotten: `isQuotaExceeded()` clears once the window passes,
+            // unless another failure lands first
+            this._roomSeenAfterFailures = this._quotaFailures;
+            return;
+        }
         this.clearQuotaState();
     }
 
@@ -3073,7 +3089,7 @@ class Storage {
             pendingWrites: this.pendingWrites.size,
             activeTimers: this.saveDebounceTimers.size,
             restorePendingStores: this.restorePendingStores(),
-            quotaExceeded: this.quotaExceeded,
+            quotaExceeded: this.isQuotaExceeded(),
             quotaExceededAt: this._quotaExceededAt,
             quotaFailures: this._quotaFailures,
             lastQuotaTarget: this._lastQuotaTarget,

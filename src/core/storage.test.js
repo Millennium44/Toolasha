@@ -789,6 +789,32 @@ describe('Storage quota handling', () => {
             expect(storage.isQuotaExceeded()).toBe(true);
         });
 
+        test('a write that committed inside the window clears the flag once the window has passed', async () => {
+            storage.db = createFullDb(QUOTA_ERROR);
+            await storage._saveToIndexedDB('big', [1], 'networthHistory');
+            storage.db = createFakeDb(['networthHistory']).db;
+            await storage._saveToIndexedDB('small', 1, 'networthHistory');
+            expect(storage.isQuotaExceeded()).toBe(true);
+
+            // No further write happens; the window simply passes
+            storage._quotaExceededAt -= PAST_RECHECK;
+
+            expect(storage.isQuotaExceeded()).toBe(false);
+        });
+
+        test('but a failure after that in-window success keeps the flag up', async () => {
+            storage.db = createFullDb(QUOTA_ERROR);
+            await storage._saveToIndexedDB('big', [1], 'networthHistory');
+            storage.db = createFakeDb(['networthHistory']).db;
+            await storage._saveToIndexedDB('small', 1, 'networthHistory');
+            storage.db = createFullDb(QUOTA_ERROR);
+            await storage._saveToIndexedDB('big2', [1], 'networthHistory');
+
+            storage._quotaExceededAt -= PAST_RECHECK;
+
+            expect(storage.isQuotaExceeded()).toBe(true);
+        });
+
         test('and not when the write began before the latest failure', async () => {
             await fillThenAge();
             storage._noteWriteCommitted(storage._quotaFailures - 1);
