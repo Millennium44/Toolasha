@@ -151,6 +151,33 @@ describe('SettingsStorage.importSettings known-character matching', () => {
         expect(stored.has('json:script_settingsMap_dave')).toBe(false);
     });
 
+    // The full-backup file sits beside the settings export, and both are .json.
+    // Fed to Import Settings, its top-level keys were written as settings —
+    // `stores` being the entire database under one key in the settings store —
+    // and the import reported success.
+    test('refuses a full backup file instead of writing its top-level keys as settings', async () => {
+        vi.spyOn(console, 'error').mockImplementation(() => {});
+        const result = await settingsStorage.importSettings(
+            JSON.stringify({
+                formatVersion: 1,
+                exportedAt: '2026-10-01T12:00:00.000Z',
+                stores: { settings: { script_settingsMap_alice: { some: 'setting' } }, xpHistory: {} },
+            })
+        );
+
+        expect(result).toBeNull();
+        expect([...stored.keys()]).toEqual([]);
+        console.error.mockRestore();
+    });
+
+    test('refuses a file that is not a key/value map', async () => {
+        vi.spyOn(console, 'error').mockImplementation(() => {});
+        expect(await settingsStorage.importSettings(JSON.stringify([{ id: 'x' }]))).toBeNull();
+        expect(await settingsStorage.importSettings('null')).toBeNull();
+        expect([...stored.keys()]).toEqual([]);
+        console.error.mockRestore();
+    });
+
     test('reports failure instead of counting a refused write as imported', async () => {
         outage.on = true;
 
