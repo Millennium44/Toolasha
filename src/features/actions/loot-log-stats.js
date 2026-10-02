@@ -10,7 +10,7 @@ import webSocketHook from '../../core/websocket.js';
 import dataManager from '../../core/data-manager.js';
 import { getItemPrices } from '../../utils/market-data.js';
 import { toCsv, csvFilename, downloadCsv } from '../../utils/csv-export.js';
-import { formatKMB, numberFormatter, formatDateTime } from '../../utils/formatters.js';
+import { formatLargeNumber, numberFormatter, formatDateTime } from '../../utils/formatters.js';
 import { createTimerRegistry } from '../../utils/timer-registry.js';
 import { MARKET_TAX, GATHERING_TYPES } from '../../utils/profit-constants.js';
 import { getActionEfficiencyContext } from '../../utils/efficiency.js';
@@ -146,12 +146,14 @@ export function buildLootLogSummaryText(logData, { itemInfo, actionName, profit 
         const bidItemTotal = (info.bidPerItem || 0) * count;
         askTotal += askItemTotal;
         bidTotal += bidItemTotal;
-        lines.push(`  ${info.name} ×${numberFormatter(count)} — ${formatKMB(askItemTotal)}/${formatKMB(bidItemTotal)}`);
+        lines.push(
+            `  ${info.name} ×${numberFormatter(count)} — ${formatLargeNumber(askItemTotal, 1)}/${formatLargeNumber(bidItemTotal, 1)}`
+        );
     }
 
-    lines.push(`Total: ${formatKMB(askTotal)}/${formatKMB(bidTotal)} (ask/bid)`);
+    lines.push(`Total: ${formatLargeNumber(askTotal, 1)}/${formatLargeNumber(bidTotal, 1)} (ask/bid)`);
     if (profit) {
-        lines.push(`Profit: ${formatKMB(profit.askProfit)}/${formatKMB(profit.bidProfit)}`);
+        lines.push(`Profit: ${formatLargeNumber(profit.askProfit, 1)}/${formatLargeNumber(profit.bidProfit, 1)}`);
     }
 
     return lines.join('\n');
@@ -213,8 +215,9 @@ export function buildLootLogChatLine(
             const dropsPart = more > 0 ? (namedText ? `${namedText} +${more} more` : `+${more} more`) : namedText;
             if (dropsPart) parts.push(dropsPart);
         }
-        parts.push(`total ${formatKMB(askTotal)}/${formatKMB(bidTotal)}`);
-        if (profit) parts.push(`profit ${formatKMB(profit.askProfit)}/${formatKMB(profit.bidProfit)}`);
+        parts.push(`total ${formatLargeNumber(askTotal, 1)}/${formatLargeNumber(bidTotal, 1)}`);
+        if (profit)
+            parts.push(`profit ${formatLargeNumber(profit.askProfit, 1)}/${formatLargeNumber(profit.bidProfit, 1)}`);
         const luck = luckPart();
         if (luck) parts.push(luck);
         return parts.join(' | ');
@@ -614,7 +617,7 @@ class LootLogStats {
      * @returns {string} HTML
      */
     buildMergedSummaryHtml(m, itemName) {
-        const fmt = (n) => formatKMB(Math.round(n));
+        const fmt = (n) => formatLargeNumber(Math.round(n), 1);
         const factor = (a, e) => (e > 0 ? (a / e).toFixed(2) + '×' : '—');
         const GOOD = '#00c46a';
         const BAD = '#ff5d6c';
@@ -652,7 +655,7 @@ class LootLogStats {
      * @returns {string} HTML
      */
     buildEnhancingSummaryHtml(s) {
-        const fmt = (n) => formatKMB(Math.round(n));
+        const fmt = (n) => formatLargeNumber(Math.round(n), 1);
         const factor = (a, e) => (e > 0 ? (a / e).toFixed(2) + '×' : '—');
         const GOOD = '#00c46a';
         const BAD = '#ff5d6c';
@@ -1074,7 +1077,7 @@ class LootLogStats {
             return;
         }
 
-        header.textContent = `▶ Total Value: ${formatKMB(askTotal)}/${formatKMB(bidTotal)}`;
+        header.textContent = `▶ Total Value: ${formatLargeNumber(askTotal, 1)}/${formatLargeNumber(bidTotal, 1)}`;
         header.style.cursor = 'pointer';
         wrapper.appendChild(header);
 
@@ -1111,7 +1114,7 @@ class LootLogStats {
         if (profit) {
             const profitLine = document.createElement('div');
             profitLine.style.cssText = `text-align: right; font-weight: bold; color: ${this.getProfitColor(profit.askProfit, profit.bidProfit)};`;
-            profitLine.textContent = `Profit: ${formatKMB(profit.askProfit)}/${formatKMB(profit.bidProfit)}`;
+            profitLine.textContent = `Profit: ${formatLargeNumber(profit.askProfit, 1)}/${formatLargeNumber(profit.bidProfit, 1)}`;
             wrapper.appendChild(profitLine);
         }
 
@@ -1125,7 +1128,7 @@ class LootLogStats {
 
             const expectedLine = document.createElement('div');
             expectedLine.style.cssText = 'text-align: right; font-size: 0.9em; color: #aaa;';
-            expectedLine.textContent = `Expected: ${formatKMB(expected.askExpected)}/${formatKMB(expected.bidExpected)} (`;
+            expectedLine.textContent = `Expected: ${formatLargeNumber(expected.askExpected, 1)}/${formatLargeNumber(expected.bidExpected, 1)} (`;
 
             const ratioSpan = document.createElement('span');
             ratioSpan.style.cssText = `color: ${ratio.color}; font-weight: bold;`;
@@ -1563,7 +1566,7 @@ class LootLogStats {
             totalSpan.style.cssText = `color: ${config.COLOR_GOLD}; flex-shrink: 0; text-align: right;`;
 
             if (item.askTotal > 0 || item.bidTotal > 0) {
-                totalSpan.textContent = `${formatKMB(item.askTotal)}/${formatKMB(item.bidTotal)}`;
+                totalSpan.textContent = `${formatLargeNumber(item.askTotal, 1)}/${formatLargeNumber(item.bidTotal, 1)}`;
             } else {
                 totalSpan.textContent = '—';
             }
@@ -1621,7 +1624,7 @@ class LootLogStats {
                 const costSpan = document.createElement('span');
                 costSpan.style.cssText = `color: ${config.COLOR_LOSS}; flex-shrink: 0; text-align: right;`;
                 if (input.askTotal > 0 || input.bidTotal > 0) {
-                    costSpan.textContent = `−${formatKMB(input.askTotal)}/−${formatKMB(input.bidTotal)}`;
+                    costSpan.textContent = `−${formatLargeNumber(input.askTotal, 1)}/−${formatLargeNumber(input.bidTotal, 1)}`;
                 } else {
                     costSpan.textContent = '—';
                 }
@@ -1769,7 +1772,8 @@ class LootLogStats {
         if (dayValueAsk === 0 && dayValueBid === 0) {
             dayValueSpan.textContent = 'Daily Output: —';
         } else {
-            dayValueSpan.textContent = `Daily Output: ${formatKMB(dayValueAsk)}/${formatKMB(dayValueBid)}` + rateSuffix;
+            dayValueSpan.textContent =
+                `Daily Output: ${formatLargeNumber(dayValueAsk, 1)}/${formatLargeNumber(dayValueBid, 1)}` + rateSuffix;
             if (rateTitle) dayValueSpan.title = rateTitle;
         }
 
@@ -1788,7 +1792,8 @@ class LootLogStats {
             const dayProfitAsk = (profit.askProfit * 86400) / duration;
             const dayProfitBid = (profit.bidProfit * 86400) / duration;
             dayProfitSpan.textContent =
-                `Daily Profit: ${formatKMB(dayProfitAsk)}/${formatKMB(dayProfitBid)}` + rateSuffix;
+                `Daily Profit: ${formatLargeNumber(dayProfitAsk, 1)}/${formatLargeNumber(dayProfitBid, 1)}` +
+                rateSuffix;
             if (rateTitle) dayProfitSpan.title = rateTitle;
             dayProfitSpan.style.float = 'right';
             dayProfitSpan.style.color = this.getProfitColor(dayProfitAsk, dayProfitBid);

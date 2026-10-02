@@ -21,7 +21,12 @@ vi.mock('./dungeon-tracker-storage.js', () => ({
     },
 }));
 vi.mock('../../utils/timer-registry.js', () => ({
-    createTimerRegistry: () => ({ registerTimeout: () => {}, clearAll: () => {} }),
+    createTimerRegistry: () => ({
+        registerTimeout: () => {},
+        scheduleTimeout: (fn, ms) => setTimeout(fn, ms),
+        cancelTimeout: (id) => clearTimeout(id),
+        clearAll: () => {},
+    }),
 }));
 
 // A gate `_analyse` can be made to pause inside, so a test can land `disable()`

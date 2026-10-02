@@ -6,6 +6,14 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Fixes and Custom Tabs extras from the upstream sweep
+
+- Reopening action panels and market views no longer keeps old copies alive in memory, and spent timers no longer pile up during combat.
+- The lab sim no longer offers gear the character can't equip.
+- Unlisted enhanced items aren't priced at +0 craft cost; untradable worn gear isn't counted as sold.
+- The Loot & XP Log follows the number-format setting.
+- Custom Tabs' "Add to Tab" dropdown isn't cut off, can remove items or start a tab, and the toolbar gains Import Categories.
+
 ### Bulk Sell vendor sales work again
 
 - Selling to the vendor no longer stops at "the item menu is for an enhanced item" for ordinary unenhanced items.

@@ -19,6 +19,7 @@ vi.mock('../../core/dom-observer.js', () => ({
 
 const { default: collectableListingsSort } = await import('./collectable-listings-sort.js');
 const { default: config } = await import('../../core/config.js');
+const { getCleanupRegistryCensus } = await import('../../utils/cleanup-registry.js');
 
 function buildRow({ status, hasCollect }) {
     const row = document.createElement('tr');
@@ -220,5 +221,39 @@ describe('collectableListingsSort.initialize()', () => {
 
         const statuses = Array.from(table.querySelectorAll('tbody tr')).map((r) => r.children[0].textContent);
         expect(statuses).toEqual(['Filled', 'Active']);
+    });
+});
+
+describe('collectableListingsSort remounts', () => {
+    test('a remounted table releases the previous mount observer instead of accumulating them', () => {
+        const baseline = getCleanupRegistryCensus();
+        const tables = [];
+        for (let i = 0; i < 5; i++) {
+            document.body.innerHTML = '';
+            const table = buildTable([
+                { status: 'Active', hasCollect: false },
+                { status: 'Filled', hasCollect: true },
+            ]);
+            tables.push(table);
+            collectableListingsSort._watchTable(table);
+            // The same mount seen again (the catch-up and the class watcher both firing) adds nothing
+            collectableListingsSort._watchTable(table);
+        }
+
+        const census = getCleanupRegistryCensus();
+        expect(census.observers - baseline.observers).toBe(1);
+        expect(census.cleanups - baseline.cleanups).toBe(0);
+        expect(collectableListingsSort.currentTbody).toBe(tables[4].querySelector('tbody'));
+    });
+
+    test('cleanup releases the current mount observer', () => {
+        const baseline = getCleanupRegistryCensus().observers;
+        const table = buildTable([{ status: 'Active', hasCollect: false }]);
+        collectableListingsSort._watchTable(table);
+        expect(getCleanupRegistryCensus().observers).toBe(baseline + 1);
+
+        collectableListingsSort.cleanup();
+        expect(getCleanupRegistryCensus().observers).toBe(baseline);
+        expect(collectableListingsSort.currentTbody).toBeNull();
     });
 });

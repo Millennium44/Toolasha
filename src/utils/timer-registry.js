@@ -23,15 +23,22 @@ export function getTimerRegistryCensus() {
 
 /**
  * Create a timer registry for deterministic teardown.
+ *
+ * `registerTimeout` keeps the id until `clearAll`, so a timer that fires stays
+ * listed; new code that schedules a timeout should use `scheduleTimeout`, which
+ * drops its entry when the timer fires, and `cancelTimeout` to cancel one.
  * @returns {{
  *   registerInterval: (intervalId: number, label?: string) => void,
  *   registerTimeout: (timeoutId: number, label?: string) => void,
+ *   scheduleTimeout: (fn: Function, ms?: number, label?: string) => number,
+ *   cancelTimeout: (timeoutId: number) => void,
  *   clearAll: () => void
  * }} Timer registry API
  */
 export function createTimerRegistry() {
     const intervals = [];
-    const timeouts = [];
+    // A Set so a fired or cancelled timer is dropped in O(1).
+    const timeouts = new Set();
 
     // Optional: names the pformance-panel row this timer's ticks report under
     // (`interval:<label>`) instead of leaving it to the guessed call site or
@@ -53,9 +60,33 @@ export function createTimerRegistry() {
             return;
         }
 
-        timeouts.push(timeoutId);
-        census.timeouts += 1;
+        if (!timeouts.has(timeoutId)) {
+            timeouts.add(timeoutId);
+            census.timeouts += 1;
+        }
         if (label) performanceMonitor.labelTimer(timeoutId, label);
+    };
+
+    const dropTimeout = (timeoutId) => {
+        if (!timeouts.delete(timeoutId)) return;
+        census.timeouts -= 1;
+        performanceMonitor.unlabelTimer?.(timeoutId);
+    };
+
+    // The entry is dropped before `fn` runs, so `fn` may schedule again (or
+    // throw) without leaving this one behind.
+    const scheduleTimeout = (fn, ms, label) => {
+        const timeoutId = setTimeout(() => {
+            dropTimeout(timeoutId);
+            fn();
+        }, ms);
+        registerTimeout(timeoutId, label);
+        return timeoutId;
+    };
+
+    const cancelTimeout = (timeoutId) => {
+        clearTimeout(timeoutId);
+        dropTimeout(timeoutId);
     };
 
     const clearAll = () => {
@@ -76,13 +107,15 @@ export function createTimerRegistry() {
                 console.error('[TimerRegistry] Failed to clear timeout:', error);
             }
         });
-        census.timeouts -= timeouts.length;
-        timeouts.length = 0;
+        census.timeouts -= timeouts.size;
+        timeouts.clear();
     };
 
     return {
         registerInterval,
         registerTimeout,
+        scheduleTimeout,
+        cancelTimeout,
         clearAll,
     };
 }
