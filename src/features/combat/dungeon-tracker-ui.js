@@ -291,7 +291,7 @@ class DungeonTrackerUI {
                 </div>
             </div>
 
-            <div id="mwi-dt-content" style="padding: 12px 20px; display: flex; flex-direction: column; gap: 12px; max-height: calc((100vh - 80px) / var(--toolasha-text-zoom, 1)); overflow-y: auto;">
+            <div id="mwi-dt-content" style="padding: 12px 20px; display: flex; flex-direction: column; gap: 12px; max-height: calc(100vh / var(--toolasha-text-zoom, 1) - 80px); overflow-y: auto;">
                 <!-- Progress bar -->
                 <div>
                     <div style="background: #333; border-radius: 4px; height: 20px; position: relative; overflow: hidden;">
