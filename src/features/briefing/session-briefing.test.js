@@ -117,6 +117,9 @@ vi.mock('../queue-monitor/queue-time-row.js', () => ({ queueTimeLeft: () => game
 vi.mock('../queue-monitor/queue-snapshot.js', () => ({
     default: {
         getSnapshot: () => game.ownSnapshot,
+        whenLoaded: async () => {
+            await game.snapshotLoad;
+        },
         getOtherCharacterSnapshots: () => game.snapshots,
     },
 }));
@@ -1005,6 +1008,29 @@ describe('how long the queue has been idle', () => {
         await feature.initialize();
 
         expect(collectFacts().queue.emptySince).toBeNull();
+    });
+
+    test('a snapshot still loading from storage is judged once it lands', async () => {
+        const left = Date.now() - 30 * 3_600_000;
+        // a cold page load: the snapshot is not in memory until its storage read finishes
+        game.ownSnapshot = null;
+        game.snapshotLoad = new Promise((resolve) =>
+            setTimeout(() => {
+                game.ownSnapshot = { timestamp: left, totalQueueSeconds: 3600, hasInfiniteAction: false };
+                resolve();
+            }, 0)
+        );
+        game.stored.set('sessionBriefingLastAlive_char-1', Date.now() - 5 * 3_600_000);
+        game.queue = { queued: 0, seconds: 0 };
+
+        try {
+            const ready = feature.initialize();
+            await vi.runAllTimersAsync();
+            await ready;
+            expect(collectFacts().queue.emptySince).toBeNull();
+        } finally {
+            game.snapshotLoad = null;
+        }
     });
 
     test('arriving with a queue still running leaves a later empty queue undated by the old snapshot', async () => {

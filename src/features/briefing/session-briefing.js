@@ -987,7 +987,9 @@ export default {
         // earns a briefing. This gates drawing only — the facts below are still
         // collected and the away diff still computed, exactly as they would be
         // on a real arrival, so the overlay tile still reads the truth.
-        const lastAlive = await readLastAlive(characterId);
+        // The snapshot load is started by queue-monitor without being awaited; judged
+        // before it lands, a cold page load would read no snapshot and wave it through
+        const [lastAlive] = await Promise.all([readLastAlive(characterId), queueSnapshot.whenLoaded?.()]);
         const isQuickRefresh = Number.isFinite(lastAlive) && Date.now() - lastAlive < QUICK_REFRESH_WINDOW_MS;
 
         // Judged here, before anything stamps this character or the queue changes: the snapshot only
