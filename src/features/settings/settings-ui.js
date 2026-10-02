@@ -244,10 +244,9 @@ class SettingsUI {
         this.cleanupDOM();
 
         // Wait for settings panel to stabilize before re-observing
-        const reobserveTimeout = setTimeout(() => {
+        this.timerRegistry.scheduleTimeout(() => {
             this.observeSettingsPanel();
         }, 500);
-        this.timerRegistry.registerTimeout(reobserveTimeout);
     }
 
     /**
@@ -322,8 +321,7 @@ class SettingsUI {
         // Wait for DOM to be ready before observing
         const startObserver = () => {
             if (!document.body) {
-                const observerDelay = setTimeout(startObserver, 10);
-                this.timerRegistry.registerTimeout(observerDelay);
+                this.timerRegistry.scheduleTimeout(startObserver, 10);
                 return;
             }
 
@@ -1940,12 +1938,10 @@ class SettingsUI {
                     button.textContent = 'Failed';
                 } finally {
                     await refreshStatus();
-                    this.timerRegistry.registerTimeout(
-                        setTimeout(() => {
-                            button.textContent = label;
-                            button.disabled = false;
-                        }, 2000)
-                    );
+                    this.timerRegistry.scheduleTimeout(() => {
+                        button.textContent = label;
+                        button.disabled = false;
+                    }, 2000);
                 }
             });
             return button;
@@ -2798,25 +2794,23 @@ class SettingsUI {
                 button.style.color = '#000';
 
                 // Reset button after 2 seconds
-                const resetSuccessTimeout = setTimeout(() => {
+                this.timerRegistry.scheduleTimeout(() => {
                     button.textContent = originalText;
                     button.style.backgroundColor = '';
                     button.style.color = '';
                     button.disabled = false;
                 }, 2000);
-                this.timerRegistry.registerTimeout(resetSuccessTimeout);
             } else {
                 // Failed - show error state
                 button.textContent = '❌ Failed';
                 button.style.backgroundColor = '#ff0000';
 
                 // Reset button after 3 seconds
-                const resetFailureTimeout = setTimeout(() => {
+                this.timerRegistry.scheduleTimeout(() => {
                     button.textContent = originalText;
                     button.style.backgroundColor = '';
                     button.disabled = false;
                 }, 3000);
-                this.timerRegistry.registerTimeout(resetFailureTimeout);
             }
         } catch (error) {
             console.error('[SettingsUI] Fetch prices failed:', error);
@@ -2826,12 +2820,11 @@ class SettingsUI {
             button.style.backgroundColor = '#ff0000';
 
             // Reset button after 3 seconds
-            const resetErrorTimeout = setTimeout(() => {
+            this.timerRegistry.scheduleTimeout(() => {
                 button.textContent = originalText;
                 button.style.backgroundColor = '';
                 button.disabled = false;
             }, 3000);
-            this.timerRegistry.registerTimeout(resetErrorTimeout);
         }
     }
 

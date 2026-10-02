@@ -397,13 +397,13 @@ class CraftingPlanWalk {
                 }
             }
             if (step.requiresItemHrid) {
-                this.timerRegistry.registerTimeout(setTimeout(tryFill, ITEM_WAIT_POLL_MS));
+                this.timerRegistry.scheduleTimeout(tryFill, ITEM_WAIT_POLL_MS);
             } else if (++retries < NAV_RETRY_LIMIT) {
-                this.timerRegistry.registerTimeout(setTimeout(tryFill, NAV_SETTLE_MS));
+                this.timerRegistry.scheduleTimeout(tryFill, NAV_SETTLE_MS);
             }
         };
 
-        this.timerRegistry.registerTimeout(setTimeout(tryFill, NAV_SETTLE_MS));
+        this.timerRegistry.scheduleTimeout(tryFill, NAV_SETTLE_MS);
     }
 
     /**
@@ -486,8 +486,9 @@ class CraftingPlanWalk {
      * @private
      */
     _armIdleTimeout() {
-        this.timerRegistry.registerTimeout(
-            setTimeout(() => this.stop('The walk ended after a long wait on one step.'), IDLE_TIMEOUT_MS)
+        this.timerRegistry.scheduleTimeout(
+            () => this.stop('The walk ended after a long wait on one step.'),
+            IDLE_TIMEOUT_MS
         );
     }
 

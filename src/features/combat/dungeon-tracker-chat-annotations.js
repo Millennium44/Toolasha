@@ -241,8 +241,7 @@ class DungeonTrackerChatAnnotations {
         this.startMonitoring();
 
         // Initial annotation of existing messages (batch mode)
-        const initialAnnotateTimeout = setTimeout(() => this.annotateAllMessages(), 1500);
-        this.timerRegistry.registerTimeout(initialAnnotateTimeout);
+        this.timerRegistry.scheduleTimeout(() => this.annotateAllMessages(), 1500);
 
         // Also trigger when switching to party chat
         this.observeTabSwitches();
@@ -266,8 +265,7 @@ class DungeonTrackerChatAnnotations {
                 // Create new handler
                 const handler = () => {
                     // Delay to let DOM update
-                    const annotateTimeout = setTimeout(() => this.annotateAllMessages(), 300);
-                    this.timerRegistry.registerTimeout(annotateTimeout);
+                    this.timerRegistry.scheduleTimeout(() => this.annotateAllMessages(), 300);
                 };
 
                 // Store and add new listener
@@ -360,11 +358,10 @@ class DungeonTrackerChatAnnotations {
                 this.timerRegistry.registerInterval(checkInterval);
 
                 // Timeout after 5 seconds
-                const initTimeout = setTimeout(() => {
+                this.timerRegistry.scheduleTimeout(() => {
                     clearInterval(checkInterval);
                     resolve();
                 }, 5000);
-                this.timerRegistry.registerTimeout(initTimeout);
             });
         }
 

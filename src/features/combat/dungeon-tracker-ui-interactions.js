@@ -754,8 +754,7 @@ class DungeonTrackerUIInteractions {
             chartContainer.style.display = 'block';
             // Render chart after becoming visible (longer delay for initial page load)
             if (this.callbacks.onUpdateChart) {
-                const chartTimeout = setTimeout(() => this.callbacks.onUpdateChart(), 300);
-                this.timerRegistry.registerTimeout(chartTimeout);
+                this.timerRegistry.scheduleTimeout(() => this.callbacks.onUpdateChart(), 300);
             }
         }
         if (toggle) toggle.textContent = '▼';
@@ -906,13 +905,11 @@ class DungeonTrackerUIInteractions {
         document.body.appendChild(notification);
 
         // Fade out and remove after 2 seconds
-        const removeTimeout = setTimeout(() => {
+        this.timerRegistry.scheduleTimeout(() => {
             notification.style.transition = 'opacity 0.3s ease';
             notification.style.opacity = '0';
-            const cleanupTimeout = setTimeout(() => notification.remove(), 300);
-            this.timerRegistry.registerTimeout(cleanupTimeout);
+            this.timerRegistry.scheduleTimeout(() => notification.remove(), 300);
         }, 2000);
-        this.timerRegistry.registerTimeout(removeTimeout);
     }
 
     cleanup() {

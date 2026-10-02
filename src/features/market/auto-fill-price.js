@@ -194,18 +194,16 @@ class AutoFillPrice {
         // Adjust price after clicking to be optimally competitive
         // For buy orders: increment by 1 to outbid
         // For sell orders: depends on user setting (match or undercut)
-        const adjustTimeout = setTimeout(() => {
+        this.timerRegistry.scheduleTimeout(() => {
             this.adjustPrice(modal, isBuyOrder, isSellOrder);
         }, 50);
-        this.timerRegistry.registerTimeout(adjustTimeout);
 
         // Once the strategy click has settled, pull a price the band no longer
         // admits back inside it — matching a stale offer under the floor fills
         // a listing nobody can trade against
-        const clampTimeout = setTimeout(() => {
+        this.timerRegistry.scheduleTimeout(() => {
             this.clampPriceToTradableRange(modal);
         }, 150);
-        this.timerRegistry.registerTimeout(clampTimeout);
 
         this.watchPriceBand(modal);
     }

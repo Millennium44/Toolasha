@@ -1082,7 +1082,7 @@ class PinnedActionsPage {
         this.activeFilterButton = buttonElement;
 
         // Close on outside click (delayed to avoid immediate close)
-        const closeTimeout = setTimeout(() => {
+        this.timerRegistry.scheduleTimeout(() => {
             this.popupCloseHandler = (e) => {
                 if (!popup.contains(e.target) && e.target !== buttonElement) {
                     this.closeFilterPopup();
@@ -1090,7 +1090,6 @@ class PinnedActionsPage {
             };
             document.addEventListener('click', this.popupCloseHandler);
         }, 10);
-        this.timerRegistry.registerTimeout(closeTimeout);
     }
 
     /**

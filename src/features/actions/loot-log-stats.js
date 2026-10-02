@@ -410,7 +410,7 @@ class LootLogStats {
         }
 
         // Process existing loot log elements after short delay
-        const timeout = setTimeout(() => {
+        this.timerRegistry.scheduleTimeout(() => {
             if (config.getSetting('lootLogStats')) {
                 this.processVisibleRows();
             }
@@ -419,8 +419,6 @@ class LootLogStats {
                 this.renderHistoricalEntries();
             }
         }, 200);
-
-        this.timerRegistry.registerTimeout(timeout);
     }
 
     /**
@@ -1451,8 +1449,7 @@ class LootLogStats {
         line.textContent = 'Drop luck: working it out…';
         wrapper.appendChild(line);
 
-        const deferred = setTimeout(() => this.fillInDropLuck(line, reading, logData), 0);
-        this.timerRegistry.registerTimeout(deferred);
+        this.timerRegistry.scheduleTimeout(() => this.fillInDropLuck(line, reading, logData), 0);
     }
 
     /**

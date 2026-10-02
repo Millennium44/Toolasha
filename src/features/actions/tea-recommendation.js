@@ -1131,8 +1131,7 @@ class TeaRecommendation {
         this.currentPopup = popup;
 
         // Auto-close after 3 seconds
-        const timeout = setTimeout(() => this.closePopup(), 3000);
-        this.timerRegistry.registerTimeout(timeout);
+        this.timerRegistry.scheduleTimeout(() => this.closePopup(), 3000);
     }
 
     /**

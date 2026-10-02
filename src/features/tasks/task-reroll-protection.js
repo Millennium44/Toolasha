@@ -105,13 +105,13 @@ class TaskRerollProtection {
         // so its quest) is not yet reachable on the first pass.
         const unregister = domObserver.onClass('TaskRerollProtection', 'RandomTask_randomTask', (taskNode) => {
             this._processTaskCard(taskNode);
-            this.timerRegistry.registerTimeout(setTimeout(() => this._processTaskCard(taskNode), 150));
+            this.timerRegistry.scheduleTimeout(() => this._processTaskCard(taskNode), 150);
         });
         this.unregisterHandlers.push(unregister);
 
         // Re-process on quest updates (task content may change after reroll)
         const questHandler = () => {
-            this.timerRegistry.registerTimeout(setTimeout(() => this._processAllCards(), 300));
+            this.timerRegistry.scheduleTimeout(() => this._processAllCards(), 300);
         };
         webSocketHook.on('quests_updated', questHandler);
         this.unregisterHandlers.push(() => webSocketHook.off('quests_updated', questHandler));
@@ -368,7 +368,7 @@ class TaskRerollProtection {
 
         // Clear any existing timers for this card
         const existingTimer = this.confirmTimers.get(card);
-        if (existingTimer) clearTimeout(existingTimer);
+        if (existingTimer) this.timerRegistry.cancelTimeout(existingTimer);
 
         // After 3s lockdown → open confirmation window. Registered on the
         // timer registry as well as the per-card WeakMap: the WeakMap lets a
@@ -379,21 +379,19 @@ class TaskRerollProtection {
         // onto a card the feature had already reset (and that a reinitialize
         // may have repainted with a *different* task by the time it fires),
         // arming a reroll-confirmed bypass nobody clicked to confirm.
-        const lockdownTimer = setTimeout(() => {
+        const lockdownTimer = this.timerRegistry.scheduleTimeout(() => {
             card.dataset.mwiRerollLocked = '';
             card.dataset.mwiRerollConfirmed = '1';
             this._showWarning(card, 'Click reroll now to confirm.');
 
             // Auto-clear confirmation after another 3s
-            const confirmTimer = setTimeout(() => {
+            const confirmTimer = this.timerRegistry.scheduleTimeout(() => {
                 card.dataset.mwiRerollConfirmed = '';
                 this._clearWarning(card);
             }, 3000);
             this.confirmTimers.set(card, confirmTimer);
-            this.timerRegistry.registerTimeout(confirmTimer);
         }, 3000);
         this.confirmTimers.set(card, lockdownTimer);
-        this.timerRegistry.registerTimeout(lockdownTimer);
     }
 
     /**

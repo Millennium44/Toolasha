@@ -10,6 +10,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 - Bulk Sell's vendor step now presses the game's "Confirm Sell For" the way the game accepts it, as the task reroll walk does; it used to stall at "confirm sent" without selling.
 
+### Timers clean up after themselves everywhere
+
+- The rest of Toolasha's timers (about a hundred) now drop their bookkeeping when they fire, so the lists PFormance counts no longer creep up over a long session.
+
 ### Custom Tabs Clear All
 
 - Custom Tabs' toolbar gains Clear All, which removes every custom tab, on your other synced devices too. A tab made or edited afterwards on any device is kept.

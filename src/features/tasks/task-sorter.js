@@ -111,8 +111,7 @@ class TaskSorter {
         // Sorts what is on the board straight away, so the common case — the
         // cards are already there — is not held up waiting for a change that
         // has already happened
-        const now = setTimeout(() => this.sortTasks(), 150);
-        this.timerRegistry.registerTimeout(now);
+        this.timerRegistry.scheduleTimeout(() => this.sortTasks(), 150);
 
         const taskList = document.querySelector(GAME.TASK_LIST);
         if (!taskList) return;
@@ -124,16 +123,14 @@ class TaskSorter {
         // second pass on an already-sorted board changes nothing.
         let settleTimeout = null;
         this.settleObserver = new MutationObserver(() => {
-            clearTimeout(settleTimeout);
-            settleTimeout = setTimeout(() => this.sortTasks(), 250);
-            this.timerRegistry.registerTimeout(settleTimeout);
+            this.timerRegistry.cancelTimeout(settleTimeout);
+            settleTimeout = this.timerRegistry.scheduleTimeout(() => this.sortTasks(), 250);
         });
         this.settleObserver.observe(taskList, { childList: true, subtree: true });
 
         // It stops watching rather than watching forever — every later sort is
         // the button's job again
-        const giveUp = setTimeout(() => this.stopSettleWatch(), 3000);
-        this.timerRegistry.registerTimeout(giveUp);
+        this.timerRegistry.scheduleTimeout(() => this.stopSettleWatch(), 3000);
     }
 
     /** Stop watching the task list for new cards */
@@ -187,10 +184,9 @@ class TaskSorter {
         // Auto-sort if setting is enabled
         if (config.getSetting('taskSorter_autoSort')) {
             // Delay slightly to ensure all task cards are rendered
-            const autoSortTimeout = setTimeout(() => {
+            this.timerRegistry.scheduleTimeout(() => {
                 this.sortTasks();
             }, 100);
-            this.timerRegistry.registerTimeout(autoSortTimeout);
         }
     }
 
@@ -407,10 +403,9 @@ class TaskSorter {
 
             // Trigger icon re-processing
             // Use setTimeout to ensure React has finished any re-rendering
-            const iconTimeout = setTimeout(() => {
+            this.timerRegistry.scheduleTimeout(() => {
                 taskIcons.processAllTaskCards();
             }, 100);
-            this.timerRegistry.registerTimeout(iconTimeout);
         }
     }
 

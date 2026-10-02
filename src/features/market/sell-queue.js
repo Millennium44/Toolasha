@@ -269,7 +269,7 @@ async function waitForMarketplace() {
             if (hasMarket) return true;
         }
         await new Promise((resolve) => {
-            timerRegistry.registerTimeout(setTimeout(resolve, 100));
+            timerRegistry.scheduleTimeout(resolve, 100);
         });
     }
     return false;
@@ -485,7 +485,7 @@ async function addToQueue(itemHrid, itemName) {
                 return;
             }
             await new Promise((resolve) => {
-                timerRegistry.registerTimeout(setTimeout(resolve, 200));
+                timerRegistry.scheduleTimeout(resolve, 200);
             });
             if (era !== generation) return;
         }

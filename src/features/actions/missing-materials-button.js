@@ -872,8 +872,7 @@ async function waitForMarketplace() {
         }
 
         await new Promise((resolve) => {
-            const delayTimeout = setTimeout(resolve, delayMs);
-            timerRegistry.registerTimeout(delayTimeout);
+            timerRegistry.scheduleTimeout(resolve, delayMs);
         });
     }
 
@@ -1053,7 +1052,7 @@ function createBuyNextControl() {
             // the item (the flow has only the shop's display name), so it ends
             // with the press.
             autofillManager.clearQuantity();
-            timerRegistry.registerTimeout(setTimeout(refreshNote, 1500));
+            timerRegistry.scheduleTimeout(refreshNote, 1500);
         }
     });
     return button;
@@ -1120,7 +1119,7 @@ function findShopCard(itemName) {
 async function buyOneFromTesterShop(itemName, quantity) {
     const wait = (ms) =>
         new Promise((resolve) => {
-            timerRegistry.registerTimeout(setTimeout(resolve, ms));
+            timerRegistry.scheduleTimeout(resolve, ms);
         });
     if (!(quantity > 0)) return { ok: false, reason: 'nothing short' };
 
@@ -1203,8 +1202,7 @@ async function openWhereBought(materials, strategyInfo = null) {
         return false;
     }
     await new Promise((resolve) => {
-        const delayTimeout = setTimeout(resolve, 200);
-        timerRegistry.registerTimeout(delayTimeout);
+        timerRegistry.scheduleTimeout(resolve, 200);
     });
     createMissingMaterialTabs(materials, strategyInfo);
     return true;
@@ -1339,8 +1337,7 @@ async function handleReturnToAction() {
         const maxAttempts = 20;
         for (let i = 0; i < maxAttempts; i++) {
             await new Promise((resolve) => {
-                const t = setTimeout(resolve, 100);
-                timerRegistry.registerTimeout(t);
+                timerRegistry.scheduleTimeout(resolve, 100);
             });
 
             const input =
