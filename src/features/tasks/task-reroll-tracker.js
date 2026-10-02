@@ -400,10 +400,9 @@ class TaskRerollTracker {
             }
 
             // Wait for game to update DOM before updating displays
-            const updateTimeout = setTimeout(() => {
+            this.timerRegistry.scheduleTimeout(() => {
                 this.updateAllTaskDisplays();
             }, 250);
-            this.timerRegistry.registerTimeout(updateTimeout);
         };
 
         webSocketHook.on('quests_updated', questsHandler);
@@ -456,10 +455,9 @@ class TaskRerollTracker {
             this.cleanupOldTasks();
 
             // Wait for DOM to be ready before updating displays
-            const initTimeout = setTimeout(() => {
+            this.timerRegistry.scheduleTimeout(() => {
                 this.updateAllTaskDisplays();
             }, 500);
-            this.timerRegistry.registerTimeout(initTimeout);
         };
 
         dataManager.on('character_initialized', initHandler);
@@ -487,8 +485,7 @@ class TaskRerollTracker {
         // Watch for individual tasks appearing
         const unregisterTask = domObserver.onClass('TaskRerollTracker-Task', 'RandomTask_randomTask', () => {
             // Small delay to let task data settle
-            const taskTimeout = setTimeout(() => this.updateAllTaskDisplays(), 100);
-            this.timerRegistry.registerTimeout(taskTimeout);
+            this.timerRegistry.scheduleTimeout(() => this.updateAllTaskDisplays(), 100);
         });
         this.unregisterHandlers.push(unregisterTask);
 
