@@ -1561,9 +1561,13 @@ class CombatScore {
         // character's loadout with another's party
         const characterId = dataManager.getCurrentCharacterId();
         const characterData = dataManager.characterData;
+        // Only the latest click renders: an earlier one whose profiles load last
+        // would otherwise replace the newer preview with its own loadout
+        const request = (this._partyExportPreviewRequest = (this._partyExportPreviewRequest || 0) + 1);
         const profileList = await getProfileList();
+        if (request !== this._partyExportPreviewRequest) return;
         if (dataManager.getCurrentCharacterId() !== characterId || !panel.isConnected) return;
-        // Again after the await, in case a second click opened one meanwhile
+        // Again after the await, in case a preview was opened some other way meanwhile
         wrapper._closePartyExportPreview?.();
 
         const members = describePartyProfiles(characterData, profileList);

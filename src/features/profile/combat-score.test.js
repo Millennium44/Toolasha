@@ -25,6 +25,8 @@ const stub = vi.hoisted(() => ({
     shykaiExport: { exportObj: { player: {}, source: 'shykai' } },
     snapshots: [],
     profileList: [],
+    /** When an array, each profile-list read waits here until a test releases it */
+    profileListGate: null,
     partyMembers: [],
     teamCalls: [],
 }));
@@ -61,7 +63,10 @@ vi.mock('../../core/websocket.js', () => ({ default: { on: () => {}, off: () => 
 vi.mock('./score-calculator.js', () => ({ calculateCombatScore: () => ({}) }));
 vi.mock('../combat/combat-sim-export.js', () => ({
     constructExportObject: async () => stub.shykaiExport,
-    getProfileList: async () => stub.profileList,
+    getProfileList: () =>
+        stub.profileListGate
+            ? new Promise((resolve) => stub.profileListGate.push(() => resolve(stub.profileList)))
+            : Promise.resolve(stub.profileList),
 }));
 vi.mock('../combat/combat-sim-export-metz.js', () => ({
     constructMetzCharacterExport: async () => stub.metzExport,
@@ -737,6 +742,7 @@ describe('sim export split button', () => {
         beforeEach(() => {
             stub.snapshots = [raid];
             stub.teamCalls = [];
+            stub.profileListGate = null;
             stub.partyMembers = [
                 {
                     characterId: 'party-1',
@@ -804,6 +810,27 @@ describe('sim export split button', () => {
             expect(override.abilities[0]).toBeNull();
             expect(override.abilities[1]).toEqual({ abilityHrid: '/abilities/fireball', level: 1 });
             expect(JSON.parse(clipboardText).map((entry) => entry.name)).toEqual(['Me', 'Teammate']);
+        });
+
+        test('two loadouts clicked before profiles load show the later one, whichever read lands last', async () => {
+            stub.snapshots = [raid, { ...raid, name: 'Solo' }];
+            combatScore.showScorePanel(profileData(stub.currentCharacterId), scoreData, document.createElement('div'));
+            await flush();
+            stub.profileListGate = [];
+
+            document.querySelector('.mwi-combat-sim-party-export-option[data-name="Raid"]').click();
+            document.querySelector('.mwi-combat-sim-party-export-option[data-name="Solo"]').click();
+            await flush();
+            const [releaseRaid, releaseSolo] = stub.profileListGate;
+            releaseSolo();
+            await flush();
+            releaseRaid();
+            await flush();
+
+            const previews = document.querySelectorAll('#mwi-party-export-preview');
+            expect(previews).toHaveLength(1);
+            expect(previews[0].textContent).toContain('Solo');
+            expect(previews[0].textContent).not.toContain('Raid');
         });
 
         test('a character switch before copying exports nothing', async () => {
