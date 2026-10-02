@@ -1002,11 +1002,15 @@ export function clearAllTabs(config) {
     if (!c.removed || typeof c.removed !== 'object') c.removed = {};
     // Read by mergeConfigs: the tombstones alone would trip its mass-delete cap on a peer's stale copy
     c.clearedTabIds = { ...clearedIdsOf(c) };
-    // Each deletion is stamped past the tab's own stamp, not just now: a tab last edited on a device whose
-    // clock runs ahead carries a future stamp, and a plain `now` tombstone would lose to that same copy
-    // on the very next fold. An edit made after the clear still out-stamps it and survives.
+    // One deletion time for the whole operation, stamped past every tab's own stamp rather than just now:
+    // a tab last edited on a device whose clock runs ahead carries a future stamp, and a plain `now`
+    // tombstone would lose to that same copy on the very next fold. One time, not one per tab, so the
+    // clear stays a single deletion and reviving an ancestor revives the descendants it took with it.
+    let at = now;
     _walkTabs(config.tabs, (tab) => {
-        const at = Math.max(now, stampOf(tab) + 1);
+        at = Math.max(at, stampOf(tab) + 1);
+    });
+    _walkTabs(config.tabs, (tab) => {
         c.removed[tab.id] = at;
         c.clearedTabIds[tab.id] = at;
     });

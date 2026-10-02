@@ -1648,6 +1648,24 @@ describe('clearAllTabs and importCategoryTabs', () => {
         expect(merge(cleared, stale).tabs).toEqual([]);
     });
 
+    test('a parent edited after the clear brings back the children the clear took with it', async () => {
+        const { clearAllTabs } = await import('./custom-tabs-data.js');
+        const { mergeForKey } = await import('../../../utils/sync-merge-registry.js');
+        const merge = mergeForKey('settings', 'char1_inventoryTabs_config').merge;
+        const now = Date.now();
+        // The child was last touched on a clock running ahead of the parent's
+        const child = { id: 'kid', name: 'kid', items: [], children: [], updatedAt: now + 60 * 60_000 };
+        const parent = { id: 'top', name: 'top', items: [], children: [child], updatedAt: now - 1000 };
+        const cleared = clearAllTabs({ version: 1, selectedTabId: null, tabs: [parent] });
+        expect(cleared.removed.top).toBe(cleared.removed.kid);
+
+        // A peer edits the parent after the clear, keeping its child
+        const revived = { ...parent, updatedAt: cleared.removed.top + 1 };
+        const merged = merge({ version: 1, selectedTabId: null, tabs: [revived] }, cleared);
+        expect(merged.tabs.map((t) => t.id)).toEqual(['top']);
+        expect(merged.tabs[0].children.map((t) => t.id)).toEqual(['kid']);
+    });
+
     test('importCategoryTabs makes one tab per non-empty category and skips existing names', async () => {
         const { importCategoryTabs } = await import('./custom-tabs-data.js');
         const { c } = base();
