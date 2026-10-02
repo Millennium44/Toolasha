@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Labyrinth clear chance holds steady
+
+- The live "Clear ~N%" on a labyrinth fight no longer flips between two estimates while the Labyrinth tab is open: once the fight replay has landed it keeps the header, and its tooltip shows how old it is.
+
 ### Timers clean up after themselves everywhere
 
 - The rest of Toolasha's timers (about a hundred) now drop their bookkeeping when they fire, so the lists PFormance counts no longer creep up over a long session.
