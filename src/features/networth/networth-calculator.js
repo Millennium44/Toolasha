@@ -35,6 +35,25 @@ import { loadoutSnapshot } from '../../utils/bundle-bridge.js';
 import { buildGoldPerCredit, priceGuildCreditCosts } from '../../utils/guild-credit-pricing.js';
 
 /**
+ * The game's own value for an item the high-enhancement cost rule would otherwise price.
+ *
+ * In officialValue mode the setting promises the game's number, so a published value wins at
+ * every level, +13 and above included. Null in orderBook mode, for an Iron Cow character (whose
+ * own valuation outranks it, as in resolveNetworthPrices), or when the game has no value.
+ *
+ * @param {string} itemHrid - Item HRID
+ * @param {number} enhancementLevel - Enhancement level
+ * @returns {number|null} The official value, or null to use the existing chain
+ */
+function officialValueOverride(itemHrid, enhancementLevel) {
+    if ((config.getSettingValue('networth_valueSource') || 'orderBook') !== 'officialValue') return null;
+    if (ironCowBook(itemHrid, enhancementLevel)) return null;
+    refreshMarketValues();
+    const official = marketValueFor(itemHrid, enhancementLevel);
+    return official !== null && official > 0 ? official : null;
+}
+
+/**
  * Calculate the value of a single item
  * @param {Object} item - Item data {itemHrid, enhancementLevel, count}
  * @param {Map} priceCache - Optional price cache from getPricesBatch()
@@ -52,7 +71,14 @@ export async function calculateItemValue(item, priceCache = null) {
     // For enhanced items (1+)
     if (enhancementLevel >= 1) {
         // For high enhancement levels, use cost instead of market price (if enabled)
-        if (useHighEnhancementCost && enhancementLevel >= minLevel) {
+        const officialValue =
+            useHighEnhancementCost && enhancementLevel >= minLevel
+                ? officialValueOverride(itemHrid, enhancementLevel)
+                : null;
+        if (officialValue !== null) {
+            // Official-value mode: the game's figure beats the enhancement-cost rule
+            itemValue = officialValue;
+        } else if (useHighEnhancementCost && enhancementLevel >= minLevel) {
             // Check cache first
             const cachedCost = networthCache.get(itemHrid, enhancementLevel);
             if (cachedCost !== null) {
@@ -696,8 +722,10 @@ async function calculateItemValuesParallel(items, priceCache, gameData) {
 
         if (enhancementLevel >= 1) {
             // Check if high enhancement cost mode applies
+            // The worker only runs the enhancement-cost rule; an item the game publishes a value
+            // for in officialValue mode never reaches it (calculateItemValue answers directly)
             if (useHighEnhancementCost && enhancementLevel >= minLevel) {
-                needsWorker = true;
+                needsWorker = officialValueOverride(item.itemHrid, enhancementLevel) === null;
             } else {
                 // Check if the configured pricing mode's price is missing — valuation
                 // uses that mode, so classifying on ask alone would run the expensive

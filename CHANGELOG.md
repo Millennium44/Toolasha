@@ -11,6 +11,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 - The trial ledger's coverage now counts cycles watched out of the cycles that ran ("Watched 6 of 8 cycles (2 missed)"), so a cycle nobody recorded shows as missed; before, it compared recorded fights to two trials per cycle and could never pass 50%.
 - On the test server, the ledger places older trials that lack a cycle tag by when they were recorded, and a finished cycle is no longer shown as running.
 
+### Net worth matches the game at high enhancement levels
+
+- With net worth set to the game's market value, items at +13 and above now use the game's value too instead of Toolasha's enhancement-cost estimate, so the total matches the game's own Total Market Value.
+
 ### Rank badge options for Steam ranks
 
 - With Steam leaderboards included, two new settings can mark a badge whose rank comes from a Steam board with an "S", and show a player's standard rank instead when they have one, even if their Steam rank is higher.
