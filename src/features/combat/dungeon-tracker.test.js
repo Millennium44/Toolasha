@@ -5413,6 +5413,18 @@ describe('recording failed and canceled runs', () => {
         });
     });
 
+    test("a party member's failure or battle end on the party channel leaves a solo run alone", async () => {
+        beTracking({ currentWave: 4, wavesCompleted: 3, maxWaves: 10, battleId: 1, partyNames: ['Marketcow'] });
+
+        tracker.onChatMessage(partyMessage('systemChatMessage.partyWaveFailed', '2026-08-04T10:04:00.000Z'));
+        tracker.onChatMessage(partyMessage('systemChatMessage.partyBattleEnded', '2026-08-04T10:04:30.000Z'));
+        await windowCloses();
+
+        expect(tracker.isTracking).toBe(true);
+        expect(tracker.currentRun.wavesCompleted).toBe(3);
+        expect(game.savedRuns).toEqual([]);
+    });
+
     test('a solo run whose next wave 1 belongs to a new action is a cancel, not a death', async () => {
         game.actions = [{ id: 502, actionHrid: DEN, difficultyTier: 0, ordinal: 0, isDone: false, maxCount: 0 }];
         beTracking({ currentWave: 10, wavesCompleted: 9, maxWaves: 10, battleId: 1, partyNames: ['Marketcow'] });

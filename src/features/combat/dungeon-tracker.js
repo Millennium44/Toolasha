@@ -1415,6 +1415,8 @@ class DungeonTracker {
             this.pendingNextRunFirstKeyCount = null;
         }
 
+        // A solo run is not the party's: this is a party member's own dungeon, posted to the same channel
+        if (this.isTracking && this.isSoloRun()) return;
         if (!this.isTracking || !this.currentRun || this.predatesCurrentRun(timestamp)) {
             // The action feed may already have ended the run, unable to say why
             this.settleUnsettledEnd(RUN_RESULT_CANCEL, timestamp);
@@ -1525,6 +1527,8 @@ class DungeonTracker {
      * @param {Object} _message - Message object
      */
     onPartyFailed(timestamp, _message) {
+        // A solo run is not the party's: this is a party member's own dungeon, posted to the same channel
+        if (this.isTracking && this.isSoloRun()) return;
         if (!this.isTracking || !this.currentRun || this.predatesCurrentRun(timestamp)) {
             // The action feed may already have ended the run, unable to say why
             this.settleUnsettledEnd(RUN_RESULT_FAIL, timestamp);
@@ -2670,6 +2674,8 @@ class DungeonTracker {
     settleUnsettledEnd(result, timestamp) {
         const pending = this.unsettledEnd;
         if (!pending || pending.flushed) return;
+        // A held solo run is not what a party message is about
+        if (Array.isArray(pending.run?.partyNames) && pending.run.partyNames.length === 1) return;
         if (Date.now() - pending.at > UNSETTLED_END_WINDOW_MS) {
             this.flushHeldEnd(pending);
             return;
