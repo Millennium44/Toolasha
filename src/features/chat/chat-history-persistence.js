@@ -1680,6 +1680,15 @@ class ChatHistoryPersistence {
      * @returns {Promise<void>}
      */
     async loadGuildRecord() {
+        // A move during the first read: that read only knows the old guild's key, so wait for it and then
+        // read the new guild's record here
+        if (this.enabled && !this.loaded && this.loadPromise) {
+            try {
+                await this.loadPromise;
+            } catch {
+                // The load reports its own failure; with nothing loaded the guard below stops this read
+            }
+        }
         if (!this.enabled || !this.loaded || !this.tabs || !this.context?.guildKey) return;
         const ticket = captureOwner(this);
         const context = this.context;

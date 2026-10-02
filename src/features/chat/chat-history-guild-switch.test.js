@@ -41,6 +41,7 @@ vi.mock('../../core/storage.js', () => ({
     default: {
         get: vi.fn(async (key, store, fallback = null) => db[store]?.[key] ?? fallback),
         tryGet: vi.fn(async (key, store) => {
+            if (db.gate) await db.gate;
             const bucket = db[store] || {};
             return key in bucket
                 ? { found: true, value: JSON.parse(JSON.stringify(bucket[key])) }
@@ -196,5 +197,51 @@ describe('a guild change with the Guild pane mounted', () => {
         await settle();
         await chatHistoryPersistence.flush();
         expect(recordHas(guildRecordKey('g2'), 'g2 live')).toBe(true);
+    });
+});
+
+describe('a guild change while the first read is still in flight', () => {
+    afterEach(async () => {
+        db.gate = null;
+        await chatHistoryExtender.disable();
+        chatHistoryPersistence.reset();
+        document.body.innerHTML = '';
+    });
+
+    test('the new guild is read once that first read lands', async () => {
+        db.settings = {
+            [guildRecordKey('g2')]: { v: 1, savedAt: 1, tabs: { [GUILD]: [storedLine('g2 history', 1)] }, live: {} },
+        };
+        character.data = {
+            character: { id: '101' },
+            guild: { id: 'g1' },
+            guildCharacterMap: { 101: { characterID: '101', guildID: 'g1' } },
+        };
+        document.body.innerHTML = '<div id="root"><div class="Chat_tabsComponentContainer__x"></div></div>';
+        const button = document.createElement('button');
+        button.setAttribute('role', 'tab');
+        button.setAttribute('data-mention-channel', '/chat_channel_types/guild');
+        button.setAttribute('aria-selected', 'true');
+        button.textContent = 'Guild';
+        document.querySelector('.Chat_tabsComponentContainer__x').appendChild(button);
+        const container = document.createElement('div');
+        container.className = 'ChatHistory_chatHistory__abc';
+        document.getElementById('root').appendChild(container);
+        container.appendChild(makeMessage('g1 one', 10));
+
+        let release;
+        db.gate = new Promise((resolve) => {
+            release = resolve;
+        });
+        chatHistoryExtender.initialize();
+        await settle();
+        // The roster moves the character while the first read is still waiting on storage
+        wsHandlers.guild_characters_updated(rosterFor('g2'));
+        await settle();
+        release();
+        await settle();
+
+        const shown = [...container.querySelectorAll('.ChatMessage_chatMessage__xyz')].map(textOf);
+        expect(shown).toContain('g2 history');
     });
 });
