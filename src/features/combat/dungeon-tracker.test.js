@@ -5359,6 +5359,19 @@ describe('recording failed and canceled runs', () => {
             expect(game.savedRuns[0].run).toMatchObject({ result: 'fail', duration: 293_000, wavesCompleted: 4 });
         });
 
+        test('a delayed "Party failed" still settles the old run when the new one is paused by then', async () => {
+            await restartedAt('2026-08-04T10:04:57.000Z');
+            // Start Now on another action pauses the new run before the old run's message lands
+            tracker.pauseRun();
+
+            tracker.onChatMessage(partyMessage('systemChatMessage.partyWaveFailed', '2026-08-04T10:04:55.000Z'));
+            await windowCloses();
+
+            expect(tracker.isPaused()).toBe(true);
+            expect(game.savedRuns).toHaveLength(1);
+            expect(game.savedRuns[0].run).toMatchObject({ result: 'fail', wavesCompleted: 4 });
+        });
+
         test('a delayed "Battle ended" records the old run as a cancel and leaves the new one running', async () => {
             await restartedAt('2026-08-04T10:04:57.000Z');
 
