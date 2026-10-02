@@ -2893,13 +2893,22 @@ export class SimEditor {
      */
     setAchievementScenario(dto, mode, customTypes) {
         if (!dto || !['current', 'none', 'custom'].includes(mode)) return;
-        const original = this._originalDTOs?.[dto.hrid] || dto;
+        // The player's own buffs from before any scenario. With no loaded copy
+        // to resolve from, they are kept on the scenario itself: resolving from
+        // the DTO would read an earlier scenario's output back as the player's.
+        const base = dto.achievementScenario?.base ?? {
+            achievementCombatBuffs: structuredClone(
+                Array.isArray(dto.achievementCombatBuffs) ? dto.achievementCombatBuffs : []
+            ),
+            achievementBuffsOff: Array.isArray(dto.achievementBuffsOff) ? [...dto.achievementBuffsOff] : [],
+        };
+        const original = this._originalDTOs?.[dto.hrid] || base;
         const types = mode === 'custom' ? [...(customTypes ?? activeAchievementBuffTypes(dto))] : [];
         Object.assign(dto, resolveAchievementScenario(original, mode, types));
         if (mode === 'current') {
             delete dto.achievementScenario;
         } else {
-            dto.achievementScenario = { mode, customTypes: types };
+            dto.achievementScenario = { mode, customTypes: types, base };
         }
     }
 
@@ -3359,7 +3368,17 @@ export class SimEditor {
             ? this._loadoutBaselineDTOs?.[selfHrid] || this._originalDTOs?.[selfHrid]
             : this._originalDTOs?.[selfHrid];
         const edited = this._editedDTOs?.[selfHrid];
-        if (!original || !edited) return loadoutName || 'Current Gear';
+        const achievementMode = this.getAchievementMode(edited);
+        const achievementLabel =
+            achievementMode === 'none'
+                ? 'No Achievements'
+                : achievementMode === 'custom'
+                  ? 'Custom Achievements'
+                  : null;
+        if (!original || !edited) {
+            if (!achievementLabel) return loadoutName || 'Current Gear';
+            return loadoutName ? `${loadoutName}: ${achievementLabel}` : achievementLabel;
+        }
 
         const gameData = buildGameDataPayload();
         const itemDetailMap = gameData?.itemDetailMap || {};
@@ -3503,6 +3522,8 @@ export class SimEditor {
                 changes.push(`CB ${label} ${origVal}\u2192${editVal}`);
             }
         }
+
+        if (achievementLabel) changes.push(achievementLabel);
 
         const loadoutPrefix = loadoutName || '';
         if (changes.length === 0) return loadoutPrefix || 'Current Gear';

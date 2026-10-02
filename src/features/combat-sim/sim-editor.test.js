@@ -1447,6 +1447,38 @@ describe('achievements section', () => {
         expect(dto.achievementScenario).toBeUndefined();
         expect(editor.getAchievementMode(dto)).toBe('current');
     });
+
+    test('with no loaded copy of the player, Current goes back to their own buffs, not a scenario’s', () => {
+        const editor = new SimEditor({ editorEl: document.createElement('div') });
+        editor._originalDTOs = {};
+        const dto = { hrid: 'player1', achievementCombatBuffs: [damage], achievementBuffsOff: [] };
+        const granted = () => engineAchievementTypes(dto);
+
+        editor.setAchievementScenario(dto, 'custom', ['/buff_types/damage', '/buff_types/rare_find']);
+        editor.setAchievementScenario(dto, 'none');
+        expect(granted()).toEqual([]);
+
+        editor.setAchievementScenario(dto, 'current');
+        expect(granted()).toEqual(['/buff_types/damage']);
+        expect(dto.achievementCombatBuffs).toEqual([damage]);
+    });
+
+    test('the sim label names a scenario other than Current', () => {
+        const editor = new SimEditor({ editorEl: document.createElement('div') });
+        const loaded = { hrid: 'player1', achievementCombatBuffs: [damage], achievementBuffsOff: [] };
+        editor._originalDTOs = { player1: loaded };
+        const dto = structuredClone(loaded);
+        editor._editedDTOs = { player1: dto };
+        editor._selfHrid = 'player1';
+
+        expect(editor.generateSimLabel()).toBe('Current Gear');
+        editor.setAchievementScenario(dto, 'none');
+        expect(editor.generateSimLabel()).toBe('No Achievements');
+        editor.setAchievementScenario(dto, 'custom', ['/buff_types/rare_find']);
+        expect(editor.generateSimLabel()).toBe('Custom Achievements');
+        editor.setAchievementScenario(dto, 'current');
+        expect(editor.generateSimLabel()).toBe('Current Gear');
+    });
 });
 
 describe('scrolls section', () => {
