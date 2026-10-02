@@ -15,11 +15,30 @@ const mocks = vi.hoisted(() => ({
     inventory: [],
     priceBatch: new Map(),
     yieldSpy: null,
+    settings: {},
+    networthEnabled: false,
+    officialValues: {},
+    settingListeners: {},
+    enhancementCost: null,
 }));
 
-vi.mock('../../core/dom-observer.js', () => ({ default: { onClass: () => () => {} } }));
+vi.mock('../../core/dom-observer.js', () => ({ default: { onClass: () => () => {}, onReady: () => () => {} } }));
 vi.mock('../../core/config.js', () => ({
-    default: { getSetting: () => false, getSettingValue: (key, fallback) => fallback, isFeatureEnabled: () => false },
+    default: {
+        getSetting: (key) => mocks.settings[key] ?? false,
+        getSettingValue: (key, fallback) => mocks.settings[key] ?? fallback,
+        isFeatureEnabled: () => mocks.networthEnabled,
+        onSettingChange: (key, cb) => {
+            mocks.settingListeners[key] = cb;
+            return () => {
+                delete mocks.settingListeners[key];
+            };
+        },
+    },
+}));
+vi.mock('../../utils/market-values.js', () => ({
+    refreshMarketValues: () => {},
+    marketValueFor: (hrid, level) => mocks.officialValues[`${hrid}:${level}`] ?? null,
 }));
 vi.mock('../../api/marketplace.js', () => ({
     default: { getPricesBatch: () => mocks.priceBatch, getPrice: () => null },
@@ -27,7 +46,10 @@ vi.mock('../../api/marketplace.js', () => ({
 vi.mock('../../core/data-manager.js', () => ({
     default: { getInitClientData: () => mocks.initData, getInventory: () => mocks.inventory },
 }));
-vi.mock('../enhancement/tooltip-enhancement.js', () => ({ calculateEnhancementPath: () => null }));
+vi.mock('../enhancement/tooltip-enhancement.js', () => ({
+    calculateEnhancementPath: () =>
+        mocks.enhancementCost === null ? null : { optimalStrategy: { totalCost: mocks.enhancementCost } },
+}));
 vi.mock('../../utils/enhancement-config.js', () => ({ getEnhancingParams: () => ({}) }));
 vi.mock('../networth/networth-cache.js', () => ({ default: { get: () => null, set: () => {} } }));
 vi.mock('../market/expected-value-calculator.js', () => ({ default: { isInitialized: false } }));
@@ -49,6 +71,11 @@ beforeEach(() => {
     mocks.prices = {};
     mocks.inventory = [];
     mocks.priceBatch = new Map();
+    mocks.settings = {};
+    mocks.networthEnabled = false;
+    mocks.officialValues = {};
+    mocks.settingListeners = {};
+    mocks.enhancementCost = null;
     mocks.yieldSpy.mockClear();
     inventoryBadgeManager.nameToHridMap = null;
 });
@@ -438,5 +465,78 @@ describe('calculateItemPrices time-slicing', () => {
 
         expect(items[0].dataset.askValue).toBe('500');
         expect(mocks.yieldSpy).not.toHaveBeenCalled();
+    });
+});
+
+describe('high-enhancement equipment follows the net worth value source', () => {
+    const HRID = '/items/sword';
+
+    /**
+     * An inventory tile for a +N piece of equipment, shaped the way the pricing loop reads it.
+     * @param {number} level - Enhancement level
+     * @returns {HTMLElement} The item container
+     */
+    function enhancedEl(level) {
+        const el = document.createElement('div');
+        el.className = 'Item_itemContainer';
+        el.appendChild(document.createElement('svg')).setAttribute('aria-label', 'Sword');
+        const countEl = document.createElement('div');
+        countEl.className = 'Item_count';
+        countEl.textContent = '1';
+        el.appendChild(countEl);
+        const enh = document.createElement('div');
+        enh.className = 'Item_enhancementLevel';
+        enh.textContent = `+${level}`;
+        el.appendChild(enh);
+        return el;
+    }
+
+    beforeEach(() => {
+        mocks.initData = { itemDetailMap: { [HRID]: { name: 'Sword', equipmentDetail: {} } } };
+        mocks.inventory = [
+            { itemHrid: HRID, itemLocationHrid: '/item_locations/inventory', count: 1, enhancementLevel: 14 },
+        ];
+        mocks.priceBatch = new Map([[`${HRID}:14`, { ask: 777, bid: 700 }]]);
+        mocks.networthEnabled = true;
+        mocks.settings = { networth_highEnhancementUseCost: true, networth_highEnhancementMinLevel: 13 };
+        mocks.enhancementCost = 5000;
+    });
+
+    async function price() {
+        const el = enhancedEl(14);
+        const lookup = new Map([[`${HRID}|1|14`, mocks.inventory[0]]]);
+        await inventoryBadgeManager.calculateItemPrices([el], mocks.inventory, lookup);
+        return el.dataset;
+    }
+
+    test('official-value mode: a +14 piece is priced by the official value', async () => {
+        mocks.settings.networth_valueSource = 'officialValue';
+        mocks.officialValues[`${HRID}:14`] = 9000;
+        const d = await price();
+        expect([d.askPrice, d.bidPrice]).toEqual(['9000', '9000']);
+    });
+
+    test('official-value mode with no official value falls back to the cost rule', async () => {
+        mocks.settings.networth_valueSource = 'officialValue';
+        const d = await price();
+        expect([d.askPrice, d.bidPrice]).toEqual(['5000', '5000']);
+    });
+
+    test('order-book mode is unchanged: cost rule even when an official value exists', async () => {
+        mocks.officialValues[`${HRID}:14`] = 9000;
+        const d = await price();
+        expect([d.askPrice, d.bidPrice]).toEqual(['5000', '5000']);
+    });
+
+    test('changing the value source reprices the tiles', async () => {
+        inventoryBadgeManager.initialize();
+        const spy = vi.spyOn(inventoryBadgeManager, 'renderAllBadges').mockResolvedValue();
+        inventoryBadgeManager.lastCalculationTime = Date.now();
+        mocks.settingListeners.networth_valueSource();
+        expect(spy).toHaveBeenCalledTimes(1);
+        expect(inventoryBadgeManager.lastCalculationTime).toBe(0);
+        inventoryBadgeManager.disable();
+        expect(mocks.settingListeners.networth_valueSource).toBeUndefined();
+        spy.mockRestore();
     });
 });

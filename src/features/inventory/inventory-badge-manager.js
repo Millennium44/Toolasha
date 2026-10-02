@@ -20,6 +20,7 @@ import { getKeyUnitCost } from '../../utils/key-cost.js';
 import { createMutationWatcher } from '../../utils/dom-observer-helpers.js';
 import { yieldToEventLoop } from '../../utils/background-work.js';
 import { ironCowBook, isIronCowCharacter } from '../../utils/ironcow-valuation.js';
+import { officialValueOverride } from '../../utils/official-value-override.js';
 
 // How long the per-item pricing loop may run before handing the thread back.
 // High-enhancement equipment runs calculateEnhancementPath (100+ ms per +20
@@ -130,6 +131,19 @@ class InventoryBadgeManager {
             { childList: true }
         );
         this.unregisterHandlers.push(unwatchPopper);
+
+        // The value source decides how +13 and above equipment is priced, so a change must
+        // reprice every tile rather than wait for the next inventory event.
+        this.unregisterHandlers.push(
+            config.onSettingChange('networth_valueSource', () => {
+                this.invalidateCache();
+                this.lastCalculationTime = 0;
+                this.lastRenderTime = 0;
+                this.renderAllBadges().catch((error) => {
+                    console.error('[InventoryBadgeManager] Re-render after value source change failed:', error);
+                });
+            })
+        );
     }
 
     /**
@@ -542,10 +556,15 @@ class InventoryBadgeManager {
 
             // Determine pricing method
             if (isEquipment && useHighEnhancementCost && enhancementLevel >= minLevel) {
+                // Official-value mode: the game's figure beats the cost rule, exactly as in net worth
+                const officialValue = officialValueOverride(itemHrid, enhancementLevel);
                 // Use enhancement cost calculation for high-level equipment
-                const cachedCost = networthCache.get(itemHrid, enhancementLevel);
+                const cachedCost = officialValue === null ? networthCache.get(itemHrid, enhancementLevel) : null;
 
-                if (cachedCost !== null) {
+                if (officialValue !== null) {
+                    askPrice = officialValue;
+                    bidPrice = officialValue;
+                } else if (cachedCost !== null) {
                     // Use cached value for both ask and bid
                     askPrice = cachedCost;
                     bidPrice = cachedCost;
