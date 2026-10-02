@@ -8,7 +8,7 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ### Fixes and Custom Tabs extras from the upstream sweep
 
-- Reopening action panels and market views no longer keeps old copies alive in memory.
+- Reopening action panels and market views no longer keeps old copies alive in memory, and spent timers no longer pile up during combat.
 - The lab sim no longer offers gear the character can't equip.
 - Unlisted enhanced items aren't priced at +0 craft cost; untradable worn gear isn't counted as sold.
 - The Loot & XP Log follows the number-format setting.
