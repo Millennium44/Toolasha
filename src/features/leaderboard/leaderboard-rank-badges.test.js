@@ -221,8 +221,8 @@ describe('leaderboard rank badges', () => {
             return el.nextElementSibling.querySelector('use').getAttribute('href');
         };
 
-        expect(await icon('labyrinth_points')).toBe('/static/misc.svg#item_category_labyrinth');
-        expect(await icon('labyrinth_depth')).toBe('/static/misc.svg#labyrinth');
+        expect(await icon('labyrinth_points')).toBe('/static/misc.svg#labyrinth');
+        expect(await icon('labyrinth_depth')).toBe('/static/misc.svg#flag');
         expect(await icon('fame_points')).toBe('/static/chatIcons.svg#holy_supporter');
     });
 
