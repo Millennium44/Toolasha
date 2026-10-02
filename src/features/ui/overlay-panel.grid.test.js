@@ -510,6 +510,21 @@ describe('arranging by hand', () => {
         expect(overlayPanel.settings.span.a).toBe(2);
     });
 
+    test('a text-scaled canvas measures a column in viewport pixels, like the pointer', () => {
+        // The canvas lives under the text-size zoom, so its clientWidth is in zoomed-out pixels while
+        // clientX is in viewport pixels: at 200% a 60px drag is a third of a column, not most of one
+        const [first] = threeUnlocked();
+        Object.defineProperty(overlayPanel.canvasEl, 'clientWidth', { value: 200, configurable: true });
+        Object.defineProperty(overlayPanel.canvasEl, 'currentCSSZoom', { value: 2, configurable: true });
+        overlayPanel.columns = 2;
+
+        first._grip.dispatchEvent(new window.PointerEvent('pointerdown', { button: 0, bubbles: true, clientX: 0 }));
+        document.dispatchEvent(new window.PointerEvent('pointermove', { clientX: 60, bubbles: true }));
+        document.dispatchEvent(new window.PointerEvent('pointerup', { bubbles: true }));
+
+        expect(overlayPanel.settings.span.a).toBe(1);
+    });
+
     test('and never past the columns there are', () => {
         const [first] = threeUnlocked();
         Object.defineProperty(overlayPanel.canvasEl, 'clientWidth', { value: 200, configurable: true });
