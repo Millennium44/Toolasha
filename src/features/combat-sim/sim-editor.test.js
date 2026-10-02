@@ -1448,6 +1448,24 @@ describe('achievements section', () => {
         expect(editor.getAchievementMode(dto)).toBe('current');
     });
 
+    test('Custom after None starts from the loaded player, and keeps a custom set made earlier', () => {
+        const editor = new SimEditor({ editorEl: document.createElement('div') });
+        const loaded = { hrid: 'player1', achievementCombatBuffs: [damage], achievementBuffsOff: [] };
+        editor._originalDTOs = { player1: loaded };
+        const dto = structuredClone(loaded);
+        editor._editedDTOs = { player1: dto };
+        const granted = () => engineAchievementTypes(dto);
+
+        editor.setAchievementScenario(dto, 'none');
+        editor.setAchievementScenario(dto, 'custom');
+        expect(granted()).toEqual(['/buff_types/damage']);
+
+        editor.setAchievementScenario(dto, 'custom', ['/buff_types/rare_find']);
+        editor.setAchievementScenario(dto, 'none');
+        editor.setAchievementScenario(dto, 'custom');
+        expect(granted()).toEqual(['/buff_types/rare_find']);
+    });
+
     test('with no loaded copy of the player, Current goes back to their own buffs, not a scenario’s', () => {
         const editor = new SimEditor({ editorEl: document.createElement('div') });
         editor._originalDTOs = {};

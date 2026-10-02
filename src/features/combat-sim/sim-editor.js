@@ -2903,12 +2903,20 @@ export class SimEditor {
             achievementBuffsOff: Array.isArray(dto.achievementBuffsOff) ? [...dto.achievementBuffsOff] : [],
         };
         const original = this._originalDTOs?.[dto.hrid] || base;
-        const types = mode === 'custom' ? [...(customTypes ?? activeAchievementBuffTypes(dto))] : [];
+        // Custom entered from the mode button picks up the last custom set made for this player, or else
+        // what the loaded player has: never the current DTO, which None has already emptied
+        const lastCustom = dto.achievementScenario?.lastCustomTypes;
+        const types = mode === 'custom' ? [...(customTypes ?? lastCustom ?? activeAchievementBuffTypes(original))] : [];
         Object.assign(dto, resolveAchievementScenario(original, mode, types));
         if (mode === 'current') {
             delete dto.achievementScenario;
         } else {
-            dto.achievementScenario = { mode, customTypes: types, base };
+            dto.achievementScenario = {
+                mode,
+                customTypes: types,
+                base,
+                lastCustomTypes: mode === 'custom' ? types : lastCustom,
+            };
         }
     }
 
