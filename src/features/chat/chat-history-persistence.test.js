@@ -2399,6 +2399,28 @@ describe('the cap counts lines older than the game’s live backlog', () => {
         expect(bufferTexts(container)).toHaveLength(CAP);
     });
 
+    test('a saved overlap is released when a delayed backlog renders smaller than the saved allowance', async () => {
+        const SAVED_LIVE = 20;
+        const NOW_LIVE = 5;
+        db.settings[STORAGE_KEY] = {
+            v: 1,
+            savedAt: 1,
+            tabs: { [KEY]: Array.from({ length: CAP + SAVED_LIVE }, (_, i) => html(i)) },
+            live: { [KEY]: SAVED_LIVE },
+        };
+        const [container] = buildChat(['General']);
+        chatHistoryExtender.initialize();
+        await settle();
+
+        // The backlog arrives after the restore, smaller than what the record was saved with
+        container.append(
+            ...Array.from({ length: NOW_LIVE }, (_, i) => makeMessage(line(CAP + SAVED_LIVE - NOW_LIVE + i)))
+        );
+        await settle();
+
+        expect(bufferTexts(container)).toHaveLength(CAP);
+    });
+
     test('a tab with no known live count gets the full allowance, not a bare cap', () => {
         const tabs = { [KEY]: Array.from({ length: 400 }, (_, i) => `<div>${i}</div>`) };
         applyCaps(tabs, 10, {});

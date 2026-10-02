@@ -1492,8 +1492,12 @@ class ChatTabHandler {
         });
 
         this._dropBufferedDuplicates(renderedLive);
-        // The restore's surplus is released once the live suffix is known.
-        if (renderedLive.size) this._trim(maxHistory);
+        // The restore's surplus is released once the live suffix is known. A delayed backlog that renders
+        // smaller than the saved allowance has still identified its size, so the overlap held for it ends
+        if (renderedLive.size) {
+            this._restoredAllowance = Math.min(this._restoredAllowance, this._liveMessageNodes().length);
+            this._trim(maxHistory);
+        }
         // A tab that just became this container's (a switch, late naming) has
         // had its backlog tagged above; whatever is still queued for it
         // matched nothing and never will.
