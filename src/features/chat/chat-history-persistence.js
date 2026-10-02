@@ -1451,6 +1451,13 @@ class ChatHistoryPersistence {
          * @type {Record<string, Array<string>>|null}
          */
         this.guildLegacy = null;
+        /**
+         * A guild left mid-session: its lines and decisions, per record key, until
+         * a write lands them there. See {@link ChatHistoryPersistence#noteGuildRoster}.
+         * @type {Map<string, {tabs: Record<string, Array<string>>, live: Record<string, number>,
+         *   decisions: Array<{id: string, deleted: boolean, at: number}>}>}
+         */
+        this.heldGuildWrites = new Map();
         /** @type {string|null} The guild the socket last named for this character, over `characterData`'s */
         this.guildOverride = null;
         /** @type {Record<string, number>} Live allowances the shared records hold, as last read or written */
@@ -1517,13 +1524,33 @@ class ChatHistoryPersistence {
         const guildKey = guildRecordKey(this.guildOverride);
         if (!context || context.guildKey === guildKey) return;
 
-        // Issued before the context moves: `flush` groups the working record by
-        // the context it finds, synchronously.
-        if (this.tabs) {
-            for (const tabKey of Object.keys(this.tabs)) {
-                if (tabScope(tabKey) === 'guild') this.dirtyTabs.add(tabKey);
+        // The old guild's lines and moderation decisions, taken before the context
+        // moves and held until a write lands them in the old guild's record: the
+        // working record drops them below, and a write that failed then would
+        // have nothing left to retry with.
+        if (this.tabs && context.guildKey) {
+            const tabs = {};
+            const live = {};
+            for (const [tabKey, list] of Object.entries(this.tabs)) {
+                if (tabScope(tabKey) !== 'guild') continue;
+                tabs[tabKey] = [...list];
+                if (typeof this.liveCounts[tabKey] === 'number') live[tabKey] = this.liveCounts[tabKey];
             }
-            this.flush(true).catch(() => {});
+            const decisions = this._decisionsFor(context.guildKey, context);
+            if (Object.keys(tabs).length || decisions.length) {
+                this._holdGuildWrite(context.guildKey, { tabs, live, decisions });
+                this._writeHeldGuild(context.guildKey).catch(() => {});
+            }
+        } else if (this.tabs) {
+            // With no guild, a guild tab was the character's own (old lines no
+            // guild is known for): held as such, not dropped and not handed to
+            // the guild just joined.
+            for (const [tabKey, list] of Object.entries(this.tabs)) {
+                if (tabScope(tabKey) !== 'guild' || !list.length) continue;
+                this.guildLegacy = this.guildLegacy || {};
+                this.guildLegacy[tabKey] = mergeLists(this.guildLegacy[tabKey] || [], list, true);
+                this.dirty = true;
+            }
         }
         for (const tabKey of Object.keys(this.tabs || {})) {
             if (tabScope(tabKey) !== 'guild') continue;
@@ -1927,6 +1954,7 @@ class ChatHistoryPersistence {
                 writes.push(this._writeShared(key, groups[key] || {}, context, ticket));
             }
         }
+        for (const key of this.heldGuildWrites.keys()) writes.push(this._writeHeldGuild(key));
 
         const accepted = (await Promise.all(writes)).every(Boolean);
         if (!accepted && stillOurs(ticket)) {
@@ -1966,6 +1994,55 @@ class ChatHistoryPersistence {
             console.error('[ChatHistoryPersistence] Could not write chat history:', error);
             return false;
         }
+    }
+
+    /**
+     * Keep a left guild's lines for its record until a write lands them, folded
+     * into whatever is already held for it.
+     * @param {string} key - The old guild's record key
+     * @param {{tabs: Record<string, Array<string>>, live: Record<string, number>,
+     *   decisions: Array<{id: string, deleted: boolean, at: number}>}} snapshot
+     */
+    _holdGuildWrite(key, snapshot) {
+        const held = this.heldGuildWrites.get(key);
+        if (!held) {
+            this.heldGuildWrites.set(key, snapshot);
+            return;
+        }
+        const tabs = { ...held.tabs };
+        for (const [tabKey, list] of Object.entries(snapshot.tabs)) {
+            tabs[tabKey] = mergeLists(tabs[tabKey] || [], list, true);
+        }
+        const live = { ...held.live };
+        for (const [tabKey, count] of Object.entries(snapshot.live)) {
+            live[tabKey] = Math.max(live[tabKey] ?? 0, count);
+        }
+        this.heldGuildWrites.set(key, { tabs, live, decisions: [...held.decisions, ...snapshot.decisions] });
+    }
+
+    /**
+     * Write what is held for a left guild into its record; forgotten once landed,
+     * and kept, with a write scheduled, when it is not.
+     * @param {string} key - The old guild's record key
+     * @returns {Promise<boolean>} Whether it landed (true when nothing was held)
+     */
+    async _writeHeldGuild(key) {
+        const held = this.heldGuildWrites.get(key);
+        if (!held) return true;
+        const perTab = this.getMaxHistory();
+        const ticket = captureOwner(this);
+        const incoming = { tabs: held.tabs, live: held.live, decisions: held.decisions, at: Date.now() };
+        const result = await updateRecord(key, (stored) => mergeSharedRecord(stored, incoming, perTab));
+        if (result) {
+            // Something held since this was sent is newer, and waits for its own write.
+            if (this.heldGuildWrites.get(key) === held) this.heldGuildWrites.delete(key);
+            return true;
+        }
+        if (stillOurs(ticket)) {
+            this.dirty = true;
+            this._scheduleWrite();
+        }
+        return false;
     }
 
     /**
@@ -2120,6 +2197,7 @@ class ChatHistoryPersistence {
             };
             shared.push(updateRecord(recordKey, (stored) => mergeSharedRecord(stored, incoming, perTab)));
         }
+        for (const heldKey of this.heldGuildWrites.keys()) shared.push(this._writeHeldGuild(heldKey));
         const own = this._mergeOwnIntoStored(key, pending, perTab, sessionLive, prior, immediate);
         const results = await Promise.all([own, ...shared]);
         return results.every(Boolean);
@@ -2286,6 +2364,7 @@ class ChatHistoryPersistence {
         this.decisions = new Map();
         this.heldLegacy = null;
         this.guildLegacy = null;
+        this.heldGuildWrites = new Map();
         this.guildOverride = null;
         this.sharedLive = {};
     }

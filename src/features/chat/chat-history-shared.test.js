@@ -828,6 +828,52 @@ describe('one game tab switching characters in place', () => {
         expect(stored(guildKey('g2'), GUILD)).toEqual(['said in g2']);
     });
 
+    test('a guild change whose write to the old guild fails keeps those lines and retries', async () => {
+        const bob = await openPage('202', 'g1');
+        await bob.persistence.load();
+        bob.persistence.record(GUILD, line('Gil', 'to be deleted', 1, 'x1'));
+        await bob.persistence.flush();
+
+        const page = await openPage('101', 'g1');
+        await page.persistence.load();
+        page.persistence.record(GUILD, line('Ada', 'said in g1', 2));
+        await page.persistence.purgeMessageById(GUILD, 'x1');
+
+        const { default: storage } = await import('../../core/storage.js');
+        const update = storage.update;
+        storage.update = async (key, mutate) => (key === guildKey('g1') ? null : update(key, mutate));
+        try {
+            page.persistence.noteGuildRoster({ 101: { characterID: '101', guildID: 'g2' } });
+            await page.persistence.flush();
+        } finally {
+            storage.update = update;
+        }
+        expect(stored(guildKey('g1'), GUILD)).toEqual(['to be deleted']);
+
+        page.persistence.record(GUILD, line('Ada', 'said in g2', 3));
+        await page.persistence.flush();
+
+        expect(stored(guildKey('g1'), GUILD)).toEqual(['said in g1']);
+        expect(shared.db[guildKey('g1')].deleted).toEqual(['x1']);
+        expect(stored(guildKey('g2'), GUILD)).toEqual(['said in g2']);
+        expect(page.persistence.heldGuildWrites.size).toBe(0);
+    });
+
+    test('joining a guild mid-session keeps a guildless character’s old guild lines as its own', async () => {
+        shared.db[ownKey('101')] = legacyRecord({ [GUILD]: [line('Old', 'from a guild left long ago', 1)] });
+        const page = await openPage('101', null);
+        await page.persistence.load();
+        expect(texts(page.persistence.messagesFor(GUILD))).toEqual(['from a guild left long ago']);
+
+        page.persistence.noteGuildRoster({ 101: { characterID: '101', guildID: 'g2' } });
+        page.persistence.record(GUILD, line('Gil', 'g2 now', 2));
+        await page.persistence.flush();
+
+        expect(stored(guildKey('g2'), GUILD)).toEqual(['g2 now']);
+        expect(texts(shared.db[ownKey('101')].guildLegacy[GUILD])).toEqual(['from a guild left long ago']);
+        expect(texts(page.persistence.messagesFor(GUILD))).toEqual(['from a guild left long ago', 'g2 now']);
+    });
+
     test('a roster row for another member says nothing about this character’s guild', async () => {
         const page = await openPage('101', 'g1');
         await page.persistence.load();
