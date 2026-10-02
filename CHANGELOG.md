@@ -6,6 +6,11 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Shykai sim gets your shrines and labyrinth upgrades
+
+- Exports to Shykai's simulator now carry your combat guild shrines (and your party's) and your labyrinth upgrades, which Shykai just added support for.
+- The skill-level calculator on Shykai's page now updates as soon as you click into or spin a skill's target, not only once you type.
+
 ### Bulk Sell vendor sales work again
 
 - Selling to the vendor no longer stops at "the item menu is for an enhanced item" for ordinary unenhanced items.
