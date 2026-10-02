@@ -92,18 +92,21 @@ let onBattleUpdated = null;
 function scheduleWrite() {
     dirty = true;
     if (writeTimer) return;
-    writeTimer = setTimeout(async () => {
-        writeTimer = null;
-        if (!dirty) return;
-        dirty = false;
-        try {
-            if (storage.isQuotaExceeded?.()) return;
-            await storage.set(STORAGE_KEY, tally, STORAGE_STORE);
-        } catch (error) {
-            console.error('[TickPeriod] Could not save the tally:', error);
-        }
-    }, WRITE_DEBOUNCE_MS);
-    registry.registerTimeout(writeTimer, 'tick-period:write');
+    writeTimer = registry.scheduleTimeout(
+        async () => {
+            writeTimer = null;
+            if (!dirty) return;
+            dirty = false;
+            try {
+                if (storage.isQuotaExceeded?.()) return;
+                await storage.set(STORAGE_KEY, tally, STORAGE_STORE);
+            } catch (error) {
+                console.error('[TickPeriod] Could not save the tally:', error);
+            }
+        },
+        WRITE_DEBOUNCE_MS,
+        'tick-period:write'
+    );
 }
 
 /**

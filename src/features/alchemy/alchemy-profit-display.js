@@ -301,13 +301,12 @@ class AlchemyProfitDisplay {
 
         // Debounce updates
         if (this.updateTimeout) {
-            clearTimeout(this.updateTimeout);
+            this.timerRegistry.cancelTimeout(this.updateTimeout);
         }
 
-        this.updateTimeout = setTimeout(() => {
+        this.updateTimeout = this.timerRegistry.scheduleTimeout(() => {
             this.updateDisplay(infoContainer);
         }, 100);
-        this.timerRegistry.registerTimeout(this.updateTimeout);
     }
 
     /**
