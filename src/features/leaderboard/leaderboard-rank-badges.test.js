@@ -265,9 +265,7 @@ describe('leaderboard rank badges', () => {
 
         release();
         await flush();
-        expect(afk.nextElementSibling.querySelector('use').getAttribute('href')).toBe(
-            '/static/misc.svg#item_category_labyrinth'
-        );
+        expect(afk.nextElementSibling.querySelector('use').getAttribute('href')).toBe('/static/misc.svg#labyrinth');
         expect(other.nextElementSibling.querySelector('use').getAttribute('href')).toBe('/static/misc.svg#combat');
 
         // Preferring the standard rank switches to 88 and keeps the icon
@@ -276,7 +274,7 @@ describe('leaderboard rank badges', () => {
         await flush();
         const badge = afk.nextElementSibling;
         expect(badge.textContent).toBe('88');
-        expect(badge.querySelector('use').getAttribute('href')).toBe('/static/misc.svg#item_category_labyrinth');
+        expect(badge.querySelector('use').getAttribute('href')).toBe('/static/misc.svg#labyrinth');
     });
 
     test('a save keeps boards another tab or a sync pull stored meanwhile, and badges them', async () => {
