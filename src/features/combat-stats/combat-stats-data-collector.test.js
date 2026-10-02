@@ -394,6 +394,37 @@ describe('connection-interrupted flag', () => {
         expect(collector.getLatestData()?.connectionInterrupted).toBeUndefined();
     });
 
+    test('a battle is bound to the socket that delivered it, not the most recently attached one', async () => {
+        fighting(ZONE);
+        // SECOND has attached, but this battle arrived on FIRST
+        store.socket = SECOND;
+        await collector.onNewBattle(
+            {
+                battleId: 1,
+                combatStartTime: '2026-08-03T01:00:00Z',
+                players: [{ character: { id: 'me', name: 'Millennium44' }, loot: {}, consumables: [] }],
+            },
+            { socket: FIRST }
+        );
+
+        collector.onSocketClosed(SECOND);
+        expect(collector.isConnectionInterrupted()).toBe(false);
+        collector.onSocketClosed(FIRST);
+        expect(collector.isConnectionInterrupted()).toBe(true);
+    });
+
+    test('a session whose action was unknown when its battle arrived is never flagged', async () => {
+        // The action list had not loaded yet
+        fighting(null);
+        store.socket = FIRST;
+        await wave();
+        fighting('/actions/combat/smelly_planet');
+
+        collector.onSocketClosed(FIRST);
+
+        expect(collector.isConnectionInterrupted()).toBe(false);
+    });
+
     test('a close while idle after combat stopped flags nothing', async () => {
         fighting(ZONE);
         store.socket = FIRST;

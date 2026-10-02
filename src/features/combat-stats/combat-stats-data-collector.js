@@ -181,7 +181,7 @@ class CombatStatsDataCollector {
         if (!stillOurs(ticket)) return;
 
         // Store handler references for cleanup
-        this.newBattleHandler = (data) => this.onNewBattle(data);
+        this.newBattleHandler = (data, context) => this.onNewBattle(data, context);
         this.consumableEventHandler = (data) => this.onConsumableUsed(data);
 
         // Listen for new_battle messages (fires during combat, continuously updated)
@@ -265,7 +265,8 @@ class CombatStatsDataCollector {
         // The running combat action must be this session's: after a switch to another zone, the old
         // session is over even before the new one's first battle replaces the snapshot
         const running = this.currentCombatAction();
-        if (!running || (session.actionHrid && running !== session.actionHrid)) return;
+        // An unknown session action (the battle arrived before the action list loaded) proves nothing
+        if (!running || !session.actionHrid || running !== session.actionHrid) return;
         this.connectionInterrupted = true;
         session.connectionInterrupted = true;
         return this.persistInterruptedSnapshot(this.sessionOwner, session);
@@ -621,8 +622,9 @@ class CombatStatsDataCollector {
     /**
      * Handle new_battle message (fires during combat)
      * @param {Object} data - new_battle message data
+     * @param {{socket?: WebSocket}} [context] - Dispatch context: the socket that delivered the message
      */
-    async onNewBattle(data) {
+    async onNewBattle(data, context) {
         try {
             // Only process if we have players data
             if (!data.players || data.players.length === 0) {
@@ -632,7 +634,9 @@ class CombatStatsDataCollector {
             const battleId = data.battleId || 0;
 
             // The socket this session is being fought on, for `onSocketClosed`
-            this.sessionSocket = webSocketHook.activeGameSocket ?? null;
+            // The socket that delivered this battle, which the dispatcher passes: during a reconnect or a
+            // switch two sockets overlap, and the most recently attached one need not be it
+            this.sessionSocket = context?.socket ?? webSocketHook.activeGameSocket ?? null;
             this.sessionOwner = dataManager.getCurrentCharacterId() || null;
 
             // Calculate duration from combat start time. Clamped at zero: the
