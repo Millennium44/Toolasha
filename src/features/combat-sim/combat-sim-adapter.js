@@ -624,10 +624,9 @@ export function parseShykaiImport(jsonString) {
             slotData.houseRooms && typeof slotData.houseRooms === 'object'
                 ? Object.values(slotData.houseRooms).some((level) => level > 0)
                 : false;
-        const hasGuildLevels =
-            slotData.guildCombatBuffLevels && typeof slotData.guildCombatBuffLevels === 'object'
-                ? Object.values(slotData.guildCombatBuffLevels).some((level) => level > 0)
-                : false;
+        const hasGuildLevels = [slotData.guildCombatBuffLevels, slotData.guildBuffs].some(
+            (block) => block && typeof block === 'object' && Object.values(block).some((level) => level > 0)
+        );
         const hasAchievementBuffs =
             (Array.isArray(slotData.achievementCombatBuffs) && slotData.achievementCombatBuffs.length > 0) ||
             (slotData.achievements &&
@@ -762,12 +761,17 @@ export function parseShykaiImport(jsonString) {
         // advisor reads a missing map as "we know nothing about this player's
         // guild" and an empty one as "guildless", and inventing the second from
         // the first would offer them every shrine from level 0.
-        if (slotData.guildCombatBuffLevels) {
+        // Shykai's own export now carries `guildBuffs` (full hrid → level, combat shrines
+        // only). Either block is honored; the short-key one wins when both are present,
+        // as it is the one Toolasha writes alongside and can carry zeros.
+        if (slotData.guildCombatBuffLevels || slotData.guildBuffs) {
             const detailMap = getGuildBuffDetailMap();
             const levelMap = {};
             for (const [buffHrid, detail] of Object.entries(detailMap)) {
                 if (!detail?.isCombat || !detail.shrineHrid) continue;
-                const level = slotData.guildCombatBuffLevels[detail.shrineHrid.split('/').pop()];
+                const level = slotData.guildCombatBuffLevels
+                    ? slotData.guildCombatBuffLevels[detail.shrineHrid.split('/').pop()]
+                    : slotData.guildBuffs[buffHrid];
                 if (Number.isFinite(level) && level > 0) levelMap[buffHrid] = level;
             }
             const { guildShrineLevels, guildCombatBuffs } = buildGuildBuffsFromLevels(levelMap);
