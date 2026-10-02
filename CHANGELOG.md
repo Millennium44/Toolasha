@@ -4314,6 +4314,155 @@ The marketplace layout change gave the price row its own "Max" button and put it
 
 The simulator valued every drop at its gross market price, so profit ignored the sale tax entirely — which is why the rise to 5% never moved it. Every drop-revenue path now nets the tax off each non-coin drop, cowbell bags at their own 18%: the Results summary, the Drops table's Gold columns, and the comparison and upgrade rows. Coin drops stay whole.
 
+## [3.63.0](https://github.com/Millennium44/Toolasha/compare/v3.62.0...v3.63.0) (2026-10-02)
+
+
+### Features
+
+* bestiary plan rows expand to the zone's sim results ([921d78a](https://github.com/Millennium44/Toolasha/commit/921d78ab9d1b20ed5879b21dcafd9fd397c9c3fe))
+* count Tampermonkey traffic per tab and list all open tabs in PFormance ([24c8219](https://github.com/Millennium44/Toolasha/commit/24c82194068f0dcbc782b4fa38cd8f423c907dc3))
+* optional game text size and font, off by default ([9878058](https://github.com/Millennium44/Toolasha/commit/98780588711aa5e742edb61f22ba3ab93732d10b))
+* PFormance counts Tampermonkey traffic and lists every open tab ([dba7377](https://github.com/Millennium44/Toolasha/commit/dba7377c9927e9eefbbb8428779ff8f691d68337))
+* rank badge options to mark Steam ranks and prefer the standard rank ([8945b07](https://github.com/Millennium44/Toolasha/commit/8945b0738f3b1973e4a4c379de5a558db2d9e838))
+* rank badge options to mark Steam ranks and prefer the standard rank ([15ea33f](https://github.com/Millennium44/Toolasha/commit/15ea33facb4c8476cd8992ae3831535c4830f93a))
+* saved chat history is shared across characters for public channels and per guild ([a2fbeda](https://github.com/Millennium44/Toolasha/commit/a2fbeda34efb25510397b7b3ad7ca568a2403628))
+* saved chat history is shared across characters for public channels and per guild ([7affc66](https://github.com/Millennium44/Toolasha/commit/7affc66d8feb658a3094c0251ba79d029a6f7ee9))
+* text size and font settings ([3ab7676](https://github.com/Millennium44/Toolasha/commit/3ab76766a32fb424e5b03763c494b95e8cd3ea71))
+* text size and font settings for Toolasha's own panels ([d209001](https://github.com/Millennium44/Toolasha/commit/d209001e51accf56ec57581192acbb565785c8a1))
+* trial ledger coverage counts cycles watched out of cycles that ran ([1696095](https://github.com/Millennium44/Toolasha/commit/1696095269f819c5e687714b6991711784967950))
+* trial ledger coverage counts cycles watched out of the cycles that ran ([4c3505b](https://github.com/Millennium44/Toolasha/commit/4c3505bf872612f0c2315fbcfc85c3af73b8522e))
+
+
+### Bug Fixes
+
+* a failed battle bridge write keeps the battle and retries it ([4882af1](https://github.com/Millennium44/Toolasha/commit/4882af13b16b70efbaeed3ba57c0ab9e2adf856f))
+* a failed battle meta write retries the battle with it ([58bc6a5](https://github.com/Millennium44/Toolasha/commit/58bc6a553157851083175f7ae2e20901a20cb2bf))
+* a failed forced battle rewrite is held for its retry ([a3c24e9](https://github.com/Millennium44/Toolasha/commit/a3c24e965ec1ef7f540fc9e206b471d85568826e))
+* a guild change during the first chat-history read restores the new guild ([ae87a9b](https://github.com/Millennium44/Toolasha/commit/ae87a9be30a9b4f5e3632af3a0b8b9c8aaa98336))
+* a guild change keeps the old guild's chat lines until they are written ([b70a6fb](https://github.com/Millennium44/Toolasha/commit/b70a6fb0af95478c6498392b0043f7d53f74f60a))
+* all-tabs view uses request/reply so hidden and extras-off tabs are heard ([5db1276](https://github.com/Millennium44/Toolasha/commit/5db12769ebc1e6b8330e0521a88c1871388423f7))
+* an undelete before any chat tab has loaded still clears the shared tombstone ([1b26fba](https://github.com/Millennium44/Toolasha/commit/1b26fba686e1e744874bef03e626d03f8b516036))
+* bestiary plan detail keeps fractional rare-drop rates ([91752a1](https://github.com/Millennium44/Toolasha/commit/91752a1fd945961efcf7213578752095b8bb0ed6))
+* bestiary plan detail marks volume-capped profit like the results table ([35f2912](https://github.com/Millennium44/Toolasha/commit/35f2912da33fd90ff8eb82c86ff646dbd0b448a3))
+* bestiary plan rows keep their open state per step, not per zone ([2659638](https://github.com/Millennium44/Toolasha/commit/26596388733c3f568775c0f7836e271a4a29607c))
+* bestiary plan rows stay expanded through same-run redraws ([3977738](https://github.com/Millennium44/Toolasha/commit/3977738047ef6551bc382a12e52647faa988fd50))
+* bulk sell guards every vendor sale press and holds until the menu is done ([83fa26f](https://github.com/Millennium44/Toolasha/commit/83fa26fca35cbed4c9ae5896c9cca3a29b799882))
+* bulk sell guards the sale when the player clicks the armed button during the arming wait ([bc8a314](https://github.com/Millennium44/Toolasha/commit/bc8a31466241e790be3e7c24fdd367ec922aaa6a))
+* bulk sell ignored Next click no longer erases the navigation flag ([8b6e48d](https://github.com/Millennium44/Toolasha/commit/8b6e48dd0ae960c2b12efe8703d04ab89942ea1d))
+* bulk sell matches the vendor menu header name exactly when the menu has no icon ([344b740](https://github.com/Millennium44/Toolasha/commit/344b74088e829aca9a6267b6b5df0978912d0bf8))
+* bulk sell shields the armed vendor button from a second click after our press ([9f2e509](https://github.com/Millennium44/Toolasha/commit/9f2e509e1377e5f8a5ae8fc7fc34b7d098187109))
+* bulk sell vendor Confirm stops waiting when the player clicks the item menu ([92a219d](https://github.com/Millennium44/Toolasha/commit/92a219dc26dd29e85d62b7cc264ba27222e278e3))
+* bulk sell waits for Next after a skip instead of opening the next order book itself ([fccb14c](https://github.com/Millennium44/Toolasha/commit/fccb14c1a48bbf467e4d514a5287cef9ebb0fbcb))
+* character panel tabs keep their width with the Toolasha tab in them ([c1d1567](https://github.com/Millennium44/Toolasha/commit/c1d1567be3174ad08a2b4d99182c436b87c35208))
+* chat history cap sees a pane backlog on first load and a stale saved overlap is released ([31d0d0e](https://github.com/Millennium44/Toolasha/commit/31d0d0ef44c08525a1571ac099378f40a4b7876f))
+* chat history leaves rank badges out of stored and matched messages ([bf9cf1f](https://github.com/Millennium44/Toolasha/commit/bf9cf1f2763dfda9e21761bb19e943a6b22798f6))
+* chat history names neither of two tabs that share a label ([0a7bdb0](https://github.com/Millennium44/Toolasha/commit/0a7bdb086bfb3c5f8d1b3dba2de70b271969d29b))
+* chat history releases the saved overlap once a smaller delayed backlog renders ([7d33d25](https://github.com/Millennium44/Toolasha/commit/7d33d25e9468dec9e8aa8c50778eb34a609f65db))
+* chat history restore bounds a buffered line at its last stored copy ([c06715b](https://github.com/Millennium44/Toolasha/commit/c06715b2af1417474f6c3a71d60dbb59c45d0ee0))
+* chat history restore bounds at the oldest live line that is stored ([4a8b170](https://github.com/Millennium44/Toolasha/commit/4a8b170477759ec3933b364ae69eccb5ea8fa944))
+* chat history switch batches raise the live allowance and restore survives lines sharing an identity ([10ecfe2](https://github.com/Millennium44/Toolasha/commit/10ecfe2bbe06f657d3f89a1ea5275c81d9094590))
+* client data bridge checks the stored payload before trusting its fingerprint ([ab5a04b](https://github.com/Millennium44/Toolasha/commit/ab5a04bf02cc9ebfb4f08acb4f1c4b564901871c))
+* encoding check covers every text source and the changelog records it ([b2ebf58](https://github.com/Millennium44/Toolasha/commit/b2ebf584f7d9d6d01a94171dd6508860d38ae437))
+* game-server.js is saved as UTF-8 ([1319263](https://github.com/Millennium44/Toolasha/commit/1319263787815dbf767430b5707ce40d6b49e80f))
+* guild change with the Guild pane mounted clears the old guild's chat ([09af864](https://github.com/Millennium44/Toolasha/commit/09af864fe793dd453ac9873b54ff3bce070ba5c6))
+* guild ledger coverage counts the earlier complete cycles of a running unsplit record ([6d07515](https://github.com/Millennium44/Toolasha/commit/6d07515800272c43815199b986f21eeeef8e3d73))
+* guild lines recorded before the roster names the new guild are quarantined ([43e98ec](https://github.com/Millennium44/Toolasha/commit/43e98eceab3e8805f225dd11529e983f3021e29b))
+* guild XP tracker login load stands down when the character switches mid-read ([de684cb](https://github.com/Millennium44/Toolasha/commit/de684cb6820e504efa91d1f54966244ee76c7a75))
+* held guild chat moves into a guild record only on three matching lines ([222b9ae](https://github.com/Millennium44/Toolasha/commit/222b9ae8b2ac8dc14b18d537534664b0c084e6d6))
+* idle-alt alert no longer repeats on every character switch ([e7b0d46](https://github.com/Millennium44/Toolasha/commit/e7b0d466aae440af46bb6b3f207f86711c222b97))
+* lab clear-chance histogram bars follow their bin edges for widths that do not divide 100 ([ae2215a](https://github.com/Millennium44/Toolasha/commit/ae2215a1a51c3e5ba2ea03b1deae04fbb43ae7a7))
+* ledger counts a legacy unsplit week whose newest group already ran every trial ([7fee907](https://github.com/Millennium44/Toolasha/commit/7fee907337216a94793d00a50655b4ab0b2fcc4a))
+* ledger coverage charges nothing when the ledger holds no records ([40661c1](https://github.com/Millennium44/Toolasha/commit/40661c1b14b519f2dee947b1ed909b06d3afc7d3))
+* ledger coverage counts an unsplit multi-cycle record per cycle once its week has ended ([239dc26](https://github.com/Millennium44/Toolasha/commit/239dc26c3632384b844259f972db3a0eda2f9f10))
+* ledger coverage keeps its window when the first-record read fails ([ed97ed7](https://github.com/Millennium44/Toolasha/commit/ed97ed75822de976e435e27eb64dee721c10d67f))
+* ledger coverage no longer reads an unsplit two-cycle week as one finished cycle ([8f7519b](https://github.com/Millennium44/Toolasha/commit/8f7519b7da2c944d6e5c5082ddab40143abf4a54))
+* ledger coverage starts at the first record ([cc60fcb](https://github.com/Millennium44/Toolasha/commit/cc60fcb86acfecfe56640298fec5ff11e86fac3d))
+* legacy per-character chat history is no longer merged into shared records ([8906ecc](https://github.com/Millennium44/Toolasha/commit/8906eccd4c63476c7fb078226beda956004689c5))
+* mana planner leaves dead time out of the natural regen deduction ([ba19392](https://github.com/Millennium44/Toolasha/commit/ba1939233e5c0f90df82fcdae3545428ffcfe60a))
+* mana planner target is spend net of natural regen ([0943c44](https://github.com/Millennium44/Toolasha/commit/0943c44f4ea7b388c0f4ff6d1805c1685152f3a4))
+* mana planner treats an absent mpRegenPer10 as zero gear regen ([ab6dfc6](https://github.com/Millennium44/Toolasha/commit/ab6dfc68719f02cbe58152f759941892526099dc))
+* mana planner treats the MP regen stat as the full rate ([05d9e27](https://github.com/Millennium44/Toolasha/commit/05d9e2767072cceeee161582931fd273c222b6c8))
+* market stats notes ride on their row instead of a line the order book covers ([b72bdbd](https://github.com/Millennium44/Toolasha/commit/b72bdbd7568f35ff07059ba428d0556e6a3f7cfa))
+* marketplace action dropdown takes the Toolasha text size and font ([b6af222](https://github.com/Millennium44/Toolasha/commit/b6af222e71ccd9938fb786a8866839deb755c5a8))
+* official-value net worth uses the game's value at +13 and above ([7a05362](https://github.com/Millennium44/Toolasha/commit/7a05362ee9db063990766cf10d1a2880627d538e))
+* old guild chat history is not moved into a guild the character has since joined ([8e6f744](https://github.com/Millennium44/Toolasha/commit/8e6f7448b103229f325265f968d2ffe9fb1767e2))
+* opening a simulator rewrites this tab's newest battle to the shared key ([38f1342](https://github.com/Millennium44/Toolasha/commit/38f1342c15f73924a31a3a66ea701ac29f3b4bc7))
+* PFormance extras setting is declared so its toggle persists ([fe37ebb](https://github.com/Millennium44/Toolasha/commit/fe37ebb0ec8b1df8c921cc4439ac5b2b89a1c00b))
+* rank badge cache folds stored boards on save instead of overwriting them ([12b45d4](https://github.com/Millennium44/Toolasha/commit/12b45d4c42559642319b39796758ed87307b1340))
+* rank badge cache persists the capped timestamp of a future-dated board ([6a0e5cc](https://github.com/Millennium44/Toolasha/commit/6a0e5cc04abf05894fa036354c4264e0c791e453))
+* rank badge cleanup keeps the account-wide record so a character switch cannot drop a pending save ([85f7c91](https://github.com/Millennium44/Toolasha/commit/85f7c914018c5a7dce2eb2af4d2b239576733b6d))
+* rank badge settings restart no longer drops a board mid-save ([f5b47e9](https://github.com/Millennium44/Toolasha/commit/f5b47e9d8cf71f801b8e1a0a8a3a5d1af55c720a))
+* rank badges cover the labyrinth points, collection points and bestiary points boards ([02d5182](https://github.com/Millennium44/Toolasha/commit/02d5182357185f60a3393be27f8e1d79c22f1ae8))
+* restored chat history stops where the live backlog starts and survives a tab round trip ([b086195](https://github.com/Millennium44/Toolasha/commit/b086195d1d3aacd711212b613c3dd08519ad517b))
+* restored chat history stops where the live backlog starts and survives a tab round trip ([ff934bc](https://github.com/Millennium44/Toolasha/commit/ff934bc17d78f6f7233cc01b40d8e54c660668ed))
+* saved chat history cap counts lines older than the live backlog ([803bcf4](https://github.com/Millennium44/Toolasha/commit/803bcf4208ba2d7b39348532e692f2f688dd135f))
+* saved chat history total rises to 1 MB so the per-tab cap is reachable ([4c7f1e0](https://github.com/Millennium44/Toolasha/commit/4c7f1e0f79e03cf390d29557ff6a47e03750fccf))
+* saved chat-history cap keeps its older lines when the backlog renders late or grows ([7bf61f7](https://github.com/Millennium44/Toolasha/commit/7bf61f7ac57f07601f2036dad9f596ba908f029a))
+* shared chat history keeps lines in the order they were sent ([d0c62df](https://github.com/Millennium44/Toolasha/commit/d0c62dfaac7e5f964ae91b52ad5c706c1601124d))
+* shared chat history keeps the shared live allowance in the working record ([c95ef10](https://github.com/Millennium44/Toolasha/commit/c95ef10c9aeb9b03ad92c1c33fbfed543285d530))
+* shared chat history never shares a tab a whisper could be named like ([335744d](https://github.com/Millennium44/Toolasha/commit/335744dd64caa9e26bc4b675889fad4edb2d9358))
+* shared chat history orders deletions and undeletes by when they arrived ([f5bd9a8](https://github.com/Millennium44/Toolasha/commit/f5bd9a819c320f52aaa1c7382f3b5f7d8a692d6a))
+* shared chat tabs report the live allowance their cap uses ([bd0c4b4](https://github.com/Millennium44/Toolasha/commit/bd0c4b4fe8da2d98eff42945b480168a0f4e33f4))
+* sim battle lookup trusts the character snapshot over its owner stamp ([c4c0bd0](https://github.com/Millennium44/Toolasha/commit/c4c0bd0a9185ec88a9ac3477bc1c961b17b70916))
+* sim-open battle rewrite is limited to the character being opened, and cleanup stops the bridge timer ([f74d2bf](https://github.com/Millennium44/Toolasha/commit/f74d2bfbd864bba6a86d36ef224d4a4c8bb55fff))
+* simulator battle bridge is per character so another tab's fight cannot replace it ([7647bc5](https://github.com/Millennium44/Toolasha/commit/7647bc55f202a5c72a14ffa1ed1fbba91cc29f25))
+* skilling optimizer picker no longer leaves a stray outside-click listener ([2470b81](https://github.com/Millennium44/Toolasha/commit/2470b81b617b92d4664197d9191c29d23b43cfe4))
+* storage update reports a write only once its transaction commits ([a688f66](https://github.com/Millennium44/Toolasha/commit/a688f6654be1b5adc67493dd97d3ecd65024285e))
+* tab census join no longer depends on the command palette ([4d65f8f](https://github.com/Millennium44/Toolasha/commit/4d65f8f5edaf5c48bc307257532bfa717e86becd))
+* tab census joins when PFormance opens and keeps poll rounds monotonic ([346210c](https://github.com/Millennium44/Toolasha/commit/346210c3f67c347f58effb15de66827b3099d778))
+* test-server ledger places anchorless trials by when they were recorded and ends a cycle an hour after its fight ([eac9096](https://github.com/Millennium44/Toolasha/commit/eac9096757001d6523ec579a085a567dfbb44394))
+* text appearance reaches direct-child canvases, text-only popovers and game-font monospace ([535933e](https://github.com/Millennium44/Toolasha/commit/535933e3244838487265c359cbf9b281ab4d8ba9))
+* text scale refits the docked overlay, spares monospace subtrees and fits the choice dialog ([bdadb77](https://github.com/Millennium44/Toolasha/commit/bdadb777a5a97f002de4f5208065ce480a9ff408))
+* text size and font reach standalone windows, modals and popups, not just registered panels ([d5d3f54](https://github.com/Millennium44/Toolasha/commit/d5d3f54eb0cd22c1dd6b5e17acea89cfb9f80178))
+* the docked overlay takes the Toolasha text size and font ([e277a81](https://github.com/Millennium44/Toolasha/commit/e277a81a7cbdf2e178fc7d43cf59bcebe5b04a4b))
+* trial DPS graph gives the party its own right-hand scale and a clickable legend ([1ce77bf](https://github.com/Millennium44/Toolasha/commit/1ce77bff9e66aaf609597eef7a6f79ab53372e57))
+* trial ledger redraws once the guild name arrives ([eadd37a](https://github.com/Millennium44/Toolasha/commit/eadd37a3a1553a6bd93617a56bdda00ac98653ac))
+
+
+### Performance Improvements
+
+* battle bridge index is written only when a character is new to it ([dfb84a1](https://github.com/Millennium44/Toolasha/commit/dfb84a1db03b2c66a6ff96aebb030f533c90a67a))
+* bridge new_battle to GM storage at most once a minute ([64c31eb](https://github.com/Millennium44/Toolasha/commit/64c31ebbf884cb6e221661434d197ae13b6f9979))
+* bridge the game's client data to GM storage only when a simulator opens ([beaf942](https://github.com/Millennium44/Toolasha/commit/beaf9420dd8989349e021ead2aecec3171ce95ed))
+
+
+### Documentation
+
+* changelog for bridging client data only when a simulator opens ([87d9269](https://github.com/Millennium44/Toolasha/commit/87d92699c987dab72885eda6fd4211fcba7e08b8))
+* changelog for chat history leaving rank badges out ([a0b1ca1](https://github.com/Millennium44/Toolasha/commit/a0b1ca178cc729f82a58af320621eb25e3bf0492))
+* changelog for chat history order and tab round trips ([29a62fa](https://github.com/Millennium44/Toolasha/commit/29a62fa5cf64db03395484e9293d3b23f2d605b0))
+* changelog for ledger coverage by cycles ([8687d1c](https://github.com/Millennium44/Toolasha/commit/8687d1c214ffd698c8b2d12d733b7dbcb48cba75))
+* changelog for official-value net worth at high levels ([11e352f](https://github.com/Millennium44/Toolasha/commit/11e352f7fbd3f232107b5f4b3fe0ff329cc0e734))
+* changelog for per-character simulator battles ([05609ac](https://github.com/Millennium44/Toolasha/commit/05609acbb84d1eb16f46b14f3b248d91ed7939f2))
+* changelog for PFormance Tampermonkey traffic and the all-tabs view ([5141283](https://github.com/Millennium44/Toolasha/commit/5141283e22cd2f2b44ec26c6d2f0a76b35c9188e))
+* changelog for rank badge Steam options ([73d3857](https://github.com/Millennium44/Toolasha/commit/73d385714da20b50c9a043a77b63017730b4bbf8))
+* changelog for shared chat history ([9cde929](https://github.com/Millennium44/Toolasha/commit/9cde929a2150efb942a8a23761fc57fd923a5bc5))
+* changelog for test-server ledger cycles ([7d31830](https://github.com/Millennium44/Toolasha/commit/7d31830e95448a911aa9ac1d69b5ce2e82fb48d6))
+* changelog for text size and font settings ([99fc8ee](https://github.com/Millennium44/Toolasha/commit/99fc8ee7d77621819aa809bf71789fa271fcc28b))
+* changelog for the chat history cap counting only older lines ([eaf03d5](https://github.com/Millennium44/Toolasha/commit/eaf03d5bf7d006da4f6e1c4140a0288b075e6a38))
+* changelog for the idle alert and skilling optimizer audit fixes ([8626f3e](https://github.com/Millennium44/Toolasha/commit/8626f3e5190f5e00bd656d19615f09df9682e570))
+* changelog for the ledger redrawing once the guild is known ([d801db9](https://github.com/Millennium44/Toolasha/commit/d801db952ef29a44bdf0556aae74116de18c4094))
+* changelog for the remembered PFormance extras toggle ([724f091](https://github.com/Millennium44/Toolasha/commit/724f09174509ca8e04855fd555cbcf8083e926f6))
+* changelog for the throttled battle snapshot write ([2d7487f](https://github.com/Millennium44/Toolasha/commit/2d7487f7dcd545d1b2bdebc6d21bf56a954a4832))
+* changelog for the trial DPS chart scales ([0413139](https://github.com/Millennium44/Toolasha/commit/04131393c5721f9503debbfc53bee475144ea064))
+* drop duplicate rank badge changelog bullets ([7f11b3d](https://github.com/Millennium44/Toolasha/commit/7f11b3d66de5563b740a4c57c1bea30d8aa902f8))
+* rank badge changelog entry describes what players see ([f3f335b](https://github.com/Millennium44/Toolasha/commit/f3f335b599303b6ceb9640e36cc3605f6291d496))
+* shared chat changelog says older history stays per character ([5de5c19](https://github.com/Millennium44/Toolasha/commit/5de5c19c3447987e2827ea1aa8639a015ea42e47))
+
+
+### Tests
+
+* allowlist the stateless surface marker in the bundle-sharing check ([e1ef821](https://github.com/Millennium44/Toolasha/commit/e1ef821f90ee5b03d1ca31edbc3758f32f9b1f67))
+* cover GM traffic counters, tab census and the PFormance extras sections ([696f23a](https://github.com/Millennium44/Toolasha/commit/696f23a9837dd227c619ef836637b0eba51d65e7))
+* cover gmDeleteValue and show delete counts in the PFormance traffic line ([b30f3b2](https://github.com/Millennium44/Toolasha/commit/b30f3b2aff70ad5eb1ce3d481be4a547964f4db1))
+* live-count cap tests use a per-character tab, with shared-tab variants ([584ccc1](https://github.com/Millennium44/Toolasha/commit/584ccc178f2385307831776cebda19fc58a289ab))
+* restore-boundary test waits for the read, with a per-character and a shared variant ([09c0b2d](https://github.com/Millennium44/Toolasha/commit/09c0b2d860f6f8a7709b50e9fbc01bd2037b2892))
+
+
+### Build System
+
+* share locale-date-order between the combat and ui bundles ([1930655](https://github.com/Millennium44/Toolasha/commit/1930655238acf42c6ca011608a7564d8b7faa588))
+
 ## [3.62.0](https://github.com/Millennium44/Toolasha/compare/v3.61.2...v3.62.0) (2026-09-30)
 
 ### Features
