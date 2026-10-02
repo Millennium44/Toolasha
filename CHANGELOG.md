@@ -11,6 +11,14 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 - The session briefing no longer reports a queue as idle for longer than it was, after you played that character since its last snapshot, and a character switch mid-load no longer files one character's listings under another.
 - The Welcome Back offline earnings block now fills in prices that arrive after it opens, and the time-to-level tooltip no longer reads "1 hour 60 minutes".
 
+### Audit round: dictionary and alt-click
+
+- Alt-clicking an item tooltip now finds enhanced and refined items ("Collector's Boots +3", "… ★") through game data instead of guessing from the name, and the dictionary's transmute rates pick up items added by a game update without a reload.
+
+### DPS graph axis labels
+
+- DPS graphs no longer label their axis "0 0 0 1 1 1" when every line is hidden or the values are tiny.
+
 ### Labyrinth badge icons
 
 - Labyrinth Points badges are back to the blue maze and Labyrinth Depth badges now show an orange flag; the white maze from 3.63.1 could show no icon at all in some browsers.

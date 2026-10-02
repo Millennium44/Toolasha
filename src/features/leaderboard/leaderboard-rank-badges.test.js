@@ -13,6 +13,8 @@ const game = vi.hoisted(() => ({
     classHandlers: [],
     response: { status: 200, text: '' },
     requests: [],
+    // Set to a pending promise to hold the sprite sheets unresolved
+    spriteGate: null,
 }));
 
 vi.mock('../../core/websocket.js', () => ({
@@ -76,7 +78,12 @@ vi.mock('../sync/gist-client.js', () => ({
     },
 }));
 vi.mock('../../utils/asset-manifest.js', () => ({
-    default: { getSpriteUrl: async (key) => `/static/${key}.svg` },
+    default: {
+        getSpriteUrl: async (key) => {
+            if (game.spriteGate) await game.spriteGate;
+            return `/static/${key}.svg`;
+        },
+    },
 }));
 
 const { leaderboardRankBadges, describeEntries, RANK_SERVER_INTERVAL_MS } =
@@ -109,11 +116,14 @@ describe('leaderboard rank badges', () => {
         vi.setSystemTime(new Date('2026-09-30T12:00:00Z'));
         game.mode = 'off';
         game.steam = false;
+        game.steamMark = false;
+        game.preferStandard = false;
         game.saved = {};
         game.wsHandlers = {};
         game.settingWatchers = [];
         game.classHandlers = [];
         game.requests = [];
+        game.spriteGate = null;
         game.response = { status: 200, text: serverBody('standard', [{ characterName: 'Alice', rank: 3 }]) };
         document.body.innerHTML = '';
         document.head.innerHTML = '';
@@ -224,6 +234,47 @@ describe('leaderboard rank badges', () => {
         expect(await icon('labyrinth_points')).toBe('/static/misc.svg#labyrinth');
         expect(await icon('labyrinth_depth')).toBe('/static/misc.svg#flag');
         expect(await icon('fame_points')).toBe('/static/chatIcons.svg#holy_supporter');
+    });
+
+    test('a badge drawn before the sprite sheets resolve gets its icon when they do, Steam pairs included', async () => {
+        // Guild member list report: a Labyrinth Points badge (88, Steam 37) drew the pill and number but no icon
+        game.mode = 'local';
+        game.steam = true;
+        game.steamMark = true;
+        let release;
+        game.spriteGate = new Promise((resolve) => {
+            release = resolve;
+        });
+        game.saved.rankBoards = {
+            'standard|labyrinth_points': { at: Date.now() - 1000, source: 'local', rows: [['AFKANDY', 88]] },
+            'steam_standard|labyrinth_points': { at: Date.now() - 1000, source: 'local', rows: [['AFKANDY', 37]] },
+            'standard|bestiary_points': { at: Date.now() - 1000, source: 'local', rows: [['Other', 12]] },
+        };
+        const row = document.createElement('div');
+        document.body.appendChild(row);
+        const afk = nameEl('AFKANDY', row);
+        const other = nameEl('Other', row);
+        // The singleton keeps resolved sheets for the page's life; start from a fresh page's state
+        leaderboardRankBadges.spriteUrls = { skills: null, misc: null, chatIcons: null };
+        await leaderboardRankBadges.initialize();
+        await flush();
+
+        // Drawn without icons while the sheets are pending: the pill and number only
+        expect(afk.nextElementSibling.querySelector('svg')).toBeNull();
+        expect(afk.nextElementSibling.textContent).toBe('S37');
+
+        release();
+        await flush();
+        expect(afk.nextElementSibling.querySelector('use').getAttribute('href')).toBe('/static/misc.svg#labyrinth');
+        expect(other.nextElementSibling.querySelector('use').getAttribute('href')).toBe('/static/misc.svg#combat');
+
+        // Preferring the standard rank switches to 88 and keeps the icon
+        game.preferStandard = true;
+        leaderboardRankBadges.applyPresentation();
+        await flush();
+        const badge = afk.nextElementSibling;
+        expect(badge.textContent).toBe('88');
+        expect(badge.querySelector('use').getAttribute('href')).toBe('/static/misc.svg#labyrinth');
     });
 
     test('a save keeps boards another tab or a sync pull stored meanwhile, and badges them', async () => {

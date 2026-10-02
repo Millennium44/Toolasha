@@ -6,7 +6,6 @@
 import domObserver from '../../core/dom-observer.js';
 import { navigateToItem, findActionForItem } from '../../utils/item-navigation.js';
 import { setReactInputValue } from '../../utils/react-input.js';
-import { createTimerRegistry } from '../../utils/timer-registry.js';
 import { calculateMaterialRequirements } from '../../utils/material-calculator.js';
 import { getActionHridFromName, getItemHridFromName } from '../../utils/game-lookups.js';
 import { parseGameNumber, gameDigitsSource } from '../../utils/number-parser.js';
@@ -50,7 +49,7 @@ class ViewActionButton {
         this.unregisterHandlers = [];
         this.isInitialized = false;
         this.injectTimeout = null;
-        this.timerRegistry = createTimerRegistry();
+        this.fillTimeout = null;
         this.pendingActionCount = null; // Pre-fill count for next action panel navigation
     }
 
@@ -71,7 +70,6 @@ class ViewActionButton {
             this.injectTimeout = setTimeout(() => {
                 this.injectButton(titleElem);
             }, 50);
-            this.timerRegistry.registerTimeout(this.injectTimeout);
         });
         this.unregisterHandlers.push(unregister);
 
@@ -308,8 +306,13 @@ class ViewActionButton {
      * and always focus it.
      */
     _fillActionCountAfterNavigation() {
+        // One live poll at a time: a second click supersedes the first rather than racing it.
+        // Held as a single handle, not in a registry, which only empties at teardown and
+        // this feature never tears down in a normal session.
+        clearTimeout(this.fillTimeout);
         let retries = 0;
         const tryFill = () => {
+            this.fillTimeout = null;
             const container = document.querySelector('[class*="maxActionCountInput"]');
             const input = container?.querySelector('input');
             if (input) {
@@ -321,14 +324,12 @@ class ViewActionButton {
                 return;
             }
             if (++retries < 15) {
-                const t = setTimeout(tryFill, 100);
-                this.timerRegistry.registerTimeout(t);
+                this.fillTimeout = setTimeout(tryFill, 100);
             } else {
                 this.pendingActionCount = null;
             }
         };
-        const t = setTimeout(tryFill, 100);
-        this.timerRegistry.registerTimeout(t);
+        this.fillTimeout = setTimeout(tryFill, 100);
     }
 
     /**
@@ -336,7 +337,10 @@ class ViewActionButton {
      */
     disable() {
         clearTimeout(this.injectTimeout);
-        this.timerRegistry.clearAll();
+        this.injectTimeout = null;
+        clearTimeout(this.fillTimeout);
+        this.fillTimeout = null;
+        this.pendingActionCount = null;
 
         this.unregisterHandlers.forEach((unregister) => unregister());
         this.unregisterHandlers = [];

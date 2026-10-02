@@ -6,7 +6,7 @@
  * settle it — see `_calcMissingFromGameData`).
  */
 
-import { describe, test, expect, afterEach } from 'vitest';
+import { describe, test, expect, afterEach, vi } from 'vitest';
 import { parseHaveNeedCount } from './view-action-button.js';
 import { _resetGameNumberSeparators } from '../../utils/number-parser.js';
 
@@ -52,5 +52,18 @@ describe('parseHaveNeedCount', () => {
             asLocale('de-DE');
             expect(parseHaveNeedCount('120', '/ 1.234')).toEqual({ matched: true, missing: 1114 });
         });
+    });
+});
+
+describe('ViewActionButton timers', () => {
+    test('polling for the count input leaves nothing behind in a timer registry', async () => {
+        vi.useFakeTimers();
+        const { default: viewActionButton } = await import('./view-action-button.js');
+        const { getTimerRegistryCensus } = await import('../../utils/timer-registry.js');
+        const before = getTimerRegistryCensus().timeouts;
+        viewActionButton._fillActionCountAfterNavigation();
+        vi.advanceTimersByTime(2000);
+        expect(getTimerRegistryCensus().timeouts).toBe(before);
+        vi.useRealTimers();
     });
 });

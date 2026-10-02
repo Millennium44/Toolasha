@@ -18,6 +18,8 @@ vi.mock('../../core/dom-observer.js', () => ({
         },
     },
 }));
+const lookupState = vi.hoisted(() => ({ names: {} }));
+vi.mock('../../utils/game-lookups.js', () => ({ getItemHridFromName: (name) => lookupState.names[name] || null }));
 vi.mock('../../utils/item-navigation.js', () => ({ navigateToItem: vi.fn() }));
 
 const { default: altClickNavigation } = await import('./alt-click-navigation.js');
@@ -64,6 +66,15 @@ describe('hovered item tracking through the tooltip observer', () => {
     test('the name falls back to a slug of the item name', () => {
         observerState.handler(popper('<div class="ItemTooltipText_name__2JAHA"><span>Griffin Bulwark</span></div>'));
         expect(altClickNavigation.currentItemHrid).toBe('/items/griffin_bulwark');
+    });
+
+    test('the name resolves through game data, so apostrophes and enhancement levels do not break it', () => {
+        lookupState.names = { "Collector's Boots": '/items/collectors_boots' };
+        observerState.handler(
+            popper(`<div class="ItemTooltipText_name__2JAHA"><span>Collector's Boots +3</span></div>`)
+        );
+        expect(altClickNavigation.currentItemHrid).toBe('/items/collectors_boots');
+        lookupState.names = {};
     });
 
     test('a tooltip with no item resets the tracked item', () => {

@@ -101,7 +101,8 @@ export function dpsGraphSVG({ xs, lines, bands = [], markers = [], xTicks = [], 
      */
     const scaleOf = (set) => {
         const max = Math.max(1, ...set.flatMap((line) => line.values.filter(Number.isFinite)));
-        const step = niceStep(max);
+        // Labels are rounded to whole numbers, so a step under one would print the same label twice
+        const step = Math.max(1, niceStep(max));
         return { step, top: Math.ceil(max / step) * step };
     };
     const left = scaleOf(leftLines);
