@@ -1460,12 +1460,62 @@ class DungeonTracker {
                     dungeonTrackerStorage.getDungeonInfo(this.currentRun.dungeonHrid)?.name || '';
 
                 if (battleName && currentDungeonName && !battleName.includes(currentDungeonName)) {
-                    this.resetTracking();
+                    // The new dungeon's battle start can land before its new_battle, whose switch branch
+                    // would otherwise have ended this run as a cancel. A party combat zone that is no
+                    // dungeon proves nothing about the run and ends it unrecorded, as it always has.
+                    this.resetTracking(
+                        this.dungeonHridForBattleName(battleName) ? this.switchCancelAttempt(timestamp) : null
+                    );
                 }
             } catch (error) {
                 console.error('[Dungeon Tracker] Error parsing battle started metadata:', error);
             }
         }
+    }
+
+    /**
+     * The dungeon a "Battle started" message names, matched against the game's
+     * own dungeon names; the longest match wins, so no name is mistaken for
+     * one it contains.
+     * @param {string} battleName - The message's `name`
+     * @returns {string|null} The dungeon's action HRID, or null when it names none
+     */
+    dungeonHridForBattleName(battleName) {
+        const actionDetailMap = dataManager.getInitClientData?.()?.actionDetailMap;
+        if (!battleName || !actionDetailMap) return null;
+        let best = null;
+        let bestLength = 0;
+        for (const [hrid, details] of Object.entries(actionDetailMap)) {
+            const name = details?.name;
+            if (!name || name.length <= bestLength || !this.isDungeonAction(hrid)) continue;
+            if (battleName.includes(name)) {
+                best = hrid;
+                bestLength = name.length;
+            }
+        }
+        return best;
+    }
+
+    /**
+     * The cancel a switch to another dungeon ends the live run with.
+     *
+     * Ended by the server at the new battle's start when the run's start is
+     * server-stamped too; otherwise both ends are on the wall clock, since
+     * `recordAttempt` pairs a server end with the local start when no
+     * server start exists.
+     *
+     * A start stamped before the run began is about an earlier action and
+     * says nothing of how this run ended.
+     *
+     * @param {number} timestamp - The "Battle started" message's server timestamp
+     * @returns {Object|null} The `attempt` argument for {@link DungeonTracker#resetTracking}
+     */
+    switchCancelAttempt(timestamp) {
+        if (this.predatesCurrentRun(timestamp)) return null;
+        if (Number.isFinite(timestamp) && Number.isFinite(this.firstKeyCountTimestamp)) {
+            return { result: RUN_RESULT_CANCEL, endTimestamp: timestamp, endFromServer: true };
+        }
+        return { result: RUN_RESULT_CANCEL, endTimestamp: Date.now(), endFromServer: false };
     }
 
     /**

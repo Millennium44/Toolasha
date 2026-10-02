@@ -97,6 +97,7 @@ vi.mock('../../core/data-manager.js', () => ({
         getCurrentCharacterId: () => game.characterId,
         getCurrentCharacterName: () => game.characterName,
         getCurrentCharacterGameMode: () => game.gameMode,
+        getInitClientData: () => ({ actionDetailMap: game.actionDetails }),
         on: (event, handler) => {
             game.dmHandlers[event] = handler;
         },
@@ -5315,6 +5316,79 @@ describe('recording failed and canceled runs', () => {
             expect(tracker.currentRun.startTime).toBe(Date.parse('2026-08-04T10:04:57.000Z'));
             expect(game.savedRuns).toHaveLength(1);
             expect(game.savedRuns[0].run).toMatchObject({ result: 'cancel', duration: 293_000, wavesCompleted: 4 });
+        });
+    });
+
+    describe('a party switching straight to another dungeon, its battle start seen before the battle', () => {
+        function battleStarted(name, isoTime) {
+            return {
+                message: {
+                    chan: '/chat_channel_types/party',
+                    isSystemMessage: true,
+                    m: 'systemChatMessage.partyBattleStarted',
+                    t: isoTime,
+                    systemMetadata: JSON.stringify({ name }),
+                },
+            };
+        }
+
+        test('the abandoned run is a cancel, ended by the server at the new battle’s start', async () => {
+            beTracking({ anchoredAt: '2026-08-04T10:00:02.000Z', keyCountsMap: PARTY, wavesCompleted: 3 });
+
+            tracker.onChatMessage(battleStarted('Sinister Circus', '2026-08-04T10:04:00.000Z'));
+            await flush();
+            expect(tracker.isTracking).toBe(false);
+
+            await windowCloses();
+            expect(game.savedRuns).toHaveLength(1);
+            expect(game.savedRuns[0].run).toMatchObject({
+                result: 'cancel',
+                dungeonHrid: DEN,
+                duration: 238_000,
+                validated: true,
+                wavesCompleted: 3,
+            });
+        });
+
+        test('with no server-stamped start, both ends are on the wall clock', async () => {
+            beTracking({ keyCountsMap: PARTY, wavesCompleted: 3 });
+
+            tracker.onChatMessage(battleStarted('Sinister Circus', '2026-08-04T10:04:00.000Z'));
+            await windowCloses();
+
+            expect(game.savedRuns).toHaveLength(1);
+            expect(game.savedRuns[0].run).toMatchObject({ result: 'cancel', duration: 5 * 60_000, validated: false });
+        });
+
+        test('the same dungeon starting again records nothing and leaves the run alone', async () => {
+            beTracking({ anchoredAt: '2026-08-04T10:00:02.000Z', keyCountsMap: PARTY, wavesCompleted: 3 });
+
+            tracker.onChatMessage(battleStarted('Chimerical Den', '2026-08-04T10:04:00.000Z'));
+            await windowCloses();
+
+            expect(tracker.isTracking).toBe(true);
+            expect(game.savedRuns).toEqual([]);
+        });
+
+        test('a party combat zone that is no dungeon still ends the run, unrecorded', async () => {
+            beTracking({ anchoredAt: '2026-08-04T10:00:02.000Z', keyCountsMap: PARTY, wavesCompleted: 3 });
+
+            tracker.onChatMessage(battleStarted('Fly', '2026-08-04T10:04:00.000Z'));
+            await windowCloses();
+
+            expect(tracker.isTracking).toBe(false);
+            expect(game.savedRuns).toEqual([]);
+        });
+
+        test('with the setting off the run ends and nothing is saved', async () => {
+            game.recordAttempts = false;
+            beTracking({ anchoredAt: '2026-08-04T10:00:02.000Z', keyCountsMap: PARTY, wavesCompleted: 3 });
+
+            tracker.onChatMessage(battleStarted('Sinister Circus', '2026-08-04T10:04:00.000Z'));
+            await windowCloses();
+
+            expect(tracker.isTracking).toBe(false);
+            expect(game.savedRuns).toEqual([]);
         });
     });
 
