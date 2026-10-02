@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Custom Tabs Clear All
+
+- Custom Tabs' toolbar gains Clear All, which removes every custom tab, on your other synced devices too. A tab made or edited afterwards on any device is kept.
+
 ### Fixes and Custom Tabs extras from the upstream sweep
 
 - Reopening action panels and market views no longer keeps old copies alive in memory, and spent timers no longer pile up during combat.
