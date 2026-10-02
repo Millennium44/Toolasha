@@ -4373,6 +4373,25 @@ describe('a dungeon displaced by "Start Now"', () => {
         expect(stored()).toBeUndefined();
     });
 
+    test('with failed runs recorded, a paused Den removed from the queue is a cancel ending at the pause', async () => {
+        game.recordAttempts = true;
+        midDen();
+        startMilkingNow();
+        await flush();
+        vi.setSystemTime(PAUSED_AT + GAP);
+
+        game.actions = [milking(), zone()];
+        tracker.onActionsUpdated({ endCharacterActions: [den({ isDone: true })] });
+        await flush();
+        vi.advanceTimersByTime(30_000);
+        await flush();
+
+        expect(tracker.isTracking).toBe(false);
+        expect(game.savedRuns).toHaveLength(1);
+        // Ended where the run stopped, not after the time spent milking
+        expect(game.savedRuns[0].run).toMatchObject({ result: 'cancel', duration: PAUSED_AT - T0, validated: false });
+    });
+
     test('the Den vanishing without a done flag while paused ends the run too', async () => {
         midDen();
         startMilkingNow();

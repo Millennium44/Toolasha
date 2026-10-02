@@ -2506,7 +2506,8 @@ class DungeonTracker {
      */
     attemptSnapshot(attempt) {
         if (!attempt || !recordingAttempts()) return null;
-        if (!this.isTracking || !this.currentRun || this.isPaused()) return null;
+        if (!this.isTracking || !this.currentRun) return null;
+        if (this.isPaused() && attempt.fromPause !== true) return null;
         // Finished and only waiting for its completion key count: a clear, not an attempt
         if (this.currentRun.awaitingKeyCount === true) return null;
         return {
@@ -2698,7 +2699,17 @@ class DungeonTracker {
      *   next waits on the write.
      */
     async resetTracking(attempt = null) {
-        const snapshot = this.attemptSnapshot(attempt);
+        // A paused run that is discarded was given up: the player put another action in front of it and
+        // then dropped or replaced it. Nothing can die while paused, so it is a cancel, ending when the
+        // run stopped (not now, which would count the time spent on the other action)
+        const snapshot = this.isPaused()
+            ? this.attemptSnapshot({
+                  result: RUN_RESULT_CANCEL,
+                  endTimestamp: this.currentRun.pausedAt,
+                  endFromServer: false,
+                  fromPause: true,
+              })
+            : this.attemptSnapshot(attempt);
         // Only a fail is final; see `holdEnd`. Held before the await below,
         // which a chat message can land inside.
         const held = snapshot !== null && snapshot.result !== RUN_RESULT_FAIL;
