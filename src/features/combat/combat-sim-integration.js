@@ -98,8 +98,7 @@ function waitForSimulatorUI() {
     timerRegistry.registerInterval(checkInterval);
 
     // Stop checking after 10 seconds
-    const stopTimeout = setTimeout(() => clearInterval(checkInterval), 10000);
-    timerRegistry.registerTimeout(stopTimeout);
+    timerRegistry.scheduleTimeout(() => clearInterval(checkInterval), 10000);
 }
 
 /**
@@ -162,11 +161,10 @@ async function importDataToSimulator(button) {
         if (!exportData) {
             button.textContent = 'Error: No character data';
             button.style.backgroundColor = '#dc3545'; // Red
-            const resetTimeout = setTimeout(() => {
+            timerRegistry.scheduleTimeout(() => {
                 button.innerHTML = 'Import from Toolasha<span style="display:none;">Import solo/group</span>';
                 button.style.backgroundColor = config.COLOR_ACCENT;
             }, 3000);
-            timerRegistry.registerTimeout(resetTimeout);
             console.error('[Toolasha Combat Sim] No export data available');
             // A bridge ownership mismatch (the GM storage fallback caught data written by a
             // different character's tab) gets a specific, actionable message; anything else
@@ -192,7 +190,7 @@ async function importDataToSimulator(button) {
         }
 
         // Small delay to let tab switch complete
-        const importTimeout = setTimeout(() => {
+        timerRegistry.scheduleTimeout(() => {
             // Step 2: Fill import field with JSON data
             const importInput = document.querySelector('input#inputSetGroupCombatAll');
             if (importInput) {
@@ -238,7 +236,7 @@ async function importDataToSimulator(button) {
             }
 
             // Step 7: Set difficulty tier
-            const difficultyTimeout = setTimeout(() => {
+            timerRegistry.scheduleTimeout(() => {
                 // Try both input and select elements
                 const difficultyElement =
                     document.querySelector('input#inputDifficulty') ||
@@ -274,7 +272,6 @@ async function importDataToSimulator(button) {
                     console.warn('[Toolasha Combat Sim] Difficulty element not found');
                 }
             }, 250); // Increased delay to ensure zone loads first
-            timerRegistry.registerTimeout(difficultyTimeout);
 
             // Step 8: Enable/disable player checkboxes
             for (let i = 0; i < 5; i++) {
@@ -300,22 +297,19 @@ async function importDataToSimulator(button) {
             // Update button status
             button.textContent = '✓ Imported';
             button.style.backgroundColor = '#28a745'; // Green
-            const successResetTimeout = setTimeout(() => {
+            timerRegistry.scheduleTimeout(() => {
                 button.innerHTML = 'Import from Toolasha<span style="display:none;">Import solo/group</span>';
                 button.style.backgroundColor = config.COLOR_ACCENT;
             }, 3000);
-            timerRegistry.registerTimeout(successResetTimeout);
         }, 100);
-        timerRegistry.registerTimeout(importTimeout);
     } catch (error) {
         console.error('[Toolasha Combat Sim] Import failed:', error);
         button.textContent = 'Import Failed';
         button.style.backgroundColor = '#dc3545'; // Red
-        const failResetTimeout = setTimeout(() => {
+        timerRegistry.scheduleTimeout(() => {
             button.innerHTML = 'Import from Toolasha<span style="display:none;">Import solo/group</span>';
             button.style.backgroundColor = config.COLOR_ACCENT;
         }, 3000);
-        timerRegistry.registerTimeout(failResetTimeout);
     }
 }
 
@@ -327,7 +321,7 @@ async function importDataToSimulator(button) {
  */
 function selectZone(zoneHrid, isDungeon) {
     if (isDungeon) {
-        const dungeonTimeout = setTimeout(() => {
+        timerRegistry.scheduleTimeout(() => {
             const selectDungeon = document.querySelector('select#selectDungeon');
             if (selectDungeon) {
                 for (let i = 0; i < selectDungeon.options.length; i++) {
@@ -339,9 +333,8 @@ function selectZone(zoneHrid, isDungeon) {
                 }
             }
         }, 100);
-        timerRegistry.registerTimeout(dungeonTimeout);
     } else {
-        const zoneTimeout = setTimeout(() => {
+        timerRegistry.scheduleTimeout(() => {
             const selectZoneEl = document.querySelector('select#selectZone');
             if (selectZoneEl) {
                 for (let i = 0; i < selectZoneEl.options.length; i++) {
@@ -353,7 +346,6 @@ function selectZone(zoneHrid, isDungeon) {
                 }
             }
         }, 100);
-        timerRegistry.registerTimeout(zoneTimeout);
     }
 }
 

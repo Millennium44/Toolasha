@@ -576,13 +576,12 @@ class RiskOfRuinUI {
         status.textContent = 'Calculating…';
         results.innerHTML = '';
 
-        const t = setTimeout(() => {
+        this.timerRegistry.scheduleTimeout(() => {
             this._compute().catch((err) => {
                 console.error('[RiskOfRuinUI] Calculation failed:', err);
                 status.textContent = 'Error during calculation.';
             });
         }, 10);
-        this.timerRegistry.registerTimeout(t);
     }
 
     async _compute() {

@@ -219,14 +219,13 @@ function checkExistingEnhancingPanel() {
     // observer's actual-ready signal (immediate if it is already attached), then lets the page
     // settle before scanning.
     const unregisterReady = domObserver.onReady('ActionPanelObserver-EnhancingCatchUp', () => {
-        const checkTimeout = setTimeout(() => {
+        timerRegistry.scheduleTimeout(() => {
             const existingPanel = document.querySelector(SELECTORS.ENHANCING_PANEL);
             if (existingPanel) {
                 handleEnhancingPanel(existingPanel);
                 registerEnhancingPanelWatcher(existingPanel);
             }
         }, 500);
-        timerRegistry.registerTimeout(checkTimeout);
     });
     unregisterHandlers.push(unregisterReady);
 }
@@ -697,7 +696,7 @@ function setupTabClickListeners(panel) {
     tabButtons.forEach((button) => {
         button.addEventListener('click', async () => {
             // Small delay to let the tab change take effect
-            const tabTimeout = setTimeout(async () => {
+            timerRegistry.scheduleTimeout(async () => {
                 const isEnhanceActive = isEnhanceTabActive(panel);
                 const existingDisplay = panel.querySelector('#mwi-enhancement-stats');
 
@@ -715,7 +714,6 @@ function setupTabClickListeners(panel) {
                     }
                 }
             }, 100);
-            timerRegistry.registerTimeout(tabTimeout);
         });
     });
 }

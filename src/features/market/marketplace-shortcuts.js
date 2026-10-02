@@ -531,7 +531,7 @@ class MarketplaceShortcuts {
         const qty = this.pendingQuantity;
         this.pendingQuantity = null;
 
-        const timeout = setTimeout(() => {
+        this.timerRegistry.scheduleTimeout(() => {
             // Nothing is written when the field cannot be identified: the
             // alternative was the old positional guess, which in a woken sell
             // modal is the price field. An unfilled quantity costs the player a
@@ -542,7 +542,6 @@ class MarketplaceShortcuts {
             nativeInputValueSetter.call(quantityInput, qty.toString());
             quantityInput.dispatchEvent(new Event('input', { bubbles: true }));
         }, 100);
-        this.timerRegistry.registerTimeout(timeout);
     }
 
     /**
@@ -565,14 +564,13 @@ class MarketplaceShortcuts {
         }
 
         // Delay to run after autofill (100ms) and quick input injection
-        const timeout = setTimeout(() => {
+        this.timerRegistry.scheduleTimeout(() => {
             const quantityInput = this.findQuantityInput(modal);
             if (quantityInput) {
                 quantityInput.focus();
                 quantityInput.select();
             }
         }, 150);
-        this.timerRegistry.registerTimeout(timeout);
     }
 
     /**
@@ -596,7 +594,7 @@ class MarketplaceShortcuts {
         if (!isMarketplaceModal) return;
 
         // Delay to let the modal fully render
-        const timeout = setTimeout(() => {
+        this.timerRegistry.scheduleTimeout(() => {
             // Skip if already injected
             if (modal.querySelector('.mwi-mp-quick-input')) return;
 
@@ -695,7 +693,6 @@ class MarketplaceShortcuts {
                 inputRow.insertAdjacentElement('afterend', row);
             }
         }, 150);
-        this.timerRegistry.registerTimeout(timeout);
     }
 
     /**
@@ -711,7 +708,7 @@ class MarketplaceShortcuts {
         const headerText = header.textContent.trim();
         if (!headerText.includes('Buy Now') && !headerText.includes('Buy Listing')) return;
 
-        const timeout = setTimeout(() => {
+        this.timerRegistry.scheduleTimeout(() => {
             if (modal.querySelector('.mwi-owned-count')) return;
 
             // Extract item HRID from the SVG icon in the modal
@@ -762,7 +759,6 @@ class MarketplaceShortcuts {
             ownedEl.innerHTML = `Owned: <span style="color: ${config.COLOR_ACCENT}; font-weight: 600;">${formatWithSeparator(count)}</span>`;
             quantityRow.insertAdjacentElement('beforebegin', ownedEl);
         }, 100);
-        this.timerRegistry.registerTimeout(timeout);
     }
 
     /**
@@ -876,7 +872,7 @@ class MarketplaceShortcuts {
             headerText.includes('Sell Listing');
         if (!isMarketplaceModal) return;
 
-        const timeout = setTimeout(() => {
+        this.timerRegistry.scheduleTimeout(() => {
             if (modal.querySelector('.mwi-mp-multiplier')) return;
 
             const priceRow = modal.querySelector('div[class*="MarketplacePanel_priceInputs"]');
@@ -902,11 +898,10 @@ class MarketplaceShortcuts {
                         return;
                     }
                     row.querySelector('div[class*="MarketplacePanel_priceDisplay"]')?.click();
-                    const wakeTimeout = setTimeout(() => {
+                    this.timerRegistry.scheduleTimeout(() => {
                         const revealed = row.querySelector('input');
                         if (revealed) apply(revealed);
                     }, 120);
-                    this.timerRegistry.registerTimeout(wakeTimeout);
                 };
 
                 const buttonContainers = row.querySelectorAll('div[class*="MarketplacePanel_buttonContainer"]');
@@ -952,7 +947,6 @@ class MarketplaceShortcuts {
                 lastContainer.insertAdjacentElement('afterend', multiplyWrapper);
             }
         }, 100);
-        this.timerRegistry.registerTimeout(timeout);
     }
 
     /**

@@ -80,7 +80,12 @@ vi.mock('./build-score-panel.js', () => ({
 vi.mock('./build-score-row.js', () => ({ readOwnScore: () => null }));
 vi.mock('../../utils/dom-observer-helpers.js', () => ({ createMutationWatcher: () => () => {} }));
 vi.mock('../../utils/timer-registry.js', () => ({
-    createTimerRegistry: () => ({ registerTimeout: () => {}, clearAll: () => {} }),
+    createTimerRegistry: () => ({
+        registerTimeout: () => {},
+        scheduleTimeout: (fn, ms) => setTimeout(fn, ms),
+        cancelTimeout: (id) => clearTimeout(id),
+        clearAll: () => {},
+    }),
 }));
 vi.mock('../../utils/floating-panel.js', () => ({ makeDraggable: () => {} }));
 vi.mock('../../utils/panel-geometry.js', () => ({

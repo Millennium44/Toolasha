@@ -711,8 +711,7 @@ class DungeonTracker {
         this.setupHibernationDetection();
 
         // Check for active dungeon on page load and try to restore state
-        const checkTimeout = setTimeout(() => this.checkForActiveDungeon(), 1000);
-        this.timerRegistry.registerTimeout(checkTimeout);
+        this.timerRegistry.scheduleTimeout(() => this.checkForActiveDungeon(), 1000);
 
         if (this.characterSwitchingHandler) {
             dataManager.off('character_switching', this.characterSwitchingHandler);
@@ -2072,8 +2071,7 @@ class DungeonTracker {
         this.saveInProgressRun();
 
         // Scan existing chat messages NOW that we're tracking (key counts message already in chat)
-        const scanTimeout = setTimeout(() => this.scanExistingChatMessages(), 100);
-        this.timerRegistry.registerTimeout(scanTimeout);
+        this.timerRegistry.scheduleTimeout(() => this.scanExistingChatMessages(), 100);
     }
 
     /**
@@ -2649,8 +2647,7 @@ class DungeonTracker {
         this.unsettledEnd = snapshot;
         if (previous && previous !== snapshot) this.flushHeldEnd(previous);
         if (!snapshot) return;
-        const timeout = setTimeout(() => this.flushHeldEnd(snapshot), UNSETTLED_END_WINDOW_MS);
-        this.timerRegistry.registerTimeout(timeout);
+        this.timerRegistry.scheduleTimeout(() => this.flushHeldEnd(snapshot), UNSETTLED_END_WINDOW_MS);
     }
 
     /**

@@ -113,12 +113,10 @@ function showProfileWarnings(button, warnings) {
 function setButtonStatus(button, label, backgroundColor) {
     button.textContent = label;
     button.style.backgroundColor = backgroundColor;
-    timerRegistry.registerTimeout(
-        setTimeout(() => {
-            button.textContent = DEFAULT_LABEL;
-            button.style.backgroundColor = config.COLOR_ACCENT;
-        }, 3000)
-    );
+    timerRegistry.scheduleTimeout(() => {
+        button.textContent = DEFAULT_LABEL;
+        button.style.backgroundColor = config.COLOR_ACCENT;
+    }, 3000);
 }
 
 function setTextareaValue(textarea, value) {

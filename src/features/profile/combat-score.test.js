@@ -85,7 +85,12 @@ vi.mock('./character-card-button.js', () => ({
 }));
 vi.mock('../../utils/dom-observer-helpers.js', () => ({ createMutationWatcher: () => () => {} }));
 vi.mock('../../utils/timer-registry.js', () => ({
-    createTimerRegistry: () => ({ registerTimeout: () => {}, clearAll: () => {} }),
+    createTimerRegistry: () => ({
+        registerTimeout: () => {},
+        scheduleTimeout: (fn, ms) => setTimeout(fn, ms),
+        cancelTimeout: (id) => clearTimeout(id),
+        clearAll: () => {},
+    }),
 }));
 vi.mock('../combat/loadout-snapshot.js', () => ({
     default: {

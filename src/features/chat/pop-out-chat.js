@@ -557,7 +557,7 @@ class PopOutChat {
         this.popoutWindow = window.open(url, 'mwi-chat-popout', features);
 
         // Defer revocation — revoking synchronously races the new window's fetch of the blob
-        this.timerRegistry.registerTimeout(setTimeout(() => URL.revokeObjectURL(url), 10000));
+        this.timerRegistry.scheduleTimeout(() => URL.revokeObjectURL(url), 10000);
 
         if (!this.popoutWindow) {
             console.error('[PopOutChat] Popup blocked by browser');
@@ -710,17 +710,15 @@ class PopOutChat {
             input.dispatchEvent(new Event('input', { bubbles: true }));
 
             // Yield to let React process the state update, then fire Enter
-            const t = setTimeout(() => {
+            this.timerRegistry.scheduleTimeout(() => {
                 input.focus();
                 input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', code: 'Enter', bubbles: true }));
             }, 0);
-            this.timerRegistry.registerTimeout(t);
         };
 
         if (tabBtn) {
             tabBtn.click();
-            const t = setTimeout(doSend, 80);
-            this.timerRegistry.registerTimeout(t);
+            this.timerRegistry.scheduleTimeout(doSend, 80);
         } else {
             doSend();
         }
