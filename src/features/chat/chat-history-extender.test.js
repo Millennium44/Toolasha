@@ -91,7 +91,7 @@ vi.mock('../../utils/profile-command.js', () => ({
     VALID_PLAYER_NAME_RE: /^[A-Za-z0-9_]+$/,
 }));
 
-import chatHistoryExtender, { tabKeyForChannel } from './chat-history-extender.js';
+import chatHistoryExtender, { liveBoundary, tabKeyForChannel } from './chat-history-extender.js';
 import chatHistoryPersistence, { CHAT_HISTORY_KEY_BASE, PUBLIC_RECORD_KEY } from './chat-history-persistence.js';
 
 const STORAGE_KEY = `${CHAT_HISTORY_KEY_BASE}_char1`;
@@ -1437,5 +1437,18 @@ describe('chat-history-extender: a rank badge beside the sender name', () => {
         expect(badge).not.toBeNull();
         badge.querySelector('use').dispatchEvent(new MouseEvent('click', { bubbles: true }));
         expect(onClick).toHaveBeenCalledTimes(1);
+    });
+});
+
+describe('liveBoundary', () => {
+    test('an oldest live line missing from the store bounds at the next live line that is stored', () => {
+        const stored = ['[1/2 10:00:00] a: old', '[1/2 10:05:00] b: live two', '[1/2 10:06:00] c: deleted later'];
+        // The first live line was deleted and never stored; the second one is
+        const live = ['[1/2 10:04:00] x: gone', '[1/2 10:05:00] b: live two'];
+        expect(liveBoundary(stored, live)).toBe(2);
+    });
+
+    test('no stored live line at all leaves the boundary unknown', () => {
+        expect(liveBoundary(['[1/2 10:00:00] a: old'], ['[1/2 10:04:00] x: gone'])).toBe(-1);
     });
 });

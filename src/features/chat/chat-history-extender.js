@@ -725,7 +725,14 @@ function identityStamp(identity) {
  * @returns {number} Count of leading `stored` lines to consider, or -1 when no live line is stored
  */
 export function liveBoundary(stored, live) {
-    return boundaryAfter(stored, live.find(Boolean));
+    // The oldest live line can be absent from the store on purpose (a deleted line is never stored), so the
+    // boundary sits on the oldest live line that IS stored; without one, nothing is known to be newer
+    for (const identity of live) {
+        if (!identity) continue;
+        const boundary = boundaryAfter(stored, identity);
+        if (boundary >= 0) return boundary;
+    }
+    return -1;
 }
 
 /**
