@@ -794,6 +794,31 @@ describe('sim export split button', () => {
             expect(stub.teamCalls).toHaveLength(0);
         });
 
+        test('a party that changed after the preview was drawn is shown again, not copied', async () => {
+            combatScore.showScorePanel(profileData(stub.currentCharacterId), scoreData, document.createElement('div'));
+            await flush();
+
+            document.querySelector('.mwi-combat-sim-party-export-option[data-name="Raid"]').click();
+            await flush();
+            // Someone joins after the preview was drawn
+            stub.partyMembers = [
+                ...stub.partyMembers,
+                {
+                    characterId: 'party-3',
+                    name: 'Newcomer',
+                    profile: {},
+                    status: { found: true, ageMs: 60 * 1000, gearless: false, stale: false },
+                    warning: null,
+                },
+            ];
+            document.querySelector('#mwi-party-export-copy-btn').click();
+            await flush();
+
+            expect(stub.teamCalls).toHaveLength(0);
+            expect(clipboardText).toBeNull();
+            expect(document.querySelector('#mwi-party-export-preview').textContent).toContain('Newcomer');
+        });
+
         test('copying exports the team for this character with the saved loadout on yourself', async () => {
             combatScore.showScorePanel(profileData(stub.currentCharacterId), scoreData, document.createElement('div'));
             await flush();

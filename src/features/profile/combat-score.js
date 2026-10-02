@@ -1669,9 +1669,23 @@ class CombatScore {
             previousCleanup?.();
         };
 
+        // The roster the preview describes; Copy re-reads the party, so a change in between must not
+        // export a different team than the one on screen
+        const rosterKey = (list) =>
+            list
+                .map((member) => String(member.characterId))
+                .sort()
+                .join(',');
+        const previewedRoster = rosterKey(members);
+
         const copyBtn = preview.querySelector('#mwi-party-export-copy-btn');
         copyBtn.addEventListener('click', async (e) => {
             e.stopPropagation();
+            if (rosterKey(describePartyProfiles(dataManager.characterData, [])) !== previewedRoster) {
+                // The party changed since the preview was drawn: show the new one instead of copying
+                await this.showPartyExportPreview(snapshotName, panel);
+                return;
+            }
             const copied = await this.handleExportFullParty(snapshotName, copyBtn, characterId);
             if (copied) {
                 const closeTimeout = setTimeout(closePreview, 1200);
