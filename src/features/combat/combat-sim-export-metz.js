@@ -264,8 +264,8 @@ export function describePartyProfiles(characterObj, profileList, now = Date.now(
     const ownerId = characterObj?.character?.id;
     const members = [];
     // The live character's `partySlotMap` is frozen at login and emptied for a whole battle, so the
-    // roster comes from dataManager (which prefers the one `new_battle` named). A bridged character
-    // (simulator page) has no live roster; its slot map is all there is.
+    // roster comes from dataManager (the newer of the last fight's and the last login payload's). A
+    // bridged character (simulator page) has no live roster; its slot map is all there is.
     const roster = isLiveCharacter(characterObj)
         ? dataManager.getPartyMembers().members
         : Object.values(characterObj?.partyInfo?.partySlotMap || {});

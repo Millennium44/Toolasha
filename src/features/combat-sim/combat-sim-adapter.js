@@ -1311,8 +1311,8 @@ export async function buildAllPlayerDTOs() {
 
     // Not `partyInfo.partySlotMap` directly: that map is frozen at page load and
     // is emptied outright mid-dungeon, so the party the user is actually in went
-    // unseen until a reload. `getPartyMembers()` prefers the roster the last
-    // battle stated and falls back to the login map. One filled slot is a solo
+    // unseen until a reload. `getPartyMembers()` takes the newer of the roster
+    // the last battle stated and the last login map that names anyone. One filled slot is a solo
     // character with the map the game always sends, and an empty map is the
     // mid-dungeon hole — both belong on the solo path, which used to produce an
     // empty player list for the latter.
