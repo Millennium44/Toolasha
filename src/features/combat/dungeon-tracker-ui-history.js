@@ -952,10 +952,6 @@ class DungeonTrackerUIHistory {
         let html = '';
 
         for (const group of groups) {
-            const avgTime = this.formatTime(group.stats.avgTime);
-            const bestTime = this.formatTime(group.stats.fastestTime);
-            const worstTime = this.formatTime(group.stats.slowestTime);
-
             // Check if this group is expanded
             // Per-group state is keyed by grouping mode + the group's own key,
             // never its display label: "Solo Runs" is the label of the solo
@@ -993,7 +989,7 @@ class DungeonTrackerUIHistory {
                                 ${this.renderGroupLabel(group)}
                             </div>
                             <div style="font-size: 10px; color: #aaa;">
-                                Runs: ${group.stats.totalRuns} | Avg: ${avgTime} | Best: ${bestTime} | Worst: ${worstTime}${this.renderAttemptSummary(group.stats)}
+                                ${this.renderGroupSummary(group.stats)}
                             </div>
                         </div>
                         <span class="mwi-dt-group-toggle" style="color: #aaa; font-size: 10px;">${toggleIcon}</span>
@@ -1078,6 +1074,21 @@ class DungeonTrackerUIHistory {
                 }
             });
         });
+    }
+
+    /**
+     * A group's summary line. Times are a clear's, so a group of failed and
+     * canceled attempts only says it has no clears rather than averaging nothing.
+     * @param {Object} stats - From `calculateStatsForRuns`
+     * @returns {string} HTML
+     */
+    renderGroupSummary(stats) {
+        const clears =
+            stats.totalRuns > 0
+                ? `Runs: ${stats.totalRuns} | Avg: ${this.formatTime(stats.avgTime)}` +
+                  ` | Best: ${this.formatTime(stats.fastestTime)} | Worst: ${this.formatTime(stats.slowestTime)}`
+                : 'No clears';
+        return clears + this.renderAttemptSummary(stats);
     }
 
     /**

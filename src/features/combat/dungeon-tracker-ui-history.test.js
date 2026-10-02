@@ -1288,6 +1288,17 @@ describe('failed and canceled attempts in the history', () => {
         expect(runList.textContent).toContain('Runs: 1 |');
     });
 
+    test('a group of attempts alone says it has no clears, with no times averaged from nothing', () => {
+        const history = new DungeonTrackerUIHistory(freshState('team'), (ms) => `${ms}ms`);
+        const runList = render(
+            history,
+            history.groupByTeam([attempt('fail', 100_000, 1), attempt('cancel', 60_000, 2)])
+        );
+
+        expect(runList.textContent).toContain('No clears | Fails: 1 (100%) | Canceled: 1');
+        expect(runList.textContent).not.toMatch(/Runs: 0|Avg:|Best:|Worst:|Per clear/);
+    });
+
     test('attempts are read from the store only while they are being recorded', async () => {
         const container = document.createElement('div');
         container.innerHTML = '<div id="mwi-dt-run-list"></div>';
