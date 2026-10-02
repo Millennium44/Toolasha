@@ -25,7 +25,11 @@ import chatHistoryPersistence, {
     senderNameFrom,
     serializeMessage,
     TAB_KEY_PREFIX,
+    tabScope,
 } from './chat-history-persistence.js';
+
+/** How long after a guild change the game's re-render of the pane is still taken for it. */
+const GUILD_SWITCH_WINDOW_MS = 3000;
 
 const STYLE_ID = 'mwi-chat-history-extender-css';
 const CSS = `
@@ -50,28 +54,63 @@ const TAB_STRIP_SELECTOR = '[class*="Chat_tabsComponentContainer"]';
 const CHAT_CONTAINER_SELECTOR = '[class*="ChatHistory_chatHistory"]';
 
 /**
- * The label part of a tab's key, namespaced by where it was read from.
- *
- * The two sources disagree about what a label looks like: channel tabs carry
- * `data-mention-channel` (`/chat_channel_types/global`), while the rest —
- * language rooms, Help, whispers — have none and are named by their button
- * text (`English`, `Help`, a player name). Namespacing rather than mixing them
- * into one flat label keeps a whisper from a player called `Help` out of the
- * Help tab's record; the channel form additionally cannot collide with a text
- * label, because a player name cannot contain `/`.
+ * A tab's label before any other tab is weighed against it beyond its channel
+ * tag: `ch:<channel>` when no other tab carries the same tag, `name:<text>`
+ * otherwise.
  *
  * The trailing-digit trim takes off the unread badge the button renders after
  * its name, which would otherwise make the key change every time a message
  * arrives.
  *
  * @param {Element} button - A tab button
- * @returns {string} The namespaced label, or '' when the button names nothing
+ * @param {Array<Element>} buttons - Every tab button in the strip
+ * @returns {string} The label, or '' when the button names nothing
  */
-function tabLabel(button) {
+function ownLabel(button, buttons) {
     const channel = button?.getAttribute?.('data-mention-channel');
-    if (channel) return `ch:${channel}`;
+    // The mention tracker names a tab's channel from its text, so a whisper with a
+    // player called `Trade` is tagged as the Trade channel too. Two tabs with one
+    // channel means one of them is not it; neither is trusted with the channel
+    // key, which is what shares a tab's history across characters.
+    const ambiguous =
+        channel && buttons.some((other) => other !== button && other.getAttribute('data-mention-channel') === channel);
+    if (channel && !ambiguous) return `ch:${channel}`;
     const text = button?.textContent?.trim().replace(/\d+$/, '').trim();
     return text ? `name:${text}` : '';
+}
+
+/**
+ * The label part of a tab's key, namespaced by where it was read from.
+ *
+ * The two sources disagree about what a label looks like: channel tabs carry
+ * `data-mention-channel` (`/chat_channel_types/global`), while the rest —
+ * language rooms, Help, whispers — have none and are named by their button
+ * text (`English`, `Help`, a player name). Namespacing rather than mixing them
+ * into one flat label keeps a whisper named like a tagged channel out of that
+ * channel's record; the channel form additionally cannot collide with a text
+ * label, because a player name cannot contain `/`.
+ *
+ * Two tabs whose labels are the same text — a whisper with a player called
+ * `Trade` beside the Trade tab, both tagged and so both falling back to their
+ * text, or a whisper with a player called `Help` beside the untagged Help tab —
+ * cannot be told apart from the strip, and nothing in the tab markup reliably
+ * marks a whisper. Neither is named, so neither is recorded or restored while
+ * both are open: one public room's history and one conversation's go
+ * unrecorded for that while, which is recoverable; a private conversation in a
+ * public room's record is not. Text is compared without case, so a name that
+ * differs from a room's only in case is treated as the same name.
+ *
+ * @param {Element} button - A tab button
+ * @param {Element|null} [strip] - The tab strip, to tell a label shared by two tabs
+ * @returns {string} The namespaced label, or '' when the button names nothing or not uniquely
+ */
+function tabLabel(button, strip = null) {
+    const buttons = strip ? [...strip.querySelectorAll('button[role="tab"]')] : [];
+    const label = ownLabel(button, buttons);
+    if (!label.startsWith('name:')) return label;
+    const folded = label.toLowerCase();
+    const shared = buttons.some((other) => other !== button && ownLabel(other, buttons).toLowerCase() === folded);
+    return shared ? '' : label;
 }
 
 /**
@@ -125,7 +164,7 @@ export function chatTabKey(containerEl) {
         // no longer means what this reads it as. Neither is a tab identity.
         if (selected.length !== 1) return null;
 
-        const label = tabLabel(selected[0]);
+        const label = tabLabel(selected[0], strip);
         if (!label) return null;
 
         const panelId = selected[0].getAttribute('aria-controls');
@@ -800,6 +839,11 @@ class ChatTabHandler {
         this._retriedRestore = false;
         /** Whether a restore has already been fired for this tab; see {@link _resolveTabKey}. */
         this.restoreStarted = false;
+        /**
+         * Until when the next batch that removes messages is a guild change's re-render, not evictions;
+         * see {@link ChatTabHandler#guildChanged}. Read by {@link ChatTabHandler#_onMutation} only.
+         */
+        this._guildSwitchUntil = 0;
         /** @type {WeakMap<Element, string|null>} Buffered node → {@link messageIdentity}, computed once */
         this.bufferIdentities = new WeakMap();
 
@@ -976,6 +1020,37 @@ class ChatTabHandler {
             }
             node.remove();
         }
+    }
+
+    /**
+     * The character's guild changed while this pane stayed mounted.
+     *
+     * The tab key does not change (it is `Guild` either way), so
+     * {@link ChatTabHandler#_resolveTabKey} sees no switch; this does what one does.
+     * The buffer holds the old guild's lines and is emptied, and the next batch that
+     * removes messages is the game replacing the old guild's chat, which must not be
+     * recorded as evictions into the new guild's key. Then the new guild's record is
+     * read and restored. The roster message may come before or after that re-render:
+     * emptying the buffer is right either way, and the window below is only spent by
+     * a batch with removals, so a roster that lands after the re-render costs at most
+     * one unrecorded eviction, at the end of the window.
+     *
+     * @param {Promise<void>} recordReady - Resolves once the new guild's record is in the working record
+     * @returns {Promise<void>}
+     */
+    async guildChanged(recordReady) {
+        const tabKey = this.tabKey;
+        if (!tabKey || tabScope(tabKey) !== 'guild' || !this.bufferEl.isConnected) return;
+        this._clearBuffer();
+        this.restoreStarted = false;
+        this._guildSwitchUntil = Date.now() + GUILD_SWITCH_WINDOW_MS;
+        try {
+            await recordReady;
+        } catch (error) {
+            console.error('[ChatHistoryExtender] Could not read the new guild record:', error);
+        }
+        if (this.tabKey !== tabKey || this.restoreStarted || !this.bufferEl.isConnected) return;
+        await this.restore(tabKey);
     }
 
     /**
@@ -1402,6 +1477,25 @@ class ChatTabHandler {
     }
 
     /**
+     * Whether a mutation batch took every line out of the pane that was there before it, and put the pane's
+     * lines back as new nodes: at least two removed and none of the old ones left. An ordinary eviction
+     * removes one line, and a tab switch is told apart by its key, not here.
+     * @param {MutationRecord[]} mutations
+     * @returns {boolean}
+     */
+    _replacesWholeBacklog(mutations) {
+        const isMessage = (node) => node.nodeType === 1 && node.className?.includes('ChatMessage_chatMessage');
+        const removed = new Set();
+        const added = new Set();
+        for (const mut of mutations) {
+            for (const node of mut.removedNodes) if (isMessage(node) && node !== this.bufferEl) removed.add(node);
+            for (const node of mut.addedNodes) if (isMessage(node)) added.add(node);
+        }
+        if (removed.size < 2) return false;
+        return this._liveMessageNodes().every((node) => added.has(node));
+    }
+
+    /**
      * Handle mutations on the chat container.
      * @param {MutationRecord[]} mutations
      */
@@ -1419,7 +1513,26 @@ class ChatTabHandler {
         // evictions would clone the outgoing tab's lines — whispers among them
         // — straight back onto the incoming tab's scrollback and into its
         // record under the incoming tab's key.
-        const switched = Boolean(previousKey) && Boolean(tabKey) && tabKey !== previousKey;
+        let switched = Boolean(previousKey) && Boolean(tabKey) && tabKey !== previousKey;
+        // A guild change replaces the pane's lines under the same key; see `guildChanged`.
+        if (this._guildSwitchUntil) {
+            const removing = mutations.some((mut) =>
+                [...mut.removedNodes].some(
+                    (node) => node.nodeType === 1 && node.className?.includes('ChatMessage_chatMessage')
+                )
+            );
+            if (Date.now() >= this._guildSwitchUntil) this._guildSwitchUntil = 0;
+            else if (removing) {
+                this._guildSwitchUntil = 0;
+                switched = true;
+            }
+        }
+        // The Guild pane dropping its whole backlog with no roster message yet is how a guild change that
+        // reached the pane first looks. From here, Guild lines are held back until the roster names the
+        // guild (see `ChatHistoryPersistence#beginGuildTransition`); the removed lines are the old guild's.
+        const guildBacklogReplaced =
+            !switched && Boolean(tabKey) && tabScope(tabKey) === 'guild' && this._replacesWholeBacklog(mutations);
+        if (guildBacklogReplaced) chatHistoryPersistence.beginGuildTransition();
         const renderedLive = new Set();
         // Before anything is recorded: the observer delivers a batch after the
         // DOM has changed, so the pane already holds the batch's new lines, and
@@ -1485,7 +1598,13 @@ class ChatTabHandler {
                             // it away again: the record is capped separately from the
                             // buffer, so a message can leave the screen and stay stored.
                             const html = serializeMessage(clone);
-                            if (html && tabKey) chatHistoryPersistence.record(tabKey, html);
+                            if (html && tabKey) {
+                                chatHistoryPersistence.record(
+                                    tabKey,
+                                    html,
+                                    guildBacklogReplaced ? { preTransition: true } : undefined
+                                );
+                            }
                         }
 
                         this._trim(maxHistory);
@@ -1541,6 +1660,8 @@ class ChatHistoryExtender {
         this.deletedIds = null;
         this._onChatMessageReceived = null;
         this._onChatMessageUpdated = null;
+        /** @type {Function|null} The `guild_characters_updated` listener */
+        this._onGuildCharacters = null;
         this._onPageLeaving = null;
         this._onVisibilityChange = null;
         /** @type {Function|null} Unsubscribes the pre-teardown flush */
@@ -1574,6 +1695,19 @@ class ChatHistoryExtender {
         webSocketHook.on('chat_message_received', this._onChatMessageReceived);
         this._onChatMessageUpdated = (data) => this._handleMessageUpdated(data?.message);
         webSocketHook.on('chat_message_updated', this._onChatMessageUpdated);
+        // The guild's chat lives in that guild's record; the login's copy of the
+        // character does not follow a guild change, the roster does.
+        this._onGuildCharacters = (data) => {
+            if (!chatHistoryPersistence.noteGuildRoster(data?.guildCharacterMap)) return;
+            // The same pane now shows another guild's chat; see `ChatTabHandler#guildChanged`.
+            const recordReady = chatHistoryPersistence.loadGuildRecord();
+            for (const handler of [...this.activeHandlers]) {
+                handler.guildChanged(recordReady).catch((error) => {
+                    console.error('[ChatHistoryExtender] Guild change restore failed:', error);
+                });
+            }
+        };
+        webSocketHook.on('guild_characters_updated', this._onGuildCharacters);
 
         // Recording is coalesced for a few seconds; these are the moments that
         // window has to be closed early. A socket closing is how a server
@@ -1718,6 +1852,7 @@ class ChatHistoryExtender {
             // check would keep treating it as deleted regardless.
             this.deletedIds?.remove(message.id);
             this.messageIds?.markUndeleted(message.id);
+            if (message.chan) chatHistoryPersistence.forgetDeletion(tabKeyForChannel(message.chan), message.id);
             for (const handler of this.activeHandlers) {
                 const live = handler.findLiveMessageNode(key);
                 if (live) delete live.dataset.mwiSkipStore;
@@ -1802,6 +1937,10 @@ class ChatHistoryExtender {
             if (this._onChatMessageUpdated) {
                 webSocketHook.off('chat_message_updated', this._onChatMessageUpdated);
                 this._onChatMessageUpdated = null;
+            }
+            if (this._onGuildCharacters) {
+                webSocketHook.off('guild_characters_updated', this._onGuildCharacters);
+                this._onGuildCharacters = null;
             }
             if (this._onPageLeaving) {
                 window.removeEventListener('pagehide', this._onPageLeaving);

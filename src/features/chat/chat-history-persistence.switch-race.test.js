@@ -45,6 +45,13 @@ vi.mock('../../core/storage.js', () => ({
             storageMock.stored[key] = JSON.parse(JSON.stringify(value));
             return true;
         },
+        update: async (key, mutate) => {
+            const found = key in storageMock.stored;
+            const next = mutate(found ? JSON.parse(JSON.stringify(storageMock.stored[key])) : undefined, found);
+            if (next === undefined) return { written: false, value: storageMock.stored[key] };
+            storageMock.stored[key] = JSON.parse(JSON.stringify(next));
+            return { written: true, value: next };
+        },
         isQuotaExceeded: () => false,
         onBeforeTeardown: () => () => {},
     },

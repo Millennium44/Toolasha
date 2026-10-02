@@ -67,6 +67,18 @@ vi.mock('../../core/storage.js', () => ({
             db[store][key] = JSON.parse(JSON.stringify(value));
             return true;
         }),
+        // The real one is one readwrite transaction: nothing lands between its
+        // read and its write. After `closeForTeardown()` it refuses.
+        update: vi.fn(async (key, mutate, store) => {
+            if (db.closing) return null;
+            db[store] = db[store] || {};
+            const found = Object.prototype.hasOwnProperty.call(db[store], key);
+            const next = mutate(found ? JSON.parse(JSON.stringify(db[store][key])) : undefined, found);
+            if (next === undefined) return { written: false, value: db[store][key] };
+            db.writes += 1;
+            db[store][key] = JSON.parse(JSON.stringify(next));
+            return { written: true, value: JSON.parse(JSON.stringify(next)) };
+        }),
         isQuotaExceeded: vi.fn(() => db.quota),
         onBeforeTeardown: vi.fn((listener) => {
             db.teardown.add(listener);
@@ -118,6 +130,7 @@ import chatHistoryPersistence, {
     MAX_MESSAGES_PER_TAB,
     MAX_TOTAL_CHARS,
     parseStoredMessage,
+    PUBLIC_RECORD_KEY,
     rewireRestoredMessage,
     serializeMessage,
 } from './chat-history-persistence.js';
@@ -136,7 +149,7 @@ const STORAGE_KEY = `${CHAT_HISTORY_KEY_BASE}_char1`;
  * @param {number} selected - Index of the open tab
  * @returns {Array<Element>} The open tab's container, as a one-element array
  */
-function buildChat(tabNames = ['General'], selected = 0) {
+function buildChat(tabNames = ['Local'], selected = 0) {
     document.body.innerHTML = '<div id="root"><div class="Chat_tabsComponentContainer__x"></div></div>';
     const strip = document.querySelector('.Chat_tabsComponentContainer__x');
     tabNames.forEach((name, index) => {
@@ -220,7 +233,7 @@ describe('chat history persistence', () => {
     });
 
     test('messages survive a simulated reload, in order', async () => {
-        const [container] = buildChat(['General']);
+        const [container] = buildChat(['Local']);
         const first = makeMessage('[1/2 10:00:00] first');
         const second = makeMessage('[1/2 10:00:01] second');
         container.append(first, second);
@@ -239,7 +252,7 @@ describe('chat history persistence', () => {
         // disable, and so does this: the next session reads after it lands.
         await chatHistoryExtender.disable();
         chatHistoryPersistence.reset();
-        const [reloaded] = buildChat(['General']);
+        const [reloaded] = buildChat(['Local']);
         chatHistoryExtender.initialize();
         await settle();
 
@@ -249,7 +262,7 @@ describe('chat history persistence', () => {
     });
 
     test('a restored item link navigates through this script’s own helper', async () => {
-        const [container] = buildChat(['General']);
+        const [container] = buildChat(['Local']);
         const message = makeItemMessage('cheese');
         container.appendChild(message);
 
@@ -260,7 +273,7 @@ describe('chat history persistence', () => {
 
         await chatHistoryExtender.disable();
         chatHistoryPersistence.reset();
-        const [reloaded] = buildChat(['General']);
+        const [reloaded] = buildChat(['Local']);
         chatHistoryExtender.initialize();
         await settle();
 
@@ -296,7 +309,7 @@ describe('chat history persistence', () => {
     });
 
     test('whisper and private tabs are persisted too — the maintainer’s explicit choice', async () => {
-        const [pane] = buildChat(['General', 'Whispers'], 1);
+        const [pane] = buildChat(['Local', 'Whispers'], 1);
         expect(chatTabKey(pane)).toBe('tab2:name:Whispers');
 
         const secret = makeMessage('[1/2 10:00:00] Alice: meet me at the tower');
@@ -306,8 +319,8 @@ describe('chat history persistence', () => {
         await settle();
         await evict(pane, secret);
 
-        // The same pane, now showing General — the game reuses the node. The
-        // switch itself is its own mutation batch; what General evicts after it
+        // The same pane, now showing Local — the game reuses the node. The
+        // switch itself is its own mutation batch; what Local evicts after it
         // is an eviction like any other.
         selectTab(0);
         const public_ = makeMessage('[1/2 10:00:00] hello');
@@ -317,19 +330,19 @@ describe('chat history persistence', () => {
         await chatHistoryPersistence.flush();
 
         const stored = db.settings[STORAGE_KEY];
-        expect(Object.keys(stored.tabs).sort()).toEqual(['tab2:name:General', 'tab2:name:Whispers']);
+        expect(Object.keys(stored.tabs).sort()).toEqual(['tab2:name:Local', 'tab2:name:Whispers']);
         expect(stored.tabs['tab2:name:Whispers'][0]).toContain('meet me at the tower');
-        expect(stored.tabs['tab2:name:General'][0]).not.toContain('meet me at the tower');
+        expect(stored.tabs['tab2:name:Local'][0]).not.toContain('meet me at the tower');
     });
 
     test('caps trim oldest-first and hold the write bounded', () => {
         // Message cap: the newest survive, the oldest go.
         const tabs = {
-            'tab2:name:General': Array.from({ length: MAX_MESSAGES_PER_TAB + 20 }, (_, i) => `<div>${i}</div>`),
+            'tab2:name:Local': Array.from({ length: MAX_MESSAGES_PER_TAB + 20 }, (_, i) => `<div>${i}</div>`),
         };
         applyCaps(tabs, MAX_MESSAGES_PER_TAB);
-        expect(tabs['tab2:name:General']).toHaveLength(MAX_MESSAGES_PER_TAB);
-        expect(tabs['tab2:name:General'][0]).toBe('<div>20</div>');
+        expect(tabs['tab2:name:Local']).toHaveLength(MAX_MESSAGES_PER_TAB);
+        expect(tabs['tab2:name:Local'][0]).toBe('<div>20</div>');
 
         // Byte cap: many tabs of large messages, each within the message cap and
         // the per-tab count, still may not add up past the total.
@@ -361,11 +374,11 @@ describe('chat history persistence', () => {
         db.settings[STORAGE_KEY] = {
             v: 1,
             savedAt: 1,
-            tabs: { 'tab2:name:General': ['<div class="ChatMessage_chatMessage__z">old</div>'] },
+            tabs: { 'tab2:name:Local': ['<div class="ChatMessage_chatMessage__z">old</div>'] },
         };
         settingValues.chatHistoryExtender = false;
 
-        const [container] = buildChat(['General']);
+        const [container] = buildChat(['Local']);
         const message = makeMessage('[1/2 10:00:00] hello');
         container.appendChild(message);
 
@@ -381,7 +394,7 @@ describe('chat history persistence', () => {
     });
 
     test('the record is keyed per character and under the device-local prefix', async () => {
-        const [container] = buildChat(['General']);
+        const [container] = buildChat(['Local']);
         const message = makeMessage('[1/2 10:00:00] hello');
         container.appendChild(message);
 
@@ -400,15 +413,11 @@ describe('chat history persistence', () => {
             v: 1,
             savedAt: 1,
             tabs: {
-                'tab2:name:General': [
-                    '',
-                    'not markup at all',
-                    '<div class="ChatMessage_chatMessage__z">survivor</div>',
-                ],
+                'tab2:name:Local': ['', 'not markup at all', '<div class="ChatMessage_chatMessage__z">survivor</div>'],
             },
         };
 
-        const [container] = buildChat(['General']);
+        const [container] = buildChat(['Local']);
         chatHistoryExtender.initialize();
         await settle();
 
@@ -421,10 +430,10 @@ describe('chat history persistence', () => {
         db.settings[STORAGE_KEY] = {
             v: 1,
             savedAt: 1,
-            tabs: { 'tab2:name:General': ['<div class="ChatMessage_chatMessage__z">older</div>'] },
+            tabs: { 'tab2:name:Local': ['<div class="ChatMessage_chatMessage__z">older</div>'] },
         };
 
-        const [container] = buildChat(['General']);
+        const [container] = buildChat(['Local']);
         const fresh = makeMessage('newer');
         container.appendChild(fresh);
 
@@ -521,17 +530,17 @@ describe('restored markup cannot execute or phone home', () => {
 
 describe('a corrupt record costs its own contents and nothing else', () => {
     test('applyCaps drops entries that are not strings rather than throwing', () => {
-        const tabs = { 'tab2:name:General': ['<div>ok</div>', null, 7, undefined, '<div>also ok</div>'] };
+        const tabs = { 'tab2:name:Local': ['<div>ok</div>', null, 7, undefined, '<div>also ok</div>'] };
         expect(() => applyCaps(tabs, MAX_MESSAGES_PER_TAB)).not.toThrow();
-        expect(tabs['tab2:name:General']).toEqual(['<div>ok</div>', '<div>also ok</div>']);
+        expect(tabs['tab2:name:Local']).toEqual(['<div>ok</div>', '<div>also ok</div>']);
     });
 
     test('a load over such a record still resolves, and recording still works', async () => {
-        db.settings[STORAGE_KEY] = { v: 1, savedAt: 1, tabs: { 'tab2:name:General': [null, '<div>kept</div>'] } };
+        db.settings[STORAGE_KEY] = { v: 1, savedAt: 1, tabs: { 'tab2:name:Local': [null, '<div>kept</div>'] } };
         chatHistoryPersistence.enable(() => MAX_MESSAGES_PER_TAB);
 
-        await expect(chatHistoryPersistence.load()).resolves.toEqual({ 'tab2:name:General': ['<div>kept</div>'] });
-        expect(() => chatHistoryPersistence.record('tab2:name:General', '<div>new</div>')).not.toThrow();
+        await expect(chatHistoryPersistence.load()).resolves.toEqual({ 'tab2:name:Local': ['<div>kept</div>'] });
+        expect(() => chatHistoryPersistence.record('tab2:name:Local', '<div>new</div>')).not.toThrow();
     });
 });
 
@@ -632,11 +641,11 @@ describe('tab identity is a name, never a position', () => {
                 'tab:/chat_channel_types/global': [
                     '<div class="ChatMessage_chatMessage__z">Bob whispers: the vault code is 1234</div>',
                 ],
-                'tab2:name:General': ['<div class="ChatMessage_chatMessage__z">hello</div>'],
+                'tab2:name:Local': ['<div class="ChatMessage_chatMessage__z">hello</div>'],
             },
         };
 
-        const [general] = buildChat(['General']);
+        const [general] = buildChat(['Local']);
         chatHistoryExtender.initialize();
         await settle();
 
@@ -649,17 +658,17 @@ describe('tab identity is a name, never a position', () => {
 
         // And they are gone from the record, not merely unread this session
         await chatHistoryPersistence.flush();
-        expect(Object.keys(db.settings[STORAGE_KEY].tabs)).toEqual(['tab2:name:General']);
+        expect(Object.keys(db.settings[STORAGE_KEY].tabs)).toEqual(['tab2:name:Local']);
     });
 
     test('the discard is a format test, so a second run cannot eat what the first left', async () => {
         db.settings[STORAGE_KEY] = {
             v: 1,
             savedAt: 1,
-            tabs: { 'tab:General': ['<div class="ChatMessage_chatMessage__z">mixed</div>'] },
+            tabs: { 'tab:Local': ['<div class="ChatMessage_chatMessage__z">mixed</div>'] },
         };
 
-        const [container] = buildChat(['General']);
+        const [container] = buildChat(['Local']);
         chatHistoryExtender.initialize();
         await settle();
         await evict(
@@ -671,17 +680,17 @@ describe('tab identity is a name, never a position', () => {
             })()
         );
         await chatHistoryPersistence.flush();
-        expect(Object.keys(db.settings[STORAGE_KEY].tabs)).toEqual(['tab2:name:General']);
+        expect(Object.keys(db.settings[STORAGE_KEY].tabs)).toEqual(['tab2:name:Local']);
 
         // Reload onto the record the first run left behind: nothing more goes.
         await chatHistoryExtender.disable();
         chatHistoryPersistence.reset();
-        const [reloaded] = buildChat(['General']);
+        const [reloaded] = buildChat(['Local']);
         chatHistoryExtender.initialize();
         await settle();
         await chatHistoryPersistence.flush();
 
-        expect(db.settings[STORAGE_KEY].tabs['tab2:name:General']).toHaveLength(1);
+        expect(db.settings[STORAGE_KEY].tabs['tab2:name:Local']).toHaveLength(1);
         expect(reloaded.textContent).toContain('kept');
     });
 
@@ -694,7 +703,7 @@ describe('tab identity is a name, never a position', () => {
             },
         };
 
-        buildChat(['General', 'Party']);
+        buildChat(['Local', 'Party']);
         chatHistoryExtender.initialize();
         await settle();
 
@@ -798,7 +807,7 @@ describe('a restored message’s sender name opens the profile', () => {
     const senderOf = (root) => root.querySelector('[class*="ChatMessage_name"]');
 
     test('a name saved this session comes back clickable', async () => {
-        const [container] = buildChat(['General']);
+        const [container] = buildChat(['Local']);
         const message = senderMessage('Spice');
         container.appendChild(message);
 
@@ -809,7 +818,7 @@ describe('a restored message’s sender name opens the profile', () => {
 
         await chatHistoryExtender.disable();
         chatHistoryPersistence.reset();
-        const [reloaded] = buildChat(['General']);
+        const [reloaded] = buildChat(['Local']);
         chatHistoryExtender.initialize();
         await settle();
 
@@ -825,10 +834,10 @@ describe('a restored message’s sender name opens the profile', () => {
         // an older version, carrying no attribute this code could have put
         // there. It still restores clickable, which is what makes the backfill
         // free — no migration, no record-version bump.
-        db.settings[STORAGE_KEY] = { v: 1, savedAt: 1, tabs: { 'tab2:name:General': [senderHTML('Millennium')] } };
-        expect(db.settings[STORAGE_KEY].tabs['tab2:name:General'][0]).not.toContain('data-mwi');
+        db.settings[STORAGE_KEY] = { v: 1, savedAt: 1, tabs: { 'tab2:name:Local': [senderHTML('Millennium')] } };
+        expect(db.settings[STORAGE_KEY].tabs['tab2:name:Local'][0]).not.toContain('data-mwi');
 
-        const [container] = buildChat(['General']);
+        const [container] = buildChat(['Local']);
         chatHistoryExtender.initialize();
         await settle();
 
@@ -1004,6 +1013,76 @@ describe('a chat tab is named by the tab that is open', () => {
         expect(chatTabKey(container)).not.toBe('tab2:ch:/chat_channel_types/global');
     });
 
+    test('a whisper the mention tracker tagged as a channel is not keyed as that channel', () => {
+        // The mention tracker tags a tab by its text, so a whisper with a player
+        // called Trade carries the Trade channel's tag as well.
+        const container = buildLiveChat('/chat_channel_types/trade');
+        openChannelTab('nothing');
+        const strip = document.querySelector('.Chat_tabsComponentContainer__x');
+        const whisper = document.createElement('button');
+        whisper.setAttribute('role', 'tab');
+        whisper.setAttribute('aria-selected', 'true');
+        whisper.setAttribute('data-mention-channel', '/chat_channel_types/trade');
+        whisper.textContent = 'Trade';
+        strip.appendChild(whisper);
+
+        // Two tabs with one channel: neither gets the channel key, which is the one that is shared. Both would
+        // fall back to the text `Trade`, which cannot tell them apart either, so neither is named at all.
+        expect(chatTabKey(container)).toBeNull();
+        openChannelTab('/chat_channel_types/trade');
+        whisper.setAttribute('aria-selected', 'false');
+        expect(chatTabKey(container)).toBeNull();
+
+        // Once the whisper closes, the Trade tab is the channel again.
+        whisper.remove();
+        expect(chatTabKey(container)).toBe('tab2:ch:/chat_channel_types/trade');
+    });
+
+    test('two untagged tabs with the same text are neither named, so a whisper never shares a room’s record', () => {
+        // A whisper with a player called Help beside the Help room: neither carries a channel tag.
+        const container = buildLiveChat('/chat_channel_types/global');
+        openChannelTab('nothing');
+        const strip = document.querySelector('.Chat_tabsComponentContainer__x');
+        const help = document.createElement('button');
+        help.setAttribute('role', 'tab');
+        help.setAttribute('aria-selected', 'true');
+        help.textContent = 'Help';
+        strip.appendChild(help);
+        expect(chatTabKey(container)).toBe('tab2:name:Help');
+
+        const whisper = document.createElement('button');
+        whisper.setAttribute('role', 'tab');
+        whisper.setAttribute('aria-selected', 'false');
+        whisper.textContent = 'help 2';
+        strip.appendChild(whisper);
+        expect(chatTabKey(container)).toBeNull();
+        help.setAttribute('aria-selected', 'false');
+        whisper.setAttribute('aria-selected', 'true');
+        expect(chatTabKey(container)).toBeNull();
+    });
+
+    test('a name-keyed tab, a whisper with a player called Trade, is kept in the character record', async () => {
+        const container = buildLiveChat('/chat_channel_types/trade');
+        openChannelTab('nothing');
+        const strip = document.querySelector('.Chat_tabsComponentContainer__x');
+        const whisper = document.createElement('button');
+        whisper.setAttribute('role', 'tab');
+        whisper.setAttribute('aria-selected', 'true');
+        whisper.textContent = 'Trade';
+        strip.appendChild(whisper);
+        const key = chatTabKey(container);
+        expect(key).toBe('tab2:name:Trade');
+
+        chatHistoryPersistence.enable(() => 150);
+        await chatHistoryPersistence.load();
+        chatHistoryPersistence.record(key, '<div class="ChatMessage_chatMessage__x">[1/2 10:00:00] Trade: psst</div>');
+        await chatHistoryPersistence.flush();
+
+        expect(db.settings[STORAGE_KEY].tabs[key]).toHaveLength(1);
+        expect(db.settings[PUBLIC_RECORD_KEY]).toBeUndefined();
+        chatHistoryPersistence.reset();
+    });
+
     test('the unread badge on a tab button does not change its key', () => {
         const container = buildLiveChat('/chat_channel_types/global');
         openChannelTab('nothing');
@@ -1055,6 +1134,12 @@ describe('a chat tab is named by the tab that is open', () => {
                 'tab2:ch:/chat_channel_types/party': [
                     '<div class="ChatMessage_chatMessage__z">Alice: meet me at the tower</div>',
                 ],
+            },
+        };
+        db.settings[PUBLIC_RECORD_KEY] = {
+            v: 1,
+            savedAt: 1,
+            tabs: {
                 'tab2:ch:/chat_channel_types/trade': ['<div class="ChatMessage_chatMessage__z">selling cheese</div>'],
             },
         };
@@ -1078,11 +1163,10 @@ describe('a chat tab is named by the tab that is open', () => {
         expect(container.textContent).toContain('selling cheese');
 
         await chatHistoryPersistence.flush();
-        const stored = db.settings[STORAGE_KEY].tabs;
-        expect(stored['tab2:ch:/chat_channel_types/trade']).toEqual([
+        expect(db.settings[PUBLIC_RECORD_KEY].tabs['tab2:ch:/chat_channel_types/trade']).toEqual([
             '<div class="ChatMessage_chatMessage__z">selling cheese</div>',
         ]);
-        expect(JSON.stringify(stored)).not.toContain('bring the key');
+        expect(JSON.stringify(db.settings)).not.toContain('bring the key');
     });
 });
 
@@ -1137,7 +1221,9 @@ describe('message identity: extractStoredMessageId and purgeMessageById', () => 
         expect(chatHistoryPersistence.tabs[tabKey][0]).toContain('second');
 
         await chatHistoryPersistence.flush();
-        expect(db.settings[STORAGE_KEY].tabs[tabKey]).toHaveLength(1);
+        // Trade is a public channel: its record is the shared one, which keeps the deletion as a tombstone.
+        expect(db.settings[PUBLIC_RECORD_KEY].tabs[tabKey]).toHaveLength(1);
+        expect(db.settings[PUBLIC_RECORD_KEY].deleted).toEqual(['1']);
     });
 
     test('purging the last message in a tab drops the tab entirely', async () => {
@@ -1449,14 +1535,14 @@ describe('messages that were only ever live survive a server restart', () => {
     }
 
     /** A second tab's history on disk, which a partial write would wipe out. */
-    const TRADE_KEY = tabKeyForChannel('/chat_channel_types/trade');
-    const TRADE_LINE = '[9/26 9:00:00 AM] Bob: selling cheese';
-    function seedTradeHistory() {
-        db.settings[STORAGE_KEY].tabs[TRADE_KEY] = [`<div class="ChatMessage_chatMessage__z">${TRADE_LINE}</div>`];
+    const WHISPER_KEY = tabKeyForChannel('/chat_channel_types/whisper');
+    const WHISPER_LINE = '[9/26 9:00:00 AM] Bob: see you at the tower';
+    function seedWhisperHistory() {
+        db.settings[STORAGE_KEY].tabs[WHISPER_KEY] = [`<div class="ChatMessage_chatMessage__z">${WHISPER_LINE}</div>`];
     }
 
     test('a disable while the first read is still open never replaces the record with the live backlog', async () => {
-        seedTradeHistory();
+        seedWhisperHistory();
         const release = holdNextRead();
 
         // The pane already shows lines when the handler attaches; they are
@@ -1472,17 +1558,17 @@ describe('messages that were only ever live survive a server restart', () => {
         await settle();
 
         expect(storedTexts()).toEqual([OLD, JOINED, RUNS[0]]);
-        expect(storedTexts(TRADE_KEY)).toEqual([TRADE_LINE]);
+        expect(storedTexts(WHISPER_KEY)).toEqual([WHISPER_LINE]);
 
         // The held read finally lands on a torn-down instance: nothing changes.
         release();
         await settle();
         expect(storedTexts()).toEqual([OLD, JOINED, RUNS[0]]);
-        expect(storedTexts(TRADE_KEY)).toEqual([TRADE_LINE]);
+        expect(storedTexts(WHISPER_KEY)).toEqual([WHISPER_LINE]);
     });
 
     test('a page hide or socket close while the first read is open merges with disk, then the load merges too', async () => {
-        seedTradeHistory();
+        seedWhisperHistory();
         const release = holdNextRead();
 
         const container = buildPartyChat();
@@ -1494,7 +1580,7 @@ describe('messages that were only ever live survive a server restart', () => {
         webSocketHook.emitSocketEvent('close', {}, null);
         await settle();
         expect(storedTexts()).toEqual([OLD, JOINED]);
-        expect(storedTexts(TRADE_KEY)).toEqual([TRADE_LINE]);
+        expect(storedTexts(WHISPER_KEY)).toEqual([WHISPER_LINE]);
 
         container.appendChild(makeMessage(RUNS[0]));
         await settle();
@@ -1502,13 +1588,13 @@ describe('messages that were only ever live survive a server restart', () => {
         await settle();
         await chatHistoryPersistence.flush();
         expect(storedTexts()).toEqual([OLD, JOINED, RUNS[0]]);
-        expect(storedTexts(TRADE_KEY)).toEqual([TRADE_LINE]);
+        expect(storedTexts(WHISPER_KEY)).toEqual([WHISPER_LINE]);
     });
 
     test('the coalescing timer never writes before the first read has merged', async () => {
         vi.useFakeTimers();
         try {
-            seedTradeHistory();
+            seedWhisperHistory();
             const release = holdNextRead();
 
             const container = buildPartyChat();
@@ -1524,14 +1610,14 @@ describe('messages that were only ever live survive a server restart', () => {
             await settle();
             await vi.advanceTimersByTimeAsync(10000);
             expect(storedTexts()).toEqual([OLD, JOINED]);
-            expect(storedTexts(TRADE_KEY)).toEqual([TRADE_LINE]);
+            expect(storedTexts(WHISPER_KEY)).toEqual([WHISPER_LINE]);
         } finally {
             vi.useRealTimers();
         }
     });
 
     test('a read that never comes back never lets a write through', async () => {
-        seedTradeHistory();
+        seedWhisperHistory();
         storage.tryGet.mockImplementation(() => new Promise(() => {}));
         try {
             const container = buildPartyChat();
@@ -1545,7 +1631,7 @@ describe('messages that were only ever live survive a server restart', () => {
 
             expect(storage.set).not.toHaveBeenCalled();
             expect(storedTexts()).toEqual([OLD]);
-            expect(storedTexts(TRADE_KEY)).toEqual([TRADE_LINE]);
+            expect(storedTexts(WHISPER_KEY)).toEqual([WHISPER_LINE]);
         } finally {
             storage.tryGet.mockReset();
             storage.tryGet.mockImplementation(async (key, store) => readDb(key, store));
@@ -1556,7 +1642,7 @@ describe('messages that were only ever live survive a server restart', () => {
     // connection with the default — indistinguishable from "nothing stored".
     // `tryGet` answers those with null, and null has to mean "do not write".
     test('an unreadable first read is not an empty record: nothing is written until a read works', async () => {
-        seedTradeHistory();
+        seedWhisperHistory();
         storage.tryGet.mockResolvedValue(null);
         try {
             const container = buildPartyChat();
@@ -1572,7 +1658,7 @@ describe('messages that were only ever live survive a server restart', () => {
             await settle();
             expect(storage.set).not.toHaveBeenCalled();
             expect(storedTexts()).toEqual([OLD]);
-            expect(storedTexts(TRADE_KEY)).toEqual([TRADE_LINE]);
+            expect(storedTexts(WHISPER_KEY)).toEqual([WHISPER_LINE]);
         } finally {
             storage.tryGet.mockReset();
             storage.tryGet.mockImplementation(async (key, store) => readDb(key, store));
@@ -1582,7 +1668,7 @@ describe('messages that were only ever live survive a server restart', () => {
         window.dispatchEvent(new Event('pagehide'));
         await settle();
         expect(storedTexts()).toEqual([OLD, JOINED]);
-        expect(storedTexts(TRADE_KEY)).toEqual([TRADE_LINE]);
+        expect(storedTexts(WHISPER_KEY)).toEqual([WHISPER_LINE]);
     });
 
     test('a page close lands the waiting lines before the teardown closes storage', async () => {
@@ -1690,8 +1776,11 @@ describe('messages that were only ever live survive a server restart', () => {
     });
 
     test('an unreadable merge read writes nothing, even on the way out', async () => {
-        seedTradeHistory();
+        seedWhisperHistory();
         const release = holdNextRead();
+        // The load also reads the public record, which answers; the merge's own
+        // read of the character's record is the one that cannot be made.
+        storage.tryGet.mockImplementationOnce(async (key, store) => readDb(key, store));
         storage.tryGet.mockResolvedValueOnce(null);
 
         const container = buildPartyChat();
@@ -1707,7 +1796,7 @@ describe('messages that were only ever live survive a server restart', () => {
         await settle();
         expect(storage.set).not.toHaveBeenCalled();
         expect(storedTexts()).toEqual([OLD]);
-        expect(storedTexts(TRADE_KEY)).toEqual([TRADE_LINE]);
+        expect(storedTexts(WHISPER_KEY)).toEqual([WHISPER_LINE]);
     });
 
     test('a write storage refuses leaves the record waiting, so the next flush retries it', async () => {
@@ -1927,7 +2016,7 @@ describe('a rank badge beside a sender name', () => {
     });
 
     test('a line seen unbadged and then evicted with a badge is stored once', async () => {
-        const [container] = buildChat(['General']);
+        const [container] = buildChat(['Local']);
         chatHistoryExtender.initialize();
         await settle();
 
@@ -1939,16 +2028,16 @@ describe('a rank badge beside a sender name', () => {
         await evict(container, message);
         await chatHistoryPersistence.flush();
 
-        expect(db.settings[STORAGE_KEY].tabs['tab2:name:General']).toHaveLength(1);
+        expect(db.settings[STORAGE_KEY].tabs['tab2:name:Local']).toHaveLength(1);
     });
 
     test('a restored record carries no stale badge and its name is still clickable', async () => {
         db.settings[STORAGE_KEY] = {
             v: 1,
             savedAt: 1,
-            tabs: { 'tab2:name:General': [addBadge(line('Spice'), 12).outerHTML] },
+            tabs: { 'tab2:name:Local': [addBadge(line('Spice'), 12).outerHTML] },
         };
-        const [container] = buildChat(['General']);
+        const [container] = buildChat(['Local']);
         chatHistoryExtender.initialize();
         await settle();
 
@@ -1959,8 +2048,8 @@ describe('a rank badge beside a sender name', () => {
     });
 
     test('a click on a badge the badge module redraws on a restored line opens the profile', async () => {
-        db.settings[STORAGE_KEY] = { v: 1, savedAt: 1, tabs: { 'tab2:name:General': [lineHTML('Spice')] } };
-        const [container] = buildChat(['General']);
+        db.settings[STORAGE_KEY] = { v: 1, savedAt: 1, tabs: { 'tab2:name:Local': [lineHTML('Spice')] } };
+        const [container] = buildChat(['Local']);
         chatHistoryExtender.initialize();
         await settle();
 
@@ -2227,7 +2316,7 @@ describe('the cap counts lines older than the game’s live backlog', () => {
             (el) => el.textContent
         );
     const html = (i) => `<div class="ChatMessage_chatMessage__z">${line(i)}</div>`;
-    const KEY = 'tab2:name:General';
+    const KEY = 'tab2:name:Local';
 
     beforeEach(() => {
         settingValues.chatHistoryExtender = true;
@@ -2247,7 +2336,7 @@ describe('the cap counts lines older than the game’s live backlog', () => {
     });
 
     test('a reload restores the full cap of older lines even though LIVE lines are still on screen', async () => {
-        const [container] = buildChat(['General']);
+        const [container] = buildChat(['Local']);
         const nodes = Array.from({ length: CAP + LIVE }, (_, i) => makeMessage(line(i)));
         container.append(...nodes);
         chatHistoryExtender.initialize();
@@ -2260,7 +2349,7 @@ describe('the cap counts lines older than the game’s live backlog', () => {
 
         await chatHistoryExtender.disable();
         chatHistoryPersistence.reset();
-        const [reloaded] = buildChat(['General']);
+        const [reloaded] = buildChat(['Local']);
         reloaded.append(...nodes.slice(CAP).map((n) => makeMessage(n.textContent)));
         chatHistoryExtender.initialize();
         await settle();
@@ -2275,7 +2364,7 @@ describe('the cap counts lines older than the game’s live backlog', () => {
             tabs: { [KEY]: Array.from({ length: CAP + LIVE }, (_, i) => html(i)) },
             live: { [KEY]: LIVE },
         };
-        const [container] = buildChat(['General']);
+        const [container] = buildChat(['Local']);
         chatHistoryExtender.initialize();
         await settle();
 
@@ -2295,7 +2384,7 @@ describe('the cap counts lines older than the game’s live backlog', () => {
             tabs: { [KEY]: Array.from({ length: CAP + LIVE }, (_, i) => html(i)) },
             live: { [KEY]: LIVE },
         };
-        const [container] = buildChat(['General']);
+        const [container] = buildChat(['Local']);
         container.append(...Array.from({ length: LIVE }, (_, i) => makeMessage(line(CAP + i))));
         chatHistoryExtender.initialize();
         await settle();
@@ -2318,7 +2407,7 @@ describe('the cap counts lines older than the game’s live backlog', () => {
             tabs: { [KEY]: Array.from({ length: CAP + LIVE }, (_, i) => html(i)) },
             live: { [KEY]: LIVE },
         };
-        const [container] = buildChat(['General', 'Other'], 1);
+        const [container] = buildChat(['Local', 'Other'], 1);
         container.appendChild(makeMessage(line(99)));
         chatHistoryExtender.initialize();
         await settle();
@@ -2337,13 +2426,13 @@ describe('the cap counts lines older than the game’s live backlog', () => {
             tabs: { [KEY]: Array.from({ length: CAP + SAVED_LIVE }, (_, i) => html(i)) },
             live: { [KEY]: SAVED_LIVE },
         };
-        const [container] = buildChat(['General', 'Other'], 1);
+        const [container] = buildChat(['Local', 'Other'], 1);
         const other = makeMessage('[1/2 11:00:00] other tab line');
         container.appendChild(other);
         chatHistoryExtender.initialize();
         await settle();
 
-        // To General, whose pane now renders more lines than it was saved with
+        // To Local, whose pane now renders more lines than it was saved with
         container.removeChild(other);
         container.append(...Array.from({ length: NOW_LIVE }, (_, i) => makeMessage(line(50 + i))));
         selectTab(0);
@@ -2365,7 +2454,7 @@ describe('the cap counts lines older than the game’s live backlog', () => {
             tabs: { [KEY]: Array.from({ length: CAP + SAVED_LIVE }, (_, i) => html(i)) },
             live: { [KEY]: SAVED_LIVE },
         };
-        const [container] = buildChat(['General']);
+        const [container] = buildChat(['Local']);
         container.append(...Array.from({ length: LIVE }, (_, i) => makeMessage(line(50 + i))));
         chatHistoryExtender.initialize();
         await settle();
@@ -2387,7 +2476,7 @@ describe('the cap counts lines older than the game’s live backlog', () => {
             tabs: { [KEY]: Array.from({ length: CAP + SAVED_LIVE }, (_, i) => html(i)) },
             live: { [KEY]: SAVED_LIVE },
         };
-        const [container] = buildChat(['General']);
+        const [container] = buildChat(['Local']);
         // The newest NOW_LIVE stored lines are what the game shows again.
         container.append(
             ...Array.from({ length: NOW_LIVE }, (_, i) => makeMessage(line(CAP + SAVED_LIVE - NOW_LIVE + i)))
@@ -2399,6 +2488,56 @@ describe('the cap counts lines older than the game’s live backlog', () => {
         expect(bufferTexts(container)).toHaveLength(CAP);
     });
 
+    test('a shared tab’s first load merges a pane’s backlog under the pane’s count, not the record’s', async () => {
+        const SHARED = 'tab2:ch:/chat_channel_types/general';
+        const SAVED_LIVE = 3;
+        db.settings[PUBLIC_RECORD_KEY] = {
+            v: 1,
+            savedAt: 1,
+            tabs: { [SHARED]: Array.from({ length: CAP + SAVED_LIVE }, (_, i) => html(i)) },
+            live: { [SHARED]: SAVED_LIVE },
+        };
+        const [container] = buildChat(['General']);
+        document
+            .querySelector('button[role="tab"]')
+            .setAttribute('data-mention-channel', '/chat_channel_types/general');
+        container.append(...Array.from({ length: LIVE }, (_, i) => makeMessage(line(50 + i))));
+        chatHistoryExtender.initialize();
+        await settle();
+        await chatHistoryPersistence.flush();
+
+        const stored = db.settings[PUBLIC_RECORD_KEY].tabs[SHARED];
+        expect(stored).toHaveLength(CAP + LIVE);
+        expect(stored.at(-1)).toContain(line(50 + LIVE - 1));
+        // The record keeps the larger figure of the game tabs showing it.
+        expect(db.settings[PUBLIC_RECORD_KEY].live[SHARED]).toBe(LIVE);
+    });
+
+    test('a shared tab releases a saved overlap its pane’s smaller backlog will never repeat', async () => {
+        const SHARED = 'tab2:ch:/chat_channel_types/general';
+        const SAVED_LIVE = 20;
+        const NOW_LIVE = 5;
+        db.settings[PUBLIC_RECORD_KEY] = {
+            v: 1,
+            savedAt: 1,
+            tabs: { [SHARED]: Array.from({ length: CAP + SAVED_LIVE }, (_, i) => html(i)) },
+            live: { [SHARED]: SAVED_LIVE },
+        };
+        const [container] = buildChat(['General']);
+        document
+            .querySelector('button[role="tab"]')
+            .setAttribute('data-mention-channel', '/chat_channel_types/general');
+        container.append(
+            ...Array.from({ length: NOW_LIVE }, (_, i) => makeMessage(line(CAP + SAVED_LIVE - NOW_LIVE + i)))
+        );
+        chatHistoryExtender.initialize();
+        await settle();
+
+        // The record's allowance stays the larger one another game tab may need; this pane's buffer does not.
+        expect(bufferTexts(container)).toHaveLength(CAP);
+        expect(chatHistoryPersistence.liveCountFor(SHARED)).toBe(SAVED_LIVE);
+    });
+
     test('a saved overlap is released when a delayed backlog renders smaller than the saved allowance', async () => {
         const SAVED_LIVE = 20;
         const NOW_LIVE = 5;
@@ -2408,11 +2547,36 @@ describe('the cap counts lines older than the game’s live backlog', () => {
             tabs: { [KEY]: Array.from({ length: CAP + SAVED_LIVE }, (_, i) => html(i)) },
             live: { [KEY]: SAVED_LIVE },
         };
-        const [container] = buildChat(['General']);
+        const [container] = buildChat(['Local']);
         chatHistoryExtender.initialize();
         await settle();
 
         // The backlog arrives after the restore, smaller than what the record was saved with
+        container.append(
+            ...Array.from({ length: NOW_LIVE }, (_, i) => makeMessage(line(CAP + SAVED_LIVE - NOW_LIVE + i)))
+        );
+        await settle();
+
+        expect(bufferTexts(container)).toHaveLength(CAP);
+    });
+
+    test('a shared tab releases a saved overlap when a delayed backlog renders smaller', async () => {
+        const SHARED = 'tab2:ch:/chat_channel_types/general';
+        const SAVED_LIVE = 20;
+        const NOW_LIVE = 5;
+        db.settings[PUBLIC_RECORD_KEY] = {
+            v: 1,
+            savedAt: 1,
+            tabs: { [SHARED]: Array.from({ length: CAP + SAVED_LIVE }, (_, i) => html(i)) },
+            live: { [SHARED]: SAVED_LIVE },
+        };
+        const [container] = buildChat(['General']);
+        document
+            .querySelector('button[role="tab"]')
+            .setAttribute('data-mention-channel', '/chat_channel_types/general');
+        chatHistoryExtender.initialize();
+        await settle();
+
         container.append(
             ...Array.from({ length: NOW_LIVE }, (_, i) => makeMessage(line(CAP + SAVED_LIVE - NOW_LIVE + i)))
         );

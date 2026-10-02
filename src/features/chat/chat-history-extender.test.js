@@ -68,6 +68,14 @@ vi.mock('../../core/storage.js', () => ({
             db[store][key] = JSON.parse(JSON.stringify(value));
             return true;
         }),
+        update: vi.fn(async (key, mutate, store) => {
+            db[store] = db[store] || {};
+            const found = Object.prototype.hasOwnProperty.call(db[store], key);
+            const next = mutate(found ? JSON.parse(JSON.stringify(db[store][key])) : undefined, found);
+            if (next === undefined) return { written: false, value: db[store][key] };
+            db[store][key] = JSON.parse(JSON.stringify(next));
+            return { written: true, value: JSON.parse(JSON.stringify(next)) };
+        }),
         isQuotaExceeded: vi.fn(() => false),
         onBeforeTeardown: vi.fn(() => () => {}),
     },
@@ -84,9 +92,15 @@ vi.mock('../../utils/profile-command.js', () => ({
 }));
 
 import chatHistoryExtender, { liveBoundary, tabKeyForChannel } from './chat-history-extender.js';
-import chatHistoryPersistence, { CHAT_HISTORY_KEY_BASE } from './chat-history-persistence.js';
+import chatHistoryPersistence, { CHAT_HISTORY_KEY_BASE, PUBLIC_RECORD_KEY } from './chat-history-persistence.js';
 
 const STORAGE_KEY = `${CHAT_HISTORY_KEY_BASE}_char1`;
+
+/**
+ * Every stored record's tabs as one map. Public channels and the character's own
+ * tabs live in different records; a test about one line need not care which.
+ */
+const storedTabs = () => Object.assign({}, ...Object.values(db.settings || {}).map((record) => record?.tabs || {}));
 
 /**
  * Build a minimal fiber tree and wire it under `#root._reactRootContainer`
@@ -725,7 +739,7 @@ describe('chat-history-extender: message identity and deletion', () => {
         await evict(container, node);
         await chatHistoryPersistence.flush();
         expect(container.querySelector('.mwi-history-buffer').textContent).not.toContain('deleted');
-        expect(db.settings[Object.keys(db.settings)[0]].tabs).toEqual({});
+        expect(storedTabs()).toEqual({});
     });
 
     test('deleting an id already evicted into the buffer removes it from screen and from storage', async () => {
@@ -743,7 +757,7 @@ describe('chat-history-extender: message identity and deletion', () => {
         await chatHistoryPersistence.flush();
 
         const tabKey = tabKeyForChannel('/chat_channel_types/trade');
-        expect(db.settings[Object.keys(db.settings)[0]].tabs[tabKey][0]).toContain('selling cheese');
+        expect(storedTabs()[tabKey][0]).toContain('selling cheese');
 
         await wsHandlers.chat_message_updated({
             message: { id: 'msg-1', chan: '/chat_channel_types/trade', isDeleted: true },
@@ -751,14 +765,21 @@ describe('chat-history-extender: message identity and deletion', () => {
 
         expect(container.querySelector('.mwi-history-buffer').textContent).not.toContain('selling cheese');
         await chatHistoryPersistence.flush();
-        expect(db.settings[Object.keys(db.settings)[0]].tabs[tabKey]).toBeUndefined();
+        expect(storedTabs()[tabKey]).toBeUndefined();
     });
 
-    test('a line evicted while the restore read is in flight bounds it at its last stored copy', async () => {
-        const tabKey = tabKeyForChannel('/chat_channel_types/trade');
+    /**
+     * A line evicted while the restore's read is held open, whose earlier copy
+     * is stored with other lines after it.
+     * @param {string} channel - The pane's channel
+     * @param {string} recordKey - The record its lines live in
+     * @returns {Promise<string>} The buffer's text once the restore has landed
+     */
+    async function restoreAroundAnEvictedRepeat(channel, recordKey) {
+        const tabKey = tabKeyForChannel(channel);
         const line = (stamp, sender, text) =>
             `<div class="ChatMessage_chatMessage__xyz"><span>[${stamp}] </span><span>${sender}</span><span>: ${text}</span></div>`;
-        db.settings[STORAGE_KEY] = {
+        db.settings[recordKey] = {
             v: 1,
             savedAt: 1,
             tabs: {
@@ -775,7 +796,7 @@ describe('chat-history-extender: message identity and deletion', () => {
         db.readGate = new Promise((resolve) => {
             release = resolve;
         });
-        const container = buildChannelChat('/chat_channel_types/trade');
+        const container = buildChannelChat(channel);
         chatHistoryExtender.initialize();
         // The later copy of the repeated line is evicted before the read lands.
         const node = document.createElement('div');
@@ -788,9 +809,22 @@ describe('chat-history-extender: message identity and deletion', () => {
         await settle();
         db.readGate = null;
         release();
+        // The read, then the restore it feeds: how many turns that takes depends on
+        // how many records the read covers, so it is waited for rather than counted.
+        await chatHistoryPersistence.load();
         await settle();
 
-        const text = container.querySelector('.mwi-history-buffer').textContent;
+        return container.querySelector('.mwi-history-buffer').textContent;
+    }
+
+    test('a line evicted while the restore read is in flight bounds it at its last stored copy', async () => {
+        const text = await restoreAroundAnEvictedRepeat('/chat_channel_types/party', STORAGE_KEY);
+        expect(text).toContain('between one');
+        expect(text).toContain('between two');
+    });
+
+    test('a shared tab bounds a line evicted during the restore read at its last stored copy', async () => {
+        const text = await restoreAroundAnEvictedRepeat('/chat_channel_types/trade', PUBLIC_RECORD_KEY);
         expect(text).toContain('between one');
         expect(text).toContain('between two');
     });
@@ -853,7 +887,7 @@ describe('chat-history-extender: message identity and deletion', () => {
 
         await evict(container, node);
         await chatHistoryPersistence.flush();
-        expect(db.settings[Object.keys(db.settings)[0]].tabs).toEqual({});
+        expect(storedTabs()).toEqual({});
         // The live-verified bug: for a non-author, non-moderator viewer the
         // game removes the node outright rather than redacting it in place —
         // and that removal reaches this handler exactly like an ordinary
@@ -897,7 +931,7 @@ describe('chat-history-extender: message identity and deletion', () => {
         await evict(container, node);
         await chatHistoryPersistence.flush();
         expect(container.querySelector('.mwi-history-buffer').textContent).not.toContain('selling cheese');
-        expect(db.settings[Object.keys(db.settings)[0]]?.tabs ?? {}).toEqual({});
+        expect(storedTabs()).toEqual({});
     });
 
     test('a deletion arriving before its message has ever rendered still tags the node skip-store', async () => {
@@ -959,7 +993,7 @@ describe('chat-history-extender: message identity and deletion', () => {
             await evict(container, node);
             await chatHistoryPersistence.flush();
             expect(container.querySelector('.mwi-history-buffer').textContent).not.toContain('selling cheese');
-            expect(db.settings[Object.keys(db.settings)[0]]?.tabs ?? {}).toEqual({});
+            expect(storedTabs()).toEqual({});
         } finally {
             vi.useRealTimers();
         }
@@ -1014,7 +1048,7 @@ describe('chat-history-extender: message identity and deletion', () => {
         await evict(container, node);
         await chatHistoryPersistence.flush();
         const tabKey = tabKeyForChannel('/chat_channel_types/trade');
-        expect(db.settings[Object.keys(db.settings)[0]].tabs[tabKey][0]).toContain('selling cheese');
+        expect(storedTabs()[tabKey][0]).toContain('selling cheese');
     });
 
     test('a message already on screen when the handler attaches is stored with its id, and a deletion purges it', async () => {
@@ -1038,13 +1072,13 @@ describe('chat-history-extender: message identity and deletion', () => {
 
         await chatHistoryPersistence.flush();
         const tabKey = tabKeyForChannel('/chat_channel_types/trade');
-        expect(db.settings[STORAGE_KEY].tabs[tabKey][0]).toContain('data-mwi-msg-id="msg-early"');
+        expect(storedTabs()[tabKey][0]).toContain('data-mwi-msg-id="msg-early"');
 
         await wsHandlers.chat_message_updated({
             message: { id: 'msg-early', chan: '/chat_channel_types/trade', isDeleted: true },
         });
         await chatHistoryPersistence.flush();
-        expect(db.settings[STORAGE_KEY].tabs[tabKey]).toBeUndefined();
+        expect(storedTabs()[tabKey]).toBeUndefined();
     });
 
     test("a tab's backlog rendered on a switch is tagged with the ids queued while it was closed", async () => {
