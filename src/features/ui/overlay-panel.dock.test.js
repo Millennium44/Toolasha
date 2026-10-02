@@ -105,6 +105,14 @@ describe('docked into the character column', () => {
         expect(overlayPanel.panel.dataset.docked).toBe('true');
     });
 
+    test('a docked panel is a Toolasha surface, so text size and font reach it', () => {
+        buildColumn();
+        overlayPanel.settings.docked = true;
+        overlayPanel.show();
+
+        expect(overlayPanel.panel.getAttribute('data-toolasha-surface')).toBe('panel');
+    });
+
     test('the column is marked so the tab body gives up the height', () => {
         // The mark is the whole mechanism: without it the panel is simply a
         // third child and the column grows instead of the inventory shrinking

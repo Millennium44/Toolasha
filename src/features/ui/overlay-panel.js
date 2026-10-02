@@ -718,6 +718,9 @@ class OverlayPanel {
 
         this.panel = document.createElement('div');
         this.panel.id = PANEL_ID;
+        // Marked here, not only through registerFloatingPanel: a docked panel is never registered, and the
+        // Toolasha text size and font still apply to it
+        markToolashaSurface(this.panel, 'panel');
         Object.assign(this.panel.style, {
             background: COLORS.background,
             border: `1px solid ${COLORS.border}`,
