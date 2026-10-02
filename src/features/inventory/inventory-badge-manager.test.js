@@ -634,6 +634,19 @@ describe('high-enhancement equipment follows the net worth value source', () => 
             expect([d.askPrice, d.bidPrice, d.askValue, d.bidValue]).toEqual(['800', '600', '1600', '1200']);
         });
 
+        test('a Bag of 10 Cowbells taxed net takes its own tax rate, not the market rate', async () => {
+            const { COWBELL_BAG_HRID, COWBELL_BAG_TAX } = await import('../../utils/profit-constants.js');
+            mocks.settings.invSort_netOfTax = true;
+            mocks.priceBatch = new Map([[`${COWBELL_BAG_HRID}:0`, { ask: 1000, bid: 1000 }]]);
+            mocks.ev = { [COWBELL_BAG_HRID]: 1 };
+            try {
+                const d = await priceChest(COWBELL_BAG_HRID);
+                expect(Number(d.askPrice)).toBeCloseTo(1000 * (1 - COWBELL_BAG_TAX));
+            } finally {
+                mocks.settings.invSort_netOfTax = false;
+            }
+        });
+
         test('a chest with no market price uses its expected value', async () => {
             mocks.ev = { [CHEST]: 5000 };
             const d = await priceChest(CHEST);

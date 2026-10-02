@@ -586,7 +586,8 @@ class InventoryBadgeManager {
                 if (evNet > 0 || (marketAsk > 0 && marketBid > 0)) {
                     // Tax applies to a market price only (net worth never taxes an EV, and an
                     // Iron Cow character has no market to pay it on)
-                    const taxKeep = config.getSetting('invSort_netOfTax') && !isIronCowCharacter() ? 1 - MARKET_TAX : 1;
+                    const taxRate = itemHrid === COWBELL_BAG_HRID ? COWBELL_BAG_TAX : MARKET_TAX;
+                    const taxKeep = config.getSetting('invSort_netOfTax') && !isIronCowCharacter() ? 1 - taxRate : 1;
                     const ask = marketAsk > 0 ? marketAsk * taxKeep : evNet;
                     const bid = marketBid > 0 ? marketBid * taxKeep : evNet;
 
