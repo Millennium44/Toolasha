@@ -103,6 +103,13 @@ const SINGLE_COPY_FEATURES = new Set([
 
 const ALLOWLIST = new Map([
     [
+        'src/utils/dungeon-run-result.js',
+        // Run-result constants and pure predicates/summaries over stored runs,
+        // no imports and no module state. The combat bundle (dungeon tracker)
+        // and the ui bundle (tracker panel and history) each classify runs with it.
+        'stateless run-result predicates and summary; no module state to share',
+    ],
+    [
         'src/utils/battle-bridge-keys.js',
         // GM key names and one key-building function, no module state. The core
         // bundle (battle bridge writer) and the combat bundle (simulator export
