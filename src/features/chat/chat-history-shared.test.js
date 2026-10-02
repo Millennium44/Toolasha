@@ -909,3 +909,112 @@ describe('mergeLists', () => {
         expect(merged).toEqual([line('Z', 'a', 1, 'm1')]);
     });
 });
+
+describe('stored lines are kept in the order they were sent', () => {
+    /** A line with a whole stamp of its own, as `[M/D h:mm:ss AM]`. */
+    function sent(stamp, text, sender = 'Gil') {
+        return line(sender, text, 0).replace(/\[10\/1 12:00:00 PM\] /, `[${stamp}] `);
+    }
+
+    /** Open a page whose client writes month first, at a fixed instant. */
+    async function openAt(iso, characterId = '101', guildId = 'g1') {
+        vi.useFakeTimers({ toFake: ['Date'] });
+        vi.setSystemTime(new Date(iso));
+        const page = await openPage(characterId, guildId);
+        (await import('../../utils/locale-date-order.js'))._resetDateFieldOrder(false);
+        return page;
+    }
+
+    test('two sent-order lists that each hold lines the other lacks merge in sent order', async () => {
+        const { module } = await openAt('2026-10-01T13:00:00');
+        const a = sent('10/1 7:00:01 AM', 'a');
+        const b = sent('10/1 7:00:02 AM', 'b');
+        const c = sent('10/1 7:00:03 AM', 'c');
+        const e = sent('10/1 7:00:05 AM', 'e');
+        // Without the stamps, `b` lands before its anchor `e` but after `c`, which only the base holds.
+        expect(texts(module.mergeLists([a, c, e], [b, e]))).toEqual(['a', 'b', 'c', 'e']);
+    });
+
+    test('a character record holding late copies of old lines migrates, and restores, in sent order', async () => {
+        // The shape found live: older builds re-recorded a re-rendered backlog's old lines after today's.
+        const legacy = [
+            sent('10/1 7:42:44 AM', 'today 1'),
+            sent('9/28 10:48:38 AM', 'sep 28 a'),
+            sent('10/1 7:47:29 AM', 'today 2'),
+            sent('9/28 4:00:14 PM', 'sep 28 b'),
+            sent('9/30 2:15:43 AM', 'sep 30'),
+            sent('10/1 5:58:28 AM', 'early 2'),
+            sent('10/1 5:57:39 AM', 'early 1'),
+        ];
+        shared.db[guildKey('g1')] = {
+            v: 1,
+            savedAt: 5000,
+            tabs: { [GUILD]: [sent('10/1 7:47:29 AM', 'today 2'), sent('10/1 8:00:00 AM', 'today 3')] },
+            live: {},
+            at: { [GUILD]: 5000 },
+        };
+        shared.db[ownKey('101')] = legacyRecord({ [GUILD]: legacy }, 1000);
+
+        const ada = await openAt('2026-10-01T13:00:00');
+        const snapshot = await ada.persistence.load();
+        await ada.persistence.flush();
+
+        const order = ['sep 28 a', 'sep 28 b', 'sep 30', 'early 1', 'early 2', 'today 1', 'today 2', 'today 3'];
+        expect(stored(guildKey('g1'), GUILD)).toEqual(order);
+        expect(texts(snapshot[GUILD])).toEqual(order);
+        expect(texts(ada.persistence.messagesFor(GUILD))).toEqual(order);
+    });
+
+    test('held guild lines out of order are shown in sent order ahead of the guild record', async () => {
+        shared.db[ownKey('101')] = legacyRecord(
+            { [GUILD]: [sent('10/1 7:42:44 AM', 'held new'), sent('9/28 10:48:38 AM', 'held old')] },
+            1000
+        );
+        const ada = await openAt('2026-10-01T13:00:00', '101', 'g2');
+        const snapshot = await ada.persistence.load();
+        expect(texts(snapshot[GUILD])).toEqual(['held old', 'held new']);
+    });
+
+    test('a shared record already out of order reads back in order, and is written back in order', async () => {
+        shared.db[guildKey('g1')] = {
+            v: 1,
+            savedAt: 5000,
+            tabs: {
+                [GUILD]: [
+                    sent('10/1 7:42:44 AM', 'today'),
+                    sent('9/28 10:48:38 AM', 'old'),
+                    sent('10/1 9:00:00 AM', 'later'),
+                ],
+            },
+            live: {},
+            at: { [GUILD]: 5000 },
+        };
+        const ada = await openAt('2026-10-01T13:00:00');
+        const snapshot = await ada.persistence.load();
+        expect(texts(snapshot[GUILD])).toEqual(['old', 'today', 'later']);
+
+        ada.persistence.record(GUILD, sent('10/1 9:30:00 AM', 'new'));
+        await ada.persistence.flush();
+        expect(stored(guildKey('g1'), GUILD)).toEqual(['old', 'today', 'later', 'new']);
+    });
+
+    test('lines sharing a stamp keep the order they were seen in', async () => {
+        const { module } = await openAt('2026-10-01T13:00:00');
+        const same = '10/1 7:00:00 AM';
+        const base = [sent(same, 'second', 'B'), sent('9/30 1:00:00 AM', 'out of place'), sent(same, 'first', 'A')];
+        expect(texts(module.mergeLists(base, []))).toEqual(['out of place', 'second', 'first']);
+    });
+
+    test('a line with no stamp stays just after the line before it', async () => {
+        const { module } = await openAt('2026-10-01T13:00:00');
+        const bare = line('Sys', 'no stamp', 0).replace(/\[10\/1 12:00:00 PM\] /, '');
+        const list = [sent('10/1 7:00:00 AM', 'new'), bare, sent('9/30 1:00:00 AM', 'old')];
+        expect(texts(module.mergeLists(list, []))).toEqual(['old', 'new', 'no stamp']);
+    });
+
+    test('December lines read in January sort before January’s', async () => {
+        const { module } = await openAt('2027-01-02T10:00:00');
+        const list = [sent('1/1 12:00:01 AM', 'new year'), sent('12/31 11:59:59 PM', 'old year')];
+        expect(texts(module.mergeLists(list, []))).toEqual(['old year', 'new year']);
+    });
+});

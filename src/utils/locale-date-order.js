@@ -125,3 +125,43 @@ export function chatStampToDate({ first, second, ambiguousOrder, hour, minute, s
 export function _resetDateFieldOrder(dayFirst) {
     dayFirstCache = dayFirst === undefined ? null : dayFirst;
 }
+
+/**
+ * The three stamp layouts the game renders, anchored at the start of a line's
+ * text: slash (`[M/D h:mm:ss AM]`, or D/M by locale), dash (`[DD-M HH:MM:SS]`)
+ * and dot (`[D.M. HH:MM:SS]`). The same layouts the dungeon tracker reads.
+ */
+const LEADING_STAMP_RES = [
+    { re: /^\s*\[(\d{1,2})\/(\d{1,2})\s*(\d{1,2}):(\d{2}):(\d{2})\s*([AP]M)?\]/, ambiguousOrder: true },
+    { re: /^\s*\[(\d{1,2})-(\d{1,2})\s*(\d{1,2}):(\d{2}):(\d{2})\]/, ambiguousOrder: false },
+    { re: /^\s*\[(\d{1,2})\.(\d{1,2})\.?\s*(\d{1,2}):(\d{2}):(\d{2})\]/, ambiguousOrder: false },
+];
+
+/**
+ * The fields of the stamp a chat line opens with, ready for {@link chatStampToDate}.
+ *
+ * Only a stamp at the very start counts: a stamp quoted inside a message body
+ * says nothing about when the line was sent.
+ *
+ * @param {string} text - A chat line's text, stamp first
+ * @returns {{first: number, second: number, ambiguousOrder: boolean, hour: number, minute: number,
+ *   sec: number, period: string|undefined}|null} The fields, or null when the line opens with no stamp
+ */
+export function leadingChatStampFields(text) {
+    if (typeof text !== 'string') return null;
+    for (const { re, ambiguousOrder } of LEADING_STAMP_RES) {
+        const match = text.match(re);
+        if (!match) continue;
+        const [, first, second, hour, minute, sec, period] = match;
+        return {
+            first: parseInt(first, 10),
+            second: parseInt(second, 10),
+            ambiguousOrder,
+            hour: parseInt(hour, 10),
+            minute: parseInt(minute, 10),
+            sec: parseInt(sec, 10),
+            period,
+        };
+    }
+    return null;
+}

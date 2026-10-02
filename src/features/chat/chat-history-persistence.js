@@ -156,6 +156,7 @@
 import dataManager from '../../core/data-manager.js';
 import storage from '../../core/storage.js';
 import { characterKey } from '../../utils/character-key.js';
+import { chatStampToDate, leadingChatStampFields } from '../../utils/locale-date-order.js';
 import { captureOwner, noteTeardown, stillOurs } from '../../utils/init-ownership.js';
 import { navigateToMarketplace } from '../../utils/marketplace-tabs.js';
 import { openPlayerProfile, VALID_PLAYER_NAME_RE } from '../../utils/profile-command.js';
@@ -701,6 +702,74 @@ export function messageIdentity(html) {
  */
 const RANK_BADGE_MARKUP_RE = new RegExp(String.raw`<span\b[^>]*\s${RANK_BADGE_ATTR}\b[^>]*>[\s\S]*?<\/span>`, 'g');
 
+/** Memo of each identity's parsed stamp fields; bounded like {@link identityMemo}. @type {Map<string, object|null>} */
+const stampMemo = new Map();
+
+/**
+ * When a stored line was sent, from the stamp its text opens with.
+ *
+ * The stamp carries no year; {@link chatStampToDate} places it in the recent
+ * past relative to `now`, so December lines read in January land in last year
+ * and sort before January's.
+ *
+ * @param {string} html - One stored message
+ * @param {Date} now - The instant the year is inferred against
+ * @returns {number|null} Epoch milliseconds, or null when the line opens with no stamp this can read
+ */
+function stampTime(html, now) {
+    const identity = messageIdentity(html);
+    if (!identity) return null;
+    let fields = stampMemo.get(identity);
+    if (fields === undefined) {
+        fields = leadingChatStampFields(identity);
+        if (stampMemo.size >= IDENTITY_MEMO_MAX) stampMemo.clear();
+        stampMemo.set(identity, fields);
+    }
+    if (!fields) return null;
+    const date = chatStampToDate(fields, now);
+    return date ? date.getTime() : null;
+}
+
+/**
+ * A tab's lines in the order they were sent, by the stamp each opens with.
+ *
+ * Stored order is not always send order: builds before rank badges were left
+ * out of the identity recorded a re-rendered backlog's old lines a second time
+ * at the end, and {@link mergeLists} places a line one side lacks by anchors,
+ * which interleaves two lists that each hold lines the other lacks. A restore
+ * draws stored order as is, and `liveBoundary` in `chat-history-extender.js` assumes it is send order.
+ *
+ * The sort is stable, so lines sharing a stamp (to the second) keep the order
+ * they had — the order they were seen in, which the restore boundary in
+ * `chat-history-extender.js` relies on for same-stamp lines. A line with no
+ * readable stamp takes the stamp of the line before it, so it stays just after
+ * that line; one with none before it stays at the front. An already ordered
+ * list is returned as is.
+ *
+ * @param {Array<string>} list - Not mutated
+ * @param {Date} [now] - The instant stamps' years are inferred against
+ * @returns {Array<string>} `list` itself when already ordered, otherwise a fresh list
+ */
+export function orderByStamp(list, now = new Date()) {
+    if (!Array.isArray(list) || list.length < 2) return list;
+    let carried = -Infinity;
+    let ordered = true;
+    const keyed = list.map((html, index) => {
+        const time = stampTime(html, now);
+        if (time !== null) {
+            if (time < carried) ordered = false;
+            carried = time;
+        }
+        return { html, key: carried, index };
+    });
+    if (ordered) return list;
+    keyed.sort((a, b) => {
+        if (a.key !== b.key) return a.key < b.key ? -1 : 1;
+        return a.index - b.index;
+    });
+    return keyed.map((entry) => entry.html);
+}
+
 /** Bound on {@link messageIdentity}'s memo: a little over one full tab set's worth of messages. */
 const IDENTITY_MEMO_MAX = 4000;
 
@@ -839,7 +908,9 @@ function mergeMessage(list, html) {
  * it, at the end: after whatever another tab wrote meanwhile, which is the
  * order the writes landed in. With no anchor at all the lists are disjoint, and
  * `incomingNewer` decides which goes first. Duplicates fold as
- * {@link mergeMessage} folds them.
+ * {@link mergeMessage} folds them. The result is then put in send order by
+ * {@link orderByStamp}, with that merged order as the tie-break and for lines
+ * whose stamp cannot be read.
  *
  * @param {Array<string>} base - Not mutated
  * @param {Array<string>} incoming - Not mutated
@@ -889,7 +960,9 @@ export function mergeLists(base, incoming, incomingNewer = true) {
         merged.push(html);
     });
     if (anchored || incomingNewer) merged.push(...waiting);
-    return merged;
+    // Anchors keep each side's order, not the two sides' order against each other: a line only one side holds
+    // lands after every line the base holds before the next anchor, newer or not. The stamps settle that.
+    return orderByStamp(merged);
 }
 
 /** Message ids a shared record remembers as deleted, newest last. */
@@ -1351,7 +1424,9 @@ function tabsFromRecord(record, perTab, live) {
         for (const html of list) {
             if (typeof html === 'string') mergeMessage(unique, html);
         }
-        tabs[key] = unique;
+        // Those copies, and merges before this build ordered by stamp, also left lines out of send order; read
+        // back in order here, a record heals on its next write.
+        tabs[key] = orderByStamp(unique);
     }
     return applyCaps(tabs, perTab, live);
 }
