@@ -21,6 +21,7 @@ import { createMutationWatcher } from '../../utils/dom-observer-helpers.js';
 import { yieldToEventLoop } from '../../utils/background-work.js';
 import { ironCowBook, isIronCowCharacter } from '../../utils/ironcow-valuation.js';
 import { officialValueOverride } from '../../utils/official-value-override.js';
+import { reconcileBook } from '../../utils/market-values.js';
 
 // How long the per-item pricing loop may run before handing the thread back.
 // High-enhancement equipment runs calculateEnhancementPath (100+ ms per +20
@@ -552,24 +553,47 @@ class InventoryBadgeManager {
                 continue;
             }
 
-            // Handle openable containers (chests, crates, caches). In official-value mode a published
-            // value comes first, as in net worth, which only falls back to the expected value
+            // Handle openable containers (chests, crates, caches) the way net worth does: the market
+            // price first, per side, and the expected value (less the key cost of a dungeon chest)
+            // only for a side the market cannot price. A published official value comes before both,
+            // so that case is left to the general chain below.
             if (
                 itemDetails?.isOpenable &&
                 expectedValueCalculator.isInitialized &&
                 officialValueOverride(itemHrid, 0) === null
             ) {
-                const evData = expectedValueCalculator.calculateExpectedValue(itemHrid);
-                if (evData && evData.expectedValue > 0) {
-                    let netValue = evData.expectedValue;
+                // The same book net worth reads (resolveNetworthPrices): Iron Cow's own valuation, else the
+                // batch cache reconciled against the game's value map, which fills an empty side
+                let book = ironCowBook(itemHrid, 0);
+                if (!book) {
+                    const raw = priceCache.get(`${itemHrid}:0`) ?? { ask: null, bid: null };
+                    book = reconcileBook(raw.ask ?? null, raw.bid ?? null, itemHrid, 0);
+                }
+                const marketAsk = book.ask > 0 ? book.ask : 0;
+                const marketBid = book.bid > 0 ? book.bid : 0;
 
-                    const chestKeyHrid = DUNGEON_CHEST_CHEST_KEYS[itemHrid];
-                    if (chestKeyHrid) netValue -= getKeyUnitCost(chestKeyHrid) ?? 0;
+                let evNet = 0;
+                if (marketAsk === 0 || marketBid === 0) {
+                    const evData = expectedValueCalculator.calculateExpectedValue(itemHrid);
+                    if (evData && evData.expectedValue > 0) {
+                        evNet = evData.expectedValue;
+                        const chestKeyHrid = DUNGEON_CHEST_CHEST_KEYS[itemHrid];
+                        if (chestKeyHrid) evNet -= getKeyUnitCost(chestKeyHrid) ?? 0;
+                    }
+                }
 
-                    itemElem.dataset.askPrice = netValue;
-                    itemElem.dataset.bidPrice = netValue;
-                    itemElem.dataset.askValue = netValue * itemCount;
-                    itemElem.dataset.bidValue = netValue * itemCount;
+                // Nothing to add over the general chain when the market prices both sides, or no EV exists
+                if (evNet > 0 || (marketAsk > 0 && marketBid > 0)) {
+                    // Tax applies to a market price only (net worth never taxes an EV, and an
+                    // Iron Cow character has no market to pay it on)
+                    const taxKeep = config.getSetting('invSort_netOfTax') && !isIronCowCharacter() ? 1 - MARKET_TAX : 1;
+                    const ask = marketAsk > 0 ? marketAsk * taxKeep : evNet;
+                    const bid = marketBid > 0 ? marketBid * taxKeep : evNet;
+
+                    itemElem.dataset.askPrice = ask;
+                    itemElem.dataset.bidPrice = bid;
+                    itemElem.dataset.askValue = ask * itemCount;
+                    itemElem.dataset.bidValue = bid * itemCount;
                     continue;
                 }
             }

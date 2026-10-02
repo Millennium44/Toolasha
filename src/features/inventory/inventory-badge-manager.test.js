@@ -21,6 +21,8 @@ const mocks = vi.hoisted(() => ({
     settingListeners: {},
     dataListeners: {},
     enhancementCost: null,
+    chestKeys: {},
+    keyCost: 0,
 }));
 
 vi.mock('../../core/dom-observer.js', () => ({ default: { onClass: () => () => {}, onReady: () => () => {} } }));
@@ -40,6 +42,7 @@ vi.mock('../../core/config.js', () => ({
 vi.mock('../../utils/market-values.js', () => ({
     refreshMarketValues: () => {},
     marketValueFor: (hrid, level) => mocks.officialValues[`${hrid}:${level}`] ?? null,
+    reconcileBook: (ask, bid) => ({ ask, bid }),
 }));
 vi.mock('../../api/marketplace.js', () => ({
     default: { getPricesBatch: () => mocks.priceBatch, getPrice: () => null },
@@ -75,7 +78,8 @@ vi.mock('../../utils/number-parser.js', () => ({
     parseItemCount: (text) => parseInt(text, 10) || 0,
     MAGNITUDE_SUFFIXES: { k: 1e3, m: 1e6, b: 1e9, t: 1e12, q: 1e15 },
 }));
-vi.mock('../../utils/dungeon-keys.js', () => ({ DUNGEON_CHEST_CHEST_KEYS: {} }));
+vi.mock('../../utils/dungeon-keys.js', () => ({ DUNGEON_CHEST_CHEST_KEYS: mocks.chestKeys }));
+vi.mock('../../utils/key-cost.js', () => ({ getKeyUnitCost: () => mocks.keyCost }));
 vi.mock('../../utils/dom-observer-helpers.js', () => ({ createMutationWatcher: () => () => {} }));
 vi.mock('../../utils/background-work.js', () => ({
     yieldToEventLoop: (mocks.yieldSpy = vi.fn(() => Promise.resolve())),
@@ -93,6 +97,8 @@ beforeEach(() => {
     mocks.officialValues = {};
     mocks.settingListeners = {};
     mocks.enhancementCost = null;
+    for (const k of Object.keys(mocks.chestKeys)) delete mocks.chestKeys[k];
+    mocks.keyCost = 0;
     mocks.yieldSpy.mockClear();
     inventoryBadgeManager.nameToHridMap = null;
 });
@@ -589,6 +595,74 @@ describe('high-enhancement equipment follows the net worth value source', () => 
         mocks.officialValues[`${HRID}:14`] = 9000;
         const d = await price();
         expect([d.askPrice, d.bidPrice]).toEqual(['5000', '5000']);
+    });
+
+    describe('openable containers price by market first, like net worth', () => {
+        const CHEST = '/items/chimerical_chest';
+        const KEYED = '/items/chimerical_chest_dungeon';
+
+        async function priceChest(hrid, count = 2) {
+            mocks.initData = { itemDetailMap: { [hrid]: { name: 'Chest', isOpenable: true } } };
+            mocks.inventory = [
+                { itemHrid: hrid, itemLocationHrid: '/item_locations/inventory', count, enhancementLevel: 0 },
+            ];
+            mocks.evReady = true;
+            const el = document.createElement('div');
+            el.className = 'Item_itemContainer';
+            el.appendChild(document.createElement('svg')).setAttribute('aria-label', 'Chest');
+            const countEl = document.createElement('div');
+            countEl.className = 'Item_count';
+            countEl.textContent = String(count);
+            el.appendChild(countEl);
+            try {
+                await inventoryBadgeManager.calculateItemPrices(
+                    [el],
+                    mocks.inventory,
+                    new Map([[`${hrid}|${count}|0`, mocks.inventory[0]]])
+                );
+            } finally {
+                mocks.evReady = false;
+                mocks.ev = null;
+            }
+            return el.dataset;
+        }
+
+        test('a chest with a market price uses it, not its expected value', async () => {
+            mocks.priceBatch = new Map([[`${CHEST}:0`, { ask: 800, bid: 600 }]]);
+            mocks.ev = { [CHEST]: 99999 };
+            const d = await priceChest(CHEST);
+            expect([d.askPrice, d.bidPrice, d.askValue, d.bidValue]).toEqual(['800', '600', '1600', '1200']);
+        });
+
+        test('a chest with no market price uses its expected value', async () => {
+            mocks.ev = { [CHEST]: 5000 };
+            const d = await priceChest(CHEST);
+            expect([d.askPrice, d.bidPrice, d.askValue]).toEqual(['5000', '5000', '10000']);
+        });
+
+        test('a dungeon chest with no market price uses its expected value less the key cost', async () => {
+            mocks.chestKeys[KEYED] = '/items/chimerical_chest_key';
+            mocks.keyCost = 1500;
+            mocks.ev = { [KEYED]: 5000 };
+            const d = await priceChest(KEYED);
+            expect([d.askPrice, d.bidPrice]).toEqual(['3500', '3500']);
+        });
+
+        test('a dungeon chest with a market price ignores the key cost', async () => {
+            mocks.chestKeys[KEYED] = '/items/chimerical_chest_key';
+            mocks.keyCost = 1500;
+            mocks.priceBatch = new Map([[`${KEYED}:0`, { ask: 4000, bid: 3000 }]]);
+            mocks.ev = { [KEYED]: 5000 };
+            const d = await priceChest(KEYED);
+            expect([d.askPrice, d.bidPrice]).toEqual(['4000', '3000']);
+        });
+
+        test('a side the market cannot price falls back to the expected value on that side only', async () => {
+            mocks.priceBatch = new Map([[`${CHEST}:0`, { ask: 800, bid: -1 }]]);
+            mocks.ev = { [CHEST]: 5000 };
+            const d = await priceChest(CHEST, 1);
+            expect([d.askPrice, d.bidPrice]).toEqual(['800', '5000']);
+        });
     });
 
     test('changing the value source reprices the tiles', async () => {
