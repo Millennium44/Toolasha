@@ -12,6 +12,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 - Recording resumes on its own once a save succeeds after storage filled up, with no reload needed.
 - Inventory badges and sort price items the same way net worth does when it uses the game's official values.
 
+### Bulk Sell vendor sales work again
+
+- Selling to the vendor no longer stops at "the item menu is for an enhanced item" for ordinary unenhanced items.
+
 ### Audit round: page-close saves, text size and net worth
 
 - Closing a tab while a save is in progress no longer loses everything else waiting to be saved.
