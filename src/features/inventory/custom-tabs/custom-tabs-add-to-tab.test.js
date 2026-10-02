@@ -163,3 +163,25 @@ describe('"Add to Tab" dropdown rows', () => {
         expect(ui._openEditor).toHaveBeenCalledWith(created.id);
     });
 });
+
+describe('"Add to Tab" with no tabs yet', () => {
+    afterEach(() => {
+        document.body.innerHTML = '';
+    });
+
+    test('the dropdown still appears and offers "+ New Tab" to create the first one', () => {
+        const ui = new CustomTabsUI();
+        ui._save = vi.fn().mockResolvedValue(undefined);
+        ui._openEditor = vi.fn();
+        ui._config = { tabs: [], selectedTabId: null };
+        const menu = makeMenu();
+        ui._injectAddToTabButton(menu);
+
+        expect(menu.querySelector('.toolasha-ct-add-to-tab')).not.toBeNull();
+        const rows = [...document.querySelectorAll('.toolasha-ct-add-to-tab-panel button')];
+        expect(rows.map((b) => b.textContent)).toEqual(['+ New Tab']);
+        rows[0].click();
+        expect(ui._config.tabs).toHaveLength(1);
+        expect(ui._config.tabs[0].items).toEqual(['/items/cheese']);
+    });
+});

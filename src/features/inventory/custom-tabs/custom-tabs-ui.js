@@ -4346,7 +4346,7 @@ export default class CustomTabsUI {
      */
     _injectAddToTabButton(actionMenu) {
         if (actionMenu.querySelector('.toolasha-ct-add-to-tab')) return;
-        if (!this._config?.tabs?.length) return;
+        if (!Array.isArray(this._config?.tabs)) return;
 
         // A panel lives in <body>, so it outlasts the native menu React removed under it
         document.querySelectorAll('.toolasha-ct-add-to-tab-panel').forEach((el) => {
