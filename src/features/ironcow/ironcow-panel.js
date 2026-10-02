@@ -960,17 +960,20 @@ class IronCowFarmPanel {
         if (!can) return [];
 
         const value =
-            can.bags === null ? bells(can.bells) : `${bells(can.bells)} (${can.bags} bag${can.bags === 1 ? '' : 's'})`;
+            can.bags === null
+                ? bells(can.bells)
+                : `${bells(can.bells)} (${can.bags} bag${can.bags === 1 ? '' : 's'}` +
+                  `${can.extraLoose > 0 ? ` + ${can.extraLoose} loose` : ''})`;
         const kept =
             reserve > 0
-                ? `Keeps ${coins(reserve)} back: the lowest your gold falls while ${spenders.join(', ')} ` +
-                  'runs, before any coinify queued behind it pays back.'
-                : 'Nothing queued spends gold before it earns it back, so nothing is held back.';
+                ? `Keeps ${coins(reserve)} back: what ${spenders.join(', ')} spends. Coinify earnings ` +
+                  'are not counted on, since its rolls can fail.'
+                : 'Nothing queued spends gold, so nothing is held back.';
         const stopped = walked.stoppedAt ? ` The queue is followed up to ${walked.stoppedAt}, which never ends.` : '';
         const route =
             can.bags === null
                 ? ' Whole bells, rounded down.'
-                : ' Whole bags of ten, rounded down' +
+                : ' Whole bags of ten first, then loose bells with what is left' +
                   (can.looseBells === null ? '.' : `; loose at ${coins(pricing.loose)} it would be ${can.looseBells}.`);
         const title = `Out of your ${coins(state.coins)}. ${kept}${stopped}${route}`;
 

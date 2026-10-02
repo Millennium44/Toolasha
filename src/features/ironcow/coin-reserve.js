@@ -46,15 +46,21 @@ function itemFromHash(hash) {
 /**
  * Walk the live queue in execution order and record each row's coin flow.
  *
- * A row that never hands the queue on (a gather with Repeat ∞, a fight) ends the
- * walk: nothing behind it ever runs, so nothing behind it can need gold.
+ * A row that never hands the queue on (a gather with Repeat ∞, an uncounted fight) ends
+ * the walk: nothing behind it ever runs, so nothing behind it can need gold. A counted
+ * fight spends no gold and does hand on, so the walk goes through it.
+ *
+ * Gold a row earns (coinify) is recorded as `earned` but not credited: its rolls can
+ * fail, and a reserve funded by expected proceeds can leave a later fee unpaid. So the
+ * reserve counts on no earnings at all.
  *
  * @param {Object|null} engine - The action-time engine (see `bundle-bridge.actionTimeDisplay`)
  * @param {Array<Object>} [actions] - The queue; defaults to `dataManager.getCurrentActions()`
  * @param {Array<Object>} [inventory] - Defaults to `dataManager.getInventory()`
- * @returns {{stages: Array<{actionHrid: string, label: string, count: number, coinDelta: number}>,
- *   stoppedAt: string|null}|null} Rows in run order; `stoppedAt` names the unbounded row that ended
- *   the walk. Null when the engine is unavailable.
+ * @returns {{stages: Array<{actionHrid: string, label: string, count: number, coinDelta: number,
+ *   earned: number}>, stoppedAt: string|null}|null} Rows in run order; `stoppedAt` names the
+ *   unbounded row that ended the walk. Null when the engine is unavailable or a row's action is
+ *   unknown — an unread row may spend, or never hand on, so no reserve is better than a low one.
  */
 export function walkQueueCoins(engine, actions, inventory) {
     if (!engine?.buildInventoryLookup || !engine.calculateSingleQueueActionTime || !engine.deductQueueActionMaterials) {
@@ -72,7 +78,7 @@ export function walkQueueCoins(engine, actions, inventory) {
     let stoppedAt = null;
     for (const action of queue) {
         const details = dataManager.getActionDetails(action.actionHrid);
-        if (!details) continue;
+        if (!details) return null;
 
         const timing = engine.calculateSingleQueueActionTime(action, details, ledger, {
             limitCountedByMaterials: true,
@@ -81,6 +87,12 @@ export function walkQueueCoins(engine, actions, inventory) {
         const itemName = itemHrid ? dataManager.getItemDetails(itemHrid)?.name : null;
         const label = itemName ? `${details.name}: ${itemName}` : details.name || action.actionHrid;
 
+        // The engine calls every fight infinite; a counted one ends and hands on, paying no gold
+        if (timing?.isTrulyInfinite && action.hasMaxCount && action.actionHrid?.includes('/combat/')) {
+            const count = Math.max(0, (action.maxCount || 0) - (action.currentCount || 0));
+            stages.push({ actionHrid: action.actionHrid, label, count, coinDelta: 0, earned: 0 });
+            continue;
+        }
         if (timing?.isTrulyInfinite) {
             stoppedAt = label;
             break;
@@ -88,8 +100,19 @@ export function walkQueueCoins(engine, actions, inventory) {
 
         const before = ledger.byHrid[COIN] || 0;
         const count = engine.deductQueueActionMaterials(ledger, details, action, timing) || 0;
-        const coinDelta = (ledger.byHrid[COIN] || 0) - before;
-        stages.push({ actionHrid: action.actionHrid, label, count, coinDelta });
+        const delta = (ledger.byHrid[COIN] || 0) - before;
+        // Earnings are not counted on (see above): the ledger keeps its spend-only balance
+        if (delta > 0) {
+            ledger.byHrid[COIN] = before;
+            ledger.byEnhancedKey[`${COIN}::0`] = before;
+        }
+        stages.push({
+            actionHrid: action.actionHrid,
+            label,
+            count,
+            coinDelta: Math.min(0, delta),
+            earned: Math.max(0, delta),
+        });
     }
     return { stages, stoppedAt };
 }
@@ -142,15 +165,16 @@ function wholeUnits(sum, cost) {
 /**
  * Bells the spare coins buy, the way the panel says to buy them.
  *
- * Whole bells only, rounded down. When the bag is the cheaper route only whole
- * bags count, so the answer is a multiple of ten; the loose count at the loose
- * price is returned beside it for the remainder.
+ * Whole bells only, rounded down. When the bag is the cheaper route, whole bags
+ * first, then whatever loose bells the remainder still buys at the loose price.
+ * `looseBells` is the count buying every bell loose instead.
  *
  * @param {number} coins - Coins on hand
  * @param {number} reserve - From {@link coinReserve}
  * @param {{price: number|null, source: 'loose'|'bag'|null, loose: number|null}} pricing - From
  *   `cowbellPricing()`; `price` is per bell either way
- * @returns {{spare: number, bells: number, bags: number|null, looseBells: number|null}|null} Null
+ * @returns {{spare: number, bells: number, bags: number|null, extraLoose: number,
+ *   looseBells: number|null}|null} `extraLoose` is the loose bells bought beside the bags. Null
  *   without a bell price
  */
 export function bellsAffordable(coins, reserve, pricing) {
@@ -161,8 +185,10 @@ export function bellsAffordable(coins, reserve, pricing) {
     const looseBells = loose === null ? null : wholeUnits(spare, loose);
 
     if (pricing.source === 'bag') {
-        const bags = wholeUnits(spare, price * COWBELLS_PER_BAG);
-        return { spare, bells: bags * COWBELLS_PER_BAG, bags, looseBells };
+        const bagCost = price * COWBELLS_PER_BAG;
+        const bags = wholeUnits(spare, bagCost);
+        const extraLoose = loose === null ? 0 : wholeUnits(spare - bags * bagCost, loose);
+        return { spare, bells: bags * COWBELLS_PER_BAG + extraLoose, bags, extraLoose, looseBells };
     }
-    return { spare, bells: wholeUnits(spare, price), bags: null, looseBells };
+    return { spare, bells: wholeUnits(spare, price), bags: null, extraLoose: 0, looseBells };
 }

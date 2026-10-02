@@ -156,7 +156,9 @@ describe('walking the queue for its coin flow', () => {
             [COINIFY, (500 * ESSENCE_PER_DECOMPOSE) / 10],
         ]);
         expect(walked.stages[0].coinDelta).toBeCloseTo(-500 * FEE_PER_DECOMPOSE, 3);
-        expect(walked.stages[1].coinDelta).toBeCloseTo(600 * COINS_PER_COINIFY, 3);
+        // Recorded, but not counted on: coinify rolls can fail
+        expect(walked.stages[1].coinDelta).toBe(0);
+        expect(walked.stages[1].earned).toBeCloseTo(600 * COINS_PER_COINIFY, 3);
         // Forage ∞ never ends, so nothing after it is reachable
         expect(walked.stoppedAt).toBe('Star Fruit');
 
@@ -176,7 +178,7 @@ describe('walking the queue for its coin flow', () => {
         expect(coinReserve(walked.stages).reserve).toBeCloseTo(450_000, 3);
     });
 
-    test('coinify first: what it earns ahead of the decompose lowers the reserve', () => {
+    test('coinify first: its expected earnings do not fund the decompose behind it', () => {
         game.inventory = [stack(COIN, 1_000_000), stack(STAR_FRUIT, 1000), stack(ESSENCE, 2000)];
         game.currentActions = [
             queued(1, COINIFY, { item: ESSENCE, maxCount: 200 }),
@@ -185,8 +187,8 @@ describe('walking the queue for its coin flow', () => {
 
         const { reserve } = coinReserve(walkQueueCoins(engine).stages);
 
-        // 200 × 1,750 = 350,000 lands before the 450,000 bill
-        expect(reserve).toBeCloseTo(450_000 - 350_000, 3);
+        // 200 coinify are expected to pay 350,000, but a failed roll pays nothing: the whole bill is kept
+        expect(reserve).toBeCloseTo(450_000, 3);
     });
 
     test('no decompose queued: nothing spends, so nothing is held back', () => {
@@ -197,6 +199,33 @@ describe('walking the queue for its coin flow', () => {
 
         expect(walked.stages.every((stage) => stage.coinDelta >= 0)).toBe(true);
         expect(coinReserve(walked.stages)).toEqual({ reserve: 0, spenders: [] });
+    });
+
+    test('a counted fight ahead of a decompose is walked through, not taken as the end', () => {
+        game.actionDetails['/actions/combat/fly'] = {
+            hrid: '/actions/combat/fly',
+            name: 'Fly',
+            type: '/action_types/combat',
+        };
+        game.currentActions = [
+            queued(1, '/actions/combat/fly', { maxCount: 50 }),
+            queued(2, DECOMPOSE, { item: STAR_FRUIT, maxCount: 500 }),
+        ];
+
+        const walked = walkQueueCoins(engine);
+
+        expect(walked.stoppedAt).toBeNull();
+        expect(walked.stages.map((stage) => stage.actionHrid)).toEqual(['/actions/combat/fly', DECOMPOSE]);
+        expect(coinReserve(walked.stages).reserve).toBeCloseTo(450_000, 3);
+    });
+
+    test('a queued action the game data does not know makes the walk unreadable, not free', () => {
+        game.currentActions = [
+            queued(1, '/actions/alchemy/unknown'),
+            queued(2, DECOMPOSE, { item: STAR_FRUIT, maxCount: 500 }),
+        ];
+
+        expect(walkQueueCoins(engine)).toBeNull();
     });
 
     test('an empty queue holds nothing back', () => {
@@ -236,6 +265,7 @@ describe('bells the spare coins buy', () => {
             spare: 550_000,
             bells: 5,
             bags: null,
+            extraLoose: 0,
             looseBells: 5,
         });
     });
@@ -245,8 +275,10 @@ describe('bells the spare coins buy', () => {
         const pricing = { price: 95_000, source: 'bag', loose: 100_000 };
         const result = bellsAffordable(3_000_000, 1_000_000, pricing);
         expect(result.bags).toBe(2);
-        expect(result.bells).toBe(2 * COWBELLS_PER_BAG);
-        // The 100,000 left over would still buy one loose
+        // The 100,000 left over after two bags still buys one loose
+        expect(result.extraLoose).toBe(1);
+        expect(result.bells).toBe(2 * COWBELLS_PER_BAG + 1);
+        // Every bell loose instead
         expect(result.looseBells).toBe(20);
     });
 

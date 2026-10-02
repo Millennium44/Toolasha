@@ -323,9 +323,9 @@ describe('what it says', () => {
         ironCowFarmPanel.show();
         await ironCowFarmPanel.refresh();
 
-        // 26M spare at 9.5M a bag of ten is two whole bags
+        // 26M spare at 9.5M a bag of ten is two whole bags, and the 7M left buys seven loose at 1M
         expect(text()).toContain('Bells you can buy now');
-        expect(text()).toContain('20 (2 bags)');
+        expect(text()).toContain('27 (2 bags + 7 loose)');
         expect(text()).toContain('Kept for the queue');
         const row = [...ironCowFarmPanel.panel.querySelectorAll('div')].find((div) =>
             div.textContent.startsWith('Bells you can buy now')
