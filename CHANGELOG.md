@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Chest badges match net worth
+
+- Chests and crates with a market price now show it on their inventory badge, as net worth does; the estimated value of their contents is used only when there's no market price.
+
 ### Custom Tabs Clear All
 
 - Custom Tabs' toolbar gains Clear All, which removes every custom tab, on your other synced devices too. A tab made or edited afterwards on any device is kept.
