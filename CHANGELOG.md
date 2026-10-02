@@ -6,6 +6,8 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+<!-- shipped in 3.63.1 -->
+
 ### Clearer rank badge icons
 
 - Collection Points rank badges show a blue book instead of the four-square icon, which was hard to make out at badge size.
@@ -4320,6 +4322,13 @@ The marketplace layout change gave the price row its own "Max" button and put it
 ### Combat sim nets the market sale tax off drop revenue
 
 The simulator valued every drop at its gross market price, so profit ignored the sale tax entirely — which is why the rise to 5% never moved it. Every drop-revenue path now nets the tax off each non-coin drop, cowbell bags at their own 18%: the Results summary, the Drops table's Gold columns, and the comparison and upgrade rows. Coin drops stay whole.
+
+## [3.63.1](https://github.com/Millennium44/Toolasha/compare/v3.63.0...v3.63.1) (2026-10-02)
+
+### Bug Fixes
+
+- Collection Points rank badges use the game's blue book icon ([c1103aa](https://github.com/Millennium44/Toolasha/commit/c1103aa4e62dd4d5f9e19851f6913a9aa6df3017))
+- rank badges tell the labyrinth boards apart and give fame the holy supporter icon ([a1d9f20](https://github.com/Millennium44/Toolasha/commit/a1d9f207167ea197c41fce1bed75c4dec6e8f425))
 
 ## [3.63.0](https://github.com/Millennium44/Toolasha/compare/v3.62.0...v3.63.0) (2026-10-02)
 
