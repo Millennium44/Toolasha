@@ -573,7 +573,8 @@ describe('exportRunHistoryBackup', () => {
         expect(mime).toBe('application/json;charset=utf-8;');
         expect(JSON.parse(text)).toEqual({
             format: DUNGEON_RUNS_BACKUP_FORMAT,
-            version: DUNGEON_RUNS_BACKUP_VERSION,
+            // No attempts among them, so the version older copies still read
+            version: 1,
             characterId: 'market123',
             exportedAt: expect.any(Number),
             runs,

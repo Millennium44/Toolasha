@@ -62,7 +62,14 @@ export const DUNGEON_RUNS_BACKUP_FORMAT = 'toolasha-dungeon-runs';
  * changes in a way an older reader could misinterpret; an import whose
  * `version` is higher than this is refused rather than guessed at.
  */
-export const DUNGEON_RUNS_BACKUP_VERSION = 1;
+export const DUNGEON_RUNS_BACKUP_VERSION = 2;
+
+/**
+ * Version 2 adds failed and canceled attempts (`result: 'fail' | 'cancel'`), which a version-1 reader
+ * would bank as clears. A backup with no attempts in it is still written as version 1, so it stays
+ * importable into older copies; one with attempts is written as 2, which they refuse.
+ */
+const ATTEMPTS_BACKUP_VERSION = 2;
 
 /**
  * The longest a run may plausibly have taken, mirroring
@@ -209,12 +216,14 @@ function canonicalizeImportedRunTimestamp(run) {
  * @returns {Object} The envelope, ready for `JSON.stringify`
  */
 export function buildDungeonRunsBackupEnvelope({ characterId, runs, now = Date.now() }) {
+    const list = Array.isArray(runs) ? runs : [];
+    const hasAttempts = list.some((run) => run?.result !== undefined && run?.result !== null && run.result !== 'clear');
     return {
         format: DUNGEON_RUNS_BACKUP_FORMAT,
-        version: DUNGEON_RUNS_BACKUP_VERSION,
+        version: hasAttempts ? ATTEMPTS_BACKUP_VERSION : 1,
         characterId: characterId ?? null,
         exportedAt: now,
-        runs: Array.isArray(runs) ? runs : [],
+        runs: list,
     };
 }
 

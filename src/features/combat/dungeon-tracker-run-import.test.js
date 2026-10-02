@@ -44,11 +44,23 @@ describe('buildDungeonRunsBackupEnvelope', () => {
 
         expect(envelope).toEqual({
             format: DUNGEON_RUNS_BACKUP_FORMAT,
-            version: DUNGEON_RUNS_BACKUP_VERSION,
+            // Clears only: still version 1, so an older copy can import it
+            version: 1,
             characterId: 'market123',
             exportedAt: 1_700_000_000_000,
             runs: [run()],
         });
+    });
+
+    test('a backup holding failed or canceled attempts is written as a version older copies refuse', () => {
+        const envelope = buildDungeonRunsBackupEnvelope({
+            characterId: 'm',
+            runs: [run(), { ...run(), result: 'fail' }],
+        });
+
+        expect(envelope.version).toBe(2);
+        expect(DUNGEON_RUNS_BACKUP_VERSION).toBeGreaterThanOrEqual(2);
+        expect(validateDungeonRunsEnvelope(envelope).ok).toBe(true);
     });
 
     test('a non-array runs list is written out as empty rather than thrown', () => {
