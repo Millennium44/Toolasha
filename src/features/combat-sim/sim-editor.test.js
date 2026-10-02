@@ -1326,6 +1326,11 @@ describe('the loadout target can be a non-self tab, even with self loaded', () =
     });
 });
 
+function engineAchievementTypes(dto) {
+    const off = new Set(dto.achievementBuffsOff);
+    return dto.achievementCombatBuffs.map((b) => b.typeHrid).filter((t) => !off.has(t));
+}
+
 describe('achievements section', () => {
     const damage = { typeHrid: '/buff_types/damage', ratioBoost: 0.02 };
     const wisdom = { typeHrid: '/buff_types/wisdom', flatBoost: 0.05 };
@@ -1355,9 +1360,12 @@ describe('achievements section', () => {
         expect(html).toContain('1 active');
     });
 
-    test('a player with no achievement buffs shows no section', () => {
+    test('a player with no achievement buffs still gets the scenario section, every tier unticked', () => {
         const editor = new SimEditor({ editorEl: document.createElement('div') });
-        expect(editor._renderAchievementsSection({ achievementCombatBuffs: [] })).toBe('');
+        const html = editor._renderAchievementsSection({ achievementCombatBuffs: [] });
+        expect(html).toContain('data-achievement-mode="custom"');
+        expect(html).toContain('0 active');
+        expect(html).not.toMatch(/data-achievement-buff="[^"]+" checked/);
     });
 
     test('a derived import captions itself as derived from achievements', () => {
@@ -1397,18 +1405,47 @@ describe('achievements section', () => {
         el.innerHTML =
             '<input type="checkbox" data-achievement-buff="/buff_types/damage" checked>' +
             '<input type="checkbox" data-achievement-buff="/buff_types/wisdom" checked>';
-        const dto = { achievementBuffsOff: [] };
+        const dto = { achievementCombatBuffs: [damage, wisdom], achievementBuffsOff: [] };
 
         editor._wireEditorEvents(el, dto);
         const dmg = el.querySelector('[data-achievement-buff="/buff_types/damage"]');
         dmg.checked = false;
         dmg.dispatchEvent(new Event('change'));
 
-        expect(dto.achievementBuffsOff).toEqual(['/buff_types/damage']);
+        expect(dto.achievementBuffsOff).toContain('/buff_types/damage');
+        expect(dto.achievementBuffsOff).not.toContain('/buff_types/wisdom');
+        expect(editor.getAchievementMode(dto)).toBe('custom');
 
         dmg.checked = true;
         dmg.dispatchEvent(new Event('change'));
-        expect(dto.achievementBuffsOff).toEqual([]);
+        expect(dto.achievementBuffsOff).not.toContain('/buff_types/damage');
+    });
+
+    test('Current, None and Custom resolve the buff set from the loaded player', () => {
+        const editor = new SimEditor({ editorEl: document.createElement('div') });
+        const loaded = { hrid: 'player1', achievementCombatBuffs: [damage], achievementBuffsOff: [] };
+        editor._originalDTOs = { player1: loaded };
+        const dto = structuredClone(loaded);
+        editor._editedDTOs = { player1: dto };
+        const granted = () => engineAchievementTypes(dto);
+
+        editor.setAchievementScenario(dto, 'none');
+        expect(granted()).toEqual([]);
+        expect(editor.getAchievementMode(dto)).toBe('none');
+
+        // Custom from the button starts from what the player has right now
+        editor.setAchievementScenario(dto, 'current');
+        editor.setAchievementScenario(dto, 'custom');
+        expect(granted()).toEqual(['/buff_types/damage']);
+
+        // A tier the player has not finished can be switched on
+        editor.setAchievementScenario(dto, 'custom', ['/buff_types/damage', '/buff_types/rare_find']);
+        expect(granted().sort()).toEqual(['/buff_types/damage', '/buff_types/rare_find']);
+
+        editor.setAchievementScenario(dto, 'current');
+        expect(granted()).toEqual(['/buff_types/damage']);
+        expect(dto.achievementScenario).toBeUndefined();
+        expect(editor.getAchievementMode(dto)).toBe('current');
     });
 });
 
