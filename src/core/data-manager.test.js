@@ -864,6 +864,56 @@ describe('saveSimulatorSnapshot', () => {
         expect(snapshot.partyInfo).toBe(partyInfo);
     });
 
+    test('carries the running combat action as the party zone and tier', async () => {
+        const { default: dataManager } = await import('./data-manager.js');
+        const { default: webSocketHook } = await import('./websocket.js');
+        webSocketHook.saveCombatSimSnapshot.mockClear();
+        dataManager.currentCharacterId = 'char-snap';
+        dataManager.isCharacterSwitching = false;
+        dataManager.battlePartyRoster = null;
+        const partyInfo = {
+            partySlotMap: { 1: { characterID: 'char-snap' } },
+            party: { actionHrid: '/actions/combat/fly', difficultyTier: 0, id: 7 },
+        };
+        dataManager.characterData = { character: { id: 'char-snap' }, partyInfo };
+        dataManager.characterActions = [
+            { id: 1, actionHrid: '/actions/combat/zombie_outbreak', difficultyTier: 2, isDone: false, ordinal: 1 },
+        ];
+
+        dataManager.saveSimulatorSnapshot();
+
+        const [snapshot] = webSocketHook.saveCombatSimSnapshot.mock.calls[0];
+        expect(snapshot.partyInfo.party).toEqual({
+            actionHrid: '/actions/combat/zombie_outbreak',
+            difficultyTier: 2,
+            id: 7,
+        });
+        expect(snapshot.partyInfo.partySlotMap).toBe(partyInfo.partySlotMap);
+        // Login's party on the live object is left as the game sent it
+        expect(dataManager.characterData.partyInfo.party.actionHrid).toBe('/actions/combat/fly');
+        dataManager.characterActions = [];
+    });
+
+    test('leaves the login party zone alone when no combat action is running', async () => {
+        const { default: dataManager } = await import('./data-manager.js');
+        const { default: webSocketHook } = await import('./websocket.js');
+        webSocketHook.saveCombatSimSnapshot.mockClear();
+        dataManager.currentCharacterId = 'char-snap';
+        dataManager.isCharacterSwitching = false;
+        dataManager.battlePartyRoster = null;
+        const partyInfo = { party: { actionHrid: '/actions/combat/fly', difficultyTier: 1 } };
+        dataManager.characterData = { character: { id: 'char-snap' }, partyInfo };
+        dataManager.characterActions = [
+            { id: 2, actionHrid: '/actions/foraging/cow', difficultyTier: 0, isDone: false, ordinal: 1 },
+        ];
+
+        dataManager.saveSimulatorSnapshot();
+
+        const [snapshot] = webSocketHook.saveCombatSimSnapshot.mock.calls[0];
+        expect(snapshot.partyInfo).toBe(partyInfo);
+        dataManager.characterActions = [];
+    });
+
     test('writes nothing mid character switch', async () => {
         const { default: dataManager } = await import('./data-manager.js');
         const { default: webSocketHook } = await import('./websocket.js');

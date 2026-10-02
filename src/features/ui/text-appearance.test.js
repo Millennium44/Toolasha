@@ -425,6 +425,13 @@ describe('review round 3', () => {
         expect(buildToolashaTextCSS()).not.toContain('--toolasha-text-zoom');
     });
 
+    test('publishes the chosen font stack for item-tile badges, and only while a font is chosen', () => {
+        state.values.ui_fontFamily = 'verdana';
+        expect(buildToolashaTextCSS()).toContain(`:root { --toolasha-font-stack: ${FONT_STACKS.verdana}; }`);
+        state.values.ui_fontFamily = 'default';
+        expect(buildToolashaTextCSS()).not.toContain('--toolasha-font-stack');
+    });
+
     test('the game font rule does not reach into Toolasha surfaces', () => {
         state.values.ui_gameText = true;
         state.values.ui_fontFamily = 'verdana';

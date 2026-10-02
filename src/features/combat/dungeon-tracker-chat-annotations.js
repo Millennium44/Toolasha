@@ -751,64 +751,6 @@ class DungeonTrackerChatAnnotations {
     }
 
     /**
-     * Save runs from chat events to storage (Phase 5: authoritative source)
-     * @param {Array} events - Chat events array
-     */
-    async saveRunsFromEvents(events) {
-        // Build runs from events (only key→key pairs)
-        const dungeonCounts = {};
-
-        for (let i = 0; i < events.length; i++) {
-            const event = events[i];
-            if (event.type !== 'key') continue;
-
-            // Find next relevant event, stopping at any battle_start (session boundary).
-            let next = null;
-            for (let j = i + 1; j < events.length; j++) {
-                const ev = events[j];
-                if (ev.type === 'battle_start') break;
-                if (ev.type === 'key' || ev.type === 'fail' || ev.type === 'cancel') {
-                    next = ev;
-                    break;
-                }
-            }
-            if (!next || next.type !== 'key') continue; // Only key→key pairs
-
-            // Calculate duration
-            let duration = next.timestamp - event.timestamp;
-            if (duration < 0) duration += 24 * 60 * 60 * 1000; // Midnight rollover
-
-            // Get dungeon name with hybrid fallback (handles chat scrolling)
-            const dungeonName = this.getDungeonNameWithFallback(events, i);
-
-            // Get team key
-            const teamKey = dungeonTrackerStorage.getTeamKey(event.team);
-
-            // Create run object.
-            //
-            // The timestamp is the chat stamp, which the game prints truncated
-            // to the second, and it is banked as-is rather than dressed up with
-            // milliseconds chat never had. Nothing else is recorded beside it
-            // because nothing else is needed: the tracker's own record of the
-            // same run carries the server's millisecond stamp for the very same
-            // key-count message, so truncating both to the second makes the two
-            // identical, and `saveTeamRun` joins them on exactly that - one team
-            // cannot begin two runs in the same second - instead of on how far
-            // apart they happen to fall.
-            const run = {
-                timestamp: event.timestamp.toISOString(),
-                duration: duration,
-                dungeonName: dungeonName,
-            };
-
-            // Save team run (includes dungeon name from Phase 2)
-            await dungeonTrackerStorage.saveTeamRun(teamKey, run);
-
-            dungeonCounts[dungeonName] = (dungeonCounts[dungeonName] || 0) + 1;
-        }
-    }
-
-    /**
      * Calculate stats from visible chat events (in-memory, no storage)
      * Used to show averages before backfill is done
      * @param {Array} events - Chat events array

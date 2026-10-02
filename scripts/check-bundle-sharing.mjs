@@ -110,6 +110,14 @@ const ALLOWLIST = new Map([
         'stateless run-result predicates and summary; no module state to share',
     ],
     [
+        'src/utils/tile-badge-text.js',
+        // Two CSS custom-property names, two zoom caps and one pure CSS-string
+        // builder; no module state. The market bundle (stack-value badge in
+        // inventory sort) and the ui bundle (ask/bid price badges) both style
+        // tile badges with it.
+        'stateless tile-badge CSS constants and builder; no module state to share',
+    ],
+    [
         'src/utils/battle-bridge-keys.js',
         // GM key names and one key-building function, no module state. The core
         // bundle (battle bridge writer) and the combat bundle (simulator export

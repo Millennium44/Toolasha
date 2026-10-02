@@ -20,6 +20,7 @@ import { getKeyUnitCost } from '../../utils/key-cost.js';
 import { createMutationWatcher } from '../../utils/dom-observer-helpers.js';
 import { yieldToEventLoop } from '../../utils/background-work.js';
 import { ironCowBook, isIronCowCharacter } from '../../utils/ironcow-valuation.js';
+import { officialValueOverride } from '../../utils/official-value-override.js';
 
 // How long the per-item pricing loop may run before handing the thread back.
 // High-enhancement equipment runs calculateEnhancementPath (100+ ms per +20
@@ -53,6 +54,7 @@ class InventoryBadgeManager {
         this.providers = new Map(); // name -> { renderFn, priority }
         this.currentInventoryElem = null;
         this.unregisterHandlers = [];
+        this.repricedListeners = new Set(); // Run after a forced reprice has rendered
         this.isInitialized = false;
         this.processedItems = new WeakSet(); // Track processed item containers
         this.warnedItems = new Set(); // Track items we've already warned about
@@ -130,6 +132,46 @@ class InventoryBadgeManager {
             { childList: true }
         );
         this.unregisterHandlers.push(unwatchPopper);
+
+        // The value source decides how +13 and above equipment is priced, and the game's value map
+        // (hourly, on its own message) feeds it in official-value mode and fills empty or stale books in
+        // order-book mode. Either change must reprice every tile rather than wait for the next inventory
+        // event. market-values.js swaps its cache on that message at import, so it has run by now.
+        const reprice = async (why) => {
+            this.invalidateCache();
+            this.lastCalculationTime = 0;
+            this.lastRenderTime = 0;
+            try {
+                await this.renderAllBadges();
+            } catch (error) {
+                console.error(`[InventoryBadgeManager] Re-render after ${why} failed:`, error);
+                return;
+            }
+            // Tiles now carry the new values; anything ordered or totalled by them redoes its pass
+            for (const listener of [...this.repricedListeners]) {
+                try {
+                    listener();
+                } catch (error) {
+                    console.error('[InventoryBadgeManager] Repriced listener failed:', error);
+                }
+            }
+        };
+        this.unregisterHandlers.push(
+            config.onSettingChange('networth_valueSource', () => reprice('value source change'))
+        );
+        const onMarketValues = () => reprice('game value refresh');
+        dataManager.on('market_item_values_updated', onMarketValues);
+        this.unregisterHandlers.push(() => dataManager.off('market_item_values_updated', onMarketValues));
+    }
+
+    /**
+     * Run a callback after a forced reprice (value source change, game value refresh) has rendered.
+     * @param {Function} listener
+     * @returns {Function} Unsubscribe
+     */
+    onRepriced(listener) {
+        this.repricedListeners.add(listener);
+        return () => this.repricedListeners.delete(listener);
     }
 
     /**
@@ -510,8 +552,13 @@ class InventoryBadgeManager {
                 continue;
             }
 
-            // Handle openable containers (chests, crates, caches)
-            if (itemDetails?.isOpenable && expectedValueCalculator.isInitialized) {
+            // Handle openable containers (chests, crates, caches). In official-value mode a published
+            // value comes first, as in net worth, which only falls back to the expected value
+            if (
+                itemDetails?.isOpenable &&
+                expectedValueCalculator.isInitialized &&
+                officialValueOverride(itemHrid, 0) === null
+            ) {
                 const evData = expectedValueCalculator.calculateExpectedValue(itemHrid);
                 if (evData && evData.expectedValue > 0) {
                     let netValue = evData.expectedValue;
@@ -540,8 +587,16 @@ class InventoryBadgeManager {
             let askPrice = 0;
             let bidPrice = 0;
 
+            // Official-value mode: the game's figure prices the item at every level, ahead of the cost
+            // rule and the order book alike, exactly as net worth does. Null in order-book mode, for an
+            // Iron Cow character, or when the game publishes no value, which leaves the chain below.
+            const officialValue = officialValueOverride(itemHrid, enhancementLevel);
+
             // Determine pricing method
-            if (isEquipment && useHighEnhancementCost && enhancementLevel >= minLevel) {
+            if (officialValue !== null) {
+                askPrice = officialValue;
+                bidPrice = officialValue;
+            } else if (isEquipment && useHighEnhancementCost && enhancementLevel >= minLevel) {
                 // Use enhancement cost calculation for high-level equipment
                 const cachedCost = networthCache.get(itemHrid, enhancementLevel);
 

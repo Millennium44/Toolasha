@@ -26,7 +26,7 @@ import {
 } from './guild-shrine-store.js';
 import { mergeMarketListings } from '../utils/market-listings.js';
 import { SCROLL_BUFF_VALUES } from '../utils/scroll-buff-values.js';
-import { compareActionQueueOrder } from '../utils/combat-actions.js';
+import { compareActionQueueOrder, runningCombatAction } from '../utils/combat-actions.js';
 
 /**
  * Whether two plain hrid -> value maps hold the same entries.
@@ -2547,6 +2547,19 @@ class DataManager {
             snapshot.partyInfo = {
                 ...(snapshot.partyInfo || {}),
                 partySlotMap: Object.fromEntries(party.members.map((member, index) => [String(index + 1), member])),
+            };
+        }
+        // The party's zone and tier are login's too. A bridged simulator export has only this snapshot
+        // to read them from, so a running fight's zone replaces them; with none running they stay.
+        const running = runningCombatAction(this.getCurrentActions(), { includeFinished: true });
+        if (running?.actionHrid) {
+            snapshot.partyInfo = {
+                ...(snapshot.partyInfo || {}),
+                party: {
+                    ...(snapshot.partyInfo?.party || {}),
+                    actionHrid: running.actionHrid,
+                    difficultyTier: running.difficultyTier || 0,
+                },
             };
         }
         return (
