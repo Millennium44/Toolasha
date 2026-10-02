@@ -2369,6 +2369,20 @@ describe('rebuilding history from the chat log', () => {
         ]);
     });
 
+    test('with failed runs recorded, a "Battle ended" just before "Party failed" is one fail', async () => {
+        game.recordAttempts = true;
+        chatLog([
+            { text: '[08/04 10:00:00 AM] Battle started: Chimerical Den' },
+            { text: '[08/04 10:00:05 AM] Key counts: [Alice - 12]' },
+            { text: '[08/04 10:02:00 AM] Battle ended: Chimerical Den' },
+            { text: '[08/04 10:02:01 AM] Party failed on wave 7' },
+        ]);
+
+        await tracker.backfillFromChatHistory();
+
+        expect(game.savedRuns.map(({ run }) => [run.result, run.duration])).toEqual([['fail', 116_000]]);
+    });
+
     test('with failed runs recorded, a ready-check that fell through a second later is still nothing', async () => {
         game.recordAttempts = true;
         chatLog([

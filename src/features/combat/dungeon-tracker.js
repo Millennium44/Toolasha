@@ -3106,8 +3106,10 @@ class DungeonTracker {
                 const event = events[i];
                 if (event.type !== 'key') continue; // Only process key count events
 
-                const next = events[i + 1];
+                let next = events[i + 1];
                 if (!next) break; // No next event
+                // A wipe can post "Battle ended" just before "Party failed": the fail wins, as it does live
+                if (next.type === 'cancel' && events[i + 2]?.type === 'fail') next = events[i + 2];
 
                 const attemptResult =
                     withAttempts && next.type === 'fail'
