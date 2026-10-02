@@ -21,7 +21,7 @@ const timerRegistry = createTimerRegistry();
 /** Resolve after `ms`, through the registry so a teardown cancels it */
 function wait(ms) {
     return new Promise((resolve) => {
-        timerRegistry.registerTimeout(setTimeout(resolve, ms));
+        timerRegistry.scheduleTimeout(resolve, ms);
     });
 }
 

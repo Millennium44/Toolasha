@@ -58,8 +58,7 @@ class HousePanelObserver {
     async handleHouseModal(modalContent) {
         // Wait a moment for content to fully load
         await new Promise((resolve) => {
-            const loadTimeout = setTimeout(resolve, 100);
-            this.cleanupRegistry.registerTimeout(loadTimeout);
+            this.cleanupRegistry.scheduleTimeout(resolve, 100);
         });
 
         // Modal shows one room at a time, not a grid

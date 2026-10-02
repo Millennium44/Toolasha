@@ -167,19 +167,17 @@ class TaskIcons {
             }
 
             // Wait for game to update DOM before updating icons
-            const iconsTimeout = setTimeout(() => {
+            this.timerRegistry.scheduleTimeout(() => {
                 this.clearAllProcessedMarkers();
                 this.processAllTaskCards();
             }, 250);
-            this.timerRegistry.registerTimeout(iconsTimeout);
 
             // And once more, later, without clearing the markers — so a card
             // the game had not finished redrawing at 250 ms is picked up rather
             // than keeping the previous task's picture until something else
             // happens to rebuild the board. A card whose name has not changed
             // since the first pass costs nothing here.
-            const settledTimeout = setTimeout(() => this.processAllTaskCards(), 1000);
-            this.timerRegistry.registerTimeout(settledTimeout);
+            this.timerRegistry.scheduleTimeout(() => this.processAllTaskCards(), 1000);
         };
 
         webSocketHook.on('quests_updated', questsHandler);

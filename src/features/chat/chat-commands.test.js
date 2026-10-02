@@ -63,7 +63,12 @@ vi.mock('../../core/dom-observer.js', () => ({
     },
 }));
 vi.mock('../../utils/timer-registry.js', () => ({
-    createTimerRegistry: () => ({ registerTimeout: () => {}, clearAll: () => {} }),
+    createTimerRegistry: () => ({
+        registerTimeout: () => {},
+        scheduleTimeout: (fn, ms) => setTimeout(fn, ms),
+        cancelTimeout: (id) => clearTimeout(id),
+        clearAll: () => {},
+    }),
 }));
 // The token valuation the /shrines report now carries a line of. Mocked at its
 // two data sources rather than wholesale, so the line is the real arithmetic.

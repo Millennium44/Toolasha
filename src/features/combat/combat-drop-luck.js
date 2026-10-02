@@ -597,8 +597,7 @@ class CombatDropLuck {
 
             // The transform is a tenth of a second on a busy zone, which is a
             // visible stutter if it runs before the panel has painted
-            const deferred = setTimeout(() => this._fillIn(line, lootMap), 0);
-            this.timerRegistry.registerTimeout(deferred);
+            this.timerRegistry.scheduleTimeout(() => this._fillIn(line, lootMap), 0);
         });
     }
 
@@ -831,8 +830,7 @@ class CombatDropLuck {
         }
         if (tries >= MAX_PANEL_TRIES) return;
 
-        const retry = setTimeout(() => this._findPanel(tries + 1, onFound), PANEL_RETRY_MS);
-        this.timerRegistry.registerTimeout(retry);
+        this.timerRegistry.scheduleTimeout(() => this._findPanel(tries + 1, onFound), PANEL_RETRY_MS);
     }
 }
 

@@ -150,8 +150,7 @@ class DungeonTrackerUI {
         this.dungeonUpdateHandler = (currentRun, completedRun) => {
             if (completedRun) {
                 // Dungeon completed - trigger chat annotation update regardless of UI setting
-                const annotateTimeout = setTimeout(() => dungeonTrackerChatAnnotations.annotateAllMessages(), 200);
-                this.timerRegistry.registerTimeout(annotateTimeout);
+                this.timerRegistry.scheduleTimeout(() => dungeonTrackerChatAnnotations.annotateAllMessages(), 200);
             }
 
             // Check if UI is enabled before updating the panel. getSetting, not

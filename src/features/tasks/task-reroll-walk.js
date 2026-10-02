@@ -1301,8 +1301,7 @@ class TaskRerollWalk {
      */
     _replanSoon(delay) {
         this.timerRegistry.clearAll();
-        const timeout = setTimeout(() => this._replan(), delay);
-        this.timerRegistry.registerTimeout(timeout);
+        this.timerRegistry.scheduleTimeout(() => this._replan(), delay);
     }
 
     /**
@@ -1376,19 +1375,17 @@ class TaskRerollWalk {
             // the board is in its final order.
             this.awaitingReadSort = true;
             this.sortTimerRegistry.clearAll();
-            this.sortTimerRegistry.registerTimeout(
-                setTimeout(() => {
-                    this.awaitingReadSort = false;
-                    if (config.getSetting('taskSorter_sortAfterRead') || config.getSetting('taskSorter_autoSort')) {
-                        try {
-                            taskSorter.sortTasks(true);
-                        } catch (error) {
-                            console.error('[TaskRerollWalk] Post-read sort failed:', error);
-                        }
+            this.sortTimerRegistry.scheduleTimeout(() => {
+                this.awaitingReadSort = false;
+                if (config.getSetting('taskSorter_sortAfterRead') || config.getSetting('taskSorter_autoSort')) {
+                    try {
+                        taskSorter.sortTasks(true);
+                    } catch (error) {
+                        console.error('[TaskRerollWalk] Post-read sort failed:', error);
                     }
-                    this._replan();
-                }, SERVER_SETTLE_MS)
-            );
+                }
+                this._replan();
+            }, SERVER_SETTLE_MS);
             this.timerRegistry.clearAll();
             return true;
         }

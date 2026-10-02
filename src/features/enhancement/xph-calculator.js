@@ -553,7 +553,7 @@ class XPHCalculator {
         status.textContent = 'Calculating…';
         this.tableBody.innerHTML = '';
 
-        const t = setTimeout(async () => {
+        this.timerRegistry.scheduleTimeout(async () => {
             try {
                 await this._compute(maxLevel, protectFrom);
             } catch (err) {
@@ -561,7 +561,6 @@ class XPHCalculator {
                 status.textContent = 'Error during calculation.';
             }
         }, 10);
-        this.timerRegistry.registerTimeout(t);
     }
 
     async _compute(maxLevel, protectFrom) {

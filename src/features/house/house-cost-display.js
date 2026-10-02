@@ -359,11 +359,9 @@ class HouseCostDisplay {
             } else {
                 button.textContent = 'Missing-materials module not loaded';
             }
-            this.timerRegistry.registerTimeout(
-                setTimeout(() => {
-                    button.textContent = 'Tester: pin all rooms → Lv';
-                }, 2500)
-            );
+            this.timerRegistry.scheduleTimeout(() => {
+                button.textContent = 'Tester: pin all rooms → Lv';
+            }, 2500);
         });
 
         wrap.append(button, level);
@@ -1095,8 +1093,7 @@ class HouseCostDisplay {
 
         // Wait for marketplace to settle
         await new Promise((resolve) => {
-            const delayTimeout = setTimeout(resolve, 200);
-            this.timerRegistry.registerTimeout(delayTimeout);
+            this.timerRegistry.scheduleTimeout(resolve, 200);
         });
 
         // Create custom tabs
@@ -1147,8 +1144,7 @@ class HouseCostDisplay {
             }
 
             await new Promise((resolve) => {
-                const delayTimeout = setTimeout(resolve, delayMs);
-                this.timerRegistry.registerTimeout(delayTimeout);
+                this.timerRegistry.scheduleTimeout(resolve, delayMs);
             });
         }
 

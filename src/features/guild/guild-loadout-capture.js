@@ -543,12 +543,10 @@ class GuildLoadoutCapture {
         if (this.saveQueued) return;
         this.saveQueued = true;
 
-        this.timers.registerTimeout(
-            setTimeout(async () => {
-                this.saveQueued = false;
-                await saveLoadouts(this.characterId, this.record, this.guildName);
-            }, SAVE_DEBOUNCE_MS)
-        );
+        this.timers.scheduleTimeout(async () => {
+            this.saveQueued = false;
+            await saveLoadouts(this.characterId, this.record, this.guildName);
+        }, SAVE_DEBOUNCE_MS);
     }
 }
 

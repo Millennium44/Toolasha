@@ -1015,11 +1015,10 @@ class CombatScore {
                 if (!dto) {
                     simCharBtn.textContent = '\u2717 No Data';
                     simCharBtn.style.background = config.COLOR_LOSS;
-                    const resetTimeout = setTimeout(() => {
+                    this.timerRegistry.scheduleTimeout(() => {
                         simCharBtn.textContent = 'Sim Character';
                         simCharBtn.style.background = 'linear-gradient(135deg, #3a7bd5, #5f3dc4)';
                     }, 3000);
-                    this.timerRegistry.registerTimeout(resetTimeout);
                     return;
                 }
                 combatSimUI.openWithExternalDTO(dto, playerName);
@@ -1410,11 +1409,10 @@ class CombatScore {
     showButtonStatus(button, text, background, originalText, originalBg) {
         button.textContent = text;
         button.style.background = background;
-        const resetTimeout = setTimeout(() => {
+        this.timerRegistry.scheduleTimeout(() => {
             button.textContent = originalText;
             button.style.background = originalBg;
         }, 3000);
-        this.timerRegistry.registerTimeout(resetTimeout);
     }
 
     /**
@@ -1657,12 +1655,11 @@ class CombatScore {
         };
         wrapper._closePartyExportPreview = closePreview;
         // Deferred so the click that opened the preview does not also close it
-        const listenTimeout = setTimeout(() => {
+        this.timerRegistry.scheduleTimeout(() => {
             if (!preview.isConnected) return;
             document.addEventListener('click', outsideCloser);
             document.addEventListener('keydown', escapeCloser);
         }, 0);
-        this.timerRegistry.registerTimeout(listenTimeout);
         const previousCleanup = panel._simFormatDropdownCleanup;
         panel._simFormatDropdownCleanup = () => {
             closePreview();
@@ -1694,8 +1691,7 @@ class CombatScore {
                 return;
             }
             if (copied) {
-                const closeTimeout = setTimeout(closePreview, 1200);
-                this.timerRegistry.registerTimeout(closeTimeout);
+                this.timerRegistry.scheduleTimeout(closePreview, 1200);
             }
         });
     }
@@ -1816,11 +1812,10 @@ class CombatScore {
             if (!exportData) {
                 button.textContent = '✗ No Data';
                 button.style.background = config.COLOR_LOSS;
-                const resetTimeout = setTimeout(() => {
+                this.timerRegistry.scheduleTimeout(() => {
                     button.textContent = originalText;
                     button.style.background = originalBg;
                 }, 3000);
-                this.timerRegistry.registerTimeout(resetTimeout);
                 return;
             }
 
@@ -1829,20 +1824,18 @@ class CombatScore {
 
             button.textContent = '✓ Copied';
             button.style.background = config.COLOR_PROFIT;
-            const resetTimeout = setTimeout(() => {
+            this.timerRegistry.scheduleTimeout(() => {
                 button.textContent = originalText;
                 button.style.background = originalBg;
             }, 3000);
-            this.timerRegistry.registerTimeout(resetTimeout);
         } catch (error) {
             console.error('[Combat Score] Milkonomy export failed:', error);
             button.textContent = '✗ Failed';
             button.style.background = config.COLOR_LOSS;
-            const resetTimeout = setTimeout(() => {
+            this.timerRegistry.scheduleTimeout(() => {
                 button.textContent = originalText;
                 button.style.background = originalBg;
             }, 3000);
-            this.timerRegistry.registerTimeout(resetTimeout);
         }
     }
 

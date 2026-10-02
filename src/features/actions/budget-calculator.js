@@ -487,10 +487,9 @@ class BudgetCalculator {
             const budget = parseKMB(raw);
             if (isNaN(budget) || budget <= 0) {
                 input.style.borderColor = '#c0392b';
-                const t = setTimeout(() => {
+                this.timerRegistry.scheduleTimeout(() => {
                     input.style.borderColor = '#555';
                 }, 1500);
-                this.timerRegistry.registerTimeout(t);
                 return;
             }
             input.style.borderColor = '#555';
@@ -501,10 +500,9 @@ class BudgetCalculator {
             const result = findMaxUnits(actionHrid, budget);
             if (!result) {
                 calcBtn.textContent = 'No data';
-                const t = setTimeout(() => {
+                this.timerRegistry.scheduleTimeout(() => {
                     calcBtn.textContent = 'Calculate';
                 }, 2000);
-                this.timerRegistry.registerTimeout(t);
                 return;
             }
 

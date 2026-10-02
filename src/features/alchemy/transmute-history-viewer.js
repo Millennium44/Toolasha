@@ -2117,8 +2117,7 @@ class TransmuteHistoryViewer {
                 this.closeActiveFilterPopup();
             }
         };
-        const t = setTimeout(() => document.addEventListener('click', this.popupCloseHandler), 10);
-        this.timerRegistry.registerTimeout(t);
+        this.timerRegistry.scheduleTimeout(() => document.addEventListener('click', this.popupCloseHandler), 10);
     }
 
     /**
