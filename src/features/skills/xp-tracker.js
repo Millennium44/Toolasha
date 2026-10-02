@@ -204,10 +204,15 @@ function formatTimeLeft(ms) {
     const d1 = 24 * 60 * 60 * 1000;
     const w1 = 7 * 24 * 60 * 60 * 1000;
 
-    const w = Math.floor(ms / w1);
-    const d = Math.floor((ms % w1) / d1);
-    const h = Math.floor((ms % d1) / h1);
-    const m = Math.ceil((ms % h1) / m1);
+    // Under six hours the minutes are shown, and they round up: carry the rounding into the hours
+    // first, or 1h59.5m reads "1 hour 60 minutes"
+    const shownMinutes = ms < 6 * h1;
+    const base = shownMinutes ? Math.ceil(ms / m1) * m1 : ms;
+
+    const w = Math.floor(base / w1);
+    const d = Math.floor((base % w1) / d1);
+    const h = Math.floor((base % d1) / h1);
+    const m = Math.ceil((base % h1) / m1);
 
     const s = (n) => (n === 1 ? '' : 's');
     const parts = [];

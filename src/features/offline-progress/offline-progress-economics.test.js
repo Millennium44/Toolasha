@@ -65,6 +65,13 @@ vi.mock('../../core/dom-observer.js', () => ({
 vi.mock('../../utils/offline-economics-calculator.js', () => ({
     calculateOfflineEconomics: mockCalculateOfflineEconomics,
 }));
+const marketListeners = vi.hoisted(() => new Set());
+vi.mock('../../api/marketplace.js', () => ({
+    default: {
+        on: (cb) => marketListeners.add(cb),
+        off: (cb) => marketListeners.delete(cb),
+    },
+}));
 vi.mock('../../utils/market-data.js', () => ({ formatPrice: vi.fn((n) => String(Math.round(n))) }));
 
 // One entry per `createMutationWatcher` call, oldest first, so a test can tell
@@ -470,6 +477,44 @@ describe('offline-progress-economics', () => {
         capturedCleanupCallback();
 
         expect(settingChangeCallbacks.get('profitCalc_pricingMode').size).toBe(0);
+    });
+
+    test('a block built before market data landed reprices when it does, and a complete one stays put', () => {
+        const partial = {
+            ...SAMPLE_ECONOMICS,
+            isPartial: true,
+            revenue: 0,
+            unvaluedItems: [{ itemHrid: '/items/cheese', enhancementLevel: 0, offlineCount: 10 }],
+        };
+        mockCalculateOfflineEconomics.mockReturnValue(partial);
+        offlineProgressEconomics.initialize();
+        triggerCharacterInitialized();
+        const modalNode = buildModalNode();
+        mockOnClass.mock.calls[0][2](modalNode);
+        expect(document.querySelector('#mwi-offline-economics').textContent).toContain('no price data');
+
+        // the startup market fetch lands
+        mockCalculateOfflineEconomics.mockReturnValue({ ...SAMPLE_ECONOMICS, revenue: 777 });
+        for (const cb of [...marketListeners]) cb();
+        expect(document.querySelector('#mwi-offline-economics').textContent).toContain('777');
+
+        // a later price tick on a complete block does not redraw it
+        mockCalculateOfflineEconomics.mockClear();
+        for (const cb of [...marketListeners]) cb();
+        expect(mockCalculateOfflineEconomics).not.toHaveBeenCalled();
+    });
+
+    test('the market listener is removed with the block', () => {
+        offlineProgressEconomics.initialize();
+        triggerCharacterInitialized();
+        const modalNode = buildModalNode();
+        mockOnClass.mock.calls[0][2](modalNode);
+        expect(marketListeners.size).toBe(1);
+
+        modalNode.remove();
+        capturedCleanupCallback();
+
+        expect(marketListeners.size).toBe(0);
     });
 
     test('does nothing when the feature setting is disabled', () => {
