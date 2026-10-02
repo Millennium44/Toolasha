@@ -1685,6 +1685,13 @@ describe('clearAllTabs and importCategoryTabs', () => {
         expect(merge(stale, cleared).tabs).toEqual([]);
     });
 
+    test('Clear All never weakens a deletion already on file from a clock running ahead', async () => {
+        const { clearAllTabs } = await import('./custom-tabs-data.js');
+        const ahead = Date.now() + 60 * 60_000;
+        const cleared = clearAllTabs({ version: 1, selectedTabId: null, tabs: [], removed: { old: ahead } });
+        expect(cleared.removed.old).toBeGreaterThanOrEqual(ahead);
+    });
+
     test('importCategoryTabs makes one tab per non-empty category and skips existing names', async () => {
         const { importCategoryTabs } = await import('./custom-tabs-data.js');
         const { c } = base();

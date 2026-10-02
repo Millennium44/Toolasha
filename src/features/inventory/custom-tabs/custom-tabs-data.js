@@ -1010,6 +1010,9 @@ export function clearAllTabs(config) {
     _walkTabs(config.tabs, (tab) => {
         at = Math.max(at, stampOf(tab) + 1);
     });
+    // Never below a deletion already on file (one written by a clock running ahead), which the
+    // reaffirming loop below would otherwise weaken
+    for (const when of Object.values(c.removed)) at = Math.max(at, Number(when) || 0);
     _walkTabs(config.tabs, (tab) => {
         c.removed[tab.id] = at;
         c.clearedTabIds[tab.id] = at;
