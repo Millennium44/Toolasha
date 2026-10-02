@@ -187,3 +187,102 @@ describe('a saved trial’s graph', () => {
         expect(savedTrialGraphHTML(graph)).toBe('');
     });
 });
+
+describe('two scales', () => {
+    // Abe ~100/s, Bo ~20/s; the party (120/s) is the sum
+    const session = {
+        snapshots: [
+            snap(0, { Abe: 0, Bo: 0 }),
+            snap(15, { Abe: 1500, Bo: 300 }),
+            snap(30, { Abe: 3000, Bo: 600 }),
+            snap(45, { Abe: 4500, Bo: 900 }),
+        ],
+    };
+
+    /**
+     * @param {Element} host - The drawn graph
+     * @param {string} side - 'left' or 'right'
+     * @returns {string[]} Tick labels on that axis
+     */
+    const ticks = (host, side) => [...host.querySelectorAll(`text[data-axis="${side}"]`)].map((t) => t.textContent);
+
+    test('players set the left axis and the party sets the right', () => {
+        const host = parse(trialDpsGraphHTML(null, { session }));
+        expect(ticks(host, 'left').at(-1)).toBe('100');
+        expect(ticks(host, 'right').at(-1)).toBe('150');
+        expect(host.querySelector('polyline[stroke-dasharray="5 2"] title').textContent).toBe('Party');
+        expect(host.textContent).toContain('right-hand scale');
+    });
+
+    test('a large party leaves the players readable', () => {
+        const big = {
+            snapshots: [
+                snap(0, { Abe: 0, Bo: 0, Cy: 0 }),
+                snap(15, { Abe: 15_000, Bo: 300_000, Cy: 600_000 }),
+                snap(30, { Abe: 30_000, Bo: 600_000, Cy: 1_200_000 }),
+            ],
+        };
+        const host = parse(trialDpsGraphHTML(null, { session: big }));
+        // Cy is 40,000/s, the party 61,000/s: each axis is sized to its own maximum
+        expect(ticks(host, 'left').at(-1)).toBe('40.0K');
+        expect(ticks(host, 'right').at(-1)).toBe('80.0K');
+    });
+
+    test('toggling a series recomputes the scales from what is showing', () => {
+        let host = parse(trialDpsGraphHTML(null, { session }));
+        const redraw = vi.fn(() => {
+            document.body.replaceChildren();
+            host = parse(trialDpsGraphHTML(null, { session }));
+            wireTrialDpsGraph(host, redraw);
+        });
+        wireTrialDpsGraph(host, redraw);
+
+        // Hide Abe: the left axis now belongs to Bo alone (20/s)
+        host.querySelector('[data-trial-graph-series="Abe"]').click();
+        expect(ticks(host, 'left').at(-1)).toBe('20');
+        expect(host.querySelectorAll('polyline')).toHaveLength(2);
+        expect(host.querySelector('[data-trial-graph-series="Abe"]').getAttribute('aria-pressed')).toBe('false');
+
+        // Hide Bo as well: the party alone, on its own axis, with no left labels
+        host.querySelector('[data-trial-graph-series="Bo"]').click();
+        expect(ticks(host, 'left')).toEqual([]);
+        expect(ticks(host, 'right').at(-1)).toBe('150');
+        expect(host.querySelectorAll('polyline')).toHaveLength(1);
+
+        // Hide the party too: nothing drawn, and nothing throws
+        host.querySelector('[data-trial-graph-series=" party"]').click();
+        expect(host.querySelectorAll('polyline')).toHaveLength(0);
+        expect(host.textContent).not.toContain('could not be drawn');
+
+        // Show Abe again with the party still hidden: left axis only
+        host.querySelector('[data-trial-graph-series="Abe"]').click();
+        expect(ticks(host, 'right')).toEqual([]);
+        expect(ticks(host, 'left').at(-1)).toBe('100');
+    });
+
+    test('hidden series survive a redraw and the Show/Hide toggle', () => {
+        const host = parse(trialDpsGraphHTML(null, { session }));
+        const redraw = vi.fn();
+        wireTrialDpsGraph(host, redraw);
+        host.querySelector('[data-trial-graph-series="Abe"]').click();
+        host.querySelector('[data-trial-graph-view="hidden"]').click();
+        host.querySelector('[data-trial-graph-view="shown"]').click();
+        const again = parse(trialDpsGraphHTML(null, { session }));
+        expect(again.querySelector('[data-trial-graph-series="Abe"]').getAttribute('aria-pressed')).toBe('false');
+    });
+
+    test('a single player, and tiny values, still draw both axes', () => {
+        const lone = { snapshots: [snap(0, { Abe: 0 }), snap(15, { Abe: 3 }), snap(30, { Abe: 6 })] };
+        const host = parse(trialDpsGraphHTML(null, { session: lone }));
+        expect(host.querySelectorAll('polyline')).toHaveLength(2);
+        expect(ticks(host, 'left').length).toBeGreaterThan(1);
+        expect(ticks(host, 'right').length).toBeGreaterThan(1);
+    });
+
+    test('a saved trial draws the same two scales', () => {
+        const graph = { rates: thinTrialRates(trialRates(session.snapshots)), marks: [] };
+        const host = parse(savedTrialGraphHTML(graph));
+        expect(ticks(host, 'right').at(-1)).toBe('150');
+        expect(host.querySelector('[data-trial-graph-series=" party"]')).not.toBeNull();
+    });
+});

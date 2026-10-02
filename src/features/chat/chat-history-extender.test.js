@@ -46,7 +46,7 @@ vi.mock('../../core/websocket.js', () => ({
 // tab), so id correlation and deletion can go all the way through
 // chat-history-persistence.js's storage calls — none of the fiber/hydration
 // tests above touch this.
-const db = vi.hoisted(() => ({ settings: {}, failReads: false }));
+const db = vi.hoisted(() => ({ settings: {}, failReads: false, readGate: null }));
 vi.mock('../../core/storage.js', () => ({
     default: {
         get: vi.fn(async (key, store, fallback = null) => {
@@ -57,6 +57,7 @@ vi.mock('../../core/storage.js', () => ({
         // not be read, `{found, value}` otherwise — the real `tryGet`'s shape.
         tryGet: vi.fn(async (key, store) => {
             if (db.failReads) return null;
+            if (db.readGate) await db.readGate;
             const bucket = db[store] || {};
             return Object.prototype.hasOwnProperty.call(bucket, key)
                 ? { found: true, value: JSON.parse(JSON.stringify(bucket[key])) }
@@ -82,7 +83,7 @@ vi.mock('../../utils/profile-command.js', () => ({
     VALID_PLAYER_NAME_RE: /^[A-Za-z0-9_]+$/,
 }));
 
-import chatHistoryExtender, { tabKeyForChannel } from './chat-history-extender.js';
+import chatHistoryExtender, { liveBoundary, tabKeyForChannel } from './chat-history-extender.js';
 import chatHistoryPersistence, { CHAT_HISTORY_KEY_BASE } from './chat-history-persistence.js';
 
 const STORAGE_KEY = `${CHAT_HISTORY_KEY_BASE}_char1`;
@@ -380,6 +381,7 @@ describe('chat-history-extender: message identity and deletion', () => {
         observerReady.domReady = true;
         db.settings = {};
         db.failReads = false;
+        db.readGate = null;
     });
 
     afterEach(async () => {
@@ -750,6 +752,47 @@ describe('chat-history-extender: message identity and deletion', () => {
         expect(container.querySelector('.mwi-history-buffer').textContent).not.toContain('selling cheese');
         await chatHistoryPersistence.flush();
         expect(db.settings[Object.keys(db.settings)[0]].tabs[tabKey]).toBeUndefined();
+    });
+
+    test('a line evicted while the restore read is in flight bounds it at its last stored copy', async () => {
+        const tabKey = tabKeyForChannel('/chat_channel_types/trade');
+        const line = (stamp, sender, text) =>
+            `<div class="ChatMessage_chatMessage__xyz"><span>[${stamp}] </span><span>${sender}</span><span>: ${text}</span></div>`;
+        db.settings[STORAGE_KEY] = {
+            v: 1,
+            savedAt: 1,
+            tabs: {
+                [tabKey]: [
+                    line('12:00:00 PM', 'Alice', 'repeated'),
+                    line('12:00:00 PM', 'Bob', 'between one'),
+                    line('12:00:00 PM', 'Bob', 'between two'),
+                    line('12:00:00 PM', 'Alice', 'repeated'),
+                ],
+            },
+        };
+
+        let release;
+        db.readGate = new Promise((resolve) => {
+            release = resolve;
+        });
+        const container = buildChannelChat('/chat_channel_types/trade');
+        chatHistoryExtender.initialize();
+        // The later copy of the repeated line is evicted before the read lands.
+        const node = document.createElement('div');
+        node.className = 'ChatMessage_chatMessage__xyz';
+        node.innerHTML = '<span>[12:00:00 PM] </span><span>Alice</span><span>: repeated</span>';
+        container.appendChild(node);
+        await Promise.resolve();
+        await settle();
+        container.removeChild(node);
+        await settle();
+        db.readGate = null;
+        release();
+        await settle();
+
+        const text = container.querySelector('.mwi-history-buffer').textContent;
+        expect(text).toContain('between one');
+        expect(text).toContain('between two');
     });
 
     test('a deletion arriving while the initial restore is still in flight is not restored anyway', async () => {
@@ -1360,5 +1403,18 @@ describe('chat-history-extender: a rank badge beside the sender name', () => {
         expect(badge).not.toBeNull();
         badge.querySelector('use').dispatchEvent(new MouseEvent('click', { bubbles: true }));
         expect(onClick).toHaveBeenCalledTimes(1);
+    });
+});
+
+describe('liveBoundary', () => {
+    test('an oldest live line missing from the store bounds at the next live line that is stored', () => {
+        const stored = ['[1/2 10:00:00] a: old', '[1/2 10:05:00] b: live two', '[1/2 10:06:00] c: deleted later'];
+        // The first live line was deleted and never stored; the second one is
+        const live = ['[1/2 10:04:00] x: gone', '[1/2 10:05:00] b: live two'];
+        expect(liveBoundary(stored, live)).toBe(2);
+    });
+
+    test('no stored live line at all leaves the boundary unknown', () => {
+        expect(liveBoundary(['[1/2 10:00:00] a: old'], ['[1/2 10:04:00] x: gone'])).toBe(-1);
     });
 });
