@@ -117,6 +117,82 @@ function unionTombstones(a, b) {
 }
 
 /**
+ * A config's Clear All records (`opId → { at, ids }`), malformed entries dropped.
+ *
+ * A record is one Clear All, written once by `clearAllTabs` and never edited:
+ * every copy of a tab named in `ids` whose stamp is below `at` is deleted by it.
+ * It names ids, never a time range, so a tab the clearing device did not know
+ * about is untouched however the clocks disagree.
+ * @param {Object} config
+ * @returns {Object<string, {at: number, ids: string[]}>}
+ */
+function clearRecordsOf(config) {
+    const records = config?.clearedAll;
+    if (!records || typeof records !== 'object') return {};
+    const out = {};
+    for (const [opId, record] of Object.entries(records)) {
+        const at = Number(record?.at);
+        if (!Number.isFinite(at) || !Array.isArray(record?.ids)) continue;
+        out[opId] = { at, ids: record.ids.filter((id) => typeof id === 'string') };
+    }
+    return out;
+}
+
+/**
+ * Union two Clear All record maps by operation id. Records are immutable, so
+ * the same id on both sides is the same record; ours is kept.
+ * @param {Object} a
+ * @param {Object} b
+ * @returns {Object<string, {at: number, ids: string[]}>}
+ */
+function unionClearRecords(a, b) {
+    return { ...a, ...b };
+}
+
+/**
+ * The Clear All deletion time per tab id, the latest record naming it winning.
+ * @param {Object<string, {at: number, ids: string[]}>} records
+ * @returns {Map<string, number>}
+ */
+function clearTimesOf(records) {
+    const times = new Map();
+    for (const { at, ids } of Object.values(records)) {
+        for (const id of ids) if (!(times.get(id) >= at)) times.set(id, at);
+    }
+    return times;
+}
+
+/**
+ * Apply Clear All records to a subtree: drop every copy stamped before the
+ * clear that named it. Mirrors `applyTombstones` in one respect - a surviving
+ * ancestor (edited after the clear) brings back the descendants that same
+ * clear took with it - and departs from it in another: an UNSTAMPED tab is
+ * deleted too. The tombstone path spares unstamped tabs because a tombstone
+ * cannot tell a legacy tab from a stale one; a record names exactly the ids
+ * the player cleared, and sparing them would let the read-back fold of the
+ * pre-clear copy undo a Clear All of a legacy layout on its first save.
+ * @param {Object} tab
+ * @param {Map<string, number>} clearAt
+ * @param {number} [revivedAt] - Clear an ancestor survived
+ * @returns {Object|null}
+ */
+function applyClears(tab, clearAt, revivedAt = -1) {
+    if (!tab || typeof tab !== 'object') return null;
+    const at = clearAt.get(tab.id);
+    let revived = revivedAt;
+    if (at !== undefined) {
+        if (stampOf(tab) >= at || at <= revivedAt) {
+            if (at > revived) revived = at;
+        } else return null;
+    }
+    const children = Array.isArray(tab.children) ? tab.children : null;
+    if (!children || children.length === 0) return tab;
+    const kept = children.map((child) => applyClears(child, clearAt, revived)).filter(Boolean);
+    if (kept.length === children.length && kept.every((child, i) => child === children[i])) return tab;
+    return { ...tab, children: kept };
+}
+
+/**
  * A config's item-deletion tombstones (`tabId -> itemHrid -> when`), absent
  * map included. Buckets are per tab because that is the scope an item lives
  * in: the same hrid removed from one tab and kept in another is two facts.
@@ -391,6 +467,8 @@ function _treeHasId(tabs, id) {
  * ORDER
  * comes from the side with the newer `orderUpdatedAt` (order is a property of
  * the list, not of any one tab), falling back to stored-then-new as before.
+ * Clear All records (`clearedAll`, see `clearAllTabs`) are unioned by
+ * operation and applied before the tombstones, outside the mass-delete cap.
  * @param {Object} stored - The config as read back / the side that loses ties
  * @param {Object} memory - The config as held / the side that wins ties
  * @returns {Object} The merged config
@@ -424,6 +502,20 @@ function mergeConfigs(stored, memory) {
         if (!bucket) continue;
         delete bucket[hrid];
         if (Object.keys(bucket).length === 0) delete itemGraves[tabId];
+    }
+
+    // Clear All first, outside the mass-delete cap: a cleared layout has no surviving tab to out-stamp
+    // a peer's stale copy, so a capped Clear All would come back forever. Exempt by construction only
+    // for what it names - copies of its own ids stamped before it - and the cap below then counts
+    // only what is left, so a large clear never dilutes the ratio for an unrelated deletion.
+    const clearRecords = unionClearRecords(clearRecordsOf(theirs), clearRecordsOf(ours));
+    const clearAt = clearTimesOf(clearRecords);
+    if (clearAt.size > 0) {
+        for (const [id, tab] of [...byId]) {
+            const kept = applyClears(tab, clearAt);
+            if (kept) byId.set(id, kept);
+            else byId.delete(id);
+        }
     }
 
     // Tombstones: the union of both sides, newest deletion per id. Applied to a
@@ -492,6 +584,8 @@ function mergeConfigs(stored, memory) {
     const orderAt = Math.max(theirOrderAt, ourOrderAt);
     if (orderAt > 0) merged.orderUpdatedAt = orderAt;
     else delete merged.orderUpdatedAt;
+    if (Object.keys(clearRecords).length > 0) merged.clearedAll = clearRecords;
+    else delete merged.clearedAll;
     return merged;
 }
 
@@ -552,6 +646,21 @@ function pruneTombstones(config, now = Date.now()) {
                 const { removed: _expired, ...rest } = out;
                 out = rest;
             } else out = { ...out, removed: kept };
+        }
+    }
+
+    // A Clear All record ages with the tombstones it wrote: past that age a copy
+    // stale enough to predate it is past every other deletion's reach as well
+    const clears = out?.clearedAll;
+    if (clears && typeof clears === 'object') {
+        const kept = Object.fromEntries(
+            Object.entries(clearRecordsOf(out)).filter(([, record]) => now - record.at < TOMBSTONE_MAX_AGE_MS)
+        );
+        if (Object.keys(kept).length !== Object.keys(clears).length) {
+            if (Object.keys(kept).length === 0) {
+                const { clearedAll: _expired, ...rest } = out;
+                out = rest;
+            } else out = { ...out, clearedAll: kept };
         }
     }
 
@@ -720,6 +829,8 @@ export function sanitizeImportedConfig(parsed, now = Date.now()) {
     const {
         removed: _removed,
         removedItems: _removedItems,
+        // Another config's Clear All names that config's ids; it is sync bookkeeping, like the tombstones
+        clearedAll: _clearedAll,
         ...rest
     } = parsed && typeof parsed === 'object' ? parsed : {};
     const idMap = new Map();
@@ -939,6 +1050,48 @@ export function removeTab(config, tabId) {
     const parentId = result.parent?.id ?? null;
     _removeFromArray(c.tabs, tabId);
     if (parentId) stampTab(c, parentId, now);
+    return c;
+}
+
+/**
+ * Remove every tab, as one operation that survives sync.
+ *
+ * Writes a Clear All record (`clearedAll[opId] = { at, ids }`, see
+ * `applyClears`) naming every tab id this config knows: each live tab, nested
+ * ones included, and each id already tombstoned, so a stale peer still
+ * carrying a tab deleted earlier cannot bring it back past the mass-delete cap
+ * either. `at` is one time for the whole clear, so a parent edited after it
+ * revives the children it took, and it is placed past every stamp and deletion
+ * on file rather than at `now`: a tab last stamped by a clock running ahead
+ * would otherwise outlive the clear on the next fold. Existing tombstones are
+ * left as they are (a lower rewrite would weaken one written by a fast clock),
+ * and live tabs get an ordinary tombstone at `at` as well, for clients that
+ * predate the record.
+ * @param {Object} config
+ * @param {number} [now]
+ * @returns {Object} new config
+ */
+export function clearAllTabs(config, now = Date.now()) {
+    const c = clone(config);
+    if (!c.removed || typeof c.removed !== 'object') c.removed = {};
+    const live = [];
+    _walkTabs(Array.isArray(c.tabs) ? c.tabs : [], (tab) => {
+        if (tab?.id != null) live.push(tab);
+    });
+    let at = now;
+    for (const tab of live) at = Math.max(at, stampOf(tab) + 1);
+    for (const when of Object.values(c.removed)) at = Math.max(at, (Number(when) || 0) + 1);
+    for (const { at: earlier } of Object.values(clearRecordsOf(c))) at = Math.max(at, earlier + 1);
+    const ids = new Set(Object.keys(c.removed));
+    for (const tab of live) {
+        ids.add(tab.id);
+        c.removed[tab.id] = at;
+    }
+    if (ids.size === 0) return c;
+    c.clearedAll = { ...clearRecordsOf(c), [makeId()]: { at, ids: [...ids] } };
+    c.tabs = [];
+    c.selectedTabId = null;
+    c.orderUpdatedAt = Math.max(Number(c.orderUpdatedAt) || 0, now);
     return c;
 }
 

@@ -656,3 +656,56 @@ describe('pre-patch inventory DOM', () => {
         expect(inv.querySelector('[class*="toolasha-"]')).toBeNull();
     });
 });
+
+describe('Clear All and export', () => {
+    test('Clear All asks first, and a cancel leaves every tab in place', () => {
+        const ui = newUI();
+        const save = vi.spyOn(ui, '_save').mockResolvedValue(true);
+        vi.stubGlobal(
+            'confirm',
+            vi.fn(() => false)
+        );
+        ui._onClearAllTabs();
+        expect(confirm).toHaveBeenCalledWith(expect.stringContaining('other synced devices'));
+        expect(confirm).toHaveBeenCalledWith(expect.stringContaining('Export'));
+        expect(ui._config.tabs.map((t) => t.id)).toEqual(['food']);
+        expect(save).not.toHaveBeenCalled();
+    });
+
+    test('a confirmed Clear All empties the layout, records the clear and saves it', () => {
+        const ui = newUI();
+        const save = vi.spyOn(ui, '_save').mockResolvedValue(true);
+        vi.spyOn(ui, '_applyLayout').mockImplementation(() => {});
+        vi.stubGlobal(
+            'confirm',
+            vi.fn(() => true)
+        );
+        ui._onClearAllTabs();
+        expect(ui._config.tabs).toEqual([]);
+        expect(Object.values(ui._config.clearedAll)[0].ids).toEqual(['food']);
+        expect(save).toHaveBeenCalledTimes(1);
+    });
+
+    test('an exported layout file never carries the clear record or the tombstones', () => {
+        const ui = newUI();
+        ui._config = { ...ui._config, removed: { old: 1 }, clearedAll: { op: { at: 1, ids: ['old'] } } };
+        const blobs = [];
+        vi.stubGlobal(
+            'Blob',
+            class {
+                constructor(parts) {
+                    blobs.push(parts.join(''));
+                }
+            }
+        );
+        vi.stubGlobal('URL', { createObjectURL: () => 'blob:x', revokeObjectURL: () => {} });
+        vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(() => {});
+        vi.spyOn(ui, '_exportFileName').mockReturnValue('tabs.json');
+        ui._exportLayout();
+        const payload = JSON.parse(blobs[0]);
+        expect(payload.clearedAll).toBeUndefined();
+        expect(payload.removed).toBeUndefined();
+        expect(payload.tabs.map((t) => t.id)).toEqual(['food']);
+        vi.restoreAllMocks();
+    });
+});
