@@ -36,6 +36,7 @@ import { makeDraggable, makeResizable, panelHeightCap } from '../../utils/floati
 import { restoreGeometry, saveGeometry, saveOpenState, reopenIfLeftOpen } from '../../utils/panel-geometry.js';
 import { attachMinimize } from '../../utils/panel-minimize.js';
 import { HOURS_PER_DAY } from '../../utils/profit-constants.js';
+import { actionTimeDisplay } from '../../utils/bundle-bridge.js';
 import { deriveStages, isIronCowMode, readCharacterState } from './ironcow-plan.js';
 import {
     ASSUMED_OFFLINE_HOURS,
@@ -49,6 +50,7 @@ import {
     offlineWindow,
 } from './starfruit-loop.js';
 import { buildQueueSteps, startQueueWalk } from './ironcow-queue-walk.js';
+import { bellsAffordable, coinReserve, walkQueueCoins } from './coin-reserve.js';
 import {
     loadOverrides,
     loadPlanCollapsed,
@@ -592,7 +594,7 @@ class IronCowFarmPanel {
             () => this._modeNote(state),
             () => this._planCard(stages),
             () => this._loopCard(),
-            () => this._bellsCard(),
+            () => this._bellsCard(state),
             () => this._queueCard(state),
             () => this._checksCard(state),
         ];
@@ -857,9 +859,10 @@ class IronCowFarmPanel {
 
     /**
      * What that gold buys in bells.
+     * @param {Object|null} state - From `readCharacterState`, for the coins on hand
      * @returns {HTMLElement} The card
      */
-    _bellsCard() {
+    _bellsCard(state) {
         const holder = card('Cowbells');
         const loop = this.loop;
 
@@ -886,6 +889,7 @@ class IronCowFarmPanel {
                 'Bags are not always ten times the loose price.'
             )
         );
+        holder.append(...this._affordableLines(state, pricing));
 
         if (!loop || loop.missing?.length || !loop.bells) {
             holder.appendChild(
@@ -926,6 +930,59 @@ class IronCowFarmPanel {
             })
         );
         return holder;
+    }
+
+    /**
+     * How many bells the coins on hand buy now, keeping back what the queue
+     * needs at its lowest point (see `coin-reserve.js`).
+     * @param {Object|null} state - From `readCharacterState`
+     * @param {Object} pricing - From `cowbellPricing()`
+     * @returns {Array<HTMLElement>} Zero, one or two lines
+     * @private
+     */
+    _affordableLines(state, pricing) {
+        if (!state) return [];
+        const label = 'Bells you can buy now';
+        const walked = walkQueueCoins(actionTimeDisplay());
+        if (!walked) {
+            return [
+                line(
+                    label,
+                    '—',
+                    COLORS.textDim,
+                    'The action queue could not be read, so the gold it still needs is unknown.'
+                ),
+            ];
+        }
+
+        const { reserve, spenders } = coinReserve(walked.stages);
+        const can = bellsAffordable(state.coins, reserve, pricing);
+        if (!can) return [];
+
+        const value =
+            can.bags === null ? bells(can.bells) : `${bells(can.bells)} (${can.bags} bag${can.bags === 1 ? '' : 's'})`;
+        const kept =
+            reserve > 0
+                ? `Keeps ${coins(reserve)} back: the lowest your gold falls while ${spenders.join(', ')} ` +
+                  'runs, before any coinify queued behind it pays back.'
+                : 'Nothing queued spends gold before it earns it back, so nothing is held back.';
+        const stopped = walked.stoppedAt ? ` The queue is followed up to ${walked.stoppedAt}, which never ends.` : '';
+        const route =
+            can.bags === null
+                ? ' Whole bells, rounded down.'
+                : ' Whole bags of ten, rounded down' +
+                  (can.looseBells === null ? '.' : `; loose at ${coins(pricing.loose)} it would be ${can.looseBells}.`);
+        const title = `Out of your ${coins(state.coins)}. ${kept}${stopped}${route}`;
+
+        return [
+            line(label, value, can.bells > 0 ? COLORS.good : COLORS.textDim, title),
+            line(
+                'Kept for the queue',
+                reserve > 0 ? coins(reserve) : '0',
+                COLORS.textDim,
+                reserve > 0 ? `For ${spenders.join(', ')}.` : kept
+            ),
+        ];
     }
 
     /**

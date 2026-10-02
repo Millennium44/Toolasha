@@ -6,6 +6,11 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Iron Bell: bells you can afford
+
+- Iron Bell Farming shows how many cowbells your coins buy now while keeping enough back for the queued loop at its lowest point (decomposing pays fees before coinify earns), and what it keeps.
+- The queue helper reports the hours and bells its counts really cover once your stock has shortened the batch.
+
 ### Timers clean up after themselves everywhere
 
 - The rest of Toolasha's timers (about a hundred) now drop their bookkeeping when they fire, so the lists PFormance counts no longer creep up over a long session.

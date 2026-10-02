@@ -18,6 +18,8 @@ const plan = vi.hoisted(() => ({ state: null, stages: [] }));
 const loop = vi.hoisted(() => ({ result: null, warnings: [], pricing: null, offline: null, pending: null }));
 const store = vi.hoisted(() => ({ overrides: {}, snapshot: null, written: [], collapsed: false, collapses: [] }));
 const walk = vi.hoisted(() => ({ started: [], succeeds: true }));
+// What the queue walk reports; null is "the actions bundle is not there"
+const coinWalk = vi.hoisted(() => ({ walked: null }));
 // Mutable so the character-switch race test can move the active character
 // mid-flight, the way a real switch does.
 const characterId = vi.hoisted(() => ({ current: 'charA' }));
@@ -104,6 +106,13 @@ vi.mock('./ironcow-queue-walk.js', async (importOriginal) => {
     };
 });
 
+// The walk needs the action-time engine and the live queue, which are pinned in
+// `coin-reserve.test.js`; the reserve and the bell arithmetic stay real here.
+vi.mock('./coin-reserve.js', async (importOriginal) => {
+    const actual = await importOriginal();
+    return { ...actual, walkQueueCoins: () => coinWalk.walked };
+});
+
 const { ironCowFarmPanel } = await import('./ironcow-panel.js');
 
 const text = () => ironCowFarmPanel.panel?.textContent ?? '';
@@ -173,6 +182,7 @@ beforeEach(() => {
     store.collapses = [];
     walk.started = [];
     walk.succeeds = true;
+    coinWalk.walked = null;
 });
 
 afterEach(() => {
@@ -299,6 +309,37 @@ describe('what it says', () => {
         });
         await ironCowFarmPanel.refresh();
         expect(text()).toContain('loose');
+    });
+
+    test('says how many bells the coins buy now, keeping back what the queue dips to', async () => {
+        plan.state = character({ coins: 30_000_000 });
+        coinWalk.walked = {
+            stages: [
+                { label: 'Decompose: Star Fruit', coinDelta: -4_000_000 },
+                { label: 'Coinify: Foraging Essence', coinDelta: 9_000_000 },
+            ],
+            stoppedAt: 'Star Fruit',
+        };
+        ironCowFarmPanel.show();
+        await ironCowFarmPanel.refresh();
+
+        // 26M spare at 9.5M a bag of ten is two whole bags
+        expect(text()).toContain('Bells you can buy now');
+        expect(text()).toContain('20 (2 bags)');
+        expect(text()).toContain('Kept for the queue');
+        const row = [...ironCowFarmPanel.panel.querySelectorAll('div')].find((div) =>
+            div.textContent.startsWith('Bells you can buy now')
+        );
+        expect(row.title).toContain('Decompose: Star Fruit');
+        expect(text()).not.toContain(FAILED);
+    });
+
+    test('an unreadable queue gives no bell count rather than one that ignores it', async () => {
+        ironCowFarmPanel.show();
+        await ironCowFarmPanel.refresh();
+
+        expect(text()).toContain('Bells you can buy now—');
+        expect(text()).not.toContain(FAILED);
     });
 
     test('shows the realistic daily figure against the offline window', async () => {
