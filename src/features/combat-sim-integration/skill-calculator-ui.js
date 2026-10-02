@@ -12,9 +12,11 @@ import { parseGameNumber } from '../../utils/number-parser.js';
  * @param {Array} characterSkills - Character skills from dataManager
  * @param {Object} expRates - Exp/hour rates for each skill
  * @param {Object} levelExpTable - Level experience table
+ * @param {Object|null} [previous] - `getState()` of the calculator being replaced, so a rebuild
+ *   after a re-run keeps the targets and the skill the user was looking at
  * @returns {Object} UI elements for later updates
  */
-export function createCalculatorUI(container, characterSkills, expRates, levelExpTable) {
+export function createCalculatorUI(container, characterSkills, expRates, levelExpTable, previous = null) {
     const wrapper = document.createElement('div');
     wrapper.id = 'mwi-skill-calculator';
     wrapper.style.cssText = `
@@ -68,6 +70,9 @@ export function createCalculatorUI(container, characterSkills, expRates, levelEx
             'width: 60px; padding: 4px; background: #2a2a2a; color: white; border: 1px solid #555; border-radius: 3px;';
         input.dataset.skill = skillName;
 
+        const restored = Number(previous?.targets?.[skillName]);
+        if (Number.isFinite(restored) && restored > 0) input.value = restored;
+
         skillInputs[skillName] = input;
 
         row.appendChild(label);
@@ -83,7 +88,8 @@ export function createCalculatorUI(container, characterSkills, expRates, levelEx
     const daysInput = document.createElement('input');
     daysInput.type = 'number';
     daysInput.id = 'mwi-days-input';
-    daysInput.value = 1;
+    const restoredDays = Number(previous?.days);
+    daysInput.value = Number.isFinite(restoredDays) && restoredDays >= 0 && previous?.days !== '' ? restoredDays : 1;
     daysInput.min = 0;
     daysInput.max = 200;
     daysInput.style.cssText = 'width: 60px; padding: 2px 4px; margin-right: 6px;';
@@ -108,8 +114,18 @@ export function createCalculatorUI(container, characterSkills, expRates, levelEx
 
     container.appendChild(wrapper);
 
-    // Attach event handlers
-    const updateHandler = () => {
+    // The mode follows the input the user last touched, not document.activeElement: clicking
+    // into a number field fires no input event, and a spinner click or a programmatic change
+    // may not move focus at all, so a focus-based check showed the days projection until a key
+    // was typed. A skill input selects its skill; the days input selects the projection.
+    let activeSkill = previous?.activeSkill && skillInputs[previous.activeSkill] ? previous.activeSkill : null;
+
+    const select = (skillName) => {
+        activeSkill = skillName;
+        refresh();
+    };
+
+    const refresh = () => {
         updateCalculatorResults(
             skillInputs,
             daysInput,
@@ -118,29 +134,22 @@ export function createCalculatorUI(container, characterSkills, expRates, levelEx
             levelExpTable,
             resultsHeader,
             resultsContent,
-            characterSkills
+            characterSkills,
+            activeSkill
         );
     };
 
-    for (const input of Object.values(skillInputs)) {
-        input.addEventListener('input', updateHandler);
-        input.addEventListener('change', updateHandler);
+    for (const [skillName, input] of Object.entries(skillInputs)) {
+        for (const eventName of ['input', 'change', 'focus']) {
+            input.addEventListener(eventName, () => select(skillName));
+        }
     }
 
-    daysInput.addEventListener('input', updateHandler);
-    daysInput.addEventListener('change', updateHandler);
+    for (const eventName of ['input', 'change', 'focus']) {
+        daysInput.addEventListener(eventName, () => select(null));
+    }
 
-    // Initial calculation for "After 1 days"
-    updateCalculatorResults(
-        skillInputs,
-        daysInput,
-        skillData,
-        expRates,
-        levelExpTable,
-        resultsHeader,
-        resultsContent,
-        characterSkills
-    );
+    refresh();
 
     return {
         wrapper,
@@ -148,6 +157,11 @@ export function createCalculatorUI(container, characterSkills, expRates, levelEx
         daysInput,
         resultsHeader,
         resultsContent,
+        getState: () => ({
+            activeSkill,
+            days: daysInput.value,
+            targets: Object.fromEntries(Object.entries(skillInputs).map(([name, input]) => [name, input.value])),
+        }),
     };
 }
 
@@ -161,6 +175,7 @@ export function createCalculatorUI(container, characterSkills, expRates, levelEx
  * @param {HTMLElement} resultsHeader - Results header element
  * @param {HTMLElement} resultsContent - Results content element
  * @param {Array} characterSkills - Character skills array
+ * @param {string|null} activeSkill - Skill whose target input was touched last, or null for the days projection
  */
 function updateCalculatorResults(
     skillInputs,
@@ -170,23 +185,12 @@ function updateCalculatorResults(
     levelExpTable,
     resultsHeader,
     resultsContent,
-    characterSkills
+    characterSkills,
+    activeSkill
 ) {
-    // Check which mode: individual skill or days projection
-    let hasIndividualTarget = false;
-    let activeSkill = null;
-    let activeInput = null;
+    const activeInput = activeSkill ? skillInputs[activeSkill] : null;
 
-    for (const [skillName, input] of Object.entries(skillInputs)) {
-        if (document.activeElement === input) {
-            hasIndividualTarget = true;
-            activeSkill = skillName;
-            activeInput = input;
-            break;
-        }
-    }
-
-    if (hasIndividualTarget && activeSkill && activeInput) {
+    if (activeSkill && activeInput) {
         // Calculate time to reach specific level
         const targetLevel = Number(activeInput.value);
         const currentLevel = skillData[activeSkill].currentLevel;

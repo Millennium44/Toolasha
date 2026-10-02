@@ -7,6 +7,7 @@
 
 import dataManager from '../../core/data-manager.js';
 import storage from '../../core/storage.js';
+import { readLiveTokenLevels } from '../combat-sim/lab-token-buffs.js';
 import { runningCombatAction } from '../../utils/combat-actions.js';
 import { BATTLE_BRIDGE_KEY, battleBridgeKeyFor } from '../../utils/battle-bridge-keys.js';
 import { gmGetValue } from '../../utils/gm-traffic.js';
@@ -321,6 +322,51 @@ function buildGuildCombatBuffLevels(levelOf, extraHrids = []) {
 }
 
 /**
+ * The `guildBuffs` block Shykai's simulator reads: full buff hrid → level.
+ *
+ * Shykai throws on a hrid it does not know and applies every buff it is given regardless of
+ * `isCombat`, so only the canonical five combat shrines go in (never the `extra` ones the
+ * short-key block carries) and zeros are left out, which it reads as no buff.
+ * @param {Object} levels - The `guildCombatBuffLevels` block
+ * @returns {Object|null} buffHrid → level, or null when no shrine is above zero
+ */
+function buildShykaiGuildBuffs(levels) {
+    const buffs = {};
+    for (const buffHrid of GUILD_COMBAT_BUFF_HRIDS) {
+        const level = Math.floor(Number(levels?.[guildCombatBuffKey(buffHrid)]) || 0);
+        if (level > 0) buffs[buffHrid] = level;
+    }
+    return Object.keys(buffs).length > 0 ? buffs : null;
+}
+
+/**
+ * Labyrinth token keys Shykai's `labyrinth` block takes. It applies them in labyrinth sims
+ * only; they are the game's own characterInfo key names.
+ * @type {string[]}
+ */
+const SHYKAI_LABYRINTH_KEYS = [
+    'labyrinthCombatDamageLevel',
+    'labyrinthAttackSpeedLevel',
+    'labyrinthCastSpeedLevel',
+    'labyrinthCriticalRateLevel',
+    'labyrinthExperienceLevel',
+];
+
+/**
+ * The `labyrinth` block for Shykai, from a character's characterInfo.
+ * @param {Object} [characterInfo] - characterData.characterInfo
+ * @returns {Object|null} key → level 1…12, or null when no token is owned
+ */
+function buildShykaiLabyrinth(characterInfo) {
+    const live = readLiveTokenLevels(characterInfo);
+    const block = {};
+    for (const key of SHYKAI_LABYRINTH_KEYS) {
+        if (live[key] > 0) block[key] = live[key];
+    }
+    return Object.keys(block).length > 0 ? block : null;
+}
+
+/**
  * Construct player export object from own character data
  * @param {Object} characterObj - Character data from init_character_data
  * @param {Object} clientObj - Client data (optional)
@@ -485,6 +531,12 @@ export function constructSelfPlayer(characterObj, clientObj) {
             extraCombatBuffHrids(ownBuffMap)
         );
     }
+    const ownGuildBuffs = buildShykaiGuildBuffs(playerObj.guildCombatBuffLevels);
+    if (ownGuildBuffs) playerObj.guildBuffs = ownGuildBuffs;
+
+    // Labyrinth tokens. The party path has none: a shared profile carries no labyrinth levels.
+    const labyrinth = buildShykaiLabyrinth(characterObj.characterInfo);
+    if (labyrinth) playerObj.labyrinth = labyrinth;
 
     return playerObj;
 }
@@ -663,6 +715,8 @@ export function constructPartyPlayer(profile, clientObj, battleObj) {
             extraCombatBuffHrids(profileBuffLevels)
         );
     }
+    const partyGuildBuffs = buildShykaiGuildBuffs(playerObj.guildCombatBuffLevels);
+    if (partyGuildBuffs) playerObj.guildBuffs = partyGuildBuffs;
 
     return playerObj;
 }

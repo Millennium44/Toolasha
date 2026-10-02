@@ -1208,6 +1208,28 @@ describe('the guild shrines a Shykai import carries', () => {
         expect(dto.guildCombatBuffs[0].ratioBoost).toBeCloseTo(0.006);
     });
 
+    test("Shykai's own guildBuffs block (full hrid keys) is read too, and skilling shrines are ignored", () => {
+        const payload = JSON.stringify({
+            player: { attackLevel: 50, equipment: [] },
+            guildBuffs: { '/guild_buffs/force_combat': 2, '/guild_buffs/scholar_skilling': 6 },
+        });
+
+        const dto = parseShykaiImport(payload).players[0];
+        expect(dto.guildShrineLevels).toEqual({ '/guild_buffs/force_combat': 2 });
+        expect(dto.guildCombatBuffs[0].ratioBoost).toBeCloseTo(0.006);
+    });
+
+    test('a slot carrying only guildBuffs is kept as a player', () => {
+        const payload = JSON.stringify({
+            1: JSON.stringify({
+                player: { attackLevel: 1, staminaLevel: 1, equipment: [] },
+                guildBuffs: { '/guild_buffs/force_combat': 3 },
+            }),
+        });
+
+        expect(parseShykaiImport(payload).players).toHaveLength(1);
+    });
+
     test('an export without the field leaves no level map at all', () => {
         const payload = JSON.stringify({ player: { attackLevel: 50, equipment: [] } });
 
