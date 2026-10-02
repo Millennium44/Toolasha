@@ -19,10 +19,10 @@
  * as everywhere else in the block.
  */
 
-import marketAPI from '../../api/marketplace.js';
 import config from '../../core/config.js';
 import dataManager from '../../core/data-manager.js';
 import domObserver from '../../core/dom-observer.js';
+import marketAPI from '../../api/marketplace.js';
 import { calculateOfflineEconomics } from '../../utils/offline-economics-calculator.js';
 import { formatPrice } from '../../utils/market-data.js';
 import { formatKMB } from '../../utils/formatters.js';
