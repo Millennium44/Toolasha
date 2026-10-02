@@ -50,39 +50,63 @@ const TAB_STRIP_SELECTOR = '[class*="Chat_tabsComponentContainer"]';
 const CHAT_CONTAINER_SELECTOR = '[class*="ChatHistory_chatHistory"]';
 
 /**
- * The label part of a tab's key, namespaced by where it was read from.
- *
- * The two sources disagree about what a label looks like: channel tabs carry
- * `data-mention-channel` (`/chat_channel_types/global`), while the rest —
- * language rooms, Help, whispers — have none and are named by their button
- * text (`English`, `Help`, a player name). Namespacing rather than mixing them
- * into one flat label keeps a whisper from a player called `Help` out of the
- * Help tab's record; the channel form additionally cannot collide with a text
- * label, because a player name cannot contain `/`.
+ * A tab's label before any other tab is weighed against it beyond its channel
+ * tag: `ch:<channel>` when no other tab carries the same tag, `name:<text>`
+ * otherwise.
  *
  * The trailing-digit trim takes off the unread badge the button renders after
  * its name, which would otherwise make the key change every time a message
  * arrives.
  *
  * @param {Element} button - A tab button
- * @param {Element|null} [strip] - The tab strip, to tell a channel tag shared by two tabs
- * @returns {string} The namespaced label, or '' when the button names nothing
+ * @param {Array<Element>} buttons - Every tab button in the strip
+ * @returns {string} The label, or '' when the button names nothing
  */
-function tabLabel(button, strip = null) {
+function ownLabel(button, buttons) {
     const channel = button?.getAttribute?.('data-mention-channel');
     // The mention tracker names a tab's channel from its text, so a whisper with a
     // player called `Trade` is tagged as the Trade channel too. Two tabs with one
     // channel means one of them is not it; neither is trusted with the channel
     // key, which is what shares a tab's history across characters.
     const ambiguous =
-        channel &&
-        strip &&
-        [...strip.querySelectorAll('button[role="tab"]')].some(
-            (other) => other !== button && other.getAttribute('data-mention-channel') === channel
-        );
+        channel && buttons.some((other) => other !== button && other.getAttribute('data-mention-channel') === channel);
     if (channel && !ambiguous) return `ch:${channel}`;
     const text = button?.textContent?.trim().replace(/\d+$/, '').trim();
     return text ? `name:${text}` : '';
+}
+
+/**
+ * The label part of a tab's key, namespaced by where it was read from.
+ *
+ * The two sources disagree about what a label looks like: channel tabs carry
+ * `data-mention-channel` (`/chat_channel_types/global`), while the rest —
+ * language rooms, Help, whispers — have none and are named by their button
+ * text (`English`, `Help`, a player name). Namespacing rather than mixing them
+ * into one flat label keeps a whisper named like a tagged channel out of that
+ * channel's record; the channel form additionally cannot collide with a text
+ * label, because a player name cannot contain `/`.
+ *
+ * Two tabs whose labels are the same text — a whisper with a player called
+ * `Trade` beside the Trade tab, both tagged and so both falling back to their
+ * text, or a whisper with a player called `Help` beside the untagged Help tab —
+ * cannot be told apart from the strip, and nothing in the tab markup reliably
+ * marks a whisper. Neither is named, so neither is recorded or restored while
+ * both are open: one public room's history and one conversation's go
+ * unrecorded for that while, which is recoverable; a private conversation in a
+ * public room's record is not. Text is compared without case, so a name that
+ * differs from a room's only in case is treated as the same name.
+ *
+ * @param {Element} button - A tab button
+ * @param {Element|null} [strip] - The tab strip, to tell a label shared by two tabs
+ * @returns {string} The namespaced label, or '' when the button names nothing or not uniquely
+ */
+function tabLabel(button, strip = null) {
+    const buttons = strip ? [...strip.querySelectorAll('button[role="tab"]')] : [];
+    const label = ownLabel(button, buttons);
+    if (!label.startsWith('name:')) return label;
+    const folded = label.toLowerCase();
+    const shared = buttons.some((other) => other !== button && ownLabel(other, buttons).toLowerCase() === folded);
+    return shared ? '' : label;
 }
 
 /**

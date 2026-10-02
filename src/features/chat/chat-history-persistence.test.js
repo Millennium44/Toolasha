@@ -133,7 +133,6 @@ import chatHistoryPersistence, {
     PUBLIC_RECORD_KEY,
     rewireRestoredMessage,
     serializeMessage,
-    tabScope,
 } from './chat-history-persistence.js';
 
 const STORAGE_KEY = `${CHAT_HISTORY_KEY_BASE}_char1`;
@@ -1027,9 +1026,39 @@ describe('a chat tab is named by the tab that is open', () => {
         whisper.textContent = 'Trade';
         strip.appendChild(whisper);
 
-        // Two tabs with one channel: neither gets the channel key, which is the one that is shared.
-        expect(chatTabKey(container)).toBe('tab2:name:Trade');
-        expect(tabScope(chatTabKey(container))).toBe('character');
+        // Two tabs with one channel: neither gets the channel key, which is the one that is shared. Both would
+        // fall back to the text `Trade`, which cannot tell them apart either, so neither is named at all.
+        expect(chatTabKey(container)).toBeNull();
+        openChannelTab('/chat_channel_types/trade');
+        whisper.setAttribute('aria-selected', 'false');
+        expect(chatTabKey(container)).toBeNull();
+
+        // Once the whisper closes, the Trade tab is the channel again.
+        whisper.remove();
+        expect(chatTabKey(container)).toBe('tab2:ch:/chat_channel_types/trade');
+    });
+
+    test('two untagged tabs with the same text are neither named, so a whisper never shares a room’s record', () => {
+        // A whisper with a player called Help beside the Help room: neither carries a channel tag.
+        const container = buildLiveChat('/chat_channel_types/global');
+        openChannelTab('nothing');
+        const strip = document.querySelector('.Chat_tabsComponentContainer__x');
+        const help = document.createElement('button');
+        help.setAttribute('role', 'tab');
+        help.setAttribute('aria-selected', 'true');
+        help.textContent = 'Help';
+        strip.appendChild(help);
+        expect(chatTabKey(container)).toBe('tab2:name:Help');
+
+        const whisper = document.createElement('button');
+        whisper.setAttribute('role', 'tab');
+        whisper.setAttribute('aria-selected', 'false');
+        whisper.textContent = 'help 2';
+        strip.appendChild(whisper);
+        expect(chatTabKey(container)).toBeNull();
+        help.setAttribute('aria-selected', 'false');
+        whisper.setAttribute('aria-selected', 'true');
+        expect(chatTabKey(container)).toBeNull();
     });
 
     test('a name-keyed tab, a whisper with a player called Trade, is kept in the character record', async () => {
