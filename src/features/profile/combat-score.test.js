@@ -784,9 +784,9 @@ describe('sim export split button', () => {
         });
 
         describe('in the Shykai format', () => {
-            const slotPlayer = (name) =>
+            // As the group builder emits a slot: no name inside it, names travel in playerIDs
+            const slotPlayer = () =>
                 JSON.stringify({
-                    name,
                     player: {
                         equipment: [
                             { itemLocationHrid: '/item_locations/head', itemHrid: '/items/hat', enhancementLevel: 0 },
@@ -799,7 +799,8 @@ describe('sim export split button', () => {
 
             beforeEach(() => {
                 stub.shykaiParty = {
-                    exportObj: { 1: slotPlayer('Teammate'), 2: slotPlayer('Me'), 3: BLANK, 4: BLANK, 5: BLANK },
+                    exportObj: { 1: slotPlayer(), 2: slotPlayer(), 3: BLANK, 4: BLANK, 5: BLANK },
+                    playerIDs: ['Teammate', 'Me', 'Player 3', 'Player 4', 'Player 5'],
                     importedPlayerPositions: [true, true, false, false, false],
                     yourSlotIndex: 2,
                 };
@@ -826,7 +827,7 @@ describe('sim export split button', () => {
                 const map = JSON.parse(clipboardText);
                 expect(Object.keys(map)).toEqual(['1', '2', '3', '4', '5']);
                 for (const slot of Object.values(map)) expect(typeof slot).toBe('string');
-                expect(map[1]).toBe(stub.shykaiParty.exportObj[1]);
+                expect(JSON.parse(map[1])).toEqual({ ...JSON.parse(stub.shykaiParty.exportObj[1]), name: 'Teammate' });
                 expect(map[3]).toBe(BLANK);
                 const mine = JSON.parse(map[2]);
                 expect(mine.name).toBe('Me');

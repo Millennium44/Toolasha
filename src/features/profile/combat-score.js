@@ -1729,8 +1729,17 @@ class CombatScore {
         if (!exportData?.exportObj || !slot || !exportData.importedPlayerPositions?.[slot - 1]) return null;
         if (typeof exportData.exportObj[slot] !== 'string') return null;
 
-        const playerObj = this.applySnapshotToShykaiPlayer(JSON.parse(exportData.exportObj[slot]), snapshot);
-        return { ...exportData.exportObj, [slot]: JSON.stringify(playerObj) };
+        // The group builder keeps names apart, in `playerIDs` (the bridge labels the sim's tabs from it);
+        // each occupied slot carries its player's name, as the single-player export does
+        const map = { ...exportData.exportObj };
+        for (let i = 1; i <= 5; i++) {
+            const name = exportData.playerIDs?.[i - 1];
+            if (!exportData.importedPlayerPositions[i - 1] || !name || typeof map[i] !== 'string') continue;
+            map[i] = JSON.stringify({ ...JSON.parse(map[i]), name });
+        }
+        const playerObj = this.applySnapshotToShykaiPlayer(JSON.parse(map[slot]), snapshot);
+        map[slot] = JSON.stringify(playerObj);
+        return map;
     }
 
     /**
