@@ -117,6 +117,9 @@ vi.mock('../queue-monitor/queue-time-row.js', () => ({ queueTimeLeft: () => game
 vi.mock('../queue-monitor/queue-snapshot.js', () => ({
     default: {
         getSnapshot: () => game.ownSnapshot,
+        whenLoaded: async () => {
+            await game.snapshotLoad;
+        },
         getOtherCharacterSnapshots: () => game.snapshots,
     },
 }));
@@ -965,5 +968,100 @@ describe('the overlay tile', () => {
         const container = document.createElement('div');
         row.render(container);
         expect(container.textContent).toBe('1 needs you');
+    });
+});
+
+/**
+ * The queue snapshot is written when a character is switched away from, so its
+ * projected "emptied at" only describes idleness if nobody played the
+ * character after it.
+ */
+describe('how long the queue has been idle', () => {
+    beforeEach(() => {
+        vi.useFakeTimers();
+        vi.setSystemTime(new Date('2026-01-02T00:00:00Z'));
+    });
+
+    afterEach(() => {
+        vi.useRealTimers();
+    });
+
+    test('a character not played since its snapshot reports the idle time projected from it', async () => {
+        const left = Date.now() - 30 * 3_600_000;
+        game.ownSnapshot = { timestamp: left, totalQueueSeconds: 3600, hasInfiniteAction: false };
+        // alive up to the moment it was switched away from
+        game.stored.set('sessionBriefingLastAlive_char-1', left - 2_000);
+        game.queue = { queued: 0, seconds: 0 };
+
+        await feature.initialize();
+
+        expect(collectFacts().queue.emptySince).toBe(left + 3_600_000);
+    });
+
+    test('a character played after its snapshot does not report an idle time from it', async () => {
+        const left = Date.now() - 30 * 3_600_000;
+        game.ownSnapshot = { timestamp: left, totalQueueSeconds: 3600, hasInfiniteAction: false };
+        // the page was alive for this character five hours ago, long after the snapshot
+        game.stored.set('sessionBriefingLastAlive_char-1', Date.now() - 5 * 3_600_000);
+        game.queue = { queued: 0, seconds: 0 };
+
+        await feature.initialize();
+
+        expect(collectFacts().queue.emptySince).toBeNull();
+    });
+
+    test('a snapshot still loading from storage is judged once it lands', async () => {
+        const left = Date.now() - 30 * 3_600_000;
+        // a cold page load: the snapshot is not in memory until its storage read finishes
+        game.ownSnapshot = null;
+        game.snapshotLoad = new Promise((resolve) =>
+            setTimeout(() => {
+                game.ownSnapshot = { timestamp: left, totalQueueSeconds: 3600, hasInfiniteAction: false };
+                resolve();
+            }, 0)
+        );
+        game.stored.set('sessionBriefingLastAlive_char-1', Date.now() - 5 * 3_600_000);
+        game.queue = { queued: 0, seconds: 0 };
+
+        try {
+            const ready = feature.initialize();
+            await vi.runAllTimersAsync();
+            await ready;
+            expect(collectFacts().queue.emptySince).toBeNull();
+        } finally {
+            game.snapshotLoad = null;
+        }
+    });
+
+    test('arriving with a queue still running leaves a later empty queue undated by the old snapshot', async () => {
+        const left = Date.now() - 30 * 3_600_000;
+        game.ownSnapshot = { timestamp: left, totalQueueSeconds: 3600, hasInfiniteAction: false };
+        game.stored.set('sessionBriefingLastAlive_char-1', left - 2_000);
+        game.queue = { queued: 3, seconds: 7200 };
+
+        await feature.initialize();
+        // hours later the queue ran dry; it did so after arrival, not at the snapshot's projection
+        game.queue = { queued: 0, seconds: 0 };
+
+        expect(collectFacts().queue.emptySince).toBeNull();
+    });
+});
+
+describe('a switch landing while the listing baseline is read', () => {
+    test('the arriving character listings are not written under the departing character key', async () => {
+        game.listings = [{ id: 9, status: '/market_listing_status/filled' }];
+        const realHas = game.stored.has.bind(game.stored);
+        // the switch lands inside the awaited storage read (the mock consults `has` first)
+        game.stored.has = (key) => {
+            if (key === 'sessionBriefingListings_char-1') game.characterId = 'char-2';
+            return realHas(key);
+        };
+        try {
+            await feature.initialize();
+        } finally {
+            game.stored.has = realHas;
+        }
+
+        expect(game.stored.has('sessionBriefingListings_char-1')).toBe(false);
     });
 });

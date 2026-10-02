@@ -165,25 +165,24 @@ function recordPresence(characterId = currentCharacterId()) {
 }
 
 /**
- * Whether this arrival is a refresh of `characterId` rather than a return to it.
+ * The last moment `characterId`'s page was known to be alive, before this arrival stamps it.
  *
  * @param {string|null} characterId - Captured by the caller before this read
- * @param {number} [now] - Clock, injectable for tests
- * @returns {Promise<boolean>} Whether the page was alive for this character inside the window
+ * @returns {Promise<number|null>} Epoch ms, or null when never stamped, unreadable, or the pointer moved on
  */
-async function wasAliveRecently(characterId, now = Date.now()) {
-    if (!characterId) return false;
+async function readLastAlive(characterId) {
+    if (!characterId) return null;
     try {
         const lastAlive = await storage.get(presenceKey(characterId), 'settings', null);
         // The pointer may have moved on while this read was in flight — a
         // character switch is not a refresh of whoever is arriving now, and an
         // answer about a character that is no longer arriving is not an answer
         // about this arrival at all
-        if (characterId !== currentCharacterId()) return false;
-        return Number.isFinite(lastAlive) && now - lastAlive < QUICK_REFRESH_WINDOW_MS;
+        if (characterId !== currentCharacterId()) return null;
+        return Number.isFinite(lastAlive) ? lastAlive : null;
     } catch (error) {
         console.error('[SessionBriefing] Could not read whether this character was alive recently:', error);
-        return false;
+        return null;
     }
 }
 
@@ -272,6 +271,20 @@ let suppressed = false;
 /** Unregisters the modal watcher, or null when it is not installed */
 let unwatchModal = null;
 
+/**
+ * Whether this character's queue snapshot still describes the gap this arrival is closing.
+ *
+ * The queue snapshot is written only when a character is switched away from, and its projected
+ * "emptied at" is only a statement about idleness if nobody played the character afterwards. Once
+ * the page has been alive for the character since the snapshot, or it arrived with a queue still
+ * running, a later empty queue emptied after the snapshot's projection and "idle 29h" would claim
+ * far more than was true. Set on arrival; true until then so a direct `collectFacts()` stays pure.
+ */
+let queueSnapshotUsable = true;
+
+/** Presence stamps this close after the snapshot are the switch pipeline itself, not later play */
+const SNAPSHOT_SWITCH_SLACK_MS = 30_000;
+
 /** Whether this arrival's away diff has been marked read */
 let awayDiffMarked = false;
 
@@ -344,6 +357,7 @@ function attempt(subject, read) {
 function queueEmptySince(characterId, now) {
     if (!characterId) return null;
     const snapshot = queueSnapshot.getSnapshot?.(characterId);
+    if (!queueSnapshotUsable) return null;
     if (!snapshot || snapshot.hasInfiniteAction || !snapshot.timestamp) return null;
 
     const emptiedAt = snapshot.timestamp + (Number(snapshot.totalQueueSeconds) || 0) * 1000;
@@ -457,6 +471,9 @@ async function loadListingDelta(characterId) {
     try {
         const key = listingBaselineKey(characterId);
         const baseline = (await storage.get(key, 'settings', null))?.listings || null;
+        // The listings below are read from whoever is current NOW; after a switch that is not this
+        // character, and writing them under this character's baseline key would poison its next arrival
+        if (characterId !== currentCharacterId()) return;
         const listings = dataManager.getMarketListings?.() || [];
 
         // Expiries are deliberately not counted here. The only list this can
@@ -949,6 +966,7 @@ export function _resetBriefingState() {
     factsReady = false;
     suppressed = false;
     handledModals = new WeakSet();
+    queueSnapshotUsable = true;
 }
 
 export default {
@@ -969,7 +987,20 @@ export default {
         // earns a briefing. This gates drawing only — the facts below are still
         // collected and the away diff still computed, exactly as they would be
         // on a real arrival, so the overlay tile still reads the truth.
-        const isQuickRefresh = await wasAliveRecently(characterId);
+        // The snapshot load is started by queue-monitor without being awaited; judged
+        // before it lands, a cold page load would read no snapshot and wave it through
+        const [lastAlive] = await Promise.all([readLastAlive(characterId), queueSnapshot.whenLoaded?.()]);
+        const isQuickRefresh = Number.isFinite(lastAlive) && Date.now() - lastAlive < QUICK_REFRESH_WINDOW_MS;
+
+        // Judged here, before anything stamps this character or the queue changes: the snapshot only
+        // projects an idle start when the character was not played between it and now
+        const snapshotAt = queueSnapshot.getSnapshot?.(characterId)?.timestamp;
+        const playedSince =
+            Number.isFinite(lastAlive) &&
+            Number.isFinite(snapshotAt) &&
+            lastAlive > snapshotAt + SNAPSHOT_SWITCH_SLACK_MS;
+        const queueAtArrival = attempt('the action queue', () => queueTimeLeft());
+        queueSnapshotUsable = !playedSince && !(queueAtArrival?.queued > 0);
 
         await loadListingDelta(characterId);
         // After the listing delta, because `collectFacts()` reads it — and this
@@ -1007,6 +1038,7 @@ export default {
         document.querySelectorAll(`.${SECTION_CLASS}`).forEach((section) => section.remove());
         factsReady = false;
         suppressed = false;
+        queueSnapshotUsable = true;
         // Dropped rather than marked read: the departing character's diff
         // belongs to the departing character, and marking it read here would
         // silence a card nobody saw. The mark it would have written is not

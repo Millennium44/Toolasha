@@ -14,6 +14,11 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 - The Loot & XP Log follows the number-format setting.
 - Custom Tabs' "Add to Tab" dropdown isn't cut off, can remove items or start a tab, and the toolbar gains Clear All and Import Categories.
 
+### Audit round: briefing, offline progress and level times
+
+- The session briefing no longer reports a queue as idle for longer than it was, after you played that character since its last snapshot, and a character switch mid-load no longer files one character's listings under another.
+- The Welcome Back offline earnings block now fills in prices that arrive after it opens, and the time-to-level tooltip no longer reads "1 hour 60 minutes".
+
 ### Audit round: dictionary and alt-click
 
 - Alt-clicking an item tooltip now finds enhanced and refined items ("Collector's Boots +3", "… ★") through game data instead of guessing from the name, and the dictionary's transmute rates pick up items added by a game update without a reload.
