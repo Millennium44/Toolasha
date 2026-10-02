@@ -308,18 +308,20 @@ export async function constructMetzTeamExport(
     expectedCharacterId = null,
     { warnings = null, selfLoadoutOverride = null } = {}
 ) {
-    const characterObj = getCharacterData();
-    if (!characterObj) return null;
-    const ownerId = characterObj.character?.id;
+    const before = getCharacterData();
+    if (!before) return null;
+    const ownerId = before.character?.id;
     if (expectedCharacterId != null && !sameCharacterId(ownerId, expectedCharacterId)) return null;
 
-    const clientObj = getClientData();
-    const battleObj = getBattleData();
     const profileList = await getProfileList();
     // Re-read after the await: another game tab can rewrite the bridged character meanwhile, and
     // this tab's own character can be switched, either of which would pair one character's
-    // party with another's self
-    if (!sameCharacterId(getCharacterData()?.character?.id, ownerId)) return null;
+    // party with another's self. The same character's data can also be refreshed in the
+    // meantime (a reconnect), so everything below is built from the copy read now
+    const characterObj = getCharacterData();
+    if (!characterObj || !sameCharacterId(characterObj.character?.id, ownerId)) return null;
+    const clientObj = getClientData();
+    const battleObj = getBattleData();
     const self = buildSelfMetzCharacter(characterObj, clientObj);
     const team = [selfLoadoutOverride ? applyLoadoutOverrideToMetzCharacter(self, selfLoadoutOverride) : self];
 

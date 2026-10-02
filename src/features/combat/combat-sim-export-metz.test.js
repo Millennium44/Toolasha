@@ -424,6 +424,20 @@ describe('Metz combat export', () => {
         expect(await constructMetzTeamExport('self-1')).toBeNull();
     });
 
+    test('builds from the same character refreshed while cached profiles are read', async () => {
+        mocks.characterData = baseCharacter();
+        const refreshed = baseCharacter({ characterSkills: [{ skillHrid: '/skills/stamina', level: 90 }] });
+        const { getProfileList, constructSelfPlayer } = await import('./combat-sim-export.js');
+        getProfileList.mockImplementationOnce(async () => {
+            // A reconnect re-sends the same character's data
+            mocks.characterData = refreshed;
+            return [];
+        });
+
+        expect(await constructMetzTeamExport('self-1')).not.toBeNull();
+        expect(constructSelfPlayer.mock.calls.at(-1)[0]).toBe(refreshed);
+    });
+
     test('refuses a team export when another game tab has replaced the intended character', async () => {
         mocks.characterData = baseCharacter({ character: { id: 'other-2', name: 'Other' } });
         expect(await constructMetzTeamExport('self-1')).toBeNull();
