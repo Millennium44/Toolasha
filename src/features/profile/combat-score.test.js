@@ -833,6 +833,25 @@ describe('sim export split button', () => {
             expect(previews[0].textContent).not.toContain('Raid');
         });
 
+        test('two loadouts sharing a name export the row that was clicked, by id', async () => {
+            stub.snapshots = [
+                { ...raid, id: '11' },
+                { ...raid, id: '22', abilities: [{ abilityHrid: '/abilities/fireball', slot: 3 }] },
+            ];
+            combatScore.showScorePanel(profileData(stub.currentCharacterId), scoreData, document.createElement('div'));
+            await flush();
+
+            document.querySelectorAll('.mwi-combat-sim-party-export-option[data-name="Raid"]')[1].click();
+            await flush();
+            document.querySelector('#mwi-party-export-copy-btn').click();
+            await flush();
+
+            const override = stub.teamCalls[0].options.selfLoadoutOverride;
+            // The second row's ability sits in slot 3, not the first row's slot 2
+            expect(override.abilities[1]).toBeNull();
+            expect(override.abilities[2]).toEqual({ abilityHrid: '/abilities/fireball', level: 1 });
+        });
+
         test('a character switch before copying exports nothing', async () => {
             combatScore.showScorePanel(profileData(stub.currentCharacterId), scoreData, document.createElement('div'));
             await flush();

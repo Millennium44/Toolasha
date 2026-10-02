@@ -59,6 +59,17 @@ const SIM_EXPORT_FORMAT_LABELS = {
 /**
  * CombatScore class manages combat score display on profiles
  */
+/**
+ * A saved loadout by the server's id, falling back to its name. Names are not unique (the game
+ * allows two loadouts to share one), so the menu rows carry the id and resolve by it.
+ * @param {string} ref - Snapshot id, or a name from a caller that has no id
+ * @returns {Object|undefined}
+ */
+function findCombatSnapshot(ref) {
+    const snapshots = loadoutSnapshot.getAllSnapshots();
+    return snapshots.find((s) => s.id != null && String(s.id) === String(ref)) || snapshots.find((s) => s.name === ref);
+}
+
 class CombatScore {
     constructor() {
         this.isActive = false;
@@ -917,7 +928,7 @@ class CombatScore {
                     loadoutList.innerHTML = combatSnapshots
                         .map(
                             (s) => `<div style="display: flex; align-items: center;">
-                                <div class="mwi-combat-sim-loadout-option" data-name="${escapeHtml(s.name)}" style="
+                                <div class="mwi-combat-sim-loadout-option" data-name="${escapeHtml(s.name)}" data-snapshot-id="${escapeHtml(String(s.id ?? ''))}" style="
                                     flex: 1;
                                     min-width: 0;
                                     padding: 6px 10px 6px 24px;
@@ -928,7 +939,7 @@ class CombatScore {
                                     overflow: hidden;
                                     text-overflow: ellipsis;
                                 ">${escapeHtml(s.name)}</div>
-                                <div class="mwi-combat-sim-party-export-option" data-name="${escapeHtml(s.name)}" title="Export full party with this loadout" style="
+                                <div class="mwi-combat-sim-party-export-option" data-name="${escapeHtml(s.name)}" data-snapshot-id="${escapeHtml(String(s.id ?? ''))}" title="Export full party with this loadout" style="
                                     display: ${partyButtonDisplay};
                                     flex-shrink: 0;
                                     padding: 6px 8px;
@@ -944,7 +955,7 @@ class CombatScore {
                             e.stopPropagation();
                             closeSimFormatDropdown();
                             await this.handleCombatSimExportFromSnapshot(
-                                opt.dataset.name,
+                                opt.dataset.snapshotId || opt.dataset.name,
                                 combatSimBtn,
                                 simFormatState.format
                             );
@@ -961,7 +972,7 @@ class CombatScore {
                         opt.addEventListener('click', async (e) => {
                             e.stopPropagation();
                             closeSimFormatDropdown();
-                            await this.showPartyExportPreview(opt.dataset.name, panel);
+                            await this.showPartyExportPreview(opt.dataset.snapshotId || opt.dataset.name, panel);
                         });
                         opt.addEventListener('mouseenter', () => {
                             opt.style.background = 'rgba(255,255,255,0.1)';
@@ -1577,7 +1588,12 @@ class CombatScore {
                 <span style="flex-shrink: 0;">${escapeHtml(label)}</span>
             </div>`;
         const rows = [
-            rowHtml(characterData?.character?.name || 'You', snapshotName, '#ddd', 'Your saved loadout'),
+            rowHtml(
+                characterData?.character?.name || 'You',
+                findCombatSnapshot(snapshotName)?.name || snapshotName,
+                '#ddd',
+                'Your saved loadout'
+            ),
             ...members.map((member) => {
                 let label = formatProfileAge(member.status.ageMs);
                 if (!member.status.found) label = 'missing, left out';
@@ -1677,7 +1693,7 @@ class CombatScore {
         const originalBg = button.style.background;
 
         try {
-            const snapshot = loadoutSnapshot.getAllSnapshots().find((s) => s.name === snapshotName);
+            const snapshot = findCombatSnapshot(snapshotName);
             if (!snapshot || dataManager.getCurrentCharacterId() !== characterId) {
                 this.showButtonStatus(button, '✗ No Data', config.COLOR_LOSS, originalText, originalBg);
                 return false;
@@ -1739,7 +1755,7 @@ class CombatScore {
         const originalBg = button.style.background;
 
         try {
-            const snapshot = loadoutSnapshot.getAllSnapshots().find((s) => s.name === snapshotName);
+            const snapshot = findCombatSnapshot(snapshotName);
             if (!snapshot) {
                 console.error('[Combat Score] Snapshot not found:', snapshotName);
                 return;
