@@ -111,6 +111,8 @@ class CombatStatsDataCollector {
         this.socketCloseHandler = null;
         /** Set when the game socket closed during the current session; cleared when a new session starts */
         this.connectionInterrupted = false;
+        /** The game socket the session's battles last arrived on; see `onSocketClosed` */
+        this.sessionSocket = null;
         this.latestCombatData = null;
         this.currentBattleId = null;
         /** Which run the snapshot belongs to; a change means the last one ended */
@@ -231,22 +233,31 @@ class CombatStatsDataCollector {
         this.latestCombatData = null;
         this.currentBattleId = null;
         this.sessionKey = null;
+        // The departing socket's close, whenever it lands, is no gap in the
+        // arriving character's session
+        this.sessionSocket = null;
     }
 
     /**
      * The game socket closed. Flags the running session as possibly incomplete.
      *
-     * A character switch closes the departing socket after the arriving one has
-     * already attached; that is not a gap in anyone's data, so a close from a
-     * socket that is no longer the active one is ignored.
+     * Only a session being fought on the wire counts: its battles arrived on
+     * the socket that closed, and its combat action is still running. That
+     * leaves out a close while idle after combat stopped (the trackers' clock
+     * outlives the fighting), a run only restored from storage, and a
+     * character switch, whose departing socket can close before or after the
+     * arriving one attaches (the switch forgets the session's socket). The
+     * mark goes on the session's snapshot too, so its archive keeps it.
+     *
      * @param {WebSocket} [socket] - The socket that closed
      */
     onSocketClosed(socket) {
-        const active = webSocketHook.activeGameSocket;
-        if (active && socket && active !== socket) return;
-        if (this.consumableTracker.startTime) {
-            this.connectionInterrupted = true;
-        }
+        if (!socket || socket !== this.sessionSocket) return;
+        const session = this.latestCombatData;
+        if (!session || session.restored) return;
+        if (!this.currentCombatAction()) return;
+        this.connectionInterrupted = true;
+        session.connectionInterrupted = true;
     }
 
     /**
@@ -586,6 +597,9 @@ class CombatStatsDataCollector {
 
             const battleId = data.battleId || 0;
 
+            // The socket this session is being fought on, for `onSocketClosed`
+            this.sessionSocket = webSocketHook.activeGameSocket ?? null;
+
             // Calculate duration from combat start time. Clamped at zero: the
             // start time is the server's clock and "now" is ours, so a short
             // run on a client a second or two behind measured negative — which
@@ -861,10 +875,13 @@ class CombatStatsDataCollector {
             // Archived before the snapshot is replaced, so what goes into the
             // history is that session's final state.
             const key = sessionKey(combatData);
-            if (this.sessionKey && key && key !== this.sessionKey && this.latestCombatData) {
-                archiveSession(this.latestCombatData);
+            if (this.sessionKey && key && key !== this.sessionKey) {
+                if (this.latestCombatData) archiveSession(this.latestCombatData);
+                // An interruption belonged to the session that just ended
+                this.connectionInterrupted = false;
             }
             if (key) this.sessionKey = key;
+            if (this.connectionInterrupted) combatData.connectionInterrupted = true;
 
             // Store in memory
             this.latestCombatData = combatData;

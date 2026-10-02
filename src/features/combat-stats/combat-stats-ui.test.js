@@ -250,13 +250,24 @@ describe('the connection-interrupted banner', () => {
         expect(popup().textContent).not.toContain('Connection was interrupted');
     });
 
-    test('is not shown on an archived run', async () => {
+    test('is not shown on an archived run that does not carry the mark, whatever Live says', async () => {
         mocks.interrupted = true;
         await combatStatsUI.showPopup();
         picker().value = ARCHIVED.key;
         picker().dispatchEvent(new Event('change'));
         await flush();
         expect(popup().textContent).not.toContain('Connection was interrupted');
+    });
+
+    test('shows on an archived run that was interrupted', async () => {
+        mocks.sessions = [{ ...ARCHIVED, connectionInterrupted: true }];
+        await combatStatsUI.showPopup();
+        expect(popup().textContent).not.toContain('Connection was interrupted');
+
+        picker().value = ARCHIVED.key;
+        picker().dispatchEvent(new Event('change'));
+        await flush();
+        expect(popup().textContent).toContain('Connection was interrupted');
     });
 });
 

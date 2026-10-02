@@ -682,7 +682,10 @@ class CombatStatsUI {
         this.createPopup(playerStats, {
             archived,
             combatData,
-            connectionInterrupted: !archived && combatStatsDataCollector.isConnectionInterrupted(),
+            // An archive carries its own mark; one archived before it existed has none
+            connectionInterrupted: archived
+                ? archived.connectionInterrupted === true
+                : combatStatsDataCollector.isConnectionInterrupted() || combatData?.connectionInterrupted === true,
         });
     }
 
@@ -760,8 +763,9 @@ class CombatStatsUI {
     /**
      * Create and display the statistics popup
      * @param {Array} playerStats - Array of player statistics
-     * @param {Object} [context] - `{archived, combatData}`: the archived session on show (null for
-     *   Live), and the snapshot the cards were computed from
+     * @param {Object} [context] - `{archived, combatData, connectionInterrupted}`: the archived
+     *   session on show (null for Live), the snapshot the cards were computed from, and whether
+     *   the connection dropped during that session
      */
     createPopup(playerStats, { archived = null, combatData = null, connectionInterrupted = false } = {}) {
         // Remove existing popup if any
