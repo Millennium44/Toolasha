@@ -1938,6 +1938,8 @@ class BulkSellAssistant {
         // caller fall back to the normal market flow
         if (!tile) return false;
 
+        // From before the menu can open: an arming during the wait for it still counts
+        this._trackVendorArming();
         (tile.querySelector('[class*="Item_item"]') || tile).dispatchEvent(
             new MouseEvent('click', { bubbles: true, cancelable: true })
         );
@@ -1968,7 +1970,6 @@ class BulkSellAssistant {
             };
             this.state = 'awaiting_confirm';
             this._render();
-            this._trackVendorArming();
             this._watchClose('[class*="Item_actionMenu"]');
         };
         setTimeout(() => awaitMenu(1), 350);

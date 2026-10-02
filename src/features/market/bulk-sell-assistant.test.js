@@ -1396,6 +1396,32 @@ describe('confirming from the strip', () => {
             expect(gameClicks).toBe(2);
         });
 
+        test('an arming while the run waits for the menu to open still counts as recent', async () => {
+            runAtStep0();
+            bulkSell.state = 'preparing';
+            const inventory = document.createElement('div');
+            inventory.className = 'Inventory_items__x';
+            inventory.innerHTML =
+                '<div class="Item_itemContainer__x"><div class="Item_item__x"><svg><use href="#cheese"></use></svg></div></div>';
+            document.body.appendChild(inventory);
+            expect(bulkSell._openVendorSell(PRICE, 1)).toBe(true);
+
+            // The menu opens and the player arms it before the run's own menu wait has looked
+            const menu = openMenu();
+            const sell = menu.querySelector('.Button_sell__x');
+            sell.click();
+            await vi.advanceTimersByTimeAsync(360);
+            expect(bulkSell.state).toBe('awaiting_confirm');
+
+            confirmBtn().click();
+            sell.click();
+            await vi.advanceTimersByTimeAsync(1200);
+
+            expect(gameClicks).toBe(1);
+            expect(bulkSell._confirmSent()).toBe(false);
+            inventory.remove();
+        });
+
         test('a player click on a button they armed a moment ago stays retryable', async () => {
             // The game may ignore a confirm landing that soon after the arming
             const menu = openMenu();
