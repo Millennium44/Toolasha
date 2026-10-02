@@ -219,3 +219,71 @@ export function achievementBuffLabel(buff) {
     const sign = pct >= 0 ? '+' : '';
     return `${name} ${sign}${pct}%`;
 }
+
+/**
+ * The achievement combat buffs a simulated player is offered: whatever buffs the
+ * player already carries, plus any combat-tier buff they do not hold yet (a
+ * player who has not finished a tier has no resolved buff for it, which is
+ * exactly the what-if a scenario needs to be able to switch on). A buff the
+ * player already carries keeps its own resolved value; a missing one comes from
+ * the static catalog. Catalog order first, then anything else the player has.
+ * @param {Array<Object>} [buffs] - The player's resolved achievement combat buffs
+ * @returns {Array<Object>} Buff objects, one per type
+ */
+export function achievementScenarioCatalog(buffs) {
+    const held = new Map();
+    for (const buff of Array.isArray(buffs) ? buffs : []) {
+        if (buff?.typeHrid && !held.has(buff.typeHrid)) held.set(buff.typeHrid, buff);
+    }
+    const catalog = manualAchievementCombatBuffs().map((buff) => held.get(buff.typeHrid) || buff);
+    const catalogTypes = new Set(catalog.map((buff) => buff.typeHrid));
+    for (const [typeHrid, buff] of held) {
+        if (!catalogTypes.has(typeHrid)) catalog.push(buff);
+    }
+    return catalog;
+}
+
+/**
+ * The buff types a player's achievements actually grant: held buffs that are not
+ * switched off.
+ * @param {Object} dto - A player DTO ({ achievementCombatBuffs, achievementBuffsOff })
+ * @returns {string[]} Buff type hrids
+ */
+export function activeAchievementBuffTypes(dto) {
+    const off = new Set(Array.isArray(dto?.achievementBuffsOff) ? dto.achievementBuffsOff : []);
+    return (Array.isArray(dto?.achievementCombatBuffs) ? dto.achievementCombatBuffs : [])
+        .map((buff) => buff?.typeHrid)
+        .filter((typeHrid) => typeHrid && !off.has(typeHrid));
+}
+
+/**
+ * Resolve an achievement what-if scenario into the two DTO fields the engine reads.
+ *
+ * - `current`: the player exactly as loaded (their own buffs and off-list).
+ * - `none`: every achievement combat buff switched off.
+ * - `custom`: exactly the chosen buff types granted, including tiers the player
+ *   has not completed.
+ *
+ * Always derived from the loaded player (`original`), never from an earlier
+ * scenario output, so switching modes back and forth cannot drift.
+ * @param {Object} original - The player DTO as loaded
+ * @param {'current'|'none'|'custom'} mode
+ * @param {Iterable<string>} [customTypes] - Buff types granted in `custom`
+ * @returns {{achievementCombatBuffs: Array<Object>, achievementBuffsOff: string[]}}
+ */
+export function resolveAchievementScenario(original, mode, customTypes = []) {
+    if (mode === 'current') {
+        return {
+            achievementCombatBuffs: structuredClone(
+                Array.isArray(original?.achievementCombatBuffs) ? original.achievementCombatBuffs : []
+            ),
+            achievementBuffsOff: Array.isArray(original?.achievementBuffsOff) ? [...original.achievementBuffsOff] : [],
+        };
+    }
+    const catalog = structuredClone(achievementScenarioCatalog(original?.achievementCombatBuffs));
+    const granted = mode === 'custom' ? new Set(customTypes) : new Set();
+    return {
+        achievementCombatBuffs: catalog,
+        achievementBuffsOff: catalog.map((buff) => buff.typeHrid).filter((typeHrid) => !granted.has(typeHrid)),
+    };
+}

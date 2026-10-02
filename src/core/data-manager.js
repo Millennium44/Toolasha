@@ -217,6 +217,13 @@ class DataManager {
         // until the next battle. Shape: {members: [{characterID, characterName}], updatedAt}.
         this.battlePartyRoster = null;
 
+        // When the `init_character_data` that `characterData.partyInfo` came from
+        // arrived, on the clock `battlePartyRoster.updatedAt` uses. A login payload
+        // re-sent to the same character (a reconnect, not a reload) postdates the
+        // last fight, and is the one reading of a party changed while idle that
+        // reaches the client.
+        this.partyInfoReceivedAt = null;
+
         // When the front action's currently in-progress base action unit started:
         // { actionId, currentCount, unitStartTime }. Callers that model "time remaining"
         // count that in-flight unit as a whole one, so without this an ETA re-anchors to a
@@ -1215,6 +1222,7 @@ class DataManager {
 
         // Process new character data normally
         this.characterData = data;
+        this.partyInfoReceivedAt = arrivedAt;
         // A mark update from this same character's socket that arrived while the
         // switch above was still clearing/replacing characterData — see the
         // item_marks_updated handler — is applied now that characterData is this
@@ -2532,8 +2540,8 @@ class DataManager {
         if (Object.keys(this.characterGuildBuffMap || {}).length > 0) {
             snapshot.characterGuildBuffMap = this.characterGuildBuffMap;
         }
-        // partyInfo is frozen at page load. A party named by a fight since then replaces it, so a
-        // member who left is not imported and one who joined is.
+        // partyInfo is only what the last login payload carried. A party named by a fight since then
+        // replaces it, so a member who left is not imported and one who joined is.
         const party = this.getPartyMembers();
         if (party.source === 'battle') {
             snapshot.partyInfo = {
@@ -2683,17 +2691,29 @@ class DataManager {
     /**
      * Who this character is grouped with, and how fresh that reading is.
      *
-     * Two sources, and the battle one wins whenever it exists: `partyInfo` is
-     * frozen at page load (see `battlePartyRoster`), so anything recorded from a
-     * fight happened later by construction. `source` is what a caller shows the
-     * user — `'battle'` can lag a party changed while idle, `'login'` lags every
-     * change since the page loaded, and neither is worth hiding from a reader.
+     * Two sources, and the newer one wins: the roster the last fight named, and
+     * the slot map the last `init_character_data` carried. Nothing else updates
+     * either — no party message is handled — so a party changed while idle is
+     * seen only once a fight starts or the login payload is re-sent. A slot map
+     * naming nobody is not a reading: the game empties it for the whole of a
+     * dungeon run, so the fight's roster stands. `source` is what a caller shows
+     * the user — `'battle'` can lag a party changed while idle, `'login'` lags
+     * every change since that payload arrived, and neither is worth hiding.
      *
      * @returns {{members: Array<{characterID: string, characterName: string}>, source: string, updatedAt: number|null}}
      */
     getPartyMembers() {
+        const slots = this.characterData?.partyInfo?.partySlotMap;
+        const members = slots
+            ? Object.values(slots)
+                  .filter((member) => member?.characterID)
+                  .map((member) => ({ characterID: member.characterID, characterName: member.characterName || '' }))
+            : [];
+        const loginAt = Number.isFinite(this.partyInfoReceivedAt) ? this.partyInfoReceivedAt : null;
+
         const battle = this.battlePartyRoster;
-        if (battle?.members?.length) {
+        const loginIsNewer = members.length > 0 && loginAt !== null && !(battle?.updatedAt >= loginAt);
+        if (battle?.members?.length && !loginIsNewer) {
             return {
                 members: battle.members.map((member) => ({ ...member })),
                 source: 'battle',
@@ -2701,13 +2721,7 @@ class DataManager {
             };
         }
 
-        const slots = this.characterData?.partyInfo?.partySlotMap;
-        const members = slots
-            ? Object.values(slots)
-                  .filter((member) => member?.characterID)
-                  .map((member) => ({ characterID: member.characterID, characterName: member.characterName || '' }))
-            : [];
-        return { members, source: members.length ? 'login' : 'none', updatedAt: null };
+        return { members, source: members.length ? 'login' : 'none', updatedAt: members.length ? loginAt : null };
     }
 
     /**

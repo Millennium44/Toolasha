@@ -20,9 +20,21 @@ const store = vi.hoisted(() => ({
     characterId: 'me',
     /** Fired once inside the next probe — lets a test land a switch inside it */
     onProbe: null,
+    /** The game socket the hook last attached to */
+    socket: null,
 }));
 
-vi.mock('../../core/websocket.js', () => ({ default: { on: () => {}, off: () => {} } }));
+vi.mock('../../core/websocket.js', () => ({
+    default: {
+        on: () => {},
+        off: () => {},
+        onSocketEvent: () => {},
+        offSocketEvent: () => {},
+        get activeGameSocket() {
+            return store.socket;
+        },
+    },
+}));
 vi.mock('../../core/data-manager.js', () => ({
     default: {
         getCurrentCharacterId: () => store.characterId,
@@ -99,6 +111,7 @@ beforeEach(() => {
     store.unavailable = false;
     store.characterId = 'me';
     store.onProbe = null;
+    store.socket = null;
     _resetReadProbe();
     collector.isInitialized = false;
     // The collector is a singleton, so the trackers, `currentBattleId` and the
@@ -332,5 +345,211 @@ describe('deciding whether a stored run still describes anything', () => {
 
         collector.latestCombatData = { ...snapshot(1, undefined), restored: true };
         expect(collector.getLatestData()).not.toBeNull();
+    });
+});
+
+describe('connection-interrupted flag', () => {
+    const FIRST = { name: 'first socket' };
+    const SECOND = { name: 'second socket' };
+
+    /** A wave of a session, arriving on whichever socket is attached. */
+    const wave = (combatStartTime = '2026-08-03T01:00:00Z', battleId = 1) =>
+        collector.onNewBattle({
+            battleId,
+            combatStartTime,
+            players: [{ character: { id: 'me', name: 'Millennium44' }, loot: {}, consumables: [] }],
+        });
+
+    test('a close of the socket a running session is fought on flags it, snapshot and all', async () => {
+        fighting(ZONE);
+        store.socket = FIRST;
+        await wave();
+
+        collector.onSocketClosed(FIRST);
+
+        expect(collector.isConnectionInterrupted()).toBe(true);
+        expect(collector.getLatestData().connectionInterrupted).toBe(true);
+    });
+
+    test('a session with no consumable used yet is flagged all the same', async () => {
+        fighting(ZONE);
+        store.socket = FIRST;
+        collector.consumableTracker.startTime = null;
+        await wave();
+
+        collector.onSocketClosed(FIRST);
+
+        expect(collector.isConnectionInterrupted()).toBe(true);
+    });
+
+    test('a close after switching to another zone, before its first battle, does not flag the old session', async () => {
+        fighting(ZONE);
+        store.socket = FIRST;
+        await wave();
+        fighting('/actions/combat/smelly_planet');
+
+        collector.onSocketClosed(FIRST);
+
+        expect(collector.isConnectionInterrupted()).toBe(false);
+        expect(collector.getLatestData()?.connectionInterrupted).toBeUndefined();
+    });
+
+    test('a battle is bound to the socket that delivered it, not the most recently attached one', async () => {
+        fighting(ZONE);
+        // SECOND has attached, but this battle arrived on FIRST
+        store.socket = SECOND;
+        await collector.onNewBattle(
+            {
+                battleId: 1,
+                combatStartTime: '2026-08-03T01:00:00Z',
+                players: [{ character: { id: 'me', name: 'Millennium44' }, loot: {}, consumables: [] }],
+            },
+            { socket: FIRST }
+        );
+
+        collector.onSocketClosed(SECOND);
+        expect(collector.isConnectionInterrupted()).toBe(false);
+        collector.onSocketClosed(FIRST);
+        expect(collector.isConnectionInterrupted()).toBe(true);
+    });
+
+    test('a session whose action was unknown when its battle arrived is never flagged', async () => {
+        // The action list had not loaded yet
+        fighting(null);
+        store.socket = FIRST;
+        await wave();
+        fighting('/actions/combat/smelly_planet');
+
+        collector.onSocketClosed(FIRST);
+
+        expect(collector.isConnectionInterrupted()).toBe(false);
+    });
+
+    test('a close while idle after combat stopped flags nothing', async () => {
+        fighting(ZONE);
+        store.socket = FIRST;
+        await wave();
+        fighting(null);
+
+        collector.onSocketClosed(FIRST);
+
+        expect(collector.isConnectionInterrupted()).toBe(false);
+        expect(collector.getLatestData()?.connectionInterrupted).toBeUndefined();
+    });
+
+    test('a run only restored from storage is not flagged', async () => {
+        store.saved = snapshot(1);
+        fighting(ZONE);
+        await collector.initialize();
+
+        collector.onSocketClosed(FIRST);
+
+        expect(collector.isConnectionInterrupted()).toBe(false);
+    });
+
+    test('the departing socket closing after a switch does not flag the arriving character', async () => {
+        fighting(ZONE);
+        store.socket = FIRST;
+        await wave();
+
+        collector.onCharacterSwitching();
+        // The hook clears its active socket as the departing one closes
+        store.socket = null;
+        store.characterId = 'iron456';
+        collector.onSocketClosed(FIRST);
+        store.socket = SECOND;
+        await wave('2026-08-03T02:00:00Z');
+
+        expect(collector.isConnectionInterrupted()).toBe(false);
+        expect(collector.getLatestData().connectionInterrupted).toBeUndefined();
+    });
+
+    test('the session that was interrupted is archived with the mark, and the next starts clean', async () => {
+        fighting(ZONE);
+        store.socket = FIRST;
+        await wave();
+        collector.onSocketClosed(FIRST);
+
+        store.socket = SECOND;
+        await wave('2026-08-03T05:00:00Z');
+
+        expect(archiveSession).toHaveBeenCalledTimes(1);
+        expect(archiveSession.mock.calls[0][0].connectionInterrupted).toBe(true);
+        expect(collector.isConnectionInterrupted()).toBe(false);
+        expect(collector.getLatestData().connectionInterrupted).toBeUndefined();
+    });
+
+    test('a reconnect inside the same session keeps the mark on its later snapshots', async () => {
+        fighting(ZONE);
+        store.socket = FIRST;
+        await wave();
+        collector.onSocketClosed(FIRST);
+
+        store.socket = SECOND;
+        await wave('2026-08-03T01:00:00Z', 2);
+
+        expect(collector.getLatestData().connectionInterrupted).toBe(true);
+    });
+
+    test('the mark is written to storage, so a reload before the next battle restores it', async () => {
+        fighting(ZONE);
+        store.socket = FIRST;
+        await wave();
+        store.writes = [];
+
+        await collector.onSocketClosed(FIRST);
+
+        expect(store.writes).toHaveLength(1);
+        expect(store.writes[0][0]).toBe('latestCombatRun_me');
+        expect(store.writes[0][1].connectionInterrupted).toBe(true);
+        expect(store.writes[0][1]).not.toHaveProperty('restored');
+    });
+
+    test('a marked session restored after a reload keeps the mark on its next battle', async () => {
+        fighting(ZONE);
+        store.socket = FIRST;
+        await wave();
+        await collector.onSocketClosed(FIRST);
+        const persisted = store.writes.at(-1)[1];
+
+        // Reload: everything in memory is gone, the stored snapshot carries the mark
+        collector.onCharacterSwitching();
+        collector.isInitialized = false;
+        _resetReadProbe();
+        store.saved = persisted;
+        await collector.initialize();
+
+        store.socket = SECOND;
+        await wave('2026-08-03T01:00:00Z', 2);
+
+        expect(collector.isConnectionInterrupted()).toBe(true);
+        expect(collector.getLatestData().connectionInterrupted).toBe(true);
+    });
+
+    test('the mark is not written under a character who became current while the probe was open', async () => {
+        fighting(ZONE);
+        store.socket = FIRST;
+        await wave();
+        store.writes = [];
+        _resetReadProbe();
+        store.onProbe = () => {
+            store.characterId = 'iron456';
+        };
+
+        await collector.onSocketClosed(FIRST);
+
+        expect(store.writes).toEqual([]);
+    });
+
+    test('a close that flags nothing writes nothing', async () => {
+        fighting(ZONE);
+        store.socket = FIRST;
+        await wave();
+        fighting(null);
+        store.writes = [];
+
+        await collector.onSocketClosed(FIRST);
+
+        expect(store.writes).toEqual([]);
     });
 });

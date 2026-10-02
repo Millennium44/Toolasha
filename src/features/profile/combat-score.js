@@ -9,8 +9,13 @@ import storage from '../../core/storage.js';
 import webSocketHook from '../../core/websocket.js';
 import { calculateCombatScore } from './score-calculator.js';
 import { numberFormatter } from '../../utils/formatters.js';
-import { constructMetzCharacterExport, applyLoadoutOverrideToMetzCharacter } from '../combat/combat-sim-export-metz.js';
-import { constructExportObject } from '../combat/combat-sim-export.js';
+import {
+    constructMetzCharacterExport,
+    constructMetzTeamExport,
+    applyLoadoutOverrideToMetzCharacter,
+    describePartyProfiles,
+} from '../combat/combat-sim-export-metz.js';
+import { constructExportObject, getProfileList } from '../combat/combat-sim-export.js';
 import { constructMilkonomyExport } from '../combat/milkonomy-export.js';
 import { handleViewCardClick, handleViewCardFromSnapshot } from './character-card-button.js';
 import { buildScorePanel, setScoreSource } from './build-score-panel.js';
@@ -24,6 +29,7 @@ import combatSimUI from '../combat-sim/combat-sim-ui.js';
 import { buildPlayerDTOFromProfile } from '../combat-sim/combat-sim-adapter.js';
 import { terminateWorkerPool } from '../../utils/enhancement-worker-manager.js';
 import { markToolashaSurface } from '../../utils/surface-marker.js';
+import { formatProfileAge } from '../../utils/shared-profile-status.js';
 
 /**
  * Escape a string for safe interpolation into innerHTML.
@@ -53,6 +59,17 @@ const SIM_EXPORT_FORMAT_LABELS = {
 /**
  * CombatScore class manages combat score display on profiles
  */
+/**
+ * A saved loadout by the server's id, falling back to its name. Names are not unique (the game
+ * allows two loadouts to share one), so the menu rows carry the id and resolve by it.
+ * @param {string} ref - Snapshot id, or a name from a caller that has no id
+ * @returns {Object|undefined}
+ */
+function findCombatSnapshot(ref) {
+    const snapshots = loadoutSnapshot.getAllSnapshots();
+    return snapshots.find((s) => s.id != null && String(s.id) === String(ref)) || snapshots.find((s) => s.name === ref);
+}
+
 class CombatScore {
     constructor() {
         this.isActive = false;
@@ -829,6 +846,10 @@ class CombatScore {
                 const marker = opt.querySelector('.mwi-combat-sim-format-marker');
                 if (marker) marker.textContent = opt.dataset.format === simFormatState.format ? '✓' : '';
             });
+            // A whole-party paste exists only in Metz's team format
+            simFormatDropdown?.querySelectorAll('.mwi-combat-sim-party-export-option').forEach((opt) => {
+                opt.style.display = simFormatState.format === SIM_EXPORT_FORMATS.METZ ? '' : 'none';
+            });
         };
 
         this.getSimExportFormat().then((format) => {
@@ -903,18 +924,29 @@ class CombatScore {
                 if (combatSnapshots.length > 0) {
                     loadoutSection.style.display = 'block';
 
+                    const partyButtonDisplay = simFormatState.format === SIM_EXPORT_FORMATS.METZ ? '' : 'none';
                     loadoutList.innerHTML = combatSnapshots
                         .map(
-                            (s) =>
-                                `<div class="mwi-combat-sim-loadout-option" data-name="${escapeHtml(s.name)}" style="
-                                padding: 6px 10px 6px 24px;
-                                cursor: pointer;
-                                font-size: 0.8rem;
-                                color: #ddd;
-                                white-space: nowrap;
-                                overflow: hidden;
-                                text-overflow: ellipsis;
-                            ">${escapeHtml(s.name)}</div>`
+                            (s) => `<div style="display: flex; align-items: center;">
+                                <div class="mwi-combat-sim-loadout-option" data-name="${escapeHtml(s.name)}" data-snapshot-id="${escapeHtml(String(s.id ?? ''))}" style="
+                                    flex: 1;
+                                    min-width: 0;
+                                    padding: 6px 10px 6px 24px;
+                                    cursor: pointer;
+                                    font-size: 0.8rem;
+                                    color: #ddd;
+                                    white-space: nowrap;
+                                    overflow: hidden;
+                                    text-overflow: ellipsis;
+                                ">${escapeHtml(s.name)}</div>
+                                <div class="mwi-combat-sim-party-export-option" data-name="${escapeHtml(s.name)}" data-snapshot-id="${escapeHtml(String(s.id ?? ''))}" title="Export full party with this loadout" style="
+                                    display: ${partyButtonDisplay};
+                                    flex-shrink: 0;
+                                    padding: 6px 8px;
+                                    cursor: pointer;
+                                    font-size: 0.8rem;
+                                ">👥</div>
+                            </div>`
                         )
                         .join('');
 
@@ -923,10 +955,24 @@ class CombatScore {
                             e.stopPropagation();
                             closeSimFormatDropdown();
                             await this.handleCombatSimExportFromSnapshot(
-                                opt.dataset.name,
+                                opt.dataset.snapshotId || opt.dataset.name,
                                 combatSimBtn,
                                 simFormatState.format
                             );
+                        });
+                        opt.addEventListener('mouseenter', () => {
+                            opt.style.background = 'rgba(255,255,255,0.1)';
+                        });
+                        opt.addEventListener('mouseleave', () => {
+                            opt.style.background = '';
+                        });
+                    });
+
+                    loadoutList.querySelectorAll('.mwi-combat-sim-party-export-option').forEach((opt) => {
+                        opt.addEventListener('click', async (e) => {
+                            e.stopPropagation();
+                            closeSimFormatDropdown();
+                            await this.showPartyExportPreview(opt.dataset.snapshotId || opt.dataset.name, panel);
                         });
                         opt.addEventListener('mouseenter', () => {
                             opt.style.background = 'rgba(255,255,255,0.1)';
@@ -1468,6 +1514,17 @@ class CombatScore {
         const character = await constructMetzCharacterExport(null);
         if (!character) return null;
 
+        return JSON.stringify(applyLoadoutOverrideToMetzCharacter(character, this.buildMetzSnapshotOverride(snapshot)));
+    }
+
+    /**
+     * The `applyLoadoutOverrideToMetzCharacter` parameters for a saved loadout, shared by the
+     * single-character loadout export and the full-party one so both wear a loadout identically.
+     * @param {Object} snapshot - Loadout snapshot (see loadout-snapshot.js)
+     * @returns {{equipment: Array<Object>, abilities: Array<Object|null>, triggerMap: Object,
+     *   food: Array<Object>, drinks: Array<Object>}}
+     */
+    buildMetzSnapshotOverride(snapshot) {
         // Build the native five slots directly from the saved 1-based slot numbers. The
         // Metz adapter then emits its compact ability list in that same priority order.
         const characterData = dataManager.characterData;
@@ -1476,7 +1533,7 @@ class CombatScore {
             if (ab.abilityHrid) abilityLevelMap[ab.abilityHrid] = ab.level || 1;
         }
         const abilities = Array(5).fill(null);
-        for (const ability of snapshot.abilities) {
+        for (const ability of snapshot.abilities || []) {
             if (!ability.abilityHrid) continue;
             const index = Number(ability.slot) - 1;
             if (index < 0 || index >= abilities.length) continue;
@@ -1486,7 +1543,7 @@ class CombatScore {
             };
         }
 
-        const overridden = applyLoadoutOverrideToMetzCharacter(character, {
+        return {
             equipment: loadoutSnapshot.resolveEquipment(snapshot),
             abilities,
             triggerMap: {
@@ -1495,9 +1552,193 @@ class CombatScore {
             },
             food: snapshot.food,
             drinks: snapshot.drinks,
-        });
+        };
+    }
 
-        return JSON.stringify(overridden);
+    /**
+     * Show the "export full party" preview under the sim export button: every party member with
+     * how old their cached profile is (or that it is missing), so a stale or absent teammate is
+     * seen before the paste rather than discovered in the sim. Its Copy button exports the team
+     * with the named saved loadout on your own character.
+     * @param {string} snapshotName - Saved combat loadout to wear on your own character
+     * @param {Element} panel - The combat score panel holding the sim export button
+     */
+    async showPartyExportPreview(snapshotName, panel) {
+        const wrapper = panel?.querySelector('#mwi-combat-sim-wrapper');
+        if (!wrapper) return;
+        wrapper._closePartyExportPreview?.();
+
+        // Captured before the await: a character switch while profiles load must not pair one
+        // character's loadout with another's party
+        const characterId = dataManager.getCurrentCharacterId();
+        const characterData = dataManager.characterData;
+        // Only the latest click renders: an earlier one whose profiles load last
+        // would otherwise replace the newer preview with its own loadout
+        const request = (this._partyExportPreviewRequest = (this._partyExportPreviewRequest || 0) + 1);
+        const profileList = await getProfileList();
+        if (request !== this._partyExportPreviewRequest) return;
+        if (dataManager.getCurrentCharacterId() !== characterId || !panel.isConnected) return;
+        // Again after the await, in case a preview was opened some other way meanwhile
+        wrapper._closePartyExportPreview?.();
+
+        const members = describePartyProfiles(characterData, profileList);
+        const rowHtml = (name, label, color, title) =>
+            `<div title="${escapeHtml(title)}" style="display: flex; justify-content: space-between; gap: 8px; padding: 2px 0; color: ${color};">
+                <span style="overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">${escapeHtml(name)}</span>
+                <span style="flex-shrink: 0;">${escapeHtml(label)}</span>
+            </div>`;
+        const rows = [
+            rowHtml(
+                characterData?.character?.name || 'You',
+                findCombatSnapshot(snapshotName)?.name || snapshotName,
+                '#ddd',
+                'Your saved loadout'
+            ),
+            ...members.map((member) => {
+                let label = formatProfileAge(member.status.ageMs);
+                if (!member.status.found) label = 'missing, left out';
+                else if (member.status.gearless) label = `no gear, ${label}`;
+                const color = member.warning ? config.COLOR_WARNING : '#ddd';
+                return rowHtml(member.name, label, color, member.warning?.text || '');
+            }),
+        ];
+        let note = '';
+        if (members.length === 0) {
+            note = 'Not in a party: only you will be exported.';
+        } else if (members.some((member) => member.warning)) {
+            note = 'Open a teammate’s profile to refresh it. Hover a name for details.';
+        }
+
+        const preview = document.createElement('div');
+        preview.id = 'mwi-party-export-preview';
+        preview.style.cssText = `
+            position: absolute;
+            top: 100%;
+            right: 0;
+            width: 250px;
+            margin-top: 2px;
+            padding: 8px 10px;
+            background: rgba(30, 30, 30, 0.98);
+            border: 1px solid #555;
+            border-radius: 4px;
+            font-size: 0.8rem;
+            z-index: 10003;
+        `;
+        preview.innerHTML = `
+            <div style="font-weight: bold; margin-bottom: 4px; color: ${config.COLOR_ACCENT};">Export Full Party</div>
+            ${rows.join('')}
+            ${note ? `<div style="color: #888; padding-top: 4px;">${note}</div>` : ''}
+            <button id="mwi-party-export-copy-btn" style="
+                margin-top: 8px;
+                padding: 6px 10px;
+                width: 100%;
+                background: ${config.COLOR_ACCENT};
+                color: black;
+                border: none;
+                border-radius: 4px;
+                cursor: pointer;
+                font-weight: bold;
+                font-size: 0.8rem;
+            ">Copy Party Export</button>
+        `;
+        wrapper.appendChild(preview);
+
+        const outsideCloser = (e) => {
+            if (!preview.contains(e.target)) closePreview();
+        };
+        const escapeCloser = (e) => {
+            if (e.key === 'Escape') closePreview();
+        };
+        const closePreview = () => {
+            preview.remove();
+            document.removeEventListener('click', outsideCloser);
+            document.removeEventListener('keydown', escapeCloser);
+            if (wrapper._closePartyExportPreview === closePreview) wrapper._closePartyExportPreview = null;
+        };
+        wrapper._closePartyExportPreview = closePreview;
+        // Deferred so the click that opened the preview does not also close it
+        const listenTimeout = setTimeout(() => {
+            if (!preview.isConnected) return;
+            document.addEventListener('click', outsideCloser);
+            document.addEventListener('keydown', escapeCloser);
+        }, 0);
+        this.timerRegistry.registerTimeout(listenTimeout);
+        const previousCleanup = panel._simFormatDropdownCleanup;
+        panel._simFormatDropdownCleanup = () => {
+            closePreview();
+            previousCleanup?.();
+        };
+
+        // The roster the preview describes; Copy re-reads the party, so a change in between must not
+        // export a different team than the one on screen
+        const rosterKey = (list) =>
+            list
+                .map((member) => String(member.characterId))
+                .sort()
+                .join(',');
+        const previewedRoster = rosterKey(members);
+
+        const copyBtn = preview.querySelector('#mwi-party-export-copy-btn');
+        copyBtn.addEventListener('click', async (e) => {
+            e.stopPropagation();
+            const rosterUnchanged = () =>
+                rosterKey(describePartyProfiles(dataManager.characterData, [])) === previewedRoster;
+            if (!rosterUnchanged()) {
+                // The party changed since the preview was drawn: show the new one instead of copying
+                await this.showPartyExportPreview(snapshotName, panel);
+                return;
+            }
+            const copied = await this.handleExportFullParty(snapshotName, copyBtn, characterId, rosterUnchanged);
+            if (copied === 'roster-changed') {
+                await this.showPartyExportPreview(snapshotName, panel);
+                return;
+            }
+            if (copied) {
+                const closeTimeout = setTimeout(closePreview, 1200);
+                this.timerRegistry.registerTimeout(closeTimeout);
+            }
+        });
+    }
+
+    /**
+     * Copy the whole party as one Metz team paste, wearing a saved loadout on your own character
+     * and each teammate's cached profile on theirs.
+     * @param {string} snapshotName - Saved combat loadout to wear on your own character
+     * @param {Element} button - The preview's Copy button, for status feedback
+     * @param {string|number|null} characterId - The character the preview was opened for
+     * @param {Function} [rosterUnchanged] - Re-checked after the export is built: the build reads the
+     *   party again after an await, and a change in between must not reach the clipboard
+     * @returns {Promise<boolean|'roster-changed'>} Whether the export reached the clipboard, or
+     *   'roster-changed' when the party moved while it was being built
+     */
+    async handleExportFullParty(snapshotName, button, characterId, rosterUnchanged = null) {
+        const originalText = button.textContent;
+        const originalBg = button.style.background;
+
+        try {
+            const snapshot = findCombatSnapshot(snapshotName);
+            if (!snapshot || dataManager.getCurrentCharacterId() !== characterId) {
+                this.showButtonStatus(button, '✗ No Data', config.COLOR_LOSS, originalText, originalBg);
+                return false;
+            }
+
+            const team = await constructMetzTeamExport(characterId, {
+                selfLoadoutOverride: this.buildMetzSnapshotOverride(snapshot),
+            });
+            if (!team) {
+                this.showButtonStatus(button, '✗ No Data', config.COLOR_LOSS, originalText, originalBg);
+                return false;
+            }
+            if (rosterUnchanged && !rosterUnchanged()) return 'roster-changed';
+
+            await navigator.clipboard.writeText(JSON.stringify(team));
+            this.showButtonStatus(button, '✓ Copied', config.COLOR_PROFIT, originalText, originalBg);
+            return true;
+        } catch (error) {
+            console.error('[Combat Score] Full party export failed:', error);
+            this.showButtonStatus(button, '✗ Failed', config.COLOR_LOSS, originalText, originalBg);
+            return false;
+        }
     }
 
     /**
@@ -1538,7 +1779,7 @@ class CombatScore {
         const originalBg = button.style.background;
 
         try {
-            const snapshot = loadoutSnapshot.getAllSnapshots().find((s) => s.name === snapshotName);
+            const snapshot = findCombatSnapshot(snapshotName);
             if (!snapshot) {
                 console.error('[Combat Score] Snapshot not found:', snapshotName);
                 return;

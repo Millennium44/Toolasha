@@ -6,6 +6,13 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Party export, dungeon fail tracking and more from the upstream sweep
+
+- Saved loadouts in the Metz export menu get a 👥 button that exports your whole party, with you wearing that loadout.
+- A new Dungeon Tracker setting (off by default) records failed and canceled runs, adding a fail rate without changing clear times.
+- Task reroll popups gain one-click "select all" chips per skill.
+- Combat Stats warns when the connection dropped mid-session, and the Sim Editor can simulate achievement tiers you haven't earned yet.
+
 ### Leftover fixes: party export, storage-full recovery, +13 badges
 
 - The single-character sim export keeps your teammates when exported mid-dungeon.

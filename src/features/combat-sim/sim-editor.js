@@ -24,7 +24,12 @@ import bundledLoadoutSnapshot from '../combat/loadout-snapshot.js';
 import { loadoutSnapshot } from '../../utils/bundle-bridge.js';
 import { PANEL_Z_CAP } from '../../utils/panel-z-index.js';
 import { COMBAT_SCROLL_LABELS, COMBAT_SCROLL_BUFF_TYPES } from '../../utils/combat-scroll-buffs.js';
-import { achievementBuffLabel } from '../../utils/achievement-combat-buffs.js';
+import {
+    achievementBuffLabel,
+    achievementScenarioCatalog,
+    activeAchievementBuffTypes,
+    resolveAchievementScenario,
+} from '../../utils/achievement-combat-buffs.js';
 import { readScoped, writeScoped } from '../../utils/character-key.js';
 import {
     formatProfileAge,
@@ -2812,10 +2817,14 @@ export class SimEditor {
      */
     _renderAchievementsSection(dto) {
         if (this.skillingMode) return '';
-        const buffs = Array.isArray(dto.achievementCombatBuffs) ? dto.achievementCombatBuffs : [];
-        if (buffs.length === 0) return '';
-        const off = new Set(Array.isArray(dto.achievementBuffsOff) ? dto.achievementBuffsOff : []);
-        const activeCount = buffs.filter((buff) => !off.has(buff?.typeHrid)).length;
+        const mode = this.getAchievementMode(dto);
+        // Every combat tier is offered, held or not, so a tier the player has not
+        // finished can be switched on as a what-if.
+        const buffs = achievementScenarioCatalog(dto.achievementCombatBuffs);
+        // Active means held and not switched off: a catalog tier the player does not
+        // hold is offered unticked, since the engine only applies held buffs.
+        const active = new Set(activeAchievementBuffTypes(dto));
+        const activeCount = active.size;
 
         let html = `<div style="margin-bottom:10px;">`;
         html += `<div style="color:${ACCENT}; font-weight:700; font-size:12px; margin-bottom:6px; cursor:pointer; user-select:none;" data-toggle="achievement-section">`;
@@ -2824,24 +2833,94 @@ export class SimEditor {
         html += '</div>';
         html += `<div id="mwi-csim-achievement-section" style="display:none;">`;
 
+        html += `<div style="display:flex; gap:4px; margin-bottom:6px;">`;
+        for (const [value, label] of [
+            ['current', 'Current'],
+            ['none', 'None'],
+            ['custom', 'Custom'],
+        ]) {
+            const btnStyle =
+                mode === value
+                    ? `background:${ACCENT_BG}; border:1px solid ${ACCENT_BORDER}; color:${ACCENT}; font-weight:700;`
+                    : 'background:rgba(255,255,255,0.04); border:1px solid #333; color:#aaa;';
+            html += `<button data-achievement-mode="${value}" style="${btnStyle} padding:2px 10px; border-radius:5px; font-size:11px; cursor:pointer; font-family:inherit;">${label}</button>`;
+        }
+        html += '</div>';
+
         for (const buff of buffs) {
             const typeHrid = buff?.typeHrid;
             if (!typeHrid) continue;
-            const checked = off.has(typeHrid) ? '' : ' checked';
+            const checked = active.has(typeHrid) ? ' checked' : '';
             html += `<label style="display:flex; align-items:center; gap:6px; font-size:12px; margin-bottom:3px; cursor:pointer;">`;
             html += `<input type="checkbox" data-achievement-buff="${typeHrid}"${checked} style="cursor:pointer;">`;
             html += `<span style="color:#888;">${achievementBuffLabel(buff)}</span>`;
             html += '</label>';
         }
-        const caption = dto.achievementBuffsDerived
-            ? 'Derived from their completed achievements — adjust if needed.'
-            : dto.achievementBuffsManual
-              ? 'Not in shared profiles — set manually.'
-              : 'From your completed achievements. Untick to sim without one.';
+        const caption =
+            mode === 'none'
+                ? 'Simulating with no achievement buffs. Simulation only.'
+                : mode === 'custom'
+                  ? 'Simulating the ticked tiers, finished or not. Simulation only.'
+                  : dto.achievementBuffsDerived
+                    ? 'Derived from their completed achievements — adjust if needed.'
+                    : dto.achievementBuffsManual
+                      ? 'Not in shared profiles — set manually.'
+                      : 'From your completed achievements. Untick to sim without one.';
         html += `<div style="color:#666; font-size:10px; margin-top:4px;">${caption}</div>`;
 
         html += '</div></div>';
         return html;
+    }
+
+    /**
+     * The player's achievement what-if mode ('current' | 'none' | 'custom'). Lives on the
+     * edited DTO, so Reset (which re-clones the loaded DTO) returns it to 'current'.
+     * @param {Object} dto
+     * @returns {string}
+     */
+    getAchievementMode(dto) {
+        const mode = dto?.achievementScenario?.mode;
+        return mode === 'none' || mode === 'custom' ? mode : 'current';
+    }
+
+    /**
+     * Set a player's achievement scenario and resolve it into the DTO's
+     * `achievementCombatBuffs` / `achievementBuffsOff`, derived from the loaded player.
+     * Custom entered from the mode button starts from what the player has now.
+     * @param {Object} dto - The edited player DTO
+     * @param {'current'|'none'|'custom'} mode
+     * @param {Iterable<string>} [customTypes] - Buff types granted in custom
+     */
+    setAchievementScenario(dto, mode, customTypes) {
+        if (!dto || !['current', 'none', 'custom'].includes(mode)) return;
+        // The player's own buffs from before any scenario. With no loaded copy
+        // to resolve from, they are kept on the scenario itself: resolving from
+        // the DTO would read an earlier scenario's output back as the player's.
+        const base = dto.achievementScenario?.base ?? {
+            achievementCombatBuffs: structuredClone(
+                Array.isArray(dto.achievementCombatBuffs) ? dto.achievementCombatBuffs : []
+            ),
+            achievementBuffsOff: Array.isArray(dto.achievementBuffsOff) ? [...dto.achievementBuffsOff] : [],
+        };
+        const original = this._originalDTOs?.[dto.hrid] || base;
+        // Custom entered from the mode button picks up the last custom set made for this player, or else
+        // what the loaded player has: never the current DTO, which None has already emptied
+        const lastCustom = dto.achievementScenario?.lastCustomTypes;
+        const types = mode === 'custom' ? [...(customTypes ?? lastCustom ?? activeAchievementBuffTypes(original))] : [];
+        Object.assign(dto, resolveAchievementScenario(original, mode, types));
+        if (mode === 'current') {
+            // Current is the loaded player, so nothing is resolved, but a custom set made earlier is kept
+            // for a later return to Custom
+            if (lastCustom) dto.achievementScenario = { mode: 'current', lastCustomTypes: lastCustom };
+            else delete dto.achievementScenario;
+        } else {
+            dto.achievementScenario = {
+                mode,
+                customTypes: types,
+                base,
+                lastCustomTypes: mode === 'custom' ? types : lastCustom,
+            };
+        }
     }
 
     /** @private */
@@ -3037,18 +3116,26 @@ export class SimEditor {
             });
         });
 
+        editorArea.querySelectorAll('[data-achievement-mode]').forEach((btn) => {
+            btn.addEventListener('click', () => {
+                this.setAchievementScenario(dto, btn.dataset.achievementMode);
+                this.renderEditor();
+            });
+        });
+
         editorArea.querySelectorAll('[data-achievement-buff]').forEach((input) => {
             input.addEventListener('change', () => {
                 const typeHrid = input.dataset.achievementBuff;
-                // The buff is applied by default; the DTO carries the *excluded*
-                // set, so an unticked box adds the type and a ticked box removes it.
-                const set = new Set(Array.isArray(dto.achievementBuffsOff) ? dto.achievementBuffsOff : []);
+                // Ticking a tier is the Custom scenario: the player's current tiers
+                // plus or minus this one, resolved from the loaded player.
+                const types = new Set(activeAchievementBuffTypes(dto));
                 if (input.checked) {
-                    set.delete(typeHrid);
+                    types.add(typeHrid);
                 } else {
-                    set.add(typeHrid);
+                    types.delete(typeHrid);
                 }
-                dto.achievementBuffsOff = [...set];
+                this.setAchievementScenario(dto, 'custom', types);
+                this.renderEditor();
             });
         });
 
@@ -3292,7 +3379,17 @@ export class SimEditor {
             ? this._loadoutBaselineDTOs?.[selfHrid] || this._originalDTOs?.[selfHrid]
             : this._originalDTOs?.[selfHrid];
         const edited = this._editedDTOs?.[selfHrid];
-        if (!original || !edited) return loadoutName || 'Current Gear';
+        const achievementMode = this.getAchievementMode(edited);
+        const achievementLabel =
+            achievementMode === 'none'
+                ? 'No Achievements'
+                : achievementMode === 'custom'
+                  ? 'Custom Achievements'
+                  : null;
+        if (!original || !edited) {
+            if (!achievementLabel) return loadoutName || 'Current Gear';
+            return loadoutName ? `${loadoutName}: ${achievementLabel}` : achievementLabel;
+        }
 
         const gameData = buildGameDataPayload();
         const itemDetailMap = gameData?.itemDetailMap || {};
@@ -3436,6 +3533,8 @@ export class SimEditor {
                 changes.push(`CB ${label} ${origVal}\u2192${editVal}`);
             }
         }
+
+        if (achievementLabel) changes.push(achievementLabel);
 
         const loadoutPrefix = loadoutName || '';
         if (changes.length === 0) return loadoutPrefix || 'Current Gear';

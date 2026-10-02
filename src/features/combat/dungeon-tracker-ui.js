@@ -5,6 +5,7 @@
  */
 
 import dungeonTracker from './dungeon-tracker.js';
+import { recordingAttempts } from './dungeon-run-attempt-setting.js';
 import dungeonTrackerChatAnnotations from './dungeon-tracker-chat-annotations.js';
 import dungeonTrackerUIState from './dungeon-tracker-ui-state.js';
 import DungeonTrackerUIChart from './dungeon-tracker-ui-chart.js';
@@ -27,6 +28,7 @@ import {
 } from './dungeon-pace.js';
 import dataManager from '../../core/data-manager.js';
 import config from '../../core/config.js';
+import { isClearRun, summarizeAttempts } from '../../utils/dungeon-run-result.js';
 import { PATIENT_TICK_SETTING_KEYS } from '../../utils/patient-tick.js';
 import { IRONCOW_VALUATION_SETTING } from '../../utils/ironcow-valuation.js';
 import { createTimerRegistry } from '../../utils/timer-registry.js';
@@ -334,6 +336,14 @@ class DungeonTrackerUI {
                     <div style="text-align: center;">
                         <div style="color: #aaa; font-size: 10px;">Slowest Run</div>
                         <div id="mwi-dt-slowest-time" style="color: #ff6b6b; font-weight: bold;">--:--</div>
+                    </div>
+                    <div class="mwi-dt-attempt-stat" style="text-align: center; display: none;" title="Failed runs out of clears plus fails. Canceled runs are not failures and are left out.">
+                        <div style="color: #aaa; font-size: 10px;">Fail Rate</div>
+                        <div id="mwi-dt-fail-rate" style="color: #ffb84d; font-weight: bold;">--</div>
+                    </div>
+                    <div class="mwi-dt-attempt-stat" style="text-align: center; display: none;" title="All the time spent, failed and canceled runs included, divided by the clears it bought. Avg Run stays clears only.">
+                        <div style="color: #aaa; font-size: 10px;">Time per Clear</div>
+                        <div id="mwi-dt-time-per-clear" style="color: #fff; font-weight: bold;">--:--</div>
                     </div>
                 </div>
 
@@ -919,12 +929,16 @@ class DungeonTrackerUI {
      */
     async drawHistoryStats(ticket, character) {
         // Fetch run statistics - respect ALL filters to match chart exactly
-        let stats, runHistory, lastRunTime;
+        let stats, lastRunTime;
 
         // Get all runs and apply filters (EXACT SAME LOGIC as chart)
         // Through the store's memory, which a run just completed has already
-        // joined — the write behind it is debounced
-        const allRuns = await dungeonTrackerStorage.getAllRuns();
+        // joined — the write behind it is debounced. Failed and canceled
+        // attempts come too when they are being recorded, for the fail figures
+        // alone: every other figure here is a clear's.
+        const withAttempts = recordingAttempts();
+        const storedRuns = await dungeonTrackerStorage.getAllRuns({ includeAttempts: withAttempts });
+        const allRuns = withAttempts ? storedRuns.filter(isClearRun) : storedRuns;
         // A switch landing inside that read has already torn the panel down —
         // `this.container`, `this.history` and `this.roiBoard` are null and the
         // figures below would be the departing character's run measured against
@@ -934,22 +948,25 @@ class DungeonTrackerUI {
         // The run store is shared across characters on purpose (see
         // dungeon-tracker-storage.js); this is where "how am I doing" narrows
         // it back to the character asking
-        runHistory = filterRunsForCharacter(allRuns, this.state.filterCharacter, character);
+        let attempts = filterRunsForCharacter(storedRuns, this.state.filterCharacter, character);
 
         // Apply dungeon filter
         if (this.state.filterDungeon !== 'all') {
-            runHistory = runHistory.filter((r) => r.dungeonName === this.state.filterDungeon);
+            attempts = attempts.filter((r) => r.dungeonName === this.state.filterDungeon);
         }
 
         // Apply tier filter (a specific tier excludes untiered runs)
         if (this.state.filterTier !== 'all') {
-            runHistory = runHistory.filter((r) => String(r.tier) === this.state.filterTier);
+            attempts = attempts.filter((r) => String(r.tier) === this.state.filterTier);
         }
 
         // Apply team filter
         if (this.state.filterTeam !== 'all') {
-            runHistory = runHistory.filter((r) => r.teamKey === this.state.filterTeam);
+            attempts = attempts.filter((r) => r.teamKey === this.state.filterTeam);
         }
+
+        // Clears only from here on, but for the fail figures
+        const runHistory = withAttempts ? attempts.filter(isClearRun) : attempts;
 
         // How far back an average may look, read from the one setting and the
         // one marker map the chat annotation reads — so the panel's average and
@@ -1034,7 +1051,34 @@ class DungeonTrackerUI {
             slowestTime.textContent = stats.slowestTime > 0 ? this.formatTime(stats.slowestTime) : '--:--';
         }
 
+        this.drawAttemptStats(withAttempts ? summarizeAttempts(attempts) : null);
+
         return { allRuns, averageLimits };
+    }
+
+    /**
+     * Draw the fail rate and time per clear, or hide them when failed runs are
+     * not being recorded.
+     * @param {Object|null} summary - From `summarizeAttempts`, or null to hide
+     */
+    drawAttemptStats(summary) {
+        for (const cell of this.container.querySelectorAll('.mwi-dt-attempt-stat')) {
+            cell.style.display = summary ? '' : 'none';
+        }
+        if (!summary) return;
+
+        const failRate = this.container.querySelector('#mwi-dt-fail-rate');
+        if (failRate) {
+            failRate.textContent =
+                summary.failRate === null
+                    ? '--'
+                    : `${Math.round(summary.failRate * 100)}% (${summary.fails}/${summary.clears + summary.fails})`;
+        }
+
+        const timePerClear = this.container.querySelector('#mwi-dt-time-per-clear');
+        if (timePerClear) {
+            timePerClear.textContent = summary.timePerClearMs > 0 ? this.formatTime(summary.timePerClearMs) : '--:--';
+        }
     }
 
     /**
