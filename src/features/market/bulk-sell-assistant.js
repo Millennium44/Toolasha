@@ -1269,8 +1269,11 @@ class BulkSellAssistant {
         if (this._vendorArming) return;
         this._vendorArming = true;
         const key = this._stepKey();
-        // The player may press the armed button themselves during the wait; that click is the sale
+        // The player may press the armed button themselves during the wait. When they armed it is not
+        // known, so the wait's start stands in for it: any click during the wait may be one the game
+        // ignores, and only cancels our press
         const watch = this._watchMenuClicks(key);
+        watch.armedAt = Date.now();
         try {
             await new Promise((resolve) => setTimeout(resolve, VENDOR_CONFIRM_SETTLE_MS));
             if (this.state !== 'awaiting_confirm' || this._stepKey() !== key || this._confirmSent()) return;
@@ -1299,7 +1302,7 @@ class BulkSellAssistant {
      * double-click's other half is swallowed and our own press never follows. Clicks made while
      * `watch.ownClick` is set are ours and ignored.
      *
-     * Except a click within `VENDOR_CONFIRM_SETTLE_MS` of our own arming click (`watch.armedAt`): the
+     * Except a click within `VENDOR_CONFIRM_SETTLE_MS` of the arming (`watch.armedAt`): the
      * game may ignore that one, so it only cancels our press and the step stays unsent — the button
      * stays clickable for a retry, and a sale that did go through closes the menu, which advances the
      * step anyway.
