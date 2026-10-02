@@ -199,6 +199,22 @@ function toMetzCharacter(name, source, extra = {}) {
     return character;
 }
 
+/**
+ * Whether a character object describes the character this game page is playing, judged by id: an
+ * `init_character_data` refresh or reconnect replaces `dataManager.characterData`, so a copy captured
+ * before an await would fail an identity check and be read as bridged data. On an external simulator
+ * page dataManager has no current character, so bridged data never matches.
+ * @param {Object} characterObj
+ * @returns {boolean}
+ */
+function isLiveCharacter(characterObj) {
+    const currentId = dataManager.getCurrentCharacterId?.();
+    const ownerId = characterObj?.character?.id;
+    return Boolean(
+        dataManager.characterData && currentId != null && ownerId != null && sameCharacterId(currentId, ownerId)
+    );
+}
+
 function buildSelfMetzCharacter(characterObj, clientObj) {
     const source = constructSelfPlayer(characterObj, clientObj);
     const itemDetailMap = clientObj?.itemDetailMap;
@@ -206,7 +222,7 @@ function buildSelfMetzCharacter(characterObj, clientObj) {
     // carries init_character_data, whose characterItems are the only inventory source there.
     // On the game page prefer the live collection so an emptied bag cannot fall back to the
     // login snapshot and resurrect items that are no longer owned.
-    const hasLiveData = characterObj === dataManager.characterData;
+    const hasLiveData = isLiveCharacter(characterObj);
     const inventoryItems = hasLiveData
         ? dataManager.getInventory() || []
         : Array.isArray(characterObj.characterItems)
@@ -250,10 +266,9 @@ export function describePartyProfiles(characterObj, profileList, now = Date.now(
     // The live character's `partySlotMap` is frozen at login and emptied for a whole battle, so the
     // roster comes from dataManager (which prefers the one `new_battle` named). A bridged character
     // (simulator page) has no live roster; its slot map is all there is.
-    const roster =
-        characterObj && characterObj === dataManager.characterData
-            ? dataManager.getPartyMembers().members
-            : Object.values(characterObj?.partyInfo?.partySlotMap || {});
+    const roster = isLiveCharacter(characterObj)
+        ? dataManager.getPartyMembers().members
+        : Object.values(characterObj?.partyInfo?.partySlotMap || {});
     for (const member of roster) {
         if (!member?.characterID || sameCharacterId(member.characterID, ownerId)) continue;
         const profile =

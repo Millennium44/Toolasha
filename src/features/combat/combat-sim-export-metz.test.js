@@ -19,6 +19,8 @@ vi.mock('../../core/data-manager.js', () => ({
         get characterData() {
             return mocks.onGamePage ? mocks.characterData : null;
         },
+        // The game page's own character; nothing on an external simulator page
+        getCurrentCharacterId: vi.fn(() => (mocks.onGamePage ? (mocks.characterData?.character?.id ?? null) : null)),
         getInventory: vi.fn(() => mocks.inventory),
         getMooPassBuffs: vi.fn(() => mocks.mooPassBuffs),
         // Mirrors the real one: the battle roster wins, else the login slot map
@@ -110,12 +112,21 @@ describe('Metz combat export', () => {
         expect(members.map((member) => member.characterId)).toEqual(['party-1']);
     });
 
-    test('a bridged character (not the live one) still reads its own slot map', () => {
+    test('a bridged character on a simulator page still reads its own slot map', () => {
         const bridged = baseCharacter({ partyInfo: { partySlotMap: { 1: { characterID: 'party-9' } } } });
-        mocks.characterData = baseCharacter();
+        mocks.onGamePage = false;
         mocks.battleRoster = [{ characterID: 'party-1', characterName: 'Teammate' }];
 
         expect(describePartyProfiles(bridged, []).map((member) => member.characterId)).toEqual(['party-9']);
+    });
+
+    test('a copy captured before a character-data refresh still reads the live roster', () => {
+        const captured = baseCharacter({ partyInfo: { partySlotMap: { 1: { characterID: 'former-1' } } } });
+        // init_character_data replaced the object; same character, new roster from the battle
+        mocks.characterData = baseCharacter({ partyInfo: { partySlotMap: {} } });
+        mocks.battleRoster = [{ characterID: 'party-1', characterName: 'Teammate' }];
+
+        expect(describePartyProfiles(captured, []).map((member) => member.characterId)).toEqual(['party-1']);
     });
 
     test('moves live tools into skilling and keeps only filled combat slots', async () => {
