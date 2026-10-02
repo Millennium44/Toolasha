@@ -209,17 +209,23 @@ describe('a test-server week runs an encounter more than once', () => {
         expect(ledgerCyclesByAnchor(records, { perCycle: false })).toBe(records);
     });
 
-    test('the window counts cycles, not weeks', async () => {
+    test('the window is scheduled days, not stored cycles', async () => {
         const WEEK_MS = 7 * 24 * HOUR;
         disk.store[ledgerCycleKey('g', WEEK)] = twoCycleWeek(WEEK);
         disk.store[ledgerCycleKey('g', WEEK + WEEK_MS)] = twoCycleWeek(WEEK + WEEK_MS);
         server.test = true;
+        // Just after the second week's Wednesday cycle has run
+        const now = WEEK + WEEK_MS + 3 * 24 * HOUR;
 
-        const window = await loadLedgerCycles('g', null, { cycles: 3 });
-        expect(window).toHaveLength(3);
-        expect(window.map((cycle) => cycle.weekStart)).toEqual([WEEK, WEEK + WEEK_MS, WEEK + WEEK_MS]);
-        expect(foldLedgerCycles(window).cycles).toBe(3);
-        expect(await loadLedgerCycles('g')).toHaveLength(4);
+        // Monday to Wednesday: Tuesday ran with nothing recorded, so the window holds two
+        const window = await loadLedgerCycles('g', null, { cycles: 3, now });
+        expect(window.map((cycle) => cycle.cycleAt)).toEqual([
+            WEEK + WEEK_MS + 17 * HOUR,
+            WEEK + WEEK_MS + 2 * 24 * HOUR + 17 * HOUR,
+        ]);
+        expect(observedCoverage(window, { window: 3, now })).toMatchObject({ watched: 2, expected: 3, missed: 1 });
+        expect(await loadLedgerCycles('g', null, { cycles: 8, now })).toHaveLength(3);
+        expect(await loadLedgerCycles('g', null, { now })).toHaveLength(4);
     });
 
     test('the test server exposes at most the documented cap of cycles, and a window stops reading early', async () => {
@@ -229,13 +235,16 @@ describe('a test-server week runs an encounter more than once', () => {
         }
         server.test = true;
 
+        const now = WEEK + 14 * WEEK_MS + 3 * 24 * HOUR;
+
         // 15 weeks of 2 cycles is 30 cycles held; only 26 are exposed, newest kept
-        const all = await loadLedgerCycles('g');
+        const all = await loadLedgerCycles('g', null, { now });
         expect(all).toHaveLength(MAX_LEDGER_CYCLES);
         expect(all.at(-1).weekStart).toBe(WEEK + 14 * WEEK_MS);
 
+        // Ten days back from the newest Wednesday reach the previous week's Monday
         disk.reads = 0;
-        const recent = await loadLedgerCycles('g', null, { cycles: 4 });
+        const recent = await loadLedgerCycles('g', null, { cycles: 10, now });
         expect(recent).toHaveLength(4);
         expect(recent.map((cycle) => cycle.weekStart)).toEqual([
             WEEK + 13 * WEEK_MS,
@@ -246,24 +255,29 @@ describe('a test-server week runs an encounter more than once', () => {
         expect(disk.reads).toBe(2);
 
         // A window past the cap is still the cap
-        expect(await loadLedgerCycles('g', null, { cycles: 100 })).toHaveLength(MAX_LEDGER_CYCLES);
+        expect(await loadLedgerCycles('g', null, { cycles: 100, now })).toHaveLength(MAX_LEDGER_CYCLES);
     });
 
-    test('live still reads one cycle per week', async () => {
+    test('live still reads one cycle per week, and a window is the weeks that ran plus this one', async () => {
         const WEEK_MS = 7 * 24 * HOUR;
+        const first = trialWeekStart(WEEK);
         for (let i = 0; i < 5; i++) {
-            disk.store[ledgerCycleKey('g', WEEK + i * WEEK_MS)] = emptyLedgerCycle(WEEK + i * WEEK_MS, 'g');
+            disk.store[ledgerCycleKey('g', first + i * WEEK_MS)] = emptyLedgerCycle(first + i * WEEK_MS, 'g');
         }
         server.test = false;
-        expect(await loadLedgerCycles('g')).toHaveLength(5);
-        expect(await loadLedgerCycles('g', null, { cycles: 2 })).toHaveLength(2);
+        const now = first + 4 * WEEK_MS + 3 * 24 * HOUR;
+        expect(await loadLedgerCycles('g', null, { now })).toHaveLength(5);
+        expect(await loadLedgerCycles('g', null, { cycles: 2, now })).toHaveLength(3);
     });
 
     test('an earlier cycle of the current week counts toward coverage', () => {
-        const now = WEEK + 3 * 24 * HOUR;
-        const week = twoCycleWeek(trialWeekStart(now));
-        const coverage = observedCoverage(ledgerCyclesByAnchor([week], { perCycle: true }), { now });
-        expect(coverage).toMatchObject({ observed: 1, expected: 2, cycles: 1, inProgress: true });
+        // Half an hour into Sunday's fight, which is still running
+        const weekStart = trialWeekStart(WEEK + 3 * 24 * HOUR);
+        const now = weekStart + 2 * 24 * HOUR + 22.5 * HOUR;
+        const week = twoCycleWeek(weekStart);
+        const coverage = observedCoverage(ledgerCyclesByAnchor([week], { perCycle: true }), { window: 2, now });
+        // Friday watched, Saturday ran unwatched, Sunday is left out
+        expect(coverage).toMatchObject({ watched: 1, expected: 2, missed: 1, inProgress: true });
     });
 });
 
@@ -723,226 +737,144 @@ describe('sortLedgerRows', () => {
 });
 
 describe('observedCoverage', () => {
-    test('counts the trials seen against the two a cycle runs', () => {
-        const cycles = [
-            { trials: [{ trialId: 'a' }, { trialId: 'b' }] },
-            { trials: [{ trialId: 'c' }] },
-            { trials: [] },
-        ];
-        expect(observedCoverage(cycles, { now: Date.parse('2020-01-01T00:00:00Z') })).toEqual({
-            observed: 3,
-            expected: 6,
-            cycles: 3,
-            inProgress: false,
-            fraction: 0.5,
+    const DAY = 24 * 60 * 60 * 1000;
+    const WEEK_MS = 7 * DAY;
+    const HOUR = 3_600_000;
+
+    describe('live: one cycle a week', () => {
+        const now = Date.parse('2026-08-23T12:00:00Z');
+        const thisWeek = trialWeekStart(now);
+        const week = (back, trials = [{ trialId: `w${back}` }]) => ({ weekStart: thisWeek - back * WEEK_MS, trials });
+
+        test('a ledger checked and found empty charges no cycle as missed', () => {
+            const coverage = observedCoverage([], { window: 4, now, daily: false, first: null });
+            expect(coverage.expected).toBe(0);
+            expect(coverage.missed).toBe(0);
+        });
+
+        test('four weeks ran in the window and three were recorded: 3 of 4', () => {
+            const cycles = [week(4), week(3), week(1)];
+            expect(observedCoverage(cycles, { window: 4, now, daily: false })).toEqual({
+                watched: 3,
+                expected: 4,
+                missed: 1,
+                inProgress: true,
+                daily: false,
+                fraction: 0.75,
+            });
+        });
+
+        test('weeks before the first record are neither expected nor missed', () => {
+            const first = thisWeek - 2 * WEEK_MS;
+            const cycles = [week(2), week(1)];
+            expect(observedCoverage(cycles, { window: 12, now, daily: false, first })).toMatchObject({
+                watched: 2,
+                expected: 2,
+                missed: 0,
+            });
+            // The first week counts whole: a mid-week first record still opens its week
+            expect(
+                observedCoverage([week(1)], { window: 12, now, daily: false, first: first + 3 * DAY })
+            ).toMatchObject({ watched: 1, expected: 2, missed: 1 });
+        });
+
+        test('the week in progress is left out even when its fight was seen', () => {
+            const coverage = observedCoverage([week(1), week(0)], { window: 1, now, daily: false });
+            expect(coverage).toMatchObject({ watched: 1, expected: 1, inProgress: true, fraction: 1 });
+        });
+
+        test('a week holding two trials is still one cycle', () => {
+            const cycles = [week(1, [{ trialId: 'a' }, { trialId: 'b' }])];
+            expect(observedCoverage(cycles, { window: 2, now, daily: false })).toMatchObject({
+                watched: 1,
+                expected: 2,
+            });
+        });
+
+        test('a record with no trials in it is not a watched cycle', () => {
+            const coverage = observedCoverage([week(1, [])], { window: 1, now, daily: false });
+            expect(coverage).toMatchObject({ watched: 0, expected: 1, missed: 1 });
+        });
+
+        test('with no count, the window runs from the oldest record', () => {
+            const coverage = observedCoverage([week(5), week(2)], { window: null, now, daily: false });
+            expect(coverage).toMatchObject({ watched: 2, expected: 5, missed: 3, inProgress: true });
+        });
+
+        test('a window that is only the week in progress has nothing to measure', () => {
+            expect(observedCoverage([week(0)], { window: null, now, daily: false })).toEqual({
+                watched: 0,
+                expected: 0,
+                missed: 0,
+                inProgress: true,
+                daily: false,
+                fraction: null,
+            });
         });
     });
 
-    test('the week in progress is left out of the ratio, not scored against itself', () => {
-        const now = Date.parse('2026-08-23T12:00:00Z');
-        const thisWeek = trialWeekStart(now);
-        const lastWeek = thisWeek - 7 * 24 * 60 * 60 * 1000;
+    describe('test server: one cycle a day, combat at 22:00 UTC', () => {
+        const today = Date.parse('2026-08-23T00:00:00Z');
+        const fight = (daysBack, at = 22 * HOUR + 17_000) => ({
+            trialId: `d${daysBack}`,
+            cycleAt: today - daysBack * DAY + at,
+        });
 
-        // Last week ran both; this week has run one so far and the panel saw it
-        const coverage = observedCoverage(
-            [
-                { weekStart: lastWeek, trials: [{ trialId: 'a' }, { trialId: 'b' }] },
-                { weekStart: thisWeek, trials: [{ trialId: 'c' }] },
-            ],
-            { now }
-        );
-
-        expect(coverage).toEqual({ observed: 2, expected: 2, cycles: 1, inProgress: true, fraction: 1 });
-    });
-
-    test('a trial missed this week cannot hide behind seen-of-seen', () => {
-        const now = Date.parse('2026-08-23T12:00:00Z');
-        const thisWeek = trialWeekStart(now);
-        const lastWeek = thisWeek - 7 * 24 * 60 * 60 * 1000;
-
-        // The panel was shut for one of last week's two, and saw nothing at all
-        // this week. Charging the current cycle only for what it saw used to
-        // report the whole window as perfect
-        const coverage = observedCoverage(
-            [
-                { weekStart: lastWeek, trials: [{ trialId: 'a' }] },
-                { weekStart: thisWeek, trials: [] },
-            ],
-            { now }
-        );
-
-        expect(coverage.fraction).toBe(0.5);
-        expect(coverage.inProgress).toBe(true);
-    });
-
-    test('a duplicate recording cannot push a cycle past what a cycle holds', () => {
-        const coverage = observedCoverage(
-            [{ weekStart: 0, trials: [{ trialId: 'a' }, { trialId: 'b' }, { trialId: 'b' }] }],
-            { now: Date.parse('2026-08-23T12:00:00Z') }
-        );
-
-        expect(coverage.observed).toBe(2);
-        expect(coverage.fraction).toBe(1);
-    });
-
-    test('of a week split into cycles, only the newest is in progress', () => {
-        const now = Date.parse('2026-08-23T12:00:00Z');
-        const thisWeek = trialWeekStart(now);
-        const coverage = observedCoverage(
-            [
-                { weekStart: thisWeek, cycleAt: thisWeek + 3_600_000, trials: [{ trialId: 'a' }, { trialId: 'b' }] },
-                { weekStart: thisWeek, cycleAt: thisWeek + 90_000_000, trials: [{ trialId: 'c' }] },
-            ],
-            { now }
-        );
-        expect(coverage).toEqual({ observed: 2, expected: 2, cycles: 1, inProgress: true, fraction: 1 });
-    });
-
-    test('on the test server a newest cycle that ran both trials is complete, not running', () => {
-        const now = Date.parse('2026-08-23T12:00:00Z');
-        const thisWeek = trialWeekStart(now);
-        const cycles = [
-            { weekStart: thisWeek, cycleAt: thisWeek + 3_600_000, trials: [{ trialId: 'a' }, { trialId: 'b' }] },
-            { weekStart: thisWeek, cycleAt: thisWeek + 90_000_000, trials: [{ trialId: 'c' }, { trialId: 'd' }] },
-        ];
-        server.test = true;
-        try {
-            expect(observedCoverage(cycles, { now })).toEqual({
-                observed: 4,
+        test('a day with no record in the window counts as missed', () => {
+            const now = today + 12 * HOUR;
+            const cycles = [{ weekStart: 0, trials: [fight(4), fight(3), fight(1)] }];
+            expect(observedCoverage(cycles, { window: 4, now, daily: true })).toMatchObject({
+                watched: 3,
                 expected: 4,
-                cycles: 2,
+                missed: 1,
                 inProgress: false,
-                fraction: 1,
             });
-            // One trial still to run: it stays out
-            const running = [cycles[0], { ...cycles[1], trials: [{ trialId: 'c' }] }];
-            expect(observedCoverage(running, { now })).toMatchObject({ cycles: 1, inProgress: true });
-        } finally {
-            server.test = false;
-        }
-        // Live: one record a week, left out until the week rolls over
-        expect(observedCoverage(cycles, { now })).toMatchObject({ cycles: 1, inProgress: true });
-    });
+        });
 
-    test('on the test server a running unsplit record counts its earlier complete group', () => {
-        const now = Date.parse('2026-08-23T12:00:00Z');
-        const thisWeek = trialWeekStart(now);
-        const week = {
-            weekStart: thisWeek,
-            trials: [
-                { trialId: 'a', cycleAt: thisWeek + 3_600_000 },
-                { trialId: 'b', cycleAt: thisWeek + 3_600_500 },
-                { trialId: 'c', cycleAt: thisWeek + 90_000_000 },
-            ],
-        };
-        server.test = true;
-        try {
-            expect(observedCoverage([week], { now })).toEqual({
-                observed: 2,
+        test('the cycle is running from its skilling hour to the end of its combat hour', () => {
+            const cycles = [{ weekStart: 0, trials: [fight(1), fight(0)] }];
+            for (const hour of [21.5, 22.5]) {
+                expect(observedCoverage(cycles, { window: 2, now: today + hour * HOUR, daily: true })).toMatchObject({
+                    watched: 1,
+                    expected: 2,
+                    inProgress: true,
+                });
+            }
+            expect(observedCoverage(cycles, { window: 2, now: today + 23.5 * HOUR, daily: true })).toMatchObject({
+                watched: 2,
                 expected: 2,
-                cycles: 1,
-                inProgress: true,
-                fraction: 1,
-            });
-        } finally {
-            server.test = false;
-        }
-    });
-
-    test('on the test server an unsplit record whose newest group ran both trials is finished', () => {
-        const now = Date.parse('2026-08-23T12:00:00Z');
-        const thisWeek = trialWeekStart(now);
-        const week = {
-            weekStart: thisWeek,
-            trials: [
-                { trialId: 'a', cycleAt: thisWeek + 3_600_000 },
-                { trialId: 'b', cycleAt: thisWeek + 3_600_500 },
-                { trialId: 'c', cycleAt: thisWeek + 90_000_000 },
-                { trialId: 'd', cycleAt: thisWeek + 90_000_500 },
-            ],
-        };
-        server.test = true;
-        try {
-            expect(observedCoverage([week], { now })).toEqual({
-                observed: 4,
-                expected: 4,
-                cycles: 2,
                 inProgress: false,
-                fraction: 1,
             });
-        } finally {
+        });
+
+        test('a trial placed only by when it was recorded lands on its own day', () => {
+            const late = { trialId: 'late', at: today - DAY + 22 * HOUR + 55 * 60_000 };
+            const coverage = observedCoverage([{ weekStart: 0, trials: [late] }], {
+                window: 1,
+                now: today + 12 * HOUR,
+                daily: true,
+            });
+            expect(coverage).toMatchObject({ watched: 1, expected: 1 });
+        });
+
+        test('an unsplit record holding several days counts each of them', () => {
+            const cycles = [{ weekStart: 0, trials: [fight(3), fight(2), fight(2, 22 * HOUR + 60_000)] }];
+            expect(observedCoverage(cycles, { window: 3, now: today + 12 * HOUR, daily: true })).toMatchObject({
+                watched: 2,
+                expected: 3,
+            });
+        });
+
+        test('the server is the default for which schedule applies', () => {
+            server.test = true;
+            expect(observedCoverage([], { window: 3, now: today + 12 * HOUR }).daily).toBe(true);
             server.test = false;
-        }
+            expect(observedCoverage([], { window: 3, now: today + 12 * HOUR }).daily).toBe(false);
+        });
     });
 
-    test('on the test server an unsplit week spanning two cycles is not one finished cycle', () => {
-        const now = Date.parse('2026-08-23T12:00:00Z');
-        const thisWeek = trialWeekStart(now);
-        const week = {
-            weekStart: thisWeek,
-            trials: [
-                { trialId: 'a', cycleAt: thisWeek + 3_600_000 },
-                { trialId: 'c', cycleAt: thisWeek + 90_000_000 },
-            ],
-        };
-        server.test = true;
-        try {
-            // The earlier group is complete (one trial seen of two); only the newest is in progress
-            expect(observedCoverage([week], { now })).toEqual({
-                observed: 1,
-                expected: 2,
-                cycles: 1,
-                inProgress: true,
-                fraction: 0.5,
-            });
-            // A cycle with both trials, anchored together, still counts as finished
-            const single = {
-                weekStart: thisWeek,
-                trials: [
-                    { trialId: 'a', cycleAt: thisWeek + 3_600_000 },
-                    { trialId: 'b', cycleAt: thisWeek + 3_600_500 },
-                ],
-            };
-            expect(observedCoverage([single], { now })).toMatchObject({ cycles: 1, inProgress: false, fraction: 1 });
-        } finally {
-            server.test = false;
-        }
-    });
-
-    test('on the test server the same unsplit two-cycle record in the following week is not 2/2', () => {
-        const now = Date.parse('2026-08-23T12:00:00Z');
-        const thisWeek = trialWeekStart(now);
-        const lastWeek = thisWeek - 7 * 24 * 60 * 60 * 1000;
-        const week = {
-            weekStart: lastWeek,
-            trials: [
-                { trialId: 'a', cycleAt: lastWeek + 3_600_000 },
-                { trialId: 'c', cycleAt: lastWeek + 90_000_000 },
-            ],
-        };
-        server.test = true;
-        try {
-            expect(observedCoverage([week], { now })).toEqual({
-                observed: 2,
-                expected: 4,
-                cycles: 2,
-                inProgress: false,
-                fraction: 0.5,
-            });
-        } finally {
-            server.test = false;
-        }
-    });
-
-    test('no cycles is no fraction rather than zero', () => {
+    test('no cycles and no window is no fraction rather than zero', () => {
         expect(observedCoverage([]).fraction).toBeNull();
-    });
-
-    test('a window that is only the week in progress has nothing to measure', () => {
-        const now = Date.parse('2026-08-23T12:00:00Z');
-        const coverage = observedCoverage([{ weekStart: trialWeekStart(now), trials: [{ trialId: 'a' }] }], { now });
-
-        expect(coverage).toEqual({ observed: 0, expected: 0, cycles: 0, inProgress: true, fraction: null });
     });
 });
 
@@ -1087,16 +1019,19 @@ describe('the ledger on disk', () => {
     });
 
     test('the window reads only the most recent cycles', async () => {
+        const first = trialWeekStart(WEEK);
         for (let index = 0; index < 5; index += 1) {
-            const weekStart = WEEK + index * 604_800_000;
+            const weekStart = first + index * 604_800_000;
             await recordFinishedTrial({
                 session: session([[player('Alice', { damage: 1 })]], { weekStart, startedAt: weekStart }),
                 guildName: 'g',
             });
         }
 
-        expect(await loadLedgerCycles('g', null, { cycles: 2 })).toHaveLength(2);
-        expect(await loadLedgerCycles('g')).toHaveLength(5);
+        // Two weeks that ran, and the one running
+        const now = first + 4 * 604_800_000 + 86_400_000;
+        expect(await loadLedgerCycles('g', null, { cycles: 2, now })).toHaveLength(3);
+        expect(await loadLedgerCycles('g', null, { now })).toHaveLength(5);
     });
 
     test('cycles past the cap are pruned, oldest first', async () => {

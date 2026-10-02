@@ -26,6 +26,8 @@ const world = vi.hoisted(() => ({
     // across the switch — the panel-shell reopen path a character switch
     // takes only when it finds something to reopen.
     reopenOnSwitch: false,
+    // Subscribers to the tracker's own-guild notification
+    guildListeners: [],
     // The week's measured-vs-reported blob and the trial record whose `history`
     // carries the archived cycles, for the accuracy card
     trialStats: { weekStart: 0, trials: {} },
@@ -60,12 +62,20 @@ vi.mock('./guild-xp-tracker.js', () => ({
     guildXPTracker: {
         getOwnGuildName: () => world.guildName,
         getMemberList: () => world.members,
+        onOwnGuildChange: (callback) => {
+            world.guildListeners.push(callback);
+            return () => {
+                world.guildListeners = world.guildListeners.filter((entry) => entry !== callback);
+            };
+        },
     },
 }));
 vi.mock('./guild-loadouts.js', () => ({ loadLoadouts: async () => world.loadouts }));
 vi.mock('./guild-trial-ledger.js', async (importOriginal) => ({
     ...(await importOriginal()),
-    loadLedgerCycles: async () => {
+    loadLedgerCycles: async (guild) => {
+        // The real read keys on the guild: no guild, no cycles
+        if (!guild) return [];
         // A queued answer, optionally gated so a test can control which of two
         // concurrent reads resolves first; falls back to the plain `world.cycles`
         const next = world.cyclesQueue?.shift();
@@ -73,6 +83,8 @@ vi.mock('./guild-trial-ledger.js', async (importOriginal) => ({
         if (next.gate) await next.gate;
         return next.value;
     },
+    // Undefined unless a test sets it: the real lookup reads storage, which these tests never stand up
+    loadLedgerFirstRecord: async () => world.firstRecord,
 }));
 
 // The accuracy card reads the trial store, which is IndexedDB and is never what
@@ -144,6 +156,7 @@ beforeEach(() => {
     world.loadouts = { players: {} };
     world.rows = [];
     world.reopenOnSwitch = false;
+    world.guildListeners = [];
     world.trialStats = { weekStart: WEEK, trials: {} };
     world.trialRecord = { weekStart: WEEK, tiles: {}, history: [] };
     world.cycles = [
@@ -302,6 +315,20 @@ describe('filterLedgerRows', () => {
     });
 });
 
+describe('coverage when the first-record read fails', () => {
+    test('a populated ledger whose key read came back empty is not reported as having no cycles', async () => {
+        world.firstRecord = null;
+        try {
+            await refreshLedgerView();
+            const table = buildLedgerTable({});
+            expect(table.trialsRun).toBeGreaterThan(0);
+            expect(coverageLine(table.coverage)).not.toBe('No cycles recorded yet.');
+        } finally {
+            world.firstRecord = undefined;
+        }
+    });
+});
+
 describe('buildLedgerTable filtering', () => {
     test('a name filter narrows the rows without changing trials run', async () => {
         await refreshLedgerView();
@@ -368,23 +395,28 @@ describe('participationText', () => {
 });
 
 describe('coverageLine', () => {
-    test('says what was watched against what a cycle runs', () => {
-        expect(coverageLine({ observed: 2, expected: 4, cycles: 2 })).toBe('2 of 4 trials watched across 2 cycles');
-        expect(coverageLine({ observed: 1, expected: 2, cycles: 1 })).toContain('1 cycle');
+    test('says how many of the cycles that ran were watched, and how many were missed', () => {
+        expect(coverageLine({ watched: 6, expected: 8 })).toBe('Watched 6 of 8 cycles (2 missed).');
+        expect(coverageLine({ watched: 1, expected: 1 })).toBe('Watched 1 of 1 cycle.');
     });
 
     test('nothing recorded says so rather than printing zeros', () => {
-        expect(coverageLine({ observed: 0, expected: 0, cycles: 0 })).toBe('No cycles recorded yet.');
+        expect(coverageLine({ watched: 0, expected: 0 })).toBe('No cycles recorded yet.');
     });
 
     test('the week in progress is said to be uncounted', () => {
-        const line = coverageLine({ observed: 2, expected: 2, cycles: 1, inProgress: true });
-        expect(line).toContain('2 of 2 trials watched across 1 cycle');
+        const line = coverageLine({ watched: 2, expected: 3, inProgress: true, daily: false });
+        expect(line).toContain('Watched 2 of 3 cycles (1 missed).');
         expect(line).toContain('This week is still running and is not counted yet.');
     });
 
+    test('on the test server the running cycle is a day, not the week', () => {
+        const line = coverageLine({ watched: 3, expected: 4, inProgress: true, daily: true });
+        expect(line).toContain('This cycle is still running and is not counted yet.');
+    });
+
     test('a window that is only this week says there is nothing complete to measure', () => {
-        const line = coverageLine({ observed: 0, expected: 0, cycles: 0, inProgress: true });
+        const line = coverageLine({ watched: 0, expected: 0, inProgress: true });
         expect(line).toContain('No completed cycles yet.');
         expect(line).toContain('not counted yet');
     });
@@ -483,6 +515,26 @@ describe('the panel', () => {
         expect(text).toContain('Testmaxxing');
         expect(text).not.toContain('Alice');
         expect(text).toContain('Zed');
+    });
+
+    // The panel is restored open on page load before the guild's data has arrived, so its one refresh
+    // ran with no guild name and nothing told it to draw again.
+    test('a panel drawn before the guild is known refreshes once the tracker reports it', async () => {
+        const { default: feature } = await import('./guild-trial-ledger-view.js');
+        world.guildName = null;
+        await feature.initialize();
+        guildTrialLedgerPanel.show({ remember: false });
+        expect(guildTrialLedgerPanel.panel.textContent).toContain('Guild trials');
+        expect(guildTrialLedgerPanel.panel.textContent).toContain('Attendance and contribution (0)');
+
+        world.guildName = 'Nine Lives';
+        expect(world.guildListeners).toHaveLength(1);
+        world.guildListeners[0]('Nine Lives');
+        await vi.waitFor(() => expect(guildTrialLedgerPanel.panel.textContent).toContain('Alice'));
+        expect(guildTrialLedgerPanel.panel.textContent).toContain('Nine Lives');
+
+        feature.cleanup();
+        expect(world.guildListeners).toHaveLength(0);
     });
 
     test('the composition box starts from the last recorded cycle', async () => {
