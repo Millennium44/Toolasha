@@ -184,3 +184,176 @@ describe('getCleanupRegistryCensus', () => {
         expect(getCleanupRegistryCensus().listeners).not.toBe(999);
     });
 });
+
+/**
+ * Per-registration release: a feature that registers per mount of a game panel
+ * releases the previous mount instead of holding every mount until cleanupAll.
+ */
+describe('unregister functions', () => {
+    test('a listener unregister removes just that listener, once', () => {
+        const registry = createCleanupRegistry();
+        const target = makeTarget();
+        const a = () => {};
+        const b = () => {};
+        const before = getCleanupRegistryCensus().listeners;
+        const unregisterA = registry.registerListener(target, 'click', a);
+        registry.registerListener(target, 'click', b);
+
+        unregisterA();
+        unregisterA();
+        expect(target.removeEventListener).toHaveBeenCalledTimes(1);
+        expect(target.removeEventListener).toHaveBeenCalledWith('click', a, undefined);
+        expect(getCleanupRegistryCensus().listeners).toBe(before + 1);
+
+        registry.cleanupAll();
+        expect(target.removeEventListener).toHaveBeenCalledTimes(2);
+        expect(target.removeEventListener).toHaveBeenLastCalledWith('click', b, undefined);
+        expect(getCleanupRegistryCensus().listeners).toBe(before);
+    });
+
+    test('an observer unregister disconnects it and cleanupAll does not disconnect it again', () => {
+        const registry = createCleanupRegistry();
+        const observer = { disconnect: vi.fn() };
+        const unregister = registry.registerObserver(observer);
+
+        unregister();
+        registry.cleanupAll();
+        expect(observer.disconnect).toHaveBeenCalledTimes(1);
+    });
+
+    test('timer unregisters clear the timer', () => {
+        vi.useFakeTimers();
+        try {
+            const registry = createCleanupRegistry();
+            const tick = vi.fn();
+            const unregisterInterval = registry.registerInterval(setInterval(tick, 10));
+            const fire = vi.fn();
+            const unregisterTimeout = registry.registerTimeout(setTimeout(fire, 10));
+
+            unregisterInterval();
+            unregisterTimeout();
+            vi.advanceTimersByTime(50);
+            expect(tick).not.toHaveBeenCalled();
+            expect(fire).not.toHaveBeenCalled();
+        } finally {
+            vi.useRealTimers();
+        }
+    });
+
+    test('a cleanup unregister runs it now; the same function registered twice is two entries', () => {
+        const registry = createCleanupRegistry();
+        const cleanup = vi.fn();
+        const unregisterFirst = registry.registerCleanup(cleanup);
+        registry.registerCleanup(cleanup);
+
+        unregisterFirst();
+        expect(cleanup).toHaveBeenCalledTimes(1);
+
+        registry.cleanupAll();
+        expect(cleanup).toHaveBeenCalledTimes(2);
+    });
+
+    test('unregister after cleanupAll is a no-op and the census does not go negative', () => {
+        const registry = createCleanupRegistry();
+        const observer = { disconnect: vi.fn() };
+        const before = getCleanupRegistryCensus().observers;
+        const unregister = registry.registerObserver(observer);
+
+        registry.cleanupAll();
+        unregister();
+        expect(observer.disconnect).toHaveBeenCalledTimes(1);
+        expect(getCleanupRegistryCensus().observers).toBe(before);
+    });
+
+    test('a cleanup that unregisters another entry during cleanupAll releases each exactly once', () => {
+        const registry = createCleanupRegistry();
+        const later = vi.fn();
+        let unregisterLater = null;
+        registry.registerCleanup(() => unregisterLater());
+        unregisterLater = registry.registerCleanup(later);
+
+        registry.cleanupAll();
+        expect(later).toHaveBeenCalledTimes(1);
+    });
+
+    test('invalid registrations still return a callable unregister', () => {
+        const registry = createCleanupRegistry();
+        expect(() => registry.registerListener(null, 'click', () => {})()).not.toThrow();
+        expect(() => registry.registerObserver(null)()).not.toThrow();
+        expect(() => registry.registerInterval(0)()).not.toThrow();
+        expect(() => registry.registerTimeout(0)()).not.toThrow();
+        expect(() => registry.registerCleanup(null)()).not.toThrow();
+    });
+});
+
+describe('cleanup registry scheduleTimeout / cancelTimeout', () => {
+    test('the entry is gone after the timer fires, and the census is exact', () => {
+        vi.useFakeTimers();
+        const registry = createCleanupRegistry();
+        const before = getCleanupRegistryCensus().timeouts;
+        const fn = vi.fn();
+
+        const id = registry.scheduleTimeout(fn, 100, 'test:fire');
+        expect(getCleanupRegistryCensus().timeouts).toBe(before + 1);
+
+        vi.advanceTimersByTime(100);
+        expect(fn).toHaveBeenCalledTimes(1);
+        expect(getCleanupRegistryCensus().timeouts).toBe(before);
+
+        // Nothing left to clear.
+        const clearSpy = vi.spyOn(globalThis, 'clearTimeout');
+        registry.cleanupAll();
+        expect(clearSpy).not.toHaveBeenCalledWith(id);
+        clearSpy.mockRestore();
+        vi.useRealTimers();
+    });
+
+    test('the entry is dropped even when the callback throws or reschedules', () => {
+        vi.useFakeTimers();
+        const registry = createCleanupRegistry();
+        const before = getCleanupRegistryCensus().timeouts;
+        registry.scheduleTimeout(() => {
+            registry.scheduleTimeout(() => {}, 50);
+        }, 10);
+        vi.advanceTimersByTime(10);
+        expect(getCleanupRegistryCensus().timeouts).toBe(before + 1);
+        vi.advanceTimersByTime(50);
+        expect(getCleanupRegistryCensus().timeouts).toBe(before);
+
+        registry.scheduleTimeout(() => {
+            throw new Error('boom');
+        }, 10);
+        expect(() => vi.advanceTimersByTime(10)).toThrow('boom');
+        expect(getCleanupRegistryCensus().timeouts).toBe(before);
+        vi.useRealTimers();
+    });
+
+    test('cancelTimeout stops the timer and drops the entry', () => {
+        vi.useFakeTimers();
+        const registry = createCleanupRegistry();
+        const before = getCleanupRegistryCensus().timeouts;
+        const fn = vi.fn();
+        const id = registry.scheduleTimeout(fn, 100);
+        registry.cancelTimeout(id);
+        expect(getCleanupRegistryCensus().timeouts).toBe(before);
+        vi.advanceTimersByTime(500);
+        expect(fn).not.toHaveBeenCalled();
+        registry.cancelTimeout(id); // a second cancel does not drive the census negative
+        expect(getCleanupRegistryCensus().timeouts).toBe(before);
+        vi.useRealTimers();
+    });
+
+    test('clearAll still cancels pending scheduled timeouts', () => {
+        vi.useFakeTimers();
+        const registry = createCleanupRegistry();
+        const before = getCleanupRegistryCensus().timeouts;
+        const fn = vi.fn();
+        registry.scheduleTimeout(fn, 100);
+        registry.scheduleTimeout(fn, 200);
+        registry.cleanupAll();
+        expect(getCleanupRegistryCensus().timeouts).toBe(before);
+        vi.advanceTimersByTime(500);
+        expect(fn).not.toHaveBeenCalled();
+        vi.useRealTimers();
+    });
+});

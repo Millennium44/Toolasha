@@ -344,8 +344,12 @@ class ListingPriceDisplay {
             subtree: false,
         });
 
-        // Safety timeout: if rows never match after 3 seconds, give up and process anyway
+        // Safety timeout: if rows never match after 3 seconds, give up and process anyway.
+        // Released from the registry when it fires: one runs per listing refresh, and spent
+        // ids otherwise piled up for the whole session.
+        let releaseSafetyTimeout = null;
         const safetyTimeoutId = setTimeout(() => {
+            releaseSafetyTimeout?.();
             observer.disconnect();
             this.activeRefreshes.delete(tableNode);
 
@@ -355,7 +359,7 @@ class ListingPriceDisplay {
             }
         }, 3000);
 
-        this.cleanupRegistry.registerTimeout(safetyTimeoutId);
+        releaseSafetyTimeout = this.cleanupRegistry.registerTimeout(safetyTimeoutId);
     }
 
     /**

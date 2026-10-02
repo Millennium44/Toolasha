@@ -174,11 +174,10 @@ class MaxProduceable {
 
             // Schedule profit calculation after panels settle
             // This prevents 20-50 simultaneous API calls during character switch
-            clearTimeout(this.profitCalcTimeout);
-            this.profitCalcTimeout = setTimeout(() => {
+            this.timerRegistry.cancelTimeout(this.profitCalcTimeout);
+            this.profitCalcTimeout = this.timerRegistry.scheduleTimeout(() => {
                 this.updateAllCounts();
             }, 50); // Wait 50ms after last panel appears for better responsiveness
-            this.timerRegistry.registerTimeout(this.profitCalcTimeout);
         });
 
         // Check for existing action panels that may already be open
@@ -189,11 +188,10 @@ class MaxProduceable {
 
         // Calculate profits for existing panels after initial load
         if (existingPanels.length > 0) {
-            clearTimeout(this.profitCalcTimeout);
-            this.profitCalcTimeout = setTimeout(() => {
+            this.timerRegistry.cancelTimeout(this.profitCalcTimeout);
+            this.profitCalcTimeout = this.timerRegistry.scheduleTimeout(() => {
                 this.updateAllCounts();
             }, 50); // Fast initial load for better responsiveness
-            this.timerRegistry.registerTimeout(this.profitCalcTimeout);
         }
     }
 

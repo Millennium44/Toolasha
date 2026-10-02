@@ -694,6 +694,8 @@ class ActionTimeDisplay {
         // Teardown for the action bar display alone, so it can be removed while the queue
         // annotations (on `cleanupRegistry`) keep running
         this.barCleanupRegistry = createCleanupRegistry();
+        /** Whether the display elements' teardown is already in `barCleanupRegistry` */
+        this.displayCleanupRegistered = false;
         this.barActive = false;
         // The action/actionDetails pair updateRunSoFar last drew for, so an
         // item-flow-recorder change notification can redraw the same row
@@ -2539,11 +2541,15 @@ class ActionTimeDisplay {
             if (this.waitForPanelTimeout) {
                 clearTimeout(this.waitForPanelTimeout);
             }
+            // Released when it fires: this polls every 200 ms for as long as the header is
+            // missing, and each poll left one more spent timer id in the registry.
+            let releaseTimeout = null;
             this.waitForPanelTimeout = setTimeout(() => {
                 this.waitForPanelTimeout = null;
+                releaseTimeout?.();
                 this.waitForActionPanel();
             }, 200);
-            this.barCleanupRegistry.registerTimeout(this.waitForPanelTimeout);
+            releaseTimeout = this.barCleanupRegistry.registerTimeout(this.waitForPanelTimeout);
         }
     }
 
@@ -2655,7 +2661,15 @@ class ActionTimeDisplay {
         `;
         this.profitElement.parentNode.insertBefore(this.runElement, this.profitElement.nextSibling);
 
+        // Once per bar lifetime, not once per creation: the game remounts the header's
+        // action name, and each remount recreates these elements. The teardown reads the
+        // current elements off `this`, so one registration covers every remount.
+        if (this.displayCleanupRegistered) {
+            return;
+        }
+        this.displayCleanupRegistered = true;
         this.barCleanupRegistry.registerCleanup(() => {
+            this.displayCleanupRegistered = false;
             if (this.displayElement && this.displayElement.parentNode) {
                 this.displayElement.parentNode.removeChild(this.displayElement);
             }
@@ -3624,14 +3638,17 @@ class ActionTimeDisplay {
         }
 
         const delays = [150, 300, 500];
+        // Released when it fires, so spent retries do not accumulate in the registry
+        let releaseTimeout = null;
         this.retryUpdateTimeout = setTimeout(() => {
             this.retryUpdateTimeout = null;
+            releaseTimeout?.();
             this.updateDisplay();
             if (!this.displayElement || !this.displayElement.innerHTML) {
                 this.scheduleUpdateRetry(attempt + 1);
             }
         }, delays[attempt]);
-        this.barCleanupRegistry.registerTimeout(this.retryUpdateTimeout);
+        releaseTimeout = this.barCleanupRegistry.registerTimeout(this.retryUpdateTimeout);
     }
 
     /**

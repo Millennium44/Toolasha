@@ -64,6 +64,7 @@ vi.mock('../../utils/panel-geometry.js', () => ({
 }));
 
 const { default: waveGap, waveGapPanel } = await import('./wave-gap-observer.js');
+const { getCleanupRegistryCensus } = await import('../../utils/cleanup-registry.js');
 const { emptyTally, foldObservation, CATEGORIES } = await import('./wave-gap.js');
 
 const FAILED = 'could not be drawn';
@@ -183,6 +184,28 @@ describe('the durable tally', () => {
         vi.useRealTimers();
         await new Promise((resolve) => setTimeout(resolve, 0));
         expect(state.stored.get('waveGapTally')?.categories[CATEGORIES.openZone].n).toBe(1);
+    });
+
+    test('the write debounce leaves nothing in the registry once it has fired', async () => {
+        await waveGap.initialize();
+        const battle = state.handlers.get('new_battle');
+        const tick = state.handlers.get('battle_updated');
+        vi.useFakeTimers();
+        const baseline = getCleanupRegistryCensus().timeouts;
+        let now = 1_700_000_000_000;
+        for (let i = 0; i < 50; i += 1) {
+            vi.setSystemTime(now);
+            battle(roster(0));
+            vi.setSystemTime((now += 4_000));
+            tick({ pMap: {}, mMap: { 0: { cHP: 0 }, 1: { cHP: 0 } } });
+            vi.setSystemTime((now += 3_000));
+            battle(roster(0));
+            // A pending write is the one entry allowed; once it fires it must be gone.
+            expect(getCleanupRegistryCensus().timeouts).toBeLessThanOrEqual(baseline + 1);
+            vi.advanceTimersByTime(10 * 60_000);
+            expect(getCleanupRegistryCensus().timeouts).toBe(baseline);
+        }
+        expect(waveGap.tally().categories[CATEGORIES.openZone].n).toBe(50);
     });
 
     test('ignores a stored tally from a schema it does not know', async () => {

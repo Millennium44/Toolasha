@@ -113,6 +113,14 @@ class QuickInputButtons {
         this.presetValues = [10, 100, 1000];
         this.cleanupRegistry = createCleanupRegistry();
         this._targetLevelByAction = new Map();
+        /**
+         * Release functions for what each injection wired onto a game panel, keyed by panel.
+         * A panel's entry is released when it is injected again (an action switch on a reused
+         * panel) or found detached at the next injection, so the registry holds the panels on
+         * screen rather than every panel opened since the feature started.
+         * @type {Map<HTMLElement, Function[]>}
+         */
+        this._panelReleases = new Map();
         /** Live add-mode toggles, so a late-arriving stored value can repaint them */
         this._addToggles = new Set();
         /** Whether the player has toggled add mode themselves this session */
@@ -322,12 +330,53 @@ class QuickInputButtons {
     }
 
     /**
+     * Remember a release function for something wired onto `panel`.
+     * @param {HTMLElement} panel
+     * @param {Function} release - An unregister function from the cleanup registry
+     * @private
+     */
+    _trackPanelRelease(panel, release) {
+        let releases = this._panelReleases.get(panel);
+        if (!releases) {
+            releases = [];
+            this._panelReleases.set(panel, releases);
+        }
+        releases.push(release);
+    }
+
+    /**
+     * Release everything a previous injection wired onto `panel`.
+     * @param {HTMLElement} panel
+     * @private
+     */
+    _releasePanel(panel) {
+        const releases = this._panelReleases.get(panel);
+        if (!releases) return;
+        this._panelReleases.delete(panel);
+        for (const release of releases) release();
+    }
+
+    /**
+     * Release the wiring of panels the game has since removed from the page. Their
+     * listeners and observers close over the detached panel, so leaving them registered
+     * pinned a copy of the old panel per opening until the feature was disabled.
+     * @private
+     */
+    _releaseDetachedPanels() {
+        for (const panel of [...this._panelReleases.keys()]) {
+            if (!panel.isConnected) this._releasePanel(panel);
+        }
+    }
+
+    /**
      * Inject quick input buttons into action panel
      * @param {HTMLElement} panel - Action panel element
      * @param {import('../../utils/action-panel-helper.js').ActionPanelContext} [context] - The panel's
      *   resolved action, when the dispatcher supplies it; resolved here otherwise
      */
     injectButtons(panel, context = resolveDetailPanel(panel)) {
+        this._releaseDetachedPanels();
+
         let actionDetails = null;
         try {
             // Check if already injected for this same action
@@ -343,6 +392,10 @@ class QuickInputButtons {
                 panel.querySelectorAll('.mwi-collapsible-section').forEach((el) => el.remove());
                 panel.querySelectorAll('.mwi-quick-input-btn').forEach((el) => el.remove());
             }
+
+            // From here this is a fresh injection for this panel: let go of whatever the
+            // previous one wired (its closures belong to the old action).
+            this._releasePanel(panel);
 
             // Find the queue input field - prioritize maxActionCountInput container
             // to avoid matching other number inputs (e.g., crafting plan gold/hr input)
@@ -675,39 +728,6 @@ class QuickInputButtons {
                 // Initial update
                 updateTotalTime();
 
-                // Watch for input changes
-                let inputObserverCleanup = createMutationWatcher(
-                    numberInput,
-                    () => {
-                        updateTotalTime();
-                    },
-                    {
-                        attributes: true,
-                        attributeFilter: ['value'],
-                    }
-                );
-                this.cleanupRegistry.registerCleanup(() => {
-                    if (inputObserverCleanup) {
-                        inputObserverCleanup();
-                        inputObserverCleanup = null;
-                    }
-                });
-
-                const updateOnInput = () => updateTotalTime();
-                const updateOnChange = () => updateTotalTime();
-                const updateOnClick = () => {
-                    const clickTimeout = setTimeout(updateTotalTime, 50);
-                    this.cleanupRegistry.registerTimeout(clickTimeout);
-                };
-
-                numberInput.addEventListener('input', updateOnInput);
-                numberInput.addEventListener('change', updateOnChange);
-                panel.addEventListener('click', updateOnClick);
-
-                this.cleanupRegistry.registerListener(numberInput, 'input', updateOnInput);
-                this.cleanupRegistry.registerListener(numberInput, 'change', updateOnChange);
-                this.cleanupRegistry.registerListener(panel, 'click', updateOnClick);
-
                 // Create initial summary for Action Speed & Time
                 const actionsPerHourWithEfficiency = Math.round(
                     calculateEffectiveActionsPerHour(calculateActionsPerHour(actionTime), efficiencyMultiplier)
@@ -726,9 +746,8 @@ class QuickInputButtons {
                 const speedSummaryDiv = speedSection.querySelector('.mwi-section-header + div');
 
                 // Enhanced updateTotalTime to also update the summary
-                const originalUpdateTotalTime = updateTotalTime;
                 const enhancedUpdateTotalTime = () => {
-                    originalUpdateTotalTime();
+                    updateTotalTime();
 
                     // Update summary when collapsed
                     if (speedSummaryDiv) {
@@ -748,44 +767,32 @@ class QuickInputButtons {
                     }
                 };
 
-                // Replace all updateTotalTime calls with enhanced version
-                if (inputObserverCleanup) {
-                    inputObserverCleanup();
-                    inputObserverCleanup = null;
-                }
-
-                const newInputObserverCleanup = createMutationWatcher(
-                    numberInput,
-                    () => {
-                        enhancedUpdateTotalTime();
-                    },
-                    {
-                        attributes: true,
-                        attributeFilter: ['value'],
-                    }
+                // Watch for input changes. Everything here closes over this panel, so it is
+                // tracked per panel and released when the panel is re-injected or goes away.
+                const track = (release) => this._trackPanelRelease(panel, release);
+                track(
+                    this.cleanupRegistry.registerCleanup(
+                        createMutationWatcher(numberInput, () => enhancedUpdateTotalTime(), {
+                            attributes: true,
+                            attributeFilter: ['value'],
+                        })
+                    )
                 );
-                this.cleanupRegistry.registerCleanup(() => {
-                    newInputObserverCleanup();
-                });
 
-                numberInput.removeEventListener('input', updateOnInput);
-                numberInput.removeEventListener('change', updateOnChange);
-                panel.removeEventListener('click', updateOnClick);
-
-                const updateOnInputEnhanced = () => enhancedUpdateTotalTime();
-                const updateOnChangeEnhanced = () => enhancedUpdateTotalTime();
-                const updateOnClickEnhanced = () => {
-                    const clickTimeout = setTimeout(enhancedUpdateTotalTime, 50);
-                    this.cleanupRegistry.registerTimeout(clickTimeout);
+                // One pending refresh per panel: a click reschedules it rather than registering
+                // a new timeout per click for the rest of the session.
+                let clickTimeout = null;
+                const updateOnClick = () => {
+                    clearTimeout(clickTimeout);
+                    clickTimeout = setTimeout(() => {
+                        clickTimeout = null;
+                        enhancedUpdateTotalTime();
+                    }, 50);
                 };
-
-                numberInput.addEventListener('input', updateOnInputEnhanced);
-                numberInput.addEventListener('change', updateOnChangeEnhanced);
-                panel.addEventListener('click', updateOnClickEnhanced);
-
-                this.cleanupRegistry.registerListener(numberInput, 'input', updateOnInputEnhanced);
-                this.cleanupRegistry.registerListener(numberInput, 'change', updateOnChangeEnhanced);
-                this.cleanupRegistry.registerListener(panel, 'click', updateOnClickEnhanced);
+                track(this.cleanupRegistry.registerCleanup(() => clearTimeout(clickTimeout)));
+                track(this.cleanupRegistry.registerListener(numberInput, 'input', enhancedUpdateTotalTime));
+                track(this.cleanupRegistry.registerListener(numberInput, 'change', enhancedUpdateTotalTime));
+                track(this.cleanupRegistry.registerListener(panel, 'click', updateOnClick));
 
                 // Initial update with enhanced version
                 enhancedUpdateTotalTime();
@@ -798,7 +805,8 @@ class QuickInputButtons {
                 numberInput,
                 totalEfficiency,
                 levelContext,
-                levelEfficiencyDeficit
+                levelEfficiencyDeficit,
+                panel
             );
 
             // The button rows are their own setting ('actionPanel_totalTime_quickInputs') —
@@ -909,6 +917,7 @@ class QuickInputButtons {
     disable() {
         try {
             this.cleanupRegistry.cleanupAll();
+            this._panelReleases.clear();
             this._addToggles.clear();
             document.querySelectorAll('.mwi-collapsible-section').forEach((section) => section.remove());
             document.querySelectorAll('.mwi-quick-input-btn').forEach((button) => button.remove());
@@ -1328,6 +1337,8 @@ class QuickInputButtons {
      * @param {number} totalEfficiency - Current efficiency percentage
      * @param {Object|null} levelContext - Pre-computed from _buildLevelContext; null returns null
      * @param {number} [levelEfficiencyDeficit=0] - Levels owed before level efficiency starts
+     * @param {HTMLElement|null} [panel=null] - The panel the queue input belongs to; its listeners
+     *   on the game's input are released with the panel's other wiring
      * @returns {HTMLElement|null} Level progress section or null if not applicable
      */
     createLevelProgressSection(
@@ -1337,7 +1348,8 @@ class QuickInputButtons {
         numberInput,
         totalEfficiency,
         levelContext,
-        levelEfficiencyDeficit = 0
+        levelEfficiencyDeficit = 0,
+        panel = null
     ) {
         try {
             if (!levelContext) {
@@ -1564,8 +1576,22 @@ class QuickInputButtons {
                 `;
                 targetLevelResult.style.color = `var(--text-color-primary, ${config.COLOR_TEXT_PRIMARY})`;
             };
-            numberInput.addEventListener('input', updateFromQuantity);
-            numberInput.addEventListener('change', updateFromQuantity);
+            // numberInput is the game's own input, which outlives this section when the panel is
+            // reused for another action, so these go through the registry and are released with
+            // the panel rather than stacking one stale pair per action switch.
+            if (panel) {
+                this._trackPanelRelease(
+                    panel,
+                    this.cleanupRegistry.registerListener(numberInput, 'input', updateFromQuantity)
+                );
+                this._trackPanelRelease(
+                    panel,
+                    this.cleanupRegistry.registerListener(numberInput, 'change', updateFromQuantity)
+                );
+            } else {
+                numberInput.addEventListener('input', updateFromQuantity);
+                numberInput.addEventListener('change', updateFromQuantity);
+            }
 
             // If restoring a saved target level, compute and display the result immediately
             if (initialTargetLevel !== nextLevel) {

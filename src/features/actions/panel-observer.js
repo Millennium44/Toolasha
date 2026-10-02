@@ -76,16 +76,14 @@ let consumablesUpdatedHandler = null;
 function triggerEnhancementUpdate(panel, itemHrid) {
     // Clear existing timeout for this item
     if (updateTimeouts.has(itemHrid)) {
-        clearTimeout(updateTimeouts.get(itemHrid));
+        timerRegistry.cancelTimeout(updateTimeouts.get(itemHrid));
     }
 
     // Set new timeout
-    const timeoutId = setTimeout(async () => {
+    const timeoutId = timerRegistry.scheduleTimeout(async () => {
         await displayEnhancementStats(panel, itemHrid);
         updateTimeouts.delete(itemHrid);
     }, 500); // Wait 500ms after last change
-
-    timerRegistry.registerTimeout(timeoutId);
 
     updateTimeouts.set(itemHrid, timeoutId);
 }

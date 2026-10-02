@@ -1059,10 +1059,9 @@ class EnhancementUI {
      */
     scheduleUpdate() {
         if (this.updateDebounce) {
-            clearTimeout(this.updateDebounce);
+            this.timerRegistry.cancelTimeout(this.updateDebounce);
         }
-        this.updateDebounce = setTimeout(() => this.updateUI(), 100);
-        this.timerRegistry.registerTimeout(this.updateDebounce);
+        this.updateDebounce = this.timerRegistry.scheduleTimeout(() => this.updateUI(), 100);
     }
 
     /**
