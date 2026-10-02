@@ -566,8 +566,8 @@ describe('several game tabs on one profile', () => {
     });
 });
 
-describe('the move out of the character records', () => {
-    test('four tabs migrating at once lose nothing and duplicate nothing', async () => {
+describe('legacy lines in the character records', () => {
+    test('public and guild tabs stay with their character, are restored to it alone, and are never merged in', async () => {
         const ids = ['101', '202', '303', '404'];
         // Every character saw "common"; each saw one line of its own, and two of them were in g1.
         ids.forEach((id, i) => {
@@ -586,58 +586,42 @@ describe('the move out of the character records', () => {
         await Promise.all(pages.map((page) => page.persistence.load()));
         await Promise.all(pages.map((page) => page.persistence.flush()));
 
-        expect(stored(PUBLIC, GLOBAL).sort()).toEqual(['common', 'only 101', 'only 202', 'only 303', 'only 404']);
-        // Nothing proves which guild an old guild tab came from, so each stays with its character.
+        // Nothing went into a shared record.
+        expect(shared.db[PUBLIC]).toBeUndefined();
         expect(shared.db[guildKey('g1')]).toBeUndefined();
         expect(shared.db[guildKey('g2')]).toBeUndefined();
         ids.forEach((id, i) => {
             const own = shared.db[ownKey(id)];
+            // Everything that was on disk is still there, as legacy.
             expect(Object.keys(own.tabs)).toEqual([PARTY]);
             expect(stored(ownKey(id), PARTY)).toEqual([`party of ${id}`]);
-            expect(texts(own.guildLegacy[GUILD])).toEqual([i < 2 ? 'g1 common' : 'g2 common']);
-            expect(own.sharedMigrated).toBe(true);
+            expect(texts(own.legacy[GLOBAL])).toEqual(['common', `only ${id}`]);
+            expect(texts(own.legacy[GUILD])).toEqual([i < 2 ? 'g1 common' : 'g2 common']);
+            expect(own.sharedMigrated).toBeUndefined();
+            expect(texts(pages[i].persistence.messagesFor(GLOBAL))).toEqual(['common', `only ${id}`]);
         });
     });
 
-    test('an old guild tab is not moved into a guild the character has since joined', async () => {
-        // Ada's record is from her old guild; she is in g2 now, whose record Bob already writes.
+    test('a whisper mixed into a legacy Trade list is never shown to another character', async () => {
+        // Builds before the uniqueness check filed a whisper from a player named Trade under the channel's key.
         shared.db[ownKey('101')] = legacyRecord({
-            [GUILD]: [line('Old', 'old guild secret', 1)],
-            [PARTY]: [line('Pat', 'p', 2)],
+            [TRADE]: [line('Tom', 'wts sword', 1), line('Trade', 'private whisper', 2)],
         });
-        const bob = await openPage('202', 'g2');
+        const ada = await openPage('101');
+        await ada.persistence.load();
+        await ada.persistence.flush();
+        const bob = await openPage('202');
         await bob.persistence.load();
-        bob.persistence.record(GUILD, line('Gil', 'g2 today', 30));
+        bob.persistence.record(TRADE, line('Tom', 'wtb shield', 3));
         await bob.persistence.flush();
 
-        const ada = await openPage('101', 'g2');
-        const snapshot = await ada.persistence.load();
-        await ada.persistence.flush();
-
-        expect(stored(guildKey('g2'), GUILD)).toEqual(['g2 today']);
-        expect(texts(shared.db[ownKey('101')].guildLegacy[GUILD])).toEqual(['old guild secret']);
-        expect(shared.db[ownKey('101')].tabs[GUILD]).toBeUndefined();
-        // Still Ada's to read, ahead of the guild's own lines.
-        expect(texts(snapshot[GUILD])).toEqual(['old guild secret', 'g2 today']);
-        expect(texts(ada.persistence.messagesFor(GUILD))).toEqual(['old guild secret', 'g2 today']);
-
-        // A line recorded since goes to the guild; the held ones never follow it.
-        ada.persistence.record(GUILD, line('Gil', 'g2 later', 31));
-        await ada.persistence.flush();
-        expect(stored(guildKey('g2'), GUILD)).toEqual(['g2 today', 'g2 later']);
-
-        // And another member of g2 never sees them.
-        const cy = await openPage('303', 'g2');
-        await cy.persistence.load();
-        expect(texts(cy.persistence.messagesFor(GUILD))).toEqual(['g2 today', 'g2 later']);
-
-        // Held across sessions.
-        const again = await openPage('101', 'g2');
-        await again.persistence.load();
-        expect(texts(again.persistence.messagesFor(GUILD))).toEqual(['old guild secret', 'g2 today', 'g2 later']);
+        expect(shared.db[PUBLIC]).toBeDefined();
+        expect(stored(PUBLIC, TRADE)).toEqual(['wtb shield']);
+        expect(texts(bob.persistence.messagesFor(TRADE))).toEqual(['wtb shield']);
+        expect(texts(ada.persistence.messagesFor(TRADE))).toEqual(['wts sword', 'private whisper']);
     });
 
-    test('an old guild tab that shares three lines with the guild record is that guild’s, and moves', async () => {
+    test('a legacy guild tab stays with the character even when the guild record shares its lines', async () => {
         const both = [line('Gil', 'both 1', 5), line('Ann', 'both 2', 6), line('Gil', 'both 3', 7)];
         shared.db[guildKey('g1')] = {
             v: 1,
@@ -652,107 +636,47 @@ describe('the move out of the character records', () => {
         await ada.persistence.load();
         await ada.persistence.flush();
 
-        expect(stored(guildKey('g1'), GUILD)).toEqual(['older', 'both 1', 'both 2', 'both 3', 'newer']);
-        expect(shared.db[ownKey('101')].guildLegacy).toBeUndefined();
+        expect(stored(guildKey('g1'), GUILD)).toEqual(['both 1', 'both 2', 'both 3', 'newer']);
+        expect(texts(shared.db[ownKey('101')].legacy[GUILD])).toEqual(['older', 'both 1', 'both 2', 'both 3']);
         expect(shared.db[ownKey('101')].tabs[GUILD]).toBeUndefined();
+        // Shown once, in sent order.
+        expect(texts(ada.persistence.messagesFor(GUILD))).toEqual(['older', 'both 1', 'both 2', 'both 3', 'newer']);
     });
 
-    test('one line shared with a guild record is not proof enough, and the lines stay held', async () => {
-        shared.db[guildKey('g1')] = {
-            v: 1,
-            savedAt: 5000,
-            tabs: { [GUILD]: [line('Gil', 'hi', 5), line('Gil', 'other guild', 6)] },
-            live: {},
-            at: { [GUILD]: 5000 },
-        };
-        // The same sender, second and text: a coincidence, or last year's line.
-        shared.db[ownKey('101')] = legacyRecord({ [GUILD]: [line('Old', 'held', 4), line('Gil', 'hi', 5)] }, 1000);
-
-        const ada = await openPage('101', 'g1');
-        await ada.persistence.load();
-        await ada.persistence.flush();
-
-        expect(stored(guildKey('g1'), GUILD)).toEqual(['hi', 'other guild']);
-        expect(texts(shared.db[ownKey('101')].guildLegacy[GUILD])).toEqual(['held', 'hi']);
-    });
-
-    test('matches at one second count once toward the proof', async () => {
-        const sameSecond = [line('Gil', 'a', 5), line('Ann', 'b', 5), line('Bo', 'c', 5)];
-        shared.db[guildKey('g1')] = {
-            v: 1,
-            savedAt: 5000,
-            tabs: { [GUILD]: [...sameSecond] },
-            live: {},
-            at: { [GUILD]: 5000 },
-        };
-        shared.db[ownKey('101')] = legacyRecord({ [GUILD]: [line('Old', 'held', 4), ...sameSecond] }, 1000);
-
-        const ada = await openPage('101', 'g1');
-        await ada.persistence.load();
-        await ada.persistence.flush();
-
-        expect(stored(guildKey('g1'), GUILD)).toEqual(['a', 'b', 'c']);
-        expect(texts(shared.db[ownKey('101')].guildLegacy[GUILD])).toEqual(['held', 'a', 'b', 'c']);
-    });
-
-    test('held guild lines move once the guild record comes to share enough of them', async () => {
-        shared.db[ownKey('101')] = legacyRecord(
-            {
-                [GUILD]: [
-                    line('Gil', 'held', 2),
-                    line('Gil', 'last 1', 3),
-                    line('Ann', 'last 2', 4),
-                    line('Gil', 'last', 5),
-                ],
-            },
-            1000
-        );
-        const ada = await openPage('101', 'g1');
-        await ada.persistence.load();
-        await ada.persistence.flush();
-        expect(shared.db[guildKey('g1')]).toBeUndefined();
-
-        // A guildmate's tab records the game's backlog, which still shows the last line.
-        const bob = await openPage('202', 'g1');
+    test('legacy lines are shown ahead of the shared lines, kept across sessions, and never follow a write', async () => {
+        shared.db[ownKey('101')] = legacyRecord({
+            [GUILD]: [line('Old', 'old guild secret', 1)],
+            [PARTY]: [line('Pat', 'p', 2)],
+        });
+        const bob = await openPage('202', 'g2');
         await bob.persistence.load();
-        bob.persistence.record(GUILD, line('Gil', 'last 1', 3));
-        bob.persistence.record(GUILD, line('Ann', 'last 2', 4));
-        bob.persistence.record(GUILD, line('Gil', 'last', 5));
-        bob.persistence.record(GUILD, line('Gil', 'today', 6));
+        bob.persistence.record(GUILD, line('Gil', 'g2 today', 30));
         await bob.persistence.flush();
 
-        const next = await openPage('101', 'g1');
-        await next.persistence.load();
-        await next.persistence.flush();
-        expect(stored(guildKey('g1'), GUILD)).toEqual(['held', 'last 1', 'last 2', 'last', 'today']);
-        expect(shared.db[ownKey('101')].guildLegacy).toBeUndefined();
-    });
-
-    test('a deletion reaches held guild lines too', async () => {
-        shared.db[ownKey('101')] = legacyRecord({
-            [GUILD]: [line('Gil', 'keep', 1, 'k1'), line('Gil', 'remove', 2, 'r1')],
-        });
-        const ada = await openPage('101', 'g1');
-        await ada.persistence.load();
-
-        await expect(ada.persistence.purgeMessageById(GUILD, 'r1')).resolves.toBe(true);
+        const ada = await openPage('101', 'g2');
+        const snapshot = await ada.persistence.load();
         await ada.persistence.flush();
 
-        expect(texts(ada.persistence.messagesFor(GUILD))).toEqual(['keep']);
-        expect(texts(shared.db[ownKey('101')].guildLegacy[GUILD])).toEqual(['keep']);
+        expect(stored(guildKey('g2'), GUILD)).toEqual(['g2 today']);
+        expect(texts(shared.db[ownKey('101')].legacy[GUILD])).toEqual(['old guild secret']);
+        expect(shared.db[ownKey('101')].tabs[GUILD]).toBeUndefined();
+        expect(texts(snapshot[GUILD])).toEqual(['old guild secret', 'g2 today']);
+        expect(texts(ada.persistence.messagesFor(GUILD))).toEqual(['old guild secret', 'g2 today']);
+
+        ada.persistence.record(GUILD, line('Gil', 'g2 later', 31));
+        await ada.persistence.flush();
+        expect(stored(guildKey('g2'), GUILD)).toEqual(['g2 today', 'g2 later']);
+
+        const cy = await openPage('303', 'g2');
+        await cy.persistence.load();
+        expect(texts(cy.persistence.messagesFor(GUILD))).toEqual(['g2 today', 'g2 later']);
+
+        const again = await openPage('101', 'g2');
+        await again.persistence.load();
+        expect(texts(again.persistence.messagesFor(GUILD))).toEqual(['old guild secret', 'g2 today', 'g2 later']);
     });
 
-    test('a write before the first read has landed keeps the held guild lines', async () => {
-        shared.db[ownKey('101')] = { ...legacyRecord({}), guildLegacy: { [GUILD]: [line('Gil', 'held', 1)] } };
-        const ada = await openPage('101', 'g1');
-        ada.persistence.record(PARTY, line('Pat', 'party before the read', 2));
-        await ada.persistence.flushPending();
-
-        expect(texts(shared.db[ownKey('101')].guildLegacy[GUILD])).toEqual(['held']);
-        expect(stored(ownKey('101'), PARTY)).toEqual(['party before the read']);
-    });
-
-    test('a migration cut short before the character record was rewritten runs again without doubling anything', async () => {
+    test('a load that is repeated, or cut short before the record was rewritten, loses and doubles nothing', async () => {
         shared.db[ownKey('101')] = legacyRecord({
             [GLOBAL]: [line('Zed', 'one', 1), line('Zed', 'two', 2)],
             [PARTY]: [line('Pat', 'party', 3)],
@@ -767,50 +691,86 @@ describe('the move out of the character records', () => {
         const snapshot = await second.persistence.load();
         await second.persistence.flush();
 
-        expect(stored(PUBLIC, GLOBAL)).toEqual(['one', 'two']);
         expect(texts(snapshot[GLOBAL])).toEqual(['one', 'two']);
+        expect(shared.db[PUBLIC]).toBeUndefined();
         expect(shared.db[ownKey('101')].tabs[GLOBAL]).toBeUndefined();
+        expect(texts(shared.db[ownKey('101')].legacy[GLOBAL])).toEqual(['one', 'two']);
 
-        // And once done, a third load moves nothing.
-        shared.opened = [];
+        // A third load, and a write, change nothing.
         const third = await openPage('101');
         await third.persistence.load();
-        expect(shared.opened.filter((call) => call.startsWith('update'))).toEqual([]);
+        await third.persistence.flush();
+        expect(texts(shared.db[ownKey('101')].legacy[GLOBAL])).toEqual(['one', 'two']);
+        expect(stored(ownKey('101'), PARTY)).toEqual(['party']);
     });
 
-    test('an older character record that shares no line with the shared one goes before it', async () => {
-        shared.db[PUBLIC] = {
-            v: 1,
-            savedAt: 5000,
-            tabs: { [GLOBAL]: [line('Zed', 'today', 30)] },
-            live: {},
-            at: { [GLOBAL]: 5000 },
-        };
-        shared.db[ownKey('101')] = legacyRecord({ [GLOBAL]: [line('Zed', 'last week', 1)] }, 1000);
+    test('a record from the earlier Guild-only revision (guildLegacy) is read as legacy', async () => {
+        shared.db[ownKey('101')] = { ...legacyRecord({}), guildLegacy: { [GUILD]: [line('Gil', 'held', 1)] } };
+        const ada = await openPage('101', 'g1');
+        await ada.persistence.load();
+        await ada.persistence.flush();
 
-        const ada = await openPage('101');
+        expect(texts(ada.persistence.messagesFor(GUILD))).toEqual(['held']);
+        expect(texts(shared.db[ownKey('101')].legacy[GUILD])).toEqual(['held']);
+    });
+
+    test('a deletion reaches legacy lines, public and guild', async () => {
+        shared.db[ownKey('101')] = legacyRecord({
+            [GUILD]: [line('Gil', 'keep', 1, 'k1'), line('Gil', 'remove', 2, 'r1')],
+            [TRADE]: [line('Tom', 'keep t', 3, 'k2'), line('Tom', 'remove t', 4, 'r2')],
+        });
+        const ada = await openPage('101', 'g1');
         await ada.persistence.load();
 
-        expect(stored(PUBLIC, GLOBAL)).toEqual(['last week', 'today']);
+        await expect(ada.persistence.purgeMessageById(GUILD, 'r1')).resolves.toBe(true);
+        await expect(ada.persistence.purgeMessageById(TRADE, 'r2')).resolves.toBe(true);
+        await ada.persistence.flush();
+
+        expect(texts(ada.persistence.messagesFor(GUILD))).toEqual(['keep']);
+        expect(texts(shared.db[ownKey('101')].legacy[GUILD])).toEqual(['keep']);
+        expect(texts(shared.db[ownKey('101')].legacy[TRADE])).toEqual(['keep t']);
     });
 
-    test('a shared tab whose move failed stays in the character record', async () => {
-        const legacy = legacyRecord({ [GLOBAL]: [line('Zed', 'not lost', 1)], [PARTY]: [line('Pat', 'p', 2)] });
-        shared.db[ownKey('101')] = legacy;
-        const ada = await openPage('101');
-        const { default: storage } = await import('../../core/storage.js');
-        const update = storage.update;
-        storage.update = async () => null;
-        try {
-            await ada.persistence.load();
-            await ada.persistence.flush();
-        } finally {
-            storage.update = update;
-        }
+    test('a write before the first read has landed keeps the legacy lines', async () => {
+        shared.db[ownKey('101')] = {
+            ...legacyRecord({}),
+            legacy: { [GUILD]: [line('Gil', 'held', 1)] },
+            guildLegacy: { [GUILD]: [line('Gil', 'held too', 2)] },
+        };
+        const ada = await openPage('101', 'g1');
+        ada.persistence.record(PARTY, line('Pat', 'party before the read', 2));
+        await ada.persistence.flushPending();
 
-        expect(stored(ownKey('101'), GLOBAL)).toEqual(['not lost']);
-        expect(shared.db[ownKey('101')].sharedMigrated).toBe(false);
-        expect(shared.db[PUBLIC]).toBeUndefined();
+        expect(texts(shared.db[ownKey('101')].legacy[GUILD])).toEqual(['held']);
+        expect(texts(shared.db[ownKey('101')].guildLegacy[GUILD])).toEqual(['held too']);
+        expect(stored(ownKey('101'), PARTY)).toEqual(['party before the read']);
+    });
+
+    test('legacy lines age out as the shared tab fills the per-tab cap', async () => {
+        const old = Array.from({ length: 4 }, (_, i) => line('Zed', `old ${i}`, i + 1));
+        shared.db[ownKey('101')] = legacyRecord({ [GLOBAL]: old });
+        const ada = await openPage('101');
+        ada.persistence.enable(() => 6);
+        await ada.persistence.load();
+        ada.persistence.setLiveCount(GLOBAL, 0);
+        for (let i = 0; i < 3; i += 1) ada.persistence.record(GLOBAL, line('Zed', `new ${i}`, 20 + i));
+        await ada.persistence.flush();
+        // 3 new + 4 old = 7 > 6: the oldest legacy line goes.
+        expect(texts(shared.db[ownKey('101')].legacy[GLOBAL])).toEqual(['old 1', 'old 2', 'old 3']);
+        expect(texts(ada.persistence.messagesFor(GLOBAL))).toEqual([
+            'old 1',
+            'old 2',
+            'old 3',
+            'new 0',
+            'new 1',
+            'new 2',
+        ]);
+
+        // Once the shared tab holds the whole allowance, none are left.
+        for (let i = 3; i < 6; i += 1) ada.persistence.record(GLOBAL, line('Zed', `new ${i}`, 20 + i));
+        await ada.persistence.flush();
+        expect(shared.db[ownKey('101')].legacy).toBeUndefined();
+        expect(stored(PUBLIC, GLOBAL)).toEqual(['new 0', 'new 1', 'new 2', 'new 3', 'new 4', 'new 5']);
     });
 });
 
@@ -938,7 +898,7 @@ describe('one game tab switching characters in place', () => {
         await page.persistence.flush();
 
         expect(stored(guildKey('g2'), GUILD)).toEqual(['g2 now']);
-        expect(texts(shared.db[ownKey('101')].guildLegacy[GUILD])).toEqual(['from a guild left long ago']);
+        expect(texts(shared.db[ownKey('101')].legacy[GUILD])).toEqual(['from a guild left long ago']);
         expect(texts(page.persistence.messagesFor(GUILD))).toEqual(['from a guild left long ago', 'g2 now']);
     });
 
@@ -1003,7 +963,7 @@ describe('stored lines are kept in the order they were sent', () => {
         expect(texts(module.mergeLists([a, c, e], [b, e]))).toEqual(['a', 'b', 'c', 'e']);
     });
 
-    test('a character record holding late copies of old lines migrates, and restores, in sent order', async () => {
+    test('a character record holding late copies of old lines stays legacy, and restores, in sent order', async () => {
         // The shape found live: older builds re-recorded a re-rendered backlog's old lines after today's.
         const legacy = [
             sent('10/1 7:42:44 AM', 'today 1'),
@@ -1035,7 +995,8 @@ describe('stored lines are kept in the order they were sent', () => {
         await ada.persistence.flush();
 
         const order = ['sep 28 a', 'sep 28 b', 'sep 30', 'early 1', 'early 2', 'today 1', 'today 2', 'today 3'];
-        expect(stored(guildKey('g1'), GUILD)).toEqual(order);
+        // Only the shared lines are in the shared record; the character's own are merged in at restore.
+        expect(stored(guildKey('g1'), GUILD)).toEqual(['sep 30', 'early 1', 'today 2', 'today 3']);
         expect(texts(snapshot[GUILD])).toEqual(order);
         expect(texts(ada.persistence.messagesFor(GUILD))).toEqual(order);
     });

@@ -1477,6 +1477,25 @@ class ChatTabHandler {
     }
 
     /**
+     * Whether a mutation batch took every line out of the pane that was there before it, and put the pane's
+     * lines back as new nodes: at least two removed and none of the old ones left. An ordinary eviction
+     * removes one line, and a tab switch is told apart by its key, not here.
+     * @param {MutationRecord[]} mutations
+     * @returns {boolean}
+     */
+    _replacesWholeBacklog(mutations) {
+        const isMessage = (node) => node.nodeType === 1 && node.className?.includes('ChatMessage_chatMessage');
+        const removed = new Set();
+        const added = new Set();
+        for (const mut of mutations) {
+            for (const node of mut.removedNodes) if (isMessage(node) && node !== this.bufferEl) removed.add(node);
+            for (const node of mut.addedNodes) if (isMessage(node)) added.add(node);
+        }
+        if (removed.size < 2) return false;
+        return this._liveMessageNodes().every((node) => added.has(node));
+    }
+
+    /**
      * Handle mutations on the chat container.
      * @param {MutationRecord[]} mutations
      */
@@ -1508,6 +1527,12 @@ class ChatTabHandler {
                 switched = true;
             }
         }
+        // The Guild pane dropping its whole backlog with no roster message yet is how a guild change that
+        // reached the pane first looks. From here, Guild lines are held back until the roster names the
+        // guild (see `ChatHistoryPersistence#beginGuildTransition`); the removed lines are the old guild's.
+        const guildBacklogReplaced =
+            !switched && Boolean(tabKey) && tabScope(tabKey) === 'guild' && this._replacesWholeBacklog(mutations);
+        if (guildBacklogReplaced) chatHistoryPersistence.beginGuildTransition();
         const renderedLive = new Set();
         // Before anything is recorded: the observer delivers a batch after the
         // DOM has changed, so the pane already holds the batch's new lines, and
@@ -1573,7 +1598,13 @@ class ChatTabHandler {
                             // it away again: the record is capped separately from the
                             // buffer, so a message can leave the screen and stay stored.
                             const html = serializeMessage(clone);
-                            if (html && tabKey) chatHistoryPersistence.record(tabKey, html);
+                            if (html && tabKey) {
+                                chatHistoryPersistence.record(
+                                    tabKey,
+                                    html,
+                                    guildBacklogReplaced ? { preTransition: true } : undefined
+                                );
+                            }
                         }
 
                         this._trim(maxHistory);
