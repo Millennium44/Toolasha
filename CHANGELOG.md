@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Audit round: dictionary and alt-click
+
+- Alt-clicking an item tooltip now finds enhanced and refined items ("Collector's Boots +3", "… ★") through game data instead of guessing from the name, and the dictionary's transmute rates pick up items added by a game update without a reload.
+
 <!-- shipped in 3.63.1 -->
 
 ### Clearer rank badge icons
