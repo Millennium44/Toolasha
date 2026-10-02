@@ -56,3 +56,30 @@ describe('dpsGraphSVG', () => {
         expect(host.querySelector('b')).toBeNull();
     });
 });
+
+describe('dpsGraphSVG right axis', () => {
+    const lines = [
+        { values: [1, 2, 3], color: '#ef5350', label: 'Abe' },
+        { values: [100, 200, 300], color: '#e8ecf5', label: 'Party', axis: 'right', dash: '5 2' },
+    ];
+    const texts = (host, side) => [...host.querySelectorAll(`text[data-axis="${side}"]`)].map((t) => t.textContent);
+
+    test('right-axis lines get their own range and tick column; others keep the left', () => {
+        const host = parse(dpsGraphSVG({ xs: [0, 1, 2], lines }));
+        expect(texts(host, 'left').at(-1)).toBe('3');
+        expect(texts(host, 'right').at(-1)).toBe('300');
+        expect(host.querySelector('text[data-axis="right"]').getAttribute('fill')).toBe('#e8ecf5');
+        expect(host.querySelector('polyline[stroke-dasharray="5 2"]')).not.toBeNull();
+    });
+
+    test('without right-axis lines there are no right ticks', () => {
+        const host = parse(dpsGraphSVG({ xs: [0, 1, 2], lines: [lines[0]] }));
+        expect(texts(host, 'right')).toHaveLength(0);
+    });
+
+    test('only right-axis lines: the right axis carries the labels', () => {
+        const host = parse(dpsGraphSVG({ xs: [0, 1, 2], lines: [lines[1]] }));
+        expect(texts(host, 'left')).toHaveLength(0);
+        expect(texts(host, 'right').length).toBeGreaterThan(1);
+    });
+});
