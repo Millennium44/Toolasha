@@ -14,6 +14,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 - The Loot & XP Log follows the number-format setting.
 - Custom Tabs' "Add to Tab" dropdown isn't cut off, can remove items or start a tab, and the toolbar gains Import Categories.
 
+### Bulk Sell vendor sales work again
+
+- Selling to the vendor no longer stops at "the item menu is for an enhanced item" for ordinary unenhanced items.
+
 ### Audit round: page-close saves, text size and net worth
 
 - Closing a tab while a save is in progress no longer loses everything else waiting to be saved.

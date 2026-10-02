@@ -1229,7 +1229,11 @@ describe('confirming from the strip', () => {
                 ? `<div><svg><use href="/static/media/items.svg#${item}"></use></svg>Cheese</div>`
                 : '<div>Cheese</div>';
             if (title !== null) menu.insertAdjacentHTML('afterbegin', `<div class="Item_name__x">${title}</div>`);
-            if (enhanced) menu.insertAdjacentHTML('beforeend', '<div class="Item_enhancementLevel__e">+3</div>');
+            // The live header always carries the level span, empty for a +0 item (checked on the test server)
+            menu.insertAdjacentHTML(
+                'beforeend',
+                `<span class="Item_enhancementLevel__19g-e">${enhanced ? '+3' : ''}</span>`
+            );
             const input = document.createElement('input');
             input.value = String(qty);
             const all = document.createElement('button');
