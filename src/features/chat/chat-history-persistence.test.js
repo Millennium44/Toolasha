@@ -114,6 +114,7 @@ import chatHistoryPersistence, {
     extractStoredMessageId,
     messageIdentity,
     handleRestoredClick,
+    MAX_LIVE_ALLOWANCE,
     MAX_MESSAGES_PER_TAB,
     MAX_TOTAL_CHARS,
     parseStoredMessage,
@@ -1969,5 +1970,509 @@ describe('a rank badge beside a sender name', () => {
             .querySelector('[data-toolasha-rank-badge] use')
             .dispatchEvent(new MouseEvent('click', { bubbles: true }));
         expect(openPlayerProfile).toHaveBeenCalledWith('Spice', expect.anything());
+    });
+});
+
+/**
+ * Restored history is everything older than the game's own live backlog, and only that.
+ *
+ * The record holds lines that were live when they were saved, so it overlaps whatever the game renders
+ * after a reload, and the overlap is not always exact: a line the game no longer renders (deleted, or a
+ * client-only line the server never sends back) sits in the record between lines it does render. Above the
+ * live backlog it is out of order, so it is not restored.
+ */
+describe('restored history ends where the live backlog begins', () => {
+    const GUILD = '/chat_channel_types/guild';
+    const GUILD_KEY = tabKeyForChannel(GUILD);
+
+    /** The Guild tab open, a whisper tab beside it, one pane. */
+    function buildGuildChat() {
+        document.body.innerHTML = '<div id="root"><div class="Chat_tabsComponentContainer__x"></div></div>';
+        const strip = document.querySelector('.Chat_tabsComponentContainer__x');
+        const guild = document.createElement('button');
+        guild.setAttribute('role', 'tab');
+        guild.setAttribute('data-mention-channel', GUILD);
+        guild.setAttribute('aria-selected', 'true');
+        guild.textContent = 'Guild';
+        const whisper = document.createElement('button');
+        whisper.setAttribute('role', 'tab');
+        whisper.setAttribute('aria-selected', 'false');
+        whisper.textContent = 'Whisper';
+        strip.append(guild, whisper);
+        const container = document.createElement('div');
+        container.className = 'ChatHistory_chatHistory__abc';
+        document.getElementById('root').appendChild(container);
+        return container;
+    }
+
+    /** @param {'Guild'|'Whisper'} label */
+    function openTab(label) {
+        for (const button of document.querySelectorAll('button[role="tab"]')) {
+            button.setAttribute('aria-selected', button.textContent === label ? 'true' : 'false');
+        }
+    }
+
+    /**
+     * A player chat line in the game's markup: timestamp, clickable sender, body.
+     * @param {string} time - e.g. `9:55:47 AM`
+     * @param {string} sender
+     * @param {string} body
+     * @returns {string} HTML
+     */
+    const lineHTML = (time, sender, body) =>
+        '<div class="ChatMessage_chatMessage__2wc4V">' +
+        `<span class="ChatMessage_timestamp__3VbX6">[10/1 ${time}]</span> ` +
+        '<span class="ChatMessage_name__1UZ8t ChatMessage_clickable__3Nt2s">' +
+        '<div class="CharacterName_characterName__2FqyZ">' +
+        `<div class="CharacterName_name__1amXp" data-name="${sender}"><span>${sender}</span></div></div></span>` +
+        `<span>: </span><span>${body}</span></div>`;
+
+    const line = (time, sender, body) => {
+        const host = document.createElement('div');
+        host.innerHTML = lineHTML(time, sender, body);
+        return host.firstElementChild;
+    };
+
+    const OLD_1 = ['9:55:47 AM', 'Kasvitatti', 'morning all'];
+    const OLD_2 = ['9:56:17 AM', 'Kasvitatti', 'anyone up for a run'];
+    const LIVE_1 = ['9:56:21 AM', 'Benny', 'sure'];
+    const GONE = ['12:50:31 PM', 'Spice', 'this line is no longer sent'];
+    const LIVE_2 = ['2:51:36 PM', 'Benny', 'Gzz poma'];
+
+    const text = (parts) => line(...parts).textContent;
+    const bufferTexts = (container) =>
+        [...container.querySelectorAll('.mwi-history-buffer [class*="ChatMessage_chatMessage"]')].map(
+            (el) => el.textContent
+        );
+    const liveTexts = (container) =>
+        [...container.children]
+            .filter((el) => el.className.includes('ChatMessage_chatMessage'))
+            .map((el) => el.textContent);
+
+    beforeEach(() => {
+        settingValues.chatHistoryExtender = true;
+        settingValues.chatHistoryExtender_maxHistory = null;
+        observerReady.handlers = [];
+        observerReady.domReady = true;
+        db.settings = {
+            [STORAGE_KEY]: {
+                v: 1,
+                savedAt: 1,
+                tabs: { [GUILD_KEY]: [OLD_1, OLD_2, LIVE_1, GONE, LIVE_2].map((parts) => lineHTML(...parts)) },
+            },
+        };
+        db.quota = false;
+        db.writes = 0;
+        openPlayerProfile.mockClear();
+    });
+
+    afterEach(async () => {
+        await chatHistoryExtender.disable();
+        chatHistoryPersistence.reset();
+        document.body.innerHTML = '';
+    });
+
+    test('a stored line newer than the start of the live backlog is not restored above it', async () => {
+        const container = buildGuildChat();
+        container.append(line(...LIVE_1), line(...LIVE_2));
+        chatHistoryExtender.initialize();
+        await settle();
+
+        expect(bufferTexts(container)).toEqual([text(OLD_1), text(OLD_2)]);
+        expect(liveTexts(container)).toEqual([text(LIVE_1), text(LIVE_2)]);
+    });
+
+    test('the same holds when the backlog renders after the restore has landed', async () => {
+        const container = buildGuildChat();
+        chatHistoryExtender.initialize();
+        await settle();
+        expect(bufferTexts(container)).toHaveLength(5);
+
+        container.append(line(...LIVE_1), line(...LIVE_2));
+        await settle();
+
+        expect(bufferTexts(container)).toEqual([text(OLD_1), text(OLD_2)]);
+    });
+
+    test('a tab round trip keeps the lines this session evicted', async () => {
+        // Nothing of today's on disk yet: the live lines are first seen this session
+        db.settings[STORAGE_KEY].tabs[GUILD_KEY] = [OLD_1, OLD_2].map((parts) => lineHTML(...parts));
+        const container = buildGuildChat();
+        const live1 = line(...LIVE_1);
+        const live2 = line(...LIVE_2);
+        container.append(live1, live2);
+        chatHistoryExtender.initialize();
+        await settle();
+
+        await evict(container, live1);
+        expect(bufferTexts(container)).toEqual([text(OLD_1), text(OLD_2), text(LIVE_1)]);
+
+        // To the whisper tab: the pane's contents are swapped in one commit
+        const whisper = line('3:00:00 PM', 'Spice', 'psst');
+        container.removeChild(live2);
+        container.appendChild(whisper);
+        openTab('Whisper');
+        await settle();
+        expect(bufferTexts(container)).not.toContain(text(LIVE_1));
+
+        // And back: the game renders what it still holds, which no longer includes the evicted line
+        container.removeChild(whisper);
+        container.appendChild(line(...LIVE_2));
+        openTab('Guild');
+        await settle();
+
+        expect(bufferTexts(container)).toEqual([text(OLD_1), text(OLD_2), text(LIVE_1)]);
+        expect(liveTexts(container)).toEqual([text(LIVE_2)]);
+    });
+
+    describe('two genuine messages sharing an identity', () => {
+        // Same second, sender and text: the store keeps one entry, at the earlier one's position.
+        const DUP = ['9:56:21 AM', 'Benny', 'gg'];
+        const MID_1 = ['9:56:21 AM', 'Kasvitatti', 'between one'];
+        const MID_2 = ['9:56:21 AM', 'Spice', 'between two'];
+
+        beforeEach(() => {
+            db.settings[STORAGE_KEY].tabs[GUILD_KEY] = [OLD_1, DUP, MID_1, MID_2, LIVE_2].map((parts) =>
+                lineHTML(...parts)
+            );
+        });
+
+        test('the lines between the earlier copy and the live one are restored', async () => {
+            const container = buildGuildChat();
+            container.append(line(...DUP), line(...LIVE_2));
+            chatHistoryExtender.initialize();
+            await settle();
+
+            expect(bufferTexts(container)).toEqual([text(OLD_1), text(MID_1), text(MID_2)]);
+            expect(liveTexts(container)).toEqual([text(DUP), text(LIVE_2)]);
+        });
+
+        test('and when the backlog renders after the restore landed', async () => {
+            const container = buildGuildChat();
+            chatHistoryExtender.initialize();
+            await settle();
+            expect(bufferTexts(container)).toHaveLength(5);
+
+            container.append(line(...DUP), line(...LIVE_2));
+            await settle();
+
+            expect(bufferTexts(container)).toEqual([text(OLD_1), text(MID_1), text(MID_2)]);
+        });
+    });
+
+    test('a record a build before the badge fix stored each badged line in twice restores and keeps it once', async () => {
+        // That build stored a line at render and again at eviction, and the badge (its rank changing in
+        // between) made each copy a message of its own: two or three entries for one line, filling the cap
+        const badged = (parts, rank) =>
+            lineHTML(...parts).replace(
+                '</div></div></span>',
+                `</div><span data-toolasha-rank-badge="gold"><svg viewBox="0 0 40 40"><use href="/static/skills.svg#milking"></use></svg>${rank}</span></div></span>`
+            );
+        db.settings[STORAGE_KEY].tabs[GUILD_KEY] = [
+            lineHTML(...OLD_1),
+            badged(OLD_1, 12),
+            badged(OLD_1, 11),
+            lineHTML(...OLD_2),
+            lineHTML(...LIVE_1),
+            badged(LIVE_1, 4),
+        ];
+        const container = buildGuildChat();
+        container.append(line(...LIVE_1));
+        chatHistoryExtender.initialize();
+        await settle();
+
+        expect(bufferTexts(container)).toEqual([text(OLD_1), text(OLD_2)]);
+
+        chatHistoryPersistence.record(GUILD_KEY, serializeMessage(line('3:00:00 PM', 'Spice', 'new')));
+        await chatHistoryPersistence.flush();
+        expect(db.settings[STORAGE_KEY].tabs[GUILD_KEY]).toHaveLength(4);
+    });
+
+    test('a restored sender name opens the profile, after a tab round trip too', async () => {
+        const container = buildGuildChat();
+        const live = line(...LIVE_1);
+        container.appendChild(live);
+        chatHistoryExtender.initialize();
+        await settle();
+
+        const clickName = () => {
+            const name = container.querySelector('.mwi-history-buffer [class*="CharacterName_name"] span');
+            name.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+        };
+        clickName();
+        expect(openPlayerProfile).toHaveBeenCalledWith('Kasvitatti', expect.anything());
+
+        const whisper = line('3:00:00 PM', 'Spice', 'psst');
+        container.removeChild(live);
+        container.appendChild(whisper);
+        openTab('Whisper');
+        await settle();
+        container.removeChild(whisper);
+        container.appendChild(line(...LIVE_1));
+        openTab('Guild');
+        await settle();
+
+        openPlayerProfile.mockClear();
+        clickName();
+        expect(openPlayerProfile).toHaveBeenCalledWith('Kasvitatti', expect.anything());
+    });
+});
+
+describe('the cap counts lines older than the game’s live backlog', () => {
+    const CAP = 10;
+    const LIVE = 8;
+    const line = (i) => `[1/2 10:00:${String(i).padStart(2, '0')}] line ${i}`;
+    const bufferTexts = (container) =>
+        [...container.querySelectorAll('.mwi-history-buffer [class*="ChatMessage_chatMessage"]')].map(
+            (el) => el.textContent
+        );
+    const html = (i) => `<div class="ChatMessage_chatMessage__z">${line(i)}</div>`;
+    const KEY = 'tab2:name:General';
+
+    beforeEach(() => {
+        settingValues.chatHistoryExtender = true;
+        settingValues.chatHistoryExtender_maxHistory = CAP;
+        observerReady.handlers = [];
+        observerReady.domReady = true;
+        db.settings = {};
+        db.quota = false;
+        db.writes = 0;
+    });
+
+    afterEach(async () => {
+        settingValues.chatHistoryExtender_maxHistory = null;
+        await chatHistoryExtender.disable();
+        chatHistoryPersistence.reset();
+        document.body.innerHTML = '';
+    });
+
+    test('a reload restores the full cap of older lines even though LIVE lines are still on screen', async () => {
+        const [container] = buildChat(['General']);
+        const nodes = Array.from({ length: CAP + LIVE }, (_, i) => makeMessage(line(i)));
+        container.append(...nodes);
+        chatHistoryExtender.initialize();
+        await settle();
+
+        // The game drops its oldest CAP lines and keeps LIVE.
+        for (const node of nodes.slice(0, CAP)) await evict(container, node);
+        await chatHistoryPersistence.flush();
+        expect(db.settings[STORAGE_KEY].tabs[KEY]).toHaveLength(CAP + LIVE);
+
+        await chatHistoryExtender.disable();
+        chatHistoryPersistence.reset();
+        const [reloaded] = buildChat(['General']);
+        reloaded.append(...nodes.slice(CAP).map((n) => makeMessage(n.textContent)));
+        chatHistoryExtender.initialize();
+        await settle();
+
+        expect(bufferTexts(reloaded)).toEqual(Array.from({ length: CAP }, (_, i) => line(i)));
+    });
+
+    test('a full record keeps the whole cap of older lines when the backlog renders after the restore', async () => {
+        db.settings[STORAGE_KEY] = {
+            v: 1,
+            savedAt: 1,
+            tabs: { [KEY]: Array.from({ length: CAP + LIVE }, (_, i) => html(i)) },
+            live: { [KEY]: LIVE },
+        };
+        const [container] = buildChat(['General']);
+        chatHistoryExtender.initialize();
+        await settle();
+
+        // Nothing is live yet, so the whole record is restored.
+        expect(bufferTexts(container)).toHaveLength(CAP + LIVE);
+
+        container.append(...Array.from({ length: LIVE }, (_, i) => makeMessage(line(CAP + i))));
+        await settle();
+
+        expect(bufferTexts(container)).toEqual(Array.from({ length: CAP }, (_, i) => line(i)));
+    });
+
+    test('new live lines on a full record do not push its oldest entries out', async () => {
+        db.settings[STORAGE_KEY] = {
+            v: 1,
+            savedAt: 1,
+            tabs: { [KEY]: Array.from({ length: CAP + LIVE }, (_, i) => html(i)) },
+            live: { [KEY]: LIVE },
+        };
+        const [container] = buildChat(['General']);
+        container.append(...Array.from({ length: LIVE }, (_, i) => makeMessage(line(CAP + i))));
+        chatHistoryExtender.initialize();
+        await settle();
+
+        // The game's backlog grows by one without evicting anything.
+        container.appendChild(makeMessage(line(CAP + LIVE)));
+        await settle();
+        await chatHistoryPersistence.flush();
+
+        const stored = db.settings[STORAGE_KEY].tabs[KEY];
+        expect(stored).toHaveLength(CAP + LIVE + 1);
+        expect(stored[0]).toBe(html(0));
+        expect(db.settings[STORAGE_KEY].live[KEY]).toBe(LIVE + 1);
+    });
+
+    test('a tab that is not mounted keeps its lines, past the plain cap, through another tab’s writes', async () => {
+        db.settings[STORAGE_KEY] = {
+            v: 1,
+            savedAt: 1,
+            tabs: { [KEY]: Array.from({ length: CAP + LIVE }, (_, i) => html(i)) },
+            live: { [KEY]: LIVE },
+        };
+        const [container] = buildChat(['General', 'Other'], 1);
+        container.appendChild(makeMessage(line(99)));
+        chatHistoryExtender.initialize();
+        await settle();
+        await chatHistoryPersistence.flush();
+
+        expect(db.settings[STORAGE_KEY].tabs[KEY]).toHaveLength(CAP + LIVE);
+        expect(db.settings[STORAGE_KEY].live[KEY]).toBe(LIVE);
+    });
+
+    test('a tab reopened with a larger backlog than it was saved with does not lose its oldest entries', async () => {
+        const SAVED_LIVE = 3;
+        const NOW_LIVE = 8;
+        db.settings[STORAGE_KEY] = {
+            v: 1,
+            savedAt: 1,
+            tabs: { [KEY]: Array.from({ length: CAP + SAVED_LIVE }, (_, i) => html(i)) },
+            live: { [KEY]: SAVED_LIVE },
+        };
+        const [container] = buildChat(['General', 'Other'], 1);
+        const other = makeMessage('[1/2 11:00:00] other tab line');
+        container.appendChild(other);
+        chatHistoryExtender.initialize();
+        await settle();
+
+        // To General, whose pane now renders more lines than it was saved with
+        container.removeChild(other);
+        container.append(...Array.from({ length: NOW_LIVE }, (_, i) => makeMessage(line(50 + i))));
+        selectTab(0);
+        await settle();
+        await chatHistoryPersistence.flush();
+
+        const stored = db.settings[STORAGE_KEY].tabs[KEY];
+        // The cap is CAP older lines plus what is live now; the allowance of 3 would have cut it to CAP + 3.
+        expect(stored).toHaveLength(CAP + NOW_LIVE);
+        expect(stored.at(-1)).toContain(line(50 + NOW_LIVE - 1));
+        expect(db.settings[STORAGE_KEY].live[KEY]).toBe(NOW_LIVE);
+    });
+
+    test('a first load merges a pane that already has its backlog under that pane’s count, not the saved one', async () => {
+        const SAVED_LIVE = 3;
+        db.settings[STORAGE_KEY] = {
+            v: 1,
+            savedAt: 1,
+            tabs: { [KEY]: Array.from({ length: CAP + SAVED_LIVE }, (_, i) => html(i)) },
+            live: { [KEY]: SAVED_LIVE },
+        };
+        const [container] = buildChat(['General']);
+        container.append(...Array.from({ length: LIVE }, (_, i) => makeMessage(line(50 + i))));
+        chatHistoryExtender.initialize();
+        await settle();
+        await chatHistoryPersistence.flush();
+
+        const stored = db.settings[STORAGE_KEY].tabs[KEY];
+        // CAP older lines plus the 8 live; the saved allowance of 3 would have kept CAP + 3.
+        expect(stored).toHaveLength(CAP + LIVE);
+        expect(stored.at(-1)).toContain(line(50 + LIVE - 1));
+        expect(db.settings[STORAGE_KEY].live[KEY]).toBe(LIVE);
+    });
+
+    test('a saved overlap is released when the backlog is already smaller than the saved allowance', async () => {
+        const SAVED_LIVE = 20;
+        const NOW_LIVE = 5;
+        db.settings[STORAGE_KEY] = {
+            v: 1,
+            savedAt: 1,
+            tabs: { [KEY]: Array.from({ length: CAP + SAVED_LIVE }, (_, i) => html(i)) },
+            live: { [KEY]: SAVED_LIVE },
+        };
+        const [container] = buildChat(['General']);
+        // The newest NOW_LIVE stored lines are what the game shows again.
+        container.append(
+            ...Array.from({ length: NOW_LIVE }, (_, i) => makeMessage(line(CAP + SAVED_LIVE - NOW_LIVE + i)))
+        );
+        chatHistoryExtender.initialize();
+        await settle();
+
+        // Nothing waits to be matched against a backlog that is already there, so the cap is bare.
+        expect(bufferTexts(container)).toHaveLength(CAP);
+    });
+
+    test('a saved overlap is released when a delayed backlog renders smaller than the saved allowance', async () => {
+        const SAVED_LIVE = 20;
+        const NOW_LIVE = 5;
+        db.settings[STORAGE_KEY] = {
+            v: 1,
+            savedAt: 1,
+            tabs: { [KEY]: Array.from({ length: CAP + SAVED_LIVE }, (_, i) => html(i)) },
+            live: { [KEY]: SAVED_LIVE },
+        };
+        const [container] = buildChat(['General']);
+        chatHistoryExtender.initialize();
+        await settle();
+
+        // The backlog arrives after the restore, smaller than what the record was saved with
+        container.append(
+            ...Array.from({ length: NOW_LIVE }, (_, i) => makeMessage(line(CAP + SAVED_LIVE - NOW_LIVE + i)))
+        );
+        await settle();
+
+        expect(bufferTexts(container)).toHaveLength(CAP);
+    });
+
+    test('a tab with no known live count gets the full allowance, not a bare cap', () => {
+        const tabs = { [KEY]: Array.from({ length: 400 }, (_, i) => `<div>${i}</div>`) };
+        applyCaps(tabs, 10, {});
+        expect(tabs[KEY]).toHaveLength(10 + MAX_LIVE_ALLOWANCE);
+        // The newest survive.
+        expect(tabs[KEY].at(-1)).toBe('<div>399</div>');
+    });
+
+    test('the ceiling holds whatever live count is claimed', async () => {
+        chatHistoryPersistence.enable(() => MAX_MESSAGES_PER_TAB);
+        chatHistoryPersistence.setLiveCount(KEY, 10_000);
+        for (let i = 0; i < MAX_MESSAGES_PER_TAB + MAX_LIVE_ALLOWANCE + 30; i += 1) {
+            chatHistoryPersistence.record(KEY, `<div class="ChatMessage_chatMessage__z">m${i}</div>`);
+        }
+        expect(chatHistoryPersistence.tabs[KEY]).toHaveLength(MAX_MESSAGES_PER_TAB + MAX_LIVE_ALLOWANCE);
+
+        const tabs = { [KEY]: Array.from({ length: 1000 }, (_, i) => `<div>${i}</div>`) };
+        applyCaps(tabs, 150, { [KEY]: 1e9 });
+        expect(tabs[KEY]).toHaveLength(MAX_MESSAGES_PER_TAB + MAX_LIVE_ALLOWANCE);
+    });
+
+    test('without a live count, a plain applyCaps is still the plain cap', () => {
+        const tabs = { [KEY]: Array.from({ length: 40 }, (_, i) => `<div>${i}</div>`) };
+        applyCaps(tabs, 10);
+        expect(tabs[KEY]).toHaveLength(10);
+    });
+
+    test('the merge path (a flush before the first read lands) keeps the extra lines too', async () => {
+        db.settings[STORAGE_KEY] = {
+            v: 1,
+            savedAt: 1,
+            tabs: { [KEY]: Array.from({ length: CAP + LIVE }, (_, i) => html(i)) },
+            live: { [KEY]: LIVE },
+        };
+        chatHistoryPersistence.enable(() => CAP);
+        // Not loaded: this goes through _mergeIntoStored.
+        chatHistoryPersistence.record('tab2:name:Other', html(500));
+        await chatHistoryPersistence.flush(true);
+
+        expect(db.settings[STORAGE_KEY].tabs[KEY]).toHaveLength(CAP + LIVE);
+        expect(db.settings[STORAGE_KEY].tabs['tab2:name:Other']).toHaveLength(1);
+    });
+
+    test('a non-numeric or unmounted live count in a stored record is read as the allowance, never trusted', async () => {
+        db.settings[STORAGE_KEY] = {
+            v: 1,
+            savedAt: 1,
+            tabs: { [KEY]: Array.from({ length: 60 }, (_, i) => html(i)) },
+            live: { [KEY]: 'lots' },
+        };
+        chatHistoryPersistence.enable(() => CAP);
+        await chatHistoryPersistence.load();
+        expect(chatHistoryPersistence.messagesFor(KEY)).toHaveLength(60);
     });
 });

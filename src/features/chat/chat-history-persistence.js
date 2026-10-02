@@ -77,7 +77,9 @@
  * ## Caps
  *
  * Markup for a dozen tabs at 150 messages each is not small, so three caps hold
- * the write down and every one of them trims oldest-first. See
+ * the write down and every one of them trims oldest-first. The per-tab cap
+ * counts lines older than the live backlog the game still shows (reported by
+ * the extender, kept in the record's `live` map). See
  * {@link MAX_MESSAGE_CHARS}, {@link MAX_MESSAGES_PER_TAB} and
  * {@link MAX_TOTAL_CHARS}.
  *
@@ -154,17 +156,31 @@ const RECORD_VERSION = 1;
  */
 export const MAX_MESSAGE_CHARS = 8 * 1024;
 
-/** Hard ceiling on messages kept per tab, whatever the user's max-history is. */
+/**
+ * Hard ceiling on messages kept per tab that are older than the game's live
+ * backlog, whatever the user's max-history is. The lines the game is still
+ * showing live are kept on top of this; see {@link MAX_LIVE_ALLOWANCE}.
+ */
 export const MAX_MESSAGES_PER_TAB = 150;
 
 /**
- * Ceiling on the whole record, in characters of serialized HTML summed across
- * every tab. 256k characters is roughly a quarter-megabyte of UTF-8 for ASCII
- * chat and comfortably under it in practice; it is a bound, not a target, and
- * the trim that enforces it takes from the largest tab first so one busy
- * channel cannot starve the quiet ones.
+ * Most live lines a tab's cap makes room for, and what a tab whose live count
+ * is not known (never mounted this session, record from an older build) is
+ * given. Together with {@link MAX_MESSAGES_PER_TAB} it is the absolute ceiling
+ * a tab's record can reach: 150 older lines plus 200 live ones.
  */
-export const MAX_TOTAL_CHARS = 256 * 1024;
+export const MAX_LIVE_ALLOWANCE = 200;
+
+/**
+ * Ceiling on the whole record, in characters of serialized HTML summed across
+ * every tab. It is a bound, not a target, and the trim that enforces it takes
+ * from the largest tab first so one busy channel cannot starve the quiet ones.
+ * Measured 2026-10-01: a guild line with chat icons and a rank badge is ~1k
+ * characters, so 256k filled at ~400 lines across five tabs and capped history
+ * well before the per-tab limit; 1M leaves room for ~1,000. The record is local
+ * only (never synced or backed up).
+ */
+export const MAX_TOTAL_CHARS = 1024 * 1024;
 
 /** How long writes are coalesced before one hits storage. */
 const WRITE_DEBOUNCE_MS = 5000;
@@ -663,6 +679,31 @@ const IDENTITY_MEMO_MAX = 4000;
 const identityMemo = new Map();
 
 /**
+ * A live-line count made safe to add to the cap.
+ * @param {*} count
+ * @returns {number} 0..{@link MAX_LIVE_ALLOWANCE}; the allowance itself when not a number
+ */
+function clampLive(count) {
+    if (typeof count !== 'number' || !Number.isFinite(count)) return MAX_LIVE_ALLOWANCE;
+    return Math.max(0, Math.min(Math.floor(count), MAX_LIVE_ALLOWANCE));
+}
+
+/**
+ * The live counts a stored record carries.
+ * @param {*} record - Whatever the read returned
+ * @returns {Record<string, number>}
+ */
+function liveFromRecord(record) {
+    const stored = record && record.v === RECORD_VERSION && record.live;
+    if (!stored || typeof stored !== 'object') return {};
+    const live = {};
+    for (const [key, count] of Object.entries(stored)) {
+        if (typeof count === 'number' && Number.isFinite(count)) live[key] = clampLive(count);
+    }
+    return live;
+}
+
+/**
  * Apply the three caps to a `{tabKey: [html]}` map, oldest-first, in place.
  *
  * Per-tab count first (cheap, and the cap the user's setting talks about), then
@@ -670,12 +711,21 @@ const identityMemo = new Map();
  * is currently largest, so a chatty channel is trimmed before a quiet one loses
  * anything.
  *
+ * The per-tab cap counts lines *older than the game's live backlog*: a tab's
+ * list may hold `perTab` such lines plus the lines the game is still showing
+ * live, because those are recorded as they render and would otherwise eat the
+ * cap — with the game keeping L lines live, only `perTab - L` older ones would
+ * survive a reload. `liveCounts` says how many each tab has live; a tab absent
+ * from it gets {@link MAX_LIVE_ALLOWANCE}, so a tab that is not mounted never
+ * loses history it cannot account for. Omit `liveCounts` for a plain cap.
+ *
  * @param {Record<string, Array<string>>} tabs - Mutated
- * @param {number} perTab - Message cap per tab
+ * @param {number} perTab - Message cap per tab, not counting live lines
+ * @param {Record<string, number>|null} [liveCounts] - Live lines per tab key
  * @returns {Record<string, Array<string>>} The same object
  */
-export function applyCaps(tabs, perTab = MAX_MESSAGES_PER_TAB) {
-    const limit = Math.max(1, Math.min(perTab || MAX_MESSAGES_PER_TAB, MAX_MESSAGES_PER_TAB));
+export function applyCaps(tabs, perTab = MAX_MESSAGES_PER_TAB, liveCounts = null) {
+    const base = Math.max(1, Math.min(perTab || MAX_MESSAGES_PER_TAB, MAX_MESSAGES_PER_TAB));
 
     let total = 0;
     for (const key of Object.keys(tabs)) {
@@ -693,6 +743,7 @@ export function applyCaps(tabs, perTab = MAX_MESSAGES_PER_TAB) {
             list = list.filter((html) => typeof html === 'string');
             tabs[key] = list;
         }
+        const limit = liveCounts ? base + clampLive(liveCounts[key]) : base;
         if (list.length > limit) list.splice(0, list.length - limit);
         if (!list.length) {
             delete tabs[key];
@@ -790,13 +841,40 @@ async function readStoredRecord(key) {
  * The tabs of a stored record this build can use, or an empty map.
  * @param {*} record - Whatever the read returned
  * @param {number} perTab - Message cap per tab
+ * @param {Record<string, number>} live - Live lines per tab key
  * @returns {Record<string, Array<string>>}
  */
-function tabsFromRecord(record, perTab) {
+function tabsFromRecord(record, perTab, live) {
     // A record from a version we do not understand is discarded rather than
     // half-read; the cost is one session's history.
     const stored = record && record.v === RECORD_VERSION && record.tabs ? record.tabs : {};
-    return applyCaps(dropForeignKeys(stored), perTab);
+    const tabs = dropForeignKeys(stored);
+    // Builds before rank badges were left out of the identity stored one line
+    // up to once per badge state it was seen in. Folded here, those copies stop
+    // rendering twice and stop holding the cap against older history.
+    for (const [key, list] of Object.entries(tabs)) {
+        if (!Array.isArray(list)) continue;
+        const unique = [];
+        for (const html of list) {
+            if (typeof html === 'string') mergeMessage(unique, html);
+        }
+        tabs[key] = unique;
+    }
+    return applyCaps(tabs, perTab, live);
+}
+
+/**
+ * The live counts to write beside a record: only for tabs it holds.
+ * @param {Record<string, number>} live
+ * @param {Record<string, Array<string>>} tabs
+ * @returns {Record<string, number>}
+ */
+function liveForRecord(live, tabs) {
+    const out = {};
+    for (const key of Object.keys(tabs)) {
+        if (typeof live[key] === 'number') out[key] = live[key];
+    }
+    return out;
 }
 
 /**
@@ -844,7 +922,45 @@ class ChatHistoryPersistence {
          * @type {Promise<boolean>|null}
          */
         this.finalFlush = null;
+        /**
+         * How many lines each tab last showed live: the cap's allowance. Written
+         * beside the record (`live`) so a tab that is not mounted next session
+         * keeps what it had. Reported by the extender through
+         * {@link ChatHistoryPersistence#setLiveCount}.
+         * @type {Record<string, number>}
+         */
+        this.liveCounts = {};
         this.getMaxHistory = () => MAX_MESSAGES_PER_TAB;
+    }
+
+    /**
+     * Tell the cap how many lines a tab's game pane is showing live.
+     *
+     * Called by the extender once per mutation batch and at restore. Takes
+     * effect at the next cap; it neither dirties the record nor schedules a
+     * write — the figure rides along with the next write that happens anyway.
+     *
+     * @param {string} tabKey
+     * @param {number} count - Live message nodes in that tab's pane
+     */
+    setLiveCount(tabKey, count) {
+        if (!this.enabled || !tabKey || !tabKey.startsWith(TAB_KEY_PREFIX)) return;
+        this.liveCounts[tabKey] = clampLive(count);
+    }
+
+    /**
+     * The allowance the cap currently holds for a tab, or null when none is known.
+     *
+     * Read by the extender at restore: before the game's backlog has rendered,
+     * the saved allowance is the number of stored lines that will turn out to
+     * overlap it.
+     *
+     * @param {string} tabKey
+     * @returns {number|null}
+     */
+    liveCountFor(tabKey) {
+        const count = this.liveCounts[tabKey];
+        return typeof count === 'number' ? count : null;
     }
 
     /**
@@ -875,12 +991,12 @@ class ChatHistoryPersistence {
     /**
      * Read the record, and answer with what was on disk.
      *
-     * The answer is a *snapshot*, deliberately not the working record. A tab's
-     * restore is fire-and-forget while its buffer is already taking evictions,
-     * so a message evicted during the read is appended to the working record
-     * before the restore walks it — and a restore walking the working record
-     * rendered that message a second time, above the clone the buffer had
-     * already made of it.
+     * The answer is a *snapshot*, fixed at the read, and is what tells a
+     * caller the read succeeded. A restore renders the working record instead
+     * ({@link ChatHistoryPersistence#messagesFor}), which also holds what was
+     * recorded since; it leaves out what its tab is showing live or already
+     * holds in its buffer, so a message evicted during the read is not
+     * rendered a second time above the buffer's clone of it.
      *
      * Never awaited on the path that makes chat usable: callers fire it and
      * fill their buffer when it lands.
@@ -929,7 +1045,9 @@ class ChatHistoryPersistence {
                 if (this.loadPromise === loading) this.loadPromise = null;
                 return {};
             }
-            const loaded = tabsFromRecord(read.record, this.getMaxHistory());
+            // What this session has reported wins over what was stored.
+            this.liveCounts = { ...liveFromRecord(read.record), ...this.liveCounts };
+            const loaded = tabsFromRecord(read.record, this.getMaxHistory(), this.liveCounts);
             // Taken before the merge below, which writes into `loaded` itself —
             // a snapshot taken after it held what was recorded during the read,
             // and a restore rendered those a second time.
@@ -949,7 +1067,7 @@ class ChatHistoryPersistence {
                     for (const html of list) mergeMessage(this.tabs[key], html);
                     if (!this.tabs[key].length) delete this.tabs[key];
                 }
-                applyCaps(this.tabs, this.getMaxHistory());
+                applyCaps(this.tabs, this.getMaxHistory(), this.liveCounts);
             }
             // The timer stood down while the read was open; this is the write
             // it was holding back.
@@ -967,6 +1085,21 @@ class ChatHistoryPersistence {
         this.loadPromise = loading;
 
         return this.loadPromise;
+    }
+
+    /**
+     * A tab's messages in the working record, once the first read has merged.
+     *
+     * What a restore after a tab switch renders. The snapshot `load()` answers
+     * with is fixed at the first read, so it lacks every line this session
+     * evicted since — and a switch empties the buffer that was showing them.
+     *
+     * @param {string} tabKey
+     * @returns {Array<string>|null} A copy, oldest first; null before the first read has merged
+     */
+    messagesFor(tabKey) {
+        if (!this.loaded || !this.tabs) return null;
+        return [...(this.tabs[tabKey] || [])];
     }
 
     /**
@@ -989,7 +1122,7 @@ class ChatHistoryPersistence {
         // message already held is updated in place rather than appended.
         const outcome = mergeMessage(this.tabs[tabKey], html);
         if (outcome === 'same') return;
-        if (outcome === 'appended') applyCaps(this.tabs, this.getMaxHistory());
+        if (outcome === 'appended') applyCaps(this.tabs, this.getMaxHistory(), this.liveCounts);
         this.dirty = true;
         this._scheduleWrite();
     }
@@ -1067,7 +1200,7 @@ class ChatHistoryPersistence {
 
         if (!this.loaded) return this._mergeIntoStored(immediate);
 
-        applyCaps(this.tabs, this.getMaxHistory());
+        applyCaps(this.tabs, this.getMaxHistory(), this.liveCounts);
         // Cleared before the await so a line recorded while the write is in
         // flight marks the record dirty again; restored if the write fails.
         this.dirty = false;
@@ -1077,7 +1210,12 @@ class ChatHistoryPersistence {
             accepted =
                 (await storage.set(
                     characterKey(CHAT_HISTORY_KEY_BASE),
-                    { v: RECORD_VERSION, savedAt: Date.now(), tabs: this.tabs },
+                    {
+                        v: RECORD_VERSION,
+                        savedAt: Date.now(),
+                        tabs: this.tabs,
+                        live: liveForRecord(this.liveCounts, this.tabs),
+                    },
                     CHAT_HISTORY_STORE,
                     immediate
                 )) === true;
@@ -1106,6 +1244,7 @@ class ChatHistoryPersistence {
     async _mergeIntoStored(immediate) {
         const key = characterKey(CHAT_HISTORY_KEY_BASE);
         const perTab = this.getMaxHistory();
+        const sessionLive = { ...this.liveCounts };
         const pending = Object.entries(this.tabs).map(([tabKey, list]) => [tabKey, [...list]]);
         // An earlier session's final write, captured before this one's own
         // flush is tracked — waiting on itself would never finish.
@@ -1122,19 +1261,20 @@ class ChatHistoryPersistence {
             return false;
         }
 
-        const tabs = tabsFromRecord(read.record, perTab);
+        const live = { ...liveFromRecord(read.record), ...sessionLive };
+        const tabs = tabsFromRecord(read.record, perTab, live);
         for (const [tabKey, list] of pending) {
             if (!tabs[tabKey]) tabs[tabKey] = [];
             for (const html of list) mergeMessage(tabs[tabKey], html);
             if (!tabs[tabKey].length) delete tabs[tabKey];
         }
-        applyCaps(tabs, perTab);
+        applyCaps(tabs, perTab, live);
 
         try {
             return (
                 (await storage.set(
                     key,
-                    { v: RECORD_VERSION, savedAt: Date.now(), tabs },
+                    { v: RECORD_VERSION, savedAt: Date.now(), tabs, live: liveForRecord(live, tabs) },
                     CHAT_HISTORY_STORE,
                     immediate
                 )) === true
@@ -1204,6 +1344,7 @@ class ChatHistoryPersistence {
         this.loadPromise = null;
         this.loaded = false;
         this.dirty = false;
+        this.liveCounts = {};
         this.enabled = false;
         this.getMaxHistory = () => MAX_MESSAGES_PER_TAB;
     }

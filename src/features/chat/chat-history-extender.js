@@ -688,6 +688,87 @@ function getReactPropsForNodes(domNodes) {
     return result;
 }
 
+/** The `[date time]` stamp an identity opens with, or null. */
+function identityStamp(identity) {
+    if (!identity?.startsWith('[')) return null;
+    const close = identity.indexOf(']');
+    return close > 0 ? identity.slice(0, close + 1) : null;
+}
+
+/**
+ * How many leading stored lines come before the game's live backlog, or are
+ * indistinguishable from where it begins.
+ *
+ * The backlog starts at its first line's LAST stored occurrence, not the
+ * first: two genuine messages can share an identity (same timestamp, sender
+ * and text) and the store keeps one entry, at the earlier message's position,
+ * so stopping at the first match would drop every restorable line between the
+ * two. The stored lines straight after that match that carry the same stamp
+ * are counted too, for the same reason: they can be older than the live copy,
+ * so only a later stamp proves a line newer than the backlog. A stored line
+ * with a later stamp (deleted, or never sent back after a reload) still ends
+ * it, so nothing provably newer is drawn above older live lines.
+ *
+ * @param {Array<string|null>} stored - {@link messageIdentity} of each stored line, oldest first
+ * @param {Array<string|null>} live - {@link messageIdentity} of each live line, oldest first
+ * @returns {number} Count of leading `stored` lines to consider, or -1 when no live line is stored
+ */
+export function liveBoundary(stored, live) {
+    // The oldest live line can be absent from the store on purpose (a deleted line is never stored), so the
+    // boundary sits on the oldest live line that IS stored; without one, nothing is known to be newer
+    for (const identity of live) {
+        if (!identity) continue;
+        const boundary = boundaryAfter(stored, identity);
+        if (boundary >= 0) return boundary;
+    }
+    return -1;
+}
+
+/**
+ * Count of leading stored lines up to and including the last stored copy of
+ * `identity`, plus the same-stamp lines straight after it (see
+ * {@link liveBoundary}, which this is the shared rule of).
+ *
+ * @param {Array<string|null>} stored - Stored identities, oldest first
+ * @param {string|null|undefined} identity - The line the boundary sits on
+ * @returns {number} The boundary, or -1 when `identity` is not stored
+ */
+function boundaryAfter(stored, identity) {
+    const at = identity ? stored.lastIndexOf(identity) : -1;
+    if (at < 0) return -1;
+    const stamp = identityStamp(identity);
+    let end = at + 1;
+    while (stamp && end < stored.length && identityStamp(stored[end]) === stamp) end += 1;
+    return end;
+}
+
+/**
+ * How many leading stored lines a restore may draw.
+ *
+ * Ends where the live backlog begins ({@link liveBoundary}) and, whichever
+ * comes first, at the first line this tab already holds in its buffer: those
+ * were evicted this session, so nothing stored after them is older than they
+ * are. Together these keep a line newer than the backlog from being drawn
+ * above it.
+ *
+ * @param {Array<string|null>} stored - Stored identities, oldest first
+ * @param {Array<string|null>} live - Live identities, oldest first
+ * @param {Set<string>} buffered - Identities already in the buffer
+ * @returns {number} Count of leading stored lines to consider
+ */
+function restoreBoundary(stored, live, buffered) {
+    let end = liveBoundary(stored, live);
+    if (end < 0) end = stored.length;
+    // Each buffered line is bounded at its LAST stored copy, like the live
+    // backlog: an earlier stored copy of a later-evicted line leaves the lines
+    // between the two older than it, so they are still restorable.
+    for (const identity of buffered) {
+        const at = boundaryAfter(stored, identity);
+        if (at >= 0) end = Math.min(end, at);
+    }
+    return end;
+}
+
 /**
  * Manages the history buffer for a single chat tab container.
  */
@@ -713,6 +794,8 @@ class ChatTabHandler {
          * next restore; read by {@link ChatTabHandler#refillIfNeeded}.
          */
         this.needsRefill = false;
+        /** Saved live allowance at the last restore; read only by {@link ChatTabHandler#_pendingOverlap}. */
+        this._restoredAllowance = 0;
         /** Guards the one re-run of a restore whose failed answer raced a recovery. */
         this._retriedRestore = false;
         /** Whether a restore has already been fired for this tab; see {@link _resolveTabKey}. */
@@ -764,6 +847,11 @@ class ChatTabHandler {
         return [...this.container.children].filter(
             (el) => el !== this.bufferEl && el.className?.includes?.('ChatMessage_chatMessage')
         );
+    }
+
+    /** @returns {Array<string|null>} {@link messageIdentity} of every live message, in pane order */
+    _liveIdentityList() {
+        return this._liveMessageNodes().map((node) => messageIdentity(serializeMessage(node)));
     }
 
     /** @returns {Set<string>} {@link messageIdentity} of every live message */
@@ -828,13 +916,36 @@ class ChatTabHandler {
      * Take out of the buffer any message the game has just rendered live again
      * — a restored copy of a line that was still on screen when it was saved,
      * which the game re-renders after a reload or when its tab is reopened.
+     * Restored lines from the start of the live backlog on go too (see
+     * {@link liveBoundary}): the backlog rendered after the restore landed, and
+     * those lines are not older than it.
      * @param {Set<string>} identities - Of the messages just rendered live
      */
     _dropBufferedDuplicates(identities) {
         if (!identities.size) return;
-        for (const node of this._messageNodes()) {
-            const identity = this._bufferIdentity(node);
-            if (!identity || !identities.has(identity)) continue;
+        const nodes = this._messageNodes().map((node) => ({
+            node,
+            restored: Boolean(node.compareDocumentPosition(this.restoreAnchor) & Node.DOCUMENT_POSITION_FOLLOWING),
+            identity: this._bufferIdentity(node),
+        }));
+        const restoredNodes = nodes.filter((entry) => entry.restored);
+        // Restored history ends where the live backlog begins, as in `restore`.
+        // Every batch of a live chat passes through here, so the live pane is
+        // only read once a restored line has actually come round again.
+        let tailStart = Infinity;
+        const firstRepeat = restoredNodes.findIndex((entry) => entry.identity && identities.has(entry.identity));
+        if (firstRepeat >= 0) {
+            const boundary = liveBoundary(
+                restoredNodes.map((entry) => entry.identity),
+                this._liveIdentityList()
+            );
+            tailStart = boundary >= 0 ? boundary : firstRepeat;
+        }
+        let restoredIndex = 0;
+        for (const { node, restored, identity } of nodes) {
+            const index = restored ? restoredIndex++ : -1;
+            const renderedLive = Boolean(identity) && identities.has(identity);
+            if (!renderedLive && !(restored && index >= tailStart)) continue;
             node.querySelectorAll('[data-mwi-uid]').forEach((u) => {
                 this.interactionCache.delete(u.getAttribute('data-mwi-uid'));
             });
@@ -855,6 +966,7 @@ class ChatTabHandler {
      * the new tab's is restored straight after.
      */
     _clearBuffer() {
+        this._restoredAllowance = 0;
         for (const node of this._messageNodes()) {
             node.querySelectorAll('[data-mwi-uid]').forEach((u) => {
                 this.interactionCache.delete(u.getAttribute('data-mwi-uid'));
@@ -964,7 +1076,10 @@ class ChatTabHandler {
             return 0;
         }
 
-        const stored = loaded[tabKey];
+        // The working record, not the first read's snapshot: a restore after a
+        // tab switch has to include what this tab evicted since that read, which
+        // the switch has just cleared out of the buffer.
+        const stored = chatHistoryPersistence.messagesFor(tabKey) ?? loaded[tabKey];
         if (!Array.isArray(stored) || !stored.length) return 0;
 
         // Messages are recorded while they are still live, so what is on disk
@@ -972,19 +1087,41 @@ class ChatTabHandler {
         // so does a copy this tab already evicted into its buffer — a refill
         // runs on a tab that has been taking evictions since it mounted.
         const live = this._liveIdentities();
+        const liveNow = this._liveMessageNodes().length;
+        // The saved allowance says how many stored lines the game's backlog
+        // will duplicate, and until that backlog renders they are all in the
+        // buffer. An empty pane is not a report that nothing is live — it is
+        // a backlog that has not arrived — so it must not overwrite the saved
+        // figure, which the cap and the trim below both still need.
+        // A pane that already shows a backlog has answered for itself: the saved
+        // figure is stale, and holding it would keep the overlap of lines the
+        // backlog never duplicates past the cap for good.
+        this._restoredAllowance = liveNow > 0 ? liveNow : (chatHistoryPersistence.liveCountFor(tabKey) ?? 0);
+        if (liveNow > 0) chatHistoryPersistence.setLiveCount(tabKey, liveNow);
+        const buffered = new Set();
         for (const node of this._messageNodes()) {
             const identity = this._bufferIdentity(node);
-            if (identity) live.add(identity);
+            if (!identity) continue;
+            live.add(identity);
+            buffered.add(identity);
         }
+        const storedIdentities = stored.map((html) => messageIdentity(html));
+        const end = restoreBoundary(storedIdentities, this._liveIdentityList(), buffered);
 
         let restored = 0;
-        for (const html of stored) {
+        for (let index = 0; index < end; index += 1) {
+            const html = stored[index];
             try {
-                if (live.has(messageIdentity(html))) continue;
+                // A copy of a line the game shows again is the live one's to
+                // draw. It is skipped, not a stopping point: two messages can
+                // share an identity, and the store keeps one entry at the
+                // earlier message's position, ahead of lines older than the
+                // live copy.
+                if (live.has(storedIdentities[index])) continue;
                 // A deletion that arrived while the `load()` above was still
-                // in flight has already purged `chatHistoryPersistence.tabs`
-                // — a different in-memory object than the snapshot `stored`
-                // was read from, and untouched by that purge (see
+                // in flight purges `chatHistoryPersistence.tabs` only once its
+                // own wait on that read resumes, which can be after this one;
+                // the snapshot fallback is never purged at all (see
                 // DeletedMessageIds' class doc). Without this check, that
                 // deleted message would be restored anyway.
                 if (this.deletedIds?.has(extractStoredMessageId(html))) continue;
@@ -1000,6 +1137,9 @@ class ChatTabHandler {
             }
         }
 
+        // Allows for the overlap still ahead (see `_pendingOverlap`): trimming to
+        // the bare cap now and then dropping the duplicates would leave the cap
+        // minus the overlap.
         this._trim(this.getMaxHistory());
         return restored;
     }
@@ -1027,12 +1167,30 @@ class ChatTabHandler {
     }
 
     /**
-     * Trim the buffer to `maxHistory` messages, oldest first.
+     * Stored lines a restore put in the buffer that the game's backlog has not
+     * yet rendered, and will duplicate when it does.
+     *
+     * The saved record holds the cap plus the lines that were live; a restore
+     * before the backlog renders holds all of them, and
+     * {@link ChatTabHandler#_dropBufferedDuplicates} then removes the live
+     * suffix. The buffer may carry that many lines past the cap until it has.
+     * Shrinks as live lines appear; zero once the pane shows as many as the
+     * saved allowance.
+     * @returns {number}
+     */
+    _pendingOverlap() {
+        return Math.max(0, this._restoredAllowance - this._liveMessageNodes().length);
+    }
+
+    /**
+     * Trim the buffer to `maxHistory` messages, oldest first, plus any lines
+     * still waiting to be matched against the game's backlog.
      * @param {number} maxHistory
      */
     _trim(maxHistory) {
         const nodes = this._messageNodes();
-        while (nodes.length > maxHistory) {
+        const limit = maxHistory + this._pendingOverlap();
+        while (nodes.length > limit) {
             const oldNode = nodes.shift();
             oldNode.querySelectorAll('[data-mwi-uid]').forEach((u) => {
                 this.interactionCache.delete(u.getAttribute('data-mwi-uid'));
@@ -1263,6 +1421,20 @@ class ChatTabHandler {
         // record under the incoming tab's key.
         const switched = Boolean(previousKey) && Boolean(tabKey) && tabKey !== previousKey;
         const renderedLive = new Set();
+        // Before anything is recorded: the observer delivers a batch after the
+        // DOM has changed, so the pane already holds the batch's new lines, and
+        // each one reaches the record's cap before the end of the loop. With
+        // last batch's count the cap would drop an oldest entry per new line.
+        // A switch batch can leave the outgoing tab's lines in the pane, so its
+        // count may only raise the incoming tab's saved allowance, never lower
+        // it. Without the raise, a tab reopened with a larger backlog than it
+        // was saved with records every new line against the old, smaller
+        // allowance, and each one evicts an oldest entry.
+        if (tabKey) {
+            const count = this._liveMessageNodes().length;
+            const saved = chatHistoryPersistence.liveCountFor(tabKey);
+            if (!switched || saved === null || count > saved) chatHistoryPersistence.setLiveCount(tabKey, count);
+        }
 
         mutations.forEach((mut) => {
             mut.addedNodes.forEach((node) => {
@@ -1327,6 +1499,12 @@ class ChatTabHandler {
         });
 
         this._dropBufferedDuplicates(renderedLive);
+        // The restore's surplus is released once the live suffix is known. A delayed backlog that renders
+        // smaller than the saved allowance has still identified its size, so the overlap held for it ends
+        if (renderedLive.size) {
+            this._restoredAllowance = Math.min(this._restoredAllowance, this._liveMessageNodes().length);
+            this._trim(maxHistory);
+        }
         // A tab that just became this container's (a switch, late naming) has
         // had its backlog tagged above; whatever is still queued for it
         // matched nothing and never will.
@@ -1430,6 +1608,18 @@ class ChatHistoryExtender {
             );
             this.tabHandlers.set(containerEl, handler);
             this.activeHandlers.add(handler);
+            // The pane's own count, reported before the scan below records any of
+            // it: the first load merges those recordings under the cap, and until
+            // this is said the cap only knows the saved allowance. Only a raise,
+            // as in a switch batch; an empty pane is a backlog yet to arrive, not
+            // a report of none.
+            if (handler.tabKey) {
+                const count = handler._liveMessageNodes().length;
+                const saved = chatHistoryPersistence.liveCountFor(handler.tabKey);
+                if (count > 0 && (saved === null || count > saved)) {
+                    chatHistoryPersistence.setLiveCount(handler.tabKey, count);
+                }
+            }
             containerEl.querySelectorAll('[class*="ChatMessage_chatMessage"]').forEach((msg) => {
                 handler.hydrateMessage(msg);
                 // Tagged before it is recorded, the same order `_onMutation`
