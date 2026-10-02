@@ -2040,7 +2040,7 @@ export const settingsGroups = {
                     { value: 'orderBook', label: 'Order book (ask/bid, by pricing mode below)' },
                     { value: 'officialValue', label: "Game's market value (matches inventory tooltip)" },
                 ],
-                help: "Order book prices your items from the live ask/bid using the pricing mode below. Game's market value uses the value the game itself publishes (behind the inventory's Total Market Value) — a single estimate per item, refreshed every ~10 min, so it stays fresher than the market feed and makes the net-worth total match the game. Only takes effect once the marketplace update is live.",
+                help: "Order book prices your items from the live ask/bid using the pricing mode below. Game's market value uses the value the game itself publishes (behind the inventory's Total Market Value) — a single estimate per item that the game refreshes about hourly, so the net-worth total matches the game. Applies at every enhancement level, so the enhancement-cost setting below does not apply to an item the game has a value for. Only takes effect once the marketplace update is live.",
             },
             networth_pricingMode: {
                 id: 'networth_pricingMode',
@@ -2058,7 +2058,7 @@ export const settingsGroups = {
                 label: 'Use enhancement cost for highly enhanced items',
                 type: 'checkbox',
                 default: true,
-                help: 'Market prices are unreliable for highly enhanced items (+13 and above). Use calculated enhancement cost instead.',
+                help: 'Market prices are unreliable for highly enhanced items (+13 and above). Use calculated enhancement cost instead. Has no effect on items the game publishes a value for when the value source is set to the game market value.',
             },
             networth_highEnhancementMinLevel: {
                 id: 'networth_highEnhancementMinLevel',
