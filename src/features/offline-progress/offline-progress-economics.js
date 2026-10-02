@@ -22,6 +22,7 @@
 import config from '../../core/config.js';
 import dataManager from '../../core/data-manager.js';
 import domObserver from '../../core/dom-observer.js';
+import marketAPI from '../../api/marketplace.js';
 import { calculateOfflineEconomics } from '../../utils/offline-economics-calculator.js';
 import { formatPrice } from '../../utils/market-data.js';
 import { formatKMB } from '../../utils/formatters.js';
@@ -59,6 +60,8 @@ class OfflineProgressEconomics {
         this.currentModalNode = null;
         this.currentModalSignature = null;
         this.pricingModeChangeHandler = null;
+        this.marketUpdateHandler = null;
+        this.currentBlockPartial = false;
         this.modalCleanupUnwatch = null;
         this.incompleteModalObserver = null;
         this.incompleteModalNode = null;
@@ -208,6 +211,7 @@ class OfflineProgressEconomics {
             const block = buildBlock(economics);
             wrapper.after(block);
             this.currentBlock = block;
+            this.currentBlockPartial = Boolean(economics.isPartial);
             // A reconnect can cache the next offline payload while this native modal
             // still shows the previous one. Pricing changes must retain its snapshot.
             this.currentBlockData = this.currentOfflineData;
@@ -224,6 +228,15 @@ class OfflineProgressEconomics {
             config.onSettingChange(key, this.pricingModeChangeHandler);
         }
 
+        // The modal is on screen from the first moment of login, which is before the startup market
+        // fetch has necessarily landed: items priced from nothing are reported "no price data" and
+        // would stay that way. Only a partial block follows market updates — a complete one keeps its
+        // figures steady (and its expanded rows open) while the player reads it.
+        this.marketUpdateHandler = () => {
+            if (this.currentBlockPartial) this.recompute();
+        };
+        marketAPI.on(this.marketUpdateHandler);
+
         this.setupCleanupObserver(modalContentNode);
         return true;
     }
@@ -237,6 +250,7 @@ class OfflineProgressEconomics {
         const newBlock = buildBlock(economics);
         this.currentBlock.replaceWith(newBlock);
         this.currentBlock = newBlock;
+        this.currentBlockPartial = Boolean(economics.isPartial);
     }
 
     /**
@@ -354,10 +368,15 @@ class OfflineProgressEconomics {
             }
             this.pricingModeChangeHandler = null;
         }
+        if (this.marketUpdateHandler) {
+            marketAPI.off(this.marketUpdateHandler);
+            this.marketUpdateHandler = null;
+        }
         if (this.currentBlock) {
             this.currentBlock.remove();
             this.currentBlock = null;
         }
+        this.currentBlockPartial = false;
         this.currentBlockData = null;
         this.currentModalNode = null;
         this.currentModalSignature = null;

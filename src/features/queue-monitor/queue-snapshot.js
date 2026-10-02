@@ -15,6 +15,7 @@ class QueueSnapshot {
     constructor() {
         this.snapshots = new Map(); // characterId -> snapshot
         this._boundOnSwitching = null;
+        this._loadPromise = null;
     }
 
     /**
@@ -30,7 +31,18 @@ class QueueSnapshot {
         }
 
         // Load existing snapshots from storage
-        this._loadSnapshots();
+        this._loadPromise = this._loadSnapshots();
+    }
+
+    /**
+     * Resolves once the stored snapshots are in memory, starting the load if
+     * nothing has yet. Readers that judge a snapshot at page load await this,
+     * since initialize() does not
+     * @returns {Promise<void>}
+     */
+    whenLoaded() {
+        if (!this._loadPromise) this._loadPromise = this._loadSnapshots();
+        return this._loadPromise;
     }
 
     /**

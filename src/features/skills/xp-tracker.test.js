@@ -354,6 +354,20 @@ describe('time till next level in a combat skill tooltip', () => {
         expect(el.querySelector('.mwi-xp-time-left')?.textContent).toBe('2 hours till next level');
     });
 
+    test('minutes that round up into the next hour carry into the hours', () => {
+        xpTracker.xpHistory.melee = [
+            { t: 10 * HOUR - 5 * 60_000, xp: 1_000_000 },
+            { t: 10 * HOUR, xp: 1_100_000 },
+        ];
+        // 1.2M/hr, 2.39M to go: 1 hour 59.5 minutes, which is 2 hours, not "1 hour 60 minutes"
+        const el = tooltip();
+        el.children[3].textContent = 'XP To Level Up: 2,390,000';
+
+        xpTracker._addTimeTillLevelUp(el);
+
+        expect(el.querySelector('.mwi-xp-time-left')?.textContent).toBe('2 hours till next level');
+    });
+
     test('no session and nothing in the last 10 minutes shows no line', () => {
         xpTracker.xpHistory.melee = [
             { t: 5 * HOUR, xp: 1_000_000 },
