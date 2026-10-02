@@ -1252,7 +1252,36 @@ class BulkSellAssistant {
             this._armVendorThenPress(target.button);
             return;
         }
+        // Armed already (by the player's own Sell For click, perhaps a moment ago): the game ignores a
+        // confirm landing right after the arming, so it stands for the settle interval here too
+        if (target.armed === true) {
+            this._pressArmedVendorAfterSettle();
+            return;
+        }
         this._pressConfirm(target.button);
+    }
+
+    /**
+     * Press an already-armed vendor button once it has stood for `VENDOR_CONFIRM_SETTLE_MS`, checking
+     * again that the step, the menu and the armed button are all still the ones this press is for.
+     */
+    async _pressArmedVendorAfterSettle() {
+        if (this._vendorArming) return;
+        this._vendorArming = true;
+        const key = this._stepKey();
+        try {
+            await new Promise((resolve) => setTimeout(resolve, VENDOR_CONFIRM_SETTLE_MS));
+            if (this.state !== 'awaiting_confirm' || this._stepKey() !== key || this._confirmSent()) return;
+            const settled = this._confirmTarget();
+            if (settled.why || !settled.armed) {
+                this.confirmNote = settled.why || 'the Sell For button was no longer armed, so it pressed nothing';
+                this._render();
+                return;
+            }
+            this._pressConfirm(settled.button);
+        } finally {
+            this._vendorArming = false;
+        }
     }
 
     /** Mark the step sent and press the game's button — the one game action of this step */

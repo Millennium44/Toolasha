@@ -1323,6 +1323,19 @@ describe('confirming from the strip', () => {
             expect(reactClicks.calls[0].options).toEqual({ reactFirst: true });
         });
 
+        test('a button the player armed a moment ago also stands before it is pressed', async () => {
+            openMenu({ label: 'Confirm Sell For 400K Coins' });
+            vendorRun();
+
+            confirmBtn().click();
+            await vi.advanceTimersByTimeAsync(150);
+            expect(gameClicks).toBe(0);
+
+            await vi.advanceTimersByTimeAsync(600);
+            expect(gameClicks).toBe(1);
+            expect(armClicks).toBe(0);
+        });
+
         test('an already-armed button is pressed once, with no arming click', async () => {
             openMenu({ label: 'Confirm Sell For 400K Coins' });
             vendorRun();
