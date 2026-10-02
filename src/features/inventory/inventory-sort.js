@@ -13,6 +13,7 @@ import { BADGE_MODE_SETTING, stackBadgeValueKey } from './inventory-badge-mode.j
 import { createTimerRegistry } from '../../utils/timer-registry.js';
 import { readScoped, writeScoped } from '../../utils/character-key.js';
 import { captureOwner, stillOurs, noteTeardown } from '../../utils/init-ownership.js';
+import { tileBadgeFontCSS } from '../../utils/tile-badge-text.js';
 
 /**
  * Wait for `promise`, but never past `timeoutMs`.
@@ -723,7 +724,7 @@ class InventorySort {
             right: 2px;
             z-index: 1;
             color: ${config.COLOR_ACCENT};
-            font-size: 0.7rem;
+            ${tileBadgeFontCSS(0.7)}
             font-weight: bold;
             text-align: right;
             pointer-events: none;

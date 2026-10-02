@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Inventory value badges follow the text size
+
+- The stack-value badges on inventory items now follow the Toolasha text size and font. The ask/bid price badges follow the font and shrink with smaller sizes, but don't grow, since two of them share a row.
+
 ### Shykai sim gets your shrines and labyrinth upgrades
 
 - Exports to Shykai's simulator now carry your combat guild shrines (and your party's) and your labyrinth upgrades, which Shykai just added support for.

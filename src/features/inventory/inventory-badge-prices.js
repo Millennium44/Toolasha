@@ -13,6 +13,7 @@ import inventoryBadgeManager from './inventory-badge-manager.js';
 import { BADGE_MODE_SETTING, showsItemPriceBadges } from './inventory-badge-mode.js';
 import inventorySort from './inventory-sort.js';
 import { createTimerRegistry } from '../../utils/timer-registry.js';
+import { tileBadgeFontCSS, PAIRED_BADGE_ZOOM_CAP } from '../../utils/tile-badge-text.js';
 
 /**
  * InventoryBadgePrices class manages price badge overlays on inventory items
@@ -220,7 +221,7 @@ class InventoryBadgePrices {
             ${isAsk ? 'left: 2px;' : 'right: 2px;'}
             z-index: 1;
             color: ${color};
-            font-size: 0.7rem;
+            ${tileBadgeFontCSS(0.7, PAIRED_BADGE_ZOOM_CAP)}
             font-weight: bold;
             text-align: ${isAsk ? 'left' : 'right'};
             pointer-events: none;
