@@ -542,6 +542,28 @@ describe('crediting what is already on hand', () => {
         expect(credited.decomposeActions).toBe(batch.decomposeActions);
     });
 
+    test('a credited batch reads back the hours and bells its own counts cover, not the duration asked', async () => {
+        const loop = await calculateStarfruitLoop();
+        const batch = balanceBatch(loop, 16); // 1,600 forage, 1,600 decompose, 480 coinify
+
+        // Stock covering both upstream legs: the live case of 211K fruit and 1,028K essence
+        const credited = applyHoldings(batch, loop, {
+            starfruitHeld: 999_999,
+            essenceHeld: 999_999,
+            holdingsCredited: true,
+        });
+
+        expect(credited.forageActions).toBe(0);
+        expect(credited.decomposeActions).toBe(0);
+        expect(credited.coinifyActions).toBe(480);
+        // 480 coinify actions at 180 an hour is 2⅔h of queue, not the 16h that was asked
+        expect(credited.hours).toBeCloseTo(480 / 180, 8);
+        expect(credited.requestedHours).toBe(16);
+        // Coinifying held essence pays 480 × 15,000 × 0.7 and spends no decompose fee
+        expect(credited.gold).toBeCloseTo(480 * 15_000 * 0.7, 4);
+        expect(credited.bells).toBeCloseTo((480 * 15_000 * 0.7) / loop.bellPrice, 8);
+    });
+
     test('credits nothing, and says so, when the loop items could not be resolved', async () => {
         const loop = await calculateStarfruitLoop();
         const batch = balanceBatch(loop, 16);

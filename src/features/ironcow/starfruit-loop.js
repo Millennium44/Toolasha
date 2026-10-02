@@ -433,8 +433,9 @@ export function balanceBatch(loop, hours) {
  * @param {Object|null} loop - From `calculateStarfruitLoop`
  * @param {Object|null} state - From `readCharacterState` (`starfruitHeld`, `essenceHeld`,
  *   `holdingsCredited`)
- * @returns {Object|null} The batch, `forageActions`/`decomposeActions` reduced and a `credits`
- *   array of `{item, name, amount, actionsSaved}` describing what was credited; a `holdingsNote`
+ * @returns {Object|null} The batch, `forageActions`/`decomposeActions` reduced, `hours`/`gold`/`bells`
+ *   read back off the reduced counts when anything was credited (`requestedHours` keeps the ask), and a
+ *   `credits` array of `{item, name, amount, actionsSaved}` describing what was credited; a `holdingsNote`
  *   instead when holdings were explicitly not resolvable; or `batch` unchanged when there is
  *   nothing to credit against
  */
@@ -485,7 +486,23 @@ export function applyHoldings(batch, loop, state) {
         }
     }
 
-    return { ...batch, forageActions, decomposeActions, credits, holdingsNote: '' };
+    if (!credits.length) return { ...batch, forageActions, decomposeActions, credits, holdingsNote: '' };
+
+    // `hours`, `gold` and `bells` from `balanceBatch` describe the uncredited counts.
+    // Once a leg shrinks they must be read back off the counts that remain: 1,028K
+    // held essence zeroes forage and decompose, and the coinify leg left over runs
+    // a few hours of a 16-hour request and spends no decompose fee.
+    const hours =
+        forageActions / (loop.forageActionsPerHour || Infinity) +
+        decomposeActions / (loop.decomposeActionsPerHour || Infinity) +
+        batch.coinifyActions / (loop.coinifyActionsPerHour || Infinity);
+    const gold =
+        batch.coinifyActions * (loop.coinsPerSuccess || 0) * (loop.coinifyRate || 0) -
+        decomposeActions * decomposeBulk * (loop.goldOutPerFruit || 0);
+    const bellPrice = loop.bellPrice;
+    const bells = Number.isFinite(bellPrice) && bellPrice > 0 ? gold / bellPrice : null;
+
+    return { ...batch, forageActions, decomposeActions, hours, gold, bells, credits, holdingsNote: '' };
 }
 
 /**

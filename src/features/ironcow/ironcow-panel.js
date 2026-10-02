@@ -1085,7 +1085,13 @@ class IronCowFarmPanel {
         const earns = batch.bells === null ? '' : ` · about ${bells(batch.bells)} bells`;
         const steps = buildQueueSteps(loop, batch);
         const presses = steps.length === 1 ? '1 press' : `${formatWithSeparator(steps.length)} presses`;
-        refs.summary.textContent = `Keeps the queue busy about ${round1(batch.hours)}h${earns} — ${presses}.`;
+        // Stock on hand can shrink the batch well below the duration asked; say so
+        // rather than leave a short figure next to a longer request unexplained.
+        const shortened =
+            batch.credits?.length && batch.requestedHours > 0 && batch.hours < batch.requestedHours * 0.99
+                ? ` (not ${round1(batch.requestedHours)}h: what you hold replaces the legs that would have made it)`
+                : '';
+        refs.summary.textContent = `Keeps the queue busy about ${round1(batch.hours)}h${shortened}${earns} — ${presses}.`;
 
         if (refs.walk) refs.walk.textContent = steps.length ? `Walk it — ${presses}` : 'Walk it';
     }
