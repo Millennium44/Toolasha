@@ -1280,6 +1280,7 @@ describe('confirming from the strip', () => {
             runAtStep0();
             bulkSell.decision = { insta: false, vendor: true, price: PRICE, reason: 'vendor' };
             bulkSell._render();
+            bulkSell._trackVendorArming();
             bulkSell._watchClose('[class*="Item_actionMenu"]');
         };
 
@@ -1395,12 +1396,13 @@ describe('confirming from the strip', () => {
             expect(gameClicks).toBe(2);
         });
 
-        test('a player click on an already-armed button during the settle wait cancels our press and stays retryable', async () => {
-            // The player may have armed it a moment ago, so the game may ignore that click
-            const menu = openMenu({ label: 'Confirm Sell For 400K Coins' });
+        test('a player click on a button they armed a moment ago stays retryable', async () => {
+            // The game may ignore a confirm landing that soon after the arming
+            const menu = openMenu();
             vendorRun();
             const sell = menu.querySelector('.Button_sell__x');
 
+            sell.click(); // the player arms it
             confirmBtn().click();
             sell.click();
             await vi.advanceTimersByTimeAsync(1200);
@@ -1409,6 +1411,24 @@ describe('confirming from the strip', () => {
             expect(bulkSell._confirmSent()).toBe(false);
             sell.click();
             expect(gameClicks).toBe(2);
+        });
+
+        test('a player click on a button armed long ago is the sale, and guards against a second', async () => {
+            const menu = openMenu();
+            vendorRun();
+            const sell = menu.querySelector('.Button_sell__x');
+
+            sell.click(); // the player arms it
+            await vi.advanceTimersByTimeAsync(2000);
+            confirmBtn().click();
+            sell.click();
+            sell.click();
+            await vi.advanceTimersByTimeAsync(1200);
+
+            expect(armClicks).toBe(1);
+            expect(gameClicks).toBe(1);
+            expect(bulkSell._confirmSent()).toBe(true);
+            bulkSell._releaseSaleGuard();
         });
 
         test('a second player click after the armed-button click during the wait sends no second sale', async () => {

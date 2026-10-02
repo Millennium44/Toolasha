@@ -1269,11 +1269,11 @@ class BulkSellAssistant {
         if (this._vendorArming) return;
         this._vendorArming = true;
         const key = this._stepKey();
-        // The player may press the armed button themselves during the wait. When they armed it is not
-        // known, so the wait's start stands in for it: any click during the wait may be one the game
-        // ignores, and only cancels our press
+        // The player may press the armed button themselves during the wait. Whether that click is the
+        // sale depends on how long the button had stood armed, which `_trackVendorArming` recorded; an
+        // arming it never saw is treated as long past
         const watch = this._watchMenuClicks(key);
-        watch.armedAt = Date.now();
+        watch.armedAt = this._vendorArmedAt;
         try {
             await new Promise((resolve) => setTimeout(resolve, VENDOR_CONFIRM_SETTLE_MS));
             if (this.state !== 'awaiting_confirm' || this._stepKey() !== key || this._confirmSent()) return;
@@ -1326,6 +1326,30 @@ class BulkSellAssistant {
         document.addEventListener('click', onClick, true);
         watch.stop = () => document.removeEventListener('click', onClick, true);
         return watch;
+    }
+
+    /**
+     * Record when the item menu's vendor button is armed (a click on an unarmed "Sell For"), by the
+     * player or by us, for as long as this vendor step lasts. The game ignores a confirm landing soon
+     * after the arming, so a player's own confirm click is only taken as the sale once the button has
+     * stood armed for `VENDOR_CONFIRM_SETTLE_MS` — see `_watchMenuClicks`.
+     */
+    _trackVendorArming() {
+        this._stopTrackingVendorArming();
+        this._vendorArmedAt = null;
+        const onClick = (event) => {
+            const button = event.target?.closest?.('[class*="Item_actionMenu"] button');
+            if (button && /^sell for\b/i.test(button.textContent.trim())) this._vendorArmedAt = Date.now();
+        };
+        document.addEventListener('click', onClick, true);
+        this._vendorArmTracker = onClick;
+    }
+
+    _stopTrackingVendorArming() {
+        if (!this._vendorArmTracker) return;
+        document.removeEventListener('click', this._vendorArmTracker, true);
+        this._vendorArmTracker = null;
+        this._vendorArmedAt = null;
     }
 
     /** Mark the step sent and press the game's button — the one game action of this step */
@@ -1944,6 +1968,7 @@ class BulkSellAssistant {
             };
             this.state = 'awaiting_confirm';
             this._render();
+            this._trackVendorArming();
             this._watchClose('[class*="Item_actionMenu"]');
         };
         setTimeout(() => awaitMenu(1), 350);
@@ -2091,6 +2116,7 @@ class BulkSellAssistant {
 
     _clearTransient() {
         this._releaseSaleGuard();
+        this._stopTrackingVendorArming();
         if (this.bookTimeout) {
             clearTimeout(this.bookTimeout);
             this.bookTimeout = null;
