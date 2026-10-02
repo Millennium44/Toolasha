@@ -17,6 +17,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 - Duplicates the previous version stored for players with rank badges are folded on load, so they no longer crowd older history out of the saved limit.
 - The saved-history limit now counts only lines older than what the game is still showing, so a busy tab keeps your full history setting's worth of older lines after a reload; the total saved per character rises from 256 KB to 1 MB to make room.
 
+### Net worth matches the game at high enhancement levels
+
+- With net worth set to the game's market value, items at +13 and above now use the game's value too instead of Toolasha's enhancement-cost estimate, so the total matches the game's own Total Market Value.
+
 ### Rank badge options for Steam ranks
 
 - With Steam leaderboards included, two new settings can mark a badge whose rank comes from a Steam board with an "S", and show a player's standard rank instead when they have one, even if their Steam rank is higher.

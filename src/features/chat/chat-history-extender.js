@@ -714,10 +714,22 @@ function identityStamp(identity) {
  * @returns {number} Count of leading `stored` lines to consider, or -1 when no live line is stored
  */
 export function liveBoundary(stored, live) {
-    const first = live.find(Boolean);
-    const at = first ? stored.lastIndexOf(first) : -1;
+    return boundaryAfter(stored, live.find(Boolean));
+}
+
+/**
+ * Count of leading stored lines up to and including the last stored copy of
+ * `identity`, plus the same-stamp lines straight after it (see
+ * {@link liveBoundary}, which this is the shared rule of).
+ *
+ * @param {Array<string|null>} stored - Stored identities, oldest first
+ * @param {string|null|undefined} identity - The line the boundary sits on
+ * @returns {number} The boundary, or -1 when `identity` is not stored
+ */
+function boundaryAfter(stored, identity) {
+    const at = identity ? stored.lastIndexOf(identity) : -1;
     if (at < 0) return -1;
-    const stamp = identityStamp(first);
+    const stamp = identityStamp(identity);
     let end = at + 1;
     while (stamp && end < stored.length && identityStamp(stored[end]) === stamp) end += 1;
     return end;
@@ -740,8 +752,14 @@ export function liveBoundary(stored, live) {
 function restoreBoundary(stored, live, buffered) {
     let end = liveBoundary(stored, live);
     if (end < 0) end = stored.length;
-    const firstBuffered = stored.findIndex((identity) => identity && buffered.has(identity));
-    return firstBuffered >= 0 ? Math.min(end, firstBuffered) : end;
+    // Each buffered line is bounded at its LAST stored copy, like the live
+    // backlog: an earlier stored copy of a later-evicted line leaves the lines
+    // between the two older than it, so they are still restorable.
+    for (const identity of buffered) {
+        const at = boundaryAfter(stored, identity);
+        if (at >= 0) end = Math.min(end, at);
+    }
+    return end;
 }
 
 /**
