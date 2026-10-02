@@ -41,6 +41,9 @@ import { addStyles, removeStyles } from '../../utils/dom.js';
 
 const STYLE_ID = 'toolasha-text-appearance';
 
+/** The current Toolasha text zoom, published on `:root` while it is not 1 (read it with a fallback of 1) */
+export const ZOOM_VARIABLE = '--toolasha-text-zoom';
+
 /** Every setting that changes the sheet */
 const WATCHED = ['ui_textScale', 'ui_fontFamily', 'ui_gameText', 'ui_gameTextScale'];
 
@@ -240,7 +243,7 @@ function num(value) {
 function zoomTargets() {
     return [
         ...CHILD_SCALED_ROOTS.map((root) => `${root} > ${NOT_SCALED}`),
-        ...GRANDCHILD_SCALED_ROOTS.map((root) => `${root} > * > *`),
+        ...GRANDCHILD_SCALED_ROOTS.map((root) => `${root} > * > *:not(canvas)`),
         ...SELF_SCALED,
     ];
 }
@@ -265,6 +268,8 @@ export function buildToolashaTextCSS() {
     if (scale !== 1) {
         const targets = zoomTargets();
         parts.push(`${targets.join(',\n')} { zoom: ${num(scale)}; }`);
+        // `vh`/`vw` caps inside a zoomed child are multiplied by the zoom and overrun the window; they divide by this
+        parts.push(`:root { ${ZOOM_VARIABLE}: ${num(scale)}; }`);
         parts.push(`${targets.map((target) => `${target} canvas`).join(',\n')} { zoom: ${num(1 / scale)}; }`);
         parts.push(DIALOG_FIT);
         parts.push(MODAL_SCROLL);

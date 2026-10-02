@@ -14,6 +14,13 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 - The Loot & XP Log follows the number-format setting.
 - Custom Tabs' "Add to Tab" dropdown isn't cut off, can remove items or start a tab, and the toolbar gains Clear All and Import Categories.
 
+### Audit round: page-close saves, text size and net worth
+
+- Closing a tab while a save is in progress no longer loses everything else waiting to be saved.
+- Import Settings refuses a full backup file instead of filling settings with junk.
+- At larger text sizes, overlay tile resizing follows the mouse, charts in windows stay sharp, and the Dungeon Tracker fits the window.
+- Net worth updates when the game refreshes its item values.
+
 ### Audit round: briefing, offline progress and level times
 
 - The session briefing no longer reports a queue as idle for longer than it was, after you played that character since its last snapshot, and a character switch mid-load no longer files one character's listings under another.

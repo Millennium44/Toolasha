@@ -44,6 +44,7 @@ class NetworthFeature {
         this.timerRegistry = createTimerRegistry();
         this.pauseRegistry = null;
         this.priceUpdateHandler = null;
+        this.marketValuesHandler = null;
         this.pricingModeHandler = null;
         this.itemsUpdateHandler = null;
         this.priceUpdateDebounceTimer = null;
@@ -139,6 +140,13 @@ class NetworthFeature {
         };
 
         marketAPI.on(this.priceUpdateHandler);
+
+        // The game's own value map refreshes about hourly and arrives on its own message, which does
+        // not touch the order-book listeners above. It feeds both modes: in official-value mode it IS
+        // the price, and in order-book mode reconcileBook fills empty sides and clamps stale quotes
+        // from it. market-values.js registered its swap-the-cache listener at import, so it runs first.
+        this.marketValuesHandler = () => this.priceUpdateHandler();
+        dataManager.on('market_item_values_updated', this.marketValuesHandler);
 
         // Listen for pricing changes. Both settings decide what an item is
         // worth — the value source picks the order book or the game's own
@@ -301,6 +309,11 @@ class NetworthFeature {
             if (this.priceUpdateHandler) {
                 marketAPI.off(this.priceUpdateHandler);
                 this.priceUpdateHandler = null;
+            }
+
+            if (this.marketValuesHandler) {
+                dataManager.off('market_item_values_updated', this.marketValuesHandler);
+                this.marketValuesHandler = null;
             }
 
             if (this.pricingModeHandler) {

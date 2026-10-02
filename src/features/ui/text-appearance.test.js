@@ -406,6 +406,25 @@ describe('review round 3', () => {
         document.body.innerHTML = '';
     });
 
+    test('a canvas that is a grandchild of a modal keeps no zoom either', () => {
+        state.values.ui_textScale = '150';
+        const zoomRule = buildToolashaTextCSS().split('{')[0];
+        document.body.innerHTML =
+            '<div data-toolasha-surface="modal"><div><canvas id="c"></canvas><div id="d"></div></div></div>';
+        const selectors = zoomRule.split(/,\s*(?=\[data|#)/).map((selector) => selector.trim());
+        const zoomed = (el) => selectors.some((selector) => el.matches(selector));
+        expect(zoomed(document.getElementById('c'))).toBe(false);
+        expect(zoomed(document.getElementById('d'))).toBe(true);
+        document.body.innerHTML = '';
+    });
+
+    test('publishes the zoom for vh caps inside zoomed children, and only while scaled', () => {
+        state.values.ui_textScale = '150';
+        expect(buildToolashaTextCSS()).toContain(':root { --toolasha-text-zoom: 1.5; }');
+        state.values.ui_textScale = '100';
+        expect(buildToolashaTextCSS()).not.toContain('--toolasha-text-zoom');
+    });
+
     test('the game font rule does not reach into Toolasha surfaces', () => {
         state.values.ui_gameText = true;
         state.values.ui_fontFamily = 'verdana';

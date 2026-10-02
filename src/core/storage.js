@@ -2389,8 +2389,11 @@ class Storage {
      * store into a single `putAll` transaction, and the stores are issued
      * together rather than awaited one after another, so the whole flush is a
      * handful of transactions started in the same tick.
+     * @param {{awaitInFlight?: boolean}} [options] - `awaitInFlight: false` snapshots the
+     *   queue without first waiting out writes a timer already started; see `closeForTeardown`
+     * @returns {Promise<void>}
      */
-    async flushAll() {
+    async flushAll({ awaitInFlight = true } = {}) {
         // Clear all timers first
         for (const timer of this.saveDebounceTimers.values()) {
             if (timer) {
@@ -2410,7 +2413,7 @@ class Storage {
         // `await` on the same promise was registered first and its continuation
         // runs to the requeue without another await, so it is ahead of this one
         // in the microtask queue.
-        if (this._inFlightWrites.size > 0) {
+        if (awaitInFlight && this._inFlightWrites.size > 0) {
             await Promise.allSettled(Array.from(this._inFlightWrites));
         }
 
@@ -2612,7 +2615,13 @@ class Storage {
         // Deliberately not awaited — see above. Its rejection is not anyone's to
         // handle at this point, but an unhandled one would be logged as a script
         // error on the way out.
-        const flush = this.flushAll().catch((error) => {
+        //
+        // Nor does it wait out writes a timer already started: their
+        // transactions are open and survive the close, but waiting for them
+        // first moved the snapshot past the close, so one write in flight (or
+        // wedged on a held store) cost every other queued write on a page
+        // being destroyed.
+        const flush = this.flushAll({ awaitInFlight: false }).catch((error) => {
             console.error('[Storage] Flush during page teardown failed:', error);
         });
 

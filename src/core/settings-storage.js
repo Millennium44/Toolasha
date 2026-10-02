@@ -1675,6 +1675,20 @@ class SettingsStorage {
     async importSettings(jsonString) {
         try {
             const data = JSON.parse(jsonString);
+            // A settings export is one flat key → value map. Anything else would
+            // have its top-level keys written into the settings store as if they
+            // were settings: an array's indices, or — the likely mistake, the
+            // two files sit side by side — a full backup's `formatVersion`,
+            // `exportedAt` and `stores`, the last being the whole database as a
+            // single settings key, reported back as "3 keys imported".
+            if (!data || typeof data !== 'object' || Array.isArray(data)) {
+                console.error('[Settings Storage] Import refused: the file is not a settings export');
+                return null;
+            }
+            if ('formatVersion' in data && data.stores && typeof data.stores === 'object') {
+                console.error('[Settings Storage] Import refused: this is a full backup; use Restore Backup instead');
+                return null;
+            }
             const currentCharId = this.currentCharacterId;
             let imported = 0;
             let skipped = 0;
