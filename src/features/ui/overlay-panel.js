@@ -3416,8 +3416,10 @@ class OverlayPanel {
 
         const columnWidth = () => {
             const columns = this.columns || 1;
-            const width = this.canvasEl?.clientWidth || DEFAULT_PANEL.width;
-            return Math.max(1, (width - GAP * (columns - 1)) / columns);
+            // clientWidth is in the canvas's own (text-scaled) pixels; the pointer is in viewport pixels
+            const zoom = this.canvasEl?.currentCSSZoom || 1;
+            const width = (this.canvasEl?.clientWidth || DEFAULT_PANEL.width) * zoom;
+            return Math.max(1, (width - GAP * zoom * (columns - 1)) / columns);
         };
 
         const onPointerMove = (event) => {
