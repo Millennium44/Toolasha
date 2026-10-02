@@ -2728,6 +2728,19 @@ class DungeonTracker {
         const duration = endTimestamp - start;
         if (!(duration >= MIN_RECORDED_ATTEMPT_MS) || duration > MAX_PLAUSIBLE_RUN_MS) return false;
 
+        // A death in wave N has cleared N-1 waves at most. The fatal wave can still send an `action_completed`
+        // that advances wavesCompleted to N before the next run starts, so a fail is capped by the wave it
+        // died in. Clears and cancels are left as counted.
+        let wavesCompleted = Number.isInteger(run.wavesCompleted) ? run.wavesCompleted : undefined;
+        if (
+            result === RUN_RESULT_FAIL &&
+            wavesCompleted !== undefined &&
+            Number.isInteger(run.currentWave) &&
+            run.currentWave > 0
+        ) {
+            wavesCompleted = Math.min(wavesCompleted, run.currentWave - 1);
+        }
+
         const dungeonInfo = dungeonTrackerStorage.getDungeonInfo(run.dungeonHrid);
         return dungeonTrackerStorage.saveTeamRun(dungeonTrackerStorage.getTeamKey(team), {
             timestamp: new Date(start).toISOString(),
@@ -2739,7 +2752,7 @@ class DungeonTracker {
             validated,
             source: validated ? 'chat' : 'tracker',
             result,
-            wavesCompleted: Number.isInteger(run.wavesCompleted) ? run.wavesCompleted : undefined,
+            wavesCompleted,
         });
     }
 

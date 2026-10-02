@@ -5023,7 +5023,7 @@ describe('recording failed and canceled runs', () => {
     }
 
     test('a party wipe is saved as a fail, timed by the server from the run’s opening key count', async () => {
-        beTracking({ anchoredAt: '2026-08-04T10:00:02.000Z', keyCountsMap: PARTY, wavesCompleted: 7 });
+        beTracking({ anchoredAt: '2026-08-04T10:00:02.000Z', keyCountsMap: PARTY, currentWave: 8, wavesCompleted: 7 });
 
         tracker.onChatMessage(partyMessage('systemChatMessage.partyWaveFailed', '2026-08-04T10:04:00.000Z'));
         await flush();
@@ -5100,7 +5100,7 @@ describe('recording failed and canceled runs', () => {
     });
 
     test('an early exit the chat explains only afterwards is still recorded', async () => {
-        beTracking({ anchoredAt: '2026-08-04T10:00:02.000Z', keyCountsMap: PARTY, wavesCompleted: 4 });
+        beTracking({ anchoredAt: '2026-08-04T10:00:02.000Z', keyCountsMap: PARTY, currentWave: 5, wavesCompleted: 4 });
 
         dungeonDone();
         await flush();
@@ -5175,6 +5175,27 @@ describe('recording failed and canceled runs', () => {
         expect(tracker.currentRun.wavesCompleted).toBe(0);
     });
 
+    test('a solo death in wave 5 records 4 cleared even when the fatal wave sent an action_completed', async () => {
+        game.actions = [{ id: 501, actionHrid: DEN, difficultyTier: 0, ordinal: 0, isDone: false, maxCount: 0 }];
+        beTracking({ currentWave: 5, wavesCompleted: 4, maxWaves: 10, battleId: 1, partyNames: ['Marketcow'] });
+        tracker.currentRun.actionId = 501;
+
+        // The fatal wave's completion advances the count to the wave it died in
+        tracker.onActionCompleted({ endCharacterAction: { actionHrid: DEN, wave: 5, isDone: false } });
+        expect(tracker.currentRun.wavesCompleted).toBe(5);
+
+        await tracker.onNewBattle({
+            wave: 1,
+            battleId: 2,
+            combatStartTime: '2026-08-04T10:05:00.000Z',
+            players: [{ character: { name: 'Marketcow' } }],
+        });
+        await flush();
+
+        expect(game.savedRuns).toHaveLength(1);
+        expect(game.savedRuns[0].run).toMatchObject({ result: 'fail', wavesCompleted: 4 });
+    });
+
     test('a run joined part-way, with no start to measure from, is not recorded', async () => {
         beTracking({ joinedMidRun: true, keyCountsMap: PARTY, anchoredAt: '2026-08-04T10:00:02.000Z' });
 
@@ -5245,7 +5266,7 @@ describe('recording failed and canceled runs', () => {
             },
         });
         vi.setSystemTime(Date.parse('2026-08-04T10:05:00.000Z'));
-        beTracking({ anchoredAt: '2026-08-04T10:00:02.000Z', keyCountsMap: PARTY, wavesCompleted: 4 });
+        beTracking({ anchoredAt: '2026-08-04T10:00:02.000Z', keyCountsMap: PARTY, currentWave: 5, wavesCompleted: 4 });
         // The old run's message reports on the run as it stood
         dungeonDone();
         await flush();
