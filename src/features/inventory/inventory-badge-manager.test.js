@@ -603,6 +603,22 @@ describe('high-enhancement equipment follows the net worth value source', () => 
         spy.mockRestore();
     });
 
+    test('a forced reprice tells its listeners once the render has finished', async () => {
+        inventoryBadgeManager.initialize();
+        const order = [];
+        const spy = vi.spyOn(inventoryBadgeManager, 'renderAllBadges').mockImplementation(async () => {
+            order.push('render');
+        });
+        const off = inventoryBadgeManager.onRepriced(() => order.push('listener'));
+        await mocks.dataListeners.market_item_values_updated();
+        expect(order).toEqual(['render', 'listener']);
+        off();
+        await mocks.dataListeners.market_item_values_updated();
+        expect(order).toEqual(['render', 'listener', 'render']);
+        inventoryBadgeManager.disable();
+        spy.mockRestore();
+    });
+
     test("the game's hourly value refresh reprices the tiles, and disable stops listening", async () => {
         inventoryBadgeManager.initialize();
         const spy = vi.spyOn(inventoryBadgeManager, 'renderAllBadges').mockResolvedValue();

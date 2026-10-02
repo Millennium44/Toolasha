@@ -54,6 +54,7 @@ class InventoryBadgeManager {
         this.providers = new Map(); // name -> { renderFn, priority }
         this.currentInventoryElem = null;
         this.unregisterHandlers = [];
+        this.repricedListeners = new Set(); // Run after a forced reprice has rendered
         this.isInitialized = false;
         this.processedItems = new WeakSet(); // Track processed item containers
         this.warnedItems = new Set(); // Track items we've already warned about
@@ -136,13 +137,24 @@ class InventoryBadgeManager {
         // (hourly, on its own message) feeds it in official-value mode and fills empty or stale books in
         // order-book mode. Either change must reprice every tile rather than wait for the next inventory
         // event. market-values.js swaps its cache on that message at import, so it has run by now.
-        const reprice = (why) => {
+        const reprice = async (why) => {
             this.invalidateCache();
             this.lastCalculationTime = 0;
             this.lastRenderTime = 0;
-            this.renderAllBadges().catch((error) => {
+            try {
+                await this.renderAllBadges();
+            } catch (error) {
                 console.error(`[InventoryBadgeManager] Re-render after ${why} failed:`, error);
-            });
+                return;
+            }
+            // Tiles now carry the new values; anything ordered or totalled by them redoes its pass
+            for (const listener of [...this.repricedListeners]) {
+                try {
+                    listener();
+                } catch (error) {
+                    console.error('[InventoryBadgeManager] Repriced listener failed:', error);
+                }
+            }
         };
         this.unregisterHandlers.push(
             config.onSettingChange('networth_valueSource', () => reprice('value source change'))
@@ -150,6 +162,16 @@ class InventoryBadgeManager {
         const onMarketValues = () => reprice('game value refresh');
         dataManager.on('market_item_values_updated', onMarketValues);
         this.unregisterHandlers.push(() => dataManager.off('market_item_values_updated', onMarketValues));
+    }
+
+    /**
+     * Run a callback after a forced reprice (value source change, game value refresh) has rendered.
+     * @param {Function} listener
+     * @returns {Function} Unsubscribe
+     */
+    onRepriced(listener) {
+        this.repricedListeners.add(listener);
+        return () => this.repricedListeners.delete(listener);
     }
 
     /**

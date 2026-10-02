@@ -76,6 +76,7 @@ vi.mock('./inventory-badge-manager.js', () => ({
         unregisterProvider: (name) => badgeMock.providers.delete(name),
         invalidateCache: () => {},
         requestRender: () => {},
+        onRepriced: () => () => {},
     },
 }));
 
