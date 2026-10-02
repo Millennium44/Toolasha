@@ -836,9 +836,9 @@ describe('sim export split button', () => {
             });
 
             test('a roster without you in it copies nothing rather than overwriting slot 1', async () => {
+                // As the builder reports it: a teammate seated in slot 1, and no slot of yours
                 stub.shykaiParty.importedPlayerPositions = [true, false, false, false, false];
-                stub.shykaiParty.yourSlotIndex = 1;
-                stub.shykaiParty.importedPlayerPositions = [false, false, false, false, false];
+                stub.shykaiParty.yourSlotIndex = null;
                 combatScore.showScorePanel(
                     profileData(stub.currentCharacterId),
                     scoreData,

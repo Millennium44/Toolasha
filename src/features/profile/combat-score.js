@@ -1725,7 +1725,7 @@ class CombatScore {
     async buildShykaiPartyExport(snapshot) {
         const exportData = await constructExportObject(null, false);
         const slot = exportData?.yourSlotIndex;
-        // importedPlayerPositions guards the slot default: a roster without you leaves yourSlotIndex at 1
+        // yourSlotIndex is null when the roster did not seat you: never overwrite a teammate's slot
         if (!exportData?.exportObj || !slot || !exportData.importedPlayerPositions?.[slot - 1]) return null;
         if (typeof exportData.exportObj[slot] !== 'string') return null;
 
