@@ -22,6 +22,7 @@ import { calculateTaskTokenValue } from './task-profit-calculator.js';
 import { readVisibleTaskRatings } from './task-profit-display.js';
 import { isCardInConfirmState, armConfirmSettleWatch, onConfirmFlowSettled } from './task-card-state.js';
 import { PANEL_Z_CAP } from '../../utils/panel-z-index.js';
+import { buildSkillGroups, toggleSkillGroup, renderSkillBar } from './task-skill-groups.js';
 import { markToolashaSurface } from '../../utils/surface-marker.js';
 
 const STORAGE_KEY_PREFIX = 'taskAutoRerollHrids';
@@ -563,6 +564,7 @@ class TaskAutoReroll {
             }
 
             listContainer.innerHTML = html;
+            drawSkillBar();
 
             listContainer.querySelectorAll('[data-hrid]').forEach((row) => {
                 row.addEventListener('click', async () => {
@@ -592,8 +594,25 @@ class TaskAutoReroll {
             searchTimeout = setTimeout(() => renderList(searchInput.value.trim()), 150);
         });
 
+        // Skill bulk-select bar: one chip per skill toggles all of that skill's actions
+        const skillGroups = buildSkillGroups(gameData);
+        const skillBar = document.createElement('div');
+        skillBar.style.cssText = 'display:flex; flex-wrap:wrap; gap:4px; padding:0 14px 8px; flex-shrink:0;';
+        const drawSkillBar = () =>
+            renderSkillBar(skillBar, skillGroups, this.autoRerollHrids, {
+                accent: '#ef4444',
+                tint: 'rgba(239,68,68,0.25)',
+                onToggle: async (group) => {
+                    toggleSkillGroup(group, this.autoRerollHrids);
+                    await this._save();
+                    this._processAllCards();
+                    renderList(searchInput.value.trim());
+                },
+            });
+
         popup.appendChild(header);
         popup.appendChild(searchDiv);
+        popup.appendChild(skillBar);
         popup.appendChild(listContainer);
         markToolashaSurface(popup, 'popover');
         document.body.appendChild(popup);
