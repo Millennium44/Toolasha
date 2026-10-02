@@ -142,14 +142,10 @@ class NetworthFeature {
         marketAPI.on(this.priceUpdateHandler);
 
         // The game's own value map refreshes about hourly and arrives on its own message, which does
-        // not touch the order-book listeners above. In official-value mode that map IS the price, so
-        // a refresh has to re-price; in order-book mode it only fills empty books, not worth a pass.
-        // market-values.js registered its swap-the-cache listener at import, so it runs first.
-        this.marketValuesHandler = () => {
-            if ((config.getSettingValue('networth_valueSource') || 'orderBook') === 'officialValue') {
-                this.priceUpdateHandler();
-            }
-        };
+        // not touch the order-book listeners above. It feeds both modes: in official-value mode it IS
+        // the price, and in order-book mode reconcileBook fills empty sides and clamps stale quotes
+        // from it. market-values.js registered its swap-the-cache listener at import, so it runs first.
+        this.marketValuesHandler = () => this.priceUpdateHandler();
         dataManager.on('market_item_values_updated', this.marketValuesHandler);
 
         // Listen for pricing changes. Both settings decide what an item is

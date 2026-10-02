@@ -174,7 +174,7 @@ describe('a character switch mid-recalculation', () => {
 describe('the game value map refreshing', () => {
     const handlerFor = (event) => dataManagerMock.on.mock.calls.filter(([name]) => name === event).at(-1)?.[1];
 
-    test('re-prices in official-value mode and is removed on disable', async () => {
+    test('re-prices in both value-source modes and is removed on disable', async () => {
         vi.useFakeTimers();
         const original = configMock.getSettingValue;
         try {
@@ -191,11 +191,11 @@ describe('the game value map refreshing', () => {
             await vi.advanceTimersByTimeAsync(1100);
             expect(calculatorMock.calculateNetworth).toHaveBeenCalledTimes(1);
 
-            // Order-book mode ignores it: the map only fills empty books there
+            // Order-book mode re-prices too: reconcileBook fills empty books and clamps stale quotes from the map
             configMock.getSettingValue = () => 'orderBook';
             handler();
             await vi.advanceTimersByTimeAsync(1100);
-            expect(calculatorMock.calculateNetworth).toHaveBeenCalledTimes(1);
+            expect(calculatorMock.calculateNetworth).toHaveBeenCalledTimes(2);
 
             dataManagerMock.off.mockClear();
             networthFeature.disable();
