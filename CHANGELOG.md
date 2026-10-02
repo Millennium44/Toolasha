@@ -13,6 +13,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 - Task reroll popups gain one-click "select all" chips per skill.
 - Combat Stats warns when the connection dropped mid-session, and the Sim Editor can simulate achievement tiers you haven't earned yet.
 
+### Audit round: dictionary and alt-click
+
+- Alt-clicking an item tooltip now finds enhanced and refined items ("Collector's Boots +3", "… ★") through game data instead of guessing from the name, and the dictionary's transmute rates pick up items added by a game update without a reload.
+
 ### DPS graph axis labels
 
 - DPS graphs no longer label their axis "0 0 0 1 1 1" when every line is hidden or the values are tiny.
