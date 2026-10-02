@@ -1298,16 +1298,23 @@ class BulkSellAssistant {
      * and the guard goes up (a listener added mid-dispatch skips this event), so a second click or a
      * double-click's other half is swallowed and our own press never follows. Clicks made while
      * `watch.ownClick` is set are ours and ignored.
+     *
+     * Except a click within `VENDOR_CONFIRM_SETTLE_MS` of our own arming click (`watch.armedAt`): the
+     * game may ignore that one, so it only cancels our press and the step stays unsent — the button
+     * stays clickable for a retry, and a sale that did go through closes the menu, which advances the
+     * step anyway.
      * @param {string} key - The step key the waiting press belongs to
-     * @returns {{menuClicked: boolean, ownClick: boolean, stop: Function}} Live watch state
+     * @returns {{menuClicked: boolean, ownClick: boolean, armedAt: number|null, stop: Function}} Live
+     *   watch state
      */
     _watchMenuClicks(key) {
-        const watch = { menuClicked: false, ownClick: false, stop: null };
+        const watch = { menuClicked: false, ownClick: false, armedAt: null, stop: null };
         const onClick = (event) => {
             if (watch.ownClick || !event.target?.closest?.('[class*="Item_actionMenu"]')) return;
             watch.menuClicked = true;
             const sold = event.target.closest('button');
-            if (sold && /^confirm\s+sell for\b/i.test(sold.textContent.trim())) {
+            const early = watch.armedAt !== null && Date.now() - watch.armedAt < VENDOR_CONFIRM_SETTLE_MS;
+            if (sold && !early && /^confirm\s+sell for\b/i.test(sold.textContent.trim())) {
                 this._confirmedStep = key;
                 this._guardSale(sold);
                 this._render();
@@ -1355,6 +1362,7 @@ class BulkSellAssistant {
         const watch = this._watchMenuClicks(key);
         try {
             watch.ownClick = true;
+            watch.armedAt = Date.now();
             try {
                 button.click();
             } finally {

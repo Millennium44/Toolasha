@@ -1362,17 +1362,37 @@ describe('confirming from the strip', () => {
         });
 
         test('the player pressing the armed game button during the wait is the only sale', async () => {
-            // The menu stays open with the armed label until the server answers
+            // The menu stays open with the armed label until the server answers. Clicked after the
+            // settle interval, before our own press would fire
             const menu = openMenu();
             vendorRun();
 
             confirmBtn().click();
+            await vi.advanceTimersByTimeAsync(420);
             menu.querySelector('.Button_sell__x').click();
             await vi.advanceTimersByTimeAsync(1200);
 
             expect(armClicks).toBe(1);
             expect(gameClicks).toBe(1);
             expect(bulkSell._confirmSent()).toBe(true);
+            bulkSell._releaseSaleGuard();
+        });
+
+        test('a player click right after our arming stays retryable, since the game may ignore it', async () => {
+            const menu = openMenu();
+            vendorRun();
+            const sell = menu.querySelector('.Button_sell__x');
+
+            confirmBtn().click();
+            sell.click();
+            await vi.advanceTimersByTimeAsync(1200);
+
+            // Our press stood down, but the step is not marked sent and nothing swallows a retry
+            expect(gameClicks).toBe(1);
+            expect(bulkSell._confirmSent()).toBe(false);
+            expect(confirmBtn().disabled).toBe(false);
+            sell.click();
+            expect(gameClicks).toBe(2);
         });
 
         test('the player pressing an already-armed button during the settle wait is the only sale', async () => {
@@ -1394,6 +1414,7 @@ describe('confirming from the strip', () => {
             const sell = menu.querySelector('.Button_sell__x');
 
             confirmBtn().click();
+            await vi.advanceTimersByTimeAsync(420);
             sell.click();
             sell.click();
             await vi.advanceTimersByTimeAsync(1200);
