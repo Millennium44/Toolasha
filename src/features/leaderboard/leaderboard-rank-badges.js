@@ -111,9 +111,11 @@ const TAB_SELECTOR = '[role="tab"], [class*="MuiTab-root"], [role="option"], [ro
 const MISC_SYMBOLS = Object.freeze({
     total_level: 'leaderboard',
     task_points: 'tasks',
-    // White maze for points and the blue one for depth, so the two labyrinth boards' badges differ
-    labyrinth_points: 'item_category_labyrinth',
-    labyrinth_depth: 'labyrinth',
+    // Blue maze for points and the orange flag for depth, so the two labyrinth boards' badges differ. Both
+    // carry color: the all-white glyphs (item_category_labyrinth, labyrinth_end, inventory_all) drew blank for a
+    // player whose browser hides pure-white SVG paint
+    labyrinth_points: 'labyrinth',
+    labyrinth_depth: 'flag',
     // The misc sprite has no collection or bestiary glyph (checked against the live sheet); closest stand-ins.
     // Collection's badge icon comes from the chat icons instead (CHAT_SYMBOLS); this entry is the tab match only
     collection_points: 'inventory_all',
