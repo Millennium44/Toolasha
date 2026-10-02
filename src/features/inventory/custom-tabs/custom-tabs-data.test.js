@@ -930,24 +930,48 @@ describe('the mass-delete cap', () => {
         warn.mockRestore();
     });
 
-    test('a Clear All wins over a stale copy past the cap, and keeps tabs made after it', () => {
-        const stale = {
+    test('a Clear All wins over a stale copy past the cap', () => {
+        const stale = { version: 1, selectedTabId: null, tabs: [tab('a'), tab('b'), tab('c'), tab('d')] };
+        const removed = { a: 500, b: 500, c: 500, d: 500 };
+        const cleared = { version: 1, selectedTabId: null, tabs: [], removed, clearedTabIds: { ...removed } };
+        const merged = merge(stale, cleared);
+        expect(merged.tabs).toEqual([]);
+        expect(merged.clearedTabIds).toEqual(removed);
+        // and it stays cleared on the next fold from the same stale device
+        expect(merge(stale, merged).tabs).toEqual([]);
+    });
+
+    test("a tab made after a Clear All survives, however far ahead the clearing device's clock ran", () => {
+        // The clearing device's clock was far ahead: its tombstones are stamped 10_000
+        const removed = { a: 10_000, b: 10_000, c: 10_000, d: 10_000 };
+        const cleared = { version: 1, selectedTabId: null, tabs: [], removed, clearedTabIds: { ...removed } };
+        // Another device, behind, makes a genuinely new tab afterwards with a lower stamp
+        const other = {
             version: 1,
             selectedTabId: null,
-            tabs: [tab('a'), tab('b'), tab('c'), tab('d'), tab('late', { updatedAt: 900 })],
+            tabs: [tab('a'), tab('b'), tab('c'), tab('d'), tab('fresh', { updatedAt: 200 })],
         };
-        const cleared = {
+        expect(merge(other, cleared).tabs.map((t) => t.id)).toEqual(['fresh']);
+        expect(merge(cleared, other).tabs.map((t) => t.id)).toEqual(['fresh']);
+    });
+
+    test('Clear All exempts only its own ids: other mass deletions in the same fold are still held', () => {
+        const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+        const carrier = {
+            version: 1,
+            selectedTabId: null,
+            tabs: [tab('a'), tab('x1'), tab('x2'), tab('x3'), tab('keep')],
+        };
+        const deleted = {
             version: 1,
             selectedTabId: null,
             tabs: [],
-            removed: { a: 500, b: 500, c: 500, d: 500 },
-            clearedAllAt: 500,
+            removed: { a: 500, x1: 500, x2: 500, x3: 500 },
+            clearedTabIds: { a: 500 },
         };
-        const merged = merge(stale, cleared);
-        expect(merged.tabs.map((t) => t.id)).toEqual(['late']);
-        expect(merged.clearedAllAt).toBe(500);
-        // and it stays cleared on the next fold from the same stale device
-        expect(merge(stale, merged).tabs.map((t) => t.id)).toEqual(['late']);
+        const merged = merge(carrier, deleted);
+        expect(merged.tabs.map((t) => t.id)).toEqual(['x1', 'x2', 'x3', 'keep']);
+        warn.mockRestore();
     });
 
     test('two of two still applies — nothing worth protecting in a majority of two', () => {
@@ -981,8 +1005,8 @@ describe('sanitizeImportedConfig', () => {
         expect(sanitizeImportedConfig(file()).removed).toBeUndefined();
     });
 
-    test("another device's Clear All time never comes in", () => {
-        expect(sanitizeImportedConfig({ ...file(), clearedAllAt: Date.now() }).clearedAllAt).toBeUndefined();
+    test("another device's Clear All list never comes in", () => {
+        expect(sanitizeImportedConfig({ ...file(), clearedTabIds: { ores: 1 } }).clearedTabIds).toBeUndefined();
     });
 
     test('every imported tab is stamped, nested ones included', () => {
@@ -1559,7 +1583,7 @@ describe('clearAllTabs and importCategoryTabs', () => {
         expect(cleared.tabs).toEqual([]);
         expect(cleared.selectedTabId).toBeNull();
         expect(Object.keys(cleared.removed).sort()).toEqual([rootId, childId].sort());
-        expect(cleared.clearedAllAt).toBeGreaterThan(0);
+        expect(Object.keys(cleared.clearedTabIds).sort()).toEqual([rootId, childId].sort());
         expect(c.tabs).toHaveLength(1); // input untouched
     });
 
