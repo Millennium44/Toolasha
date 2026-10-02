@@ -357,6 +357,7 @@ class Storage {
         this._quotaExceededAt = null;
         this._quotaFailures = 0;
         this._roomSeenAfterFailures = null; // `_quotaFailures` when a write last committed inside the window
+        this._quotaListenersNotified = false; // `onQuotaExceeded` listeners are told once per page
         this._lastQuotaTarget = null; // {key, storeName} of the write that failed
         this._quotaListeners = new Set();
         /**
@@ -1636,7 +1637,10 @@ class Storage {
         // Refresh the numbers so whatever shows this can say how full "full" is
         this.estimate();
 
-        if (!firstTime) return;
+        // Told once per page: a disk that recovers and fills again (the flag clears once the recheck window
+        // passes) must not raise a fresh sticky warning every cycle
+        if (!firstTime || this._quotaListenersNotified) return;
+        this._quotaListenersNotified = true;
         for (const listener of this._quotaListeners) {
             try {
                 listener({ key, storeName, at: this._quotaExceededAt, estimate: this._lastEstimate });

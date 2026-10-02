@@ -682,6 +682,7 @@ describe('Storage quota handling', () => {
         storage.db = null;
         storage.clearQuotaState();
         storage._quotaFailures = 0;
+        storage._quotaListenersNotified = false;
         storage._quotaListeners.clear();
         errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
     });
@@ -813,6 +814,23 @@ describe('Storage quota handling', () => {
             storage._quotaExceededAt -= PAST_RECHECK;
 
             expect(storage.isQuotaExceeded()).toBe(true);
+        });
+
+        test('listeners are told once, even when storage recovers and fills again', async () => {
+            const listener = vi.fn();
+            storage.onQuotaExceeded(listener);
+            storage.db = createFullDb(QUOTA_ERROR);
+            await storage._saveToIndexedDB('big', [1], 'networthHistory');
+            storage._quotaExceededAt -= PAST_RECHECK;
+            storage.db = createFakeDb(['networthHistory']).db;
+            await storage._saveToIndexedDB('small', 1, 'networthHistory');
+            expect(storage.isQuotaExceeded()).toBe(false);
+
+            storage.db = createFullDb(QUOTA_ERROR);
+            await storage._saveToIndexedDB('big2', [1], 'networthHistory');
+
+            expect(storage.isQuotaExceeded()).toBe(true);
+            expect(listener).toHaveBeenCalledTimes(1);
         });
 
         test('and not when the write began before the latest failure', async () => {
