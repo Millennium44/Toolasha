@@ -42,8 +42,9 @@ vi.mock('../../utils/performance-monitor.js', () => ({
     default: { enabled: false, span: (_g, _n, fn) => fn(), record: vi.fn() },
 }));
 vi.mock('../../utils/background-work.js', () => ({ runInBackground: vi.fn() }));
+const dataManagerMock = vi.hoisted(() => ({ on: vi.fn(), off: vi.fn() }));
 vi.mock('../../core/data-manager.js', () => ({
-    default: { on: vi.fn(), off: vi.fn() },
+    default: dataManagerMock,
 }));
 vi.mock('../../api/marketplace.js', () => ({
     default: { on: vi.fn(), off: vi.fn() },
@@ -167,6 +168,43 @@ describe('a character switch mid-recalculation', () => {
         // The figure belongs to the character that has just been left
         expect(networthFeature.currentData).toBeNull();
         expect(displayMock.header.update).not.toHaveBeenCalled();
+    });
+});
+
+describe('the game value map refreshing', () => {
+    const handlerFor = (event) => dataManagerMock.on.mock.calls.filter(([name]) => name === event).at(-1)?.[1];
+
+    test('re-prices in official-value mode and is removed on disable', async () => {
+        vi.useFakeTimers();
+        const original = configMock.getSettingValue;
+        try {
+            configMock.getSettingValue = () => 'officialValue';
+            networthFeature.isActive = true;
+            calculatorMock.calculateNetworth.mockReset();
+            calculatorMock.calculateNetworth.mockResolvedValue({ totalNetworth: 1, coins: 0 });
+            dataManagerMock.on.mockClear();
+            networthFeature.setupEventListeners();
+
+            const handler = handlerFor('market_item_values_updated');
+            expect(handler).toBeTypeOf('function');
+            handler();
+            await vi.advanceTimersByTimeAsync(1100);
+            expect(calculatorMock.calculateNetworth).toHaveBeenCalledTimes(1);
+
+            // Order-book mode ignores it: the map only fills empty books there
+            configMock.getSettingValue = () => 'orderBook';
+            handler();
+            await vi.advanceTimersByTimeAsync(1100);
+            expect(calculatorMock.calculateNetworth).toHaveBeenCalledTimes(1);
+
+            dataManagerMock.off.mockClear();
+            networthFeature.disable();
+            expect(dataManagerMock.off).toHaveBeenCalledWith('market_item_values_updated', handler);
+        } finally {
+            configMock.getSettingValue = original;
+            networthFeature.isActive = false;
+            vi.useRealTimers();
+        }
     });
 });
 

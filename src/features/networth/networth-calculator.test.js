@@ -217,6 +217,19 @@ describe('calculateItemValue', () => {
             expect(value).toBe(1554000);
         });
 
+        test('officialValue prices both sides of the +12/+13 boundary from the game value', async () => {
+            mocks.settings.networth_valueSource = 'officialValue';
+            const levels = [];
+            levels[12] = 600000;
+            levels[13] = 700000;
+            mocks.marketValues = { marketValuesVersion: 1, marketItemValues: { '/items/sword': levels } };
+            mocks.enhancementPaths['/items/sword:12'] = 11111;
+            mocks.enhancementPaths['/items/sword:13'] = 22222;
+            const at12 = await calculateItemValue({ itemHrid: '/items/sword', enhancementLevel: 12, count: 1 });
+            const at13 = await calculateItemValue({ itemHrid: '/items/sword', enhancementLevel: 13, count: 1 });
+            expect([at12, at13]).toEqual([600000, 700000]);
+        });
+
         test('orderBook at +15 still uses the enhancement cost', async () => {
             mocks.settings.networth_valueSource = 'orderBook';
             const value = await calculateItemValue({ itemHrid: '/items/sword', enhancementLevel: 15, count: 1 });
