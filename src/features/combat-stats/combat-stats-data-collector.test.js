@@ -447,4 +447,45 @@ describe('connection-interrupted flag', () => {
 
         expect(collector.getLatestData().connectionInterrupted).toBe(true);
     });
+
+    test('the mark is written to storage, so a reload before the next battle restores it', async () => {
+        fighting(ZONE);
+        store.socket = FIRST;
+        await wave();
+        store.writes = [];
+
+        await collector.onSocketClosed(FIRST);
+
+        expect(store.writes).toHaveLength(1);
+        expect(store.writes[0][0]).toBe('latestCombatRun_me');
+        expect(store.writes[0][1].connectionInterrupted).toBe(true);
+        expect(store.writes[0][1]).not.toHaveProperty('restored');
+    });
+
+    test('the mark is not written under a character who became current while the probe was open', async () => {
+        fighting(ZONE);
+        store.socket = FIRST;
+        await wave();
+        store.writes = [];
+        _resetReadProbe();
+        store.onProbe = () => {
+            store.characterId = 'iron456';
+        };
+
+        await collector.onSocketClosed(FIRST);
+
+        expect(store.writes).toEqual([]);
+    });
+
+    test('a close that flags nothing writes nothing', async () => {
+        fighting(ZONE);
+        store.socket = FIRST;
+        await wave();
+        fighting(null);
+        store.writes = [];
+
+        await collector.onSocketClosed(FIRST);
+
+        expect(store.writes).toEqual([]);
+    });
 });

@@ -113,6 +113,8 @@ class CombatStatsDataCollector {
         this.connectionInterrupted = false;
         /** The game socket the session's battles last arrived on; see `onSocketClosed` */
         this.sessionSocket = null;
+        /** The character the session's battles were fought as; the owner of the snapshot a close marks */
+        this.sessionOwner = null;
         this.latestCombatData = null;
         this.currentBattleId = null;
         /** Which run the snapshot belongs to; a change means the last one ended */
@@ -236,6 +238,7 @@ class CombatStatsDataCollector {
         // The departing socket's close, whenever it lands, is no gap in the
         // arriving character's session
         this.sessionSocket = null;
+        this.sessionOwner = null;
     }
 
     /**
@@ -247,9 +250,13 @@ class CombatStatsDataCollector {
      * outlives the fighting), a run only restored from storage, and a
      * character switch, whose departing socket can close before or after the
      * arriving one attaches (the switch forgets the session's socket). The
-     * mark goes on the session's snapshot too, so its archive keeps it.
+     * mark goes on the session's snapshot too, so its archive keeps it, and
+     * that snapshot is written back to storage: a reload before the next
+     * `new_battle` restores it from there, and the unmarked copy would be
+     * archived as a complete run.
      *
      * @param {WebSocket} [socket] - The socket that closed
+     * @returns {Promise<void>|undefined} The storage write, when one was started
      */
     onSocketClosed(socket) {
         if (!socket || socket !== this.sessionSocket) return;
@@ -258,6 +265,30 @@ class CombatStatsDataCollector {
         if (!this.currentCombatAction()) return;
         this.connectionInterrupted = true;
         session.connectionInterrupted = true;
+        return this.persistInterruptedSnapshot(this.sessionOwner, session);
+    }
+
+    /**
+     * Write the marked session snapshot under the character it belongs to.
+     *
+     * `owner` is the character the session was fought as, captured when its
+     * battles arrived, never resolved here: the close can land during a switch,
+     * and the probe below awaits. Re-checked after it, and skipped when a newer
+     * `new_battle` has replaced the snapshot (that write carries the mark itself
+     * and is fresher than this one).
+     *
+     * @param {string|null} owner - Character id the session belongs to
+     * @param {Object} session - The snapshot that was marked
+     * @returns {Promise<void>}
+     */
+    async persistInterruptedSnapshot(owner, session) {
+        try {
+            if (!owner || !(await storeReadable(LATEST_RUN_KEY))) return;
+            if (dataManager.getCurrentCharacterId() !== owner || this.latestCombatData !== session) return;
+            await storage.set(scopedFor(LATEST_RUN_KEY, owner), session, COMBAT_STORE);
+        } catch (error) {
+            console.error('[Combat Stats] Could not persist the interrupted-connection mark:', error);
+        }
     }
 
     /**
@@ -599,6 +630,7 @@ class CombatStatsDataCollector {
 
             // The socket this session is being fought on, for `onSocketClosed`
             this.sessionSocket = webSocketHook.activeGameSocket ?? null;
+            this.sessionOwner = dataManager.getCurrentCharacterId() || null;
 
             // Calculate duration from combat start time. Clamped at zero: the
             // start time is the server's clock and "now" is ours, so a short
