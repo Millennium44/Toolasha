@@ -198,7 +198,7 @@ describe('walking the queue for its coin flow', () => {
         const walked = walkQueueCoins(engine);
 
         expect(walked.stages.every((stage) => stage.coinDelta >= 0)).toBe(true);
-        expect(coinReserve(walked.stages)).toEqual({ reserve: 0, spenders: [] });
+        expect(coinReserve(walked.stages)).toEqual({ reserve: 0, spenders: [], estimated: false });
     });
 
     test('a counted fight ahead of a decompose is walked through, not taken as the end', () => {
@@ -229,7 +229,7 @@ describe('walking the queue for its coin flow', () => {
     });
 
     test('an empty queue holds nothing back', () => {
-        expect(coinReserve(walkQueueCoins(engine).stages)).toEqual({ reserve: 0, spenders: [] });
+        expect(coinReserve(walkQueueCoins(engine).stages)).toEqual({ reserve: 0, spenders: [], estimated: false });
     });
 
     test('without the engine the walk answers nothing rather than zero', () => {
@@ -245,7 +245,7 @@ describe('the reserve, from stage flows', () => {
             { label: 'Decompose: Star Fruit', coinDelta: -900 },
         ];
         // −300, then +700, then −200: the lowest point is −300
-        expect(coinReserve(stages)).toEqual({ reserve: 300, spenders: ['Decompose: Star Fruit'] });
+        expect(coinReserve(stages)).toEqual({ reserve: 300, spenders: ['Decompose: Star Fruit'], estimated: false });
     });
 
     test('a second dip deeper than the first sets it', () => {
@@ -254,7 +254,24 @@ describe('the reserve, from stage flows', () => {
             { label: 'B', coinDelta: 100 },
             { label: 'C', coinDelta: -500 },
         ];
-        expect(coinReserve(stages)).toEqual({ reserve: 700, spenders: ['A', 'C'] });
+        expect(coinReserve(stages)).toEqual({ reserve: 700, spenders: ['A', 'C'], estimated: false });
+    });
+
+    test('an enhancing spender on the way down makes the reserve an estimate', () => {
+        const stages = [
+            { label: 'Enhance: Sword', coinDelta: -300, estimated: true },
+            { label: 'Decompose: Star Fruit', coinDelta: -200 },
+        ];
+        expect(coinReserve(stages)).toMatchObject({ reserve: 500, estimated: true });
+    });
+
+    test('an enhancing spender after the deepest point does not', () => {
+        const stages = [
+            { label: 'Decompose: Star Fruit', coinDelta: -900 },
+            { label: 'Coinify', coinDelta: 1000 },
+            { label: 'Enhance: Sword', coinDelta: -50, estimated: true },
+        ];
+        expect(coinReserve(stages)).toMatchObject({ reserve: 900, estimated: false });
     });
 });
 

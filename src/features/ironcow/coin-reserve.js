@@ -112,6 +112,8 @@ export function walkQueueCoins(engine, actions, inventory) {
             count,
             coinDelta: Math.min(0, delta),
             earned: Math.max(0, delta),
+            // Enhancing spends per attempt, and the attempts are a prediction: a run of failures spends more
+            estimated: delta < 0 && String(action.actionHrid).startsWith('/actions/enhancing/'),
         });
     }
     return { stages, stoppedAt };
@@ -128,8 +130,9 @@ export function walkQueueCoins(engine, actions, inventory) {
  * lower the decompose's dip.
  *
  * @param {Array<{coinDelta: number, label?: string}>} stages - From {@link walkQueueCoins}, in run order
- * @returns {{reserve: number, spenders: Array<string>}} `reserve` ≥ 0; `spenders` names the rows
- *   that spend on the way down to the dip
+ * @returns {{reserve: number, spenders: Array<string>, estimated: boolean}} `reserve` ≥ 0;
+ *   `spenders` names the rows that spend on the way down to the dip; `estimated` when one of them
+ *   spends a predicted rather than a fixed amount (enhancing)
  */
 export function coinReserve(stages) {
     let balance = 0;
@@ -144,11 +147,13 @@ export function coinReserve(stages) {
     });
 
     const spenders = [];
+    let estimated = false;
     for (let index = 0; index <= lowestAt; index++) {
         const stage = stages[index];
+        if (stage.coinDelta < 0 && stage.estimated) estimated = true;
         if (stage.coinDelta < 0 && stage.label && !spenders.includes(stage.label)) spenders.push(stage.label);
     }
-    return { reserve: lowest < 0 ? -lowest : 0, spenders };
+    return { reserve: lowest < 0 ? -lowest : 0, spenders, estimated };
 }
 
 /**

@@ -955,7 +955,12 @@ class IronCowFarmPanel {
             ];
         }
 
-        const { reserve, spenders } = coinReserve(walked.stages);
+        const { reserve, spenders, estimated } = coinReserve(walked.stages);
+        const approx = estimated ? '~' : '';
+        const estimateNote = estimated
+            ? ' Enhancing spends per attempt and the attempts are a prediction, so this is an estimate:' +
+              ' a run of failures spends more.'
+            : '';
         const can = bellsAffordable(state.coins, reserve, pricing);
         if (!can) return [];
 
@@ -975,15 +980,15 @@ class IronCowFarmPanel {
                 ? ' Whole bells, rounded down.'
                 : ' Whole bags of ten first, then loose bells with what is left' +
                   (can.looseBells === null ? '.' : `; loose at ${coins(pricing.loose)} it would be ${can.looseBells}.`);
-        const title = `Out of your ${coins(state.coins)}. ${kept}${stopped}${route}`;
+        const title = `Out of your ${coins(state.coins)}. ${kept}${estimateNote}${stopped}${route}`;
 
         return [
-            line(label, value, can.bells > 0 ? COLORS.good : COLORS.textDim, title),
+            line(label, `${approx}${value}`, can.bells > 0 ? COLORS.good : COLORS.textDim, title),
             line(
                 'Kept for the queue',
-                reserve > 0 ? coins(reserve) : '0',
+                reserve > 0 ? `${approx}${coins(reserve)}` : '0',
                 COLORS.textDim,
-                reserve > 0 ? `For ${spenders.join(', ')}.` : kept
+                reserve > 0 ? `For ${spenders.join(', ')}.${estimateNote}` : kept
             ),
         ];
     }
