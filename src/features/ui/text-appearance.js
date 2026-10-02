@@ -38,11 +38,11 @@
 import config from '../../core/config.js';
 import overlayPanel from './overlay-panel.js';
 import { addStyles, removeStyles } from '../../utils/dom.js';
+import { ZOOM_VARIABLE, FONT_VARIABLE } from '../../utils/tile-badge-text.js';
+
+export { ZOOM_VARIABLE };
 
 const STYLE_ID = 'toolasha-text-appearance';
-
-/** The current Toolasha text zoom, published on `:root` while it is not 1 (read it with a fallback of 1) */
-export const ZOOM_VARIABLE = '--toolasha-text-zoom';
 
 /** Every setting that changes the sheet */
 const WATCHED = ['ui_textScale', 'ui_fontFamily', 'ui_gameText', 'ui_gameTextScale'];
@@ -279,6 +279,8 @@ export function buildToolashaTextCSS() {
     if (stack) {
         // !important because most panels write `font-family` inline
         parts.push(`${fontTargets().join(',\n')} { font-family: ${stack} !important; }`);
+        // Item-tile badges sit outside every surface above; they read the stack from here
+        parts.push(`:root { ${FONT_VARIABLE}: ${stack}; }`);
     }
 
     return parts.join('\n');
