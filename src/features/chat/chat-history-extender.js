@@ -65,11 +65,22 @@ const CHAT_CONTAINER_SELECTOR = '[class*="ChatHistory_chatHistory"]';
  * arrives.
  *
  * @param {Element} button - A tab button
+ * @param {Element|null} [strip] - The tab strip, to tell a channel tag shared by two tabs
  * @returns {string} The namespaced label, or '' when the button names nothing
  */
-function tabLabel(button) {
+function tabLabel(button, strip = null) {
     const channel = button?.getAttribute?.('data-mention-channel');
-    if (channel) return `ch:${channel}`;
+    // The mention tracker names a tab's channel from its text, so a whisper with a
+    // player called `Trade` is tagged as the Trade channel too. Two tabs with one
+    // channel means one of them is not it; neither is trusted with the channel
+    // key, which is what shares a tab's history across characters.
+    const ambiguous =
+        channel &&
+        strip &&
+        [...strip.querySelectorAll('button[role="tab"]')].some(
+            (other) => other !== button && other.getAttribute('data-mention-channel') === channel
+        );
+    if (channel && !ambiguous) return `ch:${channel}`;
     const text = button?.textContent?.trim().replace(/\d+$/, '').trim();
     return text ? `name:${text}` : '';
 }
@@ -125,7 +136,7 @@ export function chatTabKey(containerEl) {
         // no longer means what this reads it as. Neither is a tab identity.
         if (selected.length !== 1) return null;
 
-        const label = tabLabel(selected[0]);
+        const label = tabLabel(selected[0], strip);
         if (!label) return null;
 
         const panelId = selected[0].getAttribute('aria-controls');

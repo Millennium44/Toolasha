@@ -186,9 +186,10 @@ describe('which record a tab lives in', () => {
             expect(scope(channel)).toBe('character');
         }
 
-        expect(module.tabScope('tab2:name:中文')).toBe('public');
-        expect(module.tabScope('tab2:name:Help')).toBe('public');
-        expect(module.tabScope('tab2:name:Guild')).toBe('guild');
+        // A tab named only by its text could be a whisper with a player of that name: never shared.
+        for (const label of ['中文', 'Help', 'Guild', 'General', 'Trade', 'Global']) {
+            expect(module.tabScope(`tab2:name:${label}`)).toBe('character');
+        }
         // A whisper tab named after its partner, and anything else unrecognised.
         expect(module.tabScope('tab2:name:Alice')).toBe('character');
         expect(module.tabScope('tab2:name:Party')).toBe('character');

@@ -133,6 +133,7 @@ import chatHistoryPersistence, {
     PUBLIC_RECORD_KEY,
     rewireRestoredMessage,
     serializeMessage,
+    tabScope,
 } from './chat-history-persistence.js';
 
 const STORAGE_KEY = `${CHAT_HISTORY_KEY_BASE}_char1`;
@@ -1011,6 +1012,46 @@ describe('a chat tab is named by the tab that is open', () => {
         // Same text as the Global channel tab, and deliberately not the same key
         expect(chatTabKey(container)).toBe('tab2:name:global');
         expect(chatTabKey(container)).not.toBe('tab2:ch:/chat_channel_types/global');
+    });
+
+    test('a whisper the mention tracker tagged as a channel is not keyed as that channel', () => {
+        // The mention tracker tags a tab by its text, so a whisper with a player
+        // called Trade carries the Trade channel's tag as well.
+        const container = buildLiveChat('/chat_channel_types/trade');
+        openChannelTab('nothing');
+        const strip = document.querySelector('.Chat_tabsComponentContainer__x');
+        const whisper = document.createElement('button');
+        whisper.setAttribute('role', 'tab');
+        whisper.setAttribute('aria-selected', 'true');
+        whisper.setAttribute('data-mention-channel', '/chat_channel_types/trade');
+        whisper.textContent = 'Trade';
+        strip.appendChild(whisper);
+
+        // Two tabs with one channel: neither gets the channel key, which is the one that is shared.
+        expect(chatTabKey(container)).toBe('tab2:name:Trade');
+        expect(tabScope(chatTabKey(container))).toBe('character');
+    });
+
+    test('a name-keyed tab, a whisper with a player called Trade, is kept in the character record', async () => {
+        const container = buildLiveChat('/chat_channel_types/trade');
+        openChannelTab('nothing');
+        const strip = document.querySelector('.Chat_tabsComponentContainer__x');
+        const whisper = document.createElement('button');
+        whisper.setAttribute('role', 'tab');
+        whisper.setAttribute('aria-selected', 'true');
+        whisper.textContent = 'Trade';
+        strip.appendChild(whisper);
+        const key = chatTabKey(container);
+        expect(key).toBe('tab2:name:Trade');
+
+        chatHistoryPersistence.enable(() => 150);
+        await chatHistoryPersistence.load();
+        chatHistoryPersistence.record(key, '<div class="ChatMessage_chatMessage__x">[1/2 10:00:00] Trade: psst</div>');
+        await chatHistoryPersistence.flush();
+
+        expect(db.settings[STORAGE_KEY].tabs[key]).toHaveLength(1);
+        expect(db.settings[PUBLIC_RECORD_KEY]).toBeUndefined();
+        chatHistoryPersistence.reset();
     });
 
     test('the unread badge on a tab button does not change its key', () => {
@@ -2419,7 +2460,7 @@ describe('the cap counts lines older than the game’s live backlog', () => {
     });
 
     test('a shared tab’s first load merges a pane’s backlog under the pane’s count, not the record’s', async () => {
-        const SHARED = 'tab2:name:General';
+        const SHARED = 'tab2:ch:/chat_channel_types/general';
         const SAVED_LIVE = 3;
         db.settings[PUBLIC_RECORD_KEY] = {
             v: 1,
@@ -2428,6 +2469,9 @@ describe('the cap counts lines older than the game’s live backlog', () => {
             live: { [SHARED]: SAVED_LIVE },
         };
         const [container] = buildChat(['General']);
+        document
+            .querySelector('button[role="tab"]')
+            .setAttribute('data-mention-channel', '/chat_channel_types/general');
         container.append(...Array.from({ length: LIVE }, (_, i) => makeMessage(line(50 + i))));
         chatHistoryExtender.initialize();
         await settle();
@@ -2441,7 +2485,7 @@ describe('the cap counts lines older than the game’s live backlog', () => {
     });
 
     test('a shared tab releases a saved overlap its pane’s smaller backlog will never repeat', async () => {
-        const SHARED = 'tab2:name:General';
+        const SHARED = 'tab2:ch:/chat_channel_types/general';
         const SAVED_LIVE = 20;
         const NOW_LIVE = 5;
         db.settings[PUBLIC_RECORD_KEY] = {
@@ -2451,6 +2495,9 @@ describe('the cap counts lines older than the game’s live backlog', () => {
             live: { [SHARED]: SAVED_LIVE },
         };
         const [container] = buildChat(['General']);
+        document
+            .querySelector('button[role="tab"]')
+            .setAttribute('data-mention-channel', '/chat_channel_types/general');
         container.append(
             ...Array.from({ length: NOW_LIVE }, (_, i) => makeMessage(line(CAP + SAVED_LIVE - NOW_LIVE + i)))
         );

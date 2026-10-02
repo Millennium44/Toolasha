@@ -1165,52 +1165,28 @@ const PUBLIC_CHANNELS = new Set(
 );
 
 /**
- * Button labels of the public channels, for a `tab2:name:` key: what a tab is
- * keyed by when no `data-mention-channel` names its channel (the mention tracker
- * switched off, or a channel it does not map). A label is the button's text, so
- * a whisper tab named after a player called `Help` reads the same; that tab
- * already shares its record with the Help tab today, and sharing moves it to
- * the account's other characters, not off the device.
- */
-const PUBLIC_LABELS = new Set([
-    'Global',
-    'General',
-    'English',
-    'Trade',
-    'Beginner',
-    'Recruit',
-    'Help',
-    'Ironcow',
-    '中文',
-    'Русский',
-    '한국어',
-    '日本語',
-    'Português',
-    'Español',
-    'Français',
-    'Deutsch',
-]);
-
-/**
  * Which kind of record a tab's history belongs in.
+ *
+ * Only a `tab2:ch:` key is shared: its channel was named by the tab's
+ * `data-mention-channel`, which `chatTabKey` trusts only when no other tab in
+ * the strip carries the same one. A `tab2:name:` key is just the button's text,
+ * which a whisper with a player called `Help`, `Trade` or `Guild` reads the same
+ * as the channel, so it stays with the character: sharing it would put a
+ * private conversation in every character's tab, or every guildmate's. The
+ * cost is that a public room named only by its text (the language rooms, Help,
+ * and every tab while the mention tracker is off) is kept per character, as all
+ * history was before the shared records.
+ *
  * @param {string} tabKey - From `chatTabKey`
  * @returns {'public'|'guild'|'character'}
  */
 export function tabScope(tabKey) {
     const key = String(tabKey || '');
     const channelPrefix = `${TAB_KEY_PREFIX}ch:`;
-    const namePrefix = `${TAB_KEY_PREFIX}name:`;
-    if (key.startsWith(channelPrefix)) {
-        const channel = key.slice(channelPrefix.length);
-        if (channel === GUILD_CHANNEL) return 'guild';
-        return PUBLIC_CHANNELS.has(channel) ? 'public' : 'character';
-    }
-    if (key.startsWith(namePrefix)) {
-        const label = key.slice(namePrefix.length);
-        if (label === 'Guild') return 'guild';
-        return PUBLIC_LABELS.has(label) ? 'public' : 'character';
-    }
-    return 'character';
+    if (!key.startsWith(channelPrefix)) return 'character';
+    const channel = key.slice(channelPrefix.length);
+    if (channel === GUILD_CHANNEL) return 'guild';
+    return PUBLIC_CHANNELS.has(channel) ? 'public' : 'character';
 }
 
 /**
