@@ -422,9 +422,11 @@ export function calculateSlotUpgradeCost(itemHrid, enhancementLevel, currentEqui
 
     // An untradable current piece (refined gear, for one) can never be sold, so selling it recovers
     // nothing: the full buy price is the real cost. Not netted, and not "unpriced" either, which a
-    // production-cost estimate or missing quote for it would otherwise cause.
+    // production-cost estimate or missing quote for it would otherwise cause. The game marks tradables
+    // with `isTradable: true` and leaves the field off untradable gear (capes, quivers), so only an
+    // explicit true is sellable; an item with no detail record at all keeps the old netting.
     const currentDetail = dataManager.getInitClientData()?.itemDetailMap?.[currentEquipped.itemHrid];
-    if (currentDetail?.isTradable === false) return buyPrice;
+    if (currentDetail && currentDetail.isTradable !== true) return buyPrice;
 
     const sell = resolveItemPrice(currentEquipped.itemHrid, {
         context: 'profit',
