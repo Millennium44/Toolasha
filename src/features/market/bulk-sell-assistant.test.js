@@ -1422,6 +1422,27 @@ describe('confirming from the strip', () => {
             inventory.remove();
         });
 
+        test('clearing the step mid-wait ends the wait at once and leaves nothing listening', async () => {
+            const menu = openMenu({ label: 'Confirm Sell For 400K Coins' });
+            vendorRun();
+            const sell = menu.querySelector('.Button_sell__x');
+
+            confirmBtn().click();
+            await vi.advanceTimersByTimeAsync(100);
+            bulkSell._clearTransient();
+            expect(bulkSell._vendorArming).toBe(false);
+
+            // The stale wait's listener is gone: a click is neither taken as the sale nor guarded
+            sell.click();
+            sell.click();
+            expect(gameClicks).toBe(2);
+            expect(bulkSell._confirmSent()).toBe(false);
+
+            // and the sleeping press, when it wakes, presses nothing
+            await vi.advanceTimersByTimeAsync(1200);
+            expect(gameClicks).toBe(2);
+        });
+
         test('a player click on a button they armed a moment ago stays retryable', async () => {
             // The game may ignore a confirm landing that soon after the arming
             const menu = openMenu();

@@ -1267,16 +1267,17 @@ class BulkSellAssistant {
      */
     async _pressArmedVendorAfterSettle() {
         if (this._vendorArming) return;
-        this._vendorArming = true;
         const key = this._stepKey();
         // The player may press the armed button themselves during the wait. Whether that click is the
         // sale depends on how long the button had stood armed, which `_trackVendorArming` recorded; an
         // arming it never saw is treated as long past
-        const watch = this._watchMenuClicks(key);
+        const wait = this._beginVendorWait(key);
+        const watch = wait.watch;
         watch.armedAt = this._vendorArmedAt;
         try {
             await new Promise((resolve) => setTimeout(resolve, VENDOR_CONFIRM_SETTLE_MS));
-            if (this.state !== 'awaiting_confirm' || this._stepKey() !== key || this._confirmSent()) return;
+            if (!wait.live() || this.state !== 'awaiting_confirm' || this._stepKey() !== key || this._confirmSent())
+                return;
             if (watch.menuClicked) {
                 this.confirmNote = 'the item menu was clicked while Confirm waited, so it pressed nothing';
                 this._render();
@@ -1290,9 +1291,42 @@ class BulkSellAssistant {
             }
             this._pressConfirm(settled.button);
         } finally {
-            watch.stop();
-            this._vendorArming = false;
+            this._endVendorWait(wait);
         }
+    }
+
+    /**
+     * Start a vendor press's wait: mark arming in progress and watch the item menu. The wait is
+     * registered so `_clearTransient` (Stop, Skip, teardown) can end it at once: its listener comes
+     * down, the arming flag clears for a restarted run, and `live()` turns false so the sleeping
+     * press returns without touching the new run's state.
+     * @param {string} key - The step key the waiting press belongs to
+     * @returns {{watch: Object, live: Function}} The wait
+     */
+    _beginVendorWait(key) {
+        this._cancelVendorWait();
+        const watch = this._watchMenuClicks(key);
+        const wait = { watch, cancelled: false, live: () => !wait.cancelled };
+        this._vendorWait = wait;
+        this._vendorArming = true;
+        return wait;
+    }
+
+    /** End a vendor press's wait; a wait already cancelled leaves the flags to whoever owns them now */
+    _endVendorWait(wait) {
+        wait.watch.stop();
+        if (this._vendorWait !== wait) return;
+        this._vendorWait = null;
+        this._vendorArming = false;
+    }
+
+    _cancelVendorWait() {
+        const wait = this._vendorWait;
+        if (!wait) return;
+        wait.cancelled = true;
+        wait.watch.stop();
+        this._vendorWait = null;
+        this._vendorArming = false;
     }
 
     /**
@@ -1384,9 +1418,9 @@ class BulkSellAssistant {
      */
     async _armVendorThenPress(button) {
         if (this._vendorArming) return;
-        this._vendorArming = true;
         const key = this._stepKey();
-        const watch = this._watchMenuClicks(key);
+        const wait = this._beginVendorWait(key);
+        const watch = wait.watch;
         try {
             watch.ownClick = true;
             watch.armedAt = Date.now();
@@ -1398,7 +1432,8 @@ class BulkSellAssistant {
             let result = { why: 'the Sell For button did not arm in time' };
             for (let waited = 0; waited <= VENDOR_ARM_WAIT_MS; waited += VENDOR_ARM_POLL_MS) {
                 await new Promise((resolve) => setTimeout(resolve, VENDOR_ARM_POLL_MS));
-                if (this.state !== 'awaiting_confirm' || this._stepKey() !== key || this._confirmSent()) return;
+                if (!wait.live() || this.state !== 'awaiting_confirm' || this._stepKey() !== key || this._confirmSent())
+                    return;
                 if (watch.menuClicked) {
                     result = { why: 'the item menu was clicked while Confirm waited, so it pressed nothing' };
                     break;
@@ -1419,7 +1454,8 @@ class BulkSellAssistant {
             // Let the armed button stand before pressing it (see VENDOR_CONFIRM_SETTLE_MS), then check
             // again that nothing moved meanwhile
             await new Promise((resolve) => setTimeout(resolve, VENDOR_CONFIRM_SETTLE_MS));
-            if (this.state !== 'awaiting_confirm' || this._stepKey() !== key || this._confirmSent()) return;
+            if (!wait.live() || this.state !== 'awaiting_confirm' || this._stepKey() !== key || this._confirmSent())
+                return;
             if (watch.menuClicked) {
                 this.confirmNote = 'the item menu was clicked while Confirm waited, so it pressed nothing';
                 this._render();
@@ -1433,8 +1469,7 @@ class BulkSellAssistant {
             }
             this._pressConfirm(settled.button);
         } finally {
-            watch.stop();
-            this._vendorArming = false;
+            this._endVendorWait(wait);
         }
     }
 
@@ -2116,6 +2151,7 @@ class BulkSellAssistant {
     }
 
     _clearTransient() {
+        this._cancelVendorWait();
         this._releaseSaleGuard();
         this._stopTrackingVendorArming();
         if (this.bookTimeout) {
