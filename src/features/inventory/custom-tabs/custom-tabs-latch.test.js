@@ -95,7 +95,7 @@ vi.mock('../../../core/dom-observer.js', () => ({
 }));
 vi.mock('../inventory-sort.js', () => ({ default: { onModeChange: () => () => {} } }));
 vi.mock('../inventory-badge-manager.js', () => ({
-    default: { currentInventoryElem: null, renderAllBadges: vi.fn(async () => {}) },
+    default: { currentInventoryElem: null, onRepriced: () => () => {}, renderAllBadges: vi.fn(async () => {}) },
 }));
 vi.mock('../../combat/loadout-snapshot.js', () => ({
     default: { snapshots: {}, onUpdate: vi.fn(), offUpdate: vi.fn(), updateEnhancementLevel: vi.fn() },

@@ -5,6 +5,9 @@ import {
     MANUAL_ACHIEVEMENT_COMBAT_BUFFS,
     achievementTierCounts,
     deriveAchievementCombatBuffs,
+    achievementScenarioCatalog,
+    activeAchievementBuffTypes,
+    resolveAchievementScenario,
 } from './achievement-combat-buffs.js';
 
 const NOVICE_ACH_1 = { hrid: '/achievements/novice_1', tierHrid: '/achievement_tiers/novice' };
@@ -190,4 +193,72 @@ describe('deriveAchievementCombatBuffs', () => {
         expect(empty.buffs).toHaveLength(3);
         expect(empty.activeTypeHrids).toEqual([]);
     });
+});
+
+describe('achievement what-if scenarios', () => {
+    const ownDamage = {
+        uniqueHrid: '/buff_uniques/own_damage',
+        typeHrid: '/buff_types/damage',
+        ratioBoost: 0.02,
+        flatBoost: 0,
+    };
+    // A character who finished only the Elite tier, as the server resolves it
+    const loaded = { achievementCombatBuffs: [ownDamage], achievementBuffsOff: [] };
+    const granted = (resolved) => {
+        const off = new Set(resolved.achievementBuffsOff);
+        return resolved.achievementCombatBuffs.map((b) => b.typeHrid).filter((t) => !off.has(t));
+    };
+
+    test('Current is the player exactly as loaded', () => {
+        const resolved = resolveAchievementScenario(loaded, 'current');
+        expect(resolved.achievementCombatBuffs).toEqual([ownDamage]);
+        expect(granted(resolved)).toEqual(['/buff_types/damage']);
+    });
+
+    test('Current keeps the loaded off-list', () => {
+        const resolved = resolveAchievementScenario(
+            { ...loaded, achievementBuffsOff: ['/buff_types/damage'] },
+            'current'
+        );
+        expect(granted(resolved)).toEqual([]);
+    });
+
+    test('None grants no achievement buff, even ones the player holds', () => {
+        expect(granted(resolveAchievementScenario(loaded, 'none'))).toEqual([]);
+    });
+
+    test('Custom grants exactly the chosen tiers, finished or not', () => {
+        const resolved = resolveAchievementScenario(loaded, 'custom', ['/buff_types/wisdom', '/buff_types/rare_find']);
+        expect(granted(resolved).sort()).toEqual(['/buff_types/rare_find', '/buff_types/wisdom']);
+    });
+
+    test('Custom with every combat tier grants Damage, Wisdom and Rare Find', () => {
+        const all = MANUAL_ACHIEVEMENT_COMBAT_BUFFS.map((def) => def.typeHrid);
+        expect(granted(resolveAchievementScenario(loaded, 'custom', all)).sort()).toEqual([...all].sort());
+    });
+
+    test('a held buff keeps its own resolved value; a missing tier uses the catalog value', () => {
+        const resolved = resolveAchievementScenario(loaded, 'custom', all3());
+        expect(resolved.achievementCombatBuffs.find((b) => b.typeHrid === '/buff_types/damage')).toEqual(ownDamage);
+        const wisdom = resolved.achievementCombatBuffs.find((b) => b.typeHrid === '/buff_types/wisdom');
+        expect(wisdom.flatBoost).toBe(0.02);
+    });
+
+    test('resolving never mutates the loaded player', () => {
+        const snapshot = structuredClone(loaded);
+        resolveAchievementScenario(loaded, 'custom', all3());
+        resolveAchievementScenario(loaded, 'none');
+        expect(loaded).toEqual(snapshot);
+    });
+
+    test('a player with no buffs is still offered every combat tier', () => {
+        expect(achievementScenarioCatalog([]).map((b) => b.typeHrid)).toEqual(
+            MANUAL_ACHIEVEMENT_COMBAT_BUFFS.map((def) => def.typeHrid)
+        );
+        expect(activeAchievementBuffTypes({})).toEqual([]);
+    });
+
+    function all3() {
+        return MANUAL_ACHIEVEMENT_COMBAT_BUFFS.map((def) => def.typeHrid);
+    }
 });

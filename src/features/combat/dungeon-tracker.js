@@ -20,6 +20,8 @@ import { assessRecoveredStart, RECOVERY_FALLBACK_MAX_MS } from './dungeon-pace.j
 import { dungeonChestItems } from '../../utils/dungeon-chest-luck.js';
 import { parseGameNumber, gameDigitsSource } from '../../utils/number-parser.js';
 import { chatStampToDate } from '../../utils/locale-date-order.js';
+import { recordingAttempts } from './dungeon-run-attempt-setting.js';
+import { MIN_RECORDED_ATTEMPT_MS, RUN_RESULT_CANCEL, RUN_RESULT_FAIL } from '../../utils/dungeon-run-result.js';
 
 /**
  * The date a DOM chat stamp means, from a match of the tracker's stamp regexes.
@@ -126,6 +128,20 @@ const LOST_TIME_SLEEP_MS = 120_000;
 const MAX_PLAUSIBLE_RUN_MS = 3 * 60 * 60 * 1000;
 
 /**
+ * How long a run ended by the action feed, with no chat message to say why,
+ * waits for that message. The party chat and the action feed are separate
+ * messages whose order nothing guarantees.
+ */
+const UNSETTLED_END_WINDOW_MS = 30_000;
+
+/**
+ * How many recent party messages the client-minus-server clock estimate is
+ * taken over (see `chatClockOffset`). A short window, so a clock the system
+ * corrects is followed rather than remembered.
+ */
+const CHAT_CLOCK_SAMPLES = 20;
+
+/**
  * How old a completion's key count may be and still open the next run.
  *
  * The anchor is carried from one run's completion "Key counts" to the next
@@ -207,6 +223,14 @@ class DungeonTracker {
         this.keyCountMessages = []; // Store all key count messages for this run
         this.pendingNextRunFirstKeyCount = null; // Carry last timestamp forward as next run's start
         this.battleStartedTimestamp = null; // Timestamp from "Battle started" message
+
+        // A failed-or-canceled attempt not yet written: one the action feed
+        // ended with no chat message saying how, or a cancel a "Party failed"
+        // may still overrule (see `holdEnd`)
+        this.unsettledEnd = null;
+
+        // Arrival minus server stamp of recent party messages; see `chatClockOffset`
+        this.chatClockSamples = [];
 
         // Character ID for data isolation
         this.characterId = null;
@@ -418,6 +442,8 @@ class DungeonTracker {
             pausedMs: this.currentRun.pausedMs ?? 0,
             // Finished its last wave; the next run's wave 1 has begun; see onNewBattle
             awaitingKeyCount: this.currentRun.awaitingKeyCount === true,
+            // The queued action the run started under; see onNewBattle's solo boundary
+            actionId: this.currentRun.actionId ?? null,
         };
 
         // There is a record now, so "nothing saved" is no longer the answer for
@@ -623,6 +649,7 @@ class DungeonTracker {
             pausedAt: pausedRecord ? saved.pausedAt : null,
             pausedMs: Number.isFinite(saved.pausedMs) ? saved.pausedMs : 0,
             awaitingKeyCount: saved.awaitingKeyCount === true,
+            actionId: saved.actionId ?? null,
         };
 
         // Only a battle of this dungeon at or past the saved wave gets here, so the
@@ -1134,7 +1161,7 @@ class DungeonTracker {
 
                         if (!allWavesCompleted) {
                             // Early exit (fled, died, or failed)
-                            this.resetTracking();
+                            this.resetTracking(this.earlyExitAttempt());
                         }
                         // If it was a successful completion, action_completed will handle it
                         return;
@@ -1307,22 +1334,35 @@ class DungeonTracker {
             this.recentChatMessages.shift(); // Keep last 100 only
         }
 
-        // Only process system messages
-        if (!message.isSystemMessage) {
-            return;
-        }
-
         // Extract timestamp from message (convert to milliseconds)
         const timestamp = new Date(message.t).getTime();
 
+        // Only process system messages
+        if (message.isSystemMessage) {
+            this.onPartySystemMessage(message, timestamp);
+        }
+
+        // Noted after it is handled: a message that arrives late must not move
+        // the clock estimate it is judged against (see `predatesCurrentRun`)
+        this.noteChatClock(timestamp);
+    }
+
+    /**
+     * Route a party system message to its handler.
+     * @param {Object} message - The chat message
+     * @param {number} timestamp - Its server timestamp in milliseconds
+     */
+    onPartySystemMessage(message, timestamp) {
         // Handle "Battle started" messages
         if (message.m === 'systemChatMessage.partyBattleStarted') {
             this.onBattleStarted(timestamp, message);
             return;
         }
 
-        // Handle "Party failed" messages
-        if (message.m === 'systemChatMessage.partyFailed') {
+        // Handle "Party failed" messages ("Party failed on wave N."). The game's
+        // locale key is reported to be partyWaveFailed; partyFailed is kept too
+        // because no capture in hand pins the key down either way.
+        if (message.m === 'systemChatMessage.partyWaveFailed' || message.m === 'systemChatMessage.partyFailed') {
             this.onPartyFailed(timestamp, message);
             return;
         }
@@ -1356,21 +1396,42 @@ class DungeonTracker {
      * a successful completion has already been recorded by the time this could
      * fire — `isTracking` is false and this returns without touching it.
      *
-     * @param {number} _timestamp - Message timestamp in milliseconds
+     * With failed runs recorded, the ended message is also what makes an early
+     * exit a cancel rather than a failure: a run with waves banked is marked
+     * here, and the action feed's early exit reads the mark.
+     *
+     * One stamped before the run in progress began is about the run before it
+     * (see `predatesCurrentRun`) and only settles that one.
+     *
+     * @param {number} timestamp - Message timestamp in milliseconds
      */
-    onBattleEnded(_timestamp) {
+    onBattleEnded(timestamp) {
         // The key count that armed the next run's start belonged to a start
         // that has just been called off. Left armed, it waited — across a day,
         // a party change and a dungeon change — for whatever run came next.
-        this.pendingNextRunFirstKeyCount = null;
+        // One stamped before that key count ended something older.
+        const pending = this.pendingNextRunFirstKeyCount;
+        if (!(Number.isFinite(pending) && timestamp < pending)) {
+            this.pendingNextRunFirstKeyCount = null;
+        }
 
-        if (!this.isTracking || !this.currentRun) {
+        // A solo run is not the party's, and a paused run is not being fought: neither is what this ended.
+        // One stamped before the paused run began still settles the run before it, below
+        if (this.isTracking && (this.isSoloRun() || (this.isPaused() && !this.predatesCurrentRun(timestamp)))) {
+            return;
+        }
+        if (!this.isTracking || !this.currentRun || this.predatesCurrentRun(timestamp)) {
+            // The action feed may already have ended the run, unable to say why
+            this.settleUnsettledEnd(RUN_RESULT_CANCEL, timestamp);
             return;
         }
         if (this.currentRun.wavesCompleted > 0) {
+            if (Number.isFinite(timestamp)) this.currentRun.battleEndedAt = timestamp;
             return;
         }
-        this.resetTracking();
+        // Too short to record when it is the ready-check that fell through
+        // (see MIN_RECORDED_ATTEMPT_MS); a wave-1 flee is long enough to be one
+        this.resetTracking({ result: RUN_RESULT_CANCEL, endTimestamp: timestamp, endFromServer: true });
     }
 
     /**
@@ -1404,7 +1465,12 @@ class DungeonTracker {
                     dungeonTrackerStorage.getDungeonInfo(this.currentRun.dungeonHrid)?.name || '';
 
                 if (battleName && currentDungeonName && !battleName.includes(currentDungeonName)) {
-                    this.resetTracking();
+                    // The new dungeon's battle start can land before its new_battle, whose switch branch
+                    // would otherwise have ended this run as a cancel. A party combat zone that is no
+                    // dungeon proves nothing about the run and ends it unrecorded, as it always has.
+                    this.resetTracking(
+                        this.dungeonHridForBattleName(battleName) ? this.switchCancelAttempt(timestamp) : null
+                    );
                 }
             } catch (error) {
                 console.error('[Dungeon Tracker] Error parsing battle started metadata:', error);
@@ -1413,17 +1479,71 @@ class DungeonTracker {
     }
 
     /**
-     * Handle "Party failed" message
-     * @param {number} _timestamp - Message timestamp in milliseconds
+     * The dungeon a "Battle started" message names, matched against the game's
+     * own dungeon names; the longest match wins, so no name is mistaken for
+     * one it contains.
+     * @param {string} battleName - The message's `name`
+     * @returns {string|null} The dungeon's action HRID, or null when it names none
+     */
+    dungeonHridForBattleName(battleName) {
+        const actionDetailMap = dataManager.getInitClientData?.()?.actionDetailMap;
+        if (!battleName || !actionDetailMap) return null;
+        let best = null;
+        let bestLength = 0;
+        for (const [hrid, details] of Object.entries(actionDetailMap)) {
+            const name = details?.name;
+            if (!name || name.length <= bestLength || !this.isDungeonAction(hrid)) continue;
+            if (battleName.includes(name)) {
+                best = hrid;
+                bestLength = name.length;
+            }
+        }
+        return best;
+    }
+
+    /**
+     * The cancel a switch to another dungeon ends the live run with.
+     *
+     * Ended by the server at the new battle's start when the run's start is
+     * server-stamped too; otherwise both ends are on the wall clock, since
+     * `recordAttempt` pairs a server end with the local start when no
+     * server start exists.
+     *
+     * A start stamped before the run began is about an earlier action and
+     * says nothing of how this run ended.
+     *
+     * @param {number} timestamp - The "Battle started" message's server timestamp
+     * @returns {Object|null} The `attempt` argument for {@link DungeonTracker#resetTracking}
+     */
+    switchCancelAttempt(timestamp) {
+        if (this.predatesCurrentRun(timestamp)) return null;
+        if (Number.isFinite(timestamp) && Number.isFinite(this.firstKeyCountTimestamp)) {
+            return { result: RUN_RESULT_CANCEL, endTimestamp: timestamp, endFromServer: true };
+        }
+        return { result: RUN_RESULT_CANCEL, endTimestamp: Date.now(), endFromServer: false };
+    }
+
+    /**
+     * Handle "Party failed" message. One stamped before the run in progress
+     * began is about the run before it and only settles that one.
+     * @param {number} timestamp - Message timestamp in milliseconds
      * @param {Object} _message - Message object
      */
-    onPartyFailed(_timestamp, _message) {
-        if (!this.isTracking || !this.currentRun) {
+    onPartyFailed(timestamp, _message) {
+        // A solo run is not the party's: this is a party member's own dungeon, posted to the same channel.
+        // Nor can a paused run fail: it is not being fought, and it may yet resume. A message stamped before
+        // the paused run began is about the run before it, and still settles that one below
+        if (this.isTracking && (this.isSoloRun() || (this.isPaused() && !this.predatesCurrentRun(timestamp)))) {
+            return;
+        }
+        if (!this.isTracking || !this.currentRun || this.predatesCurrentRun(timestamp)) {
+            // The action feed may already have ended the run, unable to say why
+            this.settleUnsettledEnd(RUN_RESULT_FAIL, timestamp);
             return;
         }
 
         // Mark run as failed and reset tracking
-        this.resetTracking();
+        this.resetTracking({ result: RUN_RESULT_FAIL, endTimestamp: timestamp, endFromServer: true });
     }
 
     /**
@@ -1635,9 +1755,10 @@ class DungeonTracker {
         ) {
             // The abandoned run was interrupted, not completed. resetTracking is
             // the same discard the flee/death early-exit path uses: it drops the
-            // run without writing it to history (a half-length run would poison
-            // the averages and the ROI board) and clears the saved record.
-            await this.resetTracking();
+            // run without writing it as a clear (a half-length run would poison
+            // the averages and the ROI board) and clears the saved record. With
+            // attempts recorded it is a cancel, ending as the other dungeon began.
+            await this.resetTracking({ result: RUN_RESULT_CANCEL, endTimestamp: Date.now(), endFromServer: false });
             if (currentOwner() !== owner) return;
             this.startDungeon(data);
             return;
@@ -1715,14 +1836,15 @@ class DungeonTracker {
                 // Only a run that actually cleared its last wave is saved here —
                 // this is the backstop for a final completion that never reached
                 // us (its own action_completed handles the common case). A wave-1
-                // battle arriving with the last wave NOT cleared means the player
-                // died (commonly on the boss wave) and the repeating action
-                // requeued anyway: that run is discarded, unsaved, exactly like
-                // any other early exit.
+                // battle arriving with the last wave NOT cleared means the run
+                // ended early and is not saved as a clear.
                 if (this.isFinalWaveCleared()) {
                     await this.completeDungeon();
                 } else {
-                    await this.resetTracking();
+                    const result = this.soloEarlyEndResult(running);
+                    await this.resetTracking(
+                        result === null ? null : { result, endTimestamp: Date.now(), endFromServer: false }
+                    );
                 }
                 if (currentOwner() !== owner) return;
                 this.startDungeon(data);
@@ -1733,7 +1855,7 @@ class DungeonTracker {
             // dungeon started over under it (a restart, a wipe the queue kept).
             // Discarded, unsaved, like any other early exit.
             if (pastItsFirstWave && !this.isFinalWaveCleared()) {
-                await this.resetTracking();
+                await this.resetTracking(this.earlyExitAttempt());
                 if (currentOwner() !== owner) return;
             } else if (this.isTracking && (sameBattle || !this.pendingDungeonInfo)) {
                 // A party run that has cleared its last wave is held open through
@@ -1940,6 +2062,8 @@ class DungeonTracker {
             // `new_battle` says; every wave carries one, so a run tracked from
             // wave 1 has it from the start.
             partyNames: battlePartyNames(data),
+            // The queued action this run belongs to; see `soloEarlyEndResult`
+            actionId: running?.id ?? null,
         };
 
         this.notifyUpdate();
@@ -2079,7 +2203,7 @@ class DungeonTracker {
                 this.completeDungeon();
             } else {
                 // Early exit (fled, died, or failed)
-                this.resetTracking();
+                this.resetTracking(this.earlyExitAttempt());
             }
         } else if (this.isSoloRun() && (allWavesCompleted || this.runRewardArrived(data))) {
             // A repeating dungeon action ("Runs: 253") is not done when one run
@@ -2395,9 +2519,281 @@ class DungeonTracker {
     }
 
     /**
-     * Reset tracking state (on completion, flee, or death)
+     * How an early exit the action feed noticed ended, as far as is known yet.
+     *
+     * A "Battle ended" already seen for this run makes it a cancel, timed by
+     * that message, which a "Party failed" arriving shortly after still turns
+     * into a fail. Otherwise nothing has said why: the run is held as an
+     * unsettled end, which a "Party failed" or "Battle ended" arriving shortly
+     * after labels, and which is otherwise dropped unrecorded (see `holdEnd`).
+     *
+     * @returns {Object} The `attempt` argument for {@link DungeonTracker#resetTracking}
      */
-    async resetTracking() {
+    earlyExitAttempt() {
+        const endedAt = this.currentRun?.battleEndedAt;
+        if (Number.isFinite(endedAt)) {
+            return { result: RUN_RESULT_CANCEL, endTimestamp: endedAt, endFromServer: true };
+        }
+        return { unsettled: true };
+    }
+
+    /**
+     * How a solo run that ended before its last wave ended, judged by the action
+     * the next run's wave 1 belongs to.
+     *
+     * A solo run has no chat to say. Stopping the dungeon marks its action done,
+     * which the action feed ends the run on before any new battle, so a run
+     * still tracked here was ended by the game: the same queued action went on
+     * to its next run, and the only thing that ends a run under a repeating
+     * action is the player dying. A different action means the player started
+     * a new dungeon over this one, which is a cancel. A run that cannot say
+     * which action it began under (one saved before the action was recorded)
+     * proves neither and is not recorded. Ended now, on the wall clock, which
+     * is completion-to-completion like the solo clears it sits beside.
+     *
+     * @param {Object|null|undefined} running - The combat action now running
+     * @returns {'fail'|'cancel'|null} The attempt's result, or null to record nothing
+     */
+    soloEarlyEndResult(running) {
+        const startedUnder = this.currentRun?.actionId;
+        if (startedUnder === null || startedUnder === undefined) return null;
+        if (running?.id === null || running?.id === undefined) return null;
+        return running.id === startedUnder ? RUN_RESULT_FAIL : RUN_RESULT_CANCEL;
+    }
+
+    /**
+     * The run in progress, frozen for recording as a failed or canceled attempt.
+     * @param {Object} attempt - From the caller of `resetTracking`
+     * @returns {Object|null} The snapshot, or null when there is nothing to record
+     */
+    attemptSnapshot(attempt) {
+        if (!attempt || !recordingAttempts()) return null;
+        if (!this.isTracking || !this.currentRun) return null;
+        if (this.isPaused() && attempt.fromPause !== true) return null;
+        // Finished and only waiting for its completion key count: a clear, not an attempt
+        if (this.currentRun.awaitingKeyCount === true) return null;
+        return {
+            ...attempt,
+            run: { ...this.currentRun },
+            firstTimestamp: this.firstKeyCountTimestamp,
+            hibernated: this.hibernationDetected === true || this.currentRun.hibernationDetected === true,
+            soloName: dataManager.getCurrentCharacterName?.() ?? null,
+            owner: currentOwner(),
+            at: Date.now(),
+        };
+    }
+
+    /**
+     * Note a party message's server stamp against the local clock it arrived on.
+     * @param {number} timestamp - The message's server timestamp
+     */
+    noteChatClock(timestamp) {
+        if (!Number.isFinite(timestamp)) return;
+        this.chatClockSamples.push(Date.now() - timestamp);
+        if (this.chatClockSamples.length > CHAT_CLOCK_SAMPLES) this.chatClockSamples.shift();
+    }
+
+    /**
+     * The local clock minus the server's, as near as recent party messages say.
+     *
+     * Each message's arrival minus its stamp is that offset plus its delivery
+     * time, so the smallest is the closest estimate and never under the true
+     * offset. A local time minus it is therefore never later than the server
+     * time it stands for.
+     *
+     * @returns {number|null} Milliseconds, or null before any party message
+     */
+    chatClockOffset() {
+        return this.chatClockSamples.length > 0 ? Math.min(...this.chatClockSamples) : null;
+    }
+
+    /**
+     * Whether a party message was posted before the run in progress began.
+     *
+     * Such a message is about an earlier run: the party chat and the action
+     * feed are separate streams, so a "Party failed" or "Battle ended" for the
+     * run just ended can land after the next run's wave 1 has started it.
+     * The run's start is taken as early as any evidence allows (its opening key
+     * count, or its local start on the server's clock, less any time it spent
+     * paused, since resuming moves both forward) so no message of its own is
+     * mistaken for an older one.
+     *
+     * @param {number} timestamp - The message's server timestamp
+     * @returns {boolean} True when the message predates the run
+     */
+    predatesCurrentRun(timestamp) {
+        const run = this.currentRun;
+        if (!run || !Number.isFinite(timestamp)) return false;
+        const paused = Number.isFinite(run.pausedMs) ? run.pausedMs : 0;
+        const starts = [];
+        if (Number.isFinite(this.firstKeyCountTimestamp)) starts.push(this.firstKeyCountTimestamp - paused);
+        const offset = this.chatClockOffset();
+        if (Number.isFinite(run.startTime) && offset !== null) starts.push(run.startTime - paused - offset);
+        return starts.length > 0 && timestamp < Math.min(...starts);
+    }
+
+    /**
+     * Hold a failed-or-canceled attempt that may yet be told it was a failure.
+     *
+     * An unexplained end waits for a message to say how it ended; a cancel
+     * waits in case a "Party failed" follows its "Battle ended", since a wipe
+     * is a fail whichever of the two the game posts first. Either is written
+     * when the window closes (an unexplained one is dropped), or at once when
+     * a fail arrives. A run that ends while an older one is held settles the
+     * older one first: from then on a message is about the newer run.
+     *
+     * @param {Object|null} snapshot - The attempt to hold, or null to hold nothing
+     */
+    holdEnd(snapshot) {
+        const previous = this.unsettledEnd;
+        this.unsettledEnd = snapshot;
+        if (previous && previous !== snapshot) this.flushHeldEnd(previous);
+        if (!snapshot) return;
+        const timeout = setTimeout(() => this.flushHeldEnd(snapshot), UNSETTLED_END_WINDOW_MS);
+        this.timerRegistry.registerTimeout(timeout);
+    }
+
+    /**
+     * Write a held attempt as whatever it is known to be by now, once.
+     * @param {Object} pending - A snapshot passed to {@link DungeonTracker#holdEnd}
+     */
+    flushHeldEnd(pending) {
+        if (!pending || pending.flushed) return;
+        pending.flushed = true;
+        if (this.unsettledEnd === pending) this.unsettledEnd = null;
+        // Nothing ever said how it ended
+        if (pending.result !== RUN_RESULT_FAIL && pending.result !== RUN_RESULT_CANCEL) return;
+        if (currentOwner() !== pending.owner) return;
+        this.recordAttempt(pending).catch((error) => {
+            console.error('[Dungeon Tracker] Failed to record a failed or canceled run:', error);
+        });
+    }
+
+    /**
+     * Settle a held attempt now that a chat message has said how it ended.
+     *
+     * A fail is final and written at once. A cancel only labels an unexplained
+     * end, which then waits out the window in case a fail follows.
+     *
+     * @param {'fail'|'cancel'} result - What the message said
+     * @param {number} timestamp - The message's server timestamp
+     */
+    settleUnsettledEnd(result, timestamp) {
+        const pending = this.unsettledEnd;
+        if (!pending || pending.flushed) return;
+        // A held solo run is not what a party message is about
+        if (Array.isArray(pending.run?.partyNames) && pending.run.partyNames.length === 1) return;
+        if (Date.now() - pending.at > UNSETTLED_END_WINDOW_MS) {
+            this.flushHeldEnd(pending);
+            return;
+        }
+        // Stamped before the held run began: not about it
+        if (Number.isFinite(pending.firstTimestamp) && timestamp < pending.firstTimestamp) return;
+        if (result === RUN_RESULT_FAIL) {
+            Object.assign(pending, { result, endTimestamp: timestamp, endFromServer: true, unsettled: false });
+            this.flushHeldEnd(pending);
+            return;
+        }
+        if (pending.result === undefined) {
+            Object.assign(pending, { result, endTimestamp: timestamp, endFromServer: true, unsettled: false });
+        }
+    }
+
+    /**
+     * Bank a failed or canceled attempt in run history, on the same evidence
+     * rules a clear is banked on.
+     *
+     * Its duration is measured the way a clear's is, completion to completion:
+     * from the party's opening "Key counts" (which is the previous run's
+     * completion) or, solo, from when the run began, to the moment it ended.
+     * A run whose start was never seen, a wall-clocked run across a sleep,
+     * or one that cannot say who was in it is not recorded.
+     *
+     * @param {Object} snapshot - From {@link DungeonTracker#attemptSnapshot}, with
+     *   `result`, `endTimestamp` and `endFromServer` settled
+     * @returns {Promise<boolean>} Whether a run was saved
+     */
+    async recordAttempt(snapshot) {
+        const { run, result, endTimestamp, endFromServer, firstTimestamp, hibernated, soloName } = snapshot;
+        if (!run?.dungeonHrid) return false;
+        if (run.joinedMidRun === true && run.startRecovered !== true) return false;
+        if (!Number.isFinite(endTimestamp)) return false;
+
+        const keyCountsMap = run.keyCountsMap && Object.keys(run.keyCountsMap).length > 0 ? run.keyCountsMap : null;
+        let team;
+        if (keyCountsMap) {
+            team = Object.keys(keyCountsMap).sort();
+        } else if (Array.isArray(run.partyNames) && run.partyNames.length === 1 && soloName) {
+            team = [soloName];
+        } else {
+            return false;
+        }
+
+        // Both ends on one clock: a server-stamped end pairs with the server-stamped start, and a wall-clock
+        // end (a solo death, a paused run given up) with the local start, whatever the client clock is off by
+        const serverStart = endFromServer === true && Number.isFinite(firstTimestamp) ? firstTimestamp : null;
+        const start = serverStart ?? run.startTime;
+        if (!Number.isFinite(start)) return false;
+        const validated = serverStart !== null && endFromServer === true;
+        // A wall clock across a sleep is no measure of anything
+        if (!validated && hibernated) return false;
+
+        const duration = endTimestamp - start;
+        if (!(duration >= MIN_RECORDED_ATTEMPT_MS) || duration > MAX_PLAUSIBLE_RUN_MS) return false;
+
+        // A death in wave N has cleared N-1 waves at most. The fatal wave can still send an `action_completed`
+        // that advances wavesCompleted to N before the next run starts, so a fail is capped by the wave it
+        // died in. Clears and cancels are left as counted.
+        let wavesCompleted = Number.isInteger(run.wavesCompleted) ? run.wavesCompleted : undefined;
+        if (
+            result === RUN_RESULT_FAIL &&
+            wavesCompleted !== undefined &&
+            Number.isInteger(run.currentWave) &&
+            run.currentWave > 0
+        ) {
+            wavesCompleted = Math.min(wavesCompleted, run.currentWave - 1);
+        }
+
+        const dungeonInfo = dungeonTrackerStorage.getDungeonInfo(run.dungeonHrid);
+        return dungeonTrackerStorage.saveTeamRun(dungeonTrackerStorage.getTeamKey(team), {
+            timestamp: new Date(start).toISOString(),
+            duration,
+            dungeonName: dungeonInfo ? dungeonInfo.name : 'Unknown',
+            dungeonHrid: run.dungeonHrid,
+            tier: run.tier,
+            keyCountsMap,
+            validated,
+            source: validated ? 'chat' : 'tracker',
+            result,
+            wavesCompleted,
+        });
+    }
+
+    /**
+     * Reset tracking state (on completion, flee, or death)
+     * @param {Object} [attempt] - How the run ended, when it ended early and
+     *   failed runs are recorded: `{ result, endTimestamp, endFromServer }`, or
+     *   `{ unsettled: true }` when no message has said yet. Recorded after the
+     *   state is cleared and without being awaited, so nothing the caller does
+     *   next waits on the write.
+     */
+    async resetTracking(attempt = null) {
+        // A paused run that is discarded was given up: the player put another action in front of it and
+        // then dropped or replaced it. Nothing can die while paused, so it is a cancel, ending when the
+        // run stopped (not now, which would count the time spent on the other action)
+        const snapshot = this.isPaused()
+            ? this.attemptSnapshot({
+                  result: RUN_RESULT_CANCEL,
+                  endTimestamp: this.currentRun.pausedAt,
+                  endFromServer: false,
+                  fromPause: true,
+              })
+            : this.attemptSnapshot(attempt);
+        // Only a fail is final; see `holdEnd`. Held before the await below,
+        // which a chat message can land inside.
+        const held = snapshot !== null && snapshot.result !== RUN_RESULT_FAIL;
+        this.holdEnd(held ? snapshot : null);
+
         this.isTracking = false;
         this.currentRun = null;
         this.waveStartTime = null;
@@ -2417,6 +2813,12 @@ class DungeonTracker {
 
         // Clear saved state (await to ensure it completes)
         await this.clearInProgressRun();
+
+        if (snapshot && !held && currentOwner() === snapshot.owner) {
+            this.recordAttempt(snapshot).catch((error) => {
+                console.error('[Dungeon Tracker] Failed to record a failed or canceled run:', error);
+            });
+        }
 
         this.notifyUpdate();
     }
@@ -2631,6 +3033,13 @@ class DungeonTracker {
             this.restoredMidRun = false;
             this.joinedMidRun = false;
             this.recentChatMessages = [];
+            // A held cancel already knows how it ended and how long it ran: write it rather than drop it
+            // with its timer. An end nothing has explained is still dropped, and `flushHeldEnd` refuses a
+            // write once the character has changed. A page closing never reaches here, so a cancel held
+            // across a reload is still lost (the run store is a read-merge-write that cannot finish there).
+            if (this.unsettledEnd) this.flushHeldEnd(this.unsettledEnd);
+            this.unsettledEnd = null;
+            this.chatClockSamples = [];
 
             // Reset hibernation detection
             this.hibernationDetected = false;
@@ -2776,7 +3185,10 @@ class DungeonTracker {
                       }
                     : null;
 
-            // Build runs from events - only count key→key pairs (skip key→fail and key→cancel)
+            // Build runs from events: key→key pairs are clears. Key→fail and
+            // key→cancel are failed and canceled attempts, kept only when the
+            // player has opted in to recording them.
+            const withAttempts = recordingAttempts();
             let runsAdded = 0;
             const teamsSet = new Set();
 
@@ -2784,11 +3196,20 @@ class DungeonTracker {
                 const event = events[i];
                 if (event.type !== 'key') continue; // Only process key count events
 
-                const next = events[i + 1];
+                let next = events[i + 1];
                 if (!next) break; // No next event
+                // A wipe can post "Battle ended" just before "Party failed": the fail wins, as it does live
+                if (next.type === 'cancel' && events[i + 2]?.type === 'fail') next = events[i + 2];
 
-                // Only create run if next event is also a key count (successful completion)
-                if (next.type === 'key') {
+                const attemptResult =
+                    withAttempts && next.type === 'fail'
+                        ? RUN_RESULT_FAIL
+                        : withAttempts && next.type === 'cancel'
+                          ? RUN_RESULT_CANCEL
+                          : null;
+
+                // A clear when the next event is also a key count; an attempt when it is a recorded end
+                if (next.type === 'key' || attemptResult) {
                     // Calculate duration (handle midnight rollover)
                     let duration = next.timestamp - event.timestamp;
                     if (duration < 0) {
@@ -2798,6 +3219,8 @@ class DungeonTracker {
                     // Two key counts further apart than any run takes are two
                     // runs' boundaries, not one run's start and end
                     if (duration > MAX_PLAUSIBLE_RUN_MS) continue;
+                    // A ready-check that fell through is no attempt
+                    if (attemptResult && duration < MIN_RECORDED_ATTEMPT_MS) continue;
 
                     // The run is the dungeon the party last started. A "Battle
                     // ended" names a dungeon too, but only the one it ended: it
@@ -2822,6 +3245,7 @@ class DungeonTracker {
                         duration: duration,
                         dungeonName: dungeonName,
                     };
+                    if (attemptResult) run.result = attemptResult;
 
                     // Tag with the current dungeon's tier when the names match,
                     // so this run stops defaulting to T0 in tier-grouped views.
@@ -2835,7 +3259,7 @@ class DungeonTracker {
                         runsAdded++;
                     }
                 }
-                // If next event is 'fail' or 'cancel', skip this key count (not a completed run)
+                // Otherwise the key count ended in a fail or cancel that is not being recorded
             }
 
             return {

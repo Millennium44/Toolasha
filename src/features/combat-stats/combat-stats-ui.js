@@ -679,7 +679,14 @@ class CombatStatsUI {
         const playerStats = combatData ? calculateAllPlayerStats(combatData, durationSeconds) : [];
 
         // Create and show popup
-        this.createPopup(playerStats, { archived, combatData });
+        this.createPopup(playerStats, {
+            archived,
+            combatData,
+            // An archive carries its own mark; one archived before it existed has none
+            connectionInterrupted: archived
+                ? archived.connectionInterrupted === true
+                : combatStatsDataCollector.isConnectionInterrupted() || combatData?.connectionInterrupted === true,
+        });
     }
 
     /**
@@ -756,10 +763,11 @@ class CombatStatsUI {
     /**
      * Create and display the statistics popup
      * @param {Array} playerStats - Array of player statistics
-     * @param {Object} [context] - `{archived, combatData}`: the archived session on show (null for
-     *   Live), and the snapshot the cards were computed from
+     * @param {Object} [context] - `{archived, combatData, connectionInterrupted}`: the archived
+     *   session on show (null for Live), the snapshot the cards were computed from, and whether
+     *   the connection dropped during that session
      */
-    createPopup(playerStats, { archived = null, combatData = null } = {}) {
+    createPopup(playerStats, { archived = null, combatData = null, connectionInterrupted = false } = {}) {
         // Remove existing popup if any
         if (this.popup) {
             this.closePopup();
@@ -1008,6 +1016,23 @@ class CombatStatsUI {
                 margin-bottom: 15px;
                 padding: 8px 12px;
                 border: 1px solid #6b5a1f;
+                border-radius: 4px;
+                background: rgba(255, 200, 60, 0.08);
+                color: #e8c66c;
+                font-size: 13px;
+            `;
+            popup.appendChild(banner);
+        }
+        if (connectionInterrupted) {
+            const banner = document.createElement('div');
+            banner.className = 'toolasha-combat-stats-interrupted-banner';
+            banner.textContent =
+                'Connection was interrupted during this session. Some events may have been missed, ' +
+                'so these numbers may be incomplete.';
+            banner.style.cssText = `
+                margin-bottom: 15px;
+                padding: 8px 12px;
+                border: 1px solid #8a6a2a;
                 border-radius: 4px;
                 background: rgba(255, 200, 60, 0.08);
                 color: #e8c66c;

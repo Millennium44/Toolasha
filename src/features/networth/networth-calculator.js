@@ -28,30 +28,12 @@ import { calculateItemValueBatch } from '../../utils/networth-worker-manager.js'
 import { DUNGEON_CHEST_CHEST_KEYS } from '../../utils/dungeon-keys.js';
 import { getKeyUnitCost } from '../../utils/key-cost.js';
 import { ironCowBook } from '../../utils/ironcow-valuation.js';
+import { officialValueOverride } from '../../utils/official-value-override.js';
 import { getShopCoinCost } from '../../utils/game-lookups.js';
 import { isExcluded, getExclusions } from './networth-exclusions.js';
 import bundledLoadoutSnapshot from '../combat/loadout-snapshot.js';
 import { loadoutSnapshot } from '../../utils/bundle-bridge.js';
 import { buildGoldPerCredit, priceGuildCreditCosts } from '../../utils/guild-credit-pricing.js';
-
-/**
- * The game's own value for an item the high-enhancement cost rule would otherwise price.
- *
- * In officialValue mode the setting promises the game's number, so a published value wins at
- * every level, +13 and above included. Null in orderBook mode, for an Iron Cow character (whose
- * own valuation outranks it, as in resolveNetworthPrices), or when the game has no value.
- *
- * @param {string} itemHrid - Item HRID
- * @param {number} enhancementLevel - Enhancement level
- * @returns {number|null} The official value, or null to use the existing chain
- */
-function officialValueOverride(itemHrid, enhancementLevel) {
-    if ((config.getSettingValue('networth_valueSource') || 'orderBook') !== 'officialValue') return null;
-    if (ironCowBook(itemHrid, enhancementLevel)) return null;
-    refreshMarketValues();
-    const official = marketValueFor(itemHrid, enhancementLevel);
-    return official !== null && official > 0 ? official : null;
-}
 
 /**
  * Calculate the value of a single item

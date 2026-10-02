@@ -37,6 +37,8 @@ vi.mock('../../core/websocket.js', () => ({
         off: (type, handler) => {
             socket.handlers[type] = (socket.handlers[type] || []).filter((h) => h !== handler);
         },
+        onSocketEvent: () => {},
+        offSocketEvent: () => {},
     },
 }));
 vi.mock('../../core/data-manager.js', () => ({

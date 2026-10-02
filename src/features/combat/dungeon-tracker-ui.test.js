@@ -154,6 +154,7 @@ beforeEach(async () => {
     world.runs = [];
     world.baselines = {};
     world.settings.dungeonTrackerAverageWindow = 0;
+    world.settings.dungeonTracker_recordFailedRuns = false;
     ui.isInitialized = false;
     ui.container = null;
     ui.pricingChangeUnregisters = [];
@@ -305,6 +306,39 @@ describe('the average window reaches the panel too', () => {
         // (5 × 500_000 + 3 × 250_000) / 8 = 406_250ms
         expect(text('#mwi-dt-header-avg')).toBe('06:46');
         expect(text('#mwi-dt-avg-time')).toBe('06:46');
+    });
+
+    test('failed and canceled runs, when recorded, leave every clear figure alone', async () => {
+        world.settings.dungeonTracker_recordFailedRuns = true;
+        world.runs = [
+            ...history,
+            { ...storedRun(100_000, 9), result: 'fail' },
+            { ...storedRun(100_000, 10), result: 'fail' },
+            { ...storedRun(60_000, 11), result: 'cancel' },
+        ];
+        await ui.update(paced(6_000), true);
+
+        expect(text('#mwi-dt-header-avg')).toBe('06:46');
+        expect(text('#mwi-dt-header-runs')).toBe('8');
+        expect(text('#mwi-dt-fastest-time')).toBe('04:10');
+        // The newest clear, not the newer cancel
+        expect(text('#mwi-dt-header-last')).toBe('04:10');
+        // Two fails in ten outcomes; the cancel is neither
+        expect(text('#mwi-dt-fail-rate')).toBe('20% (2/10)');
+        // (3_250_000 + 260_000) / 8 = 438_750ms
+        expect(text('#mwi-dt-time-per-clear')).toBe('07:18');
+        const cells = [...document.querySelectorAll('.mwi-dt-attempt-stat')];
+        expect(cells.length).toBe(2);
+        expect(cells.every((cell) => cell.style.display !== 'none')).toBe(true);
+    });
+
+    test('with failed runs not recorded, the fail figures stay hidden', async () => {
+        world.runs = history;
+        await ui.update(paced(6_000), true);
+
+        const cells = [...document.querySelectorAll('.mwi-dt-attempt-stat')];
+        expect(cells.length).toBe(2);
+        expect(cells.every((cell) => cell.style.display === 'none')).toBe(true);
     });
 
     test('a window pulls Avg Run onto the last N runs, as the chat line reports them', async () => {

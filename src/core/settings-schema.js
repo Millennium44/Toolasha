@@ -2446,6 +2446,14 @@ export const settingsGroups = {
                 help: 'Adds colored timer annotations to "Key counts" messages (green if fast, red if slow)',
                 requires: 'dungeonTracker',
             },
+            dungeonTracker_recordFailedRuns: {
+                id: 'dungeonTracker_recordFailedRuns',
+                label: 'Dungeon Tracker: record failed and canceled runs',
+                type: 'checkbox',
+                default: false,
+                help: 'Keeps runs that end in a wipe or a cancel in the run history, marked as such, and adds a fail rate and a time-per-clear figure that counts the time they cost. Average, fastest and slowest run stay clears only. Cancels are not counted as failures.',
+                requires: 'dungeonTracker',
+            },
             dungeonTrackerAverageWindow: {
                 id: 'dungeonTrackerAverageWindow',
                 label: 'Party chat average covers only the last N runs (0 = all runs)',

@@ -199,6 +199,22 @@ function toMetzCharacter(name, source, extra = {}) {
     return character;
 }
 
+/**
+ * Whether a character object describes the character this game page is playing, judged by id: an
+ * `init_character_data` refresh or reconnect replaces `dataManager.characterData`, so a copy captured
+ * before an await would fail an identity check and be read as bridged data. On an external simulator
+ * page dataManager has no current character, so bridged data never matches.
+ * @param {Object} characterObj
+ * @returns {boolean}
+ */
+function isLiveCharacter(characterObj) {
+    const currentId = dataManager.getCurrentCharacterId?.();
+    const ownerId = characterObj?.character?.id;
+    return Boolean(
+        dataManager.characterData && currentId != null && ownerId != null && sameCharacterId(currentId, ownerId)
+    );
+}
+
 function buildSelfMetzCharacter(characterObj, clientObj) {
     const source = constructSelfPlayer(characterObj, clientObj);
     const itemDetailMap = clientObj?.itemDetailMap;
@@ -206,7 +222,7 @@ function buildSelfMetzCharacter(characterObj, clientObj) {
     // carries init_character_data, whose characterItems are the only inventory source there.
     // On the game page prefer the live collection so an emptied bag cannot fall back to the
     // login snapshot and resurrect items that are no longer owned.
-    const hasLiveData = characterObj === dataManager.characterData;
+    const hasLiveData = isLiveCharacter(characterObj);
     const inventoryItems = hasLiveData
         ? dataManager.getInventory() || []
         : Array.isArray(characterObj.characterItems)
@@ -231,6 +247,46 @@ function buildSelfMetzCharacter(characterObj, clientObj) {
 }
 
 /**
+ * Each other party member's cached profile and how far it can be trusted, in party-slot order.
+ *
+ * Shared by the team export (which turns it into warnings) and the profile panel's "export full
+ * party" preview (which lists every member's profile age before anything is copied).
+ *
+ * @param {Object} characterObj - The character whose party is read: the live roster when it is
+ *   `dataManager.characterData`, else its `partyInfo.partySlotMap`
+ * @param {Array<Object>} profileList - Cached `profile_list` entries
+ * @param {number} [now=Date.now()] - Reference time for profile ages
+ * @returns {Array<{characterId: string|number, name: string, profile: Object|null,
+ *   status: ReturnType<typeof sharedProfileStatus>,
+ *   warning: {level: string, text: string}|null}>}
+ */
+export function describePartyProfiles(characterObj, profileList, now = Date.now()) {
+    const ownerId = characterObj?.character?.id;
+    const members = [];
+    // The live character's `partySlotMap` is frozen at login and emptied for a whole battle, so the
+    // roster comes from dataManager (the newer of the last fight's and the last login payload's). A
+    // bridged character (simulator page) has no live roster; its slot map is all there is.
+    const roster = isLiveCharacter(characterObj)
+        ? dataManager.getPartyMembers().members
+        : Object.values(characterObj?.partyInfo?.partySlotMap || {});
+    for (const member of roster) {
+        if (!member?.characterID || sameCharacterId(member.characterID, ownerId)) continue;
+        const profile =
+            (profileList || []).find((entry) => sameCharacterId(entry?.characterID, member.characterID)) || null;
+        const name = profile?.characterName || member.characterName || 'Unknown';
+        const status = sharedProfileStatus(profile, now);
+        members.push({
+            characterId: member.characterID,
+            name,
+            profile,
+            status,
+            warning: sharedProfileWarning(name, status, now),
+        });
+    }
+    return members;
+}
+
+/**
  * Build the intended character and every cached party member in Metz's team shape.
  *
  * A member whose cached profile carries no gear is still exported, at their real levels: the
@@ -240,34 +296,37 @@ function buildSelfMetzCharacter(characterObj, clientObj) {
  * reported through `options.warnings` so the import button can say so.
  *
  * @param {string|number|null} [expectedCharacterId] - The character the simulator was opened for
- * @param {{warnings?: Array<{name: string, level: string, text: string}>}} [options] - `warnings`
- *   is appended to, one entry per party member whose profile needs attention
+ * @param {{warnings?: Array<{name: string, level: string, text: string}>,
+ *   selfLoadoutOverride?: Object|null}} [options] - `warnings` is appended to, one entry per party
+ *   member whose profile needs attention. `selfLoadoutOverride` (the parameters of
+ *   {@link applyLoadoutOverrideToMetzCharacter}) exports a saved loadout for your own character
+ *   instead of what is worn now; the other members are untouched by it
  * @returns {Promise<Array<Object>|null>} null when the character is not (or is no longer) the
  *   expected one
  */
-export async function constructMetzTeamExport(expectedCharacterId = null, { warnings = null } = {}) {
-    const characterObj = getCharacterData();
-    if (!characterObj) return null;
-    const ownerId = characterObj.character?.id;
+export async function constructMetzTeamExport(
+    expectedCharacterId = null,
+    { warnings = null, selfLoadoutOverride = null } = {}
+) {
+    const before = getCharacterData();
+    if (!before) return null;
+    const ownerId = before.character?.id;
     if (expectedCharacterId != null && !sameCharacterId(ownerId, expectedCharacterId)) return null;
 
-    const clientObj = getClientData();
-    const battleObj = getBattleData();
     const profileList = await getProfileList();
     // Re-read after the await: another game tab can rewrite the bridged character meanwhile, and
     // this tab's own character can be switched, either of which would pair one character's
-    // party with another's self
-    if (!sameCharacterId(getCharacterData()?.character?.id, ownerId)) return null;
-    const team = [buildSelfMetzCharacter(characterObj, clientObj)];
+    // party with another's self. The same character's data can also be refreshed in the
+    // meantime (a reconnect), so everything below is built from the copy read now
+    const characterObj = getCharacterData();
+    if (!characterObj || !sameCharacterId(characterObj.character?.id, ownerId)) return null;
+    const clientObj = getClientData();
+    const battleObj = getBattleData();
+    const self = buildSelfMetzCharacter(characterObj, clientObj);
+    const team = [selfLoadoutOverride ? applyLoadoutOverrideToMetzCharacter(self, selfLoadoutOverride) : self];
 
-    for (const member of Object.values(characterObj.partyInfo?.partySlotMap || {})) {
-        if (!member.characterID || sameCharacterId(member.characterID, ownerId)) continue;
-        const profile = profileList.find((entry) => sameCharacterId(entry?.characterID, member.characterID));
-        if (Array.isArray(warnings)) {
-            const name = profile?.characterName || member.characterName || 'Unknown';
-            const warning = sharedProfileWarning(name, sharedProfileStatus(profile || null));
-            if (warning) warnings.push({ name, ...warning });
-        }
+    for (const { name, profile, warning } of describePartyProfiles(characterObj, profileList)) {
+        if (Array.isArray(warnings) && warning) warnings.push({ name, ...warning });
         if (!profile) continue;
         team.push(
             toMetzCharacter(profile.characterName, constructPartyPlayer(profile, clientObj, battleObj), {

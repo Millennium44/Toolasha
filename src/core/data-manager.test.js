@@ -864,6 +864,56 @@ describe('saveSimulatorSnapshot', () => {
         expect(snapshot.partyInfo).toBe(partyInfo);
     });
 
+    test('carries the running combat action as the party zone and tier', async () => {
+        const { default: dataManager } = await import('./data-manager.js');
+        const { default: webSocketHook } = await import('./websocket.js');
+        webSocketHook.saveCombatSimSnapshot.mockClear();
+        dataManager.currentCharacterId = 'char-snap';
+        dataManager.isCharacterSwitching = false;
+        dataManager.battlePartyRoster = null;
+        const partyInfo = {
+            partySlotMap: { 1: { characterID: 'char-snap' } },
+            party: { actionHrid: '/actions/combat/fly', difficultyTier: 0, id: 7 },
+        };
+        dataManager.characterData = { character: { id: 'char-snap' }, partyInfo };
+        dataManager.characterActions = [
+            { id: 1, actionHrid: '/actions/combat/zombie_outbreak', difficultyTier: 2, isDone: false, ordinal: 1 },
+        ];
+
+        dataManager.saveSimulatorSnapshot();
+
+        const [snapshot] = webSocketHook.saveCombatSimSnapshot.mock.calls[0];
+        expect(snapshot.partyInfo.party).toEqual({
+            actionHrid: '/actions/combat/zombie_outbreak',
+            difficultyTier: 2,
+            id: 7,
+        });
+        expect(snapshot.partyInfo.partySlotMap).toBe(partyInfo.partySlotMap);
+        // Login's party on the live object is left as the game sent it
+        expect(dataManager.characterData.partyInfo.party.actionHrid).toBe('/actions/combat/fly');
+        dataManager.characterActions = [];
+    });
+
+    test('leaves the login party zone alone when no combat action is running', async () => {
+        const { default: dataManager } = await import('./data-manager.js');
+        const { default: webSocketHook } = await import('./websocket.js');
+        webSocketHook.saveCombatSimSnapshot.mockClear();
+        dataManager.currentCharacterId = 'char-snap';
+        dataManager.isCharacterSwitching = false;
+        dataManager.battlePartyRoster = null;
+        const partyInfo = { party: { actionHrid: '/actions/combat/fly', difficultyTier: 1 } };
+        dataManager.characterData = { character: { id: 'char-snap' }, partyInfo };
+        dataManager.characterActions = [
+            { id: 2, actionHrid: '/actions/foraging/cow', difficultyTier: 0, isDone: false, ordinal: 1 },
+        ];
+
+        dataManager.saveSimulatorSnapshot();
+
+        const [snapshot] = webSocketHook.saveCombatSimSnapshot.mock.calls[0];
+        expect(snapshot.partyInfo).toBe(partyInfo);
+        dataManager.characterActions = [];
+    });
+
     test('writes nothing mid character switch', async () => {
         const { default: dataManager } = await import('./data-manager.js');
         const { default: webSocketHook } = await import('./websocket.js');
@@ -1922,6 +1972,7 @@ describe('the party roster', () => {
         const { default: dataManager } = await import('./data-manager.js');
         resetCharacter(dataManager);
         dataManager.battlePartyRoster = null;
+        dataManager.partyInfoReceivedAt = null;
         dataManager.currentCharacterId = 'me';
         dataManager.currentCharacterName = 'Milkman';
         dataManager.characterData = { character: { id: 'me', name: 'Milkman' } };
@@ -2002,5 +2053,71 @@ describe('the party roster', () => {
         expect(listener).toHaveBeenCalledTimes(2);
 
         dataManager.off('party_roster_updated', listener);
+    });
+
+    /**
+     * A login payload re-sent to the same character (a reconnect, not a reload)
+     * carries the party as it stands now, so a party changed while idle is seen
+     * there before any fight says so. Mid-dungeon the same payload's slot map is
+     * `{}`, which says nothing about who is in the party.
+     */
+    describe('a login payload re-sent after the last fight', () => {
+        const slot = (characterID, characterName) => ({ characterID, characterName });
+
+        async function foughtThenReconnected(partySlotMap) {
+            vi.useFakeTimers({ toFake: ['Date'] });
+            vi.setSystemTime(Date.parse('2026-10-02T10:00:00.000Z'));
+            const { default: dataManager } = await import('./data-manager.js');
+            dataManager.battlePartyRoster = null;
+            const me = { character: { id: 'me', name: 'Milkman' } };
+            await webSocketHandlers.get('init_character_data')(
+                initPayload({ ...me, partyInfo: { partySlotMap: { 1: slot('me', 'Milkman'), 2: slot('old', 'OLD') } } })
+            );
+
+            vi.setSystemTime(Date.parse('2026-10-02T10:05:00.000Z'));
+            webSocketHandlers.get('new_battle')(battle('me', 'old'));
+
+            vi.setSystemTime(Date.parse('2026-10-02T10:30:00.000Z'));
+            await webSocketHandlers.get('init_character_data')(initPayload({ ...me, partyInfo: { partySlotMap } }));
+            return dataManager;
+        }
+
+        test('naming a party changed while idle, replaces the last fight’s roster', async () => {
+            const dataManager = await foughtThenReconnected({
+                1: slot('me', 'Milkman'),
+                2: slot('new', 'Newfriend'),
+                3: slot('b', 'B'),
+            });
+
+            const { members, source, updatedAt } = dataManager.getPartyMembers();
+            expect(members.map((member) => member.characterID)).toEqual(['me', 'new', 'b']);
+            expect(source).toBe('login');
+            expect(updatedAt).toBe(Date.parse('2026-10-02T10:30:00.000Z'));
+        });
+
+        test('naming only this character after the party was left, is solo', async () => {
+            const dataManager = await foughtThenReconnected({ 1: slot('me', 'Milkman') });
+
+            expect(dataManager.getPartyMembers().members.map((member) => member.characterID)).toEqual(['me']);
+        });
+
+        test('emptied mid-dungeon, leaves the fight’s roster standing', async () => {
+            const dataManager = await foughtThenReconnected({});
+
+            const { members, source } = dataManager.getPartyMembers();
+            expect(members.map((member) => member.characterID)).toEqual(['me', 'old']);
+            expect(source).toBe('battle');
+        });
+
+        test('is overtaken in turn by the next fight', async () => {
+            const dataManager = await foughtThenReconnected({ 1: slot('me', 'Milkman'), 2: slot('new', 'Newfriend') });
+
+            vi.setSystemTime(Date.parse('2026-10-02T10:31:00.000Z'));
+            webSocketHandlers.get('new_battle')(battle('me', 'new', 'c'));
+
+            const { members, source } = dataManager.getPartyMembers();
+            expect(members.map((member) => member.characterID)).toEqual(['me', 'new', 'c']);
+            expect(source).toBe('battle');
+        });
     });
 });

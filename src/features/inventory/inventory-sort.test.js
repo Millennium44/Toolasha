@@ -88,6 +88,12 @@ vi.mock('./inventory-badge-manager.js', () => ({
     default: {
         registerProvider: () => {},
         unregisterProvider: () => {},
+        onRepriced: (fn) => {
+            badgeManager.onRepriced = fn;
+            return () => {
+                badgeManager.onRepriced = null;
+            };
+        },
         invalidateCache: () => {},
         clearProcessedTracking: () => {},
         renderAllBadges: async () => {
@@ -621,6 +627,32 @@ describe('InventorySort — reapplies sort when a native tab switch re-renders t
         expect(items.get('c3').style.order).toBe('1');
     });
 
+    test('a forced reprice redoes the order once the new values have landed', async () => {
+        await inventorySort.initialize();
+        const { inv } = buildNewInventory([
+            [
+                'Currencies',
+                [
+                    ['c1', 10],
+                    ['c2', 30],
+                ],
+            ],
+        ]);
+        observer.classHandlers.get('InventorySort:Inventory_items')(inv);
+        inventorySort.currentMode = 'ask';
+        await inventorySort.applyCurrentSort();
+        await vi.advanceTimersByTimeAsync(0);
+        const items = itemsByHrid(inv);
+        expect(items.get('c2').style.order).toBe('0');
+
+        // The badge manager repriced (value source change or the game's value refresh)
+        items.get('c1').dataset.askValue = '50';
+        badgeManager.onRepriced();
+
+        expect(items.get('c1').style.order).toBe('0');
+        expect(items.get('c2').style.order).toBe('1');
+    });
+
     test('a categoryButton outside the current inventory element is ignored', async () => {
         await inventorySort.initialize();
 
@@ -796,6 +828,23 @@ describe('InventorySort.renderPriceBadge — first draw matches the update path'
         const badge = tile.querySelector('.mwi-stack-price');
         expect(badge).not.toBeNull();
         expect(badge.textContent).toBe('43000000');
+        tile.remove();
+    });
+
+    test('a badge sizes and sets its font from the Toolasha text variables, capped, and is plain 0.7rem at zoom 1', () => {
+        const tile = document.createElement('div');
+        const inner = document.createElement('div');
+        inner.className = 'Item_item__abc';
+        tile.appendChild(inner);
+        document.body.appendChild(tile);
+
+        inventorySort.renderPriceBadge(tile, 43_000_000);
+
+        const css = tile.querySelector('.mwi-stack-price').style.cssText;
+        expect(css).toContain('--toolasha-text-zoom, 1');
+        expect(css).toContain('min(');
+        expect(css).toMatch(/min\(var\(--toolasha-text-zoom, 1\),\s*1\.5\)/);
+        expect(css).toContain('--toolasha-font-stack');
         tile.remove();
     });
 });

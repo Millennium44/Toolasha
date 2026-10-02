@@ -108,6 +108,16 @@ import { getDrinkConcentration } from '../../utils/tea-parser.js';
 import { readScoped, writeScoped } from '../../utils/character-key.js';
 import { currentBuildEntries, fromCurrentBuild } from '../../utils/script-version.js';
 import { entriesOf } from '../../utils/cleared-record.js';
+import { isClearRun } from '../../utils/dungeon-run-result.js';
+
+/**
+ * The cleared runs of a stored run history, which is all that food planning reads.
+ * @param {*} runs - The stored `allRuns` value
+ * @returns {Array<Object>} Clears only; an empty list for anything unreadable
+ */
+function clearsOnly(runs) {
+    return Array.isArray(runs) ? runs.filter(isClearRun) : [];
+}
 
 const PANEL_ID = 'toolasha-consumables-panel';
 
@@ -338,13 +348,15 @@ class ConsumablesPanel {
     async _refreshStoredReadings() {
         const started = (this._storedReadingsGeneration += 1);
         try {
-            const [storedRates, storedByZone, ledger, runs, profiles] = await Promise.all([
+            const [storedRates, storedByZone, ledger, storedRuns, profiles] = await Promise.all([
                 readScoped('simConsumableRates', 'combatExport', null).catch(() => null),
                 readScoped('simConsumableRatesByZone', 'combatExport', {}).catch(() => ({})),
                 readScoped('labyrinthRunLedger', 'labyrinth', []).catch(() => []),
                 storage.getJSON('allRuns', 'unifiedRuns', []).catch(() => []),
                 storage.getJSON('profile_list', 'combatExport', []).catch(() => []),
             ]);
+            // Clears only: a failed or canceled attempt is no run length to plan food by
+            const runs = clearsOnly(storedRuns);
             // A newer call — this panel shown again for a different character
             // before this one's reads landed — already applied its own answer;
             // this one belongs to a character the panel has since left
@@ -418,7 +430,7 @@ class ConsumablesPanel {
         this._dungeonRuns =
             parseRunsPlanned(await storage.get('consumablesDungeonRuns', 'settings', DEFAULT_DUNGEON_RUNS)) ??
             DEFAULT_DUNGEON_RUNS;
-        this._dungeonHistory = (await storage.getJSON('allRuns', 'unifiedRuns', []).catch(() => [])) || [];
+        this._dungeonHistory = clearsOnly(await storage.getJSON('allRuns', 'unifiedRuns', []).catch(() => []));
         this._profiles = (await storage.getJSON('profile_list', 'combatExport', []).catch(() => [])) || [];
         // Everything the readiness memo is a function of has just been re-read.
         // The key costing goes with it: a craft cost is this character's own —

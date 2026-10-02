@@ -7,6 +7,7 @@ import storage from '../../core/storage.js';
 import dataManager from '../../core/data-manager.js';
 import { RECOVERY_FALLBACK_MAX_MS } from './dungeon-pace.js';
 import { registerSyncMerge } from '../../utils/sync-merge-registry.js';
+import { isClearRun, RUN_RESULT_CANCEL, RUN_RESULT_FAIL } from '../../utils/dungeon-run-result.js';
 
 /** The object store the run history lives in */
 export const RUNS_STORE = 'unifiedRuns';
@@ -1161,6 +1162,9 @@ class DungeonTrackerStorage {
      * @param {boolean} [run.startRecovered] - True when the run's start was recovered from the
      *   chat log rather than watched; such a run may not set the recovery plausibility bound
      * @param {string} [run.source] - Where the run came from: 'chat' (default) or 'tracker'
+     * @param {'fail'|'cancel'} [run.result] - A failed or canceled attempt. Omitted for a
+     *   clear, and a clear is stored without the field, exactly as before attempts existed.
+     * @param {number} [run.wavesCompleted] - Waves an attempt cleared before it ended
      * @returns {Promise<boolean>} Success status
      */
     async saveTeamRun(teamKey, run) {
@@ -1260,6 +1264,14 @@ class DungeonTrackerStorage {
                 avgWaveTime: Number.isFinite(run.avgWaveTime) ? run.avgWaveTime : null,
                 keyCountsMap: run.keyCountsMap || null, // Include key counts if available
             };
+            // A failed or canceled attempt says so. A clear carries no result at
+            // all, so it is stored in the same shape every older record has.
+            if (run.result === RUN_RESULT_FAIL || run.result === RUN_RESULT_CANCEL) {
+                unifiedRun.result = run.result;
+                if (Number.isInteger(run.wavesCompleted) && run.wavesCompleted >= 0) {
+                    unifiedRun.wavesCompleted = run.wavesCompleted;
+                }
+            }
 
             // Add to front of the CURRENT list — `this._runs`, not the local
             // `allRuns` captured before the await above. A concurrent
@@ -1285,14 +1297,23 @@ class DungeonTrackerStorage {
     }
 
     /**
-     * Get all runs (unfiltered)
-     * @returns {Promise<Array>} All runs
+     * Get all runs: every clear, and failed or canceled attempts only on request.
+     *
+     * Clears only by default. Every figure built on run history — averages,
+     * pace, the chart, the ROI board, food planning, the recovery bound — is a
+     * claim about how long a clear takes, and an attempt is not one. The few
+     * views that show attempts ask for them.
+     *
+     * @param {Object} [options]
+     * @param {boolean} [options.includeAttempts] - Include failed and canceled attempts
+     * @returns {Promise<Array>} Runs, newest first
      */
-    async getAllRuns() {
+    async getAllRuns({ includeAttempts = false } = {}) {
         const runs = await this._loadRuns();
-        // A copy: the list held here is what the next save appends to, and a
-        // caller that sorted or spliced the live one would reorder the store
-        return runs ? [...runs] : [];
+        if (!runs) return [];
+        // A copy either way: the list held here is what the next save appends
+        // to, and a caller that sorted or spliced the live one would reorder the store
+        return includeAttempts ? [...runs] : runs.filter(isClearRun);
     }
 
     /**
@@ -1584,11 +1605,12 @@ class DungeonTrackerStorage {
      * checks that itself (`dungeon-tracker.js` does, around its own await).
      *
      * @param {string} [filterCharacter] - 'mine' (default) or 'all'
+     * @param {Object} [options] - Passed to {@link DungeonTrackerStorage#getAllRuns}
      * @returns {Promise<Array>} Runs
      */
-    async getRunsForCharacter(filterCharacter = 'mine') {
+    async getRunsForCharacter(filterCharacter = 'mine', options = {}) {
         const asker = currentCharacter();
-        return filterRunsForCharacter(await this.getAllRuns(), filterCharacter, asker);
+        return filterRunsForCharacter(await this.getAllRuns(options), filterCharacter, asker);
     }
 
     /**
@@ -1702,10 +1724,13 @@ class DungeonTrackerStorage {
         const allRuns = this._runs;
         if (allRuns.length === 0) return 0;
 
-        // Group by dungeonName + teamKey
+        // Group by dungeonName + teamKey. Clears only: a failed or canceled
+        // attempt's length says nothing about a clear's, so it neither moves the
+        // median nor is judged against it.
         const groups = new Map();
         for (let i = 0; i < allRuns.length; i++) {
             const run = allRuns[i];
+            if (!isClearRun(run)) continue;
             const key = `${run.dungeonName}||${run.teamKey}`;
             if (!groups.has(key)) groups.set(key, []);
             groups.get(key).push({ run, index: i });

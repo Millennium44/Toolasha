@@ -10,6 +10,23 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 - Custom Tabs' toolbar gains Clear All, which removes every custom tab, on your other synced devices too. A tab made or edited afterwards on any device is kept.
 
+### Party export, dungeon fail tracking and more from the upstream sweep
+
+- Saved loadouts in the Metz export menu get a 👥 button that exports your whole party, with you wearing that loadout.
+- A new Dungeon Tracker setting (off by default) records failed and canceled runs, adding a fail rate without changing clear times.
+- Task reroll popups gain one-click "select all" chips per skill.
+- Combat Stats warns when the connection dropped mid-session, and the Sim Editor can simulate achievement tiers you haven't earned yet.
+
+### Leftover fixes: party export, storage-full recovery, +13 badges
+
+- The single-character sim export keeps your teammates when exported mid-dungeon.
+- Recording resumes on its own once a save succeeds after storage filled up, with no reload needed.
+- Inventory badges and sort price items the same way net worth does when it uses the game's official values.
+
+### Inventory value badges follow the text size
+
+- The stack-value badges on inventory items now follow the Toolasha text size and font. The ask/bid price badges follow the font and shrink with smaller sizes, but don't grow, since two of them share a row.
+
 ### Shykai sim gets your shrines and labyrinth upgrades
 
 - Exports to Shykai's simulator now carry your combat guild shrines (and your party's) and your labyrinth upgrades, which Shykai just added support for.
