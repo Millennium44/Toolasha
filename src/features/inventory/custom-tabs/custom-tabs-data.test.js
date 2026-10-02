@@ -1517,3 +1517,42 @@ describe('item tombstone ageing', () => {
         expect(sanitized.removedItems).toBeUndefined();
     });
 });
+
+describe('clearAllTabs and importCategoryTabs', () => {
+    const base = () => {
+        let c = { tabs: [], selectedTabId: null };
+        const a = addTab(c, null, 'Food');
+        c = addItem(a.config, a.tabId, '/items/cheese');
+        const child = addTab(c, a.tabId, 'Child');
+        c = { ...child.config, selectedTabId: a.tabId };
+        return { c, rootId: a.tabId, childId: child.tabId };
+    };
+
+    test('clearAllTabs empties the layout and tombstones every tab, nested ones included', async () => {
+        const { clearAllTabs } = await import('./custom-tabs-data.js');
+        const { c, rootId, childId } = base();
+        const cleared = clearAllTabs(c);
+        expect(cleared.tabs).toEqual([]);
+        expect(cleared.selectedTabId).toBeNull();
+        expect(Object.keys(cleared.removed).sort()).toEqual([rootId, childId].sort());
+        expect(c.tabs).toHaveLength(1); // input untouched
+    });
+
+    test('importCategoryTabs makes one tab per non-empty category and skips existing names', async () => {
+        const { importCategoryTabs } = await import('./custom-tabs-data.js');
+        const { c } = base();
+        const { config, added } = importCategoryTabs(c, [
+            { name: 'Food', items: ['/items/cheese'] },
+            { name: 'Equipment', items: ['/items/knights_boots', '/items/helmet'] },
+            { name: 'Empty', items: [] },
+        ]);
+        expect(added).toBe(1);
+        const equipment = config.tabs.find((t) => t.name === 'Equipment');
+        expect(equipment.items).toEqual(['/items/knights_boots', '/items/helmet']);
+        expect(config.tabs.find((t) => t.name === 'Empty')).toBeUndefined();
+        expect(config.tabs.filter((t) => t.name === 'Food')).toHaveLength(1);
+
+        // Running it again changes nothing
+        expect(importCategoryTabs(config, [{ name: 'Equipment', items: ['/items/x'] }]).added).toBe(0);
+    });
+});

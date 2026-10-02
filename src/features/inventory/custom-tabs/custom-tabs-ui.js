@@ -35,6 +35,8 @@ import {
     saveConfig,
     addTab,
     removeTab,
+    clearAllTabs,
+    importCategoryTabs,
     renameTab,
     setTabColor,
     moveTab,
@@ -2311,6 +2313,20 @@ export default class CustomTabsUI {
         collapseBtn.addEventListener('click', () => this._onSetAllTabsOpen(false));
         actionsDiv.appendChild(collapseBtn);
 
+        const clearAllBtn = document.createElement('button');
+        clearAllBtn.className = 'toolasha-ct-add-btn';
+        clearAllBtn.textContent = 'Clear All';
+        clearAllBtn.title = 'Delete every custom tab';
+        clearAllBtn.addEventListener('click', () => this._onClearAllTabs());
+        actionsDiv.appendChild(clearAllBtn);
+
+        const importCategoriesBtn = document.createElement('button');
+        importCategoriesBtn.className = 'toolasha-ct-add-btn';
+        importCategoriesBtn.textContent = 'Import Categories';
+        importCategoriesBtn.title = "Create one tab per native item category, filled with that category's items";
+        importCategoriesBtn.addEventListener('click', () => this._onImportNativeCategories());
+        actionsDiv.appendChild(importCategoriesBtn);
+
         this._actionBtnsEl = actionsDiv;
 
         const sortControls = document.querySelector('.mwi-inventory-sort-controls');
@@ -4239,6 +4255,40 @@ export default class CustomTabsUI {
         });
     }
 
+    /**
+     * Delete every tab after the player confirms, resetting to an empty layout.
+     */
+    _onClearAllTabs() {
+        if (!this._config?.tabs?.length) return;
+        if (!confirm('Delete all custom tabs? This cannot be undone.')) return;
+        this._config = clearAllTabs(this._config);
+        this._removeInjectedEls();
+        this._applyLayout();
+        this._save().catch((error) => {
+            console.error('[CustomTabs] Failed to persist clear all tabs:', error);
+        });
+    }
+
+    /**
+     * Create one top-level tab per native item category (empty categories and categories that
+     * already have a same-named tab are skipped), each filled through the category helper that
+     * the tab editor uses. Safe to click repeatedly.
+     */
+    _onImportNativeCategories() {
+        const categories = this._getCategories().map((cat) => ({
+            name: cat.name,
+            items: this._getItemsInCategory(cat.hrid),
+        }));
+        const { config: next, added } = importCategoryTabs(this._config, categories);
+        if (!added) return;
+        this._config = next;
+        this._removeInjectedEls();
+        this._applyLayout();
+        this._save().catch((error) => {
+            console.error('[CustomTabs] Failed to persist imported native categories:', error);
+        });
+    }
+
     _onReorderTab(draggedId, targetId) {
         const dragResult = findTab(this._config, draggedId);
         const targetResult = findTab(this._config, targetId);
@@ -4358,60 +4408,101 @@ export default class CustomTabsUI {
             box-sizing: border-box;
         `;
 
-        // Populate panel with all tabs (depth-first)
-        const flatTabs = this._flattenTabs(this._config.tabs);
-        for (const { tab, depth } of flatTabs) {
-            const alreadyAdded = tab.items.includes(itemHrid);
-            const btn = document.createElement('button');
-            btn.textContent = '\u00a0'.repeat(depth * 2) + tab.name;
+        const closeNativeMenu = () => {
+            document.dispatchEvent(
+                new KeyboardEvent('keydown', {
+                    key: 'Escape',
+                    code: 'Escape',
+                    keyCode: 27,
+                    which: 27,
+                    bubbles: true,
+                    cancelable: true,
+                })
+            );
+        };
+
+        const styleRow = (btn, extra = '') => {
             btn.style.cssText = `
                 display: block;
                 width: 100%;
                 padding: 6px 12px;
                 border: none;
                 border-radius: 4px;
-                cursor: ${alreadyAdded ? 'default' : 'pointer'};
+                cursor: pointer;
                 font-size: 0.85rem;
                 font-weight: 600;
-                color: ${alreadyAdded ? '#888' : '#fff'};
-                background: ${tab.color ? tab.color + '55' : 'rgba(255,255,255,0.08)'};
                 text-align: left;
                 transition: opacity 0.15s;
+                ${extra}
             `;
-            if (tab.color && !alreadyAdded) btn.style.borderLeft = `3px solid ${tab.color}`;
-            if (alreadyAdded) {
-                btn.title = 'Already in this tab';
-            } else {
-                btn.addEventListener('mouseenter', () => {
-                    btn.style.opacity = '0.8';
-                });
-                btn.addEventListener('mouseleave', () => {
-                    btn.style.opacity = '1';
-                });
+            btn.addEventListener('mouseenter', () => {
+                btn.style.opacity = '0.8';
+            });
+            btn.addEventListener('mouseleave', () => {
+                btn.style.opacity = '1';
+            });
+        };
+
+        // Every tab (depth-first) plus a trailing "+ New Tab". Re-rendered after each toggle so the
+        // checkmarks follow the item's membership and one visit can add it to several tabs.
+        const renderRows = () => {
+            panel.innerHTML = '';
+            for (const { tab, depth } of this._flattenTabs(this._config.tabs)) {
+                const alreadyAdded = tab.items.includes(itemHrid);
+                const btn = document.createElement('button');
+                btn.textContent = (alreadyAdded ? '\u2713 ' : '') + '\u00a0'.repeat(depth * 2) + tab.name;
+                styleRow(
+                    btn,
+                    `color: ${alreadyAdded ? '#ccc' : '#fff'};
+                    background: ${tab.color ? tab.color + '55' : 'rgba(255,255,255,0.08)'};`
+                );
+                if (tab.color) btn.style.borderLeft = `3px solid ${tab.color}`;
+                btn.title = alreadyAdded ? 'Remove from this tab' : 'Add to this tab';
                 btn.addEventListener('click', (e) => {
                     e.stopPropagation();
                     e.preventDefault();
-                    this._config = addItem(this._config, tab.id, itemHrid);
-                    this._save();
+                    this._config = alreadyAdded
+                        ? removeItem(this._config, tab.id, itemHrid)
+                        : addItem(this._config, tab.id, itemHrid);
+                    this._save().catch((error) => {
+                        console.error('[CustomTabs] Failed to persist Add to Tab change:', error);
+                    });
                     if (this._isActive) {
                         this._removeInjectedEls();
                         this._applyLayout();
                     }
-                    closePanel();
-                    document.dispatchEvent(
-                        new KeyboardEvent('keydown', {
-                            key: 'Escape',
-                            code: 'Escape',
-                            keyCode: 27,
-                            which: 27,
-                            bubbles: true,
-                            cancelable: true,
-                        })
-                    );
+                    renderRows();
                 });
+                panel.appendChild(btn);
             }
-            panel.appendChild(btn);
-        }
+
+            const newTabBtn = document.createElement('button');
+            newTabBtn.textContent = '+ New Tab';
+            styleRow(
+                newTabBtn,
+                `color: #fff; background: rgba(255,255,255,0.08);
+                border-top: 1px solid rgba(255,255,255,0.15); margin-top: 2px;`
+            );
+            newTabBtn.addEventListener('click', (e) => {
+                e.stopPropagation();
+                e.preventDefault();
+                const result = addTab(this._config, null, 'New Tab');
+                this._config = addItem(result.config, result.tabId, itemHrid);
+                this._save().catch((error) => {
+                    console.error('[CustomTabs] Failed to persist new tab from Add to Tab:', error);
+                });
+                if (this._isActive) {
+                    this._removeInjectedEls();
+                    this._applyLayout();
+                }
+                closePanel();
+                closeNativeMenu();
+                this._openEditor(result.tabId);
+            });
+            panel.appendChild(newTabBtn);
+        };
+
+        renderRows();
 
         let open = false;
         let outsideBound = false;

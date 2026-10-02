@@ -93,3 +93,47 @@ describe('"Add to Tab" dropdown portal', () => {
         expect(document.querySelectorAll('.toolasha-ct-add-to-tab-panel')).toHaveLength(1);
     });
 });
+
+describe('"Add to Tab" dropdown rows', () => {
+    let ui;
+    let menu;
+
+    beforeEach(() => {
+        ui = new CustomTabsUI();
+        ui._save = vi.fn().mockResolvedValue(undefined);
+        ui._openEditor = vi.fn();
+        ui._config = { tabs: [tab('a', 'Food', ['/items/cheese']), tab('b', 'Misc')], selectedTabId: null };
+        menu = makeMenu();
+        ui._injectAddToTabButton(menu);
+    });
+
+    afterEach(() => {
+        document.body.innerHTML = '';
+    });
+
+    const rows = () => [...document.querySelectorAll('.toolasha-ct-add-to-tab-panel button')];
+
+    test('a tab already holding the item is checked and clicking it removes the item', () => {
+        expect(rows()[0].textContent).toBe('✓ Food');
+        rows()[0].click();
+        expect(ui._config.tabs[0].items).toEqual([]);
+        expect(rows()[0].textContent).toBe('Food');
+        expect(ui._save).toHaveBeenCalled();
+    });
+
+    test('clicking an unchecked tab adds the item and keeps the panel for more', () => {
+        rows()[1].click();
+        expect(ui._config.tabs[1].items).toEqual(['/items/cheese']);
+        expect(rows()[1].textContent).toBe('✓ Misc');
+    });
+
+    test('"+ New Tab" creates a tab holding the item and opens its editor', () => {
+        const newTab = rows().at(-1);
+        expect(newTab.textContent).toBe('+ New Tab');
+        newTab.click();
+        expect(ui._config.tabs).toHaveLength(3);
+        const created = ui._config.tabs[2];
+        expect(created.items).toEqual(['/items/cheese']);
+        expect(ui._openEditor).toHaveBeenCalledWith(created.id);
+    });
+});
