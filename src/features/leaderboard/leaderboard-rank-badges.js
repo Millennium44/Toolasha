@@ -113,10 +113,20 @@ const MISC_SYMBOLS = Object.freeze({
     task_points: 'tasks',
     labyrinth_points: 'labyrinth',
     labyrinth_depth: 'labyrinth',
-    // The misc sprite has no collection or bestiary glyph (checked against the live sheet); closest stand-ins
+    // The misc sprite has no collection or bestiary glyph (checked against the live sheet); closest stand-ins.
+    // Collection's badge icon comes from the chat icons instead (CHAT_SYMBOLS); this entry is the tab match only
     collection_points: 'inventory_all',
     bestiary_points: 'combat',
     fame_points: 'experience',
+});
+
+/**
+ * Badge icons taken from the game's chat icon sprite, which wins over MISC_SYMBOLS for the badge. The misc
+ * sheet's four-square inventory glyph read as no icon at all at badge size; the blue book is the game's own
+ * and reads as a collection log.
+ */
+const CHAT_SYMBOLS = Object.freeze({
+    collection_points: 'book',
 });
 
 const STYLE_TEXT = `
@@ -292,7 +302,7 @@ class LeaderboardRankBadges {
         // Set when a fold read a board stamped in the future; see restart()
         this.storedFuture = false;
         this.index = new Map();
-        this.spriteUrls = { skills: null, misc: null };
+        this.spriteUrls = { skills: null, misc: null, chatIcons: null };
         this.timers = createTimerRegistry();
         this.teardown = [];
         this.unwatchSetting = null;
@@ -439,12 +449,13 @@ class LeaderboardRankBadges {
      * @returns {Promise<void>}
      */
     async loadSprites(runId) {
-        const [skills, misc] = await Promise.all([
+        const [skills, misc, chatIcons] = await Promise.all([
             assetManifest.getSpriteUrl('skills'),
             assetManifest.getSpriteUrl('misc'),
+            assetManifest.getSpriteUrl('chatIcons'),
         ]);
         if (runId !== this.runId) return;
-        this.spriteUrls = { skills, misc };
+        this.spriteUrls = { skills, misc, chatIcons };
         this.decorateAll(true);
     }
 
@@ -732,14 +743,15 @@ class LeaderboardRankBadges {
      * @returns {SVGElement|null} Null until the sprite URL has resolved
      */
     buildIcon(category) {
-        const misc = MISC_SYMBOLS[category];
-        const sheet = misc ? this.spriteUrls.misc : this.spriteUrls.skills;
+        const chat = CHAT_SYMBOLS[category];
+        const misc = chat ? null : MISC_SYMBOLS[category];
+        const sheet = chat ? this.spriteUrls.chatIcons : misc ? this.spriteUrls.misc : this.spriteUrls.skills;
         if (!sheet) return null;
         const svg = document.createElementNS(SVG_NS, 'svg');
         svg.setAttribute('viewBox', '0 0 40 40');
         svg.setAttribute('aria-hidden', 'true');
         const use = document.createElementNS(SVG_NS, 'use');
-        use.setAttribute('href', `${sheet}#${misc || category}`);
+        use.setAttribute('href', `${sheet}#${chat || misc || category}`);
         svg.appendChild(use);
         return svg;
     }

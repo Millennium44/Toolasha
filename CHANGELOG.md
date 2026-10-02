@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Collection Points badge icon
+
+- Collection Points rank badges show a blue book instead of the four-square icon, which was hard to make out at badge size.
+
 <!-- shipped in 3.63.0 -->
 
 ### Text size and font settings

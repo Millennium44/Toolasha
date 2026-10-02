@@ -192,6 +192,21 @@ describe('leaderboard rank badges', () => {
         expect(game.saved.rankBoards['standard|milking'].rows).toEqual([['Alice', 7]]);
     });
 
+    test('a Collection Points badge draws the chat-icon book', async () => {
+        game.mode = 'local';
+        await leaderboardRankBadges.initialize();
+        const el = nameEl('Alice');
+
+        game.wsHandlers.leaderboard_updated({
+            leaderboardCategory: 'collection_points',
+            gameModeFilter: 'standard',
+            leaderboard: { rows: [{ name: 'Alice', rank: 49 }] },
+        });
+        await flush();
+
+        expect(el.nextElementSibling.querySelector('use').getAttribute('href')).toBe('/static/chatIcons.svg#book');
+    });
+
     test('a save keeps boards another tab or a sync pull stored meanwhile, and badges them', async () => {
         game.mode = 'local';
         await leaderboardRankBadges.initialize();

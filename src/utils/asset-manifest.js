@@ -15,6 +15,7 @@ const SPRITE_KEYS = {
     misc: 'misc_sprite',
     abilities: 'abilities_sprite',
     skills: 'skills_sprite',
+    chatIcons: 'chat_icons_sprite',
 };
 
 let manifestPromise = null;
