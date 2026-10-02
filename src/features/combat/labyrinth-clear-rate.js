@@ -2135,17 +2135,25 @@ class LabyrinthClearRate {
         // passed as 0 — which meant a reload mid-fight never replayed at all,
         // and so never got off the extrapolation.
         if (state.observedSeconds < MIN_ELAPSED_SECONDS) return;
-        if (this._replay?.fightStartedAt === fight.startedAt && Date.now() - this._replay.at < LIVE_SIM_REFRESH_MS) {
+        if (
+            this._replay?.fightStartedAt === fight.startedAt &&
+            Date.now() - this._replay.landedAt < LIVE_SIM_REFRESH_MS
+        ) {
             return;
         }
 
+        // `at` is when the fight state was sampled, which is what the replay describes: a slow replay
+        // lands already that much out of date. The refresh cadence runs from when it landed.
+        const sampledAt = Date.now();
         this._replayRunning = true;
         this.simulateFromHere(state)
             .then((result) => {
                 // A replay that landed after its fight ended describes a moment
                 // that no longer exists, so it is tagged with the fight it came
                 // from and discarded when that stops matching
-                if (result) this._replay = { ...result, at: Date.now(), fightStartedAt: fight.startedAt };
+                if (result) {
+                    this._replay = { ...result, at: sampledAt, landedAt: Date.now(), fightStartedAt: fight.startedAt };
+                }
             })
             .catch((error) => {
                 if (error?.message !== 'Cancelled') {

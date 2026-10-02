@@ -2137,6 +2137,30 @@ describe('the live clear chance on the attempt bar', () => {
             expect(liveText()).toMatch(/Clear/);
         });
 
+        test('a slow replay is dated from the fight state it sampled, not from when it landed', async () => {
+            spy.mockRestore();
+            let finish;
+            const sim = vi
+                .spyOn(labyrinthClearRate, 'simulateFromHere')
+                .mockImplementation(() => new Promise((resolve) => (finish = resolve)));
+            try {
+                labyrinthClearRate._replay = null;
+                labyrinthClearRate._replayRunning = false;
+                const sampledAt = Date.now();
+                labyrinthClearRate.maybeReplayFight({ startedAt: 123 }, { observedSeconds: 60 });
+                vi.advanceTimersByTime(6000);
+                finish({ clearChance: 0.63, trials: 400, halfWidth: 0.02 });
+                await Promise.resolve();
+                await Promise.resolve();
+
+                expect(labyrinthClearRate._replay.at).toBe(sampledAt);
+                expect(labyrinthClearRate._replay.landedAt).toBe(sampledAt + 6000);
+            } finally {
+                sim.mockRestore();
+                spy = vi.spyOn(labyrinthClearRate, 'maybeReplayFight').mockImplementation(() => {});
+            }
+        });
+
         test('a replay from an earlier fight never shows', () => {
             buildActionBar();
             runTicks(warmUp);
