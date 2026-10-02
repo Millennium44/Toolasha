@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Bulk Sell vendor sales work again
+
+- Selling to the vendor no longer stops at "the item menu is for an enhanced item" for ordinary unenhanced items.
+
 ### Audit round: briefing, offline progress and level times
 
 - The session briefing no longer reports a queue as idle for longer than it was, after you played that character since its last snapshot, and a character switch mid-load no longer files one character's listings under another.
