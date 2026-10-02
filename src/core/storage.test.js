@@ -738,6 +738,65 @@ describe('Storage quota handling', () => {
         expect(storage.isQuotaExceeded()).toBe(false);
     });
 
+    describe('a committed write clears the flag', () => {
+        const PAST_RECHECK = 31_000;
+
+        /**
+         * Mark storage full, then age the failure past the recheck window.
+         * @returns {Promise<void>}
+         */
+        async function fillThenAge() {
+            storage.db = createFullDb(QUOTA_ERROR);
+            await storage._saveToIndexedDB('big', [1], 'networthHistory');
+            expect(storage.isQuotaExceeded()).toBe(true);
+            storage._quotaExceededAt -= PAST_RECHECK;
+        }
+
+        test('set', async () => {
+            await fillThenAge();
+            storage.db = createFakeDb(['networthHistory']).db;
+
+            await storage._saveToIndexedDB('small', 1, 'networthHistory');
+
+            expect(storage.isQuotaExceeded()).toBe(false);
+        });
+
+        test('update', async () => {
+            await fillThenAge();
+            storage.db = createFakeDb(['networthHistory']).db;
+
+            await storage.update('k', () => 1, 'networthHistory');
+
+            expect(storage.isQuotaExceeded()).toBe(false);
+        });
+
+        test('putAll', async () => {
+            await fillThenAge();
+            storage.db = createFakeDb(['networthHistory']).db;
+
+            await storage.putAll('networthHistory', { a: 1 });
+
+            expect(storage.isQuotaExceeded()).toBe(false);
+        });
+
+        test('but not inside the recheck window, so a small write cannot flip-flop a recorder', async () => {
+            storage.db = createFullDb(QUOTA_ERROR);
+            await storage._saveToIndexedDB('big', [1], 'networthHistory');
+            storage.db = createFakeDb(['networthHistory']).db;
+
+            await storage._saveToIndexedDB('small', 1, 'networthHistory');
+
+            expect(storage.isQuotaExceeded()).toBe(true);
+        });
+
+        test('and not when the write began before the latest failure', async () => {
+            await fillThenAge();
+            storage._noteWriteCommitted(storage._quotaFailures - 1);
+
+            expect(storage.isQuotaExceeded()).toBe(true);
+        });
+    });
+
     test('the promise settles once, though both the request and the transaction fail', async () => {
         storage.db = createFullDb(QUOTA_ERROR);
         const listener = vi.fn();

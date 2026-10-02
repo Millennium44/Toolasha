@@ -100,6 +100,13 @@ const CHARACTER_FAMILY_BUDGETS = {
  * A transient failure (a reconnect gap, a quota the user then frees) recovers well
  * inside this; a value the store will never accept stops coming back forever.
  */
+/**
+ * How long the quota flag stays up after a failed write before a committed write
+ * may clear it. Bounds the retry rate when small writes succeed beside a bulky
+ * one that still does not fit.
+ */
+const QUOTA_RECHECK_MS = 30_000;
+
 const MAX_FLUSH_ATTEMPTS = 3;
 
 /**
@@ -1403,6 +1410,7 @@ class Storage {
      * @private
      */
     _runSave(key, value, storeName) {
+        const failuresAtStart = this._quotaFailures;
         return new Promise((resolve, _reject) => {
             let settled = false;
             /**
@@ -1433,6 +1441,11 @@ class Storage {
                 request.onerror = () => {
                     console.error(`[Storage] Failed to save key ${key}:`, request.error);
                     settle(false, request.error);
+                };
+
+                // The commit, not the request, is what proves there was room
+                transaction.oncomplete = () => {
+                    this._noteWriteCommitted(failuresAtStart);
                 };
 
                 // A quota failure aborts the whole transaction; without this the
@@ -1505,6 +1518,7 @@ class Storage {
      * @private
      */
     _runUpdate(key, mutate, storeName, queued) {
+        const failuresAtStart = this._quotaFailures;
         return new Promise((resolve) => {
             let settled = false;
             const settle = (outcome, error) => {
@@ -1563,8 +1577,10 @@ class Storage {
 
                 // Only the commit says the value is on disk.
                 transaction.oncomplete = () => {
-                    if (written !== NOT_WRITTEN) settle({ written: true, value: written }, null);
-                    else if (unchanged) settle(unchanged, null);
+                    if (written !== NOT_WRITTEN) {
+                        this._noteWriteCommitted(failuresAtStart);
+                        settle({ written: true, value: written }, null);
+                    } else if (unchanged) settle(unchanged, null);
                     else settle(null, null);
                 };
                 transaction.onerror = () => {
@@ -1655,12 +1671,34 @@ class Storage {
     /**
      * Forget that storage was full, so recorders resume.
      *
-     * Called automatically after a successful delete, since deleting is the one
-     * thing that makes the original failure untrue.
+     * Called automatically after a successful delete, and after a committed write
+     * once `QUOTA_RECHECK_MS` has passed since the last failure.
      */
     clearQuotaState() {
         this.quotaExceeded = false;
         this._lastQuotaTarget = null;
+    }
+
+    /**
+     * A write committed: if storage was marked full, there is room again.
+     *
+     * Space can be freed without this script deleting anything (another tab, the
+     * user clearing site data, the browser granting more), and a flag that only a
+     * delete clears would leave every recorder stood down until reload. Two
+     * guards keep a small write from making a recorder hammer a still-full disk
+     * (small config writes succeed constantly while a bulky one keeps failing):
+     * a write that began before the latest failure proves nothing about the
+     * state after it, and the flag stays up for `QUOTA_RECHECK_MS` after a
+     * failure so a flip-flop costs at most one failed bulky write per window.
+     * A delete clears immediately, as before.
+     * @param {number} failuresAtStart - `_quotaFailures` when the write began
+     * @private
+     */
+    _noteWriteCommitted(failuresAtStart) {
+        if (!this.quotaExceeded) return;
+        if (this._quotaFailures !== failuresAtStart) return;
+        if (Date.now() - (this._quotaExceededAt ?? 0) < QUOTA_RECHECK_MS) return;
+        this.clearQuotaState();
     }
 
     /**
@@ -2331,6 +2369,7 @@ class Storage {
      * @private
      */
     _runPutAll(storeName, entries, keys) {
+        const failuresAtStart = this._quotaFailures;
         return new Promise((resolve) => {
             try {
                 const transaction = this.db.transaction([storeName], 'readwrite');
@@ -2351,6 +2390,7 @@ class Storage {
                 }
 
                 transaction.oncomplete = () => {
+                    if (written.length > 0) this._noteWriteCommitted(failuresAtStart);
                     resolve(written);
                 };
                 // A quota abort fires `abort` and never `complete` or `error`;
