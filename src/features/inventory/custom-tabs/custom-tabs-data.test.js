@@ -930,6 +930,26 @@ describe('the mass-delete cap', () => {
         warn.mockRestore();
     });
 
+    test('a Clear All wins over a stale copy past the cap, and keeps tabs made after it', () => {
+        const stale = {
+            version: 1,
+            selectedTabId: null,
+            tabs: [tab('a'), tab('b'), tab('c'), tab('d'), tab('late', { updatedAt: 900 })],
+        };
+        const cleared = {
+            version: 1,
+            selectedTabId: null,
+            tabs: [],
+            removed: { a: 500, b: 500, c: 500, d: 500 },
+            clearedAllAt: 500,
+        };
+        const merged = merge(stale, cleared);
+        expect(merged.tabs.map((t) => t.id)).toEqual(['late']);
+        expect(merged.clearedAllAt).toBe(500);
+        // and it stays cleared on the next fold from the same stale device
+        expect(merge(stale, merged).tabs.map((t) => t.id)).toEqual(['late']);
+    });
+
     test('two of two still applies — nothing worth protecting in a majority of two', () => {
         const carrier = { version: 1, selectedTabId: null, tabs: [tab('a'), tab('b')] };
         const deleted = { version: 1, selectedTabId: null, tabs: [], removed: { a: 500, b: 500 } };
@@ -959,6 +979,10 @@ describe('sanitizeImportedConfig', () => {
 
     test('the tombstone map never comes in', () => {
         expect(sanitizeImportedConfig(file()).removed).toBeUndefined();
+    });
+
+    test("another device's Clear All time never comes in", () => {
+        expect(sanitizeImportedConfig({ ...file(), clearedAllAt: Date.now() }).clearedAllAt).toBeUndefined();
     });
 
     test('every imported tab is stamped, nested ones included', () => {
@@ -1535,6 +1559,7 @@ describe('clearAllTabs and importCategoryTabs', () => {
         expect(cleared.tabs).toEqual([]);
         expect(cleared.selectedTabId).toBeNull();
         expect(Object.keys(cleared.removed).sort()).toEqual([rootId, childId].sort());
+        expect(cleared.clearedAllAt).toBeGreaterThan(0);
         expect(c.tabs).toHaveLength(1); // input untouched
     });
 

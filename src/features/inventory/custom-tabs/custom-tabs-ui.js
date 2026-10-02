@@ -2346,7 +2346,7 @@ export default class CustomTabsUI {
     /**
      * Serialize the current layout to a JSON file and trigger a download.
      *
-     * `removed`, `removedItems` and `orderUpdatedAt` are stripped. All are sync
+     * `removed`, `removedItems`, `orderUpdatedAt` and `clearedAllAt` are stripped. All are sync
      * bookkeeping
      * about THIS config's history on THIS device, and neither survives the trip
      * usefully: a shared file carrying a tombstone map is a file that deletes
@@ -2375,6 +2375,7 @@ export default class CustomTabsUI {
             removed: _removed,
             removedItems: _removedItems,
             orderUpdatedAt: _orderUpdatedAt,
+            clearedAllAt: _clearedAllAt,
             ...config
         } = this._config || {};
         const payload = { _toolasha: 'tabs-v1', ...config };

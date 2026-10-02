@@ -426,6 +426,15 @@ function mergeConfigs(stored, memory) {
         if (Object.keys(bucket).length === 0) delete itemGraves[tabId];
     }
 
+    // Clear All is the one deliberate mass deletion: it stamps the config with when it ran, and every
+    // tab last touched no later than that goes, outside the mass-delete cap below. Without it a peer's
+    // stale copy would trip the cap forever, since a cleared layout has no surviving tab to out-stamp it.
+    // A tab created or edited after the clear carries a newer stamp and is kept.
+    const clearedAllAt = Math.max(Number(theirs.clearedAllAt) || 0, Number(ours.clearedAllAt) || 0);
+    if (clearedAllAt > 0) {
+        for (const [id, tab] of byId) if (stampOf(tab) <= clearedAllAt) byId.delete(id);
+    }
+
     // Tombstones: the union of both sides, newest deletion per id. Applied to a
     // TRIAL copy first, so the mass-delete cap below can decline the whole
     // application rather than half of it (`applyTombstones` mutates the map it
@@ -492,6 +501,8 @@ function mergeConfigs(stored, memory) {
     const orderAt = Math.max(theirOrderAt, ourOrderAt);
     if (orderAt > 0) merged.orderUpdatedAt = orderAt;
     else delete merged.orderUpdatedAt;
+    if (clearedAllAt > 0) merged.clearedAllAt = clearedAllAt;
+    else delete merged.clearedAllAt;
     return merged;
 }
 
@@ -720,6 +731,8 @@ export function sanitizeImportedConfig(parsed, now = Date.now()) {
     const {
         removed: _removed,
         removedItems: _removedItems,
+        // Another device's Clear All time would sweep away the importer's own older tabs in the next fold
+        clearedAllAt: _clearedAllAt,
         ...rest
     } = parsed && typeof parsed === 'object' ? parsed : {};
     const idMap = new Map();
@@ -955,6 +968,8 @@ export function clearAllTabs(config) {
     c.tabs = [];
     c.selectedTabId = null;
     c.orderUpdatedAt = now;
+    // Read by mergeConfigs: the tombstones alone would trip its mass-delete cap on a peer's stale copy
+    c.clearedAllAt = now;
     return c;
 }
 
