@@ -92,7 +92,7 @@ vi.mock('../../utils/profile-command.js', () => ({
 }));
 
 import chatHistoryExtender, { tabKeyForChannel } from './chat-history-extender.js';
-import chatHistoryPersistence, { CHAT_HISTORY_KEY_BASE } from './chat-history-persistence.js';
+import chatHistoryPersistence, { CHAT_HISTORY_KEY_BASE, PUBLIC_RECORD_KEY } from './chat-history-persistence.js';
 
 const STORAGE_KEY = `${CHAT_HISTORY_KEY_BASE}_char1`;
 
@@ -768,11 +768,18 @@ describe('chat-history-extender: message identity and deletion', () => {
         expect(storedTabs()[tabKey]).toBeUndefined();
     });
 
-    test('a line evicted while the restore read is in flight bounds it at its last stored copy', async () => {
-        const tabKey = tabKeyForChannel('/chat_channel_types/trade');
+    /**
+     * A line evicted while the restore's read is held open, whose earlier copy
+     * is stored with other lines after it.
+     * @param {string} channel - The pane's channel
+     * @param {string} recordKey - The record its lines live in
+     * @returns {Promise<string>} The buffer's text once the restore has landed
+     */
+    async function restoreAroundAnEvictedRepeat(channel, recordKey) {
+        const tabKey = tabKeyForChannel(channel);
         const line = (stamp, sender, text) =>
             `<div class="ChatMessage_chatMessage__xyz"><span>[${stamp}] </span><span>${sender}</span><span>: ${text}</span></div>`;
-        db.settings[STORAGE_KEY] = {
+        db.settings[recordKey] = {
             v: 1,
             savedAt: 1,
             tabs: {
@@ -789,7 +796,7 @@ describe('chat-history-extender: message identity and deletion', () => {
         db.readGate = new Promise((resolve) => {
             release = resolve;
         });
-        const container = buildChannelChat('/chat_channel_types/trade');
+        const container = buildChannelChat(channel);
         chatHistoryExtender.initialize();
         // The later copy of the repeated line is evicted before the read lands.
         const node = document.createElement('div');
@@ -802,9 +809,22 @@ describe('chat-history-extender: message identity and deletion', () => {
         await settle();
         db.readGate = null;
         release();
+        // The read, then the restore it feeds: how many turns that takes depends on
+        // how many records the read covers, so it is waited for rather than counted.
+        await chatHistoryPersistence.load();
         await settle();
 
-        const text = container.querySelector('.mwi-history-buffer').textContent;
+        return container.querySelector('.mwi-history-buffer').textContent;
+    }
+
+    test('a line evicted while the restore read is in flight bounds it at its last stored copy', async () => {
+        const text = await restoreAroundAnEvictedRepeat('/chat_channel_types/party', STORAGE_KEY);
+        expect(text).toContain('between one');
+        expect(text).toContain('between two');
+    });
+
+    test('a shared tab bounds a line evicted during the restore read at its last stored copy', async () => {
+        const text = await restoreAroundAnEvictedRepeat('/chat_channel_types/trade', PUBLIC_RECORD_KEY);
         expect(text).toContain('between one');
         expect(text).toContain('between two');
     });
