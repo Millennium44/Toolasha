@@ -6,6 +6,11 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Audit round: briefing, offline progress and level times
+
+- The session briefing no longer reports a queue as idle for longer than it was, after you played that character since its last snapshot, and a character switch mid-load no longer files one character's listings under another.
+- The Welcome Back offline earnings block now fills in prices that arrive after it opens, and the time-to-level tooltip no longer reads "1 hour 60 minutes".
+
 <!-- shipped in 3.63.1 -->
 
 ### Clearer rank badge icons
