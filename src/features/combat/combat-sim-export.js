@@ -983,5 +983,6 @@ export async function constructExportObject(externalProfileId = null, singlePlay
         difficultyTier,
         isParty,
         profileWarnings,
+        yourSlotIndex,
     };
 }

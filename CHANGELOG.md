@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Export Full Party in the Shykai format
+
+- The profile export's 👥 Export Full Party now works in the Shykai format too, copying the whole party with your saved loadout for Shykai's "All players import" box.
+
 ### Timers clean up after themselves everywhere
 
 - The rest of Toolasha's timers (about a hundred) now drop their bookkeeping when they fire, so the lists PFormance counts no longer creep up over a long session.
