@@ -811,7 +811,7 @@ describe('InventorySort.renderPriceBadge — first draw matches the update path'
         const css = tile.querySelector('.mwi-stack-price').style.cssText;
         expect(css).toContain('--toolasha-text-zoom, 1');
         expect(css).toContain('min(');
-        expect(css).toContain('1.25');
+        expect(css).toMatch(/min\(var\(--toolasha-text-zoom, 1\),\s*1\.5\)/);
         expect(css).toContain('--toolasha-font-stack');
         tile.remove();
     });

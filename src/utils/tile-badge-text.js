@@ -14,11 +14,18 @@ export const ZOOM_VARIABLE = '--toolasha-text-zoom';
 export const FONT_VARIABLE = '--toolasha-font-stack';
 
 /**
- * Largest zoom a tile badge follows. Item tiles are a fixed size that does not grow with the text setting,
- * and a four-character badge ("384M") at 0.7rem bold is already about two thirds of a 40px tile. 1.25
- * keeps it inside the tile and clear of the game's own count at the bottom and the enhancement level.
+ * Largest zoom the stack-value badge follows. Game item tiles are 60px wide (measured on the test server,
+ * 16px root) and do not grow with the text setting; a four-character badge ("384M") at 0.7rem bold is
+ * about 27px, so even the largest setting (150%, about 40px) stays inside the tile, which this badge
+ * has to itself across its top.
  */
-export const TILE_BADGE_ZOOM_CAP = 1.25;
+export const TILE_BADGE_ZOOM_CAP = 1.5;
+
+/**
+ * The per-item ask and bid badges share one row, one at each edge: two four-character values already
+ * take about 54px of a 60px tile at zoom 1, so they may shrink with the setting but never grow.
+ */
+export const PAIRED_BADGE_ZOOM_CAP = 1;
 
 /**
  * Font declarations for a badge on an item tile.
@@ -26,11 +33,12 @@ export const TILE_BADGE_ZOOM_CAP = 1.25;
  * At zoom 1 and the default font these compute to exactly `font-size: <rem>rem` and an inherited family.
  *
  * @param {number} rem - The badge's size at zoom 1, in rem
+ * @param {number} [cap] - Largest zoom the badge follows
  * @returns {string} CSS declarations, ending in a semicolon
  */
-export function tileBadgeFontCSS(rem) {
+export function tileBadgeFontCSS(rem, cap = TILE_BADGE_ZOOM_CAP) {
     return (
-        `font-size: calc(${rem}rem * min(var(${ZOOM_VARIABLE}, 1), ${TILE_BADGE_ZOOM_CAP})); ` +
+        `font-size: calc(${rem}rem * min(var(${ZOOM_VARIABLE}, 1), ${cap})); ` +
         `font-family: var(${FONT_VARIABLE}, inherit);`
     );
 }

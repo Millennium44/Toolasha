@@ -35,7 +35,8 @@ describe('InventoryBadgePrices.renderPriceBadge text appearance', () => {
         const css = tile.querySelector(`.mwi-badge-price-${type}`).style.cssText;
         expect(css).toContain('--toolasha-text-zoom, 1');
         expect(css).toContain('min(');
-        expect(css).toContain('1.25');
+        // Two badges share the row, so they never grow past their size at 100%
+        expect(css).toMatch(/min\(var\(--toolasha-text-zoom, 1\),\s*1\)/);
         expect(css).toContain('--toolasha-font-stack');
         tile.remove();
     });
