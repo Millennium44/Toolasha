@@ -899,6 +899,7 @@ export default class CustomTabsUI {
         this._actionBtnsEl = null;
         this._styleEl?.remove();
         document.querySelectorAll('.toolasha-ct-add-to-tab').forEach((el) => el.remove());
+        document.querySelectorAll('.toolasha-ct-add-to-tab-panel').forEach((el) => el.remove());
         // The editor hangs off document.body, so `_clearLayout`'s sweep of the
         // inventory container never sees it. Left standing it is a live dialog
         // wired to a UI that no longer exists — every button edits the discarded
@@ -4297,6 +4298,11 @@ export default class CustomTabsUI {
         if (actionMenu.querySelector('.toolasha-ct-add-to-tab')) return;
         if (!this._config?.tabs?.length) return;
 
+        // A panel lives in <body>, so it outlasts the native menu React removed under it
+        document.querySelectorAll('.toolasha-ct-add-to-tab-panel').forEach((el) => {
+            if (!el._ctOwner?.isConnected) el.remove();
+        });
+
         // Resolve item HRID and enhancement level from the action menu DOM. The menu
         // shows the item's own tile, so its icon sprite resolves the identity locale
         // independently; the translated Item_name text is only the fallback. Scoped to
@@ -4331,13 +4337,15 @@ export default class CustomTabsUI {
         toggle.appendChild(label);
         toggle.appendChild(chevron);
 
+        // The game's action menu is a short, overflow-clipped box, so a panel nested in it cuts the
+        // tab list off. Portal the panel to <body> and position it from the toggle's rect, the way
+        // the marketplace dropdown does (marketplace-shortcuts.js).
         const panel = document.createElement('div');
+        panel.className = 'toolasha-ct-add-to-tab-panel';
+        panel._ctOwner = wrapper;
         panel.style.cssText = `
             display: none;
-            position: absolute;
-            top: calc(100% + 4px);
-            left: 0;
-            width: 100%;
+            position: fixed;
             z-index: ${config.Z_POPUP};
             flex-direction: column;
             background: var(--color-surface, #1e1e2e);
@@ -4408,11 +4416,21 @@ export default class CustomTabsUI {
         let open = false;
         let outsideBound = false;
         let outsideTimer = null;
+        let portalObserver = null;
         const outsideClick = (e) => {
-            if (!wrapper.contains(e.target)) {
+            if (!wrapper.contains(e.target) && !panel.contains(e.target)) {
                 closePanel();
             }
         };
+        // A fixed panel does not follow its toggle: close it when the page or the menu scrolls
+        // (but not for unrelated boxes the game scrolls on its own) or the window resizes
+        const onScroll = (e) => {
+            const t = e.target;
+            if (panel.contains(t)) return;
+            const pageScrolled = t === document || t === document.documentElement || t === document.body;
+            if (pageScrolled || (t instanceof Node && t.contains(wrapper))) closePanel();
+        };
+        const onResize = () => closePanel();
         const closePanel = () => {
             open = false;
             panel.style.display = 'none';
@@ -4423,8 +4441,29 @@ export default class CustomTabsUI {
             }
             if (outsideBound) {
                 document.removeEventListener('click', outsideClick);
+                document.removeEventListener('scroll', onScroll, true);
+                window.removeEventListener('resize', onResize);
                 outsideBound = false;
             }
+            portalObserver?.disconnect();
+            portalObserver = null;
+        };
+
+        const positionPanel = () => {
+            const GAP = 4;
+            const rect = toggle.getBoundingClientRect();
+            const viewportWidth = window.innerWidth || document.documentElement.clientWidth;
+            const viewportHeight = window.innerHeight || document.documentElement.clientHeight;
+            panel.style.minWidth = `${rect.width}px`;
+            const width = Math.max(rect.width, panel.getBoundingClientRect().width || 0);
+            panel.style.left = `${Math.max(0, Math.min(rect.left, viewportWidth - width))}px`;
+            const height = panel.getBoundingClientRect().height || 0;
+            let top = rect.bottom + GAP;
+            if (top + height > viewportHeight) {
+                const above = rect.top - GAP - height;
+                top = above >= 0 ? above : Math.max(0, viewportHeight - height);
+            }
+            panel.style.top = `${top}px`;
         };
 
         toggle.addEventListener('click', (e) => {
@@ -4436,19 +4475,33 @@ export default class CustomTabsUI {
             }
             open = true;
             panel.style.display = 'flex';
+            positionPanel();
             chevron.style.transform = 'rotate(180deg)';
             if (!outsideBound && outsideTimer === null) {
                 outsideTimer = setTimeout(() => {
                     outsideTimer = null;
                     if (!open || outsideBound) return;
                     document.addEventListener('click', outsideClick);
+                    document.addEventListener('scroll', onScroll, true);
+                    window.addEventListener('resize', onResize);
                     outsideBound = true;
                 }, 0);
+            }
+            // React removing the native menu does not take the portaled panel along
+            if (!portalObserver && document.body) {
+                portalObserver = new MutationObserver(() => {
+                    if (!wrapper.isConnected) {
+                        closePanel();
+                        panel.remove();
+                    }
+                });
+                portalObserver.observe(document.body, { childList: true, subtree: true });
             }
         });
 
         wrapper.appendChild(toggle);
-        wrapper.appendChild(panel);
+        markToolashaSurface(panel, 'popover');
+        document.body.appendChild(panel);
         actionMenu.appendChild(wrapper);
     }
 
