@@ -438,6 +438,118 @@ describe('guildCombatBuffLevels in the export', () => {
     });
 });
 
+describe('guildBuffs and labyrinth blocks for the Shykai simulator', () => {
+    afterEach(() => {
+        delete dataManagerMock.getCharacterGuildBuffLevel;
+    });
+
+    test('guildBuffs carries only the five combat shrines by full hrid, zeros omitted', async () => {
+        dataManagerMock.characterData = {
+            character: { id: 'char-mine', name: 'Me' },
+            characterSkills: [],
+            characterGuildBuffMap: {
+                '/guild_buffs/force_combat': { level: 4 },
+                '/guild_buffs/tempo_combat': { level: 0 },
+                '/guild_buffs/spirit_combat': { level: 2.9 },
+                '/guild_buffs/gathering_quantity': { level: 8 },
+                '/guild_buffs/production_efficiency': { level: 5 },
+                '/guild_buffs/mystery_combat': { level: 3 },
+            },
+        };
+
+        const result = await constructExportObject(null, true);
+
+        expect(result.exportObj.guildBuffs).toEqual({
+            '/guild_buffs/force_combat': 4,
+            '/guild_buffs/spirit_combat': 2,
+        });
+        expect(result.exportObj.guildCombatBuffLevels.force).toBe(4);
+    });
+
+    test('no shrine above zero means no guildBuffs key', async () => {
+        dataManagerMock.characterData = {
+            character: { id: 'char-mine', name: 'Me' },
+            characterSkills: [],
+            characterGuildBuffMap: { '/guild_buffs/force_combat': { level: 0 } },
+        };
+
+        const result = await constructExportObject(null, true);
+
+        expect(result.exportObj).not.toHaveProperty('guildBuffs');
+    });
+
+    test('party members get guildBuffs from bare-number profile levels', async () => {
+        dataManagerMock.characterData = {
+            character: { id: 'char-mine', name: 'Me' },
+            characterSkills: [],
+            partyInfo: {
+                party: { actionHrid: '/actions/combat/fly', difficultyTier: 0 },
+                partySlotMap: { 1: { characterID: 'char-mine' }, 2: { characterID: 'char-mate' } },
+            },
+        };
+        globalThis.GM_getValue = vi.fn((key) =>
+            key === 'toolasha_profile_list'
+                ? JSON.stringify([
+                      {
+                          characterID: 'char-mate',
+                          characterName: 'Mate',
+                          profile: {
+                              guildBuffLevelMap: {
+                                  '/guild_buffs/rarity_combat': 7,
+                                  '/guild_buffs/tempo_combat': 0,
+                                  '/guild_buffs/gathering_quantity': 9,
+                              },
+                          },
+                      },
+                  ])
+                : null
+        );
+
+        const result = await constructExportObject();
+        const mate = JSON.parse(result.exportObj[2]);
+
+        expect(mate.guildBuffs).toEqual({ '/guild_buffs/rarity_combat': 7 });
+        expect(mate).not.toHaveProperty('labyrinth');
+    });
+
+    test('labyrinth carries the five combat-relevant token levels, clamped, zeros omitted', async () => {
+        dataManagerMock.characterData = {
+            character: { id: 'char-mine', name: 'Me' },
+            characterSkills: [],
+            characterInfo: {
+                labyrinthCombatDamageLevel: 8,
+                labyrinthAttackSpeedLevel: 99,
+                labyrinthCastSpeedLevel: 0,
+                labyrinthCriticalRateLevel: 3,
+                labyrinthExperienceLevel: 5,
+                labyrinthSkillActionSpeedLevel: 6,
+                labyrinthTorchLevel: 4,
+            },
+        };
+
+        const result = await constructExportObject(null, true);
+
+        expect(result.exportObj.labyrinth).toEqual({
+            labyrinthCombatDamageLevel: 8,
+            labyrinthAttackSpeedLevel: 12,
+            labyrinthCriticalRateLevel: 3,
+            labyrinthExperienceLevel: 5,
+        });
+    });
+
+    test('no owned tokens means no labyrinth key', async () => {
+        dataManagerMock.characterData = {
+            character: { id: 'char-mine', name: 'Me' },
+            characterSkills: [],
+            characterInfo: { labyrinthCombatDamageLevel: 0 },
+        };
+
+        const result = await constructExportObject(null, true);
+
+        expect(result.exportObj).not.toHaveProperty('labyrinth');
+    });
+});
+
 describe('party members whose cached profile cannot be trusted', () => {
     const DAY = 24 * 60 * 60 * 1000;
 

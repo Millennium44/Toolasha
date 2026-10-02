@@ -12,6 +12,11 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 - Recording resumes on its own once a save succeeds after storage filled up, with no reload needed.
 - Inventory badges and sort price items the same way net worth does when it uses the game's official values.
 
+### Shykai sim gets your shrines and labyrinth upgrades
+
+- Exports to Shykai's simulator now carry your combat guild shrines (and your party's) and your labyrinth upgrades, which Shykai just added support for.
+- The skill-level calculator on Shykai's page now updates as soon as you click into or spin a skill's target, not only once you type.
+
 ### Fixes and Custom Tabs extras from the upstream sweep
 
 - Reopening action panels and market views no longer keeps old copies alive in memory, and spent timers no longer pile up during combat.
