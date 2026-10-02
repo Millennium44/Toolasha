@@ -750,16 +750,26 @@ class MarketVolumeStats {
             if (menu.contains(event.target)) return;
             this.closeColumnMenu();
         };
+        // Deferred one tick so the click that opened the menu does not also close it.
+        // Registered with the cleanup registry so a teardown while the menu is still
+        // open does not leave this listener on `document` forever, and released on
+        // close: the listener closes over the menu and the game's info container, so
+        // leaving its entry in the registry pinned both for every menu ever opened.
+        let releaseOutsideClick = null;
+        let armTimeout = setTimeout(() => {
+            armTimeout = null;
+            releaseOutsideClick = this.cleanupRegistry.registerListener(document, 'click', closeOnOutsideClick, true);
+        }, 0);
         this.closeColumnMenu = () => {
             menu.remove();
             if (infoContainer) infoContainer.style.zIndex = previousZIndex;
-            document.removeEventListener('click', closeOnOutsideClick, true);
+            // A close inside that first tick must also stop the listener from arming
+            clearTimeout(armTimeout);
+            armTimeout = null;
+            releaseOutsideClick?.();
+            releaseOutsideClick = null;
             this.closeColumnMenu = () => {};
         };
-        // Deferred one tick so the click that opened the menu does not also close it.
-        // Registered with the cleanup registry too, so a teardown while the menu
-        // is still open does not leave this listener on `document` forever.
-        setTimeout(() => this.cleanupRegistry.registerListener(document, 'click', closeOnOutsideClick, true), 0);
     }
 
     /**

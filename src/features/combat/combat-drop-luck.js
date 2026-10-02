@@ -554,12 +554,11 @@ class CombatDropLuck {
         if (now - this.liveAt < LIVE_INTERVAL_MS) return;
         this.liveAt = now;
 
-        const deferred = setTimeout(() => {
+        this.timerRegistry.scheduleTimeout(() => {
             this._analyse(lootMap).catch((error) => {
                 console.error('[CombatDropLuck] Live luck calculation failed:', error);
             });
         }, 0);
-        this.timerRegistry.registerTimeout(deferred);
     }
 
     /**

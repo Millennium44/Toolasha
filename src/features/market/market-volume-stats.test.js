@@ -711,3 +711,61 @@ describe('concurrent initialize() calls', () => {
         expect(domObserver.onClass).toHaveBeenCalledTimes(1);
     });
 });
+
+describe('column menu outside-click listener', () => {
+    function newPanel() {
+        const area = document.createElement('div');
+        area.className = 'MarketplacePanel_infoContainer__x';
+        const panel = document.createElement('div');
+        panel.className = 'mwi-volume-stats';
+        panel.appendChild(document.createElement('div'));
+        area.appendChild(panel);
+        document.body.appendChild(area);
+        return panel;
+    }
+
+    afterEach(() => {
+        vi.useRealTimers();
+    });
+
+    test('opening and closing the menu many times leaves no listener behind', () => {
+        vi.useFakeTimers();
+        const panel = newPanel();
+        const before = getCleanupRegistryCensus().listeners;
+
+        for (let i = 0; i < 5; i++) {
+            marketVolumeStats.toggleColumnMenu(panel);
+            vi.advanceTimersByTime(1);
+            expect(getCleanupRegistryCensus().listeners - before).toBe(1);
+            marketVolumeStats.toggleColumnMenu(panel);
+        }
+
+        expect(getCleanupRegistryCensus().listeners).toBe(before);
+        expect(panel.querySelector('.mwi-volume-stats-menu')).toBeNull();
+    });
+
+    test('a close inside the first tick never arms the listener', () => {
+        vi.useFakeTimers();
+        const panel = newPanel();
+        const before = getCleanupRegistryCensus().listeners;
+
+        marketVolumeStats.toggleColumnMenu(panel);
+        marketVolumeStats.toggleColumnMenu(panel);
+        vi.advanceTimersByTime(1);
+
+        expect(getCleanupRegistryCensus().listeners).toBe(before);
+    });
+
+    test('an outside click closes the menu and releases its listener', () => {
+        vi.useFakeTimers();
+        const panel = newPanel();
+        const before = getCleanupRegistryCensus().listeners;
+
+        marketVolumeStats.toggleColumnMenu(panel);
+        vi.advanceTimersByTime(1);
+        document.body.click();
+
+        expect(panel.querySelector('.mwi-volume-stats-menu')).toBeNull();
+        expect(getCleanupRegistryCensus().listeners).toBe(before);
+    });
+});

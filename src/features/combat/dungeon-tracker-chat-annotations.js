@@ -311,13 +311,12 @@ class DungeonTrackerChatAnnotations {
 
                 // Debounce: clear any pending call and schedule a single new one
                 if (this._pendingAnnotateTimeout) {
-                    clearTimeout(this._pendingAnnotateTimeout);
+                    this.timerRegistry.cancelTimeout(this._pendingAnnotateTimeout);
                 }
-                this._pendingAnnotateTimeout = setTimeout(() => {
+                this._pendingAnnotateTimeout = this.timerRegistry.scheduleTimeout(() => {
                     this._pendingAnnotateTimeout = null;
                     this.annotateAllMessages();
                 }, 100);
-                this.timerRegistry.registerTimeout(this._pendingAnnotateTimeout);
             },
             {
                 childList: true,

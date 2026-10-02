@@ -35,6 +35,7 @@ import {
     saveConfig,
     addTab,
     removeTab,
+    importCategoryTabs,
     renameTab,
     setTabColor,
     moveTab,
@@ -906,6 +907,7 @@ export default class CustomTabsUI {
         this._actionBtnsEl = null;
         this._styleEl?.remove();
         document.querySelectorAll('.toolasha-ct-add-to-tab').forEach((el) => el.remove());
+        document.querySelectorAll('.toolasha-ct-add-to-tab-panel').forEach((el) => el.remove());
         // The editor hangs off document.body, so `_clearLayout`'s sweep of the
         // inventory container never sees it. Left standing it is a live dialog
         // wired to a UI that no longer exists — every button edits the discarded
@@ -2316,6 +2318,13 @@ export default class CustomTabsUI {
         collapseBtn.setAttribute('aria-label', 'Collapse all tabs');
         collapseBtn.addEventListener('click', () => this._onSetAllTabsOpen(false));
         actionsDiv.appendChild(collapseBtn);
+
+        const importCategoriesBtn = document.createElement('button');
+        importCategoriesBtn.className = 'toolasha-ct-add-btn';
+        importCategoriesBtn.textContent = 'Import Categories';
+        importCategoriesBtn.title = "Create one tab per native item category, filled with that category's items";
+        importCategoriesBtn.addEventListener('click', () => this._onImportNativeCategories());
+        actionsDiv.appendChild(importCategoriesBtn);
 
         this._actionBtnsEl = actionsDiv;
 
@@ -4245,6 +4254,26 @@ export default class CustomTabsUI {
         });
     }
 
+    /**
+     * Create one top-level tab per native item category (empty categories and categories that
+     * already have a same-named tab are skipped), each filled through the category helper that
+     * the tab editor uses. Safe to click repeatedly.
+     */
+    _onImportNativeCategories() {
+        const categories = this._getCategories().map((cat) => ({
+            name: cat.name,
+            items: this._getItemsInCategory(cat.hrid),
+        }));
+        const { config: next, added } = importCategoryTabs(this._config, categories);
+        if (!added) return;
+        this._config = next;
+        this._removeInjectedEls();
+        this._applyLayout();
+        this._save().catch((error) => {
+            console.error('[CustomTabs] Failed to persist imported native categories:', error);
+        });
+    }
+
     _onReorderTab(draggedId, targetId) {
         const dragResult = findTab(this._config, draggedId);
         const targetResult = findTab(this._config, targetId);
@@ -4302,7 +4331,12 @@ export default class CustomTabsUI {
      */
     _injectAddToTabButton(actionMenu) {
         if (actionMenu.querySelector('.toolasha-ct-add-to-tab')) return;
-        if (!this._config?.tabs?.length) return;
+        if (!Array.isArray(this._config?.tabs)) return;
+
+        // A panel lives in <body>, so it outlasts the native menu React removed under it
+        document.querySelectorAll('.toolasha-ct-add-to-tab-panel').forEach((el) => {
+            if (!el._ctOwner?.isConnected) el.remove();
+        });
 
         // Resolve item HRID and enhancement level from the action menu DOM. The menu
         // shows the item's own tile, so its icon sprite resolves the identity locale
@@ -4338,88 +4372,142 @@ export default class CustomTabsUI {
         toggle.appendChild(label);
         toggle.appendChild(chevron);
 
+        // The game's action menu is a short, overflow-clipped box, so a panel nested in it cuts the
+        // tab list off. Portal the panel to <body> and position it from the toggle's rect, the way
+        // the marketplace dropdown does (marketplace-shortcuts.js).
         const panel = document.createElement('div');
+        panel.className = 'toolasha-ct-add-to-tab-panel';
+        panel._ctOwner = wrapper;
         panel.style.cssText = `
             display: none;
-            position: absolute;
-            top: calc(100% + 4px);
-            left: 0;
-            width: 100%;
+            position: fixed;
             z-index: ${config.Z_POPUP};
             flex-direction: column;
             background: var(--color-surface, #1e1e2e);
             border: 1px solid rgba(255,255,255,0.15);
             border-radius: 6px;
-            overflow: hidden;
+            overflow-x: hidden;
+            overflow-y: auto;
             box-shadow: 0 6px 20px rgba(0,0,0,0.6);
             padding: 4px;
             gap: 3px;
             box-sizing: border-box;
         `;
 
-        // Populate panel with all tabs (depth-first)
-        const flatTabs = this._flattenTabs(this._config.tabs);
-        for (const { tab, depth } of flatTabs) {
-            const alreadyAdded = tab.items.includes(itemHrid);
-            const btn = document.createElement('button');
-            btn.textContent = '\u00a0'.repeat(depth * 2) + tab.name;
+        const closeNativeMenu = () => {
+            document.dispatchEvent(
+                new KeyboardEvent('keydown', {
+                    key: 'Escape',
+                    code: 'Escape',
+                    keyCode: 27,
+                    which: 27,
+                    bubbles: true,
+                    cancelable: true,
+                })
+            );
+        };
+
+        const styleRow = (btn, extra = '') => {
             btn.style.cssText = `
                 display: block;
                 width: 100%;
                 padding: 6px 12px;
                 border: none;
                 border-radius: 4px;
-                cursor: ${alreadyAdded ? 'default' : 'pointer'};
+                cursor: pointer;
                 font-size: 0.85rem;
                 font-weight: 600;
-                color: ${alreadyAdded ? '#888' : '#fff'};
-                background: ${tab.color ? tab.color + '55' : 'rgba(255,255,255,0.08)'};
                 text-align: left;
                 transition: opacity 0.15s;
+                ${extra}
             `;
-            if (tab.color && !alreadyAdded) btn.style.borderLeft = `3px solid ${tab.color}`;
-            if (alreadyAdded) {
-                btn.title = 'Already in this tab';
-            } else {
-                btn.addEventListener('mouseenter', () => {
-                    btn.style.opacity = '0.8';
-                });
-                btn.addEventListener('mouseleave', () => {
-                    btn.style.opacity = '1';
-                });
+            btn.addEventListener('mouseenter', () => {
+                btn.style.opacity = '0.8';
+            });
+            btn.addEventListener('mouseleave', () => {
+                btn.style.opacity = '1';
+            });
+        };
+
+        // Every tab (depth-first) plus a trailing "+ New Tab". Re-rendered after each toggle so the
+        // checkmarks follow the item's membership and one visit can add it to several tabs.
+        const renderRows = () => {
+            panel.innerHTML = '';
+            for (const { tab, depth } of this._flattenTabs(this._config.tabs)) {
+                const alreadyAdded = tab.items.includes(itemHrid);
+                const btn = document.createElement('button');
+                btn.textContent = (alreadyAdded ? '\u2713 ' : '') + '\u00a0'.repeat(depth * 2) + tab.name;
+                styleRow(
+                    btn,
+                    `color: ${alreadyAdded ? '#ccc' : '#fff'};
+                    background: ${tab.color ? tab.color + '55' : 'rgba(255,255,255,0.08)'};`
+                );
+                if (tab.color) btn.style.borderLeft = `3px solid ${tab.color}`;
+                btn.title = alreadyAdded ? 'Remove from this tab' : 'Add to this tab';
                 btn.addEventListener('click', (e) => {
                     e.stopPropagation();
                     e.preventDefault();
-                    this._config = addItem(this._config, tab.id, itemHrid);
-                    this._save();
+                    this._config = alreadyAdded
+                        ? removeItem(this._config, tab.id, itemHrid)
+                        : addItem(this._config, tab.id, itemHrid);
+                    this._save().catch((error) => {
+                        console.error('[CustomTabs] Failed to persist Add to Tab change:', error);
+                    });
                     if (this._isActive) {
                         this._removeInjectedEls();
                         this._applyLayout();
                     }
-                    closePanel();
-                    document.dispatchEvent(
-                        new KeyboardEvent('keydown', {
-                            key: 'Escape',
-                            code: 'Escape',
-                            keyCode: 27,
-                            which: 27,
-                            bubbles: true,
-                            cancelable: true,
-                        })
-                    );
+                    renderRows();
                 });
+                panel.appendChild(btn);
             }
-            panel.appendChild(btn);
-        }
+
+            const newTabBtn = document.createElement('button');
+            newTabBtn.textContent = '+ New Tab';
+            styleRow(
+                newTabBtn,
+                `color: #fff; background: rgba(255,255,255,0.08);
+                border-top: 1px solid rgba(255,255,255,0.15); margin-top: 2px;`
+            );
+            newTabBtn.addEventListener('click', (e) => {
+                e.stopPropagation();
+                e.preventDefault();
+                const result = addTab(this._config, null, 'New Tab');
+                this._config = addItem(result.config, result.tabId, itemHrid);
+                this._save().catch((error) => {
+                    console.error('[CustomTabs] Failed to persist new tab from Add to Tab:', error);
+                });
+                if (this._isActive) {
+                    this._removeInjectedEls();
+                    this._applyLayout();
+                }
+                closePanel();
+                closeNativeMenu();
+                this._openEditor(result.tabId);
+            });
+            panel.appendChild(newTabBtn);
+        };
+
+        renderRows();
 
         let open = false;
         let outsideBound = false;
         let outsideTimer = null;
+        let portalObserver = null;
         const outsideClick = (e) => {
-            if (!wrapper.contains(e.target)) {
+            if (!wrapper.contains(e.target) && !panel.contains(e.target)) {
                 closePanel();
             }
         };
+        // A fixed panel does not follow its toggle: close it when the page or the menu scrolls
+        // (but not for unrelated boxes the game scrolls on its own) or the window resizes
+        const onScroll = (e) => {
+            const t = e.target;
+            if (panel.contains(t)) return;
+            const pageScrolled = t === document || t === document.documentElement || t === document.body;
+            if (pageScrolled || (t instanceof Node && t.contains(wrapper))) closePanel();
+        };
+        const onResize = () => closePanel();
         const closePanel = () => {
             open = false;
             panel.style.display = 'none';
@@ -4430,8 +4518,41 @@ export default class CustomTabsUI {
             }
             if (outsideBound) {
                 document.removeEventListener('click', outsideClick);
+                document.removeEventListener('scroll', onScroll, true);
+                window.removeEventListener('resize', onResize);
                 outsideBound = false;
             }
+            portalObserver?.disconnect();
+            portalObserver = null;
+        };
+
+        const positionPanel = () => {
+            const GAP = 4;
+            const rect = toggle.getBoundingClientRect();
+            const viewportWidth = window.innerWidth || document.documentElement.clientWidth;
+            const viewportHeight = window.innerHeight || document.documentElement.clientHeight;
+            panel.style.minWidth = `${rect.width}px`;
+            const width = Math.max(rect.width, panel.getBoundingClientRect().width || 0);
+            panel.style.left = `${Math.max(0, Math.min(rect.left, viewportWidth - width))}px`;
+            // Measured uncapped; a long tab list that fits neither side takes the roomier one and scrolls,
+            // so its last rows (+ New Tab among them) stay reachable
+            panel.style.maxHeight = '';
+            const height = panel.getBoundingClientRect().height || 0;
+            const below = viewportHeight - rect.bottom - GAP * 2;
+            const above = rect.top - GAP * 2;
+            let top;
+            if (height <= below) {
+                top = rect.bottom + GAP;
+            } else if (height <= above) {
+                top = rect.top - GAP - height;
+            } else if (below >= above) {
+                panel.style.maxHeight = `${Math.max(0, below)}px`;
+                top = rect.bottom + GAP;
+            } else {
+                panel.style.maxHeight = `${Math.max(0, above)}px`;
+                top = GAP;
+            }
+            panel.style.top = `${top}px`;
         };
 
         toggle.addEventListener('click', (e) => {
@@ -4443,19 +4564,33 @@ export default class CustomTabsUI {
             }
             open = true;
             panel.style.display = 'flex';
+            positionPanel();
             chevron.style.transform = 'rotate(180deg)';
             if (!outsideBound && outsideTimer === null) {
                 outsideTimer = setTimeout(() => {
                     outsideTimer = null;
                     if (!open || outsideBound) return;
                     document.addEventListener('click', outsideClick);
+                    document.addEventListener('scroll', onScroll, true);
+                    window.addEventListener('resize', onResize);
                     outsideBound = true;
                 }, 0);
+            }
+            // React removing the native menu does not take the portaled panel along
+            if (!portalObserver && document.body) {
+                portalObserver = new MutationObserver(() => {
+                    if (!wrapper.isConnected) {
+                        closePanel();
+                        panel.remove();
+                    }
+                });
+                portalObserver.observe(document.body, { childList: true, subtree: true });
             }
         });
 
         wrapper.appendChild(toggle);
-        wrapper.appendChild(panel);
+        markToolashaSurface(panel, 'popover');
+        document.body.appendChild(panel);
         actionMenu.appendChild(wrapper);
     }
 
