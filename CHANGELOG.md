@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### DPS graph axis labels
+
+- DPS graphs no longer label their axis "0 0 0 1 1 1" when every line is hidden or the values are tiny.
+
 ### Labyrinth badge icons
 
 - Labyrinth Points badges are back to the blue maze and Labyrinth Depth badges now show an orange flag; the white maze from 3.63.1 could show no icon at all in some browsers.
