@@ -132,18 +132,24 @@ class InventoryBadgeManager {
         );
         this.unregisterHandlers.push(unwatchPopper);
 
-        // The value source decides how +13 and above equipment is priced, so a change must
-        // reprice every tile rather than wait for the next inventory event.
+        // The value source decides how +13 and above equipment is priced, and the game's value map
+        // (hourly, on its own message) feeds it in official-value mode and fills empty or stale books in
+        // order-book mode. Either change must reprice every tile rather than wait for the next inventory
+        // event. market-values.js swaps its cache on that message at import, so it has run by now.
+        const reprice = (why) => {
+            this.invalidateCache();
+            this.lastCalculationTime = 0;
+            this.lastRenderTime = 0;
+            this.renderAllBadges().catch((error) => {
+                console.error(`[InventoryBadgeManager] Re-render after ${why} failed:`, error);
+            });
+        };
         this.unregisterHandlers.push(
-            config.onSettingChange('networth_valueSource', () => {
-                this.invalidateCache();
-                this.lastCalculationTime = 0;
-                this.lastRenderTime = 0;
-                this.renderAllBadges().catch((error) => {
-                    console.error('[InventoryBadgeManager] Re-render after value source change failed:', error);
-                });
-            })
+            config.onSettingChange('networth_valueSource', () => reprice('value source change'))
         );
+        const onMarketValues = () => reprice('game value refresh');
+        dataManager.on('market_item_values_updated', onMarketValues);
+        this.unregisterHandlers.push(() => dataManager.off('market_item_values_updated', onMarketValues));
     }
 
     /**

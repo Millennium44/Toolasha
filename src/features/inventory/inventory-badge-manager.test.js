@@ -19,6 +19,7 @@ const mocks = vi.hoisted(() => ({
     networthEnabled: false,
     officialValues: {},
     settingListeners: {},
+    dataListeners: {},
     enhancementCost: null,
 }));
 
@@ -44,7 +45,16 @@ vi.mock('../../api/marketplace.js', () => ({
     default: { getPricesBatch: () => mocks.priceBatch, getPrice: () => null },
 }));
 vi.mock('../../core/data-manager.js', () => ({
-    default: { getInitClientData: () => mocks.initData, getInventory: () => mocks.inventory },
+    default: {
+        getInitClientData: () => mocks.initData,
+        getInventory: () => mocks.inventory,
+        on: (event, cb) => {
+            mocks.dataListeners[event] = cb;
+        },
+        off: (event, cb) => {
+            if (mocks.dataListeners[event] === cb) delete mocks.dataListeners[event];
+        },
+    },
 }));
 vi.mock('../enhancement/tooltip-enhancement.js', () => ({
     calculateEnhancementPath: () =>
@@ -537,6 +547,18 @@ describe('high-enhancement equipment follows the net worth value source', () => 
         expect(inventoryBadgeManager.lastCalculationTime).toBe(0);
         inventoryBadgeManager.disable();
         expect(mocks.settingListeners.networth_valueSource).toBeUndefined();
+        spy.mockRestore();
+    });
+
+    test("the game's hourly value refresh reprices the tiles, and disable stops listening", async () => {
+        inventoryBadgeManager.initialize();
+        const spy = vi.spyOn(inventoryBadgeManager, 'renderAllBadges').mockResolvedValue();
+        inventoryBadgeManager.lastCalculationTime = Date.now();
+        mocks.dataListeners.market_item_values_updated();
+        expect(spy).toHaveBeenCalledTimes(1);
+        expect(inventoryBadgeManager.lastCalculationTime).toBe(0);
+        inventoryBadgeManager.disable();
+        expect(mocks.dataListeners.market_item_values_updated).toBeUndefined();
         spy.mockRestore();
     });
 });
