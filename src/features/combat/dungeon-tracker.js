@@ -1694,9 +1694,10 @@ class DungeonTracker {
         ) {
             // The abandoned run was interrupted, not completed. resetTracking is
             // the same discard the flee/death early-exit path uses: it drops the
-            // run without writing it to history (a half-length run would poison
-            // the averages and the ROI board) and clears the saved record.
-            await this.resetTracking();
+            // run without writing it as a clear (a half-length run would poison
+            // the averages and the ROI board) and clears the saved record. With
+            // attempts recorded it is a cancel, ending as the other dungeon began.
+            await this.resetTracking({ result: RUN_RESULT_CANCEL, endTimestamp: Date.now(), endFromServer: false });
             if (currentOwner() !== owner) return;
             this.startDungeon(data);
             return;
@@ -2665,7 +2666,9 @@ class DungeonTracker {
             return false;
         }
 
-        const serverStart = Number.isFinite(firstTimestamp) ? firstTimestamp : null;
+        // Both ends on one clock: a server-stamped end pairs with the server-stamped start, and a wall-clock
+        // end (a solo death, a paused run given up) with the local start, whatever the client clock is off by
+        const serverStart = endFromServer === true && Number.isFinite(firstTimestamp) ? firstTimestamp : null;
         const start = serverStart ?? run.startTime;
         if (!Number.isFinite(start)) return false;
         const validated = serverStart !== null && endFromServer === true;

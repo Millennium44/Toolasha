@@ -2703,6 +2703,27 @@ describe('the running dungeon changing under a live run', () => {
         expect(stored().dungeonHrid).toBe(LAIR);
     });
 
+    test('with failed runs recorded, the abandoned run is saved as a cancel ending at the switch', async () => {
+        game.recordAttempts = true;
+        vi.useFakeTimers({ toFake: ['Date', 'setTimeout', 'clearTimeout'] });
+        try {
+            vi.setSystemTime(Date.parse('2026-08-04T10:06:00.000Z'));
+            beTracking({ dungeonHrid: DEN, tier: 0, currentWave: 5, maxWaves: 10, wavesCompleted: 4 });
+            tracker.currentRun.keyCountsMap = { Aster: 12 };
+            queueSwitchedTo(LAIR, DEN);
+
+            await tracker.onNewBattle({ wave: 11, battleId: 99, combatStartTime: '2026-08-04T11:00:00.000Z' });
+            await flush();
+            vi.advanceTimersByTime(30_000);
+            await flush();
+
+            expect(game.savedRuns).toHaveLength(1);
+            expect(game.savedRuns[0].run).toMatchObject({ result: 'cancel', duration: 6 * 60_000, validated: false });
+        } finally {
+            vi.useRealTimers();
+        }
+    });
+
     test('the same dungeon carrying on is left alone', async () => {
         beTracking({ dungeonHrid: DEN, tier: 0, currentWave: 5, maxWaves: 10, wavesCompleted: 4, waveTimes: [1000] });
         game.actions = [{ actionHrid: DEN, difficultyTier: 0, ordinal: 3, isDone: false }];
@@ -4389,6 +4410,25 @@ describe('a dungeon displaced by "Start Now"', () => {
         expect(tracker.isTracking).toBe(false);
         expect(game.savedRuns).toHaveLength(1);
         // Ended where the run stopped, not after the time spent milking
+        expect(game.savedRuns[0].run).toMatchObject({ result: 'cancel', duration: PAUSED_AT - T0, validated: false });
+    });
+
+    test('a paused party run given up is timed on the local clock, whatever the server clock says', async () => {
+        game.recordAttempts = true;
+        midDen();
+        // The server stamped the run's opening key count an hour off the local clock
+        tracker.firstKeyCountTimestamp = T0 - 60 * 60_000;
+        tracker.currentRun.keyCountsMap = { Aster: 12 };
+        startMilkingNow();
+        await flush();
+
+        game.actions = [milking(), zone()];
+        tracker.onActionsUpdated({ endCharacterActions: [den({ isDone: true })] });
+        await flush();
+        vi.advanceTimersByTime(30_000);
+        await flush();
+
+        expect(game.savedRuns).toHaveLength(1);
         expect(game.savedRuns[0].run).toMatchObject({ result: 'cancel', duration: PAUSED_AT - T0, validated: false });
     });
 
