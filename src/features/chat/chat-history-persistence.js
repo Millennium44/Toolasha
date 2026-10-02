@@ -2476,12 +2476,31 @@ class ChatHistoryPersistence {
      * Take a deletion back: a moderator's undelete. Nothing is restored — the
      * markup is gone — but the tombstone must go, or the line could never be
      * recorded again: every merge of a shared record would filter it out.
+     *
+     * Reads the records first when no tab has called `load()` yet, as
+     * {@link ChatHistoryPersistence#purgeMessageById} does: with no working
+     * record, a flush has nothing to write and the decision would be dropped
+     * with the session, leaving the tombstone in the shared record for good.
+     * When already loaded it takes effect before this returns.
+     *
      * @param {string} tabKey - `tab2:ch:<channel>`
      * @param {string|number} id - The game's message id
+     * @returns {Promise<void>}
      */
-    forgetDeletion(tabKey, id) {
+    async forgetDeletion(tabKey, id) {
         if (!this.enabled || !tabKey || id == null || tabScope(tabKey) === 'character') return;
-        this._noteDecision(tabKey, String(id), false, decisionTime());
+        // When the event arrived, taken before any read: a deletion that lands during it is newer.
+        const at = decisionTime();
+        if (!this.loaded) {
+            try {
+                await this.load();
+            } catch (error) {
+                console.error('[ChatHistoryPersistence] Could not read chat history for an undelete:', error);
+                return;
+            }
+        }
+        if (!this.enabled || !this.tabs) return;
+        this._noteDecision(tabKey, String(id), false, at);
         this.dirtyTabs.add(tabKey);
         this.dirty = true;
         this._scheduleWrite();

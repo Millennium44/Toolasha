@@ -416,6 +416,26 @@ describe('several game tabs on one profile', () => {
         expect(stored(PUBLIC, TRADE)).toEqual(['back again']);
     });
 
+    test('an undelete that arrives before any tab has loaded still takes the tombstone out', async () => {
+        const ada = await openPage('101');
+        await ada.persistence.load();
+        ada.persistence.record(TRADE, line('Tom', 'back again', 1, 'm4'));
+        await ada.persistence.purgeMessageById(TRADE, 'm4');
+        await ada.persistence.flush();
+        expect(shared.db[PUBLIC].deleted).toEqual(['m4']);
+
+        // A fresh game tab: the moderator's undelete reaches it before any chat container has read the records.
+        const bob = await openPage('202');
+        expect(bob.persistence.tabs).toBeNull();
+        await bob.persistence.forgetDeletion(TRADE, 'm4');
+        await bob.persistence.flush();
+
+        expect(shared.db[PUBLIC].deleted).toEqual([]);
+        bob.persistence.record(TRADE, line('Tom', 'back again', 1, 'm4'));
+        await bob.persistence.flush();
+        expect(stored(PUBLIC, TRADE)).toEqual(['back again']);
+    });
+
     /**
      * Run `fn` with the clock at `ms`: the time a moderation event arrives is
      * what orders it against another game tab's.
