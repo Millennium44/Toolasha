@@ -117,16 +117,6 @@ function unionTombstones(a, b) {
 }
 
 /**
- * The tab ids a Clear All tombstoned (`tabId → when`), absent map included.
- * @param {Object} config
- * @returns {Object<string, number>}
- */
-function clearedIdsOf(config) {
-    const cleared = config?.clearedTabIds;
-    return cleared && typeof cleared === 'object' ? cleared : {};
-}
-
-/**
  * A config's item-deletion tombstones (`tabId -> itemHrid -> when`), absent
  * map included. Buckets are per tab because that is the scope an item lives
  * in: the same hrid removed from one tab and kept in another is two facts.
@@ -354,18 +344,18 @@ function applyTombstones(tab, removed, revivedAt = -1) {
 }
 
 /**
- * Every tab id in a tree, nested ones included.
+ * Every tab in a tree, nested ones included.
  * @param {Array} tabs
- * @returns {Array<string>}
+ * @returns {number}
  */
-function _tabIds(tabs) {
-    const ids = [];
+function _countTabs(tabs) {
+    let n = 0;
     for (const tab of tabs) {
         if (!tab || typeof tab !== 'object') continue;
-        if (tab.id != null) ids.push(tab.id);
-        if (Array.isArray(tab.children)) ids.push(..._tabIds(tab.children));
+        n += 1;
+        if (Array.isArray(tab.children)) n += _countTabs(tab.children);
     }
-    return ids;
+    return n;
 }
 
 /**
@@ -457,33 +447,12 @@ function mergeConfigs(stored, memory) {
     // holds the tombstones back UN-APPLIED. They stay in the map, so a
     // genuinely widespread deletion still wins later, once the surviving tabs
     // carry stamps that prove the deletion came after them.
-    // Clear All is the one deliberate mass deletion. It lists the ids it tombstoned in
-    // `clearedTabIds`, and those drops are exempt from the cap: a cleared layout has no surviving tab
-    // to out-stamp a peer's stale copy, so a capped fold would bring every tab back forever. Ids, not
-    // a time watermark, so a tab another device makes afterwards is never swept by clock skew.
-    const clearedIds = unionTombstones(clearedIdsOf(theirs), clearedIdsOf(ours));
-    // Exempt only while the deletion on file IS the Clear All's own: a tab edited after the clear and
-    // deleted again later carries a newer, ordinary tombstone, which the cap must still judge
-    const byClearAll = (id) => id in clearedIds && union[id] === clearedIds[id];
-    const beforeIds = _tabIds([...byId.values()]);
-    const afterIds = new Set(_tabIds([...trialById.values()]));
-    // Cleared ids sit out of both counts: a large Clear All must not dilute the ratio that would catch
-    // an unrelated mass deletion in the same fold
-    const guarded = beforeIds.filter((id) => !byClearAll(id));
-    const before = guarded.length;
-    const dropped = guarded.filter((id) => !afterIds.has(id)).length;
+    const before = _countTabs([...byId.values()]);
+    const after = _countTabs([...trialById.values()]);
+    const dropped = before - after;
     const capped = dropped > 2 && dropped * 2 > before;
     let removed = union;
     if (capped) {
-        // Still apply Clear All's own tombstones; hold back only the rest
-        const clearedRemoved = Object.fromEntries(Object.entries(union).filter(([id]) => byClearAll(id)));
-        if (Object.keys(clearedRemoved).length > 0) {
-            for (const [id, tab] of [...byId]) {
-                const kept = applyTombstones(tab, { ...clearedRemoved });
-                if (kept) byId.set(id, kept);
-                else byId.delete(id);
-            }
-        }
         console.warn(
             `[CustomTabs] Refusing a fold that would delete ${dropped} of ${before} tabs at once; ` +
                 `keeping every tab and holding ${Object.keys(union).length} tombstone(s) back un-applied. ` +
@@ -523,8 +492,6 @@ function mergeConfigs(stored, memory) {
     const orderAt = Math.max(theirOrderAt, ourOrderAt);
     if (orderAt > 0) merged.orderUpdatedAt = orderAt;
     else delete merged.orderUpdatedAt;
-    if (Object.keys(clearedIds).length > 0) merged.clearedTabIds = clearedIds;
-    else delete merged.clearedTabIds;
     return merged;
 }
 
@@ -585,19 +552,6 @@ function pruneTombstones(config, now = Date.now()) {
                 const { removed: _expired, ...rest } = out;
                 out = rest;
             } else out = { ...out, removed: kept };
-        }
-    }
-
-    const cleared = out?.clearedTabIds;
-    if (cleared && typeof cleared === 'object') {
-        const kept = Object.fromEntries(
-            Object.entries(cleared).filter(([, at]) => now - (Number(at) || 0) < TOMBSTONE_MAX_AGE_MS)
-        );
-        if (Object.keys(kept).length !== Object.keys(cleared).length) {
-            if (Object.keys(kept).length === 0) {
-                const { clearedTabIds: _expired, ...rest } = out;
-                out = rest;
-            } else out = { ...out, clearedTabIds: kept };
         }
     }
 
@@ -766,8 +720,6 @@ export function sanitizeImportedConfig(parsed, now = Date.now()) {
     const {
         removed: _removed,
         removedItems: _removedItems,
-        // Another device's Clear All list is sync bookkeeping, like the tombstones
-        clearedTabIds: _clearedTabIds,
         ...rest
     } = parsed && typeof parsed === 'object' ? parsed : {};
     const idMap = new Map();
@@ -987,45 +939,6 @@ export function removeTab(config, tabId) {
     const parentId = result.parent?.id ?? null;
     _removeFromArray(c.tabs, tabId);
     if (parentId) stampTab(c, parentId, now);
-    return c;
-}
-
-/**
- * Remove every tab. Each one is tombstoned (with its descendants), so a peer device or the stored
- * copy that still carries them does not revive the layout through the merge on the next save.
- * @param {Object} config
- * @returns {Object} new config
- */
-export function clearAllTabs(config) {
-    const c = clone(config);
-    const now = Date.now();
-    if (!c.removed || typeof c.removed !== 'object') c.removed = {};
-    // Read by mergeConfigs: the tombstones alone would trip its mass-delete cap on a peer's stale copy
-    c.clearedTabIds = { ...clearedIdsOf(c) };
-    // One deletion time for the whole operation, stamped past every tab's own stamp rather than just now:
-    // a tab last edited on a device whose clock runs ahead carries a future stamp, and a plain `now`
-    // tombstone would lose to that same copy on the very next fold. One time, not one per tab, so the
-    // clear stays a single deletion and reviving an ancestor revives the descendants it took with it.
-    let at = now;
-    _walkTabs(config.tabs, (tab) => {
-        at = Math.max(at, stampOf(tab) + 1);
-    });
-    // Never below a deletion already on file (one written by a clock running ahead), which the
-    // reaffirming loop below would otherwise weaken
-    for (const when of Object.values(c.removed)) at = Math.max(at, Number(when) || 0);
-    _walkTabs(config.tabs, (tab) => {
-        c.removed[tab.id] = at;
-        c.clearedTabIds[tab.id] = at;
-    });
-    // Tabs deleted before the clear are part of the reset too: re-affirmed under the same deletion, so a
-    // stale peer still carrying them cannot trip the mass-delete cap and bring them back
-    for (const id of Object.keys(c.removed)) {
-        c.removed[id] = at;
-        c.clearedTabIds[id] = at;
-    }
-    c.tabs = [];
-    c.selectedTabId = null;
-    c.orderUpdatedAt = now;
     return c;
 }
 

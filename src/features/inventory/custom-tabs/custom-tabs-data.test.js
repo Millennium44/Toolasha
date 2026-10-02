@@ -930,93 +930,6 @@ describe('the mass-delete cap', () => {
         warn.mockRestore();
     });
 
-    test('a Clear All wins over a stale copy past the cap', () => {
-        const stale = { version: 1, selectedTabId: null, tabs: [tab('a'), tab('b'), tab('c'), tab('d')] };
-        const removed = { a: 500, b: 500, c: 500, d: 500 };
-        const cleared = { version: 1, selectedTabId: null, tabs: [], removed, clearedTabIds: { ...removed } };
-        const merged = merge(stale, cleared);
-        expect(merged.tabs).toEqual([]);
-        expect(merged.clearedTabIds).toEqual(removed);
-        // and it stays cleared on the next fold from the same stale device
-        expect(merge(stale, merged).tabs).toEqual([]);
-    });
-
-    test("a tab made after a Clear All survives, however far ahead the clearing device's clock ran", () => {
-        // The clearing device's clock was far ahead: its tombstones are stamped 10_000
-        const removed = { a: 10_000, b: 10_000, c: 10_000, d: 10_000 };
-        const cleared = { version: 1, selectedTabId: null, tabs: [], removed, clearedTabIds: { ...removed } };
-        // Another device, behind, makes a genuinely new tab afterwards with a lower stamp
-        const other = {
-            version: 1,
-            selectedTabId: null,
-            tabs: [tab('a'), tab('b'), tab('c'), tab('d'), tab('fresh', { updatedAt: 200 })],
-        };
-        expect(merge(other, cleared).tabs.map((t) => t.id)).toEqual(['fresh']);
-        expect(merge(cleared, other).tabs.map((t) => t.id)).toEqual(['fresh']);
-    });
-
-    test('Clear All exempts only its own ids: other mass deletions in the same fold are still held', () => {
-        const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
-        const carrier = {
-            version: 1,
-            selectedTabId: null,
-            tabs: [tab('a'), tab('x1'), tab('x2'), tab('x3'), tab('keep')],
-        };
-        const deleted = {
-            version: 1,
-            selectedTabId: null,
-            tabs: [],
-            removed: { a: 500, x1: 500, x2: 500, x3: 500 },
-            clearedTabIds: { a: 500 },
-        };
-        const merged = merge(carrier, deleted);
-        expect(merged.tabs.map((t) => t.id)).toEqual(['x1', 'x2', 'x3', 'keep']);
-        warn.mockRestore();
-    });
-
-    test('a large Clear All does not dilute the cap for an unrelated mass deletion beside it', () => {
-        const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
-        const staleIds = Array.from({ length: 100 }, (_, i) => `old${i}`);
-        const cleared = Object.fromEntries(staleIds.map((id) => [id, 500]));
-        const carrier = {
-            version: 1,
-            selectedTabId: null,
-            tabs: [...staleIds.map((id) => tab(id)), tab('p1'), tab('p2'), tab('p3'), tab('p4')],
-        };
-        const deleted = {
-            version: 1,
-            selectedTabId: null,
-            tabs: [],
-            removed: { ...cleared, p1: 500, p2: 500, p3: 500 },
-            clearedTabIds: cleared,
-        };
-        const merged = merge(carrier, deleted);
-        // Clear All's own ids go; three of the four other tabs at once is still refused
-        expect(merged.tabs.map((t) => t.id)).toEqual(['p1', 'p2', 'p3', 'p4']);
-        warn.mockRestore();
-    });
-
-    test('tabs revived after a Clear All and deleted again later are judged by the cap like any other', () => {
-        const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
-        // a–d were cleared at 500, then edited at 600 (revived), and later deleted again at 900
-        const carrier = {
-            version: 1,
-            selectedTabId: null,
-            tabs: ['a', 'b', 'c', 'd'].map((id) => tab(id, { updatedAt: 600 })),
-            clearedTabIds: { a: 500, b: 500, c: 500, d: 500 },
-        };
-        const deleted = {
-            version: 1,
-            selectedTabId: null,
-            tabs: [],
-            removed: { a: 900, b: 900, c: 900 },
-            clearedTabIds: { a: 500, b: 500, c: 500, d: 500 },
-        };
-        const merged = merge(carrier, deleted);
-        expect(merged.tabs.map((t) => t.id)).toEqual(['a', 'b', 'c', 'd']);
-        warn.mockRestore();
-    });
-
     test('two of two still applies — nothing worth protecting in a majority of two', () => {
         const carrier = { version: 1, selectedTabId: null, tabs: [tab('a'), tab('b')] };
         const deleted = { version: 1, selectedTabId: null, tabs: [], removed: { a: 500, b: 500 } };
@@ -1046,10 +959,6 @@ describe('sanitizeImportedConfig', () => {
 
     test('the tombstone map never comes in', () => {
         expect(sanitizeImportedConfig(file()).removed).toBeUndefined();
-    });
-
-    test("another device's Clear All list never comes in", () => {
-        expect(sanitizeImportedConfig({ ...file(), clearedTabIds: { ores: 1 } }).clearedTabIds).toBeUndefined();
     });
 
     test('every imported tab is stamped, nested ones included', () => {
@@ -1609,7 +1518,7 @@ describe('item tombstone ageing', () => {
     });
 });
 
-describe('clearAllTabs and importCategoryTabs', () => {
+describe('importCategoryTabs', () => {
     const base = () => {
         let c = { tabs: [], selectedTabId: null };
         const a = addTab(c, null, 'Food');
@@ -1618,79 +1527,6 @@ describe('clearAllTabs and importCategoryTabs', () => {
         c = { ...child.config, selectedTabId: a.tabId };
         return { c, rootId: a.tabId, childId: child.tabId };
     };
-
-    test('clearAllTabs empties the layout and tombstones every tab, nested ones included', async () => {
-        const { clearAllTabs } = await import('./custom-tabs-data.js');
-        const { c, rootId, childId } = base();
-        const cleared = clearAllTabs(c);
-        expect(cleared.tabs).toEqual([]);
-        expect(cleared.selectedTabId).toBeNull();
-        expect(Object.keys(cleared.removed).sort()).toEqual([rootId, childId].sort());
-        expect(Object.keys(cleared.clearedTabIds).sort()).toEqual([rootId, childId].sort());
-        expect(c.tabs).toHaveLength(1); // input untouched
-    });
-
-    test('clearAllTabs beats a tab stamped by a clock running ahead, and the cleared copy stays gone', async () => {
-        const { clearAllTabs } = await import('./custom-tabs-data.js');
-        const { mergeForKey } = await import('../../../utils/sync-merge-registry.js');
-        const merge = mergeForKey('settings', 'char1_inventoryTabs_config').merge;
-        const future = Date.now() + 60 * 60_000;
-        const stale = {
-            version: 1,
-            selectedTabId: null,
-            tabs: ['a', 'b', 'c'].map((id) => ({ id, name: id, items: [], children: [], updatedAt: future })),
-        };
-
-        const cleared = clearAllTabs(stale);
-        expect(cleared.removed.a).toBeGreaterThan(future);
-        // The read-back of the copy it was cleared from does not bring the tabs back
-        expect(merge(stale, cleared).tabs).toEqual([]);
-        expect(merge(cleared, stale).tabs).toEqual([]);
-    });
-
-    test('a parent edited after the clear brings back the children the clear took with it', async () => {
-        const { clearAllTabs } = await import('./custom-tabs-data.js');
-        const { mergeForKey } = await import('../../../utils/sync-merge-registry.js');
-        const merge = mergeForKey('settings', 'char1_inventoryTabs_config').merge;
-        const now = Date.now();
-        // The child was last touched on a clock running ahead of the parent's
-        const child = { id: 'kid', name: 'kid', items: [], children: [], updatedAt: now + 60 * 60_000 };
-        const parent = { id: 'top', name: 'top', items: [], children: [child], updatedAt: now - 1000 };
-        const cleared = clearAllTabs({ version: 1, selectedTabId: null, tabs: [parent] });
-        expect(cleared.removed.top).toBe(cleared.removed.kid);
-
-        // A peer edits the parent after the clear, keeping its child
-        const revived = { ...parent, updatedAt: cleared.removed.top + 1 };
-        const merged = merge({ version: 1, selectedTabId: null, tabs: [revived] }, cleared);
-        expect(merged.tabs.map((t) => t.id)).toEqual(['top']);
-        expect(merged.tabs[0].children.map((t) => t.id)).toEqual(['kid']);
-    });
-
-    test('tabs deleted before a Clear All stay gone when a stale peer still carries them', async () => {
-        const { clearAllTabs } = await import('./custom-tabs-data.js');
-        const { mergeForKey } = await import('../../../utils/sync-merge-registry.js');
-        const merge = mergeForKey('settings', 'char1_inventoryTabs_config').merge;
-        const tabOf = (id) => ({ id, name: id, items: [], children: [], updatedAt: 100 });
-        // o1–o3 were deleted earlier; k is the one tab left when Clear All runs
-        const before = {
-            version: 1,
-            selectedTabId: null,
-            tabs: [tabOf('k')],
-            removed: { o1: 200, o2: 200, o3: 200 },
-        };
-        const cleared = clearAllTabs(before);
-        expect(Object.keys(cleared.clearedTabIds).sort()).toEqual(['k', 'o1', 'o2', 'o3']);
-
-        const stale = { version: 1, selectedTabId: null, tabs: ['o1', 'o2', 'o3', 'k'].map(tabOf) };
-        expect(merge(stale, cleared).tabs).toEqual([]);
-    });
-
-    test('Clear All never weakens a deletion already on file from a clock running ahead', async () => {
-        const { clearAllTabs } = await import('./custom-tabs-data.js');
-        const ahead = Date.now() + 60 * 60_000;
-        const cleared = clearAllTabs({ version: 1, selectedTabId: null, tabs: [], removed: { old: ahead } });
-        expect(cleared.removed.old).toBeGreaterThanOrEqual(ahead);
-    });
 
     test('importCategoryTabs makes one tab per non-empty category and skips existing names', async () => {
         const { importCategoryTabs } = await import('./custom-tabs-data.js');
