@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Trial damage chart shows the players again
+
+- The trial damage chart puts the party's DPS on its own right-hand scale so the leading players' lines are readable instead of flat at zero, and clicking a name in the new legend hides or shows that line.
+
 ### Net worth matches the game at high enhancement levels
 
 - With net worth set to the game's market value, items at +13 and above now use the game's value too instead of Toolasha's enhancement-cost estimate, so the total matches the game's own Total Market Value.
