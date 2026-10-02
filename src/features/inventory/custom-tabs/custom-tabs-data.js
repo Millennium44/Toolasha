@@ -462,18 +462,21 @@ function mergeConfigs(stored, memory) {
     // to out-stamp a peer's stale copy, so a capped fold would bring every tab back forever. Ids, not
     // a time watermark, so a tab another device makes afterwards is never swept by clock skew.
     const clearedIds = unionTombstones(clearedIdsOf(theirs), clearedIdsOf(ours));
+    // Exempt only while the deletion on file IS the Clear All's own: a tab edited after the clear and
+    // deleted again later carries a newer, ordinary tombstone, which the cap must still judge
+    const byClearAll = (id) => id in clearedIds && union[id] === clearedIds[id];
     const beforeIds = _tabIds([...byId.values()]);
     const afterIds = new Set(_tabIds([...trialById.values()]));
     // Cleared ids sit out of both counts: a large Clear All must not dilute the ratio that would catch
     // an unrelated mass deletion in the same fold
-    const guarded = beforeIds.filter((id) => !(id in clearedIds));
+    const guarded = beforeIds.filter((id) => !byClearAll(id));
     const before = guarded.length;
     const dropped = guarded.filter((id) => !afterIds.has(id)).length;
     const capped = dropped > 2 && dropped * 2 > before;
     let removed = union;
     if (capped) {
         // Still apply Clear All's own tombstones; hold back only the rest
-        const clearedRemoved = Object.fromEntries(Object.entries(union).filter(([id]) => id in clearedIds));
+        const clearedRemoved = Object.fromEntries(Object.entries(union).filter(([id]) => byClearAll(id)));
         if (Object.keys(clearedRemoved).length > 0) {
             for (const [id, tab] of [...byId]) {
                 const kept = applyTombstones(tab, { ...clearedRemoved });

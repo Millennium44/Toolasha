@@ -996,6 +996,27 @@ describe('the mass-delete cap', () => {
         warn.mockRestore();
     });
 
+    test('tabs revived after a Clear All and deleted again later are judged by the cap like any other', () => {
+        const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+        // a–d were cleared at 500, then edited at 600 (revived), and later deleted again at 900
+        const carrier = {
+            version: 1,
+            selectedTabId: null,
+            tabs: ['a', 'b', 'c', 'd'].map((id) => tab(id, { updatedAt: 600 })),
+            clearedTabIds: { a: 500, b: 500, c: 500, d: 500 },
+        };
+        const deleted = {
+            version: 1,
+            selectedTabId: null,
+            tabs: [],
+            removed: { a: 900, b: 900, c: 900 },
+            clearedTabIds: { a: 500, b: 500, c: 500, d: 500 },
+        };
+        const merged = merge(carrier, deleted);
+        expect(merged.tabs.map((t) => t.id)).toEqual(['a', 'b', 'c', 'd']);
+        warn.mockRestore();
+    });
+
     test('two of two still applies — nothing worth protecting in a majority of two', () => {
         const carrier = { version: 1, selectedTabId: null, tabs: [tab('a'), tab('b')] };
         const deleted = { version: 1, selectedTabId: null, tabs: [], removed: { a: 500, b: 500 } };
