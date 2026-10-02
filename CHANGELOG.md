@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Labyrinth badge icons
+
+- Labyrinth Points badges are back to the blue maze and Labyrinth Depth badges now show an orange flag; the white maze from 3.63.1 could show no icon at all in some browsers.
+
 <!-- shipped in 3.63.1 -->
 
 ### Clearer rank badge icons
