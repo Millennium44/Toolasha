@@ -191,6 +191,36 @@ describe('Storage on page teardown', () => {
         expect(storage.pendingWrites.size).toBe(0);
     });
 
+    // A debounce timer that fired just before the page went away has its own
+    // transaction open already, and that one survives the close. Waiting for
+    // it before snapshotting the queue pushed every *other* pending write past
+    // the close, where it could only be refused — so one write in flight at
+    // pagehide (or one wedged on a held store) lost up to three seconds of
+    // everything else on a page being destroyed.
+    test('a write already in flight does not hold the rest of the queue behind the close', async () => {
+        const { db, log, data } = createRecordingDb();
+        storage.db = db;
+        storage.available = true;
+
+        let settleInFlight;
+        const inFlight = new Promise((resolve) => {
+            settleInFlight = resolve;
+        });
+        storage._inFlightWrites.add(inFlight);
+
+        const write = storage.set('queued', 'v');
+        const flush = storage.closeForTeardown('pagehide');
+
+        expect(log).toEqual(['transaction:readwrite', 'close']);
+        settleInFlight(true);
+        storage._inFlightWrites.delete(inFlight);
+        await flush;
+
+        await expect(write).resolves.toBe(true);
+        expect(data.get('queued')).toBe('v');
+        expect(storage.pendingWrites.size).toBe(0);
+    });
+
     // `db.onclose` calls `_reconnect()`. A page on its way out that opened a
     // fresh connection in response to its own close would be handed a new
     // connection to leave a transaction on — the exact thing being prevented.
