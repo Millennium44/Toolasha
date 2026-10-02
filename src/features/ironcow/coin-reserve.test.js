@@ -219,6 +219,21 @@ describe('walking the queue for its coin flow', () => {
         expect(coinReserve(walked.stages).reserve).toBeCloseTo(450_000, 3);
     });
 
+    test('a spending row limited by materials the engine only expects makes the reserve an estimate', () => {
+        game.currentActions = [queued(1, DECOMPOSE, { item: STAR_FRUIT })];
+        const original = engine.calculateSingleQueueActionTime.bind(engine);
+        const spy = vi
+            .spyOn(engine, 'calculateSingleQueueActionTime')
+            .mockImplementation((...args) => ({ ...original(...args), materialLimitIsEstimated: true }));
+        try {
+            const walked = walkQueueCoins(engine);
+            expect(walked.stages[0].estimated).toBe(true);
+            expect(coinReserve(walked.stages).estimated).toBe(true);
+        } finally {
+            spy.mockRestore();
+        }
+    });
+
     test('a queued action the game data does not know makes the walk unreadable, not free', () => {
         game.currentActions = [
             queued(1, '/actions/alchemy/unknown'),

@@ -958,8 +958,8 @@ class IronCowFarmPanel {
         const { reserve, spenders, estimated } = coinReserve(walked.stages);
         const approx = estimated ? '~' : '';
         const estimateNote = estimated
-            ? ' Enhancing spends per attempt and the attempts are a prediction, so this is an estimate:' +
-              ' a run of failures spends more.'
+            ? ' Part of this is a prediction (enhancing attempts, or a row limited by materials it only' +
+              ' expects to have), so it is an estimate: bad luck can spend more.'
             : '';
         const can = bellsAffordable(state.coins, reserve, pricing);
         if (!can) return [];

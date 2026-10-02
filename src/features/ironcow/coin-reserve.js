@@ -112,8 +112,13 @@ export function walkQueueCoins(engine, actions, inventory) {
             count,
             coinDelta: Math.min(0, delta),
             earned: Math.max(0, delta),
-            // Enhancing spends per attempt, and the attempts are a prediction: a run of failures spends more
-            estimated: delta < 0 && String(action.actionHrid).startsWith('/actions/enhancing/'),
+            // A predicted spend: enhancing pays per attempt and the attempts are a prediction, and a row
+            // the engine limits by materials it only expects (a self-returning transmute, a drop from
+            // an earlier row) can run longer on good rolls
+            estimated:
+                delta < 0 &&
+                (String(action.actionHrid).startsWith('/actions/enhancing/') ||
+                    timing?.materialLimitIsEstimated === true),
         });
     }
     return { stages, stoppedAt };
