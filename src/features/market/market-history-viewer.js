@@ -2293,8 +2293,7 @@ class MarketHistoryViewer {
                 this.popupCloseHandler = null;
             }
         };
-        const popupTimeout = setTimeout(() => document.addEventListener('click', this.popupCloseHandler), 10);
-        this.timerRegistry.registerTimeout(popupTimeout);
+        this.timerRegistry.scheduleTimeout(() => document.addEventListener('click', this.popupCloseHandler), 10);
     }
 
     /**
