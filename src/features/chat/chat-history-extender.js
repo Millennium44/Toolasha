@@ -25,7 +25,11 @@ import chatHistoryPersistence, {
     senderNameFrom,
     serializeMessage,
     TAB_KEY_PREFIX,
+    tabScope,
 } from './chat-history-persistence.js';
+
+/** How long after a guild change the game's re-render of the pane is still taken for it. */
+const GUILD_SWITCH_WINDOW_MS = 3000;
 
 const STYLE_ID = 'mwi-chat-history-extender-css';
 const CSS = `
@@ -835,6 +839,11 @@ class ChatTabHandler {
         this._retriedRestore = false;
         /** Whether a restore has already been fired for this tab; see {@link _resolveTabKey}. */
         this.restoreStarted = false;
+        /**
+         * Until when the next batch that removes messages is a guild change's re-render, not evictions;
+         * see {@link ChatTabHandler#guildChanged}. Read by {@link ChatTabHandler#_onMutation} only.
+         */
+        this._guildSwitchUntil = 0;
         /** @type {WeakMap<Element, string|null>} Buffered node → {@link messageIdentity}, computed once */
         this.bufferIdentities = new WeakMap();
 
@@ -1011,6 +1020,37 @@ class ChatTabHandler {
             }
             node.remove();
         }
+    }
+
+    /**
+     * The character's guild changed while this pane stayed mounted.
+     *
+     * The tab key does not change (it is `Guild` either way), so
+     * {@link ChatTabHandler#_resolveTabKey} sees no switch; this does what one does.
+     * The buffer holds the old guild's lines and is emptied, and the next batch that
+     * removes messages is the game replacing the old guild's chat, which must not be
+     * recorded as evictions into the new guild's key. Then the new guild's record is
+     * read and restored. The roster message may come before or after that re-render:
+     * emptying the buffer is right either way, and the window below is only spent by
+     * a batch with removals, so a roster that lands after the re-render costs at most
+     * one unrecorded eviction, at the end of the window.
+     *
+     * @param {Promise<void>} recordReady - Resolves once the new guild's record is in the working record
+     * @returns {Promise<void>}
+     */
+    async guildChanged(recordReady) {
+        const tabKey = this.tabKey;
+        if (!tabKey || tabScope(tabKey) !== 'guild' || !this.bufferEl.isConnected) return;
+        this._clearBuffer();
+        this.restoreStarted = false;
+        this._guildSwitchUntil = Date.now() + GUILD_SWITCH_WINDOW_MS;
+        try {
+            await recordReady;
+        } catch (error) {
+            console.error('[ChatHistoryExtender] Could not read the new guild record:', error);
+        }
+        if (this.tabKey !== tabKey || this.restoreStarted || !this.bufferEl.isConnected) return;
+        await this.restore(tabKey);
     }
 
     /**
@@ -1454,7 +1494,20 @@ class ChatTabHandler {
         // evictions would clone the outgoing tab's lines — whispers among them
         // — straight back onto the incoming tab's scrollback and into its
         // record under the incoming tab's key.
-        const switched = Boolean(previousKey) && Boolean(tabKey) && tabKey !== previousKey;
+        let switched = Boolean(previousKey) && Boolean(tabKey) && tabKey !== previousKey;
+        // A guild change replaces the pane's lines under the same key; see `guildChanged`.
+        if (this._guildSwitchUntil) {
+            const removing = mutations.some((mut) =>
+                [...mut.removedNodes].some(
+                    (node) => node.nodeType === 1 && node.className?.includes('ChatMessage_chatMessage')
+                )
+            );
+            if (Date.now() >= this._guildSwitchUntil) this._guildSwitchUntil = 0;
+            else if (removing) {
+                this._guildSwitchUntil = 0;
+                switched = true;
+            }
+        }
         const renderedLive = new Set();
         // Before anything is recorded: the observer delivers a batch after the
         // DOM has changed, so the pane already holds the batch's new lines, and
@@ -1613,7 +1666,16 @@ class ChatHistoryExtender {
         webSocketHook.on('chat_message_updated', this._onChatMessageUpdated);
         // The guild's chat lives in that guild's record; the login's copy of the
         // character does not follow a guild change, the roster does.
-        this._onGuildCharacters = (data) => chatHistoryPersistence.noteGuildRoster(data?.guildCharacterMap);
+        this._onGuildCharacters = (data) => {
+            if (!chatHistoryPersistence.noteGuildRoster(data?.guildCharacterMap)) return;
+            // The same pane now shows another guild's chat; see `ChatTabHandler#guildChanged`.
+            const recordReady = chatHistoryPersistence.loadGuildRecord();
+            for (const handler of [...this.activeHandlers]) {
+                handler.guildChanged(recordReady).catch((error) => {
+                    console.error('[ChatHistoryExtender] Guild change restore failed:', error);
+                });
+            }
+        };
         webSocketHook.on('guild_characters_updated', this._onGuildCharacters);
 
         // Recording is coalesced for a few seconds; these are the moments that

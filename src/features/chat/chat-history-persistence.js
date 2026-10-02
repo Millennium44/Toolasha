@@ -1614,17 +1614,18 @@ class ChatHistoryPersistence {
      * record must not receive them.
      *
      * @param {Record<string, {guildID?: string|number}>|null|undefined} guildCharacterMap
+     * @returns {boolean} Whether a running session's context moved to another guild
      */
     noteGuildRoster(guildCharacterMap) {
-        if (!this.enabled || !guildCharacterMap || typeof guildCharacterMap !== 'object') return;
+        if (!this.enabled || !guildCharacterMap || typeof guildCharacterMap !== 'object') return false;
         const characterId = dataManager.getCurrentCharacterId?.();
         const guildId = characterId ? guildCharacterMap[characterId]?.guildID : null;
-        if (guildId == null || guildId === '') return;
+        if (guildId == null || guildId === '') return false;
         this.guildOverride = String(guildId);
 
         const context = this.context;
         const guildKey = guildRecordKey(this.guildOverride);
-        if (!context || context.guildKey === guildKey) return;
+        if (!context || context.guildKey === guildKey) return false;
 
         // The old guild's lines and moderation decisions, taken before the context
         // moves and held until a write lands them in the old guild's record: the
@@ -1663,6 +1664,39 @@ class ChatHistoryPersistence {
             this.decisions.delete(tabKey);
         }
         this.context = { ...context, guildKey };
+        return true;
+    }
+
+    /**
+     * Bring the guild the context just moved to into the working record.
+     *
+     * {@link ChatHistoryPersistence#noteGuildRoster} drops the old guild's tabs;
+     * the new guild's stored lines are not in the working record until this reads
+     * them, and a restore of the Guild tab shows only what the working record
+     * holds. Stored lines go ahead of anything already recorded since the move.
+     * A read that fails, or that a later move or a character switch overtook,
+     * changes nothing.
+     *
+     * @returns {Promise<void>}
+     */
+    async loadGuildRecord() {
+        if (!this.enabled || !this.loaded || !this.tabs || !this.context?.guildKey) return;
+        const ticket = captureOwner(this);
+        const context = this.context;
+        const key = context.guildKey;
+        const read = await readStoredRecord(key);
+        if (!stillOurs(ticket) || !read.ok || this.context?.guildKey !== key || !this.tabs) return;
+
+        const perTab = this.getMaxHistory();
+        const storedLive = liveFromRecord(read.record);
+        Object.assign(this.sharedLive, storedLive);
+        this.liveCounts = { ...storedLive, ...this.liveCounts };
+        for (const [tabKey, list] of Object.entries(tabsFromRecord(read.record, perTab, this.liveCounts))) {
+            if (recordKeyFor(tabKey, context) !== key) continue;
+            this.tabs[tabKey] = mergeLists(list, this.tabs[tabKey] || [], true);
+            if (this.snapshot) this.snapshot[tabKey] = [...this.tabs[tabKey]];
+        }
+        this._capMemory();
     }
 
     /**
