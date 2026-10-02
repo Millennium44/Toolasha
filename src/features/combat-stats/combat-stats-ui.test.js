@@ -126,6 +126,7 @@ vi.mock('./combat-stats-data-collector.js', () => ({
         getLatestData: () => mocks.live,
         loadLatestData: async () => null,
         resetConsumableTracking: async () => {},
+        isConnectionInterrupted: () => mocks.interrupted ?? false,
     },
 }));
 vi.mock('./combat-session-history.js', () => ({
@@ -230,6 +231,32 @@ describe('naming an archived run in the picker', () => {
         const label = archivedSessionLabel({ durationSeconds: 60, players: [player('A', 1)] });
         expect(label).toContain('Unknown date');
         expect(label).toContain('solo');
+    });
+});
+
+describe('the connection-interrupted banner', () => {
+    afterEach(() => {
+        mocks.interrupted = false;
+    });
+
+    test('shows on a live session whose socket closed', async () => {
+        mocks.interrupted = true;
+        await combatStatsUI.showPopup();
+        expect(popup().textContent).toContain('Connection was interrupted');
+    });
+
+    test('is absent when nothing was interrupted', async () => {
+        await combatStatsUI.showPopup();
+        expect(popup().textContent).not.toContain('Connection was interrupted');
+    });
+
+    test('is not shown on an archived run', async () => {
+        mocks.interrupted = true;
+        await combatStatsUI.showPopup();
+        picker().value = ARCHIVED.key;
+        picker().dispatchEvent(new Event('change'));
+        await flush();
+        expect(popup().textContent).not.toContain('Connection was interrupted');
     });
 });
 

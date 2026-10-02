@@ -46,6 +46,7 @@ vi.mock('./combat-stats-data-collector.js', () => ({
         getLatestData: () => mocks.live,
         loadLatestData: async () => null,
         resetConsumableTracking: async () => {},
+        isConnectionInterrupted: () => false,
     },
 }));
 vi.mock('./combat-session-history.js', () => ({ loadSessions: async () => [] }));

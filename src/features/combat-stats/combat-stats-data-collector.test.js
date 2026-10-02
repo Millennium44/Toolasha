@@ -22,7 +22,9 @@ const store = vi.hoisted(() => ({
     onProbe: null,
 }));
 
-vi.mock('../../core/websocket.js', () => ({ default: { on: () => {}, off: () => {} } }));
+vi.mock('../../core/websocket.js', () => ({
+    default: { on: () => {}, off: () => {}, onSocketEvent: () => {}, offSocketEvent: () => {} },
+}));
 vi.mock('../../core/data-manager.js', () => ({
     default: {
         getCurrentCharacterId: () => store.characterId,
@@ -332,5 +334,25 @@ describe('deciding whether a stored run still describes anything', () => {
 
         collector.latestCombatData = { ...snapshot(1, undefined), restored: true };
         expect(collector.getLatestData()).not.toBeNull();
+    });
+});
+
+describe('connection-interrupted flag', () => {
+    test('a socket close mid-session flags it, and a new session clears it', () => {
+        collector._resetTrackersInMemory();
+        expect(collector.isConnectionInterrupted()).toBe(false);
+
+        collector.onSocketClosed({});
+        expect(collector.isConnectionInterrupted()).toBe(true);
+
+        collector._resetTrackersInMemory();
+        expect(collector.isConnectionInterrupted()).toBe(false);
+    });
+
+    test('a close before any session has started is a no-op', () => {
+        collector._resetTrackersInMemory();
+        collector.consumableTracker.startTime = null;
+        collector.onSocketClosed({});
+        expect(collector.isConnectionInterrupted()).toBe(false);
     });
 });

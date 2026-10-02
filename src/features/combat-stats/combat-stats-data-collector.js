@@ -108,6 +108,9 @@ class CombatStatsDataCollector {
         this.isInitialized = false;
         this.newBattleHandler = null;
         this.consumableEventHandler = null;
+        this.socketCloseHandler = null;
+        /** Set when the game socket closed during the current session; cleared when a new session starts */
+        this.connectionInterrupted = false;
         this.latestCombatData = null;
         this.currentBattleId = null;
         /** Which run the snapshot belongs to; a change means the last one ended */
@@ -183,6 +186,11 @@ class CombatStatsDataCollector {
         // Listen for battle_consumable_ability_updated (fires on each consumable use)
         webSocketHook.on('battle_consumable_ability_updated', this.consumableEventHandler);
 
+        // A mid-session disconnect means events during the gap may have been missed, so the
+        // session's numbers are flagged as possibly incomplete rather than silently trusted.
+        this.socketCloseHandler = (_event, socket) => this.onSocketClosed(socket);
+        webSocketHook.onSocketEvent('close', this.socketCloseHandler);
+
         // Everything above is one character's live run. This pair is registered
         // once and never removed — but not, as this comment used to claim,
         // because the collector is "not always disabled on a switch". It always
@@ -223,6 +231,31 @@ class CombatStatsDataCollector {
         this.latestCombatData = null;
         this.currentBattleId = null;
         this.sessionKey = null;
+    }
+
+    /**
+     * The game socket closed. Flags the running session as possibly incomplete.
+     *
+     * A character switch closes the departing socket after the arriving one has
+     * already attached; that is not a gap in anyone's data, so a close from a
+     * socket that is no longer the active one is ignored.
+     * @param {WebSocket} [socket] - The socket that closed
+     */
+    onSocketClosed(socket) {
+        const active = webSocketHook.activeGameSocket;
+        if (active && socket && active !== socket) return;
+        if (this.consumableTracker.startTime) {
+            this.connectionInterrupted = true;
+        }
+    }
+
+    /**
+     * Whether the game socket closed during the current tracking session, meaning
+     * some events may have been missed and its numbers may be incomplete.
+     * @returns {boolean}
+     */
+    isConnectionInterrupted() {
+        return this.connectionInterrupted;
     }
 
     /** Bring in the arriving character's own run, now that they are current. */
@@ -483,6 +516,7 @@ class CombatStatsDataCollector {
         this.partyConsumableTrackers = {};
         this.partyConsumableSnapshots = {};
         this.partyLastKnownConsumables = {};
+        this.connectionInterrupted = false;
     }
 
     /**
@@ -987,6 +1021,11 @@ class CombatStatsDataCollector {
         if (this.consumableEventHandler) {
             webSocketHook.off('battle_consumable_ability_updated', this.consumableEventHandler);
             this.consumableEventHandler = null;
+        }
+
+        if (this.socketCloseHandler) {
+            webSocketHook.offSocketEvent('close', this.socketCloseHandler);
+            this.socketCloseHandler = null;
         }
 
         this.isInitialized = false;
