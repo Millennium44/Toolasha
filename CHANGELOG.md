@@ -6,6 +6,11 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Text size and font settings
+
+- New UI & Appearance settings set the text size (80–150%) and font of Toolasha's floating panels, dialogs and settings page, using fonts already on your computer.
+- An optional setting, off by default, also enlarges and changes the font of the game's chat, tooltips, item dictionary and patch notes, leaving its tiles and layout as they are.
+
 ### Chat history shared between characters
 
 - Saved chat history for public channels is now shared by all your characters, and guild chat by characters in the same guild, so it is stored once instead of per character; party and whispers stay per character. History saved before the update stays with each character and ages out as shared history builds up, and several game tabs saving at once merge instead of overwriting each other.

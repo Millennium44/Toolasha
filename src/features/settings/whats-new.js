@@ -46,6 +46,7 @@ import {
 } from '../../utils/pricing-side-select.js';
 import forkChangelog from 'virtual:fork-changelog';
 import forkOverview from 'virtual:fork-overview';
+import { markToolashaSurface } from '../../utils/surface-marker.js';
 
 const STATE_KEY_PREFIX = 'whatsNew_state';
 
@@ -809,6 +810,7 @@ class WhatsNew {
                 if (event.target === backdrop) finish(null);
             });
             document.addEventListener('keydown', onKeyDown, true);
+            markToolashaSurface(backdrop, 'modal');
             document.body.appendChild(backdrop);
         });
     }

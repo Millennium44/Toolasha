@@ -67,6 +67,7 @@ import { createDiagnosticsSection } from './diagnostics-section.js';
 import { exportEverythingJSON, importEverything } from '../../utils/full-backup.js';
 import { downloadFile } from '../../utils/csv-export.js';
 import { askChoice } from '../../utils/choice-dialog.js';
+import { markToolashaSurface } from '../../utils/surface-marker.js';
 
 const COLLAPSED_GROUPS_KEY = 'toolasha_collapsedGroups';
 
@@ -2744,6 +2745,7 @@ class SettingsUI {
         btnRow.appendChild(copyBtn);
         dialog.appendChild(btnRow);
         overlay.appendChild(dialog);
+        markToolashaSurface(overlay, 'modal');
         document.body.appendChild(overlay);
 
         const close = () => overlay.remove();
@@ -3137,6 +3139,7 @@ class SettingsUI {
         overlay.addEventListener('click', (e) => {
             if (e.target === overlay) overlay.remove();
         });
+        markToolashaSurface(overlay, 'modal');
         document.body.appendChild(overlay);
         textarea.focus();
     }
@@ -3435,6 +3438,7 @@ class SettingsUI {
         };
 
         // Add to page
+        markToolashaSurface(overlay, 'modal');
         document.body.appendChild(overlay);
     }
 
@@ -4004,6 +4008,7 @@ class SettingsUI {
             }
         });
 
+        markToolashaSurface(overlay, 'modal');
         document.body.appendChild(overlay);
     }
 

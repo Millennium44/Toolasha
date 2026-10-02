@@ -29,6 +29,7 @@ import { registerCommand, unregisterCommand } from '../../utils/command-registry
 import { ironCowBook } from '../../utils/ironcow-valuation.js';
 import { computeRefinementCraftCost, isRefinedItem, resolveRefinedItemCost } from '../../utils/refined-item-cost.js';
 import { PHILO_HRID } from '../alchemy/philosophers-stone-hrid.js';
+import { markToolashaSurface } from '../../utils/surface-marker.js';
 
 const PRIME_CATALYST_HRID = '/items/prime_catalyst';
 const PRIME_CATALYST_ADDITIVE_BONUS = 0.25; // 25% additive boost
@@ -1236,6 +1237,7 @@ class PhiloCalculator {
         };
         document.addEventListener('keydown', this._escHandler);
 
+        markToolashaSurface(this.modal, 'modal');
         document.body.appendChild(this.modal);
         this.renderTable();
     }

@@ -14,6 +14,7 @@
  */
 
 import { PANEL_Z_CAP } from './panel-z-index.js';
+import { markToolashaSurface } from './surface-marker.js';
 
 const COLORS = {
     background: 'rgba(12, 15, 26, 0.98)',
@@ -51,6 +52,8 @@ export function askChoice({ title, message = '', choices = [] }) {
             alignItems: 'center',
             justifyContent: 'center',
         });
+        // Read by text-appearance.js: the dialog inside takes the Toolasha text size and font
+        markToolashaSurface(backdrop, 'dialog');
 
         const dialog = document.createElement('div');
         Object.assign(dialog.style, {

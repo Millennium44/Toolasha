@@ -34,6 +34,7 @@ import {
 import { IRONCOW_VALUATION_SETTING } from '../../utils/ironcow-valuation.js';
 import { appendMeasuredRate } from './alchemy-measured-rate.js';
 import { ALCHEMY_TYPES, rankAlchemyType, getAlchemyBaseXP, calcXpPerAction } from './alchemy-rankings.js';
+import { markToolashaSurface } from '../../utils/surface-marker.js';
 
 // Re-exported because this module is where both helpers were first written and
 // where other files still import them from.
@@ -669,6 +670,7 @@ class AlchemyBestItems {
         content.appendChild(tableContainer);
 
         this.modal.appendChild(content);
+        markToolashaSurface(this.modal, 'modal');
         document.body.appendChild(this.modal);
         this.updatePricingSelects();
     }

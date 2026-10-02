@@ -23,6 +23,7 @@ import { classTagIconHTML } from './class-weapon.js';
 import { BOARD_COLORS, escapeText } from './damage-board.js';
 import { registerEscapeClose } from './panel-escape.js';
 import { PLAYER_PALETTE, pickedColor, playerColor, setPlayerColor } from './player-colors.js';
+import { markToolashaSurface } from './surface-marker.js';
 
 /** Carried by every marker; its value is the player's name */
 export const PLAYER_ATTR = 'data-toolasha-player';
@@ -262,6 +263,7 @@ export function openPlayerMenu(anchor, name, onChange = () => {}) {
         menu.append(heading, row);
     }
 
+    markToolashaSurface(menu, 'popover');
     document.body.appendChild(menu);
 
     // Beside the marker, kept on screen

@@ -59,6 +59,7 @@ import { createCuratedRecord, mergeById } from '../../../utils/persisted-record.
 import { attachMinimize } from '../../../utils/panel-minimize.js';
 import { registerCommand, unregisterCommand } from '../../../utils/command-registry.js';
 import { captureOwner, stillOurs, noteTeardown } from '../../../utils/init-ownership.js';
+import { markToolashaSurface } from '../../../utils/surface-marker.js';
 
 const PANEL_ID = 'mwi-market-history-panel';
 const TAB_ID = 'mwi-market-history-tab';
@@ -462,6 +463,7 @@ class MarketHistoryPanel {
         panel.appendChild(this.aftermathEl);
 
         this.makeDraggable(panel);
+        markToolashaSurface(panel, 'panel');
         document.body.appendChild(panel);
         this.panel = panel;
 

@@ -120,6 +120,7 @@ import {
     pauseForManualChoice,
 } from './overlay-layouts.js';
 import { hasCoarsePointer } from '../../utils/mobile.js';
+import { markToolashaSurface } from '../../utils/surface-marker.js';
 import {
     columnsForLayout,
     MAX_SPAN,
@@ -717,6 +718,9 @@ class OverlayPanel {
 
         this.panel = document.createElement('div');
         this.panel.id = PANEL_ID;
+        // Marked here, not only through registerFloatingPanel: a docked panel is never registered, and the
+        // Toolasha text size and font still apply to it
+        markToolashaSurface(this.panel, 'panel');
         Object.assign(this.panel.style, {
             background: COLORS.background,
             border: `1px solid ${COLORS.border}`,
@@ -888,6 +892,16 @@ class OverlayPanel {
         };
         if (typeof requestAnimationFrame === 'function') requestAnimationFrame(run);
         else run();
+    }
+
+    /**
+     * Fit and redraw after something outside the panel changed the size of its content, such
+     * as the text scale. Neither the refresh tick nor the observers re-measure the dock for
+     * that: the tick avoids `_fitDock` and the observed boxes keep their size. No-op while closed.
+     */
+    refit() {
+        if (!this.panel) return;
+        this._onViewportChange();
     }
 
     /** The window changed shape: fit to it, then redraw for what is left */
@@ -1100,12 +1114,15 @@ class OverlayPanel {
         // grid works one out. Read straight, `style.height` has been an empty
         // string since the grid rework, so this returned the default every time
         // and a docked panel never fitted its tiles at all.
-        const content = this.canvasEl?.scrollHeight || 0;
+        // The scroller carries the Toolasha text size as CSS zoom (text-appearance.js),
+        // so it and the canvas measure in their own zoomed pixels; the panel does not
+        const zoom = this.scrollEl?.currentCSSZoom || 1;
+        const content = (this.canvasEl?.scrollHeight || 0) * zoom;
         if (!Number.isFinite(content) || content <= 0) return DOCK_HEIGHT.default;
 
         // Header, grab bar and borders: everything of the panel that is not the
         // scroller. Constant while the scroller flexes, so this cannot run away
-        const chrome = this.panel.offsetHeight - (this.scrollEl?.clientHeight || 0);
+        const chrome = this.panel.offsetHeight - (this.scrollEl?.clientHeight || 0) * zoom;
         return content + Math.max(0, chrome) + 4;
     }
 
@@ -1350,6 +1367,8 @@ class OverlayPanel {
      */
     _createPicker() {
         const picker = document.createElement('div');
+        // Read by text-appearance.js: the popover takes the Toolasha text size and font
+        markToolashaSurface(picker, 'popover');
         Object.assign(picker.style, {
             display: 'none',
             position: 'fixed',

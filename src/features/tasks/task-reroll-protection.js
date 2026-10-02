@@ -20,6 +20,7 @@ import { PANEL_Z_CAP } from '../../utils/panel-z-index.js';
 import { characterKey, readScopedFrom } from '../../utils/character-key.js';
 import { createTimerRegistry } from '../../utils/timer-registry.js';
 import { captureOwner, stillOurs, noteTeardown } from '../../utils/init-ownership.js';
+import { markToolashaSurface } from '../../utils/surface-marker.js';
 
 const STORAGE_KEY_PREFIX = 'taskProtectedHrids';
 
@@ -823,6 +824,7 @@ class TaskRerollProtection {
 
         popup.appendChild(capRow);
         popup.appendChild(listContainer);
+        markToolashaSurface(popup, 'popover');
         document.body.appendChild(popup);
 
         // Initial render — show protected items

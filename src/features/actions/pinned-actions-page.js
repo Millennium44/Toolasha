@@ -24,6 +24,7 @@ import { capProfitRate, sellsFromProfitData, liquidityMarkerHtml } from '../../u
 import { openCombatZoneAtTier } from '../../utils/combat-zone-open.js';
 import alchemyProfitCalculator from '../market/alchemy-profit-calculator.js';
 import { calcXpPerAction } from '../alchemy/alchemy-rankings.js';
+import { markToolashaSurface } from '../../utils/surface-marker.js';
 
 const GATHERING_TYPES = ['/action_types/foraging', '/action_types/woodcutting', '/action_types/milking'];
 
@@ -1075,6 +1076,7 @@ class PinnedActionsPage {
         popup.style.left = `${rect.left}px`;
         popup.style.zIndex = '10002';
 
+        markToolashaSurface(popup, 'popover');
         document.body.appendChild(popup);
         this.activeFilterPopup = popup;
         this.activeFilterButton = buttonElement;

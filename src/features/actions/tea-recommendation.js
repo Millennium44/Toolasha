@@ -12,6 +12,7 @@ import { findOptimalTeas, getTeaBuffDescription, getRelevantTeas } from '../../u
 import { formatKMB } from '../../utils/formatters.js';
 import { createTimerRegistry } from '../../utils/timer-registry.js';
 import { PANEL_Z_CAP } from '../../utils/panel-z-index.js';
+import { markToolashaSurface } from '../../utils/surface-marker.js';
 
 // Shown next to a gold recommendation that counts an action whose score leans on an item with
 // no price data (see actionHasUnpricedMaterials in tea-optimizer.js) — the number is real but
@@ -322,6 +323,7 @@ class TeaRecommendation {
         this.buildPopupContent(popup, result, goal, skillName, locationTab, null, alchemyContext);
 
         // Position popup relative to button
+        markToolashaSurface(popup, 'popover');
         document.body.appendChild(popup);
         const buttonRect = anchorButton.getBoundingClientRect();
         const popupRect = popup.getBoundingClientRect();
@@ -1061,6 +1063,7 @@ class TeaRecommendation {
         popup.appendChild(closeBtn);
 
         // Position popup
+        markToolashaSurface(popup, 'popover');
         document.body.appendChild(popup);
         const buttonRect = anchorButton.getBoundingClientRect();
         const popupRect = popup.getBoundingClientRect();
@@ -1114,8 +1117,12 @@ class TeaRecommendation {
             color: ${config.COLOR_WARNING};
             font-size: 13px;
         `;
-        popup.textContent = message;
+        // In a span: a text node on the root cannot take the text zoom, which scales the root's children
+        const text = document.createElement('span');
+        text.textContent = message;
+        popup.appendChild(text);
 
+        markToolashaSurface(popup, 'popover');
         document.body.appendChild(popup);
         const buttonRect = anchorButton.getBoundingClientRect();
         popup.style.top = `${buttonRect.bottom + 8}px`;

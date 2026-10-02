@@ -37,6 +37,7 @@ import { registerCommand, unregisterCommand } from '../../utils/command-registry
 import { showToast } from '../../utils/toast.js';
 import expectedValueCalculator from '../market/expected-value-calculator.js';
 import { percentOfExpected } from '../../utils/combat-drop-model.js';
+import { markToolashaSurface } from '../../utils/surface-marker.js';
 
 /** Per-character storage key for the chat field picker's selection */
 const CHAT_FIELDS_KEY = 'combatStatsChatFields';
@@ -1018,6 +1019,7 @@ class CombatStatsUI {
         overlay.appendChild(popup);
 
         // Add to page
+        markToolashaSurface(overlay, 'modal');
         document.body.appendChild(overlay);
 
         // Close on overlay click
@@ -1978,6 +1980,7 @@ class CombatStatsUI {
             visibility: hidden;
         `;
         tooltip.innerHTML = html;
+        markToolashaSurface(tooltip, 'popover');
         document.body.appendChild(tooltip);
 
         // Measure after paint so offsetHeight is accurate

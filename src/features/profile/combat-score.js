@@ -23,6 +23,7 @@ import loadoutSnapshot from '../combat/loadout-snapshot.js';
 import combatSimUI from '../combat-sim/combat-sim-ui.js';
 import { buildPlayerDTOFromProfile } from '../combat-sim/combat-sim-adapter.js';
 import { terminateWorkerPool } from '../../utils/enhancement-worker-manager.js';
+import { markToolashaSurface } from '../../utils/surface-marker.js';
 
 /**
  * Escape a string for safe interpolation into innerHTML.
@@ -635,6 +636,7 @@ class CombatScore {
             </div>
         `;
 
+        markToolashaSurface(panel, 'popover');
         document.body.appendChild(panel);
         this.currentPanel = panel;
 
@@ -1152,6 +1154,7 @@ class CombatScore {
             </div>
         `;
 
+        markToolashaSurface(panel, 'popover');
         document.body.appendChild(panel);
         this.currentAbilitiesPanel = panel;
 

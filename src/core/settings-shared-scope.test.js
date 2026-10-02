@@ -121,6 +121,10 @@ describe('the shared scope is device-wide', () => {
                 'combatSim_uncapThreads',
                 'updateCheck',
                 'updateCheckHours',
+                'ui_textScale',
+                'ui_fontFamily',
+                'ui_gameText',
+                'ui_gameTextScale',
             ])
         );
 

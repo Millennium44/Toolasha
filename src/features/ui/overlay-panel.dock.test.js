@@ -105,6 +105,14 @@ describe('docked into the character column', () => {
         expect(overlayPanel.panel.dataset.docked).toBe('true');
     });
 
+    test('a docked panel is a Toolasha surface, so text size and font reach it', () => {
+        buildColumn();
+        overlayPanel.settings.docked = true;
+        overlayPanel.show();
+
+        expect(overlayPanel.panel.getAttribute('data-toolasha-surface')).toBe('panel');
+    });
+
     test('the column is marked so the tab body gives up the height', () => {
         // The mark is the whole mechanism: without it the panel is simply a
         // third child and the column grows instead of the inventory shrinking
@@ -150,6 +158,22 @@ describe('docked into the character column', () => {
 
         window.innerHeight = 500;
         overlayPanel._fitDock();
+
+        expect(Number.parseInt(column.style.height, 10)).toBeLessThan(tall);
+    });
+
+    test('refit() re-fits a docked panel without a window resize, and is a no-op while closed', () => {
+        const column = buildColumn();
+        window.innerHeight = 900;
+        expect(() => overlayPanel.refit()).not.toThrow();
+
+        overlayPanel.settings.docked = true;
+        overlayPanel.show();
+        const tall = Number.parseInt(column.style.height, 10);
+
+        // What a text scale change leaves behind: nothing resized, so no observer fires
+        window.innerHeight = 500;
+        overlayPanel.refit();
 
         expect(Number.parseInt(column.style.height, 10)).toBeLessThan(tall);
     });
@@ -213,6 +237,21 @@ describe('docked into the character column', () => {
         overlayPanel._fitDock();
 
         expect(Number.parseInt(overlayPanel.panel.style.height, 10)).toBeGreaterThanOrEqual(640);
+    });
+
+    test('under a Toolasha text size the tiles are measured in the scroller’s zoomed pixels', () => {
+        // text-appearance.js zooms the scroller, not the panel: 640 of the
+        // canvas's own pixels are 960 on screen at 150%
+        buildColumn();
+        window.innerHeight = 2000;
+        overlayPanel.settings.docked = true;
+        overlayPanel.settings.dockHeightPx = null;
+        overlayPanel.show();
+
+        Object.defineProperty(overlayPanel.canvasEl, 'scrollHeight', { value: 640, configurable: true });
+        Object.defineProperty(overlayPanel.scrollEl, 'currentCSSZoom', { value: 1.5, configurable: true });
+
+        expect(overlayPanel._contentHeight()).toBeGreaterThanOrEqual(960);
     });
 
     test('closing it puts the column back the way it was', () => {

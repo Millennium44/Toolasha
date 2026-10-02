@@ -23,6 +23,7 @@ import { visibleTabsContainer, navigateToMarketplace, insertTabInOrder } from '.
 import { toCsv, csvFilename, downloadCsv } from '../../utils/csv-export.js';
 import { attachMinimize } from '../../utils/panel-minimize.js';
 import { registerCommand, unregisterCommand } from '../../utils/command-registry.js';
+import { markToolashaSurface } from '../../utils/surface-marker.js';
 
 /** How many weekly summary lines the modal shows. */
 const WEEKS_SHOWN = 8;
@@ -491,6 +492,7 @@ class TradeLedgerView {
         content.appendChild(filterRow);
         content.appendChild(tableContainer);
         this.modal.appendChild(content);
+        markToolashaSurface(this.modal, 'modal');
         document.body.appendChild(this.modal);
 
         this.minimizeCtl = attachMinimize({

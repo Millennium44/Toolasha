@@ -32,6 +32,7 @@ import {
 import { buildAlchemyTransmuteModel } from '../../utils/risk-of-ruin-adapters/alchemy-adapter.js';
 import { buildEnhancementModel } from '../../utils/risk-of-ruin-adapters/enhancement-adapter.js';
 import { registerCommand, unregisterCommand } from '../../utils/command-registry.js';
+import { markToolashaSurface } from '../../utils/surface-marker.js';
 
 const PANEL_ID = 'mwi-risk-of-ruin-panel';
 const LAUNCHER_ID = 'mwi-risk-of-ruin-launcher';
@@ -207,6 +208,7 @@ class RiskOfRuinUI {
         });
 
         wrap.append(open, dismiss);
+        markToolashaSurface(wrap, 'panel');
         document.body.appendChild(wrap);
         this.launcher = wrap;
         this._syncControls();

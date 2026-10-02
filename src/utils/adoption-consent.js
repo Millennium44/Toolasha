@@ -14,6 +14,7 @@
 import dataManager from '../core/data-manager.js';
 import storage from '../core/storage.js';
 import { escapeText } from './damage-board.js';
+import { markToolashaSurface } from './surface-marker.js';
 
 const DECISION_KEY = 'adoptionTargetCharacterId';
 
@@ -130,6 +131,7 @@ function showDialog(characters, recommendedId, currentId) {
             `Reopen later with Toolasha.debug.chooseDataOwner().</div>`;
 
         overlay.appendChild(card);
+        markToolashaSurface(overlay, 'modal');
         document.body.appendChild(overlay);
 
         const done = (value) => {

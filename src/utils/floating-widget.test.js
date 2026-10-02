@@ -19,6 +19,12 @@ vi.mock('../core/storage.js', () => ({ default: { get: async () => null, set: as
 
 const { createFloatingWidget } = await import('./floating-widget.js');
 
+describe('text-appearance', () => {
+    test('the widget is marked as a surface, so the text size and font reach it', () => {
+        expect(createFloatingWidget({ id: 'marked' }).element.getAttribute('data-toolasha-surface')).toBe('panel');
+    });
+});
+
 describe('by default the shell is exactly what it was', () => {
     test('the status line still sizes itself to its text', () => {
         const widget = createFloatingWidget({ id: 'plain' });

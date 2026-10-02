@@ -85,7 +85,8 @@ describe('Marketplace Action dropdown portal', () => {
         expect(panel.style.position).toBe('fixed');
         expect(panel.style.top).toBe('148px');
         expect(panel.style.left).toBe('80px');
-        expect(panel.style.width).toBe('220px');
+        expect(panel.style.minWidth).toBe('220px');
+        expect(panel.getAttribute('data-toolasha-surface')).toBe('popover');
         expect(panel.style.display).toBe('flex');
     });
 

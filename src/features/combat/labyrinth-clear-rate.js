@@ -86,6 +86,7 @@ import {
     refreshRoomDistribution,
     destroyRoomDistribution,
 } from './labyrinth-room-distribution.js';
+import { markToolashaSurface } from '../../utils/surface-marker.js';
 
 /**
  * Re-exported from the modules they now live in, so importers that have always
@@ -4581,6 +4582,7 @@ class LabyrinthClearRate {
                 'position:fixed; min-width:180px; max-width:260px; padding:6px 9px; border-radius:6px; ' +
                 'border:1px solid rgba(128,170,255,0.45); background:rgba(12,16,24,0.96); color:#f2f7ff; ' +
                 `font-size:11px; line-height:1.4; pointer-events:none; display:none; z-index:${config.Z_NOTIFICATION};`;
+            markToolashaSurface(el, 'popover');
             document.body.appendChild(el);
         }
         return el;

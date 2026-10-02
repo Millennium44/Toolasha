@@ -29,6 +29,7 @@ import { createMutationWatcher } from '../../utils/dom-observer-helpers.js';
 import { visibleTabsContainer, navigateToMarketplace, insertTabInOrder } from '../../utils/marketplace-tabs.js';
 import { attachMinimize } from '../../utils/panel-minimize.js';
 import { registerCommand, unregisterCommand } from '../../utils/command-registry.js';
+import { markToolashaSurface } from '../../utils/surface-marker.js';
 
 /** Stable key for persisting the modal's minimized state; there is no geometry to key off. */
 const PANEL_KEY = 'staleCapitalModal';
@@ -348,6 +349,7 @@ class StaleCapitalView {
         content.appendChild(sellContainer);
         content.appendChild(buyContainer);
         this.modal.appendChild(content);
+        markToolashaSurface(this.modal, 'modal');
         document.body.appendChild(this.modal);
 
         this.minimizeCtl = attachMinimize({

@@ -39,6 +39,7 @@ import { findActionInput, resolveDetailPanel } from '../../utils/action-panel-he
 import { createTimerRegistry } from '../../utils/timer-registry.js';
 import { formatWithSeparator } from '../../utils/formatters.js';
 import { GAME } from '../../utils/selectors.js';
+import { markToolashaSurface } from '../../utils/surface-marker.js';
 
 const STRIP_ID = 'mwi-crafting-walk-strip';
 const CURRENT_CLASS = 'mwi-crafting-walk-current';
@@ -526,6 +527,7 @@ class CraftingPlanWalk {
         stop.dataset.role = 'stop';
         strip.appendChild(stop);
 
+        markToolashaSurface(strip, 'panel');
         document.body.appendChild(strip);
         return strip;
     }

@@ -46,6 +46,7 @@ import { ROOM_TRAVEL_SECONDS } from './labyrinth-formulas.js';
 import { createPersistedRecord, mergeById } from '../../utils/persisted-record.js';
 import { registerSyncMerge } from '../../utils/sync-merge-registry.js';
 import { captureOwner, stillOurs, noteTeardown } from '../../utils/init-ownership.js';
+import { markToolashaSurface } from '../../utils/surface-marker.js';
 
 /** Re-exported from labyrinth-formulas.js, where it now lives */
 export { ROOM_TRAVEL_SECONDS };
@@ -1724,6 +1725,7 @@ class LabyrinthRoomLogs {
 
         panel.appendChild(header);
         panel.appendChild(list);
+        markToolashaSurface(panel, 'panel');
         document.body.appendChild(panel);
 
         this.setupDrag(panel, header);

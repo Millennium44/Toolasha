@@ -171,6 +171,13 @@ const ALLOWLIST = new Map([
         'stateless single-function macrotask yield; no module state to share',
     ],
     [
+        'src/utils/surface-marker.js',
+        // One attribute name, one constant list and one function that sets the
+        // attribute on its argument: no module state, and two copies stamp the
+        // same attribute that text-appearance.js selects on.
+        'stateless attribute stamp; no module state to share',
+    ],
+    [
         'src/utils/async-pool.js',
         // One exported function over its own arguments, no module state; the
         // politeness bound it enforces is per call site, so two copies bound
