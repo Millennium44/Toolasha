@@ -1609,6 +1609,24 @@ describe('clearAllTabs and importCategoryTabs', () => {
         expect(c.tabs).toHaveLength(1); // input untouched
     });
 
+    test('clearAllTabs beats a tab stamped by a clock running ahead, and the cleared copy stays gone', async () => {
+        const { clearAllTabs } = await import('./custom-tabs-data.js');
+        const { mergeForKey } = await import('../../../utils/sync-merge-registry.js');
+        const merge = mergeForKey('settings', 'char1_inventoryTabs_config').merge;
+        const future = Date.now() + 60 * 60_000;
+        const stale = {
+            version: 1,
+            selectedTabId: null,
+            tabs: ['a', 'b', 'c'].map((id) => ({ id, name: id, items: [], children: [], updatedAt: future })),
+        };
+
+        const cleared = clearAllTabs(stale);
+        expect(cleared.removed.a).toBeGreaterThan(future);
+        // The read-back of the copy it was cleared from does not bring the tabs back
+        expect(merge(stale, cleared).tabs).toEqual([]);
+        expect(merge(cleared, stale).tabs).toEqual([]);
+    });
+
     test('importCategoryTabs makes one tab per non-empty category and skips existing names', async () => {
         const { importCategoryTabs } = await import('./custom-tabs-data.js');
         const { c } = base();
