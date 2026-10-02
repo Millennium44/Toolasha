@@ -70,6 +70,32 @@ describe('"Add to Tab" dropdown portal', () => {
         expect(panel().style.left).not.toBe('');
     });
 
+    test('a tab list taller than the viewport is capped and scrolls instead of running off screen', () => {
+        vi.spyOn(toggle(), 'getBoundingClientRect').mockReturnValue({
+            top: 300,
+            bottom: 320,
+            left: 10,
+            right: 110,
+            width: 100,
+            height: 20,
+        });
+        vi.spyOn(panel(), 'getBoundingClientRect').mockReturnValue({
+            top: 0,
+            bottom: 2000,
+            left: 0,
+            right: 100,
+            width: 100,
+            height: 2000,
+        });
+        toggle().click();
+        const viewport = window.innerHeight;
+        const top = parseFloat(panel().style.top);
+        const max = parseFloat(panel().style.maxHeight);
+        expect(max).toBeGreaterThan(0);
+        expect(top + max).toBeLessThanOrEqual(viewport);
+        expect(panel().style.overflowY).toBe('auto');
+    });
+
     test('a click outside the toggle and panel closes it, a click inside does not', async () => {
         toggle().click();
         await new Promise((r) => setTimeout(r, 5));

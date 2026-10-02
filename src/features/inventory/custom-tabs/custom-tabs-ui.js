@@ -4401,7 +4401,8 @@ export default class CustomTabsUI {
             background: var(--color-surface, #1e1e2e);
             border: 1px solid rgba(255,255,255,0.15);
             border-radius: 6px;
-            overflow: hidden;
+            overflow-x: hidden;
+            overflow-y: auto;
             box-shadow: 0 6px 20px rgba(0,0,0,0.6);
             padding: 4px;
             gap: 3px;
@@ -4548,11 +4549,23 @@ export default class CustomTabsUI {
             panel.style.minWidth = `${rect.width}px`;
             const width = Math.max(rect.width, panel.getBoundingClientRect().width || 0);
             panel.style.left = `${Math.max(0, Math.min(rect.left, viewportWidth - width))}px`;
+            // Measured uncapped; a long tab list that fits neither side takes the roomier one and scrolls,
+            // so its last rows (+ New Tab among them) stay reachable
+            panel.style.maxHeight = '';
             const height = panel.getBoundingClientRect().height || 0;
-            let top = rect.bottom + GAP;
-            if (top + height > viewportHeight) {
-                const above = rect.top - GAP - height;
-                top = above >= 0 ? above : Math.max(0, viewportHeight - height);
+            const below = viewportHeight - rect.bottom - GAP * 2;
+            const above = rect.top - GAP * 2;
+            let top;
+            if (height <= below) {
+                top = rect.bottom + GAP;
+            } else if (height <= above) {
+                top = rect.top - GAP - height;
+            } else if (below >= above) {
+                panel.style.maxHeight = `${Math.max(0, below)}px`;
+                top = rect.bottom + GAP;
+            } else {
+                panel.style.maxHeight = `${Math.max(0, above)}px`;
+                top = GAP;
             }
             panel.style.top = `${top}px`;
         };
