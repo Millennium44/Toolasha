@@ -37,6 +37,7 @@ import {
     ledgerCsvRows,
     ledgerTotalsRow,
     loadLedgerCycles,
+    loadLedgerFirstRecord,
     observedCoverage,
     sortLedgerRows,
 } from './guild-trial-ledger.js';
@@ -77,6 +78,7 @@ const STATUS_MARK = { ok: '✓', gap: '✗', unknown: '?' };
 const state = {
     /** Cycle records as last read; the panel never reads storage while drawing */
     cycles: [],
+    firstRecord: null,
     /** Whether a read has happened at all, so "empty" and "not looked yet" differ */
     loaded: false,
     /** Which {@link LEDGER_WINDOWS} key is selected */
@@ -113,6 +115,7 @@ let refreshGeneration = 0;
 /** Reset every remembered thing. Exported for tests, which must not inherit a run. */
 export function resetLedgerView() {
     state.cycles = [];
+    state.firstRecord = null;
     state.loaded = false;
     state.window = '4';
     state.sortKey = 'damageShare';
@@ -147,6 +150,11 @@ function rosterNames() {
     return (guildXPTracker.getMemberList?.() || []).map((member) => member?.name).filter(Boolean);
 }
 
+/** @returns {Object} The {@link LEDGER_WINDOWS} entry the selector is on */
+function selectedWindow() {
+    return LEDGER_WINDOWS.find((entry) => entry.key === state.window) || LEDGER_WINDOWS[0];
+}
+
 /**
  * Read the ledger and the stored kits, then redraw.
  *
@@ -160,10 +168,14 @@ export async function refreshLedgerView() {
     const generation = ++refreshGeneration;
     const characterId = dataManager.getCurrentCharacterId?.() ?? null;
     const guild = guildName();
-    const chosen = LEDGER_WINDOWS.find((entry) => entry.key === state.window) || LEDGER_WINDOWS[0];
+    const chosen = selectedWindow();
 
     try {
         const cycles = await loadLedgerCycles(guild, characterId, { cycles: chosen.cycles });
+        // A failed key read answers [] and so null, the same as an empty ledger; with cycles loaded the
+        // ledger is not empty, so that null is unreadable and the window is left unclamped (undefined)
+        const firstFound = await loadLedgerFirstRecord(guild, characterId);
+        const firstRecord = firstFound === null && cycles.length ? undefined : firstFound;
         const record = await loadLoadouts(characterId, guild);
         // The accuracy card reads a different pair of stores from the ledger's:
         // this week's measured-vs-reported blob, which the ladder's rollover
@@ -184,6 +196,7 @@ export async function refreshLedgerView() {
         if (characterId !== (dataManager.getCurrentCharacterId?.() ?? null)) return;
 
         state.cycles = cycles;
+        state.firstRecord = firstRecord;
         state.loaded = true;
         state.accuracy = summarizeWeekAccuracy(stats?.trials);
         state.accuracyTrend = archivedAccuracyTrend(trialRecord?.history);
@@ -244,14 +257,19 @@ export function filterLedgerRows(rows, query) {
  * @param {string} [options.sortKey] - A {@link LEDGER_COLUMNS} key
  * @param {'asc'|'desc'} [options.sortDirection] - Which way
  * @param {string} [options.filterText] - Member-name search, from {@link filterLedgerRows}
+ * @param {number|null} [options.windowCycles] - The window's length in cycles, null for all; the selected one
+ * @param {number} [options.now] - Clock, for which cycles have run
  * @returns {{rows: Array<Object>, trialsRun: number, coverage: Object, cycles: number}} The table
  */
 export function buildLedgerTable({
     cycles = state.cycles,
+    firstRecord = state.firstRecord,
     roster = null,
     sortKey = state.sortKey,
     sortDirection = state.sortDirection,
     filterText = state.filterText,
+    windowCycles = selectedWindow().cycles,
+    now = Date.now(),
 } = {}) {
     const folded = foldLedgerCycles(cycles, { rosterNames: roster ?? rosterNames() });
     return {
@@ -259,28 +277,31 @@ export function buildLedgerTable({
         trialsRun: folded.trialsRun,
         trialsKnown: folded.trialsKnown,
         cycles: folded.cycles,
-        coverage: observedCoverage(cycles),
+        coverage: observedCoverage(cycles, { window: windowCycles, now, first: firstRecord }),
     };
 }
 
 /**
  * The observed-coverage sentence.
  *
- * The current week is excluded from the ratio — its trials have not all been
- * run — so the sentence says so rather than letting the reader assume the
+ * The running cycle is excluded from the ratio — its fight may not have
+ * happened — so the sentence says so rather than letting the reader assume the
  * figure covers everything on screen.
  *
  * @param {Object} coverage - From `observedCoverage`
- * @returns {string} e.g. `4 of 8 trials watched across 4 cycles`
+ * @returns {string} e.g. `Watched 6 of 8 cycles (2 missed).`
  */
 export function coverageLine(coverage) {
-    const thisWeek = coverage?.inProgress ? ' This week is still running and is not counted yet.' : '';
-    if (!coverage?.cycles) {
-        return coverage?.inProgress ? `No completed cycles yet.${thisWeek}` : 'No cycles recorded yet.';
+    const running = coverage?.inProgress
+        ? ` ${coverage.daily ? 'This cycle' : 'This week'} is still running and is not counted yet.`
+        : '';
+    if (!coverage?.expected) {
+        return coverage?.inProgress ? `No completed cycles yet.${running}` : 'No cycles recorded yet.';
     }
+    const missed = coverage.expected - coverage.watched;
     return (
-        `${coverage.observed} of ${coverage.expected} trials watched across ${coverage.cycles} cycle` +
-        `${coverage.cycles === 1 ? '' : 's'}${thisWeek}`
+        `Watched ${coverage.watched} of ${coverage.expected} cycle${coverage.expected === 1 ? '' : 's'}` +
+        `${missed > 0 ? ` (${missed} missed)` : ''}.${running}`
     );
 }
 
@@ -946,11 +967,20 @@ export const guildTrialLedgerPanel = createPanel({
                 'Observed',
                 coverageLine(table.coverage),
                 ROW_COLORS.dim,
-                'A trial only reaches the ledger if the guild panel was open while it ran. ' +
+                'A cycle only reaches the ledger if the guild panel was open during its fight; ' +
+                    'one with nothing recorded counts as missed. ' +
                     'Attendance is against the trials recorded here, never against the ones you missed.'
             )
         );
-        header.appendChild(panelLine('Trials in window', String(table.trialsRun), ROW_COLORS.dim));
+        header.appendChild(
+            panelLine(
+                'Trials in window',
+                String(table.trialsRun),
+                ROW_COLORS.dim,
+                'Trials recorded in the window, the running cycle included: usually ' +
+                    'one per watched cycle, the fight the panel saw.'
+            )
+        );
         drawControls(header, table);
 
         const ledger = panelCard(body, `Attendance and contribution (${table.rows.length})`, ACCENT);
@@ -1008,14 +1038,22 @@ export function registerTrialLedgerRow() {
     });
 }
 
+/** @type {(function(): void)|null} Unsubscribes from the tracker's own-guild notifications */
+let offOwnGuildChange = null;
+
 export default {
     name: 'Guild Trial Ledger',
     initialize: async () => {
         if (!config.getSetting('guildTrialLedger', true)) return;
         registerTrialLedgerRow();
+        // The panel can be restored open before the guild arrives; draw again once it is known or changes
+        offOwnGuildChange?.();
+        offOwnGuildChange = guildXPTracker.onOwnGuildChange?.(() => refreshLedgerView()) || null;
         await refreshLedgerView();
     },
     cleanup: () => {
+        offOwnGuildChange?.();
+        offOwnGuildChange = null;
         guildTrialLedgerPanel.hide({ remember: false });
         resetLedgerView();
     },

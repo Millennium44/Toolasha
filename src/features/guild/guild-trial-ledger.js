@@ -146,8 +146,94 @@ export const LEDGER_WINDOWS = [
     { key: 'all', label: 'All cycles', cycles: null },
 ];
 
-/** A guild trial cycle is two trials — a skilling hour and a combat one */
-export const TRIALS_PER_CYCLE = 2;
+const DAY_MS = 24 * 60 * 60 * 1000;
+const WEEK_MS = 7 * DAY_MS;
+
+/**
+ * The UTC hour the test server's daily combat trial starts.
+ *
+ * Nothing on the wire states the test server's schedule, so it is assumed here
+ * and nowhere else: a skilling hour at 21:00 UTC and a combat hour at 22:00,
+ * every day. Every anchored fight in the stored ledger starts at 22:00:17. A
+ * cycle opens an hour before this and has run once its combat hour is over.
+ */
+export const TEST_SERVER_COMBAT_HOUR_UTC = 22;
+
+/** Most cycles a window enumerates, so a corrupt stamp far in the past cannot spin it */
+const MAX_WINDOW_SLOTS = 1000;
+
+/**
+ * The scheduled cycle a moment belongs to.
+ *
+ * Live runs one cycle a trial week and `from` is that week's start, the stamp a
+ * live record is stored under. The test server runs one a day: a moment belongs
+ * to the cycle whose combat start lies within half a day of it, so a fight
+ * anchor, or an `at` from late in the combat hour, lands on its own day.
+ *
+ * @param {number} at - Epoch ms
+ * @param {boolean} daily - Whether cycles are daily (the test server)
+ * @returns {{from: number, opens: number, end: number}} The cycle's assignment
+ *   boundary, when it begins, and when it has run
+ */
+function scheduledCycle(at, daily) {
+    if (!daily) {
+        const from = trialWeekStart(at);
+        return { from, opens: from, end: from + WEEK_MS };
+    }
+    const offset = TEST_SERVER_COMBAT_HOUR_UTC * 3_600_000;
+    const combat = Math.floor((at - offset + DAY_MS / 2) / DAY_MS) * DAY_MS + offset;
+    return { from: combat - DAY_MS / 2, opens: combat - TRIAL_ACTIVE_MS, end: combat + TRIAL_ACTIVE_MS };
+}
+
+/**
+ * The scheduled cycles a window covers, whether or not anything recorded them.
+ *
+ * "Last N cycles" is the N most recent cycles that have run, plus the one
+ * running now where there is one, so the coverage it reads is out of N. With no
+ * count, the window runs from the cycle holding `since` (the oldest record in
+ * view) to now.
+ *
+ * @param {number|null} count - Cycles run in the window; null for everything since `since`
+ * @param {Object} [options] - Context
+ * @param {number} [options.now] - Clock
+ * @param {boolean} [options.daily] - Whether cycles are daily; the test server, by default
+ * @param {number|null} [options.since] - Start of an open window
+ * @returns {Array<{from: number, opens: number, end: number}>} Cycles, oldest first
+ */
+export function ledgerWindowCycles(count, { now = Date.now(), daily = isTestServer(), since = null } = {}) {
+    const step = daily ? DAY_MS : WEEK_MS;
+    let newest = scheduledCycle(now, daily);
+    if (now < newest.opens) newest = scheduledCycle(newest.from - step / 2, daily);
+
+    const windowed = Number.isFinite(count) && count > 0;
+    if (!windowed && !Number.isFinite(since)) return [];
+    const oldestFrom = windowed ? null : scheduledCycle(Math.min(since, now), daily).from;
+
+    const slots = [];
+    let ran = 0;
+    for (let slot = newest; slots.length < MAX_WINDOW_SLOTS; slot = scheduledCycle(slot.from - step / 2, daily)) {
+        if (!windowed && slot.from < oldestFrom) break;
+        slots.push(slot);
+        if (now >= slot.end) ran += 1;
+        if (windowed && ran >= count) break;
+    }
+    return slots.reverse();
+}
+
+/**
+ * Where a ledger cycle's trials sit in time, for matching it to a scheduled cycle.
+ * @param {Object} cycle - A cycle record
+ * @returns {number[]} Each trial's fight anchor or recorded time, or the cycle's own anchor
+ */
+function cyclePlaces(cycle) {
+    const places = (Array.isArray(cycle?.trials) ? cycle.trials : [])
+        .map((trial) =>
+            Number.isFinite(trial?.cycleAt) ? trial.cycleAt : Number.isFinite(trial?.at) ? trial.at : null
+        )
+        .filter((place) => place !== null);
+    if (!places.length && Number.isFinite(cycle?.cycleAt)) places.push(cycle.cycleAt);
+    return places;
+}
 
 /**
  * The scope a ledger record belongs to.
@@ -891,22 +977,36 @@ export function sortLedgerRows(rows, sortKey = 'damageShare', direction = 'desc'
  * A week record's trials grouped into cycles by their {@link trialCycleAnchor}.
  *
  * A group is every trial within {@link TRIAL_CYCLE_SPAN_MS} of its earliest
- * anchor. Trials with no anchor cannot be placed and join the earliest group,
- * or form the week's one group when nothing is anchored — the one-cycle week
- * the ledger has always assumed.
+ * anchor. A trial recorded before anchors existed is placed by its `at` (when
+ * its session closed, inside the fight's hour), which the same span covers; a
+ * group with no anchored trial takes its earliest `at` as its `cycleAt`. Only a
+ * trial with neither cannot be placed: it joins the earliest group, or forms
+ * the week's one group when nothing else is placed.
  *
  * @param {Array<Object>} trials - A record's trial entries
  * @returns {Array<{cycleAt: number|null, trials: Array<Object>}>} Groups, oldest first
  */
 function trialCycleGroups(trials) {
+    const placeOf = (trial) =>
+        Number.isFinite(trial?.cycleAt) ? trial.cycleAt : Number.isFinite(trial?.at) ? trial.at : null;
     const groups = [];
-    const anchored = trials.filter((trial) => Number.isFinite(trial?.cycleAt));
-    for (const trial of [...anchored].sort((a, b) => a.cycleAt - b.cycleAt)) {
+    const placed = trials.filter((trial) => placeOf(trial) !== null);
+    for (const trial of [...placed].sort((a, b) => placeOf(a) - placeOf(b))) {
         const last = groups[groups.length - 1];
-        if (last && sameTrialCycle(last.cycleAt, trial.cycleAt)) last.trials.add(trial);
-        else groups.push({ cycleAt: trial.cycleAt, trials: new Set([trial]) });
+        if (last && sameTrialCycle(last.at, placeOf(trial))) {
+            last.trials.add(trial);
+            // A fight start is the cycle's identity; an `at` only stands in for one
+            if (last.cycleAt === null && Number.isFinite(trial.cycleAt)) last.cycleAt = trial.cycleAt;
+        } else {
+            groups.push({
+                at: placeOf(trial),
+                cycleAt: Number.isFinite(trial.cycleAt) ? trial.cycleAt : null,
+                trials: new Set([trial]),
+            });
+        }
     }
-    const loose = trials.filter((trial) => !Number.isFinite(trial?.cycleAt));
+    for (const group of groups) if (group.cycleAt === null) group.cycleAt = group.at;
+    const loose = trials.filter((trial) => placeOf(trial) === null);
     if (loose.length && !groups.length) groups.push({ cycleAt: null, trials: new Set() });
     for (const trial of loose) groups[0].trials.add(trial);
     // Each group keeps the record's own order
@@ -980,96 +1080,74 @@ export function ledgerCyclesByAnchor(records, { perCycle = isTestServer() } = {}
 }
 
 /**
- * How much of the guild's trialling this ledger actually saw.
+ * How many of the cycles that ran this ledger watched.
  *
- * A cycle is {@link TRIALS_PER_CYCLE} trials, so a window of N cycles is 2N
- * trials the guild could have run. Anything the panel was shut for is missing
- * from the ledger, and every attendance figure has to be read next to this or
- * it reads as an accusation.
+ * The denominator is the schedule, not the records: a cycle nobody watched
+ * leaves no record, so counting only what is stored could never report a miss.
+ * The window's cycles come from {@link ledgerWindowCycles}: weeks on live, days
+ * on the test server. A cycle is watched when at least one recorded trial falls
+ * in it; the ledger records the combat fight the client saw, so a watched cycle
+ * holds one trial in practice, never the two it runs.
  *
- * The cycle in progress is left out of the ratio entirely. Its second trial
- * has not happened yet, and charging the ledger for a trial the guild has not
- * run reports the panel as having missed something — a window ending mid-week
- * could not read above 75% however faithfully it watched. Expecting only what
- * it has seen was worse: that made the current week `seen of seen`, a perfect
- * score by construction, so a trial actually missed this week was invisible.
- * The week is therefore excluded and said to be excluded; `inProgress` is what
- * the view says it with. Where the week has been split into cycles
- * ({@link ledgerCyclesByAnchor}), only its newest is in progress: a later cycle
- * having started, the earlier ones are complete and are counted.
+ * The cycle still running is left out and said to be (`inProgress`): charging
+ * the ledger for a fight that has not happened reports a miss, and crediting it
+ * for one already seen would make the running cycle a free pass.
  *
- * Observed is clamped per cycle to what a cycle can hold, so a duplicate
- * recording cannot push the fraction above 1.
- *
- * @param {Array<Object>} cycles - The cycles in the window
+ * @param {Array<Object>} cycles - The cycle records in the window
  * @param {Object} [options] - Context
- * @param {number} [options.trialsPerCycle] - Trials a cycle runs
- * @param {number} [options.now] - Clock, for deciding which cycle is in progress
- * @returns {{observed: number, expected: number, cycles: number, inProgress: boolean,
- *   fraction: number|null}} The coverage, over the completed cycles only
+ * @param {number|null} [options.window] - Cycles in the window, as {@link LEDGER_WINDOWS} offers; null for all
+ * @param {number} [options.now] - Clock, for deciding which cycles have run
+ * @param {boolean} [options.daily] - Whether cycles are daily; the test server, by default
+ * @param {number|null} [options.first] - When the ledger first recorded anything for this scope; null when it holds
+ *     nothing (no cycle is charged as missed), omitted to leave the window unclamped
+ *   ({@link loadLedgerFirstRecord}). Cycles before the one holding it are not counted, neither
+ *   as expected nor as missed: the ledger cannot have missed what ran before it existed
+ * @returns {{watched: number, expected: number, missed: number, inProgress: boolean, daily: boolean,
+ *   fraction: number|null}} The coverage, over the cycles that have run
  */
-export function observedCoverage(cycles, { trialsPerCycle = TRIALS_PER_CYCLE, now = Date.now() } = {}) {
+export function observedCoverage(
+    cycles,
+    { window = null, now = Date.now(), daily = isTestServer(), first = undefined } = {}
+) {
     const list = (cycles || []).filter(Boolean);
-    const currentWeek = trialWeekStart(now);
-    const perCycle = Math.max(0, Number(trialsPerCycle) || 0);
 
-    let observed = 0;
-    let expected = 0;
-    let counted = 0;
-    let inProgress = false;
-
-    // One record per week unless split, so live's current week is always this one
-    const running = list
-        .filter((cycle) => cycle.weekStart === currentWeek)
-        .reduce(
-            (newest, cycle) =>
-                !newest || (cycle.cycleAt ?? -Infinity) >= (newest.cycleAt ?? -Infinity) ? cycle : newest,
-            null
-        );
-
-    // The test server can finish a cycle and idle before the next starts, so its
-    // newest cycle is over once it holds every trial a cycle runs; counted as
-    // running it would drop out of the ratio until the next cycle began. Live
-    // has one cycle a week, and the week is left out until it rolls over. A record
-    // ledgerCyclesByAnchor left unsplit (a legacy trial without memberFigures) can
-    // hold trials from several cycles, so only its newest group is judged
-    const distinctTrials = (trials) =>
-        new Set((trials || []).map((trial, index) => trial?.trialId ?? `#${index}`)).size;
-    const runningTrials = Array.isArray(running?.trials) ? running.trials : [];
-    const newestGroup = isTestServer() && running ? trialCycleGroups(runningTrials).at(-1) : null;
-    const finished =
-        isTestServer() &&
-        running &&
-        perCycle > 0 &&
-        distinctTrials(newestGroup ? newestGroup.trials : runningTrials) >= perCycle;
-
+    const watchedFrom = new Set();
+    let since = null;
     for (const cycle of list) {
-        const isRunning = cycle === running && !finished;
-        // A record still holding several cycles counts once per cycle: as one it would read 2/2 however
-        // many trials the guild ran across them. A running one has only its newest group in progress,
-        // as when ledgerCyclesByAnchor splits it
-        const groups = isTestServer() ? trialCycleGroups(Array.isArray(cycle.trials) ? cycle.trials : []) : [];
-        if (isRunning) inProgress = true;
-        if (groups.length > 1) {
-            for (const group of isRunning ? groups.slice(0, -1) : groups) {
-                observed += Math.min(group.trials.length, perCycle);
-                expected += perCycle;
-                counted += 1;
-            }
+        const places = daily ? cyclePlaces(cycle) : Number.isFinite(cycle.weekStart) ? [cycle.weekStart] : [];
+        for (const place of places) since = since === null ? place : Math.min(since, place);
+        if (!(cycle.trials || []).length) continue;
+        // A test-server trial with no time at all cannot be put on a day, and is not guessed onto one
+        for (const place of places) watchedFrom.add(scheduledCycle(place, daily).from);
+    }
+
+    let watched = 0;
+    let expected = 0;
+    let inProgress = false;
+    // `first` null means the ledger was checked and holds nothing, so no cycle is charged as missed;
+    // omitted (undefined) leaves the window unclamped
+    const firstFrom = Number.isFinite(first)
+        ? scheduledCycle(first, daily).from
+        : first === null
+          ? Infinity
+          : -Infinity;
+    for (const slot of ledgerWindowCycles(window, { now, daily, since })) {
+        if (slot.from < firstFrom) continue;
+        if (now < slot.end) {
+            inProgress = true;
             continue;
         }
-        if (isRunning) continue;
-        observed += Math.min((cycle.trials || []).length, perCycle);
-        expected += perCycle;
-        counted += 1;
+        expected += 1;
+        if (watchedFrom.has(slot.from)) watched += 1;
     }
 
     return {
-        observed,
+        watched,
         expected,
-        cycles: counted,
+        missed: expected - watched,
         inProgress,
-        fraction: expected > 0 ? observed / expected : null,
+        daily,
+        fraction: expected > 0 ? watched / expected : null,
     };
 }
 
@@ -1143,19 +1221,24 @@ export function ledgerCsvRows(rows, trialsRun) {
  *
  * @param {string|null} guildName - Guild name, or null before it is known
  * @param {string|number|null} [characterId] - The viewing character, for the fallback scope
+ * A window is the scheduled cycles {@link ledgerWindowCycles} names, so a cycle
+ * nothing recorded still takes its place in it and an older record falls out.
+ *
  * @param {Object} [options] - Windowing
- * @param {number|null} [options.cycles] - How many of the most recent to read; null for all
+ * @param {number|null} [options.cycles] - How many of the most recent scheduled cycles; null for all
+ * @param {number} [options.now] - Clock, for placing the window
  * @returns {Promise<Array<Object>>} Cycle records, oldest first: one per week on live, one per
  *   cycle on the test server ({@link ledgerCyclesByAnchor})
  */
-export async function loadLedgerCycles(guildName, characterId = null, { cycles = null } = {}) {
+export async function loadLedgerCycles(guildName, characterId = null, { cycles = null, now = Date.now() } = {}) {
     const scope = ledgerScope(guildName, characterId);
     try {
         const keys = await storage.getAllKeys(LEDGER_STORE);
         const windowed = Number.isFinite(cycles) && cycles > 0;
         const perCycle = isTestServer();
         let stamps = ledgerCyclesInKeys(keys, scope);
-        if (windowed && !perCycle) stamps = stamps.slice(-cycles);
+        const windowFrom = windowed ? ledgerWindowCycles(cycles, { now, daily: perCycle })[0].from : -Infinity;
+        if (!perCycle) stamps = stamps.filter((stamp) => stamp >= windowFrom);
 
         const readWeek = async (stamp) => {
             const record = await storage.get(ledgerCycleKey(scope, stamp), LEDGER_STORE, null);
@@ -1170,20 +1253,56 @@ export async function loadLedgerCycles(guildName, characterId = null, { cycles =
             return records;
         }
 
-        // A test-server week can hold several cycles, so the window and the
+        // A test-server week holds several cycles, so the window and the
         // documented cap are applied to the split cycles, not to weeks. Weeks
-        // are read newest first and reading stops once enough cycles are in
-        // hand; splitting is per record, so this equals splitting them all.
-        const limit = windowed ? Math.min(cycles, MAX_LEDGER_CYCLES) : MAX_LEDGER_CYCLES;
+        // are read newest first and reading stops at the window's start or once
+        // the cap is in hand; splitting is per record, so this equals splitting
+        // them all. A cycle with no time on it is kept while its week overlaps
+        const inWindow = (cycle) => {
+            const places = cyclePlaces(cycle);
+            return places.length ? places.some((place) => place >= windowFrom) : cycle.weekStart + WEEK_MS > windowFrom;
+        };
         let split = [];
-        for (let i = stamps.length - 1; i >= 0 && split.length < limit; i--) {
+        for (let i = stamps.length - 1; i >= 0 && split.length < MAX_LEDGER_CYCLES; i--) {
+            if (stamps[i] + WEEK_MS <= windowFrom) break;
             const record = await readWeek(stamps[i]);
-            if (record) split = [...ledgerCyclesByAnchor([record], { perCycle }), ...split];
+            if (record) split = [...ledgerCyclesByAnchor([record], { perCycle }).filter(inWindow), ...split];
         }
-        return split.slice(-limit);
+        return split.slice(-MAX_LEDGER_CYCLES);
     } catch (error) {
         console.error('[GuildTrialLedger] Reading the ledger failed:', error);
         return [];
+    }
+}
+
+/**
+ * When the ledger first recorded anything for a scope.
+ *
+ * Coverage counts cycles watched out of the cycles that ran, and a cycle that
+ * ran before the first record cannot have been missed: the ledger was not
+ * there. The keys name the oldest week without reading every record. Live that
+ * week's start is the answer (the first cycle counts whole). The test server's
+ * week holds several daily cycles, so the oldest record is read for its
+ * earliest trial and the first cycle counts from there.
+ *
+ * @param {string|null} guildName - Guild name, or null before it is known
+ * @param {string|number|null} [characterId] - The viewing character, for the fallback scope
+ * @returns {Promise<number|null>} Epoch ms, or null when nothing is recorded or it cannot be read
+ */
+export async function loadLedgerFirstRecord(guildName, characterId = null) {
+    const scope = ledgerScope(guildName, characterId);
+    try {
+        const keys = await storage.getAllKeys(LEDGER_STORE);
+        const [oldest] = ledgerCyclesInKeys(keys, scope);
+        if (oldest === undefined) return null;
+        if (!isTestServer()) return oldest;
+        const record = await storage.get(ledgerCycleKey(scope, oldest), LEDGER_STORE, null);
+        const places = record && typeof record === 'object' ? ledgerCyclesByAnchor([record], { perCycle: true }) : [];
+        const placed = places.flatMap((cycle) => cyclePlaces(cycle));
+        return placed.length ? Math.min(...placed) : oldest;
+    } catch (error) {
+        console.error('[GuildTrialLedger] Reading the ledger start failed:', error);
+        return null;
     }
 }
 
