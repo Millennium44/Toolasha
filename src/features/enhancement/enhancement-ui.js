@@ -919,10 +919,9 @@ class EnhancementUI {
         // must not inherit this or it would trail behind the cursor. Cleared
         // once the animation has had time to finish.
         this.floatingUI.style.transition = 'width 0.2s ease';
-        const clearTransition = setTimeout(() => {
+        this.timerRegistry.scheduleTimeout(() => {
             if (this.floatingUI) this.floatingUI.style.transition = '';
         }, 220);
-        this.timerRegistry.registerTimeout(clearTransition);
 
         if (this.isCollapsed) {
             // Remember whatever size the resize grip left the panel at, so
@@ -947,10 +946,9 @@ class EnhancementUI {
             if (grip) grip.style.display = 'none';
 
             // Show compact summary after content fades
-            const summaryTimeout = setTimeout(() => {
+            this.timerRegistry.scheduleTimeout(() => {
                 this.showCollapsedSummary();
             }, 200);
-            this.timerRegistry.registerTimeout(summaryTimeout);
         } else {
             // Expanded state
             this.hideCollapsedSummary();

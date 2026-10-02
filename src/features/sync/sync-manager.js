@@ -211,11 +211,9 @@ class SyncManager {
             config.getSetting('sync_onSwitch', false) &&
             this.isConfigured()
         ) {
-            this.timers.registerTimeout(
-                setTimeout(() => {
-                    this.push({ silent: true });
-                }, SWITCH_PUSH_DELAY_MS)
-            );
+            this.timers.scheduleTimeout(() => {
+                this.push({ silent: true });
+            }, SWITCH_PUSH_DELAY_MS);
         }
         if (characterId !== null) lastCharacterId = characterId;
     }
@@ -766,11 +764,9 @@ class SyncManager {
         if (!config.getSetting('sync_auto', false) || !this.isConfigured()) return;
 
         for (const delay of STARTUP_PULL_DELAYS_MS) {
-            this.timers.registerTimeout(
-                setTimeout(() => {
-                    this.pull({ silent: true });
-                }, delay)
-            );
+            this.timers.scheduleTimeout(() => {
+                this.pull({ silent: true });
+            }, delay);
         }
 
         this.timers.registerInterval(
@@ -784,16 +780,14 @@ class SyncManager {
         // A silent pull is safe to run unattended — it applies only a clean
         // fast-forward (remote newer, nothing changed here) and stands down on
         // a conflict without asking.
-        this.timers.registerTimeout(
-            setTimeout(() => {
-                this.timers.registerInterval(
-                    setInterval(() => {
-                        this.pull({ silent: true });
-                    }, AUTO_PUSH_INTERVAL_MS)
-                );
-                this.pull({ silent: true });
-            }, AUTO_PULL_OFFSET_MS)
-        );
+        this.timers.scheduleTimeout(() => {
+            this.timers.registerInterval(
+                setInterval(() => {
+                    this.pull({ silent: true });
+                }, AUTO_PUSH_INTERVAL_MS)
+            );
+            this.pull({ silent: true });
+        }, AUTO_PULL_OFFSET_MS);
     }
 
     /**

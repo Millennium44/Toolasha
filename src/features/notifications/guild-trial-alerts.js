@@ -336,7 +336,7 @@ class GuildTrialAlerts {
 
         this._clearStartTimer();
         this.scheduledFor = key;
-        this.startTimerId = setTimeout(() => {
+        this.startTimerId = this.timers.scheduleTimeout(() => {
             this.startTimerId = null;
             this.scheduledFor = null;
             // The chat line or a live reading may have moved the cycle on while
@@ -344,13 +344,12 @@ class GuildTrialAlerts {
             if (this.phase && this.phase !== 'scheduled') return;
             this._announceStartSoon(startAt, Date.now());
         }, delay);
-        this.timers.registerTimeout(this.startTimerId);
     }
 
     /** Drop any pending start timer. */
     _clearStartTimer() {
         if (this.startTimerId) {
-            clearTimeout(this.startTimerId);
+            this.timers.cancelTimeout(this.startTimerId);
             this.startTimerId = null;
         }
         this.scheduledFor = null;

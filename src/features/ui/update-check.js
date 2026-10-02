@@ -78,7 +78,7 @@ class UpdateCheck {
                 console.error('[UpdateCheck] Check failed:', error);
             });
         };
-        this.timerRegistry.registerTimeout(setTimeout(run, STARTUP_DELAY_MS));
+        this.timerRegistry.scheduleTimeout(run, STARTUP_DELAY_MS);
 
         // A tab left open for days should not need a refresh to hear about a
         // release: the same interval setting paces an in-session repeat, floored
