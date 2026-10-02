@@ -1269,9 +1269,16 @@ class BulkSellAssistant {
         if (this._vendorArming) return;
         this._vendorArming = true;
         const key = this._stepKey();
+        // The player may press the armed button themselves during the wait; that click is the sale
+        const watch = this._watchMenuClicks(key);
         try {
             await new Promise((resolve) => setTimeout(resolve, VENDOR_CONFIRM_SETTLE_MS));
             if (this.state !== 'awaiting_confirm' || this._stepKey() !== key || this._confirmSent()) return;
+            if (watch.menuClicked) {
+                this.confirmNote = 'the item menu was clicked while Confirm waited, so it pressed nothing';
+                this._render();
+                return;
+            }
             const settled = this._confirmTarget();
             if (settled.why || !settled.armed) {
                 this.confirmNote = settled.why || 'the Sell For button was no longer armed, so it pressed nothing';
@@ -1280,8 +1287,35 @@ class BulkSellAssistant {
             }
             this._pressConfirm(settled.button);
         } finally {
+            watch.stop();
             this._vendorArming = false;
         }
+    }
+
+    /**
+     * Watch for clicks inside the item menu while a vendor press waits. The player's own click on the
+     * armed "Confirm Sell For" button is that step's sale: it is let through, the step counts as sent
+     * and the guard goes up (a listener added mid-dispatch skips this event), so a second click or a
+     * double-click's other half is swallowed and our own press never follows. Clicks made while
+     * `watch.ownClick` is set are ours and ignored.
+     * @param {string} key - The step key the waiting press belongs to
+     * @returns {{menuClicked: boolean, ownClick: boolean, stop: Function}} Live watch state
+     */
+    _watchMenuClicks(key) {
+        const watch = { menuClicked: false, ownClick: false, stop: null };
+        const onClick = (event) => {
+            if (watch.ownClick || !event.target?.closest?.('[class*="Item_actionMenu"]')) return;
+            watch.menuClicked = true;
+            const sold = event.target.closest('button');
+            if (sold && /^confirm\s+sell for\b/i.test(sold.textContent.trim())) {
+                this._confirmedStep = key;
+                this._guardSale(sold);
+                this._render();
+            }
+        };
+        document.addEventListener('click', onClick, true);
+        watch.stop = () => document.removeEventListener('click', onClick, true);
+        return watch;
     }
 
     /** Mark the step sent and press the game's button — the one game action of this step */
@@ -1318,35 +1352,19 @@ class BulkSellAssistant {
         if (this._vendorArming) return;
         this._vendorArming = true;
         const key = this._stepKey();
-        let ownClick = false;
-        let menuClicked = false;
-        const onClick = (event) => {
-            if (ownClick || !event.target?.closest?.('[class*="Item_actionMenu"]')) return;
-            menuClicked = true;
-            // The player's click on the armed button is the sale itself. It is let
-            // through; the guard goes up now (a listener added mid-dispatch skips
-            // this event) so a second click or a double-click's other half is
-            // swallowed, and the step counts as sent so our own press never follows.
-            const sold = event.target.closest('button');
-            if (sold && /^confirm\s+sell for\b/i.test(sold.textContent.trim())) {
-                this._confirmedStep = key;
-                this._guardSale(sold);
-                this._render();
-            }
-        };
-        document.addEventListener('click', onClick, true);
+        const watch = this._watchMenuClicks(key);
         try {
-            ownClick = true;
+            watch.ownClick = true;
             try {
                 button.click();
             } finally {
-                ownClick = false;
+                watch.ownClick = false;
             }
             let result = { why: 'the Sell For button did not arm in time' };
             for (let waited = 0; waited <= VENDOR_ARM_WAIT_MS; waited += VENDOR_ARM_POLL_MS) {
                 await new Promise((resolve) => setTimeout(resolve, VENDOR_ARM_POLL_MS));
                 if (this.state !== 'awaiting_confirm' || this._stepKey() !== key || this._confirmSent()) return;
-                if (menuClicked) {
+                if (watch.menuClicked) {
                     result = { why: 'the item menu was clicked while Confirm waited, so it pressed nothing' };
                     break;
                 }
@@ -1367,7 +1385,7 @@ class BulkSellAssistant {
             // again that nothing moved meanwhile
             await new Promise((resolve) => setTimeout(resolve, VENDOR_CONFIRM_SETTLE_MS));
             if (this.state !== 'awaiting_confirm' || this._stepKey() !== key || this._confirmSent()) return;
-            if (menuClicked) {
+            if (watch.menuClicked) {
                 this.confirmNote = 'the item menu was clicked while Confirm waited, so it pressed nothing';
                 this._render();
                 return;
@@ -1380,7 +1398,7 @@ class BulkSellAssistant {
             }
             this._pressConfirm(settled.button);
         } finally {
-            document.removeEventListener('click', onClick, true);
+            watch.stop();
             this._vendorArming = false;
         }
     }

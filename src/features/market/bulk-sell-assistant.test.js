@@ -1375,6 +1375,19 @@ describe('confirming from the strip', () => {
             expect(bulkSell._confirmSent()).toBe(true);
         });
 
+        test('the player pressing an already-armed button during the settle wait is the only sale', async () => {
+            const menu = openMenu({ label: 'Confirm Sell For 400K Coins' });
+            vendorRun();
+
+            confirmBtn().click();
+            menu.querySelector('.Button_sell__x').click();
+            await vi.advanceTimersByTimeAsync(1200);
+
+            expect(gameClicks).toBe(1);
+            expect(bulkSell._confirmSent()).toBe(true);
+            bulkSell._releaseSaleGuard();
+        });
+
         test('a second player click after the armed-button click during the wait sends no second sale', async () => {
             const menu = openMenu();
             vendorRun();
