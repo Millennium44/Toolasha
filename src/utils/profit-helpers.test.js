@@ -526,6 +526,25 @@ describe('resolveItemPrice', () => {
         });
     });
 
+    test('an enhanced level with no listing is not priced as the +0 craft', () => {
+        chain.production = 700;
+
+        expect(resolveItemPrice('/items/cheese', { enhancementLevel: 10 })).toEqual({
+            price: null,
+            custom: false,
+            missing: true,
+            estimated: false,
+        });
+        expect(chain.productionCostModes).toEqual([]);
+    });
+
+    test('an enhanced level with a listing still prices from the listing', () => {
+        chain.production = 700;
+        chain.market = { price: 5000, source: 'book', estimated: false };
+
+        expect(resolveItemPrice('/items/cheese', { enhancementLevel: 10 }).price).toBe(5000);
+    });
+
     test('a shop floor undercuts the market on the buy side', () => {
         chain.market = { price: 900, source: 'book', estimated: false };
         chain.shop = 400;
