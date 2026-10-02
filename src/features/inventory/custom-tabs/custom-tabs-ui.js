@@ -35,6 +35,7 @@ import {
     saveConfig,
     addTab,
     removeTab,
+    clearAllTabs,
     importCategoryTabs,
     renameTab,
     setTabColor,
@@ -2319,6 +2320,13 @@ export default class CustomTabsUI {
         collapseBtn.addEventListener('click', () => this._onSetAllTabsOpen(false));
         actionsDiv.appendChild(collapseBtn);
 
+        const clearAllBtn = document.createElement('button');
+        clearAllBtn.className = 'toolasha-ct-add-btn';
+        clearAllBtn.textContent = 'Clear All';
+        clearAllBtn.title = 'Delete every custom tab';
+        clearAllBtn.addEventListener('click', () => this._onClearAllTabs());
+        actionsDiv.appendChild(clearAllBtn);
+
         const importCategoriesBtn = document.createElement('button');
         importCategoriesBtn.className = 'toolasha-ct-add-btn';
         importCategoriesBtn.textContent = 'Import Categories';
@@ -2345,7 +2353,7 @@ export default class CustomTabsUI {
     /**
      * Serialize the current layout to a JSON file and trigger a download.
      *
-     * `removed`, `removedItems` and `orderUpdatedAt` are stripped. All are sync
+     * `removed`, `removedItems`, `orderUpdatedAt` and `clearedAll` are stripped. All are sync
      * bookkeeping
      * about THIS config's history on THIS device, and neither survives the trip
      * usefully: a shared file carrying a tombstone map is a file that deletes
@@ -2374,6 +2382,7 @@ export default class CustomTabsUI {
             removed: _removed,
             removedItems: _removedItems,
             orderUpdatedAt: _orderUpdatedAt,
+            clearedAll: _clearedAll,
             ...config
         } = this._config || {};
         const payload = { _toolasha: 'tabs-v1', ...config };
@@ -4251,6 +4260,25 @@ export default class CustomTabsUI {
         this._applyLayout();
         this._save().catch((error) => {
             console.error('[CustomTabs] Failed to persist expand/collapse all:', error);
+        });
+    }
+
+    /**
+     * Delete every tab after the player confirms. The clear reaches every synced device, so the
+     * confirm says so and points at Export as the only way back.
+     */
+    _onClearAllTabs() {
+        if (!this._config?.tabs?.length) return;
+        const message =
+            'Delete ALL custom tabs?\n\n' +
+            'This also clears them on your other synced devices and cannot be undone. ' +
+            'To keep a copy, cancel and use Export first.';
+        if (!confirm(message)) return;
+        this._config = clearAllTabs(this._config);
+        this._removeInjectedEls();
+        this._applyLayout();
+        this._save().catch((error) => {
+            console.error('[CustomTabs] Failed to persist clear all tabs:', error);
         });
     }
 

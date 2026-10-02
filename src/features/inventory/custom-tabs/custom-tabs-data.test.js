@@ -2,7 +2,7 @@
  * Tests for custom tabs loadout binding sync
  */
 
-import { describe, test, expect, vi, beforeEach } from 'vitest';
+import { describe, test, expect, vi, beforeEach, afterEach } from 'vitest';
 
 const storageMock = vi.hoisted(() => {
     const stores = new Map();
@@ -64,6 +64,7 @@ const {
     flushConfigWrites,
     addTab,
     removeTab,
+    clearAllTabs,
     renameTab,
     setTabColor,
     moveTab,
@@ -934,6 +935,259 @@ describe('the mass-delete cap', () => {
         const carrier = { version: 1, selectedTabId: null, tabs: [tab('a'), tab('b')] };
         const deleted = { version: 1, selectedTabId: null, tabs: [], removed: { a: 500, b: 500 } };
         expect(merge(carrier, deleted).tabs).toEqual([]);
+    });
+});
+
+describe('Clear All', () => {
+    const tab = (id, extra = {}) => ({ id, name: id, updatedAt: 100, items: [], children: [], ...extra });
+    const layout = (tabs, extra = {}) => ({ version: 1, selectedTabId: null, tabs, ...extra });
+    const ids = (config) => config.tabs.map((t) => t.id);
+    const NOW = 1_000_000;
+
+    let merge;
+    let warn;
+    beforeEach(async () => {
+        const { mergeForKey } = await import('../../../utils/sync-merge-registry.js');
+        merge = mergeForKey('settings', 'char1_inventoryTabs_config').merge;
+        warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    });
+    afterEach(() => warn.mockRestore());
+
+    test('empties the layout and records one operation naming every tab, nested ones included', () => {
+        const before = layout([tab('a', { children: [tab('a1')] }), tab('b')], { selectedTabId: 'b' });
+        const cleared = clearAllTabs(before, NOW);
+        expect(cleared.tabs).toEqual([]);
+        expect(cleared.selectedTabId).toBeNull();
+        const records = Object.values(cleared.clearedAll);
+        expect(records).toHaveLength(1);
+        expect(records[0].at).toBe(NOW);
+        expect([...records[0].ids].sort()).toEqual(['a', 'a1', 'b']);
+        expect(cleared.removed).toEqual({ a: NOW, a1: NOW, b: NOW });
+        expect(ids(before)).toEqual(['a', 'b']); // input untouched
+    });
+
+    test('an empty layout with nothing on file is left alone', () => {
+        expect(clearAllTabs(layout([]), NOW).clearedAll).toBeUndefined();
+    });
+
+    // Failure mode 1
+    test('syncs to a stale peer past the mass-delete cap and stays cleared on every later fold', () => {
+        const stale = layout(['a', 'b', 'c', 'd', 'e'].map((id) => tab(id)));
+        const cleared = clearAllTabs(stale, NOW);
+        for (const merged of [merge(stale, cleared), merge(cleared, stale)]) {
+            expect(merged.tabs).toEqual([]);
+            expect(merged.clearedAll).toEqual(cleared.clearedAll);
+            // The stale device folds its old copy again: still nothing comes back
+            expect(merge(stale, merged).tabs).toEqual([]);
+            expect(merge(merged, stale).tabs).toEqual([]);
+        }
+    });
+
+    test('survives a save and reload against the pre-clear copy on disk', async () => {
+        storageMock.reset();
+        _resetConfigRecords();
+        storageMock
+            .storeFor('settings')
+            .set('char1_inventoryTabs_config', layout(['a', 'b', 'c', 'd'].map((id) => tab(id))));
+        const loaded = await loadConfig('char1');
+        await saveConfig('char1', clearAllTabs(loaded));
+        await flushConfigWrites();
+        _resetConfigRecords();
+        expect((await loadConfig('char1')).tabs).toEqual([]);
+    });
+
+    test('a legacy layout of unstamped tabs stays cleared through the read-back fold', () => {
+        const legacy = layout(['a', 'b', 'c'].map((id) => ({ id, name: id, items: [], children: [] })));
+        const cleared = clearAllTabs(legacy, NOW);
+        expect(merge(legacy, cleared).tabs).toEqual([]);
+    });
+
+    test('a tab made after the clear survives on either device', () => {
+        const stale = layout(['a', 'b', 'c', 'd'].map((id) => tab(id)));
+        const cleared = clearAllTabs(stale, NOW);
+        const here = addTab(cleared, null, 'Fresh');
+        const there = layout([...stale.tabs, tab('peer-new', { updatedAt: NOW + 50 })]);
+        const merged = merge(there, here.config);
+        expect(ids(merged).sort()).toEqual([here.tabId, 'peer-new'].sort());
+        expect(ids(merge(merged, there)).sort()).toEqual([here.tabId, 'peer-new'].sort());
+    });
+
+    test('a tab edited on a peer after the clear outlives it', () => {
+        const stale = layout(['a', 'b', 'c', 'd'].map((id) => tab(id)));
+        const cleared = clearAllTabs(stale, NOW);
+        const edited = layout([...stale.tabs.slice(1), tab('a', { name: 'kept', updatedAt: NOW + 1 })]);
+        const merged = merge(edited, cleared);
+        expect(ids(merged)).toEqual(['a']);
+        expect(merged.tabs[0].name).toBe('kept');
+    });
+
+    // Failure mode 2
+    test('clock skew never sweeps a tab the clearing device did not know about', () => {
+        const stale = layout(['a', 'b', 'c', 'd'].map((id) => tab(id)));
+        const cleared = clearAllTabs(stale, NOW + 10_000_000); // clearing clock far ahead
+        // Another device, behind, makes a genuinely new tab afterwards with a much lower stamp
+        const other = layout([...stale.tabs, tab('fresh', { updatedAt: 200 })]);
+        expect(ids(merge(other, cleared))).toEqual(['fresh']);
+        expect(ids(merge(cleared, other))).toEqual(['fresh']);
+    });
+
+    // Failure mode 3
+    test('outranks a tab stamped by a clock running ahead', () => {
+        const future = NOW + 60 * 60_000;
+        const stale = layout(['a', 'b', 'c'].map((id) => tab(id, { updatedAt: future })));
+        const cleared = clearAllTabs(stale, NOW);
+        expect(Object.values(cleared.clearedAll)[0].at).toBeGreaterThan(future);
+        expect(merge(stale, cleared).tabs).toEqual([]);
+        expect(merge(cleared, stale).tabs).toEqual([]);
+    });
+
+    // Failure mode 4
+    test('a tab revived after the clear and mass-deleted again later is judged by the cap', () => {
+        const stale = layout(['a', 'b', 'c', 'd'].map((id) => tab(id)));
+        const cleared = clearAllTabs(stale, NOW);
+        // Every tab edited after the clear (revived), then three deleted at once, ordinarily
+        const revived = layout(
+            ['a', 'b', 'c', 'd'].map((id) => tab(id, { updatedAt: NOW + 10 })),
+            { clearedAll: cleared.clearedAll }
+        );
+        const deleted = layout([tab('d', { updatedAt: NOW + 10 })], {
+            clearedAll: cleared.clearedAll,
+            removed: { a: NOW + 500, b: NOW + 500, c: NOW + 500 },
+        });
+        expect(ids(merge(revived, deleted)).sort()).toEqual(['a', 'b', 'c', 'd']);
+        expect(warn).toHaveBeenCalledWith(expect.stringContaining('3 of 4'));
+    });
+
+    // Failure mode 5
+    test('a large clear does not dilute the cap for an unrelated mass deletion in the same fold', () => {
+        const old = Array.from({ length: 100 }, (_, i) => tab(`old${i}`));
+        const cleared = clearAllTabs(layout(old), NOW);
+        // A peer carries the stale 100 plus four tabs the clearer never saw; three of those are
+        // deleted ordinarily in the same fold
+        const carrier = layout([...old, tab('p1'), tab('p2'), tab('p3'), tab('p4')]);
+        const deleter = { ...cleared, removed: { ...cleared.removed, p1: NOW, p2: NOW, p3: NOW } };
+        const merged = merge(carrier, deleter);
+        expect(ids(merged)).toEqual(['p1', 'p2', 'p3', 'p4']);
+        expect(warn).toHaveBeenCalledWith(expect.stringContaining('3 of 4'));
+    });
+
+    // Failure mode 6
+    test('a parent edited after the clear brings back the children the clear took with it', () => {
+        // The child was last touched on a clock running ahead of the parent's
+        const child = tab('kid', { updatedAt: NOW + 60 * 60_000 });
+        const parent = tab('top', { updatedAt: NOW - 1000, children: [child] });
+        const cleared = clearAllTabs(layout([parent]), NOW);
+        const at = Object.values(cleared.clearedAll)[0].at;
+        expect(cleared.removed.top).toBe(cleared.removed.kid);
+        const revived = layout([{ ...parent, children: [{ ...child, updatedAt: NOW - 5 }], updatedAt: at + 1 }]);
+        for (const merged of [merge(revived, cleared), merge(cleared, revived)]) {
+            expect(ids(merged)).toEqual(['top']);
+            expect(merged.tabs[0].children.map((t) => t.id)).toEqual(['kid']);
+        }
+    });
+
+    // Failure mode 7
+    test('tabs deleted before the clear stay gone when a stale peer still carries them', () => {
+        const before = layout([tab('k')], { removed: { o1: 200, o2: 200, o3: 200 } });
+        const cleared = clearAllTabs(before, NOW);
+        expect([...Object.values(cleared.clearedAll)[0].ids].sort()).toEqual(['k', 'o1', 'o2', 'o3']);
+        const stale = layout(['o1', 'o2', 'o3', 'k'].map((id) => tab(id)));
+        expect(merge(stale, cleared).tabs).toEqual([]);
+        expect(merge(cleared, stale).tabs).toEqual([]);
+    });
+
+    test('a child deleted before the clear stays gone when its revived parent still carries it', () => {
+        const kid = tab('kid', { updatedAt: 10 });
+        const parent = tab('top', { updatedAt: 10, children: [kid] });
+        // The child is deleted alone at 50, then the whole layout is cleared
+        const before = layout([tab('top', { updatedAt: 60 })], { removed: { kid: 50 } });
+        const cleared = clearAllTabs(before, NOW);
+        const record = Object.values(cleared.clearedAll)[0];
+        expect(record.prior).toEqual(['kid']);
+        expect(cleared.removed.kid).toBe(50);
+        // A stale peer edits the parent after the clear while still holding the child
+        const stale = layout([{ ...parent, updatedAt: record.at + 50 }]);
+        for (const first of [merge(stale, cleared), merge(cleared, stale)]) {
+            expect(ids(first)).toEqual(['top']);
+            expect(first.tabs[0].children).toEqual([]);
+            expect(first.removed.kid).toBe(50);
+            // Stable across a second fold, from either side
+            for (const again of [merge(stale, first), merge(first, stale)]) {
+                expect(again.tabs[0].children).toEqual([]);
+                expect(again.removed.kid).toBe(50);
+            }
+        }
+    });
+
+    test('a prior id whose copy was edited after the clear survives', () => {
+        const before = layout([tab('top', { updatedAt: 60 })], { removed: { kid: 50 } });
+        const cleared = clearAllTabs(before, NOW);
+        const at = Object.values(cleared.clearedAll)[0].at;
+        const stale = layout([
+            tab('top', { updatedAt: at + 50, children: [tab('kid', { name: 'back', updatedAt: at + 60 })] }),
+        ]);
+        const merged = merge(stale, cleared);
+        expect(merged.tabs[0].children.map((t) => t.name)).toEqual(['back']);
+    });
+
+    test('a record written before `prior` existed still reads as all-live', () => {
+        const kid = tab('kid', { updatedAt: 10 });
+        const parent = tab('top', { updatedAt: NOW + 50, children: [kid] });
+        const old = layout([], { clearedAll: { op: { at: NOW, ids: ['top', 'kid'] } } });
+        const merged = merge(layout([parent]), old);
+        expect(merged.tabs[0].children.map((t) => t.id)).toEqual(['kid']);
+    });
+
+    // Failure mode 8
+    test('never lowers a deletion already on file from a clock running ahead', () => {
+        const ahead = NOW + 60 * 60_000;
+        const cleared = clearAllTabs(layout([tab('k')], { removed: { old: ahead } }), NOW);
+        expect(cleared.removed.old).toBe(ahead);
+        expect(Object.values(cleared.clearedAll)[0].at).toBeGreaterThan(ahead);
+    });
+
+    test('a later ordinary deletion of a cleared id on another device does not lift the clear', () => {
+        // A peer whose clock runs ahead deleted b, c and d after the clear's own time
+        const stale = layout(['a', 'b', 'c', 'd'].map((id) => tab(id)));
+        const cleared = clearAllTabs(stale, NOW);
+        const peer = layout([tab('a')], { removed: { b: NOW + 900, c: NOW + 900, d: NOW + 900 } });
+        const both = merge(peer, cleared);
+        expect(merge(stale, both).tabs).toEqual([]);
+    });
+
+    test('an ordinary mass deletion still trips the cap beside a clear record', () => {
+        const cleared = clearAllTabs(layout([tab('gone')]), NOW);
+        const carrier = layout(['a', 'b', 'c', 'd', 'e'].map((id) => tab(id)));
+        const deleter = layout([tab('e')], {
+            clearedAll: cleared.clearedAll,
+            removed: { a: 500, b: 500, c: 500, d: 500 },
+        });
+        expect(ids(merge(carrier, deleter)).sort()).toEqual(['a', 'b', 'c', 'd', 'e']);
+    });
+
+    test('two clears from two devices merge by operation, and both apply', () => {
+        const first = clearAllTabs(layout([tab('a'), tab('b'), tab('c')]), NOW);
+        const second = clearAllTabs(layout([tab('x'), tab('y'), tab('z')]), NOW + 5);
+        const merged = merge(first, second);
+        expect(Object.keys(merged.clearedAll)).toHaveLength(2);
+        const stale = layout(['a', 'b', 'c', 'x', 'y', 'z'].map((id) => tab(id)));
+        expect(merge(stale, merged).tabs).toEqual([]);
+    });
+
+    test('the record ages out with the tombstones it wrote', async () => {
+        storageMock.reset();
+        _resetConfigRecords();
+        const cleared = clearAllTabs(layout([tab('a')]), Date.now() - TOMBSTONE_MAX_AGE_MS - 1);
+        storageMock.storeFor('settings').set('char1_inventoryTabs_config', cleared);
+        const loaded = await loadConfig('char1');
+        expect(loaded.clearedAll).toBeUndefined();
+        expect(loaded.removed).toBeUndefined();
+    });
+
+    // Failure mode 9, import side (the export side is in custom-tabs-native-tabs.test.js)
+    test('an imported layout file never brings a clear record in', () => {
+        const file = { ...layout([tab('a')]), clearedAll: { op: { at: NOW, ids: ['a'] } } };
+        expect(sanitizeImportedConfig(file, NOW).clearedAll).toBeUndefined();
     });
 });
 

@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Custom Tabs Clear All
+
+- Custom Tabs' toolbar gains Clear All, which removes every custom tab, on your other synced devices too. A tab made or edited afterwards on any device is kept.
+
 ### Party export, dungeon fail tracking and more from the upstream sweep
 
 - Saved loadouts in the Metz export menu get a 👥 button that exports your whole party, with you wearing that loadout.
