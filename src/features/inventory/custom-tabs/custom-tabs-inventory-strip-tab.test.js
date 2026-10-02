@@ -93,7 +93,13 @@ vi.mock('../../../core/data-manager.js', () => ({
 }));
 vi.mock('../inventory-sort.js', () => ({ default: { currentMode: 'none', onModeChange: () => () => {} } }));
 vi.mock('../inventory-badge-manager.js', () => ({
-    default: { currentInventoryElem: {}, isCalculating: false, isRendering: false, renderAllBadges: async () => {} },
+    default: {
+        currentInventoryElem: {},
+        isCalculating: false,
+        isRendering: false,
+        onRepriced: () => () => {},
+        renderAllBadges: async () => {},
+    },
 }));
 vi.mock('../../combat/loadout-snapshot.js', () => ({ default: {} }));
 vi.mock('../../../utils/bundle-bridge.js', () => ({

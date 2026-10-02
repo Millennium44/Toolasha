@@ -810,6 +810,13 @@ export default class CustomTabsUI {
         });
         this._unregisterHandlers.push(unregisterSort);
 
+        // A forced reprice rewrites the tiles' values; the section totals and the value-sorted order
+        // are computed here, not by the native category pass, so they are redone through the guarded path
+        const unregisterReprice = inventoryBadgeManager.onRepriced(() => {
+            if (this._isActive) this._applyLayout();
+        });
+        this._unregisterHandlers.push(unregisterReprice);
+
         // Inject "Add to Tab" button into item action menus
         const unregisterItemAction = domObserver.onClass('CustomTabs_itemAction', 'Item_actionMenu', (menu) => {
             this._injectAddToTabButton(menu);

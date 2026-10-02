@@ -90,6 +90,7 @@ const badges = vi.hoisted(() => ({
     currentInventoryElem: {},
     isCalculating: false,
     isRendering: false,
+    onRepriced: () => () => {},
     renderAllBadges: async () => {},
 }));
 vi.mock('../inventory-badge-manager.js', () => ({ default: badges }));
