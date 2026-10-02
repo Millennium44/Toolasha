@@ -618,17 +618,15 @@ class ActionFilter {
     handleFilterInput(value) {
         // Clear existing timeout
         if (this.filterTimeout) {
-            clearTimeout(this.filterTimeout);
+            this.timerRegistry.cancelTimeout(this.filterTimeout);
         }
 
         // Schedule filter update after 300ms of inactivity
-        this.filterTimeout = setTimeout(() => {
+        this.filterTimeout = this.timerRegistry.scheduleTimeout(() => {
             this.filterValue = value.toLowerCase().trim();
             this.applyFilter();
             this.filterTimeout = null;
         }, 300);
-
-        this.timerRegistry.registerTimeout(this.filterTimeout);
     }
 
     /**
@@ -918,7 +916,7 @@ class ActionFilter {
     cleanup() {
         // Clear timeout
         if (this.filterTimeout) {
-            clearTimeout(this.filterTimeout);
+            this.timerRegistry.cancelTimeout(this.filterTimeout);
             this.filterTimeout = null;
         }
 

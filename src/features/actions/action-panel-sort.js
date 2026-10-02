@@ -353,7 +353,7 @@ class ActionPanelSort {
     clearAllPanels() {
         // Clear sort timeout
         if (this.sortTimeout) {
-            clearTimeout(this.sortTimeout);
+            this.timerRegistry.cancelTimeout(this.sortTimeout);
             this.sortTimeout = null;
         }
 
@@ -383,15 +383,14 @@ class ActionPanelSort {
 
         // Clear existing timeout
         if (this.sortTimeout) {
-            clearTimeout(this.sortTimeout);
+            this.timerRegistry.cancelTimeout(this.sortTimeout);
         }
 
         // Schedule new sort after 300ms of inactivity (reduced from 500ms)
-        this.sortTimeout = setTimeout(() => {
+        this.sortTimeout = this.timerRegistry.scheduleTimeout(() => {
             this.sortPanelsByProfit();
             this.sortTimeout = null;
         }, 300);
-        this.timerRegistry.registerTimeout(this.sortTimeout);
     }
 
     /**
