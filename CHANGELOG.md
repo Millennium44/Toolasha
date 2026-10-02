@@ -12,7 +12,7 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 - The lab sim no longer offers gear the character can't equip.
 - Unlisted enhanced items aren't priced at +0 craft cost; untradable worn gear isn't counted as sold.
 - The Loot & XP Log follows the number-format setting.
-- Custom Tabs' "Add to Tab" dropdown isn't cut off, can remove items or start a tab, and the toolbar gains Clear All and Import Categories.
+- Custom Tabs' "Add to Tab" dropdown isn't cut off, can remove items or start a tab, and the toolbar gains Import Categories.
 
 ### Audit round: page-close saves, text size and net worth
 
