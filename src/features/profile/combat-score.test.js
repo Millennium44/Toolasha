@@ -24,6 +24,9 @@ const stub = vi.hoisted(() => ({
     metzExport: { source: 'metz' },
     shykaiExport: { exportObj: { player: {}, source: 'shykai' } },
     snapshots: [],
+    profileList: [],
+    partyMembers: [],
+    teamCalls: [],
 }));
 
 vi.mock('../../core/config.js', () => ({
@@ -34,13 +37,14 @@ vi.mock('../../core/config.js', () => ({
         COLOR_ACCENT: '#5b8def',
         COLOR_LOSS: '#e03131',
         COLOR_PROFIT: '#4ade80',
+        COLOR_WARNING: '#ffa500',
     },
 }));
 vi.mock('../../core/data-manager.js', () => ({
     default: {
         getCurrentCharacterId: () => stub.currentCharacterId,
         getInitClientData: () => ({ abilityDetailMap: {} }),
-        characterData: { characterAbilities: [] },
+        characterData: { character: { id: 7, name: 'Me' }, characterAbilities: [] },
     },
 }));
 vi.mock('../../core/storage.js', () => ({
@@ -57,10 +61,16 @@ vi.mock('../../core/websocket.js', () => ({ default: { on: () => {}, off: () => 
 vi.mock('./score-calculator.js', () => ({ calculateCombatScore: () => ({}) }));
 vi.mock('../combat/combat-sim-export.js', () => ({
     constructExportObject: async () => stub.shykaiExport,
+    getProfileList: async () => stub.profileList,
 }));
 vi.mock('../combat/combat-sim-export-metz.js', () => ({
     constructMetzCharacterExport: async () => stub.metzExport,
     applyLoadoutOverrideToMetzCharacter: (character, override) => ({ ...character, override }),
+    constructMetzTeamExport: async (expectedCharacterId, options) => {
+        stub.teamCalls.push({ expectedCharacterId, options });
+        return [{ name: 'Me', override: options?.selfLoadoutOverride }, { name: 'Teammate' }];
+    },
+    describePartyProfiles: () => stub.partyMembers,
 }));
 vi.mock('../combat/milkonomy-export.js', () => ({ constructMilkonomyExport: () => ({}) }));
 vi.mock('./character-card-button.js', () => ({
@@ -711,6 +721,115 @@ describe('sim export split button', () => {
         document.querySelector('.mwi-combat-sim-loadout-option[data-name="Raid"]').click();
         await flush();
         expect(JSON.parse(clipboardText).source).toBe('shykai');
+    });
+
+    describe('export full party', () => {
+        const raid = {
+            name: 'Raid',
+            actionTypeHrid: '/action_types/combat',
+            abilities: [{ abilityHrid: '/abilities/fireball', slot: 2 }],
+            food: [],
+            drinks: [],
+            abilityCombatTriggersMap: {},
+            consumableCombatTriggersMap: {},
+        };
+
+        beforeEach(() => {
+            stub.snapshots = [raid];
+            stub.teamCalls = [];
+            stub.partyMembers = [
+                {
+                    characterId: 'party-1',
+                    name: 'Teammate',
+                    profile: {},
+                    status: { found: true, ageMs: 5 * 60 * 1000, gearless: false, stale: false },
+                    warning: null,
+                },
+                {
+                    characterId: 'party-2',
+                    name: 'Ghost',
+                    profile: null,
+                    status: { found: false, ageMs: null, gearless: true, stale: true },
+                    warning: { level: 'missing', text: 'Ghost: no cached profile, left out.' },
+                },
+            ];
+        });
+
+        test('each saved loadout offers a party export in Metz format only', async () => {
+            combatScore.showScorePanel(profileData(stub.currentCharacterId), scoreData, document.createElement('div'));
+            await flush();
+
+            const partyBtn = document.querySelector('.mwi-combat-sim-party-export-option[data-name="Raid"]');
+            expect(partyBtn).not.toBeNull();
+            expect(partyBtn.style.display).toBe('');
+
+            document.querySelector('#mwi-combat-sim-format-btn').click();
+            document.querySelector('.mwi-combat-sim-format-option[data-format="shykai"]').click();
+            await flush();
+            expect(partyBtn.style.display).toBe('none');
+        });
+
+        test('the preview lists every member with their profile age before anything is copied', async () => {
+            combatScore.showScorePanel(profileData(stub.currentCharacterId), scoreData, document.createElement('div'));
+            await flush();
+
+            document.querySelector('.mwi-combat-sim-party-export-option[data-name="Raid"]').click();
+            await flush();
+
+            const preview = document.querySelector('#mwi-party-export-preview');
+            expect(preview).not.toBeNull();
+            expect(preview.textContent).toContain('Me');
+            expect(preview.textContent).toContain('Raid');
+            expect(preview.textContent).toContain('Teammate');
+            expect(preview.textContent).toContain('5 min old');
+            expect(preview.textContent).toContain('Ghost');
+            expect(preview.textContent).toContain('missing, left out');
+            expect(clipboardText).toBeNull();
+            expect(stub.teamCalls).toHaveLength(0);
+        });
+
+        test('copying exports the team for this character with the saved loadout on yourself', async () => {
+            combatScore.showScorePanel(profileData(stub.currentCharacterId), scoreData, document.createElement('div'));
+            await flush();
+
+            document.querySelector('.mwi-combat-sim-party-export-option[data-name="Raid"]').click();
+            await flush();
+            document.querySelector('#mwi-party-export-copy-btn').click();
+            await flush();
+
+            expect(stub.teamCalls).toHaveLength(1);
+            expect(stub.teamCalls[0].expectedCharacterId).toBe(stub.currentCharacterId);
+            const override = stub.teamCalls[0].options.selfLoadoutOverride;
+            // Saved slot 2 lands in native slot index 1, hole in front kept
+            expect(override.abilities[0]).toBeNull();
+            expect(override.abilities[1]).toEqual({ abilityHrid: '/abilities/fireball', level: 1 });
+            expect(JSON.parse(clipboardText).map((entry) => entry.name)).toEqual(['Me', 'Teammate']);
+        });
+
+        test('a character switch before copying exports nothing', async () => {
+            combatScore.showScorePanel(profileData(stub.currentCharacterId), scoreData, document.createElement('div'));
+            await flush();
+
+            document.querySelector('.mwi-combat-sim-party-export-option[data-name="Raid"]').click();
+            await flush();
+            stub.currentCharacterId = 8;
+            document.querySelector('#mwi-party-export-copy-btn').click();
+            await flush();
+
+            expect(stub.teamCalls).toHaveLength(0);
+            expect(clipboardText).toBeNull();
+        });
+
+        test('closing the panel removes the preview and its listeners', async () => {
+            combatScore.showScorePanel(profileData(stub.currentCharacterId), scoreData, document.createElement('div'));
+            await flush();
+            document.querySelector('.mwi-combat-sim-party-export-option[data-name="Raid"]').click();
+            await flush();
+
+            document.querySelector('#mwi-score-close-btn').click();
+
+            expect(document.querySelector('#mwi-party-export-preview')).toBeNull();
+        });
     });
 
     test('the menu is gone after teardown', async () => {

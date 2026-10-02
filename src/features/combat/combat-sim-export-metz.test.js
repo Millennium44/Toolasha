@@ -53,6 +53,7 @@ import {
     constructMetzCharacterExport,
     constructMetzTeamExport,
     applyLoadoutOverrideToMetzCharacter,
+    describePartyProfiles,
 } from './combat-sim-export-metz.js';
 
 function baseCharacter(overrides = {}) {
@@ -465,5 +466,117 @@ describe('Metz combat export', () => {
             abilities: [{ abilityHrid: '/abilities/live_skill', level: 50, equipped: false }],
         });
         expect(overridden.owned.equipment).toHaveLength(2);
+    });
+});
+
+describe('full party export with a saved loadout on yourself', () => {
+    // A cached profile_shared entry as websocket.js stores it under profile_list
+    function teammateProfile(timestamp) {
+        return {
+            characterID: 'party-1',
+            characterName: 'Teammate',
+            timestamp,
+            profile: {
+                characterSkills: [{ skillHrid: '/skills/enhancing', level: 77 }],
+                wearableItemMap: {
+                    '/item_locations/main_hand': {
+                        itemLocationHrid: '/item_locations/main_hand',
+                        itemHrid: '/items/rippling_trident',
+                        enhancementLevel: 7,
+                    },
+                },
+            },
+        };
+    }
+
+    // The parameters combat-score builds from a saved combat loadout
+    const savedLoadout = {
+        equipment: [
+            {
+                itemLocationHrid: '/item_locations/main_hand',
+                itemHrid: '/items/blazing_trident',
+                enhancementLevel: 10,
+            },
+        ],
+        abilities: [null, { abilityHrid: '/abilities/fireball', level: 40 }, null, null, null],
+        triggerMap: { '/abilities/fireball': [] },
+        food: [{ itemHrid: '/items/star_fruit_yogurt' }, { itemHrid: '' }],
+        drinks: [{ itemHrid: '/items/wisdom_coffee' }],
+    };
+
+    beforeEach(() => {
+        mocks.characterData = baseCharacter({
+            partyInfo: { partySlotMap: { 1: { characterID: 'self-1' }, 2: { characterID: 'party-1' } } },
+        });
+        mocks.onGamePage = true;
+        mocks.inventory = [];
+        mocks.itemDetailMap = {};
+        mocks.mooPassBuffs = [];
+        mocks.selfEquipment = [
+            {
+                itemLocationHrid: '/item_locations/main_hand',
+                itemHrid: '/items/live_staff',
+                enhancementLevel: 3,
+            },
+        ];
+        mocks.selfAbilities = [{ abilityHrid: '/abilities/cleave', level: 60 }];
+        mocks.partyEquipment = [
+            {
+                itemLocationHrid: '/item_locations/main_hand',
+                itemHrid: '/items/rippling_trident',
+                enhancementLevel: 7,
+            },
+        ];
+        mocks.partySkills = [];
+        mocks.profiles = [teammateProfile(Date.now() - 60 * 1000)];
+    });
+
+    test('your own entry wears the saved loadout instead of the live gear', async () => {
+        const team = await constructMetzTeamExport('self-1', { selfLoadoutOverride: savedLoadout });
+
+        expect(team[0].name).toBe('Self');
+        expect(team[0].player.equipment).toEqual(savedLoadout.equipment);
+        expect(team[0].abilities).toEqual([{ abilityHrid: '/abilities/fireball', level: 40 }]);
+        expect(team[0].triggerMap).toEqual(savedLoadout.triggerMap);
+        expect(team[0].food['/action_types/combat']).toEqual([{ itemHrid: '/items/star_fruit_yogurt' }]);
+        expect(team[0].drinks['/action_types/combat']).toEqual([{ itemHrid: '/items/wisdom_coffee' }]);
+    });
+
+    test('every other member is exported exactly as without the override', async () => {
+        const plain = await constructMetzTeamExport('self-1');
+        const overridden = await constructMetzTeamExport('self-1', { selfLoadoutOverride: savedLoadout });
+
+        expect(overridden).toHaveLength(2);
+        expect(overridden[1]).toEqual(plain[1]);
+        expect(overridden[1].player.equipment).toEqual(mocks.partyEquipment);
+        expect(plain[0].player.equipment).toEqual(mocks.selfEquipment);
+    });
+
+    test('the override still refuses a team whose character was switched', async () => {
+        expect(await constructMetzTeamExport('other-2', { selfLoadoutOverride: savedLoadout })).toBeNull();
+    });
+
+    test('the preview description names each other member with their profile status', () => {
+        const now = Date.now();
+        mocks.characterData = baseCharacter({
+            partyInfo: {
+                partySlotMap: {
+                    1: { characterID: 'self-1' },
+                    2: { characterID: 'party-1' },
+                    3: { characterID: 'party-2', characterName: 'Ghost' },
+                },
+            },
+        });
+        const members = describePartyProfiles(
+            mocks.characterData,
+            [teammateProfile(now - 3 * 24 * 60 * 60 * 1000)],
+            now
+        );
+
+        expect(members.map((member) => member.name)).toEqual(['Teammate', 'Ghost']);
+        expect(members[0].status).toMatchObject({ found: true, gearless: false, stale: true });
+        expect(members[0].warning).toMatchObject({ level: 'stale' });
+        expect(members[1].status.found).toBe(false);
+        expect(members[1].warning).toMatchObject({ level: 'missing' });
     });
 });
