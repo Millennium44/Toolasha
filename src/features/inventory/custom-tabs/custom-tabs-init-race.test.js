@@ -142,7 +142,7 @@ vi.mock('../inventory-sort.js', () => ({
     },
 }));
 vi.mock('../inventory-badge-manager.js', () => ({
-    default: { currentInventoryElem: null, renderAllBadges: vi.fn(async () => {}) },
+    default: { currentInventoryElem: null, onRepriced: () => () => {}, renderAllBadges: vi.fn(async () => {}) },
 }));
 vi.mock('../../combat/loadout-snapshot.js', () => ({ default: loadoutSnapshotMock }));
 vi.mock('../../../utils/bundle-bridge.js', () => ({ loadoutSnapshot: () => null }));

@@ -168,6 +168,16 @@ class InventorySort {
             })
         );
 
+        // A forced reprice (value source change, the game's value refresh) rewrites the tiles' values
+        // without any of the triggers below, so the order is redone once those values have landed
+        this.unregisterHandlers.push(
+            inventoryBadgeManager.onRepriced(() => {
+                if (this.currentInventoryElem && !this.isCalculating) {
+                    this._applyCategoryOrderPass(this.currentInventoryElem);
+                }
+            })
+        );
+
         // Watch for inventory panel (for future opens/reloads)
         const unregister = domObserver.onClass('InventorySort', 'Inventory_items', (elem) => {
             this.currentInventoryElem = elem;

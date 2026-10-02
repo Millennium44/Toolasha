@@ -16,6 +16,8 @@ const { dataManagerMock } = vi.hoisted(() => ({
         characterEquipment: new Map(),
         getInitClientData: vi.fn(() => null),
         getCurrentCharacterId: vi.fn(() => null),
+        getPartyMembers: vi.fn(() => ({ members: [], source: 'none', updatedAt: null })),
+        getCurrentActions: vi.fn(() => null),
     },
 }));
 
@@ -42,6 +44,8 @@ beforeEach(() => {
     dataManagerMock.characterEquipment = new Map();
     dataManagerMock.getInitClientData.mockReset().mockReturnValue(null);
     dataManagerMock.getCurrentCharacterId.mockReset().mockReturnValue(null);
+    dataManagerMock.getPartyMembers.mockReset().mockReturnValue({ members: [], source: 'none', updatedAt: null });
+    dataManagerMock.getCurrentActions.mockReset().mockReturnValue(null);
     vi.spyOn(console, 'warn').mockImplementation(() => {});
     vi.spyOn(console, 'error').mockImplementation(() => {});
 });
@@ -647,5 +651,93 @@ describe('party members whose cached profile cannot be trusted', () => {
         });
 
         expect(await constructExportObject()).toBeNull();
+    });
+
+    describe('roster source', () => {
+        function midBattleCharacter() {
+            return {
+                character: { id: 'char-mine', name: 'Me' },
+                characterSkills: [],
+                // The game empties the login-time map for the whole battle.
+                partyInfo: { party: {}, partySlotMap: {} },
+            };
+        }
+
+        const BATTLE_ROSTER = [
+            { characterID: 'char-mine', characterName: 'Me' },
+            { characterID: 'char-fresh', characterName: 'Fresh' },
+            { characterID: 'char-shy', characterName: 'Shy' },
+        ];
+
+        test('mid-battle, an empty slot map plus a battle roster still exports teammates', async () => {
+            dataManagerMock.characterData = midBattleCharacter();
+            dataManagerMock.getCurrentCharacterId.mockReturnValue('char-mine');
+            dataManagerMock.getPartyMembers.mockReturnValue({ members: BATTLE_ROSTER, source: 'battle', updatedAt: 1 });
+            dataManagerMock.getCurrentActions.mockReturnValue([
+                { actionHrid: '/actions/combat/fly', difficultyTier: 1, isDone: false },
+            ]);
+            globalThis.GM_getValue = vi.fn((key) =>
+                key === 'toolasha_profile_list' ? JSON.stringify(profiles(Date.now())) : null
+            );
+
+            const result = await constructExportObject();
+
+            expect(result.importedPlayerPositions).toEqual([true, true, true, false, false]);
+            expect(result.playerIDs.slice(0, 3)).toEqual(['Me', 'Fresh', 'Shy']);
+            expect(result.difficultyTier).toBe(1);
+        });
+
+        test('the running fight beats a stale login-time party zone and tier', async () => {
+            const char = midBattleCharacter();
+            // Logged in while the party was set to fly T0; it has since moved on
+            char.partyInfo.party = { actionHrid: '/actions/combat/fly', difficultyTier: 0 };
+            dataManagerMock.characterData = char;
+            dataManagerMock.getCurrentCharacterId.mockReturnValue('char-mine');
+            dataManagerMock.getPartyMembers.mockReturnValue({ members: BATTLE_ROSTER, source: 'battle', updatedAt: 1 });
+            dataManagerMock.getCurrentActions.mockReturnValue([
+                { actionHrid: '/actions/combat/smelly_planet', difficultyTier: 2, isDone: false },
+            ]);
+            globalThis.GM_getValue = vi.fn((key) =>
+                key === 'toolasha_profile_list' ? JSON.stringify(profiles(Date.now())) : null
+            );
+
+            const result = await constructExportObject();
+
+            expect(result.difficultyTier).toBe(2);
+            expect(JSON.stringify(result)).toContain('smelly_planet');
+        });
+
+        test('a one-member battle roster is a solo fight, not a party', async () => {
+            dataManagerMock.characterData = midBattleCharacter();
+            dataManagerMock.getCurrentCharacterId.mockReturnValue('char-mine');
+            dataManagerMock.getPartyMembers.mockReturnValue({
+                members: [BATTLE_ROSTER[0]],
+                source: 'battle',
+                updatedAt: 1,
+            });
+
+            const result = await constructExportObject();
+
+            expect(result.importedPlayerPositions).toEqual([true, false, false, false, false]);
+        });
+
+        test('a bridged character keeps its own slot map and ignores the live roster', async () => {
+            const bridged = partyCharacter();
+            dataManagerMock.characterData = null; // simulator page: no current character
+            dataManagerMock.getPartyMembers.mockReturnValue({ members: BATTLE_ROSTER, source: 'battle', updatedAt: 1 });
+            globalThis.GM_getValue = vi.fn((key) => {
+                if (key === 'toolasha_init_character_data') return JSON.stringify(bridged);
+                if (key === 'toolasha_profile_list') return JSON.stringify(profiles(Date.now()));
+                return null;
+            });
+
+            const result = await constructExportObject();
+
+            expect(result.playerIDs[1]).toBe('Fresh');
+            expect(result.playerIDs[2]).toBe('Shy');
+            expect(result.profileWarnings).toEqual(
+                expect.arrayContaining([expect.objectContaining({ name: 'Ghost' })])
+            );
+        });
     });
 });

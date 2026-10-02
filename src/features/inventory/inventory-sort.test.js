@@ -88,6 +88,12 @@ vi.mock('./inventory-badge-manager.js', () => ({
     default: {
         registerProvider: () => {},
         unregisterProvider: () => {},
+        onRepriced: (fn) => {
+            badgeManager.onRepriced = fn;
+            return () => {
+                badgeManager.onRepriced = null;
+            };
+        },
         invalidateCache: () => {},
         clearProcessedTracking: () => {},
         renderAllBadges: async () => {
@@ -619,6 +625,32 @@ describe('InventorySort — reapplies sort when a native tab switch re-renders t
 
         expect(items.get('c4').style.order).toBe('0'); // value 40, highest first
         expect(items.get('c3').style.order).toBe('1');
+    });
+
+    test('a forced reprice redoes the order once the new values have landed', async () => {
+        await inventorySort.initialize();
+        const { inv } = buildNewInventory([
+            [
+                'Currencies',
+                [
+                    ['c1', 10],
+                    ['c2', 30],
+                ],
+            ],
+        ]);
+        observer.classHandlers.get('InventorySort:Inventory_items')(inv);
+        inventorySort.currentMode = 'ask';
+        await inventorySort.applyCurrentSort();
+        await vi.advanceTimersByTimeAsync(0);
+        const items = itemsByHrid(inv);
+        expect(items.get('c2').style.order).toBe('0');
+
+        // The badge manager repriced (value source change or the game's value refresh)
+        items.get('c1').dataset.askValue = '50';
+        badgeManager.onRepriced();
+
+        expect(items.get('c1').style.order).toBe('0');
+        expect(items.get('c2').style.order).toBe('1');
     });
 
     test('a categoryButton outside the current inventory element is ignored', async () => {

@@ -6,6 +6,12 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Leftover fixes: party export, storage-full recovery, +13 badges
+
+- The single-character sim export keeps your teammates when exported mid-dungeon.
+- Recording resumes on its own once a save succeeds after storage filled up, with no reload needed.
+- Inventory badges and sort price items the same way net worth does when it uses the game's official values.
+
 ### Inventory value badges follow the text size
 
 - The stack-value badges on inventory items now follow the Toolasha text size and font. The ask/bid price badges follow the font and shrink with smaller sizes, but don't grow, since two of them share a row.

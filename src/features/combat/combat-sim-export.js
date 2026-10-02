@@ -32,6 +32,36 @@ function sameCharacterId(left, right) {
 }
 
 /**
+ * Whether `characterObj` is the character this game page is logged in as, by id. Bridged data on a
+ * simulator page has no current character, so it is never live there.
+ * @param {Object} characterObj - Character data object
+ * @returns {boolean}
+ */
+function isLiveCharacter(characterObj) {
+    return (
+        !!dataManager.characterData &&
+        sameCharacterId(dataManager.getCurrentCharacterId?.(), characterObj?.character?.id)
+    );
+}
+
+/**
+ * The party roster to export. The game freezes `partyInfo.partySlotMap` at login and empties it for
+ * a whole battle, so the live character reads the roster the data manager captured from `new_battle`;
+ * bridged data keeps its own slot map. Only `characterID` and `characterName` are read from a member.
+ * A one-member roster is a solo fight, not a party.
+ * @param {Object} characterObj - Character data object
+ * @returns {Array<{characterID: string, characterName?: string}>|null} Members, or null when not in a party
+ */
+function getExportPartyMembers(characterObj) {
+    if (isLiveCharacter(characterObj)) {
+        const members = dataManager.getPartyMembers?.().members || [];
+        return members.length > 1 ? members : null;
+    }
+    const slots = characterObj.partyInfo?.partySlotMap;
+    return slots ? Object.values(slots) : null;
+}
+
+/**
  * Reason the most recent ownership-checked GM-bridged read was refused, or null if the last
  * checked read was clean (matched owner, legacy/unstamped, or merely stale).
  * @returns {string|null}
@@ -844,9 +874,9 @@ export async function constructExportObject(externalProfileId = null, singlePlay
     let yourSlotIndex = 1; // Track which slot contains YOUR data (for party mode)
 
     // Check if in party
-    const hasParty = characterObj.partyInfo?.partySlotMap;
+    const partyMembers = getExportPartyMembers(characterObj);
 
-    if (!hasParty) {
+    if (!partyMembers) {
         exportObj[1] = JSON.stringify(constructSelfPlayer(characterObj, clientObj));
         playerIDs[0] = characterObj.character?.name || 'Player 1';
         importedPlayerPositions[0] = true;
@@ -870,7 +900,7 @@ export async function constructExportObject(externalProfileId = null, singlePlay
         }
     } else {
         let slotIndex = 1;
-        for (const member of Object.values(characterObj.partyInfo.partySlotMap)) {
+        for (const member of partyMembers) {
             if (member.characterID) {
                 if (sameCharacterId(member.characterID, characterObj.character.id)) {
                     // This is you
@@ -908,9 +938,15 @@ export async function constructExportObject(externalProfileId = null, singlePlay
         // Smaller parties fit within the sim's default 3-slot mode without needing dungeon toggle.
         isParty = slotIndex - 1 === 5;
 
-        // Get party zone and tier
-        zone = characterObj.partyInfo?.party?.actionHrid || '/actions/combat/fly';
-        difficultyTier = characterObj.partyInfo?.party?.difficultyTier || 0;
+        // Get party zone and tier. The login-time `party` is as stale as the slot map: for the live
+        // character the running combat action wins, and `party` is only the fallback (and all a bridged
+        // export has)
+        const running = isLiveCharacter(characterObj)
+            ? runningCombatAction(dataManager.getCurrentActions?.(), { includeFinished: true })
+            : null;
+        const loginParty = characterObj.partyInfo?.party;
+        zone = running?.actionHrid || loginParty?.actionHrid || '/actions/combat/fly';
+        difficultyTier = running ? running.difficultyTier || 0 : loginParty?.difficultyTier || 0;
         isZoneDungeon = clientObj?.actionDetailMap?.[zone]?.combatZoneInfo?.isDungeon || false;
     }
 
