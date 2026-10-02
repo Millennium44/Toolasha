@@ -37,7 +37,7 @@ import config from '../../core/config.js';
 import dataManager from '../../core/data-manager.js';
 import domObserver from '../../core/dom-observer.js';
 import webSocketHook from '../../core/websocket.js';
-import { formatKMB, numberFormatter, formatDateTime } from '../../utils/formatters.js';
+import { formatLargeNumber, numberFormatter, formatDateTime } from '../../utils/formatters.js';
 import { createPanel, panelNote } from '../../utils/simple-panel.js';
 import { toCsv, csvFilename, downloadCsv } from '../../utils/csv-export.js';
 import { registerCommand, unregisterCommand } from '../../utils/command-registry.js';
@@ -328,7 +328,7 @@ function cell(text, color = '#e8ecf5') {
  */
 function pairCell(ask, bid) {
     if (!ask && !bid) return cell('—', ROW_COLORS.dim);
-    return cell(`${formatKMB(ask)} / ${formatKMB(bid)}`, ROW_COLORS.gold);
+    return cell(`${formatLargeNumber(ask, 1)} / ${formatLargeNumber(bid, 1)}`, ROW_COLORS.gold);
 }
 
 /**
@@ -356,11 +356,11 @@ function xpCell(view) {
         line.appendChild(icon);
 
         const rate = document.createElement('span');
-        rate.textContent = `${formatKMB(xp.perHour)}/hr`;
+        rate.textContent = `${formatLargeNumber(xp.perHour, 1)}/hr`;
         rate.style.color = ROW_COLORS.accent;
 
         const total = document.createElement('span');
-        total.textContent = ` (${formatKMB(xp.amount)})`;
+        total.textContent = ` (${formatLargeNumber(xp.amount, 1)})`;
         total.style.color = ROW_COLORS.dim;
 
         line.append(rate, total);
@@ -384,7 +384,7 @@ function xpCell(view) {
         label.style.color = ROW_COLORS.dim;
 
         const rate = document.createElement('span');
-        rate.textContent = `${formatKMB(view.totalXpPerHour)}/hr`;
+        rate.textContent = `${formatLargeNumber(view.totalXpPerHour, 1)}/hr`;
         Object.assign(rate.style, { color: ROW_COLORS.accent, fontWeight: 'bold' });
 
         line.append(label, rate);
@@ -566,7 +566,7 @@ function drawFooter(body, views) {
     left.textContent = `${numberFormatter(totalActions)} actions over ${shortDuration(totalMs / 1000)}`;
 
     const right = document.createElement('span');
-    right.textContent = `Total value (ask/bid): ${formatKMB(ask)} / ${formatKMB(bid)}`;
+    right.textContent = `Total value (ask/bid): ${formatLargeNumber(ask, 1)} / ${formatLargeNumber(bid, 1)}`;
     right.style.color = ROW_COLORS.gold;
 
     footer.append(left, right);

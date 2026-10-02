@@ -472,9 +472,16 @@ export function resolveItemPrice(itemHrid, options = {}) {
     // got its craft-cost fallback quoted at ask, overstating cost for exactly the
     // items with no order book at all, and skewing the craft-vs-buy comparison
     // for upgrade items to boot.
-    const prodCost = getProductionCost(itemHrid, mode || getPricingMode(context, side));
-    if (prodCost > 0) {
-        return { price: prodCost, custom: false, missing: false, estimated: true };
+    //
+    // Only for +0. A craft yields a +0 item, so for an enhanced level it is the price
+    // of a different thing: quoting it would present a +10 piece at its base craft cost.
+    // An enhanced level with no listing stays unpriced and the caller decides (e.g. base
+    // price plus enhancement materials).
+    if (enhancementLevel === 0) {
+        const prodCost = getProductionCost(itemHrid, mode || getPricingMode(context, side));
+        if (prodCost > 0) {
+            return { price: prodCost, custom: false, missing: false, estimated: true };
+        }
     }
 
     // 5. No price found — null, so a caller that forgets to check `missing`

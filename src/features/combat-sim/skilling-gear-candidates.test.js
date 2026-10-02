@@ -52,7 +52,7 @@ const ITEMS = {
         { milkingSpeed: 0.9 },
         {
             name: 'Locked Brush',
-            levelRequirements: [{ levelTypeHrid: '/level_types/milking', level: 120 }],
+            levelRequirements: [{ skillHrid: '/skills/milking', level: 120 }],
         }
     ),
 };
