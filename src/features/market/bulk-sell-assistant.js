@@ -214,6 +214,19 @@ export function loadoutHoldKeys() {
     return keys;
 }
 
+/**
+ * The enhancement level an item tile or item menu shows, 0 when it shows none. The game renders the
+ * level span in a menu header whether or not the item is enhanced, empty for +0, so its presence alone
+ * says nothing.
+ * @param {Element} root
+ * @returns {number}
+ */
+function shownEnhancementLevel(root) {
+    const text = root?.querySelector('[class*="Item_enhancementLevel"]')?.textContent || '';
+    const match = text.match(/\+\s*(\d+)/);
+    return match ? parseInt(match[1], 10) : 0;
+}
+
 class BulkSellAssistant {
     constructor() {
         this.isInitialized = false;
@@ -1145,9 +1158,10 @@ class BulkSellAssistant {
     _vendorConfirmTarget() {
         const menu = document.querySelector('[class*="Item_actionMenu"]');
         if (!menu) return { why: 'the item menu is not open' };
-        // The vendor path only opens +0 stacks, so an enhanced step or an
-        // enhancement marker in the menu is a sale this guard did not queue
-        if ((this.current.enhancementLevel || 0) !== 0 || menu.querySelector('[class*="Item_enhancementLevel"]')) {
+        // The vendor path only opens +0 stacks, so an enhanced step or a menu
+        // showing a level is a sale this guard did not queue. The menu header
+        // always carries the level span, empty for a +0 item, so only its text counts
+        if ((this.current.enhancementLevel || 0) !== 0 || shownEnhancementLevel(menu) > 0) {
             return { why: 'the item menu is for an enhanced item, not the queued +0 stack' };
         }
 
@@ -1807,7 +1821,7 @@ class BulkSellAssistant {
             const href = container.querySelector('svg use')?.getAttribute('href') || '';
             if (!href.endsWith(`#${iconName}`)) continue;
             // Vendor path only runs for +0 items — skip enhanced variants
-            if (container.querySelector('[class*="Item_enhancementLevel"]')) continue;
+            if (shownEnhancementLevel(container) > 0) continue;
             tile = container;
             break;
         }

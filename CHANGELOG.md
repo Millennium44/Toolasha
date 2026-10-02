@@ -10,6 +10,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 - The stack-value badges on inventory items now follow the Toolasha text size and font. The ask/bid price badges follow the font and shrink with smaller sizes, but don't grow, since two of them share a row.
 
+### Bulk Sell vendor sales work again
+
+- Selling to the vendor no longer stops at "the item menu is for an enhanced item" for ordinary unenhanced items.
+
 ### Audit round: page-close saves, text size and net worth
 
 - Closing a tab while a save is in progress no longer loses everything else waiting to be saved.
