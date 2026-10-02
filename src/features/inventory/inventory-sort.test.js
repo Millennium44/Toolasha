@@ -798,4 +798,21 @@ describe('InventorySort.renderPriceBadge — first draw matches the update path'
         expect(badge.textContent).toBe('43000000');
         tile.remove();
     });
+
+    test('a badge sizes and sets its font from the Toolasha text variables, capped, and is plain 0.7rem at zoom 1', () => {
+        const tile = document.createElement('div');
+        const inner = document.createElement('div');
+        inner.className = 'Item_item__abc';
+        tile.appendChild(inner);
+        document.body.appendChild(tile);
+
+        inventorySort.renderPriceBadge(tile, 43_000_000);
+
+        const css = tile.querySelector('.mwi-stack-price').style.cssText;
+        expect(css).toContain('--toolasha-text-zoom, 1');
+        expect(css).toContain('min(');
+        expect(css).toContain('1.25');
+        expect(css).toContain('--toolasha-font-stack');
+        tile.remove();
+    });
 });

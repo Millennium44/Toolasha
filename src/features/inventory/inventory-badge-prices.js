@@ -8,6 +8,7 @@ import config from '../../core/config.js';
 import domObserver from '../../core/dom-observer.js';
 import marketAPI from '../../api/marketplace.js';
 import { formatKMB } from '../../utils/formatters.js';
+import { tileBadgeFontCSS } from '../../utils/tile-badge-text.js';
 import dataManager from '../../core/data-manager.js';
 import inventoryBadgeManager from './inventory-badge-manager.js';
 import { BADGE_MODE_SETTING, showsItemPriceBadges } from './inventory-badge-mode.js';
@@ -220,7 +221,7 @@ class InventoryBadgePrices {
             ${isAsk ? 'left: 2px;' : 'right: 2px;'}
             z-index: 1;
             color: ${color};
-            font-size: 0.7rem;
+            ${tileBadgeFontCSS(0.7)}
             font-weight: bold;
             text-align: ${isAsk ? 'left' : 'right'};
             pointer-events: none;
