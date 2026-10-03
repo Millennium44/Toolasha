@@ -22,6 +22,7 @@ const game = vi.hoisted(() => ({
     readGate: null,
     requests: 0,
     fiberTouched: 0,
+    activeSocket: 'socket-a',
 }));
 
 vi.mock('../../core/config.js', () => ({
@@ -45,6 +46,7 @@ vi.mock('../../core/data-manager.js', () => ({
             if (game.dm[event] === handler) delete game.dm[event];
         },
         emit: (event, data) => game.dm[event]?.(data),
+        isFromActiveSocket: (context) => context?.socket === game.activeSocket,
     },
 }));
 vi.mock('../../core/websocket.js', () => ({
@@ -104,6 +106,10 @@ const rows = (counts) =>
         tierData: JSON.stringify({ 0: count }),
     }));
 
+/** The delivery context of a message from the active character's socket */
+const ACTIVE = { socket: 'socket-a' };
+const STALE = { socket: 'socket-old' };
+
 const tick = () => new Promise((resolve) => setTimeout(resolve, 0));
 
 /** A real reading, as the Achievements tab or the sim's fetch causes */
@@ -115,21 +121,24 @@ const reading = async (counts) => {
 };
 
 /** A wave of the given monsters, solo unless more players are named */
-const wave = (names, players = 1) => {
-    game.wire.new_battle({
-        monsters: Object.fromEntries(
-            names.map((name, i) => [
-                String(i),
-                { hrid: `/monsters/${name}`, currentHitpoints: 100, combatDetails: { maxHitpoints: 100 } },
-            ])
-        ),
-        players: Object.fromEntries(Array.from({ length: players }, (_, i) => [String(i), { name: `p${i}` }])),
-    });
+const wave = (names, players = 1, context = ACTIVE) => {
+    game.wire.new_battle(
+        {
+            monsters: Object.fromEntries(
+                names.map((name, i) => [
+                    String(i),
+                    { hrid: `/monsters/${name}`, currentHitpoints: 100, combatDetails: { maxHitpoints: 100 } },
+                ])
+            ),
+            players: Object.fromEntries(Array.from({ length: players }, (_, i) => [String(i), { name: `p${i}` }])),
+        },
+        context
+    );
 };
 
 /** Kill the monster in a slot, as a compact tick shows it */
-const kill = async (slot = 0) => {
-    game.wire.battle_updated({ mMap: { [slot]: { cHP: 0 } } });
+const kill = async (slot = 0, context = ACTIVE) => {
+    game.wire.battle_updated({ mMap: { [slot]: { cHP: 0 } } }, context);
     await tick();
 };
 
@@ -183,6 +192,23 @@ describe('bestiary points alerts', () => {
 
         await kill(1);
         expect(game.notified).toHaveLength(1);
+    });
+
+    test('combat messages from a stale socket add no credit', async () => {
+        await reading({ fly: 9 });
+        await alerts.initialize();
+
+        wave(['fly'], 1, STALE); // the old socket's wave is not remembered
+        await kill(0, STALE);
+        expect(alerts.estimatedCounts()).toEqual({ '/monsters/fly': 9 });
+
+        wave(['fly']);
+        await kill(0, STALE); // a tick from the stale socket does not credit the active wave
+        expect(alerts.estimatedCounts()).toEqual({ '/monsters/fly': 9 });
+        expect(game.notified).toHaveLength(0);
+
+        await kill();
+        expect(alerts.estimatedCounts()).toEqual({ '/monsters/fly': 10 });
     });
 
     test('a slot is one kill however many ticks show it at zero', async () => {
@@ -297,7 +323,7 @@ describe('bestiary points alerts', () => {
             release = resolve;
         });
         wave(['fly']);
-        game.wire.battle_updated({ mMap: { 0: { cHP: 0 } } }); // would cross for character A
+        game.wire.battle_updated({ mMap: { 0: { cHP: 0 } } }, ACTIVE); // would cross for character A
         game.characterId = 'char-b';
         game.monsters = null;
         release();

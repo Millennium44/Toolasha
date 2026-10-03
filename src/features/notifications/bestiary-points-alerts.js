@@ -124,8 +124,13 @@ class BestiaryPointsAlerts {
             this.handlers.push(() => dataManager.off(event, handler));
         };
         const onWire = (event, handler) => {
-            webSocketHook.on(event, handler);
-            this.handlers.push(() => webSocketHook.off(event, handler));
+            // A combat message from a socket that is not the active character's is not this character's kill
+            const fromActive = (data, context) => {
+                if (dataManager.isFromActiveSocket?.(context) === false) return;
+                handler(data);
+            };
+            webSocketHook.on(event, fromActive);
+            this.handlers.push(() => webSocketHook.off(event, fromActive));
         };
         const guard = (name, fn) => (data) => {
             try {
