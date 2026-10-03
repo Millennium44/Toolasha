@@ -251,6 +251,47 @@ describe('finding the exchange in client data', () => {
 
         expect(readTokenCreditExchange()).toEqual({ exchanges: [], source: 'unknown' });
     });
+
+    test('the off switch keeps captured shop rates unpriced', () => {
+        game.settings = { guildTokenCreditRate: 0 };
+        game.captured = [
+            {
+                creditItemHrid: '/items/green_guild_credit',
+                creditsPerToken: 10,
+                tokensPerExchange: 1,
+                creditsPerExchange: 10,
+            },
+        ];
+
+        expect(readTokenCreditExchange()).toEqual({ exchanges: [], source: 'unknown' });
+    });
+
+    test('the off switch also suppresses all eight rates published by the actual token item', () => {
+        game.settings = { guildTokenCreditRate: 0 };
+        // The token's eight conversion rows from the captured test-client DTO.
+        game.clientData = {
+            itemDetailMap: {
+                '/items/guild_token': {
+                    hrid: '/items/guild_token',
+                    name: 'Guild Token',
+                    categoryHrid: '/item_categories/currency',
+                    guildCreditConversions: [
+                        { creditItemHrid: '/items/green_guild_credit', itemCount: 1, creditCount: 10 },
+                        { creditItemHrid: '/items/brown_guild_credit', itemCount: 1, creditCount: 10 },
+                        { creditItemHrid: '/items/white_guild_credit', itemCount: 1, creditCount: 10 },
+                        { creditItemHrid: '/items/blue_guild_credit', itemCount: 1, creditCount: 10 },
+                        { creditItemHrid: '/items/purple_guild_credit', itemCount: 1, creditCount: 1 },
+                        { creditItemHrid: '/items/red_guild_credit', itemCount: 1, creditCount: 1 },
+                        { creditItemHrid: '/items/silver_guild_credit', itemCount: 10, creditCount: 1 },
+                        { creditItemHrid: '/items/gold_guild_credit', itemCount: 60, creditCount: 1 },
+                    ],
+                },
+            },
+        };
+
+        expect(exchangesFromClientData(game.clientData)).toHaveLength(8);
+        expect(readTokenCreditExchange()).toEqual({ exchanges: [], source: 'unknown' });
+    });
 });
 
 describe('goldPerGuildToken', () => {

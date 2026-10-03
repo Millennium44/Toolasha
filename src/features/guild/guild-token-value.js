@@ -20,7 +20,9 @@
  *
  * ## Where the exchange rate comes from
  *
- * Three sources, in order, and each one that answers stops the search.
+ * Three sources, in order, and each one that answers stops the search. The
+ * setting's explicit zero is checked first as an opt-out, so it can suppress
+ * even a client or dialog reading.
  *
  * **The client's own data**, if it publishes the exchange anywhere. Four shapes
  * are probed, because which one the game uses — if it uses any — has not been
@@ -277,6 +279,11 @@ export function exchangesFromClientData(clientData) {
  *   (`'client'`, `'captured'`, `'setting'`, or `'unknown'` when nothing is priceable)
  */
 export function readTokenCreditExchange({ clientData, capturedExchanges, getSetting } = {}) {
+    const read = getSetting || ((key, fallback) => config.getSettingValue?.(key, fallback) ?? fallback);
+    const rate = Number(read(TOKEN_CREDIT_RATE_SETTING, DEFAULT_TOKEN_CREDIT_RATE));
+    // Zero is the explicit off switch, even when a live or captured rate exists.
+    if (rate === 0) return { exchanges: [], source: 'unknown' };
+
     const data = clientData || dataManager.getInitClientData?.() || {};
     const fromClient = exchangesFromClientData(data);
     if (fromClient.length > 0) return { exchanges: fromClient, source: 'client' };
@@ -288,9 +295,7 @@ export function readTokenCreditExchange({ clientData, capturedExchanges, getSett
         return { exchanges: fromDialog.map((exchange) => ({ ...exchange, via: 'captured' })), source: 'captured' };
     }
 
-    const read = getSetting || ((key, fallback) => config.getSettingValue?.(key, fallback) ?? fallback);
-    const rate = Number(read(TOKEN_CREDIT_RATE_SETTING, DEFAULT_TOKEN_CREDIT_RATE));
-    // Zero is the off switch, not a rate: it puts callers back on a bare count
+    // Invalid or negative settings are not rates either.
     if (!Number.isFinite(rate) || rate <= 0) return { exchanges: [], source: 'unknown' };
 
     return { exchanges: [{ creditItemHrid: null, creditsPerToken: rate, via: 'setting' }], source: 'setting' };

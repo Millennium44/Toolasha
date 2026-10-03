@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Guild Token valuation honors its off switch
+
+- Setting the Guild Token credit rate to zero now leaves tokens unpriced even when exchange rates are available from game data or captured from the Guild Shop.
+
 ### Ability book costs distinguish missing prices
 
 - The Item Dictionary's ability book calculator now says when an ask or bid quote is missing instead of presenting an unpriced book as free.
