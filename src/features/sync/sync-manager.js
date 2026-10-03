@@ -108,12 +108,55 @@ const KEY_MERGE_HELD = 'toolasha_sync_mergeHeld';
 const KEY_CHUNK_COUNT = 'toolasha_sync_chunkCount';
 
 /**
+ * The last gist version this device saw: `{gistId, etag, files, current}`.
+ *
+ * `etag` and `files` (size by file name) always come from the same response,
+ * so a 304 to a conditional request proves the gist still holds exactly those
+ * files — which is what lets a push skip downloading the whole gist to learn
+ * which chunks are orphans.
+ *
+ * `current` says more: this device's data already reflects that version,
+ * because it pushed it or pulled it to a conclusion ("not newer", or a complete
+ * apply). Only then may a silent pull send the ETag and take a 304 as "nothing
+ * to do". A pull that stood down, failed to decrypt or applied partly leaves
+ * it false, so the next one downloads and tries again.
+ */
+const KEY_GIST_VERSION = 'toolasha_sync_gistVersion';
+
+/**
  * How often auto-sync considers pushing.
  *
  * Long, on purpose. Each tick rebuilds the payload to fingerprint it, which for
  * the `everything` scope is a full database read; doing that every minute would
  * be a visible stutter in exchange for freshness nobody asked for.
  */
+/**
+ * What this tab's sync did and why, newest last: leadership changes, the schedule starting, and every
+ * operation's outcome. Silent ticks report nothing on screen — `another-tab`, `busy`, `unchanged`,
+ * `not-modified` — so this is the only record of why an automatic sync made no request.
+ * Read it from the console with `Toolasha.debug.syncTrace()`.
+ */
+const syncTrace = [];
+const SYNC_TRACE_LIMIT = 100;
+
+/**
+ * Record one sync event for `getSyncTrace`.
+ * @param {string} event - What happened
+ * @param {Object} [detail] - Anything that says why
+ */
+function traceSync(event, detail = {}) {
+    syncTrace.push({ at: new Date().toISOString(), event, ...detail });
+    if (syncTrace.length > SYNC_TRACE_LIMIT) syncTrace.shift();
+}
+
+/**
+ * This tab's recent sync events, oldest first.
+ * @returns {Array<Object>} A copy of the trace
+ */
+export function getSyncTrace() {
+    return syncTrace.map((entry) => ({ ...entry }));
+}
+
 export const AUTO_PUSH_INTERVAL_MS = 15 * 60 * 1000;
 
 /** How long after a character switch the on-switch push waits for the dust. */
@@ -122,8 +165,9 @@ const SWITCH_PUSH_DELAY_MS = 5 * 1000;
 /**
  * Startup pulls, staggered. One pull twenty seconds in raced the handoff: a
  * phone logging in pulls before the tab it kicked has finished pushing, and
- * misses it by seconds. The retries are nearly free — a pull whose remote is
- * not newer stops at the manifest read.
+ * misses it by seconds. The retries are nearly free when the gist has not
+ * changed: a silent pull of a version this device already has is a conditional
+ * request that GitHub answers 304, with no body (see KEY_GIST_VERSION).
  */
 const STARTUP_PULL_DELAYS_MS = [20 * 1000, 80 * 1000, 200 * 1000];
 
@@ -138,6 +182,12 @@ const AUTO_PULL_OFFSET_MS = Math.floor(AUTO_PUSH_INTERVAL_MS / 2);
  */
 let lastCharacterId = null;
 
+/**
+ * Web Lock held by the one tab that runs the automatic schedule. Separate from
+ * the `toolasha-sync` operation lock, which every push and pull takes briefly.
+ */
+const LEADER_LOCK = 'toolasha-sync-leader';
+
 /** A sync busy longer than this is wedged, and a new one may take over. */
 const BUSY_STUCK_MS = 5 * 60 * 1000;
 
@@ -147,6 +197,10 @@ class SyncManager {
         this.busy = false;
         this.isInitialized = false;
         this.settingListeners = [];
+        /** This tab's claim on {@link LEADER_LOCK}, held or queued; null when none */
+        this.leadership = null;
+        /** Whether this tab currently runs the automatic schedule under the leader lock */
+        this.isLeader = false;
     }
 
     /**
@@ -159,7 +213,9 @@ class SyncManager {
         this.isInitialized = true;
 
         const restart = () => {
+            traceSync('restart', { enabled: config.getSetting('sync_enabled', false) });
             this.timers.clearAll();
+            this._releaseLeadership();
             this.handoffUnregister?.();
             this.handoffUnregister = null;
             this._startAuto();
@@ -234,7 +290,10 @@ class SyncManager {
         this.handoffUnregister?.();
         this.handoffUnregister = null;
         this.handoffPushed = false;
+        // Timers first: a waiting tab takes the schedule over as soon as the
+        // leader lock goes, and this tab's intervals must already be dead
         this.timers.clearAll();
+        this._releaseLeadership();
         for (const [key, callback] of this.settingListeners) config.offSettingChange(key, callback);
         this.settingListeners = [];
         this.isInitialized = false;
@@ -391,17 +450,17 @@ class SyncManager {
 
         // Last check before the write that actually reaches GitHub. Nothing
         // between the top of this method and here normally takes long enough
-        // for a takeover to happen without the dialog above, but a `fetch`
-        // fallback (no GM manager) has no timeout of its own and can hang
-        // indefinitely — the same "wedged" shape, just without a dialog to
-        // point at.
+        // for a takeover to happen without the dialog above, but a stalled
+        // storage read or a gist resolution waiting out its request timeout
+        // is the same "wedged" shape, just without a dialog to point at.
         if (!this._stillOwns(opToken)) return this._supersededResult(silent, 'push', opToken);
 
         // Another tab's pull may have held records back while this payload was
         // being built. The check at the top is too early to cover that.
         if (await storage.get(KEY_MERGE_HELD, STORE, null)) return this._heldBackResult(silent);
 
-        const written = await writeSyncGist(token, gistId, manifest, chunks, previousChunks);
+        const known = await this._knownVersion(gistId);
+        const written = await writeSyncGist(token, gistId, manifest, chunks, previousChunks, known);
 
         // The upload already landed — that part cannot be undone or is not
         // worth undoing, since the takeover's own more-recent write (if any)
@@ -412,7 +471,17 @@ class SyncManager {
         // unsynced again.
         if (!this._stillOwns(opToken)) return this._supersededResult(silent, 'push', opToken);
 
-        await this._remember({ gistId: written.id, exportedAt, hash, chunkCount: chunks.length, syncSeq });
+        await this._remember({
+            gistId: written.id,
+            exportedAt,
+            hash,
+            chunkCount: chunks.length,
+            syncSeq,
+            // The write's own response describes the version it produced, which
+            // is this device's data by construction. No ETag, no claim: the
+            // next read then downloads in full, as it always did.
+            version: gistVersion(written.id, written.etag, written.files, true),
+        });
         await rememberLocal({ [KEY_LAST_PUSHED_AT]: exportedAt });
 
         if (!silent) {
@@ -465,8 +534,19 @@ class SyncManager {
             return { ok: true, skipped: true, reason: 'no-gist' };
         }
 
-        const remote = await readSyncGist(token, gistId);
+        // A silent pull asks GitHub whether the gist moved before downloading
+        // it. Held-back records are the exception: they wait on a re-read of
+        // the very version this device already has.
+        const known = await this._knownVersion(gistId);
+        const conditional =
+            silent && known?.current && !(await storage.get(KEY_MERGE_HELD, STORE, null)) ? known.etag : null;
+        const remote = await readSyncGist(token, gistId, conditional ? { etag: conditional } : undefined);
         if (!this._stillOwns(opToken)) return this._supersededResult(silent, 'pull', opToken);
+        if (remote.notModified) return { ok: true, skipped: true, reason: 'not-modified' };
+        // What this download proves about the gist's file set, whatever this
+        // pull goes on to decide. It stays `current` only if it already was;
+        // the outcomes below that settle the content upgrade it.
+        const seen = gistVersion(gistId, remote.etag, remote.files, known?.current && known.etag === remote.etag);
         const manifest = remote.manifest;
         let payload = remote.payload;
 
@@ -503,6 +583,8 @@ class SyncManager {
         const retryHeld = held?.exportedAt === remoteAt && held?.hash === contentHash(payload);
 
         if (!retryHeld && !isNewer(remoteAt, lastSyncedAt, remoteSeq, lastSeq)) {
+            // Settled: nothing in this version is news to this device
+            if (seen) await rememberLocal({ [KEY_GIST_VERSION]: { ...seen, current: true } });
             if (!silent) showToast('Already up to date with GitHub.');
             return { ok: true, skipped: true, reason: 'not-newer' };
         }
@@ -530,6 +612,9 @@ class SyncManager {
             // stops until I reload" report. Unattended pulls stand down and
             // leave the decision to a human-initiated sync.
             if (silent) {
+                // Not settled, so not `current`: the next silent pull downloads
+                // again. The listing is still true, and the next push uses it.
+                if (seen) await rememberLocal({ [KEY_GIST_VERSION]: seen });
                 console.warn('[Sync] Startup pull found both sides changed; leaving it for a manual sync.');
                 return { ok: true, skipped: true, reason: 'conflict' };
             }
@@ -563,9 +648,9 @@ class SyncManager {
         }
 
         // Last check before the write that actually lands in IndexedDB. On the
-        // no-dialog path this only catches a `fetch` fallback (no GM manager,
-        // no timeout of its own) hanging long enough for a takeover — the same
-        // "wedged" shape as the dialog above, just without a dialog to point at.
+        // no-dialog path this catches a slow download or fingerprint taking
+        // long enough for a takeover — the same "wedged" shape as the dialog
+        // above, just without a dialog to point at.
         if (!this._stillOwns(opToken)) return this._supersededResult(silent, 'pull', opToken);
 
         const { merged, mergeFailed, mergeHeld, complete, failed, applied, expected } = await applyPayload(payload);
@@ -633,6 +718,9 @@ class SyncManager {
             // already has to avoid.
             syncSeq: advanceSeq(lastSeq, remoteSeq),
             mergeHeld: pendingHeld,
+            // Applied whole, this version is now this device's. Held-back
+            // records mean it is not yet, and the retry must re-download it.
+            version: seen ? { ...seen, current: !pendingHeld } : null,
         });
 
         // Every figure below comes out of the apply result; nothing here re-reads
@@ -718,6 +806,7 @@ class SyncManager {
             // is exactly the check that decides whether a first push stops to ask.
             [KEY_LAST_PUSHED_AT]: null,
             [KEY_MERGE_HELD]: null,
+            [KEY_GIST_VERSION]: null,
         });
     }
 
@@ -758,17 +847,111 @@ class SyncManager {
 
     /**
      * Start (or decline to start) the automatic schedule.
+     *
+     * One tab per browser runs it. Every tab used to run its own, so four
+     * characters open meant four quarter-hourly pushes and four silent pulls of
+     * one and the same device-wide database — the operation lock only stopped
+     * them overlapping. The leader is whichever tab holds the
+     * {@link LEADER_LOCK} Web Lock; the others queue on it, and the browser
+     * hands it to one of them when the leader's tab closes or its feature is
+     * cleaned up. Without Web Locks every tab schedules, as before.
      * @private
      */
     _startAuto() {
         if (!config.getSetting('sync_auto', false) || !this.isConfigured()) return;
 
+        // Every tab that starts pulls a few times early, leader or not: a tab opened on a character another
+        // device just handed off must collect that handoff now, not at the leader's next interval. Only
+        // the repeating schedule is the leader's. An unchanged gist answers these with an empty 304.
         for (const delay of STARTUP_PULL_DELAYS_MS) {
             this.timers.scheduleTimeout(() => {
                 this.pull({ silent: true });
             }, delay);
         }
 
+        const locks = typeof navigator !== 'undefined' ? navigator.locks : null;
+        if (typeof locks?.request !== 'function') {
+            this._scheduleAuto();
+            return;
+        }
+        this._requestLeadership(locks);
+    }
+
+    /**
+     * Queue for the leader lock, and run the automatic schedule while holding it.
+     *
+     * The lock is held by a promise that only `_releaseLeadership` settles, so
+     * leadership lasts until cleanup, a restart, or the tab going away. A
+     * request still queued at release is aborted, so a torn-down instance never
+     * becomes leader afterwards.
+     * @param {LockManager} locks - `navigator.locks`
+     * @private
+     */
+    _requestLeadership(locks) {
+        this._releaseLeadership();
+        const ticket = {};
+        const controller = typeof AbortController === 'function' ? new AbortController() : null;
+        let release;
+        const held = new Promise((resolve) => {
+            release = resolve;
+        });
+        this.leadership = { ticket, release, controller };
+
+        const options = controller ? { signal: controller.signal } : {};
+        // A lock manager that refuses outright (a SecurityError, an unsupported option) must not leave
+        // this tab with no schedule at all: it runs the schedule itself, as with no Web Locks
+        const unled = (error) => {
+            if (this.leadership?.ticket !== ticket || this.isLeader) return;
+            console.warn('[Sync] Could not take the sync-leader lock; this tab runs its own schedule:', error);
+            this.isLeader = true;
+            this._scheduleAuto();
+        };
+        let granted;
+        try {
+            traceSync('leader-requested');
+            granted = locks.request(LEADER_LOCK, options, async () => {
+                if (this.leadership?.ticket !== ticket) {
+                    traceSync('leader-granted-stale');
+                    return;
+                }
+                traceSync('leader-granted');
+                this.isLeader = true;
+                this._scheduleAuto();
+                await held;
+            });
+        } catch (error) {
+            unled(error);
+            return;
+        }
+        Promise.resolve(granted).catch((error) => {
+            // Aborted while queued is our own release, not a failure
+            if (error?.name === 'AbortError') return;
+            unled(error);
+        });
+    }
+
+    /**
+     * Give up leadership, or stop queueing for it. Timers are the caller's to
+     * clear; this only lets the lock go.
+     * @private
+     */
+    _releaseLeadership() {
+        const current = this.leadership;
+        if (current) traceSync('leader-released', { wasLeader: this.isLeader });
+        this.leadership = null;
+        this.isLeader = false;
+        if (!current) return;
+        current.release();
+        current.controller?.abort();
+    }
+
+    /**
+     * The leader's repeating schedule (the startup pulls are every tab's, see `_startAuto`): the push
+     * interval, and the silent-pull interval offset between pushes.
+     * @private
+     */
+    _scheduleAuto() {
+        traceSync('schedule-started');
         this.timers.registerInterval(
             setInterval(() => {
                 this.push({ silent: true });
@@ -848,20 +1031,40 @@ class SyncManager {
     /**
      * Record what this device now believes about the gist.
      * @param {{gistId: string, exportedAt: string, hash: string, chunkCount: number,
-     *   syncSeq?: number|null, mergeHeld?: Object|null}} state - New state. `syncSeq` is null for an exchange
-     *   with a gist that carries no counter, which must not invent one. `mergeHeld` is passed only by a
-     *   pull, which is the one exchange that can land or hold back records; a push leaves the marker alone.
+     *   syncSeq?: number|null, mergeHeld?: Object|null, version?: Object|null}} state - New state. `syncSeq`
+     *   is null for an exchange with a gist that carries no counter, which must not invent one. `mergeHeld`
+     *   is passed only by a pull, which is the one exchange that can land or hold back records; a push leaves
+     *   the marker alone. `version` is the gist version the exchange leaves behind (see KEY_GIST_VERSION).
      * @private
      */
-    async _remember({ gistId, exportedAt, hash, chunkCount, syncSeq = null, mergeHeld = undefined }) {
+    async _remember({ gistId, exportedAt, hash, chunkCount, syncSeq = null, mergeHeld = undefined, version }) {
         await rememberLocal({
             [KEY_GIST_ID]: gistId,
             [KEY_LAST_SYNCED_AT]: exportedAt,
             [KEY_LAST_HASH]: hash,
             [KEY_CHUNK_COUNT]: chunkCount,
             [KEY_LAST_SYNCED_SEQ]: syncSeq,
+            // In the same transaction as the stamp it vouches for: a version
+            // marked current with an older stamp beside it would let a 304
+            // skip a pull the stamp says is still owed
+            [KEY_GIST_VERSION]: version ?? null,
             ...(mergeHeld === undefined ? {} : { [KEY_MERGE_HELD]: mergeHeld }),
         });
+    }
+
+    /**
+     * The remembered gist version, if it is for this gist and well formed.
+     * @param {string|null} gistId - The gist about to be read or written
+     * @returns {Promise<{gistId: string, etag: string, files: Record<string, number>, current: boolean}|null>}
+     *   The version, or null
+     * @private
+     */
+    async _knownVersion(gistId) {
+        if (!gistId) return null;
+        const stored = await storage.get(KEY_GIST_VERSION, STORE, null);
+        if (!stored || stored.gistId !== gistId || typeof stored.etag !== 'string' || !stored.etag) return null;
+        if (!stored.files || typeof stored.files !== 'object') return null;
+        return stored;
     }
 
     /**
@@ -887,8 +1090,9 @@ class SyncManager {
     /**
      * Run a sync under a browser-wide lock, so tabs queue instead of racing.
      *
-     * Four characters open is four tabs on the same interval pushing the same
-     * gist, and GitHub answers the losers with 409s. The `busy` flag above is
+     * The automatic schedule runs in one tab (see `_startAuto`), but manual,
+     * character-switch and handoff syncs run in whichever tab asked, and two
+     * pushes to one gist at once get the loser a 409. The `busy` flag above is
      * per-tab; this is the cross-tab half, and it never waits: the lock is
      * taken only if free (a held lock is a sync running in another tab), and
      * Web Locks release on their own when a tab dies, so nothing can wedge it
@@ -974,6 +1178,21 @@ class SyncManager {
     }
 
     async _run(label, silent, operation) {
+        const outcome = await this._runUntraced(label, silent, operation);
+        traceSync(label, {
+            silent,
+            isLeader: this.isLeader,
+            ok: outcome?.ok,
+            reason: outcome?.reason ?? (outcome?.skipped ? 'skipped' : null),
+        });
+        return outcome;
+    }
+
+    /**
+     * `_run`'s body: the guards and the operation, without the trace entry.
+     * @private
+     */
+    async _runUntraced(label, silent, operation) {
         if (!config.getSetting('sync_enabled', false)) {
             if (!silent) showToast('Cross-device sync is turned off.', { kind: 'warn' });
             return { ok: false, reason: 'disabled' };
@@ -1133,6 +1352,20 @@ function verifyAgainstManifest(manifest, payload) {
             );
         }
     }
+}
+
+/**
+ * A gist version record (see KEY_GIST_VERSION), or null when the response did
+ * not carry what one needs.
+ * @param {string} gistId - Gist id
+ * @param {string|null|undefined} etag - The response's ETag
+ * @param {Record<string, number>|null|undefined} files - File sizes from the same response
+ * @param {boolean} current - This device's data already reflects this version
+ * @returns {{gistId: string, etag: string, files: Record<string, number>, current: boolean}|null} Record
+ */
+function gistVersion(gistId, etag, files, current) {
+    if (!gistId || typeof etag !== 'string' || !etag || !files || typeof files !== 'object') return null;
+    return { gistId, etag, files, current: Boolean(current) };
 }
 
 /**

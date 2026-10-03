@@ -6,15 +6,17 @@
  *
  * Two things drive the shape of this file.
  *
- * The first is that api.github.com is cross-origin. `api/marketplace.js` uses
- * plain `fetch`, but it only ever asks milkywayidle.com for its own JSON, so no
- * preflight and no CORS. GitHub's API does send permissive CORS headers, yet a
- * request carrying `Authorization` is still at the mercy of whatever CSP the
- * game page ships, and a userscript has no say in that. `GM_xmlhttpRequest`
- * bypasses both, and the script already grants it in the header — so that is
- * the primary path, with `GM.xmlHttpRequest` and finally `fetch` behind it so
- * the module is still testable and still works under a manager that only
- * exposes the promise-shaped API.
+ * The first is the transport. api.github.com is cross-origin, but GitHub
+ * answers with `Access-Control-Allow-Origin: *` and exposes the headers this
+ * file reads (ETag, Retry-After, X-RateLimit-*), and the game page ships no
+ * Content-Security-Policy — so a page `fetch` reaches it. That is the primary
+ * path for api.github.com, and it has to be: `GM_xmlhttpRequest` hands every
+ * request body to the userscript manager's background page, and Tampermonkey
+ * keeps it after the request completes. A sync push body is the whole backup,
+ * several megabytes, and Firefox was measured holding hundreds of them. The GM
+ * path remains the fallback when the page fetch throws (CORS, or a CSP the game
+ * might add later), and the only path for every other host, whose CORS nobody
+ * has checked.
  *
  * The second is that a gist file over 1 MB comes back from the API with its
  * `content` truncated and only a `raw_url` to show for it, and a gist over
@@ -27,7 +29,7 @@
  * it out of the thing being uploaded.
  */
 
-import { gmRequest, gmRequestAvailable } from '../../utils/gm-traffic.js';
+import { gmRequest, gmRequestAvailable, recordPageRequest } from '../../utils/gm-traffic.js';
 
 /** Manifest file name; also how an existing sync gist is recognised */
 export const MANIFEST_FILE = 'toolasha-sync.json';
@@ -90,6 +92,46 @@ function parseHeaders(raw) {
 }
 
 /**
+ * Hosts reached with a page `fetch` before the userscript manager is tried.
+ *
+ * Only hosts whose CORS answer has been measured belong here; a host that
+ * refuses the preflight would cost a failed fetch before every GM request.
+ */
+const PAGE_FETCH_HOSTS = new Set(['api.github.com']);
+
+/**
+ * Methods a failed page fetch may be replayed with through the manager: repeating them changes nothing.
+ * Not PATCH: a whole-gist write whose answer was lost may have landed, and replaying the same stale
+ * snapshot could overwrite a newer push another device made in between.
+ */
+const REPLAYABLE_METHODS = new Set(['GET', 'HEAD', 'DELETE']);
+
+/**
+ * Set once page fetches keep failing where the GM path reaches GitHub — CORS or a
+ * CSP, not the network — so later requests stop paying for a doomed fetch first.
+ * Module state: it lasts for the page. Falling back is what the leak was, so the
+ * latch is earned, not tripped: see `FETCH_FAILURES_TO_LATCH`.
+ */
+let pageFetchUnusable = false;
+
+/**
+ * Consecutive fetch failures that GM answered below 500, needed before the latch sets. One is a
+ * blip (a connection reset on wake); a CORS or CSP block repeats on every request. A 5xx is
+ * not counted: an error page from an edge carries no CORS header, so the fetch throws for the
+ * same reason GM gets the 5xx, and the page fetch is not to blame.
+ */
+const FETCH_FAILURES_TO_LATCH = 3;
+
+/** Fetch failures in a row that GM answered; any page fetch that succeeds resets it. */
+let fetchFailuresAnsweredByManager = 0;
+
+/** Tests only: forget a previous fallback. */
+export function resetTransportForTests() {
+    pageFetchUnusable = false;
+    fetchFailuresAnsweredByManager = 0;
+}
+
+/**
  * The cross-origin request function this environment actually has.
  * @returns {Function|null} A GM request function, or null to fall back to fetch
  */
@@ -98,11 +140,90 @@ function getGMRequest() {
 }
 
 /**
+ * Whether this URL goes to a host that is reached with a page fetch first.
+ * @param {string} url - Absolute URL
+ * @returns {boolean} True when the page fetch is tried before GM
+ */
+function prefersPageFetch(url) {
+    if (pageFetchUnusable || typeof fetch !== 'function') return false;
+    try {
+        return PAGE_FETCH_HOSTS.has(new URL(url).host);
+    } catch {
+        return false;
+    }
+}
+
+/**
+ * One request through the page's own `fetch`.
+ *
+ * A thrown fetch is either the network or the browser refusing the request
+ * (CORS, CSP); the two look the same from here, so the error carries
+ * `transportFailure` and `httpRequest` tells them apart by asking the GM path.
+ * A timeout carries no flag: the server was reached and did not answer, and the
+ * GM path would wait just as long.
+ *
+ * @param {Object} request - As for `httpRequest`
+ * @param {boolean} githubHost - Omit credentials and bypass the HTTP cache
+ * @returns {Promise<{status: number, text: string, headers: Record<string, string>}>} Response
+ */
+async function pageFetch({ method, url, headers, body, anonymous }, githubHost) {
+    const controller = typeof AbortController === 'function' ? new AbortController() : null;
+    let timedOut = false;
+    const timer = controller
+        ? setTimeout(() => {
+              timedOut = true;
+              controller.abort();
+          }, REQUEST_TIMEOUT_MS)
+        : null;
+    const sentBytes = typeof body === 'string' ? body.length : 0;
+    try {
+        const response = await fetch(url, {
+            method,
+            headers,
+            body,
+            // Authorization travels in its header only. github.com cookies are
+            // never wanted, and a `*` CORS answer refuses credentialed requests.
+            ...(anonymous || githubHost ? { credentials: 'omit' } : {}),
+            // GitHub marks gist responses cacheable for 60 s. A listing served
+            // from the browser cache can miss a chunk another device wrote a
+            // moment ago, and the orphan cleanup depends on that listing.
+            ...(githubHost ? { cache: 'no-store' } : {}),
+            ...(controller ? { signal: controller.signal } : {}),
+        });
+        const text = await response.text();
+        const collected = {};
+        response.headers?.forEach?.((value, name) => {
+            collected[String(name).toLowerCase()] = value;
+        });
+        recordPageRequest(url, sentBytes, text.length, false);
+        return { status: response.status, text, headers: collected };
+    } catch {
+        recordPageRequest(url, sentBytes, 0, true);
+        // The original error is not forwarded: a fetch failure message can
+        // contain the request URL, and the URL is the one place a caller could
+        // accidentally have put a token
+        if (timedOut) throw new GistError('offline', 'GitHub did not answer in time. Try again.');
+        throw new GistError('offline', 'Could not reach GitHub. Check your connection and try again.', {
+            transportFailure: true,
+        });
+    } finally {
+        if (timer) clearTimeout(timer);
+    }
+}
+
+/**
  * One HTTP request, whichever transport is available.
  *
  * Resolves for any status the server returned — including 401 and 403 — because
  * classifying those is `classify()`'s job and it needs the body. Rejects only
  * when nothing came back at all, which is what offline looks like from here.
+ *
+ * For api.github.com the page fetch goes first and the GM path is tried only
+ * when the fetch throws. An HTTP error status is an answer, never a reason to
+ * fall back: repeating a 409 through GM would double the request and put its
+ * body in the manager's memory, which is what the page fetch is there to stop.
+ * The fallback is remembered for the session only once GM succeeds where the
+ * fetch failed; a dead network fails both and leaves the page fetch in place.
  *
  * @param {Object} options - Request
  * @param {string} options.method - HTTP method
@@ -113,27 +234,61 @@ function getGMRequest() {
  * @returns {Promise<{status: number, text: string, headers: Record<string, string>}>} Response
  */
 export async function httpRequest({ method, url, headers = {}, body, anonymous = false }) {
-    const gmRequest = getGMRequest();
+    const request = { method, url, headers, body, anonymous };
+    const send = getGMRequest();
 
-    if (!gmRequest) {
-        // No userscript manager (tests, or a bare page). `fetch` is subject to
-        // the page's CSP, so this path can fail where the GM one would not.
-        try {
-            const response = await fetch(url, { method, headers, body, ...(anonymous ? { credentials: 'omit' } : {}) });
-            const text = await response.text();
-            const collected = {};
-            response.headers?.forEach?.((value, name) => {
-                collected[String(name).toLowerCase()] = value;
-            });
-            return { status: response.status, text, headers: collected };
-        } catch {
-            // Deliberately not forwarding the original error: a fetch failure
-            // message can contain the request URL, and the URL is the one place
-            // a caller could accidentally have put a token
-            throw new GistError('offline', 'Could not reach GitHub. Check your connection and try again.');
+    // No userscript manager (tests, or a bare page): fetch is all there is
+    if (!send) return pageFetch(request, prefersPageFetch(url));
+    if (!prefersPageFetch(url)) return managerRequest(send, request);
+
+    // A request that must not be sent twice goes straight to the manager when the last page fetch
+    // failed where the manager got through: trying the page first could only fail again, and that
+    // failure could not be replayed (see below)
+    const replayable = REPLAYABLE_METHODS.has(String(method).toUpperCase());
+    if (!replayable && fetchFailuresAnsweredByManager > 0) return managerRequest(send, request);
+
+    try {
+        const response = await pageFetch(request, true);
+        fetchFailuresAnsweredByManager = 0;
+        return response;
+    } catch (error) {
+        if (!error?.transportFailure) {
+            // A timeout, not a refusal: it says nothing about the page fetch, and breaks the run
+            fetchFailuresAnsweredByManager = 0;
+            throw error;
         }
+        // A fetch can fail after GitHub acted on it (the connection drops while the answer comes back).
+        // Replaying is safe for a read or a whole-gist overwrite, but a second POST creates a second
+        // gist, so a failed POST surfaces as the failure it is and the next sync starts over.
+        if (!replayable) throw error;
+        let response;
+        try {
+            response = await managerRequest(send, request);
+        } catch (managerError) {
+            // Neither got through: the network, not the page fetch. That breaks the run too.
+            fetchFailuresAnsweredByManager = 0;
+            throw managerError;
+        }
+        // A 5xx says nothing about the page fetch (see above) and breaks the run: three in a row means
+        // three in a row
+        fetchFailuresAnsweredByManager = response.status < 500 ? fetchFailuresAnsweredByManager + 1 : 0;
+        if (fetchFailuresAnsweredByManager >= FETCH_FAILURES_TO_LATCH) {
+            pageFetchUnusable = true;
+            console.warn(
+                '[GistClient] Page fetch to GitHub keeps failing where the userscript manager does not; using it.'
+            );
+        }
+        return response;
     }
+}
 
+/**
+ * One request through the userscript manager.
+ * @param {Function} send - The GM request function
+ * @param {Object} request - As for `httpRequest`
+ * @returns {Promise<{status: number, text: string, headers: Record<string, string>}>} Response
+ */
+function managerRequest(send, { method, url, headers, body, anonymous }) {
     return new Promise((resolve, reject) => {
         let settled = false;
         const finish = (fn, value) => {
@@ -142,7 +297,7 @@ export async function httpRequest({ method, url, headers = {}, body, anonymous =
             fn(value);
         };
 
-        gmRequest({
+        send({
             method,
             url,
             headers,
@@ -361,6 +516,28 @@ function classify(response) {
  * @returns {Promise<Object>} Parsed response body
  */
 async function apiCall(token, method, path, payload) {
+    const exchange = await apiExchange(token, method, path, {
+        body: payload === undefined ? undefined : JSON.stringify(payload),
+    });
+    return exchange.data;
+}
+
+/**
+ * An authenticated API call, with what the response said about itself.
+ *
+ * With `ifNoneMatch`, a 304 is an answer rather than a failure: the resource
+ * still has that ETag, and GitHub sends no body (and, for an authenticated
+ * request, does not count it against the rate limit).
+ *
+ * @param {string} token - GitHub personal access token
+ * @param {string} method - HTTP method
+ * @param {string} path - Path under the API root
+ * @param {Object} [options] - Options
+ * @param {string} [options.body] - Body, already serialized
+ * @param {string|null} [options.ifNoneMatch] - ETag for a conditional request
+ * @returns {Promise<{notModified: boolean, etag: string|null, data: Object|null}>} Outcome
+ */
+async function apiExchange(token, method, path, { body, ifNoneMatch = null } = {}) {
     if (!token) {
         throw new GistError('auth', 'No GitHub token is set. Add one in Settings → Cross-Device Sync.');
     }
@@ -374,19 +551,36 @@ async function apiCall(token, method, path, payload) {
             Accept: 'application/vnd.github+json',
             'X-GitHub-Api-Version': '2022-11-28',
             'Content-Type': 'application/json',
+            ...(ifNoneMatch ? { 'If-None-Match': ifNoneMatch } : {}),
         },
-        body: payload === undefined ? undefined : JSON.stringify(payload),
+        body,
     });
+    const etag = response.headers?.etag || null;
+
+    if (ifNoneMatch && response.status === 304) return { notModified: true, etag: etag || ifNoneMatch, data: null };
 
     if (response.status < 200 || response.status >= 300) {
         throw classify(response);
     }
 
     try {
-        return JSON.parse(response.text || '{}');
+        return { notModified: false, etag, data: JSON.parse(response.text || '{}') };
     } catch {
         throw new GistError('parse', 'GitHub sent a response this script could not read.');
     }
+}
+
+/**
+ * A gist's file names and sizes, without contents — what a remembered listing
+ * keeps, since that is all the orphan cleanup and the size guard read.
+ * @param {Record<string, Object>|undefined} files - The `files` of a gist response
+ * @returns {Record<string, number>|null} Size by file name, or null when there is no listing
+ */
+function fileSizes(files) {
+    if (!files || typeof files !== 'object') return null;
+    const sizes = {};
+    for (const [name, file] of Object.entries(files)) sizes[name] = Number(file?.size) || 0;
+    return sizes;
 }
 
 /**
@@ -465,12 +659,23 @@ export async function findSyncGist(token) {
  * can produce one, and losing half a backup silently is much worse than one
  * extra request.
  *
+ * With `etag`, the read is conditional: a gist that still has that ETag comes
+ * back as `{notModified: true}` with nothing downloaded. Every gist response
+ * carries every file's content, so this is the difference between a few hundred
+ * bytes and the whole backup.
+ *
  * @param {string} token - GitHub personal access token
  * @param {string} gistId - Gist id
- * @returns {Promise<{manifest: Object, payload: string, updatedAt: string}>} Reassembled contents
+ * @param {Object} [options] - Options
+ * @param {string|null} [options.etag] - ETag of a version this device already has
+ * @returns {Promise<{notModified?: boolean, manifest?: Object, payload?: string, updatedAt?: string,
+ *   etag: string|null, files?: Record<string, number>}>} Reassembled contents, the response's ETag, and the
+ *   gist's file sizes by name
  */
-export async function readSyncGist(token, gistId) {
-    const gist = await apiCall(token, 'GET', `/gists/${encodeURIComponent(gistId)}`);
+export async function readSyncGist(token, gistId, { etag = null } = {}) {
+    const exchange = await apiExchange(token, 'GET', `/gists/${encodeURIComponent(gistId)}`, { ifNoneMatch: etag });
+    if (exchange.notModified) return { notModified: true, etag: exchange.etag };
+    const gist = exchange.data;
     const files = gist?.files || {};
 
     const manifestFile = files[MANIFEST_FILE];
@@ -516,7 +721,13 @@ export async function readSyncGist(token, gistId) {
         parts.push(await readFileContent(token, file));
     }
 
-    return { manifest, payload: parts.join(''), updatedAt: gist?.updated_at ?? null };
+    return {
+        manifest,
+        payload: parts.join(''),
+        updatedAt: gist?.updated_at ?? null,
+        etag: exchange.etag,
+        files: fileSizes(files),
+    };
 }
 
 /**
@@ -554,64 +765,102 @@ async function readFileContent(token, file) {
  * being written. The count survives as a fallback for a gist that cannot be
  * listed.
  *
+ * The listing is a conditional request when `known` holds a listing of this
+ * gist: a 304 means the gist still has exactly that ETag, so its file set is
+ * exactly the remembered one, and the orphan cleanup reads that instead of
+ * downloading every file's content to learn their names.
+ *
  * @param {string} token - GitHub personal access token
  * @param {string|null} gistId - Existing gist id, or null to create one
  * @param {Object} manifest - Manifest object, stored as pretty JSON
  * @param {Array<string>} chunks - Payload chunks in order
  * @param {number} [previousChunkCount=0] - How many chunks this device last wrote, as a hint
- * @returns {Promise<{id: string, updatedAt: string}>} The gist that was written
+ * @param {{gistId: string, etag: string, files: Record<string, number>}|null} [known] - A remembered
+ *   listing: the gist's ETag and the file sizes it had at that ETag
+ * @returns {Promise<{id: string, updatedAt: string, etag: string|null, files: Record<string, number>|null}>}
+ *   The gist that was written, with the ETag and file sizes of the version the write produced
  */
-export async function writeSyncGist(token, gistId, manifest, chunks, previousChunkCount = 0) {
+export async function writeSyncGist(token, gistId, manifest, chunks, previousChunkCount = 0, known = null) {
+    let listing = known && gistId && known.gistId === gistId && known.etag && known.files ? known : null;
+
+    // Everything but the orphan list is the same on every attempt, so the body
+    // is serialized again only when a retry's listing names different orphans.
+    // A full-scope body is megabytes; stringifying it once per 409 was waste.
+    const files = { [MANIFEST_FILE]: { content: JSON.stringify(manifest, null, 2) } };
+    chunks.forEach((chunk, index) => {
+        // A gist file may not be empty; a single space keeps an empty payload legal
+        files[chunkFileName(index)] = { content: chunk === '' ? ' ' : chunk };
+    });
+    const payloadBytes = chunks.reduce((sum, chunk) => sum + chunk.length, 0);
+    let serialized = null;
+
     const attempt = async () => {
         // Listed before the size guard, because what survives the write counts
         // towards the ceiling as much as what is being written. Inside the
         // attempt so a conflict retry sees the file set that just beat it.
-        const existingFiles = gistId ? await listGistFiles(token, gistId) : null;
+        if (gistId) listing = await listGistFiles(token, gistId, listing);
+        const existingFiles = listing?.files ?? null;
 
-        const files = { [MANIFEST_FILE]: { content: JSON.stringify(manifest, null, 2) } };
-        chunks.forEach((chunk, index) => {
-            // A gist file may not be empty; a single space keeps an empty payload legal
-            files[chunkFileName(index)] = { content: chunk === '' ? ' ' : chunk };
-        });
-
+        const orphans = [];
         let survivingBytes = 0;
         if (existingFiles) {
-            for (const [name, file] of Object.entries(existingFiles)) {
+            for (const [name, size] of Object.entries(existingFiles)) {
                 if (Object.hasOwn(files, name)) continue; // being overwritten
-                const index = chunkIndexFromName(name);
-                if (index !== null) {
+                if (chunkIndexFromName(name) !== null) {
                     // A chunk this payload does not reach is an orphan, whoever wrote it
-                    files[name] = null;
+                    orphans.push(name);
                     continue;
                 }
                 // Something else lives in this gist. Not ours to delete, but its
                 // bytes are just as real to the API's ceiling.
-                survivingBytes += Number(file?.size) || 0;
+                survivingBytes += Number(size) || 0;
             }
         } else {
             for (let index = chunks.length; index < previousChunkCount; index += 1) {
-                files[chunkFileName(index)] = null;
+                orphans.push(chunkFileName(index));
             }
         }
+        orphans.sort();
 
-        const totalBytes = chunks.reduce((sum, chunk) => sum + chunk.length, 0) + survivingBytes;
-        if (totalBytes > MAX_GIST_BYTES) {
+        if (payloadBytes + survivingBytes > MAX_GIST_BYTES) {
             throw new GistError(
                 'too-large',
                 'This backup is too big for a single gist. Switch Sync scope to "Settings only".'
             );
         }
 
-        const body = { description: 'Toolasha cross-device sync (do not edit by hand)', files };
-
-        if (gistId) {
-            const updated = await apiCall(token, 'PATCH', `/gists/${encodeURIComponent(gistId)}`, body);
-            return { id: updated.id ?? gistId, updatedAt: updated.updated_at ?? null };
+        const orphanKey = orphans.join('\n');
+        if (serialized?.orphanKey !== orphanKey) {
+            const withOrphans = { ...files };
+            for (const name of orphans) withOrphans[name] = null;
+            const body = {
+                description: 'Toolasha cross-device sync (do not edit by hand)',
+                files: withOrphans,
+                ...(gistId ? {} : { public: false }),
+            };
+            serialized = { orphanKey, text: JSON.stringify(body) };
         }
 
-        const created = await apiCall(token, 'POST', '/gists', { ...body, public: false });
-        if (!created?.id) throw new GistError('parse', 'GitHub created a gist but did not say which one.');
-        return { id: created.id, updatedAt: created.updated_at ?? null };
+        if (gistId) {
+            const updated = await apiExchange(token, 'PATCH', `/gists/${encodeURIComponent(gistId)}`, {
+                body: serialized.text,
+            });
+            return {
+                id: updated.data?.id ?? gistId,
+                updatedAt: updated.data?.updated_at ?? null,
+                etag: updated.etag,
+                files: fileSizes(updated.data?.files),
+            };
+        }
+
+        const created = await apiExchange(token, 'POST', '/gists', { body: serialized.text });
+        if (!created.data?.id) throw new GistError('parse', 'GitHub created a gist but did not say which one.');
+        return {
+            id: created.data.id,
+            updatedAt: created.data.updated_at ?? null,
+            etag: created.etag,
+            files: fileSizes(created.data.files),
+        };
     };
 
     // A 409 is two pushes landing on the same gist at the same moment — two
@@ -641,15 +890,22 @@ export async function writeSyncGist(token, gistId, manifest, chunks, previousChu
  * that would fail the push anyway will fail it a moment later on the PATCH,
  * with its own classification intact.
  *
+ * With a previous listing, the request is conditional and a 304 returns that
+ * listing unchanged. The pair is only ever stored together — an ETag and the
+ * file sizes of the response that carried it — so a match proves the file set.
+ *
  * @param {string} token - GitHub personal access token
  * @param {string} gistId - Gist id
- * @returns {Promise<Record<string, Object>|null>} File entries by name
+ * @param {{etag: string, files: Record<string, number>}|null} previous - Listing to revalidate
+ * @returns {Promise<{gistId: string, etag: string|null, files: Record<string, number>}|null>} The listing
  */
-async function listGistFiles(token, gistId) {
+async function listGistFiles(token, gistId, previous) {
     try {
-        const gist = await apiCall(token, 'GET', `/gists/${encodeURIComponent(gistId)}`);
-        const files = gist?.files;
-        return files && typeof files === 'object' ? files : null;
+        const ifNoneMatch = previous?.etag && previous.files ? previous.etag : null;
+        const exchange = await apiExchange(token, 'GET', `/gists/${encodeURIComponent(gistId)}`, { ifNoneMatch });
+        if (exchange.notModified) return { gistId, etag: exchange.etag, files: previous.files };
+        const files = fileSizes(exchange.data?.files);
+        return files ? { gistId, etag: exchange.etag, files } : null;
     } catch (error) {
         console.warn('[GistClient] Could not list the gist before writing it:', error?.message || error);
         return null;

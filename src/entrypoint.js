@@ -3022,6 +3022,8 @@ if (combatSimulatorSite === 'metz') {
         // The errors this script's own code has logged or thrown this session,
         // newest first — what the settings panel's Diagnostics section shows
         errors: () => errorLog?.getEntries?.() || [],
+        // This tab's cross-device sync events: leadership, the schedule, and why each tick did what it did
+        syncTrace: () => UI.syncTrace?.() || [],
         clearErrors: () => errorLog?.clear?.(),
         // The selector canary, callable directly for a spot-check without
         // waiting for the delayed health pass to run it on its own.

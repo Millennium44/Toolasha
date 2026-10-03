@@ -9,20 +9,33 @@ import {
     findSyncGist,
     httpRequest,
     readSyncGist,
+    resetTransportForTests,
     writeSyncGist,
 } from './gist-client.js';
+import { getGmTrafficSnapshot, resetGmTraffic } from '../../utils/gm-traffic.js';
 
-/** Requests the fake transport saw, newest last */
+/**
+ * Requests either fake transport saw, newest last, in the GM details shape
+ * (`data` is the body) with `transport` saying which one carried it.
+ */
 let calls;
-/** Queued responses, consumed in order */
+/**
+ * Queued responses, consumed in order by whichever transport asks next.
+ * `networkError` fails either transport; `fetchThrows` fails only a page fetch,
+ * the way a CORS or CSP refusal does.
+ */
 let responses;
+
+const bodyText = (next) => (typeof next.body === 'string' ? next.body : JSON.stringify(next.body ?? {}));
 
 beforeEach(() => {
     calls = [];
     responses = [];
+    resetTransportForTests?.();
     globalThis.GM_xmlhttpRequest = (options) => {
-        calls.push(options);
-        const next = responses.shift();
+        calls.push({ ...options, transport: 'gm' });
+        const queued = responses.shift();
+        const next = typeof queued === 'function' ? queued(options) : queued;
         if (!next) throw new Error(`Unexpected request to ${options.url}`);
         if (next.networkError) {
             options.onerror();
@@ -30,16 +43,231 @@ beforeEach(() => {
         }
         options.onload({
             status: next.status ?? 200,
-            responseText: typeof next.body === 'string' ? next.body : JSON.stringify(next.body ?? {}),
+            responseText: bodyText(next),
             responseHeaders: Object.entries(next.headers || {})
                 .map(([name, value]) => `${name}: ${value}`)
                 .join('\r\n'),
         });
     };
+    vi.stubGlobal('fetch', async (url, init = {}) => {
+        calls.push({ ...init, url, data: init.body, transport: 'fetch' });
+        const queued = responses.shift();
+        const next = typeof queued === 'function' ? queued({ ...init, url }) : queued;
+        if (!next) throw new Error(`Unexpected request to ${url}`);
+        if (next.hang) {
+            return new Promise((_resolve, reject) => {
+                init.signal?.addEventListener('abort', () => reject(new DOMException('Aborted', 'AbortError')));
+            });
+        }
+        if (next.networkError || next.fetchThrows) throw new TypeError('NetworkError when attempting to fetch');
+        const status = next.status ?? 200;
+        return {
+            status,
+            text: async () => (status === 304 ? '' : bodyText(next)),
+            headers: new Headers(next.headers || {}),
+        };
+    });
 });
 
 afterEach(() => {
     delete globalThis.GM_xmlhttpRequest;
+    vi.unstubAllGlobals();
+});
+
+describe('transport', () => {
+    test('api.github.com goes through the page fetch, never the userscript manager', async () => {
+        responses.push({ status: 200, body: [] });
+        await findSyncGist('tok');
+        expect(calls).toHaveLength(1);
+        expect(calls[0].transport).toBe('fetch');
+        expect(calls[0].credentials).toBe('omit');
+        expect(calls[0].cache).toBe('no-store');
+        expect(calls[0].headers.Authorization).toBe('Bearer tok');
+    });
+
+    test('an HTTP error is an answer: a 401 and a 409 never reach the userscript manager', async () => {
+        responses.push({ status: 401, body: { message: 'Bad credentials' } });
+        await expect(findSyncGist('tok')).rejects.toMatchObject({ kind: 'auth' });
+
+        vi.useFakeTimers();
+        try {
+            for (let attempt = 0; attempt < 3; attempt += 1) {
+                responses.push({ status: 200, body: { files: {} } });
+                responses.push({ status: 409, body: { message: 'Conflict' } });
+            }
+            const pending = writeSyncGist('tok', 'abc', { chunks: 1 }, ['data']).catch((caught) => caught);
+            await vi.advanceTimersByTimeAsync(10_000);
+            expect((await pending).kind).toBe('conflict');
+        } finally {
+            vi.useRealTimers();
+        }
+
+        expect(calls.length).toBeGreaterThan(1);
+        expect(calls.every((call) => call.transport === 'fetch')).toBe(true);
+    });
+
+    test('a thrown page fetch falls back to the manager, and only a repeated failure keeps it there', async () => {
+        const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+        // One failure is a blip: the next request tries the page fetch again
+        responses.push({ fetchThrows: true }, { status: 200, body: [] });
+        await findSyncGist('tok');
+        expect(calls.map((call) => call.transport)).toEqual(['fetch', 'gm']);
+
+        // Three in a row that the manager answers is a block (CORS, a CSP): the session stays on it
+        responses.push({ fetchThrows: true }, { status: 200, body: [] });
+        await findSyncGist('tok');
+        responses.push({ fetchThrows: true }, { status: 200, body: [] });
+        await findSyncGist('tok');
+        responses.push({ status: 200, body: [] });
+        await findSyncGist('tok');
+        expect(calls.map((call) => call.transport)).toEqual(['fetch', 'gm', 'fetch', 'gm', 'fetch', 'gm', 'gm']);
+        warn.mockRestore();
+    });
+
+    test('a page fetch that succeeds in between starts the failure count again', async () => {
+        responses.push({ fetchThrows: true }, { status: 200, body: [] });
+        await findSyncGist('tok');
+        responses.push({ fetchThrows: true }, { status: 200, body: [] });
+        await findSyncGist('tok');
+        responses.push({ status: 200, body: [] });
+        await findSyncGist('tok');
+        responses.push({ fetchThrows: true }, { status: 200, body: [] });
+        await findSyncGist('tok');
+        responses.push({ status: 200, body: [] });
+        await findSyncGist('tok');
+
+        expect(calls.at(-1).transport).toBe('fetch');
+    });
+
+    test('a dead network on both transports breaks the run of failures', async () => {
+        const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+        responses.push({ fetchThrows: true }, { status: 200, body: [] });
+        await findSyncGist('tok');
+        responses.push({ fetchThrows: true }, { status: 200, body: [] });
+        await findSyncGist('tok');
+        responses.push({ networkError: true }, { networkError: true });
+        await findSyncGist('tok').catch(() => {});
+        responses.push({ fetchThrows: true }, { status: 200, body: [] });
+        await findSyncGist('tok');
+        responses.push({ status: 200, body: [] });
+        await findSyncGist('tok');
+
+        expect(calls.at(-1).transport).toBe('fetch');
+        warn.mockRestore();
+    });
+
+    test('creating a gist goes straight to the manager once a page fetch failed where it got through', async () => {
+        // The listing before a first push: the page fetch is blocked, the manager answers
+        responses.push({ fetchThrows: true }, { status: 200, body: [] });
+        await findSyncGist('tok');
+        responses.push({ status: 201, body: { id: 'g1', files: {} } });
+        await httpRequest({ method: 'POST', url: 'https://api.github.com/gists', body: '{}' });
+
+        expect(calls.map((call) => call.transport)).toEqual(['fetch', 'gm', 'gm']);
+    });
+
+    test('a page fetch that fails on a whole-gist PATCH is not replayed over a possibly newer gist', async () => {
+        responses.push({ fetchThrows: true });
+        await expect(
+            httpRequest({ method: 'PATCH', url: 'https://api.github.com/gists/g1', body: '{}' })
+        ).rejects.toMatchObject({ kind: 'offline' });
+
+        expect(calls.map((call) => call.transport)).toEqual(['fetch']);
+    });
+
+    test('a page fetch timeout breaks the run of failures', async () => {
+        vi.useFakeTimers();
+        const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+        try {
+            responses.push({ fetchThrows: true }, { status: 200, body: [] });
+            await findSyncGist('tok');
+            responses.push({ fetchThrows: true }, { status: 200, body: [] });
+            await findSyncGist('tok');
+            responses.push({ hang: true });
+            const pending = findSyncGist('tok').catch(() => {});
+            await vi.advanceTimersByTimeAsync(30_000);
+            await pending;
+            responses.push({ fetchThrows: true }, { status: 200, body: [] });
+            await findSyncGist('tok');
+            responses.push({ status: 200, body: [] });
+            await findSyncGist('tok');
+
+            expect(calls.at(-1).transport).toBe('fetch');
+        } finally {
+            warn.mockRestore();
+            vi.useRealTimers();
+        }
+    });
+
+    test('a page fetch that fails on a POST is not replayed, so a gist is never created twice', async () => {
+        responses.push({ fetchThrows: true });
+        await expect(
+            httpRequest({ method: 'POST', url: 'https://api.github.com/gists', body: '{}' })
+        ).rejects.toMatchObject({ kind: 'offline' });
+
+        expect(calls.map((call) => call.transport)).toEqual(['fetch']);
+    });
+
+    test('a 5xx answer in the middle breaks the run of failures', async () => {
+        const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+        responses.push({ fetchThrows: true }, { status: 200, body: [] });
+        await findSyncGist('tok');
+        responses.push({ fetchThrows: true }, { status: 200, body: [] });
+        await findSyncGist('tok');
+        responses.push({ fetchThrows: true }, { status: 503, body: 'unavailable' });
+        await findSyncGist('tok').catch(() => {});
+        responses.push({ fetchThrows: true }, { status: 200, body: [] });
+        await findSyncGist('tok');
+        responses.push({ status: 200, body: [] });
+        await findSyncGist('tok');
+
+        // Not three in a row, so the page fetch is still tried
+        expect(calls.at(-1).transport).toBe('fetch');
+        warn.mockRestore();
+    });
+
+    test('an edge error page with no CORS header never moves the session onto the manager', async () => {
+        // The 502 page throws the fetch (no Access-Control-Allow-Origin); the manager gets the same 502
+        for (let i = 0; i < 4; i++) {
+            responses.push({ fetchThrows: true }, { status: 502, body: 'bad gateway' });
+            await findSyncGist('tok').catch(() => {});
+        }
+        responses.push({ status: 200, body: [] });
+        await findSyncGist('tok');
+
+        expect(calls.at(-1).transport).toBe('fetch');
+    });
+
+    test('a dead network fails both transports without giving up on the page fetch', async () => {
+        responses.push({ networkError: true }, { networkError: true });
+        await expect(findSyncGist('tok')).rejects.toMatchObject({ kind: 'offline' });
+
+        responses.push({ status: 200, body: [] });
+        await findSyncGist('tok');
+        expect(calls.map((call) => call.transport)).toEqual(['fetch', 'gm', 'fetch']);
+    });
+
+    test('a page fetch that never answers is aborted at the timeout, with no second attempt', async () => {
+        vi.useFakeTimers();
+        try {
+            responses.push({ hang: true });
+            const pending = findSyncGist('tok').catch((caught) => caught);
+            await vi.advanceTimersByTimeAsync(30_000);
+            const error = await pending;
+            expect(error.kind).toBe('offline');
+            expect(error.message).toContain('in time');
+            expect(calls[0].signal.aborted).toBe(true);
+            expect(calls.map((call) => call.transport)).toEqual(['fetch']);
+        } finally {
+            vi.useRealTimers();
+        }
+    });
+
+    test('other hosts still go through the userscript manager', async () => {
+        responses.push({ status: 200, body: 'ok' });
+        await httpRequest({ method: 'GET', url: 'https://example.test/a' });
+        expect(calls[0].transport).toBe('gm');
+    });
 });
 
 describe('httpRequest anonymous', () => {
@@ -234,7 +462,8 @@ describe('error classification', () => {
     });
 
     test('a dead network is offline, not an HTTP failure', async () => {
-        responses.push({ networkError: true });
+        // Once for the page fetch, once for the manager it falls back to
+        responses.push({ networkError: true }, { networkError: true });
         await expect(findSyncGist('tok')).rejects.toMatchObject({ kind: 'offline' });
     });
 
@@ -518,5 +747,156 @@ describe('chunkIndexFromName', () => {
         expect(chunkIndexFromName('toolasha-data-notes.json')).toBeNull();
         expect(chunkIndexFromName('notes.md')).toBeNull();
         expect(chunkIndexFromName(undefined)).toBeNull();
+    });
+});
+
+/**
+ * What a push and a silent pull cost, in requests and bytes, at the size that
+ * leaked: a full-scope backup of five ~900 KB chunks.
+ */
+describe('conditional reads and the cost of a sync', () => {
+    const CHUNK = 900_000;
+    const ETAG = 'W/"v1"';
+    const manifestText = JSON.stringify({ toolashaSync: 1, chunks: 5, exportedAt: 'T' });
+    const chunkTexts = [0, 1, 2, 3, 4].map((index) => String(index).repeat(CHUNK));
+    const gistFiles = {
+        [MANIFEST_FILE]: { size: manifestText.length, content: manifestText },
+        ...Object.fromEntries(
+            chunkTexts.map((text, index) => [chunkFileName(index), { size: text.length, content: text }])
+        ),
+    };
+    const sizes = Object.fromEntries(Object.entries(gistFiles).map(([name, file]) => [name, file.size]));
+
+    /** The gist as GitHub serves it: 304 to a matching If-None-Match, the whole gist otherwise */
+    const gistAt =
+        (etag, files = gistFiles) =>
+        (request) =>
+            request.headers?.['If-None-Match'] === etag
+                ? { status: 304, body: '', headers: { ETag: etag } }
+                : { status: 200, headers: { ETag: etag }, body: { id: 'abc', files } };
+
+    /** Page-fetch traffic for one operation */
+    async function measure(operation) {
+        resetGmTraffic();
+        const before = calls.length;
+        const result = await operation();
+        const { totals } = getGmTrafficSnapshot();
+        return {
+            result,
+            requests: calls.length - before,
+            sent: totals.pageRequestBytes,
+            received: totals.pageResponseBytes,
+        };
+    }
+
+    test('a silent pull of a version this device has downloads nothing', async () => {
+        responses.push(gistAt(ETAG));
+        const full = await measure(() => readSyncGist('tok', 'abc'));
+        expect(full.result.etag).toBe(ETAG);
+        expect(full.result.files).toEqual(sizes);
+
+        responses.push(gistAt(ETAG));
+        const conditional = await measure(() => readSyncGist('tok', 'abc', { etag: ETAG }));
+
+        expect(calls.at(-1).headers['If-None-Match']).toBe(ETAG);
+        expect(conditional.result).toEqual({ notModified: true, etag: ETAG });
+        expect(full).toMatchObject({ requests: 1 });
+        expect(full.received).toBeGreaterThan(5 * CHUNK);
+        expect(conditional).toMatchObject({ requests: 1, received: 0 });
+    });
+
+    test('a changed gist is downloaded whole, ETag or not', async () => {
+        responses.push(gistAt('W/"v2"'));
+        const { payload, etag } = await readSyncGist('tok', 'abc', { etag: ETAG });
+        expect(payload).toBe(chunkTexts.join(''));
+        expect(etag).toBe('W/"v2"');
+    });
+
+    test('a push with a remembered listing revalidates it instead of downloading the gist', async () => {
+        const written = { id: 'abc', updated_at: 'T2', files: { [MANIFEST_FILE]: { size: 10 } } };
+        const pushOnce = (known) => {
+            responses.push(gistAt(ETAG));
+            responses.push({ status: 200, headers: { ETag: 'W/"v2"' }, body: written });
+            return measure(() => writeSyncGist('tok', 'abc', { chunks: 1 }, ['new'], 5, known));
+        };
+
+        const before = await pushOnce(null);
+        const after = await pushOnce({ gistId: 'abc', etag: ETAG, files: sizes });
+
+        expect(before.requests).toBe(2);
+        expect(after.requests).toBe(2);
+        expect(before.received).toBeGreaterThan(5 * CHUNK);
+        expect(after.received).toBeLessThan(1000);
+        // The write reports the version it produced, for the next push to revalidate
+        expect(after.result).toMatchObject({ id: 'abc', etag: 'W/"v2"', files: { [MANIFEST_FILE]: 10 } });
+    });
+
+    test('a 304 listing still deletes every orphaned chunk the gist holds', async () => {
+        responses.push(gistAt(ETAG));
+        responses.push({ status: 200, body: { id: 'abc' } });
+
+        // The local hint says one chunk; the remembered listing says five
+        await writeSyncGist('tok', 'abc', { chunks: 1 }, ['new'], 1, { gistId: 'abc', etag: ETAG, files: sizes });
+
+        expect(calls[0].headers['If-None-Match']).toBe(ETAG);
+        const { files } = JSON.parse(calls[1].data);
+        expect(files[chunkFileName(0)]).toEqual({ content: 'new' });
+        for (const index of [1, 2, 3, 4]) expect(files[chunkFileName(index)]).toBeNull();
+    });
+
+    test('a listing remembered for another gist is not used for this one', async () => {
+        responses.push(gistAt(ETAG));
+        responses.push({ status: 200, body: { id: 'abc' } });
+
+        await writeSyncGist('tok', 'abc', { chunks: 1 }, ['new'], 0, { gistId: 'zzz', etag: ETAG, files: {} });
+
+        expect(calls[0].headers['If-None-Match']).toBeUndefined();
+        const { files } = JSON.parse(calls[1].data);
+        for (const index of [1, 2, 3, 4]) expect(files[chunkFileName(index)]).toBeNull();
+    });
+
+    test('a conflict retry with an unchanged listing reuses the serialized body', async () => {
+        vi.useFakeTimers();
+        const stringify = vi.spyOn(JSON, 'stringify');
+        try {
+            responses.push(gistAt(ETAG));
+            responses.push({ status: 409, body: { message: 'Conflict' } });
+            responses.push(gistAt(ETAG));
+            responses.push({ status: 200, body: { id: 'abc' } });
+
+            const pending = writeSyncGist('tok', 'abc', { chunks: 1 }, chunkTexts, 5, {
+                gistId: 'abc',
+                etag: ETAG,
+                files: sizes,
+            });
+            await vi.advanceTimersByTimeAsync(3000);
+            await pending;
+
+            const bodies = stringify.mock.calls.filter(([value]) => value?.files && value?.description);
+            expect(bodies).toHaveLength(1);
+            expect(calls[1].data).toBe(calls[3].data);
+        } finally {
+            stringify.mockRestore();
+            vi.useRealTimers();
+        }
+    });
+
+    test('a conflict retry whose listing changed rebuilds the body with the new orphans', async () => {
+        vi.useFakeTimers();
+        try {
+            responses.push(gistAt(ETAG, { [MANIFEST_FILE]: { size: 1 } }));
+            responses.push({ status: 409, body: { message: 'Conflict' } });
+            responses.push(gistAt('W/"v3"'));
+            responses.push({ status: 200, body: { id: 'abc' } });
+
+            const pending = writeSyncGist('tok', 'abc', { chunks: 1 }, ['new']);
+            await vi.advanceTimersByTimeAsync(3000);
+            await pending;
+
+            expect(JSON.parse(calls[1].data).files[chunkFileName(4)]).toBeUndefined();
+            expect(JSON.parse(calls[3].data).files[chunkFileName(4)]).toBeNull();
+        } finally {
+            vi.useRealTimers();
+        }
     });
 });

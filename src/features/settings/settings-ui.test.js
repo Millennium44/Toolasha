@@ -464,6 +464,7 @@ vi.mock('../ui/overlay-tab-button.js', () => ({
 }));
 vi.mock('../sync/sync-manager.js', () => ({
     default: { initialize: async () => {}, describeStatus: async () => 'Not linked.' },
+    getSyncTrace: () => [],
 }));
 vi.mock('./custom-price-overrides.js', () => ({
     getCustomPriceOverrides: () => ({}),

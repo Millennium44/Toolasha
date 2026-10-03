@@ -82,6 +82,7 @@ import housePanelObserver from '../features/house/house-panel-observer.js';
 
 // Settings UI
 import settingsUI from '../features/settings/settings-ui.js';
+import { getSyncTrace } from '../features/sync/sync-manager.js';
 import whatsNew from '../features/settings/whats-new.js';
 import forkBackupPrompt from '../features/settings/fork-backup-prompt.js';
 import settingsMirrorRestore from '../features/settings/settings-mirror-restore.js';
@@ -231,6 +232,7 @@ toolashaRoot.UI = {
     lootLogPivot,
     housePanelObserver,
     settingsUI,
+    syncTrace: getSyncTrace,
     whatsNew,
     forkBackupPrompt,
     settingsMirrorRestore,

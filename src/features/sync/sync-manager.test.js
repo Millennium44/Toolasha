@@ -102,6 +102,11 @@ const gist = vi.hoisted(() => ({
     writeWait: null,
     writeAttempts: 0,
     writes: [],
+    readOptions: [],
+    remoteEtag: null,
+    remoteFiles: null,
+    writeEtag: undefined,
+    writeFiles: undefined,
 }));
 
 class FakeGistError extends Error {
@@ -115,18 +120,21 @@ vi.mock('./gist-client.js', () => ({
     GistError: FakeGistError,
     chunkPayload: (text) => [text],
     findSyncGist: async () => gist.found,
-    readSyncGist: async () => {
+    readSyncGist: async (_token, _id, options) => {
         gist.readCalls += 1;
+        gist.readOptions.push(options);
         if (gist.readWait) await gist.readWait;
         if (gist.readError) throw gist.readError;
-        return gist.read;
+        // GitHub's answer to a conditional read of an unchanged gist
+        if (options?.etag && options.etag === gist.remoteEtag) return { notModified: true, etag: options.etag };
+        return gist.remoteEtag ? { ...gist.read, etag: gist.remoteEtag, files: gist.remoteFiles } : gist.read;
     },
-    writeSyncGist: async (_token, id, manifest, chunks, previous) => {
+    writeSyncGist: async (_token, id, manifest, chunks, previous, known) => {
         gist.writeAttempts += 1;
         if (gist.writeWait) await gist.writeWait;
         if (gist.writeError) throw gist.writeError;
-        gist.writes.push({ id, manifest, chunks, previous });
-        return { id: id ?? 'created-id', updatedAt: 'now' };
+        gist.writes.push({ id, manifest, chunks, previous, known });
+        return { id: id ?? 'created-id', updatedAt: 'now', etag: gist.writeEtag, files: gist.writeFiles };
     },
 }));
 
@@ -137,7 +145,7 @@ vi.mock('./pull-summary-panel.js', () => ({
 }));
 
 const { lastPullSummary, clearPullSummary } = await import('./pull-summary.js');
-const { default: syncManager, isNewer } = await import('./sync-manager.js');
+const { default: syncManager, isNewer, SyncManager } = await import('./sync-manager.js');
 
 beforeEach(() => {
     settings.values = { sync_enabled: true, sync_token: 'ghp_secret', sync_scope: 'settings', sync_auto: false };
@@ -169,6 +177,11 @@ beforeEach(() => {
     gist.writeWait = null;
     gist.writeAttempts = 0;
     gist.writes = [];
+    gist.readOptions = [];
+    gist.remoteEtag = null;
+    gist.remoteFiles = null;
+    gist.writeEtag = undefined;
+    gist.writeFiles = undefined;
     panelOpens.length = 0;
     clearPullSummary();
     syncManager.busy = false;
@@ -1360,5 +1373,337 @@ describe('the held-back marker outlives a push that was already under way', () =
 
         expect(await pushing).toMatchObject({ ok: true });
         expect(stored.map.toolasha_sync_mergeHeld).toEqual(held);
+    });
+});
+
+describe('the remembered gist version', () => {
+    const FILES = { 'toolasha-sync.json': 120, 'toolasha-data-000.json': 900000 };
+    const remote = (exportedAt, body = '{"remote":1}') => ({
+        manifest: { exportedAt, chunks: 1, hash: `h:${body}`, bytes: body.length },
+        payload: body,
+    });
+
+    beforeEach(() => {
+        stored.map.toolasha_sync_gistId = 'abc';
+        stored.map.toolasha_sync_lastSyncedAt = '2026-02-01T00:00:00.000Z';
+        stored.map.toolasha_sync_lastHash = 'h:{"local":1}';
+        gist.read = remote('2026-02-01T00:00:00.000Z');
+        gist.remoteEtag = 'W/"e1"';
+        gist.remoteFiles = FILES;
+    });
+
+    test('a silent pull that finds nothing new remembers the version; the next one is a 304', async () => {
+        expect(await syncManager.pull({ silent: true })).toMatchObject({ reason: 'not-newer' });
+        expect(gist.readOptions[0]).toBeUndefined();
+        expect(stored.map.toolasha_sync_gistVersion).toEqual({
+            gistId: 'abc',
+            etag: 'W/"e1"',
+            files: FILES,
+            current: true,
+        });
+
+        expect(await syncManager.pull({ silent: true })).toMatchObject({ ok: true, reason: 'not-modified' });
+        expect(gist.readOptions[1]).toEqual({ etag: 'W/"e1"' });
+        expect(payload.applyCalls).toBe(0);
+    });
+
+    test('a gist that moved since is downloaded and applied, and its new version remembered', async () => {
+        await syncManager.pull({ silent: true });
+        gist.remoteEtag = 'W/"e2"';
+        gist.read = remote('2026-03-01T00:00:00.000Z');
+
+        expect(await syncManager.pull({ silent: true })).toMatchObject({ ok: true });
+        expect(gist.readOptions[1]).toEqual({ etag: 'W/"e1"' });
+        expect(payload.applyCalls).toBe(1);
+        expect(stored.map.toolasha_sync_gistVersion).toMatchObject({ etag: 'W/"e2"', current: true });
+    });
+
+    test('a manual pull always downloads', async () => {
+        stored.map.toolasha_sync_gistVersion = { gistId: 'abc', etag: 'W/"e1"', files: FILES, current: true };
+        await syncManager.pull();
+        expect(gist.readOptions[0]).toBeUndefined();
+    });
+
+    test('held-back records make a silent pull download the version it already has', async () => {
+        stored.map.toolasha_sync_gistVersion = { gistId: 'abc', etag: 'W/"e1"', files: FILES, current: true };
+        stored.map.toolasha_sync_mergeHeld = { exportedAt: '2026-02-01T00:00:00.000Z', hash: 'h:{"remote":1}' };
+        await syncManager.pull({ silent: true });
+        expect(gist.readOptions[0]).toBeUndefined();
+    });
+
+    test('a silent pull that stood down on a conflict is not current, so the next one downloads again', async () => {
+        gist.read = remote('2026-03-01T00:00:00.000Z');
+        payload.text = '{"local":2}';
+
+        expect(await syncManager.pull({ silent: true })).toMatchObject({ reason: 'conflict' });
+        expect(stored.map.toolasha_sync_gistVersion).toMatchObject({ etag: 'W/"e1"', current: false });
+
+        await syncManager.pull({ silent: true });
+        expect(gist.readOptions[1]).toBeUndefined();
+    });
+
+    test('a pull that did not apply cleanly claims no version', async () => {
+        gist.read = remote('2026-03-01T00:00:00.000Z');
+        payload.complete = false;
+        payload.failed = [{ store: 'xpHistory', expected: 1, written: 0 }];
+
+        await syncManager.pull({ silent: true });
+        expect(stored.map.toolasha_sync_gistVersion).toBeUndefined();
+        await syncManager.pull({ silent: true });
+        expect(gist.readOptions[1]).toBeUndefined();
+    });
+
+    test('a version remembered for another gist is not sent', async () => {
+        stored.map.toolasha_sync_gistVersion = { gistId: 'other', etag: 'W/"e1"', files: FILES, current: true };
+        await syncManager.pull({ silent: true });
+        expect(gist.readOptions[0]).toBeUndefined();
+    });
+
+    test('a push hands the remembered listing to the write and remembers the version it produced', async () => {
+        const known = { gistId: 'abc', etag: 'W/"e1"', files: FILES, current: false };
+        stored.map.toolasha_sync_gistVersion = known;
+        payload.text = '{"local":2}';
+        gist.writeEtag = 'W/"e9"';
+        gist.writeFiles = { 'toolasha-sync.json': 130, 'toolasha-data-000.json': 11 };
+
+        expect(await syncManager.push()).toMatchObject({ ok: true });
+        expect(gist.writes[0].known).toEqual(known);
+        expect(stored.map.toolasha_sync_gistVersion).toEqual({
+            gistId: 'abc',
+            etag: 'W/"e9"',
+            files: gist.writeFiles,
+            current: true,
+        });
+    });
+
+    test('a write that reports no ETag leaves no version behind', async () => {
+        stored.map.toolasha_sync_gistVersion = { gistId: 'abc', etag: 'W/"e1"', files: FILES, current: true };
+        payload.text = '{"local":2}';
+
+        await syncManager.push();
+        expect(stored.map.toolasha_sync_gistVersion).toBeNull();
+    });
+
+    test('forgetting the gist forgets its version', async () => {
+        stored.map.toolasha_sync_gistVersion = { gistId: 'abc', etag: 'W/"e1"', files: FILES, current: true };
+        await syncManager.forgetGist();
+        expect(stored.map.toolasha_sync_gistVersion).toBeNull();
+    });
+});
+
+describe('one tab runs the automatic schedule', () => {
+    /**
+     * A Web Locks stand-in shared by several simulated tabs: queued requests,
+     * `ifAvailable`, abort while queued, and `kill(tab)` for a tab that closes
+     * with a lock held — which the browser releases without the callback ever
+     * settling.
+     */
+    function createLockBroker() {
+        const held = new Map(); // name -> { tab, release }
+        const queues = new Map(); // name -> [{ tab, grant }]
+        const queueOf = (name) => {
+            if (!queues.has(name)) queues.set(name, []);
+            return queues.get(name);
+        };
+        const handOn = (name) => {
+            held.delete(name);
+            queueOf(name).shift()?.grant();
+        };
+        const viewFor = (tab) => ({
+            async request(name, options, callback) {
+                if (typeof options === 'function') {
+                    callback = options;
+                    options = {};
+                }
+                if (held.has(name)) {
+                    if (options?.ifAvailable) return callback(null);
+                    await new Promise((resolve, reject) => {
+                        const entry = { tab, grant: resolve };
+                        queueOf(name).push(entry);
+                        options?.signal?.addEventListener('abort', () => {
+                            const queue = queueOf(name);
+                            const index = queue.indexOf(entry);
+                            if (index !== -1) queue.splice(index, 1);
+                            reject(new DOMException('Aborted', 'AbortError'));
+                        });
+                    });
+                }
+                let released = false;
+                const release = () => {
+                    if (released) return;
+                    released = true;
+                    handOn(name);
+                };
+                held.set(name, { tab, release });
+                try {
+                    return await callback({ name });
+                } finally {
+                    release();
+                }
+            },
+        });
+        return {
+            viewFor,
+            holder: (name) => held.get(name)?.tab ?? null,
+            kill(tab) {
+                for (const queue of queues.values()) {
+                    for (let index = queue.length - 1; index >= 0; index -= 1) {
+                        if (queue[index].tab === tab) queue.splice(index, 1);
+                    }
+                }
+                for (const entry of [...held.values()]) if (entry.tab === tab) entry.release();
+            },
+        };
+    }
+
+    let broker;
+    let tabs;
+
+    /**
+     * A tab with its own manager; push and pull are counted, not run.
+     * @param {string} name - Tab name, for the broker
+     * @param {Object|null} [locks] - Its `navigator.locks`, or null for none
+     * @returns {Promise<Object>} The tab's manager
+     */
+    async function openTab(name, locks = broker.viewFor(name)) {
+        vi.stubGlobal('navigator', locks ? { locks } : {});
+        const manager = new SyncManager();
+        manager.push = vi.fn(async () => ({ ok: true }));
+        manager.pull = vi.fn(async () => ({ ok: true }));
+        await manager.initialize();
+        await vi.advanceTimersByTimeAsync(0);
+        tabs.push(manager);
+        return manager;
+    }
+
+    const HOUR = 60 * 60 * 1000;
+
+    beforeEach(() => {
+        vi.useFakeTimers();
+        settings.values.sync_auto = true;
+        broker = createLockBroker();
+        tabs = [];
+    });
+
+    afterEach(() => {
+        for (const tab of tabs) tab.cleanup();
+        vi.useRealTimers();
+        vi.unstubAllGlobals();
+    });
+
+    test('only the leader runs the repeating schedule; every tab makes its startup pulls', async () => {
+        const first = await openTab('A');
+        const second = await openTab('B');
+
+        await vi.advanceTimersByTimeAsync(HOUR);
+
+        expect(first.isLeader).toBe(true);
+        expect(second.isLeader).toBe(false);
+        expect(first.push).toHaveBeenCalledTimes(4);
+        expect(first.pull.mock.calls.length).toBeGreaterThan(3);
+        expect(second.push).not.toHaveBeenCalled();
+        // A tab opened on a character another device just handed off collects it now, not at the
+        // leader's next interval: its three startup pulls, and nothing after them
+        expect(second.pull).toHaveBeenCalledTimes(3);
+    });
+
+    test('cleanup releases leadership, and a queued tab takes the schedule over', async () => {
+        const first = await openTab('A');
+        const second = await openTab('B');
+        expect(broker.holder('toolasha-sync-leader')).toBe('A');
+
+        first.cleanup();
+        await vi.advanceTimersByTimeAsync(0);
+
+        expect(first.isLeader).toBe(false);
+        expect(broker.holder('toolasha-sync-leader')).toBe('B');
+        expect(second.isLeader).toBe(true);
+
+        await vi.advanceTimersByTimeAsync(HOUR);
+        expect(first.push).not.toHaveBeenCalled();
+        expect(second.push).toHaveBeenCalledTimes(4);
+    });
+
+    test('a cleaned-up tab that was still queued never becomes leader', async () => {
+        const first = await openTab('A');
+        const second = await openTab('B');
+        second.cleanup();
+        first.cleanup();
+        await vi.advanceTimersByTimeAsync(HOUR);
+
+        expect(broker.holder('toolasha-sync-leader')).toBeNull();
+        expect(second.isLeader).toBe(false);
+        expect(second.push).not.toHaveBeenCalled();
+    });
+
+    test('a waiting tab takes over when the leader tab dies', async () => {
+        const first = await openTab('A');
+        const second = await openTab('B');
+
+        // The tab closes: its timers die with it and the browser frees its lock
+        first.timers.clearAll();
+        broker.kill('A');
+        await vi.advanceTimersByTimeAsync(0);
+
+        expect(second.isLeader).toBe(true);
+        await vi.advanceTimersByTimeAsync(HOUR);
+        expect(second.push).toHaveBeenCalledTimes(4);
+    });
+
+    test('without Web Locks every tab schedules, as before', async () => {
+        const first = await openTab('A', null);
+        const second = await openTab('B', null);
+
+        await vi.advanceTimersByTimeAsync(HOUR);
+
+        expect(first.push).toHaveBeenCalledTimes(4);
+        expect(second.push).toHaveBeenCalledTimes(4);
+    });
+
+    test('a lock manager that refuses the request still leaves the tab its own schedule', async () => {
+        const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+        const refusing = {
+            request: () => Promise.reject(Object.assign(new Error('denied'), { name: 'SecurityError' })),
+        };
+        const tab = await openTab('A', refusing);
+
+        await vi.advanceTimersByTimeAsync(HOUR);
+
+        expect(tab.isLeader).toBe(true);
+        expect(tab.push).toHaveBeenCalledTimes(4);
+        warn.mockRestore();
+    });
+
+    test('a lock manager that throws on the request still leaves the tab its own schedule', async () => {
+        const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+        const throwing = {
+            request: () => {
+                throw new TypeError('bad options');
+            },
+        };
+        const tab = await openTab('A', throwing);
+
+        await vi.advanceTimersByTimeAsync(HOUR);
+
+        expect(tab.push).toHaveBeenCalledTimes(4);
+        warn.mockRestore();
+    });
+
+    test('four tabs make as many automatic pushes and pulls per hour as one', async () => {
+        const solo = await openTab('solo');
+        await vi.advanceTimersByTimeAsync(HOUR);
+        const oneTab = { push: solo.push.mock.calls.length, pull: solo.pull.mock.calls.length };
+        solo.cleanup();
+        tabs = [];
+        broker = createLockBroker();
+
+        for (const name of ['A', 'B', 'C', 'D']) await openTab(name);
+        await vi.advanceTimersByTimeAsync(HOUR);
+
+        const total = (field) => tabs.reduce((sum, tab) => sum + tab[field].mock.calls.length, 0);
+        expect(oneTab).toEqual({ push: 4, pull: 7 });
+        expect(total('push')).toBe(oneTab.push);
+        // The repeating pulls are the leader's alone; each extra tab adds only its three startup pulls
+        expect(total('pull')).toBe(oneTab.pull + 3 * 3);
     });
 });

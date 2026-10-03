@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Cross-device sync no longer fills Tampermonkey's memory
+
+- Sync uploads went through Tampermonkey, which kept every one: hundreds of multi-megabyte copies, gigabytes over a day or two in Firefox. Sync now talks to GitHub directly from the page, only one game tab runs the automatic schedule, and unchanged gists are no longer downloaded in full.
+
 ### Overlay docking works across game languages
 
 - A docked overlay now finds the character column without relying on translated tab names. Unrelated or nested tab strips are no longer mistaken for its docking location.
