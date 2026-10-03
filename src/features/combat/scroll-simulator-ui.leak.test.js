@@ -50,6 +50,22 @@ describe('disable unregisters the setting-change listener it registered', () => 
         for (const key of Object.keys(settingListeners)) delete settingListeners[key];
     });
 
+    test('switching scroll simulation on or off tells open panels to redraw', () => {
+        scrollSimulatorUI.initialize();
+        const heard = [];
+        const listener = (event) => heard.push(event.detail);
+        document.addEventListener('toolasha:scroll-selection-changed', listener);
+
+        settingListeners.simulateScrollEffects.forEach((cb) => cb(false));
+        settingListeners.simulateScrollEffects.forEach((cb) => cb(true));
+
+        document.removeEventListener('toolasha:scroll-selection-changed', listener);
+        expect(heard).toEqual([
+            { key: null, setting: true },
+            { key: null, setting: true },
+        ]);
+    });
+
     test('a character-switch cycle does not accumulate listeners', () => {
         scrollSimulatorUI.initialize();
         for (let i = 0; i < 3; i++) {
