@@ -872,6 +872,8 @@ export async function constructExportObject(externalProfileId = null, singlePlay
     let difficultyTier = 0;
     let isParty = false;
     let yourSlotIndex = 1; // Track which slot contains YOUR data (for party mode)
+    // Whether the roster actually seated you; yourSlotIndex stays 1 when it did not
+    let selfSeated = false;
 
     // Check if in party
     const partyMembers = getExportPartyMembers(characterObj);
@@ -880,6 +882,7 @@ export async function constructExportObject(externalProfileId = null, singlePlay
         exportObj[1] = JSON.stringify(constructSelfPlayer(characterObj, clientObj));
         playerIDs[0] = characterObj.character?.name || 'Player 1';
         importedPlayerPositions[0] = true;
+        selfSeated = true;
 
         // Get current combat zone and tier
         // The zone being fought, by execution order: the first combat entry in
@@ -905,6 +908,7 @@ export async function constructExportObject(externalProfileId = null, singlePlay
                 if (sameCharacterId(member.characterID, characterObj.character.id)) {
                     // This is you
                     yourSlotIndex = slotIndex; // Remember your slot
+                    selfSeated = true;
                     exportObj[slotIndex] = JSON.stringify(constructSelfPlayer(characterObj, clientObj));
                     playerIDs[slotIndex - 1] = characterObj.character.name;
                     importedPlayerPositions[slotIndex - 1] = true;
@@ -983,5 +987,7 @@ export async function constructExportObject(externalProfileId = null, singlePlay
         difficultyTier,
         isParty,
         profileWarnings,
+        // Null when the roster did not seat you, so a caller cannot mistake slot 1 for yours
+        yourSlotIndex: selfSeated ? yourSlotIndex : null,
     };
 }

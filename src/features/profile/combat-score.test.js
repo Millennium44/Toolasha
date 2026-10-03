@@ -23,6 +23,7 @@ const stub = vi.hoisted(() => ({
     storedFormat: null,
     metzExport: { source: 'metz' },
     shykaiExport: { exportObj: { player: {}, source: 'shykai' } },
+    shykaiParty: null,
     snapshots: [],
     profileList: [],
     /** When an array, each profile-list read waits here until a test releases it */
@@ -62,7 +63,8 @@ vi.mock('../../core/storage.js', () => ({
 vi.mock('../../core/websocket.js', () => ({ default: { on: () => {}, off: () => {} } }));
 vi.mock('./score-calculator.js', () => ({ calculateCombatScore: () => ({}) }));
 vi.mock('../combat/combat-sim-export.js', () => ({
-    constructExportObject: async () => stub.shykaiExport,
+    constructExportObject: async (profileId, singlePlayer) =>
+        singlePlayer === false ? stub.shykaiParty : stub.shykaiExport,
     getProfileList: () =>
         stub.profileListGate
             ? new Promise((resolve) => stub.profileListGate.push(() => resolve(stub.profileList)))
@@ -767,7 +769,7 @@ describe('sim export split button', () => {
             ];
         });
 
-        test('each saved loadout offers a party export in Metz format only', async () => {
+        test('each saved loadout offers a party export in either format', async () => {
             combatScore.showScorePanel(profileData(stub.currentCharacterId), scoreData, document.createElement('div'));
             await flush();
 
@@ -778,7 +780,83 @@ describe('sim export split button', () => {
             document.querySelector('#mwi-combat-sim-format-btn').click();
             document.querySelector('.mwi-combat-sim-format-option[data-format="shykai"]').click();
             await flush();
-            expect(partyBtn.style.display).toBe('none');
+            expect(partyBtn.style.display).toBe('');
+        });
+
+        describe('in the Shykai format', () => {
+            // As the group builder emits a slot: no name inside it, names travel in playerIDs
+            const slotPlayer = () =>
+                JSON.stringify({
+                    player: {
+                        equipment: [
+                            { itemLocationHrid: '/item_locations/head', itemHrid: '/items/hat', enhancementLevel: 0 },
+                        ],
+                    },
+                    abilities: [{ abilityHrid: '/abilities/old', level: 1 }],
+                    triggerMap: {},
+                });
+            const BLANK = '{"player":{"equipment":[]},"blank":true}';
+
+            beforeEach(() => {
+                stub.shykaiParty = {
+                    exportObj: { 1: slotPlayer(), 2: slotPlayer(), 3: BLANK, 4: BLANK, 5: BLANK },
+                    playerIDs: ['Teammate', 'Me', 'Player 3', 'Player 4', 'Player 5'],
+                    importedPlayerPositions: [true, true, false, false, false],
+                    yourSlotIndex: 2,
+                };
+            });
+
+            test('copying exports the Group Combat slot map with the loadout worn in your slot only', async () => {
+                combatScore.showScorePanel(
+                    profileData(stub.currentCharacterId),
+                    scoreData,
+                    document.createElement('div')
+                );
+                await flush();
+                document.querySelector('#mwi-combat-sim-format-btn').click();
+                document.querySelector('.mwi-combat-sim-format-option[data-format="shykai"]').click();
+                await flush();
+
+                document.querySelector('.mwi-combat-sim-party-export-option[data-name="Raid"]').click();
+                await flush();
+                expect(document.querySelector('#mwi-party-export-preview').textContent).toContain('All players import');
+                document.querySelector('#mwi-party-export-copy-btn').click();
+                await flush();
+
+                expect(stub.teamCalls).toHaveLength(0);
+                const map = JSON.parse(clipboardText);
+                expect(Object.keys(map)).toEqual(['1', '2', '3', '4', '5']);
+                for (const slot of Object.values(map)) expect(typeof slot).toBe('string');
+                expect(JSON.parse(map[1])).toEqual({ ...JSON.parse(stub.shykaiParty.exportObj[1]), name: 'Teammate' });
+                expect(map[3]).toBe(BLANK);
+                const mine = JSON.parse(map[2]);
+                expect(mine.name).toBe('Me');
+                expect(mine.abilities[1]).toEqual({ abilityHrid: '/abilities/fireball', level: 1 });
+                expect(mine.player.equipment).toEqual({});
+            });
+
+            test('a roster without you in it copies nothing rather than overwriting slot 1', async () => {
+                // As the builder reports it: a teammate seated in slot 1, and no slot of yours
+                stub.shykaiParty.importedPlayerPositions = [true, false, false, false, false];
+                stub.shykaiParty.yourSlotIndex = null;
+                combatScore.showScorePanel(
+                    profileData(stub.currentCharacterId),
+                    scoreData,
+                    document.createElement('div')
+                );
+                await flush();
+                document.querySelector('#mwi-combat-sim-format-btn').click();
+                document.querySelector('.mwi-combat-sim-format-option[data-format="shykai"]').click();
+                await flush();
+
+                document.querySelector('.mwi-combat-sim-party-export-option[data-name="Raid"]').click();
+                await flush();
+                clipboardText = null;
+                document.querySelector('#mwi-party-export-copy-btn').click();
+                await flush();
+
+                expect(clipboardText).toBeNull();
+            });
         });
 
         test('the preview lists every member with their profile age before anything is copied', async () => {

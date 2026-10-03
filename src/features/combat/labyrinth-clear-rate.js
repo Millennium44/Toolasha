@@ -121,8 +121,14 @@ const LIVE_COMBAT_REDRAW_MS = 1000;
 const LIVE_SIM_TRIALS = 400;
 /** How often a fight is replayed; between replays the extrapolation shows */
 const LIVE_SIM_REFRESH_MS = 4000;
-/** A replay older than this describes a fight that has moved on */
-const LIVE_SIM_MAX_AGE_MS = 9000;
+/**
+ * A replay of the current fight owns the readout until the fight ends or it is
+ * this old. Deliberately far longer than LIVE_SIM_REFRESH_MS: a replay that
+ * runs slow (the grid's own path sims compete for the CPU) must not hand the
+ * header back to an extrapolation that disagrees with it. The ceiling only
+ * stops a broken replay path from freezing the figure.
+ */
+const LIVE_SIM_MAX_AGE_MS = 30000;
 const TILE_CONTROLS_CLASS = 'mwi-labyrinth-tile-controls';
 /** Only reached for when the game's item sheet has not been drawn from yet */
 const SUPPLY_EMOJI = { torch: '🔥', shroud: '👻', beacon: '📡' };
@@ -1932,12 +1938,19 @@ class LabyrinthClearRate {
             playerLostFraction: started.firstPlayerFraction - playerHpFraction,
             remainingSeconds: started.caughtStart ? Math.max(0, FIGHT_TIMEOUT_SECONDS - observedSeconds) : null,
         });
-        // The replayed figure is the better answer whenever one is in hand;
-        // the extrapolation carries the display between replays and covers the
-        // first seconds, before any replay has finished
+        // The replayed figure is the better answer once one has landed for this
+        // fight, and it keeps the header until the fight ends — a slow replay
+        // does not hand it back to an extrapolation that disagrees. The
+        // extrapolation covers only the seconds before the first replay lands,
+        // and the whole fight if the setting is off or the replay path has gone
+        // quiet past the ceiling.
         const replay = this._replay;
         const fresh =
-            replay && replay.fightStartedAt === started.startedAt && Date.now() - replay.at < LIVE_SIM_MAX_AGE_MS;
+            !!replay &&
+            replay.fightStartedAt === started.startedAt &&
+            Date.now() - replay.at < LIVE_SIM_MAX_AGE_MS &&
+            !!config.getSetting('labyrinthLiveCombatSim');
+        const replayAgeSeconds = fresh ? Math.round((Date.now() - replay.at) / 1000) : 0;
         // An extrapolation the fight has not yet earned is shown as a band
         // rather than as a figure. The arithmetic behind it is untouched — this
         // is only a refusal to quote a number to a precision the evidence does
@@ -2002,7 +2015,7 @@ class LabyrinthClearRate {
                     ? `Dead in ~${Math.round(estimate.deathSeconds)}s`
                     : 'Taking no damage',
                 fresh
-                    ? `Replayed this fight ${replay.trials} times from here — ±${(replay.halfWidth * 100).toFixed(1)}%`
+                    ? `Replayed this fight ${replay.trials} times from here — ±${(replay.halfWidth * 100).toFixed(1)}% (${replayAgeSeconds}s ago)`
                     : `${estimate.reason}${estimate.confident ? '' : ' — early, so shown as a range'}`,
                 display.source === 'provisional'
                     ? `Latest reading ${(estimate.clearChance * 100).toFixed(0)}%, averaged to ` +
@@ -2122,17 +2135,25 @@ class LabyrinthClearRate {
         // passed as 0 — which meant a reload mid-fight never replayed at all,
         // and so never got off the extrapolation.
         if (state.observedSeconds < MIN_ELAPSED_SECONDS) return;
-        if (this._replay?.fightStartedAt === fight.startedAt && Date.now() - this._replay.at < LIVE_SIM_REFRESH_MS) {
+        if (
+            this._replay?.fightStartedAt === fight.startedAt &&
+            Date.now() - this._replay.landedAt < LIVE_SIM_REFRESH_MS
+        ) {
             return;
         }
 
+        // `at` is when the fight state was sampled, which is what the replay describes: a slow replay
+        // lands already that much out of date. The refresh cadence runs from when it landed.
+        const sampledAt = Date.now();
         this._replayRunning = true;
         this.simulateFromHere(state)
             .then((result) => {
                 // A replay that landed after its fight ended describes a moment
                 // that no longer exists, so it is tagged with the fight it came
                 // from and discarded when that stops matching
-                if (result) this._replay = { ...result, at: Date.now(), fightStartedAt: fight.startedAt };
+                if (result) {
+                    this._replay = { ...result, at: sampledAt, landedAt: Date.now(), fightStartedAt: fight.startedAt };
+                }
             })
             .catch((error) => {
                 if (error?.message !== 'Cancelled') {

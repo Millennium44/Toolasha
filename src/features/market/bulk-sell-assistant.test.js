@@ -115,6 +115,16 @@ vi.mock('../inventory/watchlist.js', () => ({
     watchlistEntries: () => game.watched.map((hrid) => ({ hrid, name: hrid.split('/').pop() })),
 }));
 
+// The vendor confirm goes through the game's React handler; here it still clicks, so the counts hold
+const reactClicks = vi.hoisted(() => ({ calls: [] }));
+vi.mock('../../utils/react-click.js', () => ({
+    clickThroughReact: (element, options) => {
+        reactClicks.calls.push({ element, options });
+        element.click();
+        return 'dom';
+    },
+}));
+
 const { default: bulkSell } = await import('./bulk-sell-assistant.js');
 
 const inventory = (itemHrid, count = 5, enhancementLevel = 0) => ({
@@ -921,6 +931,17 @@ describe('confirming from the strip', () => {
         expect(bulkSell.state).toBe('awaiting_next');
     });
 
+    test("a market modal confirm keeps the plain click, not the game's handler", () => {
+        reactClicks.calls = [];
+        const modal = openModal();
+        runAtStep0();
+
+        confirmBtn().click();
+        expect(gameClicks).toBe(1);
+        expect(reactClicks.calls).toHaveLength(0);
+        closeModalAndSettle(modal);
+    });
+
     test("the game's own button still confirms, and lands in the same place", () => {
         const first = openModal();
         runAtStep0();
@@ -1259,6 +1280,7 @@ describe('confirming from the strip', () => {
             runAtStep0();
             bulkSell.decision = { insta: false, vendor: true, price: PRICE, reason: 'vendor' };
             bulkSell._render();
+            bulkSell._trackVendorArming();
             bulkSell._watchClose('[class*="Item_actionMenu"]');
         };
 
@@ -1268,6 +1290,19 @@ describe('confirming from the strip', () => {
             await vi.advanceTimersByTimeAsync(1200);
         };
 
+        test('the armed button stands a moment before it is pressed, since the game ignores an instant confirm', async () => {
+            openMenu();
+            vendorRun();
+
+            confirmBtn().click();
+            await vi.advanceTimersByTimeAsync(150);
+            expect(armClicks).toBe(1);
+            expect(gameClicks).toBe(0);
+
+            await vi.advanceTimersByTimeAsync(600);
+            expect(gameClicks).toBe(1);
+        });
+
         test('an unarmed button is armed by one click, then sold by one more', async () => {
             openMenu();
             vendorRun();
@@ -1276,6 +1311,30 @@ describe('confirming from the strip', () => {
             await pressAndSettle();
             expect(armClicks).toBe(1);
             expect(gameClicks).toBe(1);
+        });
+
+        test("the sale is pressed through the game's handler, since it ignores an untrusted click", async () => {
+            reactClicks.calls = [];
+            openMenu({ label: 'Confirm Sell For 400K Coins' });
+            vendorRun();
+
+            await pressAndSettle();
+            expect(reactClicks.calls).toHaveLength(1);
+            expect(reactClicks.calls[0].element.textContent).toBe('Confirm Sell For 400K Coins');
+            expect(reactClicks.calls[0].options).toEqual({ reactFirst: true });
+        });
+
+        test('a button the player armed a moment ago also stands before it is pressed', async () => {
+            openMenu({ label: 'Confirm Sell For 400K Coins' });
+            vendorRun();
+
+            confirmBtn().click();
+            await vi.advanceTimersByTimeAsync(150);
+            expect(gameClicks).toBe(0);
+
+            await vi.advanceTimersByTimeAsync(600);
+            expect(gameClicks).toBe(1);
+            expect(armClicks).toBe(0);
         });
 
         test('an already-armed button is pressed once, with no arming click', async () => {
@@ -1304,17 +1363,119 @@ describe('confirming from the strip', () => {
         });
 
         test('the player pressing the armed game button during the wait is the only sale', async () => {
-            // The menu stays open with the armed label until the server answers
+            // The menu stays open with the armed label until the server answers. Clicked after the
+            // settle interval, before our own press would fire
             const menu = openMenu();
             vendorRun();
 
             confirmBtn().click();
+            await vi.advanceTimersByTimeAsync(420);
             menu.querySelector('.Button_sell__x').click();
             await vi.advanceTimersByTimeAsync(1200);
 
             expect(armClicks).toBe(1);
             expect(gameClicks).toBe(1);
             expect(bulkSell._confirmSent()).toBe(true);
+            bulkSell._releaseSaleGuard();
+        });
+
+        test('a player click right after our arming stays retryable, since the game may ignore it', async () => {
+            const menu = openMenu();
+            vendorRun();
+            const sell = menu.querySelector('.Button_sell__x');
+
+            confirmBtn().click();
+            sell.click();
+            await vi.advanceTimersByTimeAsync(1200);
+
+            // Our press stood down, but the step is not marked sent and nothing swallows a retry
+            expect(gameClicks).toBe(1);
+            expect(bulkSell._confirmSent()).toBe(false);
+            expect(confirmBtn().disabled).toBe(false);
+            sell.click();
+            expect(gameClicks).toBe(2);
+        });
+
+        test('an arming while the run waits for the menu to open still counts as recent', async () => {
+            runAtStep0();
+            bulkSell.state = 'preparing';
+            const inventory = document.createElement('div');
+            inventory.className = 'Inventory_items__x';
+            inventory.innerHTML =
+                '<div class="Item_itemContainer__x"><div class="Item_item__x"><svg><use href="#cheese"></use></svg></div></div>';
+            document.body.appendChild(inventory);
+            expect(bulkSell._openVendorSell(PRICE, 1)).toBe(true);
+
+            // The menu opens and the player arms it before the run's own menu wait has looked
+            const menu = openMenu();
+            const sell = menu.querySelector('.Button_sell__x');
+            sell.click();
+            await vi.advanceTimersByTimeAsync(360);
+            expect(bulkSell.state).toBe('awaiting_confirm');
+
+            confirmBtn().click();
+            sell.click();
+            await vi.advanceTimersByTimeAsync(1200);
+
+            expect(gameClicks).toBe(1);
+            expect(bulkSell._confirmSent()).toBe(false);
+            inventory.remove();
+        });
+
+        test('clearing the step mid-wait ends the wait at once and leaves nothing listening', async () => {
+            const menu = openMenu({ label: 'Confirm Sell For 400K Coins' });
+            vendorRun();
+            const sell = menu.querySelector('.Button_sell__x');
+
+            confirmBtn().click();
+            await vi.advanceTimersByTimeAsync(100);
+            bulkSell._clearTransient();
+            expect(bulkSell._vendorArming).toBe(false);
+
+            // The stale wait's listener is gone: a click is neither taken as the sale nor guarded
+            sell.click();
+            sell.click();
+            expect(gameClicks).toBe(2);
+            expect(bulkSell._confirmSent()).toBe(false);
+
+            // and the sleeping press, when it wakes, presses nothing
+            await vi.advanceTimersByTimeAsync(1200);
+            expect(gameClicks).toBe(2);
+        });
+
+        test('a player click on a button they armed a moment ago stays retryable', async () => {
+            // The game may ignore a confirm landing that soon after the arming
+            const menu = openMenu();
+            vendorRun();
+            const sell = menu.querySelector('.Button_sell__x');
+
+            sell.click(); // the player arms it
+            confirmBtn().click();
+            sell.click();
+            await vi.advanceTimersByTimeAsync(1200);
+
+            expect(gameClicks).toBe(1);
+            expect(bulkSell._confirmSent()).toBe(false);
+            sell.click();
+            expect(gameClicks).toBe(2);
+        });
+
+        test('a player click on a button armed long ago is the sale, and guards against a second', async () => {
+            const menu = openMenu();
+            vendorRun();
+            const sell = menu.querySelector('.Button_sell__x');
+
+            sell.click(); // the player arms it
+            await vi.advanceTimersByTimeAsync(2000);
+            confirmBtn().click();
+            sell.click();
+            sell.click();
+            await vi.advanceTimersByTimeAsync(1200);
+
+            expect(armClicks).toBe(1);
+            expect(gameClicks).toBe(1);
+            expect(bulkSell._confirmSent()).toBe(true);
+            bulkSell._releaseSaleGuard();
         });
 
         test('a second player click after the armed-button click during the wait sends no second sale', async () => {
@@ -1323,6 +1484,7 @@ describe('confirming from the strip', () => {
             const sell = menu.querySelector('.Button_sell__x');
 
             confirmBtn().click();
+            await vi.advanceTimersByTimeAsync(420);
             sell.click();
             sell.click();
             await vi.advanceTimersByTimeAsync(1200);

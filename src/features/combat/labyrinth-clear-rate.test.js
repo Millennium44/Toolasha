@@ -2083,6 +2083,96 @@ describe('the live clear chance on the attempt bar', () => {
         expect(liveText()).toContain('Clear ~63%');
     });
 
+    describe('a replay that has landed keeps the header', () => {
+        const warmUp = [
+            [0.98, 0.99],
+            [0.9, 0.95],
+            [0.8, 0.9],
+            [0.7, 0.85],
+            [0.6, 0.8],
+            [0.5, 0.75],
+            [0.4, 0.7],
+        ];
+        /** Slow, steady losses so a tick never reads as a new fight */
+        const slowTicks = (n) => Array.from({ length: n }, (_, i) => [0.4 - (i + 1) * 0.005, 0.7 - (i + 1) * 0.005]);
+
+        /** A replay landing now for the fight on screen, as maybeReplayFight stores it */
+        const landReplay = () => {
+            labyrinthClearRate._replay = {
+                clearChance: 0.63,
+                trials: 400,
+                halfWidth: 0.02,
+                at: Date.now(),
+                fightStartedAt: labyrinthClearRate._fight.startedAt,
+            };
+        };
+
+        let spy;
+        beforeEach(() => {
+            // The replay is stored by hand; none may start and overwrite it
+            spy = vi.spyOn(labyrinthClearRate, 'maybeReplayFight').mockImplementation(() => {});
+        });
+        afterEach(() => spy.mockRestore());
+
+        test('past the old nine-second age it still reads the replay, not the extrapolation', () => {
+            buildActionBar();
+            runTicks(warmUp);
+            landReplay();
+
+            runTicks(slowTicks(14));
+
+            expect(Date.now() - labyrinthClearRate._replay.at).toBeGreaterThan(9000);
+            expect(liveText()).toContain('Clear ~63%');
+            expect(document.querySelector(LIVE_SELECTOR).title).toContain('s ago');
+        });
+
+        test('past the ceiling it falls back to the extrapolation', () => {
+            buildActionBar();
+            runTicks(warmUp);
+            landReplay();
+
+            runTicks(slowTicks(31));
+
+            expect(liveText()).not.toContain('Clear ~63%');
+            expect(liveText()).toMatch(/Clear/);
+        });
+
+        test('a slow replay is dated from the fight state it sampled, not from when it landed', async () => {
+            spy.mockRestore();
+            let finish;
+            const sim = vi
+                .spyOn(labyrinthClearRate, 'simulateFromHere')
+                .mockImplementation(() => new Promise((resolve) => (finish = resolve)));
+            try {
+                labyrinthClearRate._replay = null;
+                labyrinthClearRate._replayRunning = false;
+                const sampledAt = Date.now();
+                labyrinthClearRate.maybeReplayFight({ startedAt: 123 }, { observedSeconds: 60 });
+                vi.advanceTimersByTime(6000);
+                finish({ clearChance: 0.63, trials: 400, halfWidth: 0.02 });
+                await Promise.resolve();
+                await Promise.resolve();
+
+                expect(labyrinthClearRate._replay.at).toBe(sampledAt);
+                expect(labyrinthClearRate._replay.landedAt).toBe(sampledAt + 6000);
+            } finally {
+                sim.mockRestore();
+                spy = vi.spyOn(labyrinthClearRate, 'maybeReplayFight').mockImplementation(() => {});
+            }
+        });
+
+        test('a replay from an earlier fight never shows', () => {
+            buildActionBar();
+            runTicks(warmUp);
+            landReplay();
+            labyrinthClearRate._replay.fightStartedAt -= 1;
+
+            runTicks(slowTicks(2));
+
+            expect(liveText()).not.toContain('Clear ~63%');
+        });
+    });
+
     test('a fight whose mana the server never sent replays at full, not at NaN', () => {
         // A tick is a sparse delta merged over the last one, so a field never
         // sent is undefined. The health denominator is validated for exactly
