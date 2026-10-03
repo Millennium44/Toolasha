@@ -874,12 +874,15 @@ export function attributeTick(tick, state, options) {
 
         const hasDamageCounter = monster?.dmgCounter != null && Number.isFinite(Number(monster.dmgCounter));
         const damageCount = hasDamageCounter ? Number(monster.dmgCounter) : 0;
-        const critCount = Number(monster?.critCounter) || 0;
+        const hasCritCounter = monster?.critCounter != null && Number.isFinite(Number(monster.critCounter));
+        const critCount = hasCritCounter ? Number(monster.critCounter) : 0;
         const attacks = Number(monster?.atkCounter);
 
         state.monstersHP[index] = health;
-        state.dmgCounter[index] = damageCount;
-        state.critCounter[index] = critCount;
+        // An omitted counter cannot baseline the next cumulative reading. The HP loss still counts
+        // below, but the next counter-bearing tick must seed afresh rather than replay old splats.
+        state.dmgCounter[index] = hasDamageCounter ? damageCount : undefined;
+        state.critCounter[index] = hasCritCounter ? critCount : undefined;
         if (Number.isFinite(maxHealth)) state.monstersMaxHP[index] = maxHealth;
         if (Number.isFinite(attacks)) monsterAttacks[index] = attacks;
 
