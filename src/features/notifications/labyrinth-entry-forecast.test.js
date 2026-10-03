@@ -52,6 +52,18 @@ describe('forecastLabyrinthEntries', () => {
         expect(f.available).toBe(false);
     });
 
+    test.each(['0001-01-01T00:00:00.000Z', '0001-01-01T00:00:00+00:00'])(
+        'treats other spellings of the year-one sentinel (%s) as no timestamp too',
+        (lastLabyrinthTimestamp) => {
+            const characterInfo = { labyrinthEntries: 1, labyrinthCooldownHours: 48, lastLabyrinthTimestamp };
+
+            const f = forecastLabyrinthEntries({ characterInfo, now: NOW });
+
+            expect(f.lastEntryAt).toBeNull();
+            expect(f.nextEntryAt).toBeNull();
+        }
+    );
+
     test('reports not-ok without character info or cooldown', () => {
         expect(forecastLabyrinthEntries({ characterInfo: null }).ok).toBe(false);
         expect(forecastLabyrinthEntries({ characterInfo: { labyrinthEntries: 1 } }).ok).toBe(false);

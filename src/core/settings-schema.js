@@ -857,7 +857,7 @@ export const settingsGroups = {
             },
             dungeonTokenTooltips: {
                 id: 'dungeonTokenTooltips',
-                label: 'Currency tooltips: Show shop values for tokens, seals, and cowbells',
+                label: 'Currency tooltips: Show shop values for tokens, scrolls, and cowbells',
                 type: 'checkbox',
                 default: true,
             },

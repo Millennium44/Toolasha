@@ -2251,7 +2251,7 @@ const UPGRADE_MODES = [
             'What each Labyrinth combat scroll is worth in this fight: turning on one you are not carrying, ' +
             'or — for one already on — what you would lose by dropping it.\n\n' +
             'Damage, attack and cast speed, crit rate, combat drop, wisdom and rare find are all offered. The ' +
-            'per-run seal cost is not priced, so these land in the "measured, but not priced" box next to ' +
+            'per-run scroll cost is not priced, so these land in the "measured, but not priced" box next to ' +
             'Community — read them on their deltas.',
     },
     {
@@ -10675,7 +10675,7 @@ class CombatSimUI {
                 : r.candidate?.type === 'community_buff'
                   ? 'not a purchase — nobody buys a community buff level'
                   : r.candidate?.type === 'scroll'
-                    ? 'a per-run seal cost the advisor does not price'
+                    ? 'a per-run scroll cost the advisor does not price'
                     : 'no price could be resolved';
 
             html += `<tr style="cursor:pointer; color:#e0e0e0;" data-unpriced-row="${i}" data-row-key="${rowKey}">

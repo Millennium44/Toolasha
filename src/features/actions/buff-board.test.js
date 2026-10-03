@@ -198,7 +198,7 @@ describe('the board renders at all', () => {
             'MooPass',
             'Guild',
             'Community',
-            'Seals',
+            'Scrolls',
         ]) {
             expect(text()).toContain(label);
         }
