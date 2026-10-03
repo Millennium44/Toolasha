@@ -153,7 +153,12 @@ function bootstrapFromCurrentEnhancingAction() {
     // Not the run just closed as ended, though: it is the same item near the same level, and
     // extending it would fold the new run into the old one after all.
     const { itemHrid, level } = parseItemHash(activeEnhancingAction.primaryItemHash);
-    if (!closedEndedRun && itemHrid && enhancementTracker.findExtendableSession(itemHrid, level)) return;
+    if (!closedEndedRun && itemHrid && enhancementTracker.findExtendableSession(itemHrid, level)) {
+        // The cached row is already the run we will extend. Remember its id so
+        // a routine update of that same row cannot arm a forced new session.
+        trackedEnhanceActionId = activeEnhancingAction.id;
+        return;
+    }
 
     enhancementTracker.setPendingStart();
     trackedEnhanceActionId = activeEnhancingAction.id;

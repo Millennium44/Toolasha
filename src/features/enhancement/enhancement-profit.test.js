@@ -1,5 +1,6 @@
 import { describe, test, expect } from 'vitest';
 import { costVsExpected, valueVsCost, MARKET_SELL_TAX } from './enhancement-profit.js';
+import { addMaterialCost, addProtectionCost, createSession } from './enhancement-session.js';
 
 /** A session with 20 attempts costing 100 each in materials, no protection. */
 function session(overrides = {}) {
@@ -79,6 +80,25 @@ describe('costVsExpected', () => {
             protectionCost: 0,
             predictions: { expectedAttempts: 14, expectedProtections: 2 },
         });
+        expect(costVsExpected(run)).toBeNull();
+    });
+
+    test('remembers unpriced material units after later attempts have a price', () => {
+        const run = createSession('/items/test_sword', 'Test Sword', 0, 2, 0);
+        addMaterialCost(run, '/items/prime_catalyst', 1, 0);
+        addMaterialCost(run, '/items/prime_catalyst', 1, 100);
+        run.totalAttempts = 2;
+        run.predictions = { expectedAttempts: 2, expectedProtections: 0 };
+        expect(costVsExpected(run)).toBeNull();
+    });
+
+    test('remembers an unpriced protection after later protections have a price', () => {
+        const run = createSession('/items/test_sword', 'Test Sword', 0, 2, 2);
+        addMaterialCost(run, '/items/prime_catalyst', 2, 100);
+        addProtectionCost(run, '/items/mirror_of_protection', 0);
+        addProtectionCost(run, '/items/mirror_of_protection', 100);
+        run.totalAttempts = 2;
+        run.predictions = { expectedAttempts: 2, expectedProtections: 2 };
         expect(costVsExpected(run)).toBeNull();
     });
 });

@@ -46,6 +46,7 @@ export function costVsExpected(session, leg = null) {
 
     // Tracking retains consumed quantities when a market, production, and vendor
     // price are all absent. A zero-priced input makes the bill incomplete.
+    if (session.hasUnpricedInput === true) return null;
     if (Object.values(session.materialCosts || {}).some((m) => m.count > 0 && !(m.totalCost > 0))) return null;
     if (protCount > 0 && !(protActual > 0)) return null;
 

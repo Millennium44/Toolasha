@@ -433,6 +433,20 @@ describe('TLA-043: bootstrap from an already-cached current action', () => {
         trackerMock.findExtendableSession = () => null;
     });
 
+    test('a cached extendable run survives a same-action queue update before its next completion', async () => {
+        trackerMock.findExtendableSession = vi.fn(() => 'old_session');
+        const row = cachedEnhanceAction({ id: 'a1' });
+        state.actions = [row];
+        setupEnhancementHandlers();
+
+        await state.handlers.actions_updated({ endCharacterActions: [row] });
+        await state.handlers.action_completed(attempt(6, 2071));
+
+        expect(state.calls).toContainEqual(['extend', 'old_session', 15]);
+        expect(state.calls.map(([kind]) => kind)).not.toContain('start');
+        trackerMock.findExtendableSession = () => null;
+    });
+
     test('the setting disabled skips the bootstrap entirely', async () => {
         state.actions = [cachedEnhanceAction()];
         const configModule = await import('../../core/config.js');
