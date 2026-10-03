@@ -19,7 +19,7 @@ import { compareActionQueueOrder } from '../../utils/combat-actions.js';
 
 const COIN = '/items/coin';
 
-/** Bells come loose or in bags of this many */
+/** The market sells bells only in bags of this many */
 export const COWBELLS_PER_BAG = 10;
 
 /**
@@ -173,32 +173,18 @@ function wholeUnits(sum, cost) {
 }
 
 /**
- * Bells the spare coins buy, the way the panel says to buy them.
- *
- * Whole bells only, rounded down. When the bag is the cheaper route, whole bags
- * first, then whatever loose bells the remainder still buys at the loose price.
- * `looseBells` is the count buying every bell loose instead.
+ * Bells the spare coins buy. The market sells them only in bags of ten, so it is
+ * whole bags, rounded down.
  *
  * @param {number} coins - Coins on hand
  * @param {number} reserve - From {@link coinReserve}
- * @param {{price: number|null, source: 'loose'|'bag'|null, loose: number|null}} pricing - From
- *   `cowbellPricing()`; `price` is per bell either way
- * @returns {{spare: number, bells: number, bags: number|null, extraLoose: number,
- *   looseBells: number|null}|null} `extraLoose` is the loose bells bought beside the bags. Null
- *   without a bell price
+ * @param {{price: number|null}} pricing - From `cowbellPricing()`; `price` is per bell
+ * @returns {{spare: number, bells: number, bags: number}|null} Null without a bell price
  */
 export function bellsAffordable(coins, reserve, pricing) {
     const price = pricing?.price;
     if (!Number.isFinite(price) || price <= 0) return null;
     const spare = Math.max(0, (Number.isFinite(coins) ? coins : 0) - (Number.isFinite(reserve) ? reserve : 0));
-    const loose = Number.isFinite(pricing.loose) && pricing.loose > 0 ? pricing.loose : null;
-    const looseBells = loose === null ? null : wholeUnits(spare, loose);
-
-    if (pricing.source === 'bag') {
-        const bagCost = price * COWBELLS_PER_BAG;
-        const bags = wholeUnits(spare, bagCost);
-        const extraLoose = loose === null ? 0 : wholeUnits(spare - bags * bagCost, loose);
-        return { spare, bells: bags * COWBELLS_PER_BAG + extraLoose, bags, extraLoose, looseBells };
-    }
-    return { spare, bells: wholeUnits(spare, price), bags: null, extraLoose: 0, looseBells };
+    const bags = wholeUnits(spare, price * COWBELLS_PER_BAG);
+    return { spare, bells: bags * COWBELLS_PER_BAG, bags };
 }

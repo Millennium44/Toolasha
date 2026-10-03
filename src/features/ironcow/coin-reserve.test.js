@@ -291,37 +291,24 @@ describe('the reserve, from stage flows', () => {
 });
 
 describe('bells the spare coins buy', () => {
-    test('floors to whole bells when they are bought loose', () => {
-        const pricing = { price: 100_000, source: 'loose', loose: 100_000 };
-        expect(bellsAffordable(1_000_000, 450_000, pricing)).toEqual({
-            spare: 550_000,
-            bells: 5,
-            bags: null,
-            extraLoose: 0,
-            looseBells: 5,
+    test('floors to whole bags of ten, the only way bells are sold', () => {
+        // 95,000 a bell is 950,000 a bag; the 100,000 left after two bags buys nothing
+        const pricing = { price: 95_000, source: 'bag' };
+        expect(bellsAffordable(3_000_000, 1_000_000, pricing)).toEqual({
+            spare: 2_000_000,
+            bells: 2 * COWBELLS_PER_BAG,
+            bags: 2,
         });
     });
 
-    test('floors to whole bags of ten when the bag is the cheaper way', () => {
-        // 95,000 a bell by the bag is 950,000 a bag
-        const pricing = { price: 95_000, source: 'bag', loose: 100_000 };
-        const result = bellsAffordable(3_000_000, 1_000_000, pricing);
-        expect(result.bags).toBe(2);
-        // The 100,000 left over after two bags still buys one loose
-        expect(result.extraLoose).toBe(1);
-        expect(result.bells).toBe(2 * COWBELLS_PER_BAG + 1);
-        // Every bell loose instead
-        expect(result.looseBells).toBe(20);
-    });
-
     test('an exact multiple of the bag price buys that many bags, not one fewer', () => {
-        const pricing = { price: 111_500, source: 'bag', loose: null };
-        expect(bellsAffordable(3 * 1_115_000, 0, pricing)).toMatchObject({ bags: 3, bells: 30, looseBells: null });
+        const pricing = { price: 111_500, source: 'bag' };
+        expect(bellsAffordable(3 * 1_115_000, 0, pricing)).toMatchObject({ bags: 3, bells: 30 });
     });
 
     test('a reserve above the coins on hand buys nothing, not a negative', () => {
-        const pricing = { price: 100_000, source: 'loose', loose: 100_000 };
-        expect(bellsAffordable(400_000, 450_000, pricing)).toMatchObject({ spare: 0, bells: 0 });
+        const pricing = { price: 100_000, source: 'bag' };
+        expect(bellsAffordable(400_000, 450_000, pricing)).toMatchObject({ spare: 0, bells: 0, bags: 0 });
     });
 
     test('says nothing without a bell price', () => {

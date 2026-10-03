@@ -159,7 +159,7 @@ function costedLoop(overrides = {}) {
         goldPerDay: 6_660_000,
         alchemyFeePerHour: 37_500,
         bellPrice: 950_000,
-        bellPricing: { price: 950_000, source: 'bag', loose: 1_000_000, bag: 950_000, pricingMode: 'ask' },
+        bellPricing: { price: 950_000, source: 'bag', bag: 950_000, pricingMode: 'ask' },
         bells: { perHour: 0.2921, perDay: 7.01, perWeek: 49.08 },
         pricingMode: 'hybrid',
         computedAt: Date.parse('2026-08-04T09:00:00Z'),
@@ -171,7 +171,7 @@ beforeEach(() => {
     plan.state = character();
     loop.result = costedLoop();
     loop.warnings = [];
-    loop.pricing = { price: 950_000, source: 'bag', loose: 1_000_000, bag: 950_000, pricingMode: 'ask' };
+    loop.pricing = { price: 950_000, source: 'bag', bag: 950_000, pricingMode: 'ask' };
     loop.offline = { hours: 16, assumed: true };
     loop.pending = null;
     characterId.current = 'charA';
@@ -299,16 +299,11 @@ describe('what it says', () => {
         expect(text()).toContain('An iron cow sells nothing');
     });
 
-    test('says which way of buying bells is cheaper', async () => {
+    test('says bells are bought in bags of ten', async () => {
         ironCowFarmPanel.show();
         await ironCowFarmPanel.refresh();
         expect(text()).toContain('in bags of ten');
-
-        loop.result = costedLoop({
-            bellPricing: { price: 900_000, source: 'loose', loose: 900_000, bag: 950_000, pricingMode: 'ask' },
-        });
-        await ironCowFarmPanel.refresh();
-        expect(text()).toContain('loose');
+        expect(text()).not.toContain('loose');
     });
 
     test('says how many bells the coins buy now, keeping back what the queue dips to', async () => {
@@ -323,9 +318,9 @@ describe('what it says', () => {
         ironCowFarmPanel.show();
         await ironCowFarmPanel.refresh();
 
-        // 26M spare at 9.5M a bag of ten is two whole bags, and the 7M left buys seven loose at 1M
+        // 26M spare at 9.5M a bag of ten is two whole bags
         expect(text()).toContain('Bells you can buy now');
-        expect(text()).toContain('27 (2 bags + 7 loose)');
+        expect(text()).toContain('20 (2 bags)');
         expect(text()).toContain('Kept for the queue');
         const row = [...ironCowFarmPanel.panel.querySelectorAll('div')].find((div) =>
             div.textContent.startsWith('Bells you can buy now')

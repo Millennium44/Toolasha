@@ -71,7 +71,6 @@ export const LOOP_QUEUE_SLOTS = 3;
 export const ASSUMED_OFFLINE_HOURS = 16;
 
 const COIN = '/items/coin';
-const COWBELL = '/items/cowbell';
 const COWBELL_BAG = '/items/bag_of_10_cowbells';
 const COWBELLS_PER_BAG = 10;
 const HOURS_PER_WEEK = 168;
@@ -118,35 +117,23 @@ function ironCowSuccessRate(result) {
 }
 
 /**
- * What a cowbell costs, bought the cheaper of the two ways.
+ * What a cowbell costs: a tenth of a bag of ten, the only way the market sells them.
  *
- * Cowbells are sold loose and in bags of ten, and the bag is not always ten
- * times the loose price. Since buying them is the entire point of the gold,
- * quoting the wrong one misprices the whole projection.
- *
- * @returns {{price: number|null, source: 'loose'|'bag'|null, loose: number|null, bag: number|null,
- *   pricingMode: string}}
+ * @returns {{price: number|null, source: 'bag'|null, bag: number|null, pricingMode: string}} `price`
+ *   and `bag` are per bell; null with no bag price
  */
 export function cowbellPricing() {
     // 'buy' side, because buying cowbells is the only market act available.
-    const loose = getItemPrice(COWBELL, { context: 'profit', side: 'buy' });
     const bag = getItemPrice(COWBELL_BAG, { context: 'profit', side: 'buy' });
     const pricingMode = getPricingMode('profit', 'buy');
 
     const perBellFromBag = typeof bag === 'number' && bag > 0 ? bag / COWBELLS_PER_BAG : null;
-    const perBellLoose = typeof loose === 'number' && loose > 0 ? loose : null;
-
-    let price = null;
-    let source = null;
-    if (perBellLoose !== null && (perBellFromBag === null || perBellLoose <= perBellFromBag)) {
-        price = perBellLoose;
-        source = 'loose';
-    } else if (perBellFromBag !== null) {
-        price = perBellFromBag;
-        source = 'bag';
-    }
-
-    return { price, source, loose: perBellLoose, bag: perBellFromBag, pricingMode };
+    return {
+        price: perBellFromBag,
+        source: perBellFromBag === null ? null : 'bag',
+        bag: perBellFromBag,
+        pricingMode,
+    };
 }
 
 /**

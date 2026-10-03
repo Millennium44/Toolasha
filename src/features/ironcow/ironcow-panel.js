@@ -877,17 +877,11 @@ class IronCowFarmPanel {
                 'Per bell',
                 coins(pricing.price),
                 COLORS.text,
-                `Cheaper of loose (${coins(pricing.loose)}) and by the bag (${coins(pricing.bag)} each). ` +
-                    `Priced at ${pricing.pricingMode}.`
+                `A tenth of a bag of ten (${coins(pricing.bag * 10)} a bag). Priced at ${pricing.pricingMode}.`
             )
         );
         holder.appendChild(
-            line(
-                'Buy them',
-                pricing.source === 'bag' ? 'in bags of ten' : 'loose',
-                COLORS.good,
-                'Bags are not always ten times the loose price.'
-            )
+            line('Buy them', 'in bags of ten', COLORS.good, 'The market sells cowbells only in bags of ten.')
         );
         holder.append(...this._affordableLines(state, pricing));
 
@@ -964,22 +958,14 @@ class IronCowFarmPanel {
         const can = bellsAffordable(state.coins, reserve, pricing);
         if (!can) return [];
 
-        const value =
-            can.bags === null
-                ? bells(can.bells)
-                : `${bells(can.bells)} (${can.bags} bag${can.bags === 1 ? '' : 's'}` +
-                  `${can.extraLoose > 0 ? ` + ${can.extraLoose} loose` : ''})`;
+        const value = `${bells(can.bells)} (${can.bags} bag${can.bags === 1 ? '' : 's'})`;
         const kept =
             reserve > 0
                 ? `Keeps ${coins(reserve)} back: what ${spenders.join(', ')} spends. Coinify earnings ` +
                   'are not counted on, since its rolls can fail.'
                 : 'Nothing queued spends gold, so nothing is held back.';
         const stopped = walked.stoppedAt ? ` The queue is followed up to ${walked.stoppedAt}, which never ends.` : '';
-        const route =
-            can.bags === null
-                ? ' Whole bells, rounded down.'
-                : ' Whole bags of ten first, then loose bells with what is left' +
-                  (can.looseBells === null ? '.' : `; loose at ${coins(pricing.loose)} it would be ${can.looseBells}.`);
+        const route = ' Whole bags of ten, rounded down.';
         const title = `Out of your ${coins(state.coins)}. ${kept}${estimateNote}${stopped}${route}`;
 
         return [

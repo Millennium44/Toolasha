@@ -353,12 +353,13 @@ describe('bells', () => {
         expect(bellsFrom(Number.NaN, 1_000_000)).toBeNull();
     });
 
-    test('buys them whichever way is cheaper', () => {
-        market.prices = { [COWBELL]: 1_000_000, [COWBELL_BAG]: 9_500_000 };
-        expect(cowbellPricing()).toMatchObject({ price: 950_000, source: 'bag' });
-
+    test('prices a bell as a tenth of a bag, the only way they are sold', () => {
+        // A cheaper loose quote is not a price anyone can buy at
         market.prices = { [COWBELL]: 900_000, [COWBELL_BAG]: 9_500_000 };
-        expect(cowbellPricing()).toMatchObject({ price: 900_000, source: 'loose' });
+        expect(cowbellPricing()).toMatchObject({ price: 950_000, source: 'bag', bag: 950_000 });
+
+        market.prices = { [COWBELL]: 900_000 };
+        expect(cowbellPricing()).toMatchObject({ price: null, source: null });
     });
 
     test('reports the pricing mode it quoted under', () => {

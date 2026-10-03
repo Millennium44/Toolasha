@@ -10,6 +10,7 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 - Iron Bell Farming shows how many cowbells your coins buy now while keeping enough back for the queued loop at its lowest point (decomposing pays fees before coinify earns), and what it keeps.
 - The queue helper reports the hours and bells its counts really cover once your stock has shortened the batch.
+- A cowbell is priced as a tenth of a bag of ten, the only way the market sells them, rather than at a loose price nobody can buy at.
 
 ### Timers clean up after themselves everywhere
 
