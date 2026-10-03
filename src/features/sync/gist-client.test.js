@@ -139,6 +139,24 @@ describe('transport', () => {
         expect(calls.at(-1).transport).toBe('fetch');
     });
 
+    test('a 5xx answer in the middle breaks the run of failures', async () => {
+        const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+        responses.push({ fetchThrows: true }, { status: 200, body: [] });
+        await findSyncGist('tok');
+        responses.push({ fetchThrows: true }, { status: 200, body: [] });
+        await findSyncGist('tok');
+        responses.push({ fetchThrows: true }, { status: 503, body: 'unavailable' });
+        await findSyncGist('tok').catch(() => {});
+        responses.push({ fetchThrows: true }, { status: 200, body: [] });
+        await findSyncGist('tok');
+        responses.push({ status: 200, body: [] });
+        await findSyncGist('tok');
+
+        // Not three in a row, so the page fetch is still tried
+        expect(calls.at(-1).transport).toBe('fetch');
+        warn.mockRestore();
+    });
+
     test('an edge error page with no CORS header never moves the session onto the manager', async () => {
         // The 502 page throws the fetch (no Access-Control-Allow-Origin); the manager gets the same 502
         for (let i = 0; i < 4; i++) {

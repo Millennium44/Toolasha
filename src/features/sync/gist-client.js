@@ -241,7 +241,9 @@ export async function httpRequest({ method, url, headers = {}, body, anonymous =
     } catch (error) {
         if (!error?.transportFailure) throw error;
         const response = await managerRequest(send, request);
-        if (response.status < 500) fetchFailuresAnsweredByManager++;
+        // A 5xx says nothing about the page fetch (see above) and breaks the run: three in a row means
+        // three in a row
+        fetchFailuresAnsweredByManager = response.status < 500 ? fetchFailuresAnsweredByManager + 1 : 0;
         if (fetchFailuresAnsweredByManager >= FETCH_FAILURES_TO_LATCH) {
             pageFetchUnusable = true;
             console.warn(
