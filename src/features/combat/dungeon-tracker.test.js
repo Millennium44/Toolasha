@@ -230,6 +230,7 @@ function resetTracker() {
     tracker._lostTimeBeat = null;
     tracker.timerRegistry.clearAll();
     tracker._completionKeyCountGrace = null;
+    tracker._expiredCompletionKeyCountCutoff = null;
     if (tracker.visibilityHandler) {
         document.removeEventListener('visibilitychange', tracker.visibilityHandler);
         tracker.visibilityHandler = null;
@@ -4301,6 +4302,171 @@ describe('a dungeon displaced by "Start Now"', () => {
         await tracker.onNewBattle({ wave: 1, battleId: 91, players: [{ character: { name: 'Marketcow' } }] });
         expect(tracker.currentRun.currentWave).toBe(1);
         expect(tracker.currentRun.wavesCompleted).toBe(0);
+    });
+
+    test('a key count delayed past the wait cannot anchor the successor run', async () => {
+        midDen();
+        tracker.currentRun.maxWaves = 12;
+        tracker.currentRun.wavesCompleted = 12;
+        tracker.currentRun.partyNames = ['Aster', 'Briar'];
+        tracker.firstKeyCountTimestamp = T0 - 60 * 60_000;
+        tracker.lastKeyCountTimestamp = tracker.firstKeyCountTimestamp;
+        // Party chat is stamped on the server's clock, an hour behind this client.
+        tracker.onChatMessage({
+            message: {
+                chan: '/chat_channel_types/party',
+                isSystemMessage: false,
+                m: 'ready',
+                t: new Date(DISPLACED_AT - 60 * 60_000).toISOString(),
+            },
+        });
+        startMilkingNow();
+        vi.advanceTimersByTime(10_001);
+        await flush();
+
+        game.actions = [den({ id: 600, wave: 1 })];
+        await tracker.onNewBattle({
+            wave: 1,
+            battleId: 91,
+            players: [{ character: { name: 'Aster' } }, { character: { name: 'Briar' } }],
+        });
+        expect(tracker.currentRun.wavesCompleted).toBe(0);
+
+        tracker.onChatMessage(
+            keyCountsData(new Date(DISPLACED_AT + 5_000 - 60 * 60_000).toISOString(), '[Aster - 11], [Briar - 11]')
+        );
+        expect(tracker.isTracking).toBe(true);
+        expect(tracker.firstKeyCountTimestamp).toBeNull();
+        expect(tracker.currentRun.keyCountsMap).toBeUndefined();
+        expect(game.savedRuns).toHaveLength(0);
+
+        vi.advanceTimersByTime(999);
+        const successorStart = DISPLACED_AT + 11_000 - 60 * 60_000;
+        tracker.onChatMessage(keyCountsData(new Date(successorStart).toISOString(), '[Aster - 10], [Briar - 10]'));
+        expect(tracker.firstKeyCountTimestamp).toBe(successorStart);
+        expect(tracker.currentRun.keyCountsMap).toEqual({ Aster: 10, Briar: 10 });
+    });
+
+    test('a late old key count cannot complete a successor that has already cleared a wave', async () => {
+        midDen();
+        tracker.currentRun.maxWaves = 12;
+        tracker.currentRun.wavesCompleted = 12;
+        tracker.currentRun.partyNames = ['Aster', 'Briar'];
+        tracker.firstKeyCountTimestamp = T0 - 60 * 60_000;
+        tracker.lastKeyCountTimestamp = tracker.firstKeyCountTimestamp;
+        tracker.onChatMessage({
+            message: {
+                chan: '/chat_channel_types/party',
+                isSystemMessage: false,
+                m: 'ready',
+                t: new Date(DISPLACED_AT - 60 * 60_000).toISOString(),
+            },
+        });
+        startMilkingNow();
+        vi.advanceTimersByTime(10_001);
+        await flush();
+
+        game.actions = [den({ id: 600, wave: 2 })];
+        await tracker.onNewBattle({
+            wave: 2,
+            battleId: 92,
+            players: [{ character: { name: 'Aster' } }, { character: { name: 'Briar' } }],
+        });
+        tracker.currentRun.wavesCompleted = 1;
+        tracker.onChatMessage(
+            keyCountsData(new Date(DISPLACED_AT + 5_000 - 60 * 60_000).toISOString(), '[Aster - 11], [Briar - 11]')
+        );
+        await flush();
+
+        expect(tracker.isTracking).toBe(true);
+        expect(tracker.currentRun.currentWave).toBe(2);
+        expect(game.savedRuns).toHaveLength(0);
+    });
+
+    test('a restored run with no clock sample uses its opening count to reject an old completion', async () => {
+        midDen();
+        tracker.currentRun.maxWaves = 12;
+        tracker.currentRun.wavesCompleted = 12;
+        tracker.currentRun.partyNames = ['Aster', 'Briar'];
+        tracker.firstKeyCountTimestamp = T0 - 60 * 60_000;
+        tracker.lastKeyCountTimestamp = tracker.firstKeyCountTimestamp;
+        // A restored record keeps key timestamps, but not in-memory clock samples.
+        expect(tracker.chatClockOffset()).toBeNull();
+        startMilkingNow();
+        vi.advanceTimersByTime(10_001);
+        await flush();
+
+        game.actions = [den({ id: 600, wave: 1 })];
+        await tracker.onNewBattle({
+            wave: 1,
+            battleId: 91,
+            players: [{ character: { name: 'Aster' } }, { character: { name: 'Briar' } }],
+        });
+        tracker.onChatMessage(
+            keyCountsData(new Date(DISPLACED_AT + 5_000 - 60 * 60_000).toISOString(), '[Aster - 11], [Briar - 11]')
+        );
+        expect(tracker.firstKeyCountTimestamp).toBeNull();
+        expect(tracker.currentRun.keyCountsMap).toBeUndefined();
+
+        vi.advanceTimersByTime(999);
+        const successorStart = DISPLACED_AT + 11_000 - 60 * 60_000;
+        tracker.onChatMessage(keyCountsData(new Date(successorStart).toISOString(), '[Aster - 10], [Briar - 10]'));
+        expect(tracker.firstKeyCountTimestamp).toBe(successorStart);
+        expect(tracker.currentRun.keyCountsMap).toEqual({ Aster: 10, Briar: 10 });
+    });
+
+    test('a late count in the gap before a successor battle leaves its genuine count alone', async () => {
+        midDen();
+        tracker.currentRun.maxWaves = 12;
+        tracker.currentRun.wavesCompleted = 12;
+        tracker.currentRun.partyNames = ['Aster', 'Briar'];
+        tracker.firstKeyCountTimestamp = T0 - 60 * 60_000;
+        tracker.lastKeyCountTimestamp = tracker.firstKeyCountTimestamp;
+        startMilkingNow();
+        vi.advanceTimersByTime(10_001);
+        await flush();
+        expect(tracker.isTracking).toBe(false);
+
+        tracker.onChatMessage(
+            keyCountsData(new Date(DISPLACED_AT + 5_000 - 60 * 60_000).toISOString(), '[Aster - 11], [Briar - 11]')
+        );
+        game.actions = [den({ id: 600, wave: 1 })];
+        await tracker.onNewBattle({
+            wave: 1,
+            battleId: 91,
+            players: [{ character: { name: 'Aster' } }, { character: { name: 'Briar' } }],
+        });
+        vi.advanceTimersByTime(999);
+        const successorStart = DISPLACED_AT + 11_000 - 60 * 60_000;
+        tracker.onChatMessage(keyCountsData(new Date(successorStart).toISOString(), '[Aster - 10], [Briar - 10]'));
+
+        expect(tracker.firstKeyCountTimestamp).toBe(successorStart);
+        expect(tracker.currentRun.keyCountsMap).toEqual({ Aster: 10, Briar: 10 });
+    });
+
+    test('a missing old count without a clock sample does not consume the successor start count', async () => {
+        midDen();
+        tracker.currentRun.maxWaves = 12;
+        tracker.currentRun.wavesCompleted = 12;
+        tracker.currentRun.partyNames = ['Aster', 'Briar'];
+        tracker.firstKeyCountTimestamp = T0 - 60 * 60_000;
+        tracker.lastKeyCountTimestamp = tracker.firstKeyCountTimestamp;
+        startMilkingNow();
+        vi.advanceTimersByTime(10_001);
+        await flush();
+
+        game.actions = [den({ id: 600, wave: 1 })];
+        await tracker.onNewBattle({
+            wave: 1,
+            battleId: 91,
+            players: [{ character: { name: 'Aster' } }, { character: { name: 'Briar' } }],
+        });
+        vi.advanceTimersByTime(999);
+        const successorStart = DISPLACED_AT + 11_000 - 60 * 60_000;
+        tracker.onChatMessage(keyCountsData(new Date(successorStart).toISOString(), '[Aster - 10], [Briar - 10]'));
+
+        expect(tracker.firstKeyCountTimestamp).toBe(successorStart);
+        expect(tracker.currentRun.keyCountsMap).toEqual({ Aster: 10, Briar: 10 });
     });
 
     test('a completion key count inside the wait banks the clear and leaves the next run alone', async () => {
