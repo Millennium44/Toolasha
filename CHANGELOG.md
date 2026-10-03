@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Mana target drafts survive a refresh
+
+- The Mana panel keeps an unsubmitted target after you move focus away or the panel redraws. Calculate or Enter applies it, and switching characters clears the previous character's draft.
+
 ### Briefing tile keeps one current summary
 
 - The Briefing tile no longer repeats its attention count on every refresh. Its current summary replaces the previous line as the items needing attention change.

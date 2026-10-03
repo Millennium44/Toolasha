@@ -97,6 +97,8 @@ let plannerStale = false;
 
 /** What the MP optimizer panel section was last asked for; null until typed, so the measured rate fills it */
 let optimTarget = null;
+/** An unsubmitted target survives a body redraw; null means the measured or applied target is shown */
+let optimTargetDraft = null;
 
 /**
  * The running tally, at module scope so the row can read it.
@@ -130,6 +132,7 @@ export function resetMpPlanner() {
     mpRegenPer10 = null;
     plannerStale = false;
     optimTarget = null;
+    optimTargetDraft = null;
     ownSlot = null;
 }
 
@@ -469,7 +472,7 @@ function drawMpSupply(body) {
     input.type = 'number';
     input.min = '0';
     input.dataset.mpTarget = 'true';
-    input.value = target === null ? '' : String(target);
+    input.value = optimTargetDraft ?? (target === null ? '' : String(target));
     Object.assign(input.style, {
         width: '80px',
         background: 'rgba(255, 255, 255, 0.08)',
@@ -482,9 +485,14 @@ function drawMpSupply(body) {
     const apply = () => {
         const typed = parseFloat(input.value);
         optimTarget = Number.isFinite(typed) && typed >= 0 ? typed : null;
+        optimTargetDraft = null;
         claimState();
         manaPanel.render();
     };
+    input.addEventListener('input', () => {
+        optimTargetDraft = input.value;
+        claimState();
+    });
     input.addEventListener('keydown', (event) => {
         if (event.key === 'Enter') apply();
     });
