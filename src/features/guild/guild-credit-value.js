@@ -1757,6 +1757,7 @@ class GuildCreditValue {
                 this._advisorObserver.observe(itemSelector, {
                     subtree: true,
                     childList: true,
+                    characterData: true,
                     attributes: true,
                     attributeFilter: ['href', 'aria-label', 'class'],
                 });

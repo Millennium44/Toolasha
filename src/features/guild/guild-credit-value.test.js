@@ -931,6 +931,57 @@ describe('guild credit value — exchange advisor sell/rebuy math', () => {
         const baseNet = 4 * 3200 - Math.floor(4 * 3200 * MARKET_TAX);
         expect(advisor.textContent).not.toContain(formatKMB(baseNet));
     });
+
+    test('switching only the enhancement badge text refreshes the same item sale value', async () => {
+        game.clientData = {
+            itemDetailMap: {
+                '/items/purple_guild_credit': { name: 'Purple Guild Credit' },
+                '/items/cheese_hammer': {
+                    hrid: '/items/cheese_hammer',
+                    name: 'Cheese Hammer',
+                    guildCreditConversions: [
+                        { creditItemHrid: '/items/purple_guild_credit', itemCount: 4, creditCount: 1 },
+                    ],
+                },
+                '/items/advanced_alchemy_charm': {
+                    hrid: '/items/advanced_alchemy_charm',
+                    name: 'Advanced Alchemy Charm',
+                    guildCreditConversions: [
+                        { creditItemHrid: '/items/purple_guild_credit', itemCount: 1, creditCount: 1600 },
+                    ],
+                },
+            },
+        };
+        game.prices = {
+            '/items/cheese_hammer': { ask: 4000, bid: 3200 },
+            '/items/cheese_hammer:9': { ask: 12_000, bid: 10_000 },
+            '/items/cheese_hammer:10': { ask: 24_000, bid: 20_000 },
+            '/items/advanced_alchemy_charm': { ask: 100, bid: 90 },
+        };
+        const modal = buildAdvisorModal('Purple Guild Credit', {
+            spriteId: 'cheese_hammer',
+            quantity: 4,
+            enhancementLevel: 9,
+        });
+        game.observers['GuildPanel_exchangeModalContent'](modal);
+
+        try {
+            const initialNet = 4 * 10_000 - Math.floor(4 * 10_000 * MARKET_TAX);
+            expect(modal.querySelector('.mwi-exchange-advisor').textContent).toContain(formatKMB(initialNet));
+
+            // React can retain the same element/icon and update only this Text
+            // node when another enhancement level of the same item is chosen.
+            modal.querySelector('[class*="Item_enhancementLevel"]').firstChild.data = '+10';
+            const nextNet = 4 * 20_000 - Math.floor(4 * 20_000 * MARKET_TAX);
+            await vi.waitFor(() => {
+                const text = modal.querySelector('.mwi-exchange-advisor').textContent;
+                expect(text).toContain(formatKMB(nextNet));
+                expect(text).not.toContain(formatKMB(initialNet));
+            });
+        } finally {
+            guildCreditValue.cleanup();
+        }
+    });
 });
 
 describe('guild credit value — trial tier badge', () => {

@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Exchange advice follows enhancement switches
+
+- Switching between enhancement levels of the same item now refreshes its Guild Credit exchange advice, so the comparison uses the newly selected level's value.
+
 ### Exchange advice values the selected enhancement level
 
 - The Guild Credit exchange advisor now values an enhanced item and its sale order book at the selected enhancement level. It no longer recommends exchanging an expensive enhanced copy based on the unenhanced item's price, and leaves the comparison unavailable when that level has no value.
