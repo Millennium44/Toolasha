@@ -11,6 +11,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 - The Labyrinth entry forecast treats any pre-1970 date as unset, so no spelling of the game's "never set" date can bring back a false "entry ready" alert.
 - The Labyrinth scrolls are called scrolls wherever Toolasha names them (they were seals).
 
+### Toggle simulated scrolls on the action panel
+
+- With scroll simulation on, an action panel's profit section shows a chip for each scroll that applies to that skill; clicking one adds or removes it and redraws profit, XP and time at once, editing the same loadout or default selection as the Scroll Simulation popups.
+
 ### Crafting reservations follow execution order
 
 - Material collection now allocates bag stock to buy steps in plan order, and walks preserve dependencies on output produced by earlier craft steps.

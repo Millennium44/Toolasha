@@ -39,6 +39,7 @@ vi.mock('../../core/data-manager.js', () => ({
             type: actionHrid.includes('woodcutting') ? '/action_types/woodcutting' : '/action_types/crafting',
         }),
         getItemDetails: () => null,
+        getInitClientData: () => null,
         setScrollSimulation: () => {},
         clearScrollSimulation: () => {},
         isBuffBeingSimulated: () => false,

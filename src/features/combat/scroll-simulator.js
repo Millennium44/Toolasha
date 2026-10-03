@@ -15,10 +15,10 @@ import dataManager from '../../core/data-manager.js';
 import config from '../../core/config.js';
 import storage from '../../core/storage.js';
 import loadoutSnapshot from './loadout-snapshot.js';
+import { SELECTION_CHANGED_EVENT } from '../../utils/scroll-buff-values.js';
 
 const STORAGE_KEY_PREFIX = 'scroll_simulation';
 export const DEFAULT_KEY = '__default__';
-
 /** Whoever is logged in, or `'default'` before login */
 function currentCharId() {
     return dataManager.getCurrentCharacterId() || 'default';
@@ -128,11 +128,33 @@ class ScrollSimulator {
      */
     getScrollSetForActionType(actionTypeHrid) {
         if (!config.getSetting('simulateScrollEffects')) return new Set();
+        return this.resolveSelection(actionTypeHrid).set;
+    }
+
+    /**
+     * Which selection the resolver uses for an action type, and what it holds.
+     * This is the one place the priority lives: a toggle writes to `key`, and the
+     * calculations read the same entry, so the two can never disagree.
+     * @param {string} actionTypeHrid
+     * @returns {{key: string, loadoutName: string|null, scope: 'loadout'|'default', set: Set<string>}}
+     *   `key` is the entry to save under; `loadoutName` is null for the default
+     */
+    resolveSelection(actionTypeHrid) {
         const loadoutName = loadoutSnapshot.getSnapshotInfoForSkill(actionTypeHrid)?.name;
         if (loadoutName && this.scrollsByLoadout[loadoutName]) {
-            return this.scrollsByLoadout[loadoutName];
+            return {
+                key: loadoutName,
+                loadoutName,
+                scope: 'loadout',
+                set: this.scrollsByLoadout[loadoutName],
+            };
         }
-        return this.scrollsByLoadout[DEFAULT_KEY] ?? new Set();
+        return {
+            key: DEFAULT_KEY,
+            loadoutName: null,
+            scope: 'default',
+            set: this.scrollsByLoadout[DEFAULT_KEY] ?? new Set(),
+        };
     }
 
     /**
@@ -148,6 +170,7 @@ class ScrollSimulator {
      * Save scroll selections for a loadout (or global defaults).
      * @param {string|null} loadoutName - null for global defaults
      * @param {string[]} buffTypeHrids
+     * @returns {Promise<boolean>} Whether the selection was kept
      */
     async saveScrollsForLoadout(loadoutName, buffTypeHrids) {
         const charId = currentCharId();
@@ -156,11 +179,16 @@ class ScrollSimulator {
                 `[ScrollSimulator] Not saving scroll selections: they belong to ${this.owner ?? 'no character yet'}, ` +
                     `not to ${charId}`
             );
-            return;
+            return false;
         }
         const key = loadoutName ?? DEFAULT_KEY;
         this.scrollsByLoadout[key] = new Set(buffTypeHrids);
+        // Before the write: memory is already the truth readers see
+        if (typeof document !== 'undefined' && typeof CustomEvent !== 'undefined') {
+            document.dispatchEvent(new CustomEvent(SELECTION_CHANGED_EVENT, { detail: { key } }));
+        }
         await this._persist(charId);
+        return true;
     }
 
     /**
