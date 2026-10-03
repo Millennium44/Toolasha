@@ -237,6 +237,12 @@ export async function httpRequest({ method, url, headers = {}, body, anonymous =
     if (!send) return pageFetch(request, prefersPageFetch(url));
     if (!prefersPageFetch(url)) return managerRequest(send, request);
 
+    // A request that must not be sent twice goes straight to the manager when the last page fetch
+    // failed where the manager got through: trying the page first could only fail again, and that
+    // failure could not be replayed (see below)
+    const replayable = REPLAYABLE_METHODS.has(String(method).toUpperCase());
+    if (!replayable && fetchFailuresAnsweredByManager > 0) return managerRequest(send, request);
+
     try {
         const response = await pageFetch(request, true);
         fetchFailuresAnsweredByManager = 0;
@@ -246,8 +252,15 @@ export async function httpRequest({ method, url, headers = {}, body, anonymous =
         // A fetch can fail after GitHub acted on it (the connection drops while the answer comes back).
         // Replaying is safe for a read or a whole-gist overwrite, but a second POST creates a second
         // gist, so a failed POST surfaces as the failure it is and the next sync starts over.
-        if (!REPLAYABLE_METHODS.has(String(method).toUpperCase())) throw error;
-        const response = await managerRequest(send, request);
+        if (!replayable) throw error;
+        let response;
+        try {
+            response = await managerRequest(send, request);
+        } catch (managerError) {
+            // Neither got through: the network, not the page fetch. That breaks the run too.
+            fetchFailuresAnsweredByManager = 0;
+            throw managerError;
+        }
         // A 5xx says nothing about the page fetch (see above) and breaks the run: three in a row means
         // three in a row
         fetchFailuresAnsweredByManager = response.status < 500 ? fetchFailuresAnsweredByManager + 1 : 0;

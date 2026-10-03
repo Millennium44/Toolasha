@@ -139,6 +139,33 @@ describe('transport', () => {
         expect(calls.at(-1).transport).toBe('fetch');
     });
 
+    test('a dead network on both transports breaks the run of failures', async () => {
+        const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+        responses.push({ fetchThrows: true }, { status: 200, body: [] });
+        await findSyncGist('tok');
+        responses.push({ fetchThrows: true }, { status: 200, body: [] });
+        await findSyncGist('tok');
+        responses.push({ networkError: true }, { networkError: true });
+        await findSyncGist('tok').catch(() => {});
+        responses.push({ fetchThrows: true }, { status: 200, body: [] });
+        await findSyncGist('tok');
+        responses.push({ status: 200, body: [] });
+        await findSyncGist('tok');
+
+        expect(calls.at(-1).transport).toBe('fetch');
+        warn.mockRestore();
+    });
+
+    test('creating a gist goes straight to the manager once a page fetch failed where it got through', async () => {
+        // The listing before a first push: the page fetch is blocked, the manager answers
+        responses.push({ fetchThrows: true }, { status: 200, body: [] });
+        await findSyncGist('tok');
+        responses.push({ status: 201, body: { id: 'g1', files: {} } });
+        await httpRequest({ method: 'POST', url: 'https://api.github.com/gists', body: '{}' });
+
+        expect(calls.map((call) => call.transport)).toEqual(['fetch', 'gm', 'gm']);
+    });
+
     test('a page fetch that fails on a POST is not replayed, so a gist is never created twice', async () => {
         responses.push({ fetchThrows: true });
         await expect(
