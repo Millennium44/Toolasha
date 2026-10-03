@@ -2178,7 +2178,7 @@ class ConsumablesPanel {
         const sim = this._idleRates();
         const itemMap = dataManager.getInitClientData?.()?.itemDetailMap;
         const inventory = dataManager.getInventory?.();
-        const concentration = this._idleConcentration();
+        const concentration = this._idleConcentration(loadout);
         const simPerDay = (hrid) => {
             const perHour = sim?.perHour?.[hrid];
             return Number.isFinite(perHour) && perHour >= 0 ? perHour * 24 : null;
@@ -2362,13 +2362,15 @@ class ConsumablesPanel {
         return select;
     }
 
-    /** Drink concentration off worn gear, for the idle plan's arithmetic rates */
-    _idleConcentration() {
+    /** Drink concentration off the chosen loadout's resolved gear */
+    _idleConcentration(snapshot) {
         try {
-            return (
-                getDrinkConcentration(dataManager.getEquipment?.(), dataManager.getInitClientData?.()?.itemDetailMap) ||
-                0
-            );
+            const bridge = window.Toolasha?.Combat?.loadoutSnapshot;
+            const resolvedEquipment = bridge?.resolveEquipment?.(snapshot);
+            if (!Array.isArray(resolvedEquipment)) return 0;
+
+            const equipment = new Map(resolvedEquipment.map((item) => [item.itemLocationHrid, item]));
+            return getDrinkConcentration(equipment, dataManager.getInitClientData?.()?.itemDetailMap) || 0;
         } catch {
             return 0;
         }
