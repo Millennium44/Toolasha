@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Notices tile replaces its count on refresh
+
+- The Notices tile now shows one current count instead of accumulating duplicate lines. Reading or clearing notices also removes the previous count.
+
 ### Overlay Undo restores the active layout
 
 - Undoing an overlay layout switch now restores its previous name and Update action along with the tiles. A Dashboard opened before the character column is available also docks automatically when the column appears.

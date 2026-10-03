@@ -243,6 +243,31 @@ describe('reading and clearing', () => {
 });
 
 describe('the overlay tile', () => {
+    test('refreshing an empty log keeps one count line', () => {
+        const container = document.createElement('div');
+        for (let index = 0; index < 5; index += 1) registeredRow.render(container);
+
+        expect(container.children).toHaveLength(1);
+        expect(container.textContent).toBe('0 logged');
+    });
+
+    test('refresh replaces unread, read, and cleared counts in the same tile', () => {
+        const container = document.createElement('div');
+        log.entries = [entry({ at: 10 }), entry({ at: 20 })];
+        registeredRow.render(container);
+        registeredRow.render(container);
+
+        log.seenAt = 30;
+        registeredRow.render(container);
+        expect(container.textContent).toBe('2 logged');
+        expect(container.children).toHaveLength(1);
+
+        log.entries = [];
+        registeredRow.render(container);
+        expect(container.textContent).toBe('0 logged');
+        expect(container.children).toHaveLength(1);
+    });
+
     test('it registers a row that opens the panel', () => {
         const row = registeredRow;
         expect(row).toBeTruthy();
