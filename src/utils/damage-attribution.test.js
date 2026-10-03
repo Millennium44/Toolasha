@@ -1467,6 +1467,22 @@ describe('a monster respawning into a slot', () => {
         expect(events).toEqual([]);
     });
 
+    test('a same-maximum replacement with a reset splat counter registers nothing', () => {
+        const state = newAttributionState();
+        attributeTick({ pMap: { 0: { cMP: 50 } }, mMap: { 0: unit(900, 1000, 4) } }, state);
+
+        // The replacement was already hurt before the next sparse update arrived.
+        const events = attributeTick({ pMap: { 0: { cMP: 50 } }, mMap: { 0: unit(700, 1000, 0) } }, state);
+
+        expect(events).toEqual([]);
+        expect(state.monstersHP['0']).toBe(700);
+        expect(state.dmgCounter['0']).toBe(0);
+
+        const next = attributeTick({ pMap: { 0: { cMP: 50 } }, mMap: { 0: unit(640, 1000, 1) } }, state);
+        expect(next).toHaveLength(1);
+        expect(next[0].amount).toBe(60);
+    });
+
     test('the tick after the re-baseline counts normally', () => {
         const state = newAttributionState();
         attributeTick({ pMap: { 0: { cMP: 50 } }, mMap: { 0: unit(200, 1000, 4) } }, state);

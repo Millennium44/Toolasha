@@ -885,12 +885,17 @@ export function attributeTick(tick, state, options) {
         // First sighting of a monster is not a hit for its entire health bar
         if (beforeHealth === undefined) continue;
 
-        // A different maximum in the same slot is a different monster in it.
+        // A different maximum or a reset splat counter marks a different monster in the slot.
         // The trial stream only restates its roster once or twice an hour, so
         // a respawn between those has nothing else to announce it — and the
         // slot's previous corpse read against the newcomer's full bar is
-        // either a phantom heal or, with residual health, phantom damage.
-        if (Number.isFinite(maxHealth) && beforeMax !== undefined && maxHealth !== beforeMax) continue;
+        // either a phantom heal or, with residual health, phantom damage. A
+        // replacement can also have the same maximum as its predecessor.
+        if (
+            (Number.isFinite(maxHealth) && beforeMax !== undefined && maxHealth !== beforeMax) ||
+            (beforeDamage !== undefined && damageCount < beforeDamage)
+        )
+            continue;
 
         // A death is its own event, separate from the hit that caused it.
         // Merging the two would lose every kill landed by a bleed, and a kill
