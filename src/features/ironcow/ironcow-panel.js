@@ -522,6 +522,8 @@ class IronCowFarmPanel {
         };
         dataManager.on('items_updated', this._liveHandler);
         dataManager.on('actions_updated', this._liveHandler);
+        // A buff ending changes success rates, and with them how far a catalyst-limited paid row runs
+        dataManager.on('buffs_updated', this._liveHandler);
         marketAPI.on(this._liveHandler);
     }
 
@@ -535,6 +537,7 @@ class IronCowFarmPanel {
         if (this._liveHandler) {
             dataManager.off('items_updated', this._liveHandler);
             dataManager.off('actions_updated', this._liveHandler);
+            dataManager.off('buffs_updated', this._liveHandler);
             marketAPI.off(this._liveHandler);
             this._liveHandler = null;
         }

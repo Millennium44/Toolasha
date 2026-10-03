@@ -377,7 +377,22 @@ describe('what it says', () => {
         ironCowFarmPanel.hide();
         expect(events.listeners.get('items_updated')?.size ?? 0).toBe(0);
         expect(events.listeners.get('actions_updated')?.size ?? 0).toBe(0);
+        expect(events.listeners.get('buffs_updated')?.size ?? 0).toBe(0);
         expect(marketListeners.size).toBe(othersListening);
+    });
+
+    test('a buff ending redraws the bell count too', async () => {
+        plan.state = character({ coins: 30_000_000 });
+        coinWalk.walked = { stages: [{ label: 'Decompose: Star Fruit', coinDelta: -4_000_000 }], stoppedAt: null };
+        ironCowFarmPanel.show();
+        await ironCowFarmPanel.refresh();
+        expect(text()).toContain('20 (2 bags)');
+
+        // The queue now needs more once the success buff is gone
+        coinWalk.walked = { stages: [{ label: 'Decompose: Star Fruit', coinDelta: -20_000_000 }], stoppedAt: null };
+        emit('buffs_updated');
+        await new Promise((resolve) => setTimeout(resolve, 350));
+        expect(text()).toContain('10 (1 bag)');
     });
 
     test('a snapshot costed with no bell price still gets a live buy-now count once a bag is listed', async () => {
