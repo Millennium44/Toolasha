@@ -158,6 +158,29 @@ const STORAGE_KEY = 'overlayPanelV2';
 const LEGACY_STORAGE_KEY = 'overlayPanel';
 
 /**
+ * Reorder a rendered subset without moving keys the current UI cannot render.
+ * Saved row providers can be absent temporarily, so their keys keep their
+ * slots until the provider returns. Rows outside `keys` (including hidden
+ * tiles during a drag) likewise retain their saved positions.
+ *
+ * @param {string[]} order - Full saved order
+ * @param {string[]} keys - Keys represented by the rendered list
+ * @param {string[]} nextKeys - Their requested rendered order
+ * @returns {string[]} The full order with only rendered slots rearranged
+ */
+function reorderRenderedSlots(order, keys, nextKeys) {
+    const movable = new Set(keys);
+    const normalizedOrder = [...order];
+    const present = new Set(order);
+    for (const key of keys) {
+        if (!present.has(key)) normalizedOrder.push(key);
+    }
+
+    let nextIndex = 0;
+    return normalizedOrder.map((key) => (movable.has(key) ? nextKeys[nextIndex++] : key));
+}
+
+/**
  * Which named layout is in force, kept per character.
  *
  * Separate from the layout record rather than a field in it, because it is not
@@ -371,6 +394,26 @@ function defaultSettings() {
 }
 
 /**
+ * A dashboard for a character with no saved overlay settings.
+ *
+ * The existing default remains the fallback for saved records that predate
+ * this layout, so adding tiles here cannot change anyone's existing overlay.
+ * @returns {Object} Fresh dashboard settings
+ */
+function freshDashboardSettings() {
+    const settings = defaultSettings();
+    const dashboard = PRESET_LAYOUTS.Dashboard;
+
+    settings.order = [...dashboard.order];
+    settings.span = { ...dashboard.span };
+    settings.docked = true;
+    settings.visible = Object.fromEntries(registeredRows().map(({ key }) => [key, false]));
+    for (const key of dashboard.order) settings.visible[key] = true;
+
+    return settings;
+}
+
+/**
  * What the character is doing, as far as a layout is concerned.
  *
  * Read from the action queue rather than from any feature, so it does not
@@ -519,25 +562,38 @@ class OverlayPanel {
             'settings'
         );
         const saved = await this._readSettings(state);
-        this.settings =
-            saved && typeof saved === 'object'
-                ? // Never spread in from the defaults: a saved layout that predates
-                  // the curated set has no opinion on the flag, and taking the
-                  // default's `true` would quietly switch off every row that
-                  // player had on and never explicitly ticked
-                  { ...defaultSettings(), ...saved, curatedDefaults: saved.curatedDefaults === true }
-                : defaultSettings();
+        const freshDashboard = !saved || typeof saved !== 'object';
+        this.settings = !freshDashboard
+            ? // Never spread in from the defaults: a saved layout that predates
+              // the curated set has no opinion on the flag, and taking the
+              // default's `true` would quietly switch off every row that
+              // player had on and never explicitly ticked
+              { ...defaultSettings(), ...saved, curatedDefaults: saved.curatedDefaults === true }
+            : freshDashboardSettings();
 
-        // The order names every row the registry knows about, once, here.
-        //
-        // It used to be written by `_renderPicker` as a side effect of drawing
-        // itself, which was harmless while the order was advisory and is not
-        // now that the order *is* the layout: opening the gear would have
-        // rewritten the arrangement into registration order. `resolveRows` does
-        // the same job correctly — saved order first, then anything it has never
-        // heard of — and a row whose feature registers after this still gets
-        // appended at draw time, in registration order, deterministically.
-        this.settings.order = resolveRows(registeredRows(), this.settings).map((row) => row.key);
+        // Keep saved keys even when their row has not registered yet. Feature
+        // providers can initialize later than the overlay, and resolving only
+        // against today's registry would discard their saved positions. Unknown
+        // keys stay harmless: resolveRows only draws rows that are registered.
+        const availableRows = registeredRows();
+        const requestedOrder = [];
+        const seen = new Set();
+        for (const key of Array.isArray(this.settings.order) ? this.settings.order : []) {
+            if (typeof key !== 'string' || key.length === 0 || seen.has(key)) continue;
+            seen.add(key);
+            requestedOrder.push(key);
+        }
+
+        const resolvedOrder = resolveRows(availableRows, { ...this.settings, order: requestedOrder }).map(
+            (row) => row.key
+        );
+        const ordered = [...requestedOrder];
+        for (const key of resolvedOrder) {
+            if (typeof key !== 'string' || key.length === 0 || seen.has(key)) continue;
+            seen.add(key);
+            ordered.push(key);
+        }
+        this.settings.order = ordered;
 
         // Before the panel is drawn, so the first render of the popover already
         // has the Update button and the "Showing:" line on it
@@ -732,7 +788,7 @@ class OverlayPanel {
             overflow: 'hidden',
         });
 
-        this.panel.appendChild(this._createHeader(Boolean(host)));
+        this.panel.appendChild(this._createHeader(Boolean(host), this.settings.docked === true && !host));
 
         // The scroll container, so the canvas below can be as large as the tiles
         // need without the panel growing to match
@@ -1135,22 +1191,29 @@ class OverlayPanel {
     /**
      * The container the docked panel goes into.
      *
-     * Found through the character column's tab strip — the one with an Inventory
-     * tab — because every tab strip in the game shares the same classes and only
-     * this one has that. The strip's container and the body it switches are
-     * siblings; their parent is what the panel joins.
+     * Found through the character management component's direct tab strip.
+     * Other parts of the game have nested tab strips too, so the enclosing
+     * class hierarchy distinguishes this one without depending on translated
+     * tab labels. The panel joins the tab component around that strip and body.
      *
      * @returns {HTMLElement|null}
      */
     _findDockHost() {
         for (const list of document.querySelectorAll('[role="tablist"]')) {
-            const inventory = [...list.querySelectorAll('[role="tab"]')].some(
-                (tab) => tab.textContent.trim() === 'Inventory'
-            );
-            if (!inventory) continue;
-
             const container = list.closest('[class*="TabsComponent_tabsContainer"]');
-            if (container?.parentElement) return container.parentElement;
+            const component = container?.parentElement;
+            const characterTabs = component?.parentElement;
+            const characterManagement = characterTabs?.parentElement;
+            const hasClassPrefix = (element, prefix) =>
+                [...(element?.classList || [])].some((className) => className.startsWith(prefix));
+
+            if (
+                hasClassPrefix(component, 'TabsComponent_tabsComponent') &&
+                hasClassPrefix(characterTabs, 'CharacterManagement_tabsComponentContainer') &&
+                hasClassPrefix(characterManagement, 'CharacterManagement_characterManagement')
+            ) {
+                return component;
+            }
         }
         return null;
     }
@@ -1251,9 +1314,10 @@ class OverlayPanel {
 
     /**
      * @param {boolean} docked - Whether this header belongs to a docked panel
+     * @param {boolean} pendingDock - Whether the floating panel is waiting for its dock host
      * @returns {HTMLElement}
      */
-    _createHeader(docked = false) {
+    _createHeader(docked = false, pendingDock = false) {
         const header = document.createElement('div');
         Object.assign(header.style, {
             display: 'flex',
@@ -1296,10 +1360,12 @@ class OverlayPanel {
             else this.openPicker();
         });
         const dockBtn = this._iconButton(
-            docked ? '⇱' : '⇲',
+            docked ? '⇱' : pendingDock ? '⌛' : '⇲',
             docked
                 ? 'Float over the game, where it can be dragged anywhere'
-                : 'Dock below the character tabs, giving the overlay its own space instead of covering the game',
+                : pendingDock
+                  ? 'Cancel docking when the character tabs appear'
+                  : 'Dock below the character tabs, giving the overlay its own space instead of covering the game',
             () => this.toggleDock()
         );
         const closeBtn = this._iconButton('✕', 'Close', () => this.hide());
@@ -2075,9 +2141,10 @@ class OverlayPanel {
             // find auto-switching still unpaused and switch out from under the
             // choice being made
             if (byHand) this.switchState = pauseForManualChoice(this.switchState, currentActivity());
+            const appliedLayoutBefore = this.appliedLayout;
             this._setAppliedLayout(key);
 
-            await this._applyLayout(read, `switch to ${key}`);
+            await this._applyLayout(read, `switch to ${key}`, { appliedLayoutBefore });
             return true;
         } catch (error) {
             console.error('[OverlayPanel] Switching to the saved layout failed:', error);
@@ -2386,8 +2453,11 @@ class OverlayPanel {
      * @param {number} delta - -1 earlier, 1 later
      */
     _move(key, delta) {
-        const next = moveRow(this.settings.order, key, delta);
-        if (next === this.settings.order) return;
+        const rendered = resolveRows(registeredRows(), this.settings).map((row) => row.key);
+        const nextRendered = moveRow(rendered, key, delta);
+        if (nextRendered === rendered) return;
+
+        const next = reorderRenderedSlots(this.settings.order, rendered, nextRendered);
 
         this.settings.order = next;
         this._save();
@@ -2405,8 +2475,9 @@ class OverlayPanel {
      * which restores as a no-op.
      *
      * @param {string} what - What is about to happen, for the button's label
+     * @param {string|null} [appliedLayout] - Active layout name before the change
      */
-    _snapshot(what) {
+    _snapshot(what, appliedLayout = this.appliedLayout) {
         this.undoState = {
             what,
             // A span only means anything against the grid it was written for,
@@ -2421,6 +2492,7 @@ class OverlayPanel {
             visible: { ...this.settings.visible },
             order: [...(this.settings.order || [])],
             curatedDefaults: this.settings.curatedDefaults,
+            appliedLayout,
         };
     }
 
@@ -2428,7 +2500,8 @@ class OverlayPanel {
     _undo() {
         if (!this.undoState) return;
 
-        const { columns, columnsPinned, span, zoom, textScale, visible, order, curatedDefaults } = this.undoState;
+        const { columns, columnsPinned, span, zoom, textScale, visible, order, curatedDefaults, appliedLayout } =
+            this.undoState;
         this.settings = {
             ...this.settings,
             columns,
@@ -2440,6 +2513,7 @@ class OverlayPanel {
             order,
             curatedDefaults,
         };
+        this._setAppliedLayout(appliedLayout);
         this.undoState = null;
         this._save();
         this._applyColumns();
@@ -2617,10 +2691,12 @@ class OverlayPanel {
      *
      * @param {Object} read - What `fromOPanelConfig` returned
      * @param {string} what - What to call this on the Undo button
+     * @param {Object} [options]
+     * @param {string|null} [options.appliedLayoutBefore] - Active name before a named switch
      * @returns {Promise<void>}
      */
-    async _applyLayout(read, what) {
-        this._snapshot(what);
+    async _applyLayout(read, what, { appliedLayoutBefore = this.appliedLayout } = {}) {
+        this._snapshot(what, appliedLayoutBefore);
 
         // A layout arrives either already in this overlay's own terms — an
         // order and a set of spans — or as pixels, from OPanel or from a file
@@ -2898,8 +2974,6 @@ class OverlayPanel {
         let drawn = 0;
         for (const row of full) {
             const tile = this._tileFor(row);
-            this._styleTile(tile, row);
-
             const blank = this._drawRow(tile, row);
             // It has been seen working, which is all a switched-on tile was
             // ever owed — see `_emptyPolicy`
@@ -2908,6 +2982,12 @@ class OverlayPanel {
             const policy = blank ? this._emptyPolicy(row) : null;
             if (policy === EMPTY_POLICY.COMPACT) this._drawCompact(tile, row);
             else if (policy === EMPTY_POLICY.FULL) this._drawPlaceholder(tile, row);
+
+            // A compact name is the row's small waiting state, not a full-size
+            // card with one line in it. Let its content set the height until
+            // data arrives; `_styleTile` restores the row's declared floor on
+            // the same draw that makes it full again.
+            this._styleTile(tile, row, policy === EMPTY_POLICY.COMPACT);
 
             // A hidden tile leaves the flow and everything after it closes up.
             // Kept rather than destroyed: it is one refresh away from having
@@ -2964,8 +3044,9 @@ class OverlayPanel {
      * Put a tile where the layout says, at the size and text scale it says.
      * @param {HTMLElement} tile - The tile
      * @param {Object} row - Its laid-out row
+     * @param {boolean} compact - Whether only the tile's waiting title is drawn
      */
-    _styleTile(tile, row) {
+    _styleTile(tile, row, compact = false) {
         if (!tile) return;
         // Written property by property, and only where the value differs. Every
         // assignment to `style` invalidates the element whether or not it changed
@@ -2980,7 +3061,7 @@ class OverlayPanel {
             // declared, which keeps a tile whose content changes every second
             // from resizing the grid under the reader.
             gridColumn: `span ${row.span}`,
-            minHeight: `${row.minHeight}px`,
+            minHeight: compact ? '0px' : `${row.minHeight}px`,
             fontSize: `${row.zoom}%`,
             cursor: this.isEditable ? 'move' : row.onOpen ? 'pointer' : 'default',
             // While unlocked a finger drag must not become a scroll; locked
@@ -3349,8 +3430,12 @@ class OverlayPanel {
             const slot = dropIndex(laid, { x: event.clientX, y: event.clientY });
             // `dropIndex` counts slots in the list as drawn, which still holds
             // the dragged tile; `moveTo` wants the slot in the list without it
-            const from = laid.findIndex((box) => box.key === key);
-            const next = moveTo(this.settings.order, key, from >= 0 && slot > from ? slot - 1 : slot);
+            const rendered = laid.map((box) => box.key);
+            const from = rendered.indexOf(key);
+            const nextRendered = moveTo(rendered, key, from >= 0 && slot > from ? slot - 1 : slot);
+            if (nextRendered === rendered) return;
+
+            const next = reorderRenderedSlots(this.settings.order, rendered, nextRendered);
             if (next === this.settings.order) return;
 
             this.settings.order = next;
@@ -3548,14 +3633,25 @@ class OverlayPanel {
      * combat tick — costs more than the check it would be avoiding.
      */
     _ensureDocked() {
-        if (!this.panel || this.panel.dataset.docked !== 'true') return;
+        if (!this.panel || this.settings.docked !== true) return;
 
-        if (this.panel.isConnected && this.dockHost?.isConnected) {
+        if (this.panel.dataset.docked === 'true' && this.panel.isConnected && this.dockHost?.isConnected) {
             this.dockHost.classList.add(DOCK_HOST_CLASS);
             return;
         }
         const host = this._findDockHost();
         if (!host) return;
+
+        // A requested dock can start floating when the inventory column has
+        // not mounted yet. Rebuild it in docked form when that column appears;
+        // this also detaches floating geometry callbacks bound to the old node.
+        if (this.panel.dataset.docked !== 'true') {
+            const wasPicking = this.isPickerOpen;
+            this._removePanel();
+            this._createPanel();
+            if (wasPicking) this.openPicker();
+            return;
+        }
 
         host.classList.add(DOCK_HOST_CLASS);
         host.appendChild(this.panel);

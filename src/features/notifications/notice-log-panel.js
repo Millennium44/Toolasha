@@ -305,7 +305,7 @@ registerRow({
         const line = document.createElement('div');
         line.textContent = unread === 0 ? `${noticeCount()} logged` : `${unread} unread`;
         line.style.color = unread === 0 ? ROW_COLORS.dim : ROW_COLORS.gold;
-        container.appendChild(line);
+        container.replaceChildren(line);
     },
     onOpen: () => noticePanel.toggle(),
 });

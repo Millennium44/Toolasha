@@ -408,12 +408,38 @@ export const PRESET_LAYOUTS = {
         span: { skillBooks: 2, watchlist: 2, equipmentWatch: 2 },
     },
     /**
-     * What the overlay looks like before anybody has arranged it.
-     *
-     * The curated starting set, arranged rather than packed — the same tiles
-     * `CURATED_ROWS` names, in an arrangement that groups them. Mapped to
-     * `ACTIVITY.NONE`, which nothing is ever detected as, so it is offered in the
-     * dropdown and reachable by Reset without auto-switching ever choosing it.
+     * A fuller starting dashboard that carries the character through every
+     * activity without switching layouts. The Default preset below stays the
+     * original curated arrangement for players who choose it explicitly.
+     */
+    Dashboard: {
+        activity: ACTIVITY.NONE,
+        order: [
+            'netWorth',
+            'coins',
+            'accountView',
+            'buildScore',
+            'combatLevel',
+            'skillLevel',
+            'timeToLevel',
+            'queueTimeLeft',
+            'combatStatus',
+            'experiencePerHour',
+            'dps',
+            'deathsPerHour',
+            'manaPerFight',
+            'luck',
+            'totalProfit',
+            'consumables',
+            'noticeLog',
+        ],
+        span: { accountView: 2, luck: 2, totalProfit: 2, consumables: 2 },
+    },
+    /**
+     * The original compact dashboard, kept as an explicit preset and the
+     * arrangement used by Reset Layout. Fresh characters now start with the
+     * fuller Dashboard preset above. Mapped to `ACTIVITY.NONE`, which nothing is
+     * ever detected as, so auto-switching never chooses it.
      */
     Default: {
         activity: ACTIVITY.NONE,

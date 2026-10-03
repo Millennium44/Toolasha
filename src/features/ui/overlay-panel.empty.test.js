@@ -9,10 +9,10 @@
  * are allowed to be idle in the same words. The three figures that were actually
  * live were somewhere in the middle of it.
  *
- * Two things fix that and both are tested here: a curated set of rows for a
+ * Two things fix that and both are tested here: a fuller dashboard for a
  * character who has never arranged the overlay, and a rule about what a tile
  * does when it has drawn nothing. Neither may touch a player who already has a
- * layout — the last test is the one that matters most.
+ * layout — the saved-character tests are the ones that matter most.
  */
 
 import { describe, test, expect, beforeEach, afterEach, vi } from 'vitest';
@@ -82,6 +82,7 @@ vi.mock('../../utils/overlay-rows.js', async (importActual) => ({
 const overlayPanel = (await import('./overlay-panel.js')).default;
 const { CURATED_ROWS, TILE_CLASS, EMPTY_POLICY, emptyPolicyFor, compactLabel, waitingLine, emptyContract } =
     await import('../../utils/overlay-rows.js');
+const { PRESET_LAYOUTS } = await import('./overlay-layouts.js');
 
 /**
  * A row that draws whatever it is told to.
@@ -144,31 +145,68 @@ afterEach(() => {
 });
 
 describe('a character who has never arranged the overlay', () => {
-    test('starts with the curated set and nothing else', async () => {
-        game.rows = [...CURATED_ROWS, 'combatRevenue', 'treasure', 'watchlist', 'houses'].map((key) =>
+    test('starts with the fuller dashboard, docked and closed', async () => {
+        game.rows = [...PRESET_LAYOUTS.Dashboard.order, 'inventoryValue', 'skillTimeToLevel', 'houses'].map((key) =>
             row(key, { text: 'x' })
         );
 
         await overlayPanel.initialize();
+        expect(overlayPanel.settings.open).toBe(false);
         overlayPanel.show();
 
-        expect(shown()).toEqual([...CURATED_ROWS].sort());
+        expect(shown()).toEqual([...PRESET_LAYOUTS.Dashboard.order].sort());
+        expect(overlayPanel.settings.docked).toBe(true);
+        expect(overlayPanel.settings.locked).toBe(true);
+        expect(overlayPanel.settings.textScale).toBe(100);
+        expect(overlayPanel.settings.autoSwitchLayout).toBe(false);
+        expect(overlayPanel.settings.span).toEqual(PRESET_LAYOUTS.Dashboard.span);
+        expect(overlayPanel.settings.visible.inventoryValue).toBe(false);
+        expect(overlayPanel.settings.visible.skillTimeToLevel).toBe(false);
     });
 
-    test('the curated tiles are placed in the curated order, packed from the top left', async () => {
-        // Registration order is whatever the bundles happen to import in, and a
-        // fresh layout has no saved positions — so the order the curated set is
-        // written in is the only thing deciding what sits where
-        game.rows = [...CURATED_ROWS].reverse().map((key) => row(key, { text: 'x' }));
+    test('keeps a late row position across save, reload, and provider registration', async () => {
+        // The provider is absent for both startup reads; only its persisted
+        // position can put it back where the dashboard placed it.
+        const registeredBeforeAccount = PRESET_LAYOUTS.Dashboard.order
+            .filter((key) => key !== 'accountView')
+            .map((key) => row(key, { text: 'x' }));
+        game.rows = [...registeredBeforeAccount].reverse();
 
         await overlayPanel.initialize();
+        overlayPanel._save();
+        await vi.waitFor(() => expect(saved.written).toBeTruthy());
+        saved.read = JSON.parse(JSON.stringify(saved.written));
+        saved.read.order.push('removed-row-from-older-version', 'coins', '', null, 4);
+
+        // Reload while Account View still has not registered.
+        overlayPanel.hide();
+        overlayPanel.isInitialized = false;
+        game.rows = [...registeredBeforeAccount].reverse();
+        await overlayPanel.initialize();
+
+        expect(overlayPanel.settings.order.slice(0, PRESET_LAYOUTS.Dashboard.order.length)).toEqual(
+            PRESET_LAYOUTS.Dashboard.order
+        );
+        expect(overlayPanel.settings.order).toContain('removed-row-from-older-version');
+        expect(overlayPanel.settings.order.filter((key) => key === 'coins')).toHaveLength(1);
+        expect(overlayPanel.settings.order).not.toContain('');
+        expect(overlayPanel.settings.order).not.toContain(4);
+        expect(overlayPanel.settings.visible).toEqual(saved.read.visible);
+        expect(overlayPanel.settings.span).toEqual(saved.read.span);
+        expect(overlayPanel.settings.zoom).toEqual(saved.read.zoom);
+
         overlayPanel.show();
+        expect(
+            [...overlayPanel.canvasEl.querySelectorAll('[data-overlay-row]')].map((tile) => tile.dataset.overlayRow)
+        ).not.toContain('removed-row-from-older-version');
 
         // Reading order is the layout, so it is the document order that says it
-        const drawn = [...overlayPanel.canvasEl.querySelectorAll('[data-overlay-row]')].map(
+        game.rows.push(row('accountView', { text: 'x' }));
+        overlayPanel.refresh();
+        const withLateRow = [...overlayPanel.canvasEl.querySelectorAll('[data-overlay-row]')].map(
             (tile) => tile.dataset.overlayRow
         );
-        expect(drawn).toEqual(CURATED_ROWS.filter((key) => drawn.includes(key)));
+        expect(withLateRow.slice(0, PRESET_LAYOUTS.Dashboard.order.length)).toEqual(PRESET_LAYOUTS.Dashboard.order);
     });
 
     test('nothing is said about a row that failed to draw', async () => {
@@ -178,6 +216,32 @@ describe('a character who has never arranged the overlay', () => {
         overlayPanel.show();
 
         expect(text()).not.toContain('unavailable');
+    });
+
+    test('keeps the prior curated set for an existing saved character', async () => {
+        game.rows = [...CURATED_ROWS, 'accountView'].map((key) => row(key, { text: 'x' }));
+        saved.read = { visible: {}, order: [...CURATED_ROWS], curatedDefaults: true, docked: false };
+
+        await overlayPanel.initialize();
+        overlayPanel.show();
+
+        expect(shown()).toEqual([...CURATED_ROWS].sort());
+        expect(overlayPanel.settings.docked).toBe(false);
+        expect(overlayPanel.settings.order.slice(0, CURATED_ROWS.length)).toEqual(CURATED_ROWS);
+        expect(overlayPanel.settings.order).not.toEqual(PRESET_LAYOUTS.Dashboard.order);
+    });
+
+    test('a saved layout missing newer fields inherits old floating defaults', async () => {
+        game.rows = ['netWorth', 'coins', 'accountView'].map((key) => row(key, { text: 'x' }));
+        saved.read = { visible: { coins: true }, order: ['coins'] };
+
+        await overlayPanel.initialize();
+        overlayPanel.show();
+
+        expect(overlayPanel.settings.docked).toBe(false);
+        expect(overlayPanel.settings.order.slice(0, 1)).toEqual(['coins']);
+        expect(overlayPanel.settings.order).not.toEqual(PRESET_LAYOUTS.Dashboard.order);
+        expect(overlayPanel.settings.visible.accountView).toBeUndefined();
     });
 });
 
@@ -318,6 +382,7 @@ describe('a tile with nothing to show', () => {
 
         const quiet = tiles().get('experiencePerHour');
         expect(quiet.style.display).not.toBe('none');
+        expect(quiet.style.minHeight).toBe('0px');
         expect(quiet._content.textContent).toBe('Experience/hr');
         // It keeps its place in the order, so nothing beside it moves
         const drawn = [...overlayPanel.canvasEl.querySelectorAll('[data-overlay-row]')].map(
@@ -345,6 +410,7 @@ describe('a tile with nothing to show', () => {
         const dps = row('dps', { name: 'DPS', empty: 'No damage tracked yet' });
         await open([dps, row('coins', { text: '1,024' })]);
         expect(tiles().get('dps')._content.textContent).toBe('DPS');
+        expect(tiles().get('dps').style.minHeight).toBe('0px');
 
         // The fight starts
         dps.render = (el) => (el.textContent = '412 dps');
@@ -352,6 +418,7 @@ describe('a tile with nothing to show', () => {
 
         expect(shown()).toEqual(['coins', 'dps']);
         expect(tiles().get('dps')._content.textContent).toContain('412 dps');
+        expect(tiles().get('dps').style.minHeight).toBe('40px');
         expect(text()).toContain('412 dps');
     });
 
@@ -360,6 +427,7 @@ describe('a tile with nothing to show', () => {
 
         const tile = tiles().get('netWorth');
         expect(tile.style.display).not.toBe('none');
+        expect(tile.style.minHeight).toBe('0px');
         expect(tile._content.textContent).toBe('Net Worth');
         expect(text()).not.toContain('No net worth yet');
     });
@@ -500,6 +568,7 @@ describe('the empty-tiles setting', () => {
 
         expect(shown()).toEqual(['dps', 'netWorth']);
         expect(tiles().get('dps')._content.textContent).toBe('DPS');
+        expect(tiles().get('dps').style.minHeight).toBe('0px');
     });
 
     test('full is the old behaviour: the row says its own line, at full size', async () => {
@@ -507,6 +576,7 @@ describe('the empty-tiles setting', () => {
 
         expect(shown()).toEqual(['dps', 'netWorth']);
         expect(tiles().get('dps')._content.textContent).toBe('No damage tracked yet');
+        expect(tiles().get('dps').style.minHeight).toBe('40px');
     });
 
     test('is offered in the gear popover, and changing it redraws', async () => {

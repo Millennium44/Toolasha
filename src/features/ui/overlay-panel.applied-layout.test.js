@@ -200,6 +200,22 @@ describe('the applied layout name survives a reload', () => {
         expect(buttons).toContain('Update "Dungeon"');
     });
 
+    test('undo writes the restored applied layout name back to its scoped key', async () => {
+        wear(dungeonLayout());
+        await overlayPanel.saveNamedLayout('Dungeon');
+        wear({ ...dungeonLayout(), order: ['luck', 'dps'], visible: { dps: false, luck: true } });
+        await overlayPanel.saveNamedLayout('Market');
+
+        await overlayPanel.applyNamedLayout('Dungeon');
+        await overlayPanel.applyNamedLayout('Market');
+        expect(scoped.data.get(APPLIED_KEY)).toBe('Market');
+
+        overlayPanel._undo();
+
+        expect(overlayPanel.appliedLayout).toBe('Dungeon');
+        await vi.waitFor(() => expect(scoped.data.get(APPLIED_KEY)).toBe('Dungeon'));
+    });
+
     test('a restored name is still checked against the saved copy, not trusted as clean', async () => {
         // The whole reason only the name is stored: a layout that changed while
         // this character was away must read as edited, not as clean because it

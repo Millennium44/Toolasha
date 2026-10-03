@@ -10,6 +10,50 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 - Sync uploads went through Tampermonkey, which kept every one: hundreds of multi-megabyte copies, gigabytes over a day or two in Firefox. Sync now talks to GitHub directly from the page, only one game tab runs the automatic schedule, and unchanged gists are no longer downloaded in full.
 
+### Overlay docking works across game languages
+
+- A docked overlay now finds the character column without relying on translated tab names. Unrelated or nested tab strips are no longer mistaken for its docking location.
+
+### Mana target drafts survive a refresh
+
+- The Mana panel keeps an unsubmitted target after you move focus away or the panel redraws. Calculate or Enter applies it, and switching characters clears the previous character's draft.
+
+### Briefing tile keeps one current summary
+
+- The Briefing tile no longer repeats its attention count on every refresh. Its current summary replaces the previous line as the items needing attention change.
+
+### Notices tile replaces its count on refresh
+
+- The Notices tile now shows one current count instead of accumulating duplicate lines. Reading or clearing notices also removes the previous count.
+
+### Overlay Undo restores the active layout
+
+- Undoing an overlay layout switch now restores its previous name and Update action along with the tiles. A Dashboard opened before the character column is available also docks automatically when the column appears.
+
+### Overlay arrangement works around unavailable tiles
+
+- Moving overlay tiles now follows the rows shown in the picker or on the dashboard, even when a saved feature is unavailable. Newly loaded tiles also stay in the layout when reordered.
+
+### Guided purchase controls keep their state
+
+- Starting a new Consumables purchase walk after canceling restores its Next button. A toolbar you dragged also keeps its position when switching between the panel and floating controls.
+
+### Consumables controls stay with their panel
+
+- The Consumables panel starts centered when no position has been saved. Guided purchases now use clearly labeled “Walk buys” controls inside the expanded panel, freeing the floating toolbar from the character tabs; active walks retain a toolbar when the panel is minimized or closed.
+
+### Saved overlay order survives delayed panels
+
+- Overlay tiles keep their saved positions when their feature loads after the dashboard. Account View no longer moves to the end after a reload.
+
+### A fuller dashboard for new overlay layouts
+
+- New overlay layouts start with a docked Dashboard covering wealth, skill progress, queue time, combat results, consumables, and notices. Saved layouts keep their settings, and Dashboard is available as a preset when you want it.
+
+### Compact overlay tiles reclaim empty space
+
+- Empty overlay tiles now shrink to their title instead of reserving the full card height. Tiles regain their usual size as soon as there is data to show.
+
 ### Newly archived chat names open profiles immediately
 
 - Usernames in extended chat history now open the player profile as soon as a message leaves the game's history. You no longer need to switch chat channels and back first.
