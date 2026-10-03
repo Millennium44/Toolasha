@@ -846,10 +846,6 @@ class CombatScore {
                 const marker = opt.querySelector('.mwi-combat-sim-format-marker');
                 if (marker) marker.textContent = opt.dataset.format === simFormatState.format ? '✓' : '';
             });
-            // A whole-party paste exists only in Metz's team format
-            simFormatDropdown?.querySelectorAll('.mwi-combat-sim-party-export-option').forEach((opt) => {
-                opt.style.display = simFormatState.format === SIM_EXPORT_FORMATS.METZ ? '' : 'none';
-            });
         };
 
         this.getSimExportFormat().then((format) => {
@@ -924,7 +920,6 @@ class CombatScore {
                 if (combatSnapshots.length > 0) {
                     loadoutSection.style.display = 'block';
 
-                    const partyButtonDisplay = simFormatState.format === SIM_EXPORT_FORMATS.METZ ? '' : 'none';
                     loadoutList.innerHTML = combatSnapshots
                         .map(
                             (s) => `<div style="display: flex; align-items: center;">
@@ -940,7 +935,6 @@ class CombatScore {
                                     text-overflow: ellipsis;
                                 ">${escapeHtml(s.name)}</div>
                                 <div class="mwi-combat-sim-party-export-option" data-name="${escapeHtml(s.name)}" data-snapshot-id="${escapeHtml(String(s.id ?? ''))}" title="Export full party with this loadout" style="
-                                    display: ${partyButtonDisplay};
                                     flex-shrink: 0;
                                     padding: 6px 8px;
                                     cursor: pointer;
@@ -972,7 +966,11 @@ class CombatScore {
                         opt.addEventListener('click', async (e) => {
                             e.stopPropagation();
                             closeSimFormatDropdown();
-                            await this.showPartyExportPreview(opt.dataset.snapshotId || opt.dataset.name, panel);
+                            await this.showPartyExportPreview(
+                                opt.dataset.snapshotId || opt.dataset.name,
+                                panel,
+                                simFormatState.format
+                            );
                         });
                         opt.addEventListener('mouseenter', () => {
                             opt.style.background = 'rgba(255,255,255,0.1)';
@@ -1443,76 +1441,86 @@ class CombatScore {
             const exportData = await constructExportObject(null, true);
             if (!exportData) return null;
 
-            const playerObj = exportData.exportObj;
-            const clientObj = dataManager.getInitClientData();
-
-            // Override equipment from snapshot. The levels come from the
-            // loadout's own rule rather than the wearable hash: a loadout in
-            // "highest owned" mode wears the best copy owned now, and the hash
-            // holds whatever it was when the loadout was last saved — usually 0.
-            playerObj.player.equipment = loadoutSnapshot.resolveEquipment(snapshot);
-
-            // Override abilities from snapshot. Build ability level lookup from
-            // all learned abilities (not just currently equipped).
-            const characterData = dataManager.characterData;
-            const abilityLevelMap = {};
-            for (const ab of characterData?.characterAbilities || []) {
-                if (ab.abilityHrid) abilityLevelMap[ab.abilityHrid] = ab.level || 1;
-            }
-
-            // Map snapshot abilities to sim format (slot 0 = special, slots 1-4 = normal)
-            playerObj.abilities = [
-                { abilityHrid: '', level: 1 },
-                { abilityHrid: '', level: 1 },
-                { abilityHrid: '', level: 1 },
-                { abilityHrid: '', level: 1 },
-                { abilityHrid: '', level: 1 },
-            ];
-            let normalAbilityIndex = 1;
-            for (const ability of snapshot.abilities) {
-                if (!ability.abilityHrid) continue;
-                const isSpecial = clientObj?.abilityDetailMap?.[ability.abilityHrid]?.isSpecialAbility || false;
-                const level = abilityLevelMap[ability.abilityHrid] || 1;
-
-                if (isSpecial) {
-                    playerObj.abilities[0] = { abilityHrid: ability.abilityHrid, level };
-                } else if (normalAbilityIndex < 5) {
-                    playerObj.abilities[normalAbilityIndex++] = {
-                        abilityHrid: ability.abilityHrid,
-                        level,
-                    };
-                }
-            }
-
-            // Override triggers from snapshot (includes all configured triggers regardless of equip state)
-            playerObj.triggerMap = {
-                ...(snapshot.abilityCombatTriggersMap || {}),
-                ...(snapshot.consumableCombatTriggersMap || {}),
-            };
-
-            // Override food from snapshot
-            playerObj.food = { '/action_types/combat': [] };
-            for (let i = 0; i < 3; i++) {
-                playerObj.food['/action_types/combat'][i] = {
-                    itemHrid: snapshot.food?.[i]?.itemHrid || '',
-                };
-            }
-
-            // Override drinks from snapshot
-            playerObj.drinks = { '/action_types/combat': [] };
-            for (let i = 0; i < 3; i++) {
-                playerObj.drinks['/action_types/combat'][i] = {
-                    itemHrid: snapshot.drinks?.[i]?.itemHrid || '',
-                };
-            }
-
-            return JSON.stringify(playerObj);
+            return JSON.stringify(this.applySnapshotToShykaiPlayer(exportData.exportObj, snapshot));
         }
 
         const character = await constructMetzCharacterExport(null);
         if (!character) return null;
 
         return JSON.stringify(applyLoadoutOverrideToMetzCharacter(character, this.buildMetzSnapshotOverride(snapshot)));
+    }
+
+    /**
+     * Wear a saved loadout on a Shykai sim player object, shared by the single-player loadout
+     * export and the full-party one so both wear a loadout identically.
+     * @param {Object} playerObj - Shykai player object (a `constructExportObject` slot, parsed); mutated
+     * @param {Object} snapshot - Loadout snapshot (see loadout-snapshot.js)
+     * @returns {Object} The same player object
+     */
+    applySnapshotToShykaiPlayer(playerObj, snapshot) {
+        const clientObj = dataManager.getInitClientData();
+
+        // Override equipment from snapshot. The levels come from the
+        // loadout's own rule rather than the wearable hash: a loadout in
+        // "highest owned" mode wears the best copy owned now, and the hash
+        // holds whatever it was when the loadout was last saved — usually 0.
+        playerObj.player.equipment = loadoutSnapshot.resolveEquipment(snapshot);
+
+        // Override abilities from snapshot. Build ability level lookup from
+        // all learned abilities (not just currently equipped).
+        const characterData = dataManager.characterData;
+        const abilityLevelMap = {};
+        for (const ab of characterData?.characterAbilities || []) {
+            if (ab.abilityHrid) abilityLevelMap[ab.abilityHrid] = ab.level || 1;
+        }
+
+        // Map snapshot abilities to sim format (slot 0 = special, slots 1-4 = normal)
+        playerObj.abilities = [
+            { abilityHrid: '', level: 1 },
+            { abilityHrid: '', level: 1 },
+            { abilityHrid: '', level: 1 },
+            { abilityHrid: '', level: 1 },
+            { abilityHrid: '', level: 1 },
+        ];
+        let normalAbilityIndex = 1;
+        for (const ability of snapshot.abilities) {
+            if (!ability.abilityHrid) continue;
+            const isSpecial = clientObj?.abilityDetailMap?.[ability.abilityHrid]?.isSpecialAbility || false;
+            const level = abilityLevelMap[ability.abilityHrid] || 1;
+
+            if (isSpecial) {
+                playerObj.abilities[0] = { abilityHrid: ability.abilityHrid, level };
+            } else if (normalAbilityIndex < 5) {
+                playerObj.abilities[normalAbilityIndex++] = {
+                    abilityHrid: ability.abilityHrid,
+                    level,
+                };
+            }
+        }
+
+        // Override triggers from snapshot (includes all configured triggers regardless of equip state)
+        playerObj.triggerMap = {
+            ...(snapshot.abilityCombatTriggersMap || {}),
+            ...(snapshot.consumableCombatTriggersMap || {}),
+        };
+
+        // Override food from snapshot
+        playerObj.food = { '/action_types/combat': [] };
+        for (let i = 0; i < 3; i++) {
+            playerObj.food['/action_types/combat'][i] = {
+                itemHrid: snapshot.food?.[i]?.itemHrid || '',
+            };
+        }
+
+        // Override drinks from snapshot
+        playerObj.drinks = { '/action_types/combat': [] };
+        for (let i = 0; i < 3; i++) {
+            playerObj.drinks['/action_types/combat'][i] = {
+                itemHrid: snapshot.drinks?.[i]?.itemHrid || '',
+            };
+        }
+
+        return playerObj;
     }
 
     /**
@@ -1560,8 +1568,9 @@ class CombatScore {
      * with the named saved loadout on your own character.
      * @param {string} snapshotName - Saved combat loadout to wear on your own character
      * @param {Element} panel - The combat score panel holding the sim export button
+     * @param {string} [format] - One of SIM_EXPORT_FORMATS, the paste format the Copy button builds
      */
-    async showPartyExportPreview(snapshotName, panel) {
+    async showPartyExportPreview(snapshotName, panel, format = SIM_EXPORT_FORMATS.METZ) {
         const wrapper = panel?.querySelector('#mwi-combat-sim-wrapper');
         if (!wrapper) return;
         wrapper._closePartyExportPreview?.();
@@ -1600,6 +1609,10 @@ class CombatScore {
                 return rowHtml(member.name, label, color, member.warning?.text || '');
             }),
         ];
+        const pasteHint =
+            format === SIM_EXPORT_FORMATS.SHYKAI
+                ? 'Paste into “All players import” on the Group Combat tab.'
+                : 'Paste into the sim’s team import.';
         let note = '';
         if (members.length === 0) {
             note = 'Not in a party: only you will be exported.';
@@ -1626,6 +1639,7 @@ class CombatScore {
             <div style="font-weight: bold; margin-bottom: 4px; color: ${config.COLOR_ACCENT};">Export Full Party</div>
             ${rows.join('')}
             ${note ? `<div style="color: #888; padding-top: 4px;">${note}</div>` : ''}
+            <div style="color: #888; padding-top: 4px;">${pasteHint}</div>
             <button id="mwi-party-export-copy-btn" style="
                 margin-top: 8px;
                 padding: 6px 10px;
@@ -1682,12 +1696,18 @@ class CombatScore {
                 rosterKey(describePartyProfiles(dataManager.characterData, [])) === previewedRoster;
             if (!rosterUnchanged()) {
                 // The party changed since the preview was drawn: show the new one instead of copying
-                await this.showPartyExportPreview(snapshotName, panel);
+                await this.showPartyExportPreview(snapshotName, panel, format);
                 return;
             }
-            const copied = await this.handleExportFullParty(snapshotName, copyBtn, characterId, rosterUnchanged);
+            const copied = await this.handleExportFullParty(
+                snapshotName,
+                copyBtn,
+                characterId,
+                rosterUnchanged,
+                format
+            );
             if (copied === 'roster-changed') {
-                await this.showPartyExportPreview(snapshotName, panel);
+                await this.showPartyExportPreview(snapshotName, panel, format);
                 return;
             }
             if (copied) {
@@ -1697,7 +1717,33 @@ class CombatScore {
     }
 
     /**
-     * Copy the whole party as one Metz team paste, wearing a saved loadout on your own character
+     * Shykai's "All players import" map (slots "1".."5", each a player JSON string) with a saved
+     * loadout worn in your own slot and every teammate's slot as `constructExportObject` built it.
+     * @param {Object} snapshot - Loadout snapshot (see loadout-snapshot.js)
+     * @returns {Promise<Object|null>} The slot map, or null when there is no export or no slot of yours
+     */
+    async buildShykaiPartyExport(snapshot) {
+        const exportData = await constructExportObject(null, false);
+        const slot = exportData?.yourSlotIndex;
+        // yourSlotIndex is null when the roster did not seat you: never overwrite a teammate's slot
+        if (!exportData?.exportObj || !slot || !exportData.importedPlayerPositions?.[slot - 1]) return null;
+        if (typeof exportData.exportObj[slot] !== 'string') return null;
+
+        // The group builder keeps names apart, in `playerIDs` (the bridge labels the sim's tabs from it);
+        // each occupied slot carries its player's name, as the single-player export does
+        const map = { ...exportData.exportObj };
+        for (let i = 1; i <= 5; i++) {
+            const name = exportData.playerIDs?.[i - 1];
+            if (!exportData.importedPlayerPositions[i - 1] || !name || typeof map[i] !== 'string') continue;
+            map[i] = JSON.stringify({ ...JSON.parse(map[i]), name });
+        }
+        const playerObj = this.applySnapshotToShykaiPlayer(JSON.parse(map[slot]), snapshot);
+        map[slot] = JSON.stringify(playerObj);
+        return map;
+    }
+
+    /**
+     * Copy the whole party as one team paste (Metz team list or Shykai "All players import" map), wearing a saved loadout on your own character
      * and each teammate's cached profile on theirs.
      * @param {string} snapshotName - Saved combat loadout to wear on your own character
      * @param {Element} button - The preview's Copy button, for status feedback
@@ -1706,8 +1752,15 @@ class CombatScore {
      *   party again after an await, and a change in between must not reach the clipboard
      * @returns {Promise<boolean|'roster-changed'>} Whether the export reached the clipboard, or
      *   'roster-changed' when the party moved while it was being built
+     * @param {string} [format] - One of SIM_EXPORT_FORMATS
      */
-    async handleExportFullParty(snapshotName, button, characterId, rosterUnchanged = null) {
+    async handleExportFullParty(
+        snapshotName,
+        button,
+        characterId,
+        rosterUnchanged = null,
+        format = SIM_EXPORT_FORMATS.METZ
+    ) {
         const originalText = button.textContent;
         const originalBg = button.style.background;
 
@@ -1718,9 +1771,14 @@ class CombatScore {
                 return false;
             }
 
-            const team = await constructMetzTeamExport(characterId, {
-                selfLoadoutOverride: this.buildMetzSnapshotOverride(snapshot),
-            });
+            let team;
+            if (format === SIM_EXPORT_FORMATS.SHYKAI) {
+                team = await this.buildShykaiPartyExport(snapshot);
+            } else {
+                team = await constructMetzTeamExport(characterId, {
+                    selfLoadoutOverride: this.buildMetzSnapshotOverride(snapshot),
+                });
+            }
             if (!team) {
                 this.showButtonStatus(button, '✗ No Data', config.COLOR_LOSS, originalText, originalBg);
                 return false;

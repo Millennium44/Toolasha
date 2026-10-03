@@ -621,6 +621,44 @@ describe('party members whose cached profile cannot be trusted', () => {
         expect(result.profileWarnings[0].text).toContain('hides equipment');
     });
 
+    test('the party export names which slot is yours, wherever the game seated you', async () => {
+        const now = Date.now();
+        dataManagerMock.characterData = {
+            ...partyCharacter(),
+            partyInfo: {
+                party: { actionHrid: '/actions/combat/fly', difficultyTier: 0 },
+                partySlotMap: { 1: { characterID: 'char-fresh' }, 2: { characterID: 'char-mine' } },
+            },
+        };
+        globalThis.GM_getValue = vi.fn((key) =>
+            key === 'toolasha_profile_list' ? JSON.stringify(profiles(now)) : null
+        );
+
+        const result = await constructExportObject(null, false);
+
+        expect(result.yourSlotIndex).toBe(2);
+        expect(result.importedPlayerPositions[result.yourSlotIndex - 1]).toBe(true);
+    });
+
+    test('a party roster that leaves you out names no slot as yours', async () => {
+        const now = Date.now();
+        dataManagerMock.characterData = {
+            ...partyCharacter(),
+            partyInfo: {
+                party: { actionHrid: '/actions/combat/fly', difficultyTier: 0 },
+                partySlotMap: { 1: { characterID: 'char-fresh' } },
+            },
+        };
+        globalThis.GM_getValue = vi.fn((key) =>
+            key === 'toolasha_profile_list' ? JSON.stringify(profiles(now)) : null
+        );
+
+        const result = await constructExportObject(null, false);
+
+        expect(result.importedPlayerPositions[0]).toBe(true);
+        expect(result.yourSlotIndex).toBeNull();
+    });
+
     test('an old but geared profile warns without changing what is exported', async () => {
         const now = Date.now();
         const list = profiles(now);

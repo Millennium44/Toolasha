@@ -12,6 +12,9 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 ### Bulk Sell vendor sales go through
 
 - Bulk Sell's vendor step now presses the game's "Confirm Sell For" the way the game accepts it, as the task reroll walk does; it used to stall at "confirm sent" without selling.
+### Export Full Party in the Shykai format
+
+- The profile export's 👥 Export Full Party now works in the Shykai format too, copying the whole party with your saved loadout for Shykai's "All players import" box.
 
 ### Timers clean up after themselves everywhere
 
