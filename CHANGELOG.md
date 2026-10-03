@@ -12,6 +12,12 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 - A party clear waiting for its late key-count message now stays available even if another action starts, so the completed run is still recorded. If the dungeon reward table cannot be read, the ROI board shows unknown revenue and key cost instead of treating it as a free chestless run.
 - If the party key-count message never arrives, the finished tracker releases its run after ten seconds. A message inside that window still records the clear, and a later dungeon can start without inheriting the old run.
 
+### Iron Bell: bells you can afford
+
+- Iron Bell Farming shows how many cowbells your coins buy now while keeping enough back for the queued loop at its lowest point (decomposing pays fees before coinify earns), and what it keeps.
+- The queue helper reports the hours and bells its counts really cover once your stock has shortened the batch.
+- A cowbell is priced as a tenth of a bag of ten, the only way the market sells them, rather than at a loose price nobody can buy at.
+
 ### Shared agent rules brought up to date
 
 - Nothing a player sees changes. The workflow rules every coding agent reads now include the pull-request, review and briefing practices adopted since late September, and the newer code rules (spend buttons, non-English game clients, settings defaults).

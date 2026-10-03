@@ -50,7 +50,7 @@ import { calculateGatheringProfit } from '../actions/gathering-profit.js';
 import { getAlchemyCoinCost } from '../../utils/alchemy-fees.js';
 import { getAlchemySuccessBonus } from '../../utils/buff-parser.js';
 import { formatWithSeparator } from '../../utils/formatters.js';
-import { getItemPrice, getPricingMode } from '../../utils/market-data.js';
+import { getItemPriceInfo, getPricingMode } from '../../utils/market-data.js';
 import { HOURS_PER_DAY } from '../../utils/profit-constants.js';
 import { resolveLoopItems } from './loop-items.js';
 
@@ -71,7 +71,6 @@ export const LOOP_QUEUE_SLOTS = 3;
 export const ASSUMED_OFFLINE_HOURS = 16;
 
 const COIN = '/items/coin';
-const COWBELL = '/items/cowbell';
 const COWBELL_BAG = '/items/bag_of_10_cowbells';
 const COWBELLS_PER_BAG = 10;
 const HOURS_PER_WEEK = 168;
@@ -118,35 +117,34 @@ function ironCowSuccessRate(result) {
 }
 
 /**
- * What a cowbell costs, bought the cheaper of the two ways.
+ * What a cowbell costs: a tenth of a bag of ten, the only way the market sells them.
  *
- * Cowbells are sold loose and in bags of ten, and the bag is not always ten
- * times the loose price. Since buying them is the entire point of the gold,
- * quoting the wrong one misprices the whole projection.
- *
- * @returns {{price: number|null, source: 'loose'|'bag'|null, loose: number|null, bag: number|null,
- *   pricingMode: string}}
+ * @param {Object} [options] - `buyNow: true` for a purchase made this moment: the ask, whatever
+ *   the profit pricing mode (which may be the bid, a price to wait for rather than one to take)
+ * @returns {{price: number|null, source: 'bag'|null, bag: number|null, pricingMode: string,
+ *   quoted: boolean}} `price` and `bag` are per bell; null with no bag price. `quoted` when the price
+ *   is a real listing (or the player's own override), not a value-map estimate for an empty book
  */
-export function cowbellPricing() {
-    // 'buy' side, because buying cowbells is the only market act available.
-    const loose = getItemPrice(COWBELL, { context: 'profit', side: 'buy' });
-    const bag = getItemPrice(COWBELL_BAG, { context: 'profit', side: 'buy' });
-    const pricingMode = getPricingMode('profit', 'buy');
+export function cowbellPricing({ buyNow = false } = {}) {
+    // 'buy' side, because buying cowbells is the only market act available. The book's quote even
+    // under an Iron Cow valuation setting: that values loot, but these bags are bought for coins.
+    const info = getItemPriceInfo(COWBELL_BAG, {
+        context: 'profit',
+        side: 'buy',
+        marketQuote: true,
+        ...(buyNow ? { mode: 'ask' } : {}),
+    });
+    const bag = info?.price;
+    const pricingMode = buyNow ? 'ask' : getPricingMode('profit', 'buy');
 
     const perBellFromBag = typeof bag === 'number' && bag > 0 ? bag / COWBELLS_PER_BAG : null;
-    const perBellLoose = typeof loose === 'number' && loose > 0 ? loose : null;
-
-    let price = null;
-    let source = null;
-    if (perBellLoose !== null && (perBellFromBag === null || perBellLoose <= perBellFromBag)) {
-        price = perBellLoose;
-        source = 'loose';
-    } else if (perBellFromBag !== null) {
-        price = perBellFromBag;
-        source = 'bag';
-    }
-
-    return { price, source, loose: perBellLoose, bag: perBellFromBag, pricingMode };
+    return {
+        price: perBellFromBag,
+        source: perBellFromBag === null ? null : 'bag',
+        bag: perBellFromBag,
+        pricingMode,
+        quoted: perBellFromBag !== null && (info.source === 'book' || info.source === 'custom'),
+    };
 }
 
 /**
@@ -433,8 +431,9 @@ export function balanceBatch(loop, hours) {
  * @param {Object|null} loop - From `calculateStarfruitLoop`
  * @param {Object|null} state - From `readCharacterState` (`starfruitHeld`, `essenceHeld`,
  *   `holdingsCredited`)
- * @returns {Object|null} The batch, `forageActions`/`decomposeActions` reduced and a `credits`
- *   array of `{item, name, amount, actionsSaved}` describing what was credited; a `holdingsNote`
+ * @returns {Object|null} The batch, `forageActions`/`decomposeActions` reduced, `hours`/`gold`/`bells`
+ *   read back off the reduced counts when anything was credited (`requestedHours` keeps the ask), and a
+ *   `credits` array of `{item, name, amount, actionsSaved}` describing what was credited; a `holdingsNote`
  *   instead when holdings were explicitly not resolvable; or `batch` unchanged when there is
  *   nothing to credit against
  */
@@ -485,7 +484,23 @@ export function applyHoldings(batch, loop, state) {
         }
     }
 
-    return { ...batch, forageActions, decomposeActions, credits, holdingsNote: '' };
+    if (!credits.length) return { ...batch, forageActions, decomposeActions, credits, holdingsNote: '' };
+
+    // `hours`, `gold` and `bells` from `balanceBatch` describe the uncredited counts.
+    // Once a leg shrinks they must be read back off the counts that remain: 1,028K
+    // held essence zeroes forage and decompose, and the coinify leg left over runs
+    // a few hours of a 16-hour request and spends no decompose fee.
+    const hours =
+        forageActions / (loop.forageActionsPerHour || Infinity) +
+        decomposeActions / (loop.decomposeActionsPerHour || Infinity) +
+        batch.coinifyActions / (loop.coinifyActionsPerHour || Infinity);
+    const gold =
+        batch.coinifyActions * (loop.coinsPerSuccess || 0) * (loop.coinifyRate || 0) -
+        decomposeActions * decomposeBulk * (loop.goldOutPerFruit || 0);
+    const bellPrice = loop.bellPrice;
+    const bells = Number.isFinite(bellPrice) && bellPrice > 0 ? gold / bellPrice : null;
+
+    return { ...batch, forageActions, decomposeActions, hours, gold, bells, credits, holdingsNote: '' };
 }
 
 /**

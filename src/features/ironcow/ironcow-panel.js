@@ -30,12 +30,14 @@
 
 import config from '../../core/config.js';
 import dataManager from '../../core/data-manager.js';
+import marketAPI from '../../api/marketplace.js';
 import { formatKMB, formatPercentage, formatWithSeparator } from '../../utils/formatters.js';
 import { registerFloatingPanel, unregisterFloatingPanel, bringPanelToFront } from '../../utils/panel-z-index.js';
 import { makeDraggable, makeResizable, panelHeightCap } from '../../utils/floating-panel.js';
 import { restoreGeometry, saveGeometry, saveOpenState, reopenIfLeftOpen } from '../../utils/panel-geometry.js';
 import { attachMinimize } from '../../utils/panel-minimize.js';
 import { HOURS_PER_DAY } from '../../utils/profit-constants.js';
+import { actionTimeDisplay } from '../../utils/bundle-bridge.js';
 import { deriveStages, isIronCowMode, readCharacterState } from './ironcow-plan.js';
 import {
     ASSUMED_OFFLINE_HOURS,
@@ -49,6 +51,7 @@ import {
     offlineWindow,
 } from './starfruit-loop.js';
 import { buildQueueSteps, startQueueWalk } from './ironcow-queue-walk.js';
+import { bellsAffordable, coinReserve, walkQueueCoins } from './coin-reserve.js';
 import {
     loadOverrides,
     loadPlanCollapsed,
@@ -72,6 +75,28 @@ const PANEL_ID = 'toolasha-ironcow-farm-panel';
 // saved under it. Renaming it would orphan that saved position and size.
 const GEOMETRY_KEY = 'ironCowFarmPanel';
 const DEFAULT_PANEL = { width: 520, height: 620 };
+/** How long a burst of coin or queue updates settles before the bells-you-can-buy lines redraw */
+const LIVE_REDRAW_MS = 300;
+/**
+ * Data-manager events that can change what the queue spends: coins and materials, the queue itself,
+ * and everything that moves a success rate, an efficiency or a level penalty — skills, equipment,
+ * house rooms, consumables and every buff source
+ */
+const LIVE_EVENTS = [
+    'items_updated',
+    'actions_updated',
+    'skills_updated',
+    'buffs_updated',
+    'equipment_buffs_updated',
+    'house_rooms_updated',
+    'consumables_updated',
+    'consumable_buffs_updated',
+    'personal_buffs_updated',
+    'community_buffs_updated',
+    'guild_buffs_updated',
+    'moo_pass_buffs_updated',
+    'achievement_buffs_updated',
+];
 
 const COLORS = {
     background: 'rgba(10, 12, 20, 0.97)',
@@ -367,7 +392,12 @@ class IronCowFarmPanel {
         const window = offlineWindow();
         if (window?.hours > 0) this.batchHours = window.hours;
         this.batchUnit = 'h';
-        const snapshot = await loadSnapshot();
+        let snapshot = await loadSnapshot();
+        // A snapshot costed when a loose cowbell price was still taken: its bell price and every
+        // bell figure rest on a price nobody can buy at, so it waits for a fresh costing instead
+        // The same goes for any snapshot from before bag prices were read off the book (no `quoted`):
+        // an Iron Cow valuation setting could have stood in for the bag's price
+        if (snapshot?.bellPricing && !('quoted' in snapshot.bellPricing)) snapshot = null;
         this.loop = snapshot;
         this.pricedAt = snapshot?.computedAt || null;
         this._render();
@@ -505,9 +535,32 @@ class IronCowFarmPanel {
 
         this._render();
         if (!this.loaded) this.loaded = this.load();
+
+        // Coins spent, rows queued and a new bag price change what the bells-you-can-buy count must
+        // be; redraw just those lines, a beat after a burst of updates settles
+        this._liveHandler = () => {
+            clearTimeout(this._liveTimer);
+            this._liveTimer = setTimeout(() => this._onLiveChange(), LIVE_REDRAW_MS);
+        };
+        for (const event of LIVE_EVENTS) dataManager.on(event, this._liveHandler);
+        marketAPI.on(this._liveHandler);
+    }
+
+    /** Redraw the bells-you-can-buy lines against the coins and queue as they stand now */
+    _onLiveChange() {
+        if (!this.affordableEl?.isConnected) return;
+        this.affordableEl.replaceChildren(...this._affordableLines(this._safeState()));
     }
 
     _remove() {
+        if (this._liveHandler) {
+            for (const event of LIVE_EVENTS) dataManager.off(event, this._liveHandler);
+            marketAPI.off(this._liveHandler);
+            this._liveHandler = null;
+        }
+        clearTimeout(this._liveTimer);
+        this._liveTimer = null;
+        this.affordableEl = null;
         this.detachDrag?.();
         this.detachResize?.();
         this.detachDrag = null;
@@ -592,7 +645,7 @@ class IronCowFarmPanel {
             () => this._modeNote(state),
             () => this._planCard(stages),
             () => this._loopCard(),
-            () => this._bellsCard(),
+            () => this._bellsCard(state),
             () => this._queueCard(state),
             () => this._checksCard(state),
         ];
@@ -857,15 +910,24 @@ class IronCowFarmPanel {
 
     /**
      * What that gold buys in bells.
+     * @param {Object|null} state - From `readCharacterState`, for the coins on hand
      * @returns {HTMLElement} The card
      */
-    _bellsCard() {
+    _bellsCard(state) {
         const holder = card('Cowbells');
         const loop = this.loop;
+
+        // Its own box, priced off the live quote, so a coin, queue or price change can redraw just these
+        // lines (see `_onLiveChange`) — drawn even when the costed snapshot had no bell price, so a bag
+        // listed since can still bring the count up without a full Refresh
+        const affordable = document.createElement('div');
+        affordable.append(...this._affordableLines(state));
+        this.affordableEl = affordable;
 
         const pricing = loop?.bellPricing || cowbellPricing();
         if (!pricing.price) {
             holder.appendChild(span('No market price for a cowbell yet.', { color: COLORS.warn }));
+            holder.appendChild(affordable);
             return holder;
         }
 
@@ -874,18 +936,13 @@ class IronCowFarmPanel {
                 'Per bell',
                 coins(pricing.price),
                 COLORS.text,
-                `Cheaper of loose (${coins(pricing.loose)}) and by the bag (${coins(pricing.bag)} each). ` +
-                    `Priced at ${pricing.pricingMode}.`
+                `A tenth of a bag of ten (${coins(pricing.bag * 10)} a bag). Priced at ${pricing.pricingMode}.`
             )
         );
         holder.appendChild(
-            line(
-                'Buy them',
-                pricing.source === 'bag' ? 'in bags of ten' : 'loose',
-                COLORS.good,
-                'Bags are not always ten times the loose price.'
-            )
+            line('Buy them', 'in bags of ten', COLORS.good, 'The market sells cowbells only in bags of ten.')
         );
+        holder.appendChild(affordable);
 
         if (!loop || loop.missing?.length || !loop.bells) {
             holder.appendChild(
@@ -926,6 +983,76 @@ class IronCowFarmPanel {
             })
         );
         return holder;
+    }
+
+    /**
+     * How many bells the coins on hand buy now, keeping back what the queue
+     * needs at its lowest point (see `coin-reserve.js`).
+     * Priced off the live market quote, not the costed snapshot: this is a purchase to make now.
+     * @param {Object|null} state - From `readCharacterState`
+     * @returns {Array<HTMLElement>} Zero, one or two lines
+     * @private
+     */
+    _affordableLines(state) {
+        if (!state) return [];
+        const pricing = cowbellPricing({ buyNow: true });
+        if (!pricing.price) return [];
+        const label = 'Bells you can buy now';
+        if (!pricing.quoted) {
+            return [
+                line(
+                    label,
+                    '—',
+                    COLORS.textDim,
+                    'No bag of ten cowbells is listed for sale right now; the price above is only an estimate.'
+                ),
+            ];
+        }
+        const walked = walkQueueCoins(actionTimeDisplay());
+        if (!walked) {
+            return [
+                line(
+                    label,
+                    '—',
+                    COLORS.textDim,
+                    'The action queue could not be read in full (an unknown action, or a row that may run on ' +
+                        'loot from a fight ahead of it), so the gold it still needs is unknown.'
+                ),
+            ];
+        }
+
+        const { reserve, spenders, estimated } = coinReserve(walked.stages);
+        const approx = estimated ? '~' : '';
+        const estimateNote = estimated
+            ? ' Part of this is a prediction (enhancing attempts, or a row limited by materials it only' +
+              ' expects to have), so it is an estimate: bad luck can spend more.'
+            : '';
+        const can = bellsAffordable(state.coins, reserve, pricing);
+        if (!can) return [];
+
+        const value = `${bells(can.bells)} (${can.bags} bag${can.bags === 1 ? '' : 's'})`;
+        const kept =
+            reserve > 0
+                ? `Keeps ${coins(reserve)} back: what ${spenders.join(', ')} spends. Coinify earnings ` +
+                  'are not counted on, since its rolls can fail.'
+                : 'Nothing queued spends gold, so nothing is held back.';
+        const stopped = walked.stoppedAt ? ` The queue is followed up to ${walked.stoppedAt}, which never ends.` : '';
+        // The price feed carries no depth: every bag is priced at the cheapest listing, so this is a
+        // ceiling once that listing runs out, and the tooltip says so
+        const route =
+            ` Whole bags of ten, rounded down, all at the cheapest listing (${coins(pricing.price * 10)} a bag).` +
+            ' If fewer bags are listed at that price, the rest cost more and you get fewer.';
+        const title = `Out of your ${coins(state.coins)}. ${kept}${estimateNote}${stopped}${route}`;
+
+        return [
+            line(label, `${approx}${value}`, can.bells > 0 ? COLORS.good : COLORS.textDim, title),
+            line(
+                'Kept for the queue',
+                reserve > 0 ? `${approx}${coins(reserve)}` : '0',
+                COLORS.textDim,
+                reserve > 0 ? `For ${spenders.join(', ')}.${estimateNote}` : kept
+            ),
+        ];
     }
 
     /**
@@ -1085,7 +1212,13 @@ class IronCowFarmPanel {
         const earns = batch.bells === null ? '' : ` · about ${bells(batch.bells)} bells`;
         const steps = buildQueueSteps(loop, batch);
         const presses = steps.length === 1 ? '1 press' : `${formatWithSeparator(steps.length)} presses`;
-        refs.summary.textContent = `Keeps the queue busy about ${round1(batch.hours)}h${earns} — ${presses}.`;
+        // Stock on hand can shrink the batch well below the duration asked; say so
+        // rather than leave a short figure next to a longer request unexplained.
+        const shortened =
+            batch.credits?.length && batch.requestedHours > 0 && batch.hours < batch.requestedHours * 0.99
+                ? ` (not ${round1(batch.requestedHours)}h: what you hold replaces the legs that would have made it)`
+                : '';
+        refs.summary.textContent = `Keeps the queue busy about ${round1(batch.hours)}h${shortened}${earns} — ${presses}.`;
 
         if (refs.walk) refs.walk.textContent = steps.length ? `Walk it — ${presses}` : 'Walk it';
     }
