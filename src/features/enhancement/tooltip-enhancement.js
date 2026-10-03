@@ -650,9 +650,13 @@ function buildMirrorOptimizedResult(
     const consumedItemsCost = consumedItems.reduce((sum, item) => sum + item.totalCost, 0);
     const totalMirrorsCost = mirrorCount * mirrorPrice;
 
-    // Mirror combinations are instant, so only the leaves cost time and attempts
-    const totalTime = leaves.reduce((sum, { level, quantity }) => sum + quantity * traditionalTimes[level], 0);
-    const totalAttempts = leaves.reduce((sum, { level, quantity }) => sum + quantity * traditionalAttempts[level], 0);
+    // The leaves use ordinary enhancement attempts. Each mirror then completes one more
+    // guaranteed Enhancing action, whose duration is the same per-action duration as the leaves.
+    const leafTime = leaves.reduce((sum, { level, quantity }) => sum + quantity * traditionalTimes[level], 0);
+    const leafAttempts = leaves.reduce((sum, { level, quantity }) => sum + quantity * traditionalAttempts[level], 0);
+    const perActionTime = leafAttempts > 0 ? leafTime / leafAttempts : 0;
+    const totalTime = leafTime + mirrorCount * perActionTime;
+    const totalAttempts = leafAttempts + mirrorCount;
     const totalProtections = leaves.reduce(
         (sum, { level, quantity }) => sum + quantity * (traditionalProtections[level] || 0),
         0
@@ -667,10 +671,10 @@ function buildMirrorOptimizedResult(
         : totalBaseItems;
     const copyBaseItems = copyHrid ? totalBaseItems - primaryBaseItems : 0;
 
-    // The per-attempt material bill is the same at every level, so the target-level strategy's
-    // breakdown (which is already multiplied by *its* attempts) scales to the plan's attempts
+    // The per-attempt material bill is the same at every level. Mirror actions consume their
+    // copy item instead of the ordinary enhancement recipe, so only leaf attempts scale it.
     const materialMultiplier =
-        optimalTraditional.expectedAttempts > 0 ? totalAttempts / optimalTraditional.expectedAttempts : 0;
+        optimalTraditional.expectedAttempts > 0 ? leafAttempts / optimalTraditional.expectedAttempts : 0;
 
     // For mirror phase: ONLY consumed items + mirrors
     // The consumed item costs from targetCosts already include base/materials/protection

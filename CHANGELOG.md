@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Mirror enhancement plans include their action time
+
+- Mirror enhancement plans now count each mirror use as one Enhancing action and include its duration. Their ordinary material quantities stay unchanged because mirror actions consume a copy item instead of the usual recipe.
+
 ### Tea recommendations fit the equipped pouch
 
 - Tea recommendations now fit the drink slots available from the current or planned pouch. Characters with one or two slots no longer get an unusable three-tea recommendation.
