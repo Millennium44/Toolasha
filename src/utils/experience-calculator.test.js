@@ -202,6 +202,26 @@ describe('calculateLevelFromActions', () => {
         expect(queuedPastCap.timeElapsed).toBe(60);
     });
 
+    test('carried cycle precision handles Pincer Gloves at the level cap', () => {
+        // Captured level table, Pincer Gloves XP and 60-second recipe. At +194% efficiency,
+        // 336 completions reach the cap in 115 cycles, leaving 2.1 of the next level's 2.95
+        // average completions available; the final 8 queued completions take two cycles.
+        const gameTable = { 199: 92125192822, 200: 100000000000 };
+        const currentXP = 99999303808;
+        const exact = calculateLevelFromActions(199, currentXP, 344, 194, 60, 2072, gameTable);
+        const partial = calculateLevelFromActions(199, currentXP, 344, 193.9999, 60, 2072, gameTable);
+
+        expect(exact.finalLevel).toBe(200);
+        expect(exact.finalXP).toBe(100000000000);
+        expect(exact.xpGained).toBe(696192);
+        expect(exact.timeElapsed).toBe(117 * 60);
+        // A small real shortfall in repeat capacity still requires the third cap cycle.
+        expect(partial.finalLevel).toBe(exact.finalLevel);
+        expect(partial.finalXP).toBe(exact.finalXP);
+        expect(partial.xpGained).toBe(exact.xpGained);
+        expect(partial.timeElapsed).toBe(118 * 60);
+    });
+
     test('zero XP leaves the level unchanged while queued actions still take time', () => {
         const result = calculateLevelFromActions(1, 10, 2, 50, 60, 0, table);
         const impossible = calculateMultiLevelProgress(1, 10, 2, 50, 60, 0, table);

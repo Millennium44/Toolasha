@@ -116,26 +116,41 @@ function progressiveEfficiencyMultiplier(baseEfficiency, levelsGained, levelEffi
  * @param {number} actionCount - Completions to fit into timed cycles
  * @param {number} efficiencyMultiplier - Average completions per timed cycle
  * @param {number} actionTime - Seconds per timed cycle
- * @param {number} carriedCapacity - Unused completion capacity from the previous level
- * @returns {{ timeElapsed: number, carriedCapacity: number }}
+ * @param {{ capacity: number, errorBound: number }} cycleState - Unused completion capacity and its precision bound
+ * @returns {{ timeElapsed: number, cycleState: { capacity: number, errorBound: number } }}
  */
-function chargeActionCycles(actionCount, efficiencyMultiplier, actionTime, carriedCapacity) {
+function chargeActionCycles(actionCount, efficiencyMultiplier, actionTime, cycleState) {
+    const carriedCapacity = cycleState.capacity;
     const carriedActions = Math.min(actionCount, carriedCapacity);
     const remainingActions = actionCount - carriedActions;
+    const remainingError = cycleState.errorBound + Number.EPSILON * (Math.abs(actionCount) + Math.abs(carriedActions));
     if (remainingActions === 0) {
-        return { timeElapsed: 0, carriedCapacity: carriedCapacity - carriedActions };
+        return {
+            timeElapsed: 0,
+            cycleState: {
+                capacity: carriedCapacity - carriedActions,
+                errorBound: remainingError,
+            },
+        };
     }
 
     const quotient = remainingActions / efficiencyMultiplier;
     const nearestInteger = Math.round(quotient);
-    // Subtracting the carried capacity can leave an exact whole-cycle result a
-    // few floating-point steps above its integer. Only normalize that residue;
-    // a meaningful fraction beyond the integer still needs another full cycle.
-    const tolerance = 4 * Number.EPSILON * Math.max(1, Math.abs(quotient));
+    // Subtracting carried capacity propagates its earlier multiplication error
+    // into this quotient, in addition to the local division rounding error.
+    const tolerance = remainingError / efficiencyMultiplier + 4 * Number.EPSILON * Math.max(1, Math.abs(quotient));
     const cycles = Math.abs(quotient - nearestInteger) <= tolerance ? nearestInteger : Math.ceil(quotient);
+    const cycleCapacity = cycles * efficiencyMultiplier;
+    const rawCapacity = cycleCapacity - remainingActions;
     return {
         timeElapsed: cycles * actionTime,
-        carriedCapacity: Math.max(0, cycles * efficiencyMultiplier - remainingActions),
+        cycleState: {
+            capacity: Math.max(0, rawCapacity),
+            errorBound:
+                remainingError +
+                Number.EPSILON * (Math.abs(cycleCapacity) + Math.abs(remainingActions)) +
+                Math.max(0, -rawCapacity),
+        },
     };
 }
 
@@ -167,7 +182,7 @@ export function calculateMultiLevelProgress(
 ) {
     let totalActions = 0;
     let totalTime = 0;
-    let carriedCapacity = 0;
+    let cycleState = { capacity: 0, errorBound: 0 };
     let level = currentLevel;
     let xp = currentXP;
 
@@ -205,9 +220,9 @@ export function calculateMultiLevelProgress(
         );
 
         totalActions += actionsForLevel;
-        const cycleCharge = chargeActionCycles(actionsForLevel, efficiencyMultiplier, actionTime, carriedCapacity);
+        const cycleCharge = chargeActionCycles(actionsForLevel, efficiencyMultiplier, actionTime, cycleState);
         totalTime += cycleCharge.timeElapsed;
-        carriedCapacity = cycleCharge.carriedCapacity;
+        cycleState = cycleCharge.cycleState;
         xp += actionsForLevel * xpPerAction;
 
         // Keep XP earned by the completion that crossed the threshold. It may
@@ -254,7 +269,7 @@ export function calculateLevelFromActions(
     let level = currentLevel;
     let xp = currentXP;
     let timeElapsed = 0;
-    let carriedCapacity = 0;
+    let cycleState = { capacity: 0, errorBound: 0 };
 
     while (remainingActions > 0) {
         // The current XP may already have crossed one or more thresholds, for
@@ -272,9 +287,8 @@ export function calculateLevelFromActions(
 
         if (xpForNextLevel === undefined) {
             // At the level cap: the queue still runs, it just stops buying levels
-            const cycleCharge = chargeActionCycles(remainingActions, efficiencyMultiplier, actionTime, carriedCapacity);
+            const cycleCharge = chargeActionCycles(remainingActions, efficiencyMultiplier, actionTime, cycleState);
             timeElapsed += cycleCharge.timeElapsed;
-            carriedCapacity = cycleCharge.carriedCapacity;
             remainingActions = 0;
             break;
         }
@@ -283,9 +297,8 @@ export function calculateLevelFromActions(
         // action grants only its own XP. With no XP gain, the queue still takes
         // time and makes no level progress.
         if (!(xpPerAction > 0)) {
-            const cycleCharge = chargeActionCycles(remainingActions, efficiencyMultiplier, actionTime, carriedCapacity);
+            const cycleCharge = chargeActionCycles(remainingActions, efficiencyMultiplier, actionTime, cycleState);
             timeElapsed += cycleCharge.timeElapsed;
-            carriedCapacity = cycleCharge.carriedCapacity;
             remainingActions = 0;
             break;
         }
@@ -294,19 +307,13 @@ export function calculateLevelFromActions(
 
         if (actionsToNextLevel <= remainingActions) {
             remainingActions -= actionsToNextLevel;
-            const cycleCharge = chargeActionCycles(
-                actionsToNextLevel,
-                efficiencyMultiplier,
-                actionTime,
-                carriedCapacity
-            );
+            const cycleCharge = chargeActionCycles(actionsToNextLevel, efficiencyMultiplier, actionTime, cycleState);
             timeElapsed += cycleCharge.timeElapsed;
-            carriedCapacity = cycleCharge.carriedCapacity;
+            cycleState = cycleCharge.cycleState;
             xp += actionsToNextLevel * xpPerAction;
         } else {
-            const cycleCharge = chargeActionCycles(remainingActions, efficiencyMultiplier, actionTime, carriedCapacity);
+            const cycleCharge = chargeActionCycles(remainingActions, efficiencyMultiplier, actionTime, cycleState);
             timeElapsed += cycleCharge.timeElapsed;
-            carriedCapacity = cycleCharge.carriedCapacity;
             xp += remainingActions * xpPerAction;
             remainingActions = 0;
         }
