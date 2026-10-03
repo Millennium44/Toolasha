@@ -12,6 +12,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 - The queue helper reports the hours and bells its counts really cover once your stock has shortened the batch.
 - A cowbell is priced as a tenth of a bag of ten, the only way the market sells them, rather than at a loose price nobody can buy at.
 
+### Shared agent rules brought up to date
+
+- Nothing a player sees changes. The workflow rules every coding agent reads now include the pull-request, review and briefing practices adopted since late September, and the newer code rules (spend buttons, non-English game clients, settings defaults).
+
 ### Chest badges match net worth
 
 - Chests and crates with a market price now show it on their inventory badge, as net worth does; the estimated value of their contents is used only when there's no market price.
