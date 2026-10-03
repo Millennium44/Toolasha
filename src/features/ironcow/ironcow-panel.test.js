@@ -346,6 +346,8 @@ describe('what it says', () => {
             (div) => div.textContent.startsWith('Bells you can buy now') && div.title
         );
         expect(row.title).toContain('Decompose: Star Fruit');
+        // No depth in the price feed: the count is said to be at the cheapest listing only
+        expect(row.title).toContain('all at the cheapest listing');
         expect(text()).not.toContain(FAILED);
     });
 

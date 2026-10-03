@@ -1012,7 +1012,11 @@ class IronCowFarmPanel {
                   'are not counted on, since its rolls can fail.'
                 : 'Nothing queued spends gold, so nothing is held back.';
         const stopped = walked.stoppedAt ? ` The queue is followed up to ${walked.stoppedAt}, which never ends.` : '';
-        const route = ' Whole bags of ten, rounded down.';
+        // The price feed carries no depth: every bag is priced at the cheapest listing, so this is a
+        // ceiling once that listing runs out, and the tooltip says so
+        const route =
+            ` Whole bags of ten, rounded down, all at the cheapest listing (${coins(pricing.price * 10)} a bag).` +
+            ' If fewer bags are listed at that price, the rest cost more and you get fewer.';
         const title = `Out of your ${coins(state.coins)}. ${kept}${estimateNote}${stopped}${route}`;
 
         return [
