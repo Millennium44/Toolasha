@@ -483,6 +483,70 @@ describe('the Buy-all widget', () => {
         expect(widget()).toBe(null);
     });
 
+    test('starting a new walk after cancel keeps the remaining step available while shopping', async () => {
+        consumablesPanel._buyQueue = shortfall.slice();
+        consumablesPanel.show();
+        await settled();
+
+        document.querySelector('.toolasha-consumables-inline-cancel').click();
+        expect(consumablesPanel._buyWidgetHidden).toBe(true);
+
+        consumablesPanel._registerBuyQueue('Combat', shortfall);
+        consumablesPanel.bodyEl.appendChild(consumablesPanel._renderInlineBuyWalk());
+        document.querySelector('.toolasha-consumables-inline-next').click();
+
+        expect(consumablesPanel.panel).toBe(null);
+        expect(consumablesPanel._buyQueue).toEqual([shortfall[1]]);
+        expect(widget()).not.toBe(null);
+        expect(mainLabel()).toBe('▶ Next: Star Fruit Gummy (1 left)');
+    });
+
+    test('a dragged walk widget keeps its position when the panel is reopened and minimized', async () => {
+        consumablesPanel._buyQueue = shortfall.slice();
+        consumablesPanel.show();
+        await settled();
+
+        document.querySelector('.toolasha-consumables-inline-next').click();
+        const floating = widget();
+        vi.spyOn(floating, 'getBoundingClientRect').mockImplementation(() => {
+            const left = Number.parseFloat(floating.style.left);
+            const top = Number.parseFloat(floating.style.top);
+            return {
+                left: Number.isFinite(left) ? left : 500,
+                top: Number.isFinite(top) ? top : 160,
+                right: 600,
+                bottom: 200,
+                width: 100,
+                height: 40,
+                x: left || 500,
+                y: top || 160,
+                toJSON: () => {},
+            };
+        });
+        const pointer = (type, target, x, y) => {
+            const event = new Event(type, { bubbles: true, cancelable: true });
+            Object.assign(event, { button: 0, clientX: x, clientY: y });
+            target.dispatchEvent(event);
+        };
+
+        pointer('pointerdown', floating, 510, 170);
+        pointer('pointermove', document, 210, 110);
+        pointer('pointerup', document, 210, 110);
+        expect(floating.style.left).toBe('200px');
+        expect(floating.style.top).toBe('100px');
+
+        consumablesPanel.show();
+        await settled();
+        expect(widget()).toBe(null);
+
+        consumablesPanel.minimizeCtl.button.click();
+        await settled();
+
+        expect(widget().style.left).toBe('200px');
+        expect(widget().style.top).toBe('100px');
+        expect(consumablesPanel._buyQueue).toEqual([shortfall[1]]);
+    });
+
     test('a walk and its saved floating position survive minimizing and reopening the panel', async () => {
         consumablesPanel._buyWidgetPosition = { left: 120, top: 60 };
         consumablesPanel._buyQueue = shortfall.slice();

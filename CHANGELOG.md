@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Guided purchase controls keep their state
+
+- Starting a new Consumables purchase walk after canceling restores its Next button. A toolbar you dragged also keeps its position when switching between the panel and floating controls.
+
 ### Consumables controls stay with their panel
 
 - The Consumables panel starts centered when no position has been saved. Guided purchases now use clearly labeled “Walk buys” controls inside the expanded panel, freeing the floating toolbar from the character tabs; active walks retain a toolbar when the panel is minimized or closed.

@@ -1788,6 +1788,7 @@ class ConsumablesPanel {
     }
 
     _startBuyAll(queue) {
+        this._buyWidgetHidden = false;
         this._buyQueue = queue.slice();
         this._advanceBuyQueue();
     }
@@ -1858,6 +1859,9 @@ class ConsumablesPanel {
                 zIndex: config.Z_FLOATING_PANEL,
                 positionKey: BUY_WIDGET_POSITION_KEY,
                 position: this._buyWidgetPosition,
+                onMove: (position) => {
+                    this._buyWidgetPosition = position;
+                },
             });
             widget.main.addEventListener('click', () => this._onBuyWidgetClick());
             widget.close.title = 'Stop here — the rest of the shortfall stays on the panel.';
