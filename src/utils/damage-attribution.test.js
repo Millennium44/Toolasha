@@ -1467,6 +1467,53 @@ describe('a monster respawning into a slot', () => {
         expect(events).toEqual([]);
     });
 
+    test('a same-maximum replacement with a reset splat counter registers nothing', () => {
+        const state = newAttributionState();
+        attributeTick({ pMap: { 0: { cMP: 50 } }, mMap: { 0: unit(900, 1000, 4) } }, state);
+
+        // The replacement was already hurt before the next sparse update arrived.
+        const events = attributeTick({ pMap: { 0: { cMP: 50 } }, mMap: { 0: unit(700, 1000, 0) } }, state);
+
+        expect(events).toEqual([]);
+        expect(state.monstersHP['0']).toBe(700);
+        expect(state.dmgCounter['0']).toBe(0);
+
+        const next = attributeTick({ pMap: { 0: { cMP: 50 } }, mMap: { 0: unit(640, 1000, 1) } }, state);
+        expect(next).toHaveLength(1);
+        expect(next[0].amount).toBe(60);
+    });
+
+    test('an absent splat counter after a positive one still counts health loss', () => {
+        const state = newAttributionState();
+        attributeTick({ pMap: { 0: { cMP: 50 } }, mMap: { 0: unit(900, 1000, 4) } }, state);
+
+        // A sparse older payload states health but no splat counter; absence is not a reset to zero.
+        const events = attributeTick({ pMap: { 0: { cMP: 50 } }, mMap: { 0: { cHP: 700, mHP: 1000 } } }, state);
+
+        expect(events).toHaveLength(1);
+        expect(events[0]).toMatchObject({ amount: 200, isDot: true, playerIndex: '0' });
+    });
+
+    test('a restored counter seeds a new baseline instead of replaying unseen splats', () => {
+        const state = newAttributionState();
+        const player = (atkCounter) => ({ cMP: 50, atkCounter, isAutoAtk: true });
+        attributeTick({ pMap: { 0: player(10) }, mMap: { 0: { ...unit(900, 1000, 4), critCounter: 2 } } }, state);
+
+        const missing = attributeTick({ pMap: { 0: player(10) }, mMap: { 0: { cHP: 700, mHP: 1000 } } }, state);
+        const restored = attributeTick(
+            { pMap: { 0: player(11) }, mMap: { 0: { ...unit(650, 1000, 5), critCounter: 2 } } },
+            state
+        );
+        const next = attributeTick(
+            { pMap: { 0: player(12) }, mMap: { 0: { ...unit(610, 1000, 6), critCounter: 3 } } },
+            state
+        );
+
+        expect(missing).toMatchObject([{ amount: 200, isDot: true }]);
+        expect(restored).toMatchObject([{ amount: 50, isDot: true, isCrit: false }]);
+        expect(next).toMatchObject([{ amount: 40, isDot: false, isCrit: true }]);
+    });
+
     test('the tick after the re-baseline counts normally', () => {
         const state = newAttributionState();
         attributeTick({ pMap: { 0: { cMP: 50 } }, mMap: { 0: unit(200, 1000, 4) } }, state);

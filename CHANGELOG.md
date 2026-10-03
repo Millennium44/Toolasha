@@ -6,6 +6,13 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Combat damage after monster replacement
+
+- The damage tracker now recognizes a monster replacement when the damage counter resets, even if the new monster has the same maximum health. This prevents a sparse combat update from counting the replacement's already-missing health as new damage.
+- Replay and attribution comparisons now start a new health segment at that reset, and guild-trial debuff badges clear the replaced monster's effects. Their displayed totals and timers follow the same replacement rule as the damage tracker.
+- Combat updates that omit the damage counter still count actual health loss; an absent counter no longer looks like a monster replacement.
+- After a counterless combat update, the next cumulative counter now establishes a fresh baseline. Old hits are no longer replayed as new hits when counter data returns.
+
 ### Dungeon restarts and key estimates
 
 - Starting another action during a dungeon now ends that tracked attempt, so a stale queued wave cannot carry its time and progress into a later run. Dungeon profit estimates also charge entry keys only for regular completion chests; refinement-only and chest-free rewards no longer incur a phantom entry key.
