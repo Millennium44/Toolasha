@@ -554,6 +554,22 @@ describe('skills named by their icon, in any game language', () => {
         expect(el.querySelector('.mwi-xp-time-left')).toBeNull();
     });
 
+    test('a translated tooltip portaled to the body resolves through its aria-describedby trigger', () => {
+        const nav = navEntry('melee', '近战');
+        nav.querySelector('span').setAttribute('aria-describedby', 'mui-tip-7');
+        document.body.appendChild(nav);
+        // MUI portals the tooltip: a role=tooltip popper at body level, named by the trigger
+        const popper = document.createElement('div');
+        popper.setAttribute('role', 'tooltip');
+        popper.id = 'mui-tip-7';
+        document.body.appendChild(popper);
+        const el = tooltipIn(popper, '近战');
+
+        xpTracker._addTimeTillLevelUp(el);
+
+        expect(el.querySelector('.mwi-xp-time-left')?.textContent).toBe('50 minutes till next level');
+    });
+
     test('an English tooltip with no icon around it still resolves by its name', () => {
         const el = tooltipIn(document.body, 'Melee');
 

@@ -58,6 +58,29 @@ SKILLS.forEach((s) => (SKILL_HRID_TO_ID[s.hrid] = s.id));
  * @param {Element|null|undefined} navEl
  * @returns {string|null}
  */
+/**
+ * The nav entry a skill tooltip was opened from. A tooltip rendered inside its entry is found by
+ * ancestry; a portaled one by the trigger that names it in `aria-describedby`, else by the entry the
+ * pointer is over (the tooltip opens on hover).
+ * @param {HTMLElement} tooltipEl - The tooltip
+ * @returns {HTMLElement|null}
+ */
+function tooltipNavEntry(tooltipEl) {
+    const NAV = '[class*="NavigationBar_nav"]';
+    const inside = tooltipEl.closest(NAV);
+    if (inside) return inside;
+
+    const tooltipId = tooltipEl.closest('[role="tooltip"]')?.id || tooltipEl.id;
+    if (tooltipId) {
+        const trigger = document.querySelector(`[aria-describedby~="${CSS.escape(tooltipId)}"]`);
+        const fromTrigger = trigger?.closest(NAV);
+        if (fromTrigger) return fromTrigger;
+    }
+
+    const hovered = document.querySelectorAll(`${NAV}:hover`);
+    return hovered.length ? hovered[hovered.length - 1] : null;
+}
+
 function skillIdForNavEntry(navEl) {
     const hrid = getSkillHridFromIconHref(getIconHref(navEl, 'skills_sprite'));
     if (hrid && SKILL_HRID_TO_ID[hrid]) return SKILL_HRID_TO_ID[hrid];
@@ -578,15 +601,17 @@ class XPTracker {
     }
 
     /**
-     * The tracked skill id a tooltip belongs to. The tooltip carries no icon of its own, but it is
-     * revealed under its nav entry, whose icon names the skill in any game language; when it is
-     * not inside one, the English name in its first line is the fallback.
+     * The tracked skill id a tooltip belongs to. The tooltip carries no icon of its own, but its nav
+     * entry's icon names the skill in any game language. A tooltip is usually portaled to the body,
+     * so the entry is found through its trigger — the element whose `aria-describedby` names the
+     * tooltip, else the nav entry under the pointer — and only failing all of those through the
+     * English name in its first line.
      * @param {HTMLElement} tooltipEl - The tooltip
      * @param {HTMLElement} nameEl - Its first line, the skill's displayed name
      * @returns {string|null}
      */
     _tooltipSkillId(tooltipEl, nameEl) {
-        const navEl = tooltipEl.closest('[class*="NavigationBar_nav"]');
+        const navEl = tooltipNavEntry(tooltipEl);
         if (navEl) {
             const hrid = getSkillHridFromIconHref(getIconHref(navEl, 'skills_sprite'));
             if (hrid && SKILL_HRID_TO_ID[hrid]) return SKILL_HRID_TO_ID[hrid];
