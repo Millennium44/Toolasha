@@ -106,6 +106,7 @@ import enhancementFeature from '../features/enhancement/enhancement-feature.js';
 import '../features/enhancement/enhancement-session-row.js';
 import xphCalculator from '../features/enhancement/xph-calculator.js';
 import enhancementItemPins from '../features/enhancement/enhancement-item-pins.js';
+import wideEnhancingPanel from '../features/enhancement/wide-enhancing-panel.js';
 
 // Risk of Ruin
 import riskOfRuinUI from '../features/risk-of-ruin/risk-of-ruin-ui.js';
@@ -248,6 +249,7 @@ toolashaRoot.UI = {
     enhancementFeature,
     xphCalculator,
     enhancementItemPins,
+    wideEnhancingPanel,
     riskOfRuinUI,
     predictionCalibration,
     leaderboardXPTracker,
