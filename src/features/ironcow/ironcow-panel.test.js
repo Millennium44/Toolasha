@@ -380,6 +380,22 @@ describe('what it says', () => {
         expect(marketListeners.size).toBe(othersListening);
     });
 
+    test('a snapshot costed with no bell price still gets a live buy-now count once a bag is listed', async () => {
+        plan.state = character({ coins: 30_000_000 });
+        coinWalk.walked = { stages: [], stoppedAt: null };
+        store.snapshot = costedLoop({ bellPrice: null, bellPricing: { price: null }, bells: null });
+        loop.pricing = { price: null };
+        ironCowFarmPanel.show();
+        await ironCowFarmPanel.load();
+        expect(text()).toContain('No market price for a cowbell yet');
+
+        loop.pricing = { price: 950_000, source: 'bag', bag: 950_000, pricingMode: 'ask', quoted: true };
+        for (const fn of marketListeners) fn();
+        await new Promise((resolve) => setTimeout(resolve, 350));
+        expect(text()).toContain('30 (3 bags)');
+        expect(text()).not.toContain(FAILED);
+    });
+
     test('with no bag listed for sale, no bell count is offered', async () => {
         plan.state = character({ coins: 30_000_000 });
         coinWalk.walked = { stages: [], stoppedAt: null };

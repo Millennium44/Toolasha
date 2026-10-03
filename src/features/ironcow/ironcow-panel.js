@@ -897,9 +897,17 @@ class IronCowFarmPanel {
         const holder = card('Cowbells');
         const loop = this.loop;
 
+        // Its own box, priced off the live quote, so a coin, queue or price change can redraw just these
+        // lines (see `_onLiveChange`) — drawn even when the costed snapshot had no bell price, so a bag
+        // listed since can still bring the count up without a full Refresh
+        const affordable = document.createElement('div');
+        affordable.append(...this._affordableLines(state));
+        this.affordableEl = affordable;
+
         const pricing = loop?.bellPricing || cowbellPricing();
         if (!pricing.price) {
             holder.appendChild(span('No market price for a cowbell yet.', { color: COLORS.warn }));
+            holder.appendChild(affordable);
             return holder;
         }
 
@@ -914,10 +922,6 @@ class IronCowFarmPanel {
         holder.appendChild(
             line('Buy them', 'in bags of ten', COLORS.good, 'The market sells cowbells only in bags of ten.')
         );
-        // Its own box, so a coin or queue change can redraw just these lines (see `_onLiveChange`)
-        const affordable = document.createElement('div');
-        affordable.append(...this._affordableLines(state));
-        this.affordableEl = affordable;
         holder.appendChild(affordable);
 
         if (!loop || loop.missing?.length || !loop.bells) {

@@ -201,7 +201,7 @@ describe('walking the queue for its coin flow', () => {
         expect(coinReserve(walked.stages)).toEqual({ reserve: 0, spenders: [], estimated: false });
     });
 
-    test('a counted fight ahead of a decompose is walked through, not taken as the end', () => {
+    test('a counted decompose behind a counted fight, which its loot could feed, makes the walk unreadable', () => {
         game.actionDetails['/actions/combat/fly'] = {
             hrid: '/actions/combat/fly',
             name: 'Fly',
@@ -212,11 +212,25 @@ describe('walking the queue for its coin flow', () => {
             queued(2, DECOMPOSE, { item: STAR_FRUIT, maxCount: 500 }),
         ];
 
+        expect(walkQueueCoins(engine)).toBeNull();
+    });
+
+    test('a counted fight ahead of a row that pays no gold is walked through, not taken as the end', () => {
+        game.actionDetails['/actions/combat/fly'] = {
+            hrid: '/actions/combat/fly',
+            name: 'Fly',
+            type: '/action_types/combat',
+        };
+        game.currentActions = [
+            queued(1, '/actions/combat/fly', { maxCount: 50 }),
+            queued(2, FORAGE, { maxCount: 100 }),
+        ];
+
         const walked = walkQueueCoins(engine);
 
         expect(walked.stoppedAt).toBeNull();
-        expect(walked.stages.map((stage) => stage.actionHrid)).toEqual(['/actions/combat/fly', DECOMPOSE]);
-        expect(coinReserve(walked.stages).reserve).toBeCloseTo(450_000, 3);
+        expect(walked.stages.map((stage) => stage.actionHrid)).toEqual(['/actions/combat/fly', FORAGE]);
+        expect(coinReserve(walked.stages).reserve).toBe(0);
     });
 
     test('a spending row limited by materials the engine only expects makes the reserve an estimate', () => {

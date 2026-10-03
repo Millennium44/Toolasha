@@ -32,6 +32,9 @@ export const COWBELLS_PER_BAG = 10;
  */
 const LEDGER_COINS = 1e15;
 
+/** Action types that pay gold per action: alchemy fees and enhancing costs */
+const PAYING_ACTIONS = ['/actions/alchemy/', '/actions/enhancing/'];
+
 /**
  * The item a queued action names in its primary slot.
  * @param {string|null|undefined} hash - `characterId::location::itemHrid::level`
@@ -60,7 +63,7 @@ function itemFromHash(hash) {
  * @returns {{stages: Array<{actionHrid: string, label: string, count: number, coinDelta: number,
  *   earned: number}>, stoppedAt: string|null}|null} Rows in run order; `stoppedAt` names the
  *   unbounded row that ended the walk. Null when the engine is unavailable, a row's action is
- *   unknown, or an uncounted spender sits behind a counted fight whose loot it could run on — no
+ *   unknown, or a gold-paying row sits behind a counted fight whose loot it could run on — no
  *   reserve is better than a low one.
  */
 export function walkQueueCoins(engine, actions, inventory) {
@@ -103,12 +106,16 @@ export function walkQueueCoins(engine, actions, inventory) {
             break;
         }
 
+        // A gold-paying row behind a fight, counted or not, could run on loot the walk never credited
+        // (a counted one is capped by the materials held now, an uncounted one by them entirely): no
+        // reserve, rather than one short of what the queue will spend
+        if (afterFight && PAYING_ACTIONS.some((prefix) => String(action.actionHrid).startsWith(prefix))) {
+            return null;
+        }
+
         const before = ledger.byHrid[COIN] || 0;
         const count = engine.deductQueueActionMaterials(ledger, details, action, timing) || 0;
         const delta = (ledger.byHrid[COIN] || 0) - before;
-        // An uncounted spender behind a fight could run on loot the walk never credited: no reserve,
-        // rather than one short of what the queue will spend
-        if (afterFight && delta < 0 && !action.hasMaxCount) return null;
         // Earnings are not counted on (see above): the ledger keeps its spend-only balance
         if (delta > 0) {
             ledger.byHrid[COIN] = before;
