@@ -229,6 +229,7 @@ function resetTracker() {
     tracker.hibernationDetected = false;
     tracker._lostTimeBeat = null;
     tracker.timerRegistry.clearAll();
+    tracker._completionKeyCountGrace = null;
     if (tracker.visibilityHandler) {
         document.removeEventListener('visibilitychange', tracker.visibilityHandler);
         tracker.visibilityHandler = null;
@@ -4279,6 +4280,72 @@ describe('a dungeon displaced by "Start Now"', () => {
         expect(game.savedRuns).toHaveLength(1);
         expect(game.savedRuns[0].run).toMatchObject({ validated: true, duration: DISPLACED_AT + 1000 - T0 });
         expect(game.savedRuns[0].run.result).toBeUndefined();
+    });
+
+    test('a missing completion key count releases the old run after a bounded wait', async () => {
+        midDen();
+        tracker.currentRun.maxWaves = 12;
+        tracker.currentRun.wavesCompleted = 12;
+        tracker.currentRun.partyNames = ['Aster', 'Briar'];
+        tracker.firstKeyCountTimestamp = T0;
+        tracker.lastKeyCountTimestamp = T0;
+        startMilkingNow();
+        await flush();
+
+        vi.advanceTimersByTime(10_001);
+        await flush();
+        expect(tracker.isTracking).toBe(false);
+        expect(game.savedRuns).toHaveLength(0);
+
+        game.actions = [den({ id: 600, wave: 1 })];
+        await tracker.onNewBattle({ wave: 1, battleId: 91, players: [{ character: { name: 'Marketcow' } }] });
+        expect(tracker.currentRun.currentWave).toBe(1);
+        expect(tracker.currentRun.wavesCompleted).toBe(0);
+    });
+
+    test('a completion key count inside the wait banks the clear and leaves the next run alone', async () => {
+        midDen();
+        tracker.currentRun.maxWaves = 12;
+        tracker.currentRun.wavesCompleted = 12;
+        tracker.currentRun.partyNames = ['Aster', 'Briar'];
+        tracker.currentRun.keyCountsMap = { Aster: 12, Briar: 12 };
+        tracker.firstKeyCountTimestamp = T0;
+        tracker.lastKeyCountTimestamp = T0;
+        startMilkingNow();
+
+        vi.advanceTimersByTime(5_000);
+        tracker.onChatMessage(keyCountsData(new Date(Date.now()).toISOString(), '[Aster - 11], [Briar - 11]'));
+        await flush();
+        expect(game.savedRuns).toHaveLength(1);
+        expect(game.savedRuns[0].run.result).toBeUndefined();
+
+        game.actions = [den({ id: 600, wave: 1 })];
+        await tracker.onNewBattle({ wave: 1, battleId: 91, players: [{ character: { name: 'Marketcow' } }] });
+        vi.advanceTimersByTime(5_001);
+        await flush();
+        expect(tracker.currentRun.currentWave).toBe(1);
+    });
+
+    test('a new action battle before its queue update also releases a lost completion', async () => {
+        midDen();
+        tracker.currentRun.maxWaves = 12;
+        tracker.currentRun.wavesCompleted = 12;
+        tracker.currentRun.partyNames = ['Aster', 'Briar'];
+        tracker.firstKeyCountTimestamp = T0;
+        tracker.lastKeyCountTimestamp = T0;
+        const zone = { id: 503, actionHrid: FLY, ordinal: -6, isDone: false, wave: 3, partyID: 0 };
+        game.actions = [zone, den()];
+        await tracker.onNewBattle({ wave: 3, battleId: 90 });
+        expect(tracker.isTracking).toBe(true);
+
+        vi.advanceTimersByTime(10_001);
+        await flush();
+        expect(tracker.isTracking).toBe(false);
+
+        game.actions = [den({ id: 600, wave: 1 })];
+        await tracker.onNewBattle({ wave: 1, battleId: 91, players: [{ character: { name: 'Marketcow' } }] });
+        expect(tracker.currentRun.currentWave).toBe(1);
+        expect(tracker.currentRun.wavesCompleted).toBe(0);
     });
 
     test('ends the old run despite the queued dungeon retaining its stale wave', async () => {

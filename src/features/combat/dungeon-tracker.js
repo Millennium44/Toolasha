@@ -134,6 +134,9 @@ const MAX_PLAUSIBLE_RUN_MS = 3 * 60 * 60 * 1000;
  */
 const UNSETTLED_END_WINDOW_MS = 30_000;
 
+/** How long a finished party run waits for its reward Key counts after another action takes over. */
+const COMPLETION_KEY_COUNT_GRACE_MS = 10_000;
+
 /**
  * How many recent party messages the client-minus-server clock estimate is
  * taken over (see `chatClockOffset`). A short window, so a clock the system
@@ -270,6 +273,7 @@ class DungeonTracker {
         this._lastBeatAt = 0;
         this._lostTimeBeat = null;
         this.timerRegistry = createTimerRegistry();
+        this._completionKeyCountGrace = null;
         this.visibilityHandler = null;
 
         // Store handler references for cleanup
@@ -1156,7 +1160,9 @@ class DungeonTracker {
                             // Early exit (fled, died, or failed)
                             this.resetTracking(this.earlyExitAttempt());
                         }
-                        // If it was a successful completion, action_completed will handle it
+                        // A party clear may still be waiting for its reward Key
+                        // counts. Do not hold it forever if that message was lost.
+                        if (allWavesCompleted) this.armCompletionKeyCountGrace();
                         return;
                     }
                 }
@@ -1172,6 +1178,37 @@ class DungeonTracker {
      */
     isPaused() {
         return Boolean(this.isTracking && this.currentRun && Number.isFinite(this.currentRun.pausedAt));
+    }
+
+    /** Keep a finished party run available briefly for a delayed reward message. */
+    armCompletionKeyCountGrace() {
+        const run = this.currentRun;
+        if (!this.isTracking || !run || !this.isFinalWaveCleared()) return;
+        if (this._completionKeyCountGrace?.run === run) return;
+        this.cancelCompletionKeyCountGrace();
+
+        const timerId = this.timerRegistry.scheduleTimeout(
+            () => {
+                if (this._completionKeyCountGrace?.run !== run) return;
+                this._completionKeyCountGrace = null;
+                if (!this.isTracking || this.currentRun !== run) return;
+                // Without the party's completion message this cannot be validated
+                // or banked as a clear, but it must stop blocking later combat.
+                this.completeDungeon().catch((error) => {
+                    console.error('[Dungeon Tracker] Could not settle a finished run without Key counts:', error);
+                });
+            },
+            COMPLETION_KEY_COUNT_GRACE_MS,
+            'dungeon-tracker-key-count-grace'
+        );
+        this._completionKeyCountGrace = { run, timerId };
+    }
+
+    /** Stop a pending grace timer when its run ends by another route. */
+    cancelCompletionKeyCountGrace() {
+        if (!this._completionKeyCountGrace) return;
+        this.timerRegistry.cancelTimeout(this._completionKeyCountGrace.timerId);
+        this._completionKeyCountGrace = null;
     }
 
     /**
@@ -1237,11 +1274,6 @@ class DungeonTracker {
         const actions = dataManager.getCurrentActions?.();
         if (!Array.isArray(actions)) return;
 
-        // The last wave can be complete before the party's reward Key counts
-        // arrives. Start Now must not turn that clear into a cancel or discard
-        // the only run that can accept the delayed completion message.
-        if (this.isFinalWaveCleared() || this.currentRun.awaitingKeyCount === true) return;
-
         const dungeonHrid = this.currentRun.dungeonHrid;
         const front = runningAction(actions);
 
@@ -1259,10 +1291,19 @@ class DungeonTracker {
             return;
         }
 
-        if (!front || !isQueued(actions, dungeonHrid)) return;
-        const delivered = (data?.endCharacterActions || []).some(
-            (action) => action && !action.isDone && action.id === front.id && action.actionHrid === front.actionHrid
-        );
+        const queued = isQueued(actions, dungeonHrid);
+        const delivered =
+            front &&
+            (data?.endCharacterActions || []).some(
+                (action) => action && !action.isDone && action.id === front.id && action.actionHrid === front.actionHrid
+            );
+        // The last wave can be complete before the party's reward Key counts
+        // arrives. Wait briefly for it, then release this run if it was lost.
+        if (this.isFinalWaveCleared() || this.currentRun.awaitingKeyCount === true) {
+            if (delivered || !queued) this.armCompletionKeyCountGrace();
+            return;
+        }
+        if (!front || !queued) return;
         if (delivered) {
             // Start Now leaves the old dungeon queued with its old wave, but the
             // next time it runs the server starts at wave 1. End this attempt at
@@ -1290,8 +1331,10 @@ class DungeonTracker {
         if (
             (this.isFinalWaveCleared() || this.currentRun.awaitingKeyCount === true) &&
             battleAction?.actionHrid !== dungeonHrid
-        )
+        ) {
+            this.armCompletionKeyCountGrace();
             return 'ignore';
+        }
 
         if (battleAction?.actionHrid === dungeonHrid) {
             if (!paused) return 'continue';
@@ -1868,6 +1911,7 @@ class DungeonTracker {
                 // would read the finished run back as wave 1 of the next one.
                 if (pastItsFirstWave || this.currentRun?.awaitingKeyCount === true) {
                     this.currentRun.awaitingKeyCount = true;
+                    this.armCompletionKeyCountGrace();
                     this.notifyUpdate();
                     this.saveInProgressRun();
                     return;
@@ -2279,6 +2323,8 @@ class DungeonTracker {
         if (!this.currentRun || !this.isTracking) {
             return;
         }
+
+        this.cancelCompletionKeyCountGrace();
 
         // Reset tracking immediately to prevent race condition with next dungeon
         this.isTracking = false;
@@ -2775,6 +2821,7 @@ class DungeonTracker {
      *   next waits on the write.
      */
     async resetTracking(attempt = null) {
+        this.cancelCompletionKeyCountGrace();
         // A paused run that is discarded was given up: the player put another action in front of it and
         // then dropped or replaced it. Nothing can die while paused, so it is a cancel, ending when the
         // run stopped (not now, which would count the time spent on the other action)
@@ -3061,6 +3108,7 @@ class DungeonTracker {
             this.updateCallbacks = [];
 
             this.timerRegistry.clearAll();
+            this._completionKeyCountGrace = null;
 
             // Clear saved in-progress run
             await this.clearInProgressRun();
