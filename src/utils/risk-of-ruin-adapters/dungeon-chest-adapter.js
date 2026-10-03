@@ -112,21 +112,21 @@ export function getChestCostBreakdown(containerHrid) {
 function priceRealizedDrop(itemHrid, count) {
     if (count <= 0) return 0;
 
-    const price = expectedValueCalculator.getDropPrice(itemHrid);
-    if (price === null) return null;
+    const resolved = expectedValueCalculator.resolveSellSideValue(itemHrid);
+    if (resolved === null) return null;
 
-    if (itemHrid === COIN_HRID) return count * price;
+    if (itemHrid === COIN_HRID) return count * resolved.value;
 
     const itemDetails = dataManager.getItemDetails(itemHrid);
     const canBeSold = itemDetails?.isTradable !== false;
-    return canBeSold ? calculatePriceAfterTax(count * price) : count * price;
+    return canBeSold && resolved.needsTax ? calculatePriceAfterTax(count * resolved.value) : count * resolved.value;
 }
 
 /**
  * Draw one realized payout value for opening the given chest once. Prices each triggered drop
  * the same way expected-value-calculator.js's getDropBreakdown() prices its average — tax-aware
  * sell side, with coin/cowbell/dungeon-token/nested-container special cases handled by
- * getDropPrice() — but against the actually-realized random count, not the average.
+ * resolveSellSideValue() — but against the actually-realized random count, not the average.
  * @param {string} containerHrid
  * @param {function(): number} rng
  * @returns {number}
