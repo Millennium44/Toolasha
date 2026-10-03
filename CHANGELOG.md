@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Ability book costs distinguish missing prices
+
+- The Item Dictionary's ability book calculator now says when an ask or bid quote is missing instead of presenting an unpriced book as free.
+
 ### Mana recommendations wait for pouch capacity
 
 - Before a fight supplies the character's pouch stats, mana recommendations now fit the base capacity of one food and one drink. The panel explains this temporary estimate instead of offering a food combination that may not fit.

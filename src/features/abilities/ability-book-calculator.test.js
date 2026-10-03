@@ -127,6 +127,27 @@ describe('the Tester shop as the buy side', () => {
     /** Let the click handler's awaits run out */
     const settle = () => new Promise((resolve) => setTimeout(resolve, 0));
 
+    test('a real ability book with no market quote is not costed as free', async () => {
+        game.testerOn = false;
+        game.shopCost = 0;
+        game.price = null;
+        game.data.itemDetailMap['/items/puncture'] = {
+            hrid: '/items/puncture',
+            name: 'Puncture',
+            categoryHrid: '/item_categories/ability_book',
+            abilityBookDetail: {
+                abilityHrid: '/abilities/puncture',
+                levelRequirements: [{ skillHrid: '/skills/intelligence', level: 50 }],
+                experienceGain: 500,
+            },
+        };
+        const el = panel();
+        await abilityBookCalculator.injectCalculator(el, { level: 1, xp: 0 }, 500, '/items/puncture');
+
+        expect(el.textContent).toContain('Cost: no market quote');
+        expect(el.textContent).not.toContain('Cost: 0 / 0');
+    });
+
     test('with the setting off the cost is the market quote and the button says marketplace', async () => {
         const el = await build();
 
