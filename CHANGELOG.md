@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Exchange advice values the selected enhancement level
+
+- The Guild Credit exchange advisor now values an enhanced item and its sale order book at the selected enhancement level. It no longer recommends exchanging an expensive enhanced copy based on the unenhanced item's price, and leaves the comparison unavailable when that level has no value.
+
 ### Guild Token valuation honors its off switch
 
 - Setting the Guild Token credit rate to zero now leaves tokens unpriced even when exchange rates are available from game data or captured from the Guild Shop.
