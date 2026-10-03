@@ -11,6 +11,12 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 - Transmute, Coinify and Decompose history now share one Alchemy History tab with a switcher that remembers your last pick; every viewer feature works as before.
 - Actions and skills are recognized by their icon and the game's own data before their English name, so action-panel profit and speed, quick inputs, task icons, remaining XP and the XP tracker work with the game set to Chinese.
 
+### Iron Bell: bells you can afford
+
+- Iron Bell Farming shows how many cowbells your coins buy now while keeping enough back for the queued loop at its lowest point (decomposing pays fees before coinify earns), and what it keeps.
+- The queue helper reports the hours and bells its counts really cover once your stock has shortened the batch.
+- A cowbell is priced as a tenth of a bag of ten, the only way the market sells them, rather than at a loose price nobody can buy at.
+
 ### Shared agent rules brought up to date
 
 - Nothing a player sees changes. The workflow rules every coding agent reads now include the pull-request, review and briefing practices adopted since late September, and the newer code rules (spend buttons, non-English game clients, settings defaults).

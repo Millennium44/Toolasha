@@ -113,6 +113,14 @@ describe('readCharacterState', () => {
         expect(state.held.has(NECKLACE)).toBe(true);
     });
 
+    test('gold is the bag coins only, not coins held in a market listing', () => {
+        game.inventory = [
+            { itemHrid: '/items/coin', count: 900_000_000, itemLocationHrid: '/item_locations/market_listing' },
+            { itemHrid: '/items/coin', count: 12_500_000, itemLocationHrid: '/item_locations/inventory' },
+        ];
+        expect(readCharacterState().coins).toBe(12_500_000);
+    });
+
     test('worn jewelry counts the same as jewelry in the bag', () => {
         game.equipment = new Map([['/item_locations/neck', { itemHrid: NECKLACE }]]);
         expect(readCharacterState().held.has(NECKLACE)).toBe(true);

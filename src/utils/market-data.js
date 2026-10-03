@@ -55,6 +55,9 @@ export function withProfitPricingMode(mode, fn) {
  * @param {string} [options.mode] - Pricing mode ('ask'|'bid'|'average'). If not provided, uses context or user settings
  * @param {string} [options.context] - Context hint ('profit'|'networth'|null). Used to determine pricing mode from settings
  * @param {string} [options.side='sell'] - Transaction side ('buy'|'sell') - used with 'profit' context to determine correct price
+ * @param {boolean} [options.marketQuote=false] - Quote the order book even for an Iron Cow character, whose
+ *   valuation setting otherwise answers with a vendor/coinify figure — for a real purchase, where only the
+ *   book's price is what the coins have to cover
  * @returns {number|null} Price in gold, or null if no market data
  */
 export function getItemPrice(itemHrid, options = {}) {
@@ -98,7 +101,7 @@ export function getItemPriceInfo(itemHrid, options = {}) {
         options = {};
     }
 
-    const { enhancementLevel = 0, mode, context, side = 'sell' } = options;
+    const { enhancementLevel = 0, mode, context, side = 'sell', marketQuote = false } = options;
 
     // Check for custom price override
     const customPrice = getCustomPrice(itemHrid, enhancementLevel, side);
@@ -108,7 +111,7 @@ export function getItemPriceInfo(itemHrid, options = {}) {
 
     // An Iron Cow character valuing items off-market: one figure for both sides,
     // and no pricing mode or patient tick, because there is no book to price against
-    const ironCowValue = getIronCowValue(itemHrid, enhancementLevel);
+    const ironCowValue = marketQuote ? null : getIronCowValue(itemHrid, enhancementLevel);
     if (ironCowValue) {
         return { price: ironCowValue.price, source: ironCowValue.source, estimated: false };
     }
