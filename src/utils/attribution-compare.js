@@ -151,7 +151,7 @@ function num(value) {
  * @returns {Object}
  */
 export function newPresenceState() {
-    return { monstersHP: {}, playersMP: {}, haveBattle: false };
+    return { monstersHP: {}, monstersDmg: {}, playersMP: {}, haveBattle: false };
 }
 
 /**
@@ -164,10 +164,18 @@ export function newPresenceState() {
  */
 export function presenceNewBattle(state, payload) {
     state.monstersHP = {};
+    state.monstersDmg = {};
     state.playersMP = {};
     for (const [index, monster] of Object.entries(payload?.monsters || {})) {
         const hp = num(monster?.currentHitpoints ?? monster?.combatDetails?.currentHitpoints ?? monster?.cHP);
         if (hp !== null) state.monstersHP[index] = hp;
+        const dmg = num(
+            monster?.damageSplatCounter ??
+                monster?.combatDetails?.damageSplatCounter ??
+                monster?.combatDetails?.dmgCounter ??
+                monster?.dmgCounter
+        );
+        if (dmg !== null) state.monstersDmg[index] = dmg;
     }
     for (const [index, player] of Object.entries(payload?.players || {})) {
         const mp = num(player?.currentManapoints ?? player?.combatDetails?.currentManapoints ?? player?.cMP);
@@ -208,9 +216,12 @@ export function presenceTick(tick, state) {
     for (const [index, monster] of Object.entries(mMap)) {
         if (state.monstersHP[index] === undefined) continue;
         const hp = Number(monster?.cHP ?? monster?.currentHitpoints) || 0;
+        const dmg = num(monster?.dmgCounter);
+        const reset = dmg !== null && state.monstersDmg[index] !== undefined && dmg < state.monstersDmg[index];
         const diff = state.monstersHP[index] - hp;
         state.monstersHP[index] = hp;
-        if (diff > 0) damage += diff;
+        if (dmg !== null) state.monstersDmg[index] = dmg;
+        if (!reset && diff > 0) damage += diff;
     }
     if (!(damage > 0)) return { damage: 0, credited: {}, mode: 'none' };
 
@@ -262,7 +273,9 @@ function observeNewBattle(obs, payload) {
     }
     for (const [index, monster] of Object.entries(payload?.monsters || {})) {
         const details = monster?.combatDetails || {};
-        const dmg = num(details.dmgCounter ?? monster?.dmgCounter);
+        const dmg = num(
+            details.damageSplatCounter ?? monster?.damageSplatCounter ?? details.dmgCounter ?? monster?.dmgCounter
+        );
         const hp = num(monster?.currentHitpoints ?? details.currentHitpoints ?? monster?.cHP);
         obs.mDmg[index] = dmg ?? 0;
         if (hp !== null) obs.mHP[index] = hp;
@@ -307,13 +320,14 @@ function observeTick(tick, obs) {
     let monsterHpLost = 0;
     for (const [index, monster] of Object.entries(mMap)) {
         const dmg = num(monster?.dmgCounter);
+        const reset = dmg !== null && obs.mDmg[index] !== undefined && dmg < obs.mDmg[index];
         if (dmg !== null) {
             if (obs.mDmg[index] !== undefined && dmg > obs.mDmg[index]) hitLanded = true;
             obs.mDmg[index] = dmg;
         }
         const hp = num(monster?.cHP ?? monster?.currentHitpoints);
         if (hp !== null) {
-            if (obs.mHP[index] !== undefined && obs.mHP[index] > hp) monsterHpLost += obs.mHP[index] - hp;
+            if (!reset && obs.mHP[index] !== undefined && obs.mHP[index] > hp) monsterHpLost += obs.mHP[index] - hp;
             obs.mHP[index] = hp;
         }
     }

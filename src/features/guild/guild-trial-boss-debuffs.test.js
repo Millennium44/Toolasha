@@ -137,6 +137,19 @@ describe('noteBossDebuffTick', () => {
         expect(state.monsters).toEqual({});
     });
 
+    test('a same-maximum replacement with a reset splat counter sheds the old boss debuff', () => {
+        const state = fold({ 0: '/abilities/ice_spear' }, { 0: boss({ dmgCounter: 6 }) });
+        noteBossDebuffTick(state, {
+            pMap: {},
+            mMap: { 0: boss({ cHP: 500_000, dmgCounter: 0 }) },
+            attribution: engine({}, { dmgCounter: { 0: 6 } }),
+            now: now + 250,
+            abilityDetailMap: detailMap,
+        });
+
+        expect(state.monsters).toEqual({});
+    });
+
     test('a stun lasts as long as the stream states it, counting down from the landing ability', () => {
         const state = fold({ 0: '/abilities/entangle' }, { 0: boss({ dmgCounter: 6, isStunned: true }) });
         expect(state.monsters['0'].stun).toMatchObject({

@@ -9,6 +9,7 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 ### Combat damage after monster replacement
 
 - The damage tracker now recognizes a monster replacement when the damage counter resets, even if the new monster has the same maximum health. This prevents a sparse combat update from counting the replacement's already-missing health as new damage.
+- Replay and attribution comparisons now start a new health segment at that reset, and guild-trial debuff badges clear the replaced monster's effects. Their displayed totals and timers follow the same replacement rule as the damage tracker.
 
 ### Shared agent rules brought up to date
 
