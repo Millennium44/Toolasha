@@ -68,7 +68,8 @@ export async function setBestiaryTarget(points) {
 
 /**
  * Ask the game for the Bestiary (`get_monsters`), as its own tab does on open.
- * A data fetch, not a game action; the answer arrives as `monsters_updated`.
+ * A data fetch, not a game action; the answer arrives as `monsters_updated`. For the combat sim,
+ * on the player's own action only: the points alert never calls it.
  * Found through the React fiber tree rather than an obfuscated key.
  */
 export function requestBestiary() {

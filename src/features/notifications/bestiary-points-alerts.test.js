@@ -1,11 +1,10 @@
 /**
  * Tests for the Bestiary points target alert.
  *
- * The total comes from `monsters_updated` rows as the game sends them
- * (`{monsterHrid, count, tierData}`, count already tier-weighted and fractional), and the target
- * is a per-character record. The cases that matter: a crossing fires once, a target already
- * reached at load is silent, raising the target re-arms, and a character switch in the middle of
- * an update must not compare one character's target with another's points.
+ * The baseline is a real `monsters_updated` reading (`{monsterHrid, count, tierData}`, count already
+ * tier-weighted and fractional). Between readings the alert counts kills off the combat stream:
+ * `new_battle` (`monsters` and `players` keyed by slot) and `battle_updated` (`mMap` of `{cHP}`).
+ * It must never ask the game for the Bestiary.
  */
 
 import { describe, test, expect, beforeEach, afterEach, vi } from 'vitest';
@@ -15,11 +14,14 @@ const game = vi.hoisted(() => ({
     settings: {},
     monsters: null,
     characterId: 'char-a',
+    actions: [],
     stored: new Map(),
-    handlers: {},
+    dm: {},
+    wire: {},
     notified: [],
     readGate: null,
     requests: 0,
+    fiberTouched: 0,
 }));
 
 vi.mock('../../core/config.js', () => ({
@@ -35,13 +37,24 @@ vi.mock('../../core/data-manager.js', () => ({
     default: {
         getCurrentCharacterId: () => game.characterId,
         getCharacterMonsters: () => game.monsters,
+        getCurrentActions: () => game.actions,
         on: (event, handler) => {
-            game.handlers[event] = handler;
+            game.dm[event] = handler;
         },
         off: (event, handler) => {
-            if (game.handlers[event] === handler) delete game.handlers[event];
+            if (game.dm[event] === handler) delete game.dm[event];
         },
-        emit: (event, data) => game.handlers[event]?.(data),
+        emit: (event, data) => game.dm[event]?.(data),
+    },
+}));
+vi.mock('../../core/websocket.js', () => ({
+    default: {
+        on: (event, handler) => {
+            game.wire[event] = handler;
+        },
+        off: (event, handler) => {
+            if (game.wire[event] === handler) delete game.wire[event];
+        },
     },
 }));
 vi.mock('../../utils/character-key.js', () => ({
@@ -63,37 +76,80 @@ vi.mock('./notification-service.js', () => ({
         },
     },
 }));
-vi.mock('../../utils/timer-registry.js', () => ({
-    createTimerRegistry: () => ({ registerInterval: () => {}, clearAll: () => {} }),
-}));
+vi.mock('../../utils/bestiary-target.js', async (importOriginal) => {
+    const original = await importOriginal();
+    return {
+        ...original,
+        requestBestiary: () => {
+            game.requests += 1;
+        },
+    };
+});
 
-const { default: alerts, MASTER_SETTING } = await import('./bestiary-points-alerts.js');
+globalThis.document = {
+    getElementById: () => {
+        game.fiberTouched += 1;
+        return null;
+    },
+};
+
+const { default: alerts, MASTER_SETTING, BASELINE_KEY } = await import('./bestiary-points-alerts.js');
 const { setBestiaryTarget, TARGET_KEY } = await import('../../utils/bestiary-target.js');
 
-/** Rows as `monsters_updated` carries them; counts 10, 10 and 1 are worth 3 + 3 + 1 points */
+/** Rows as `monsters_updated` carries them */
 const rows = (counts) =>
-    counts.map((count, i) => ({
-        monsterHrid: `/monsters/m${i}`,
+    Object.entries(counts).map(([name, count]) => ({
+        monsterHrid: `/monsters/${name}`,
         count,
         tierData: JSON.stringify({ 0: count }),
     }));
 
-const send = async (counts) => {
+const tick = () => new Promise((resolve) => setTimeout(resolve, 0));
+
+/** A real reading, as the Achievements tab or the sim's fetch causes */
+const reading = async (counts) => {
     game.monsters = rows(counts);
-    game.handlers.monsters_updated({ monsters: game.monsters });
-    await vi.waitFor(() => expect(game.readGate).toBeNull());
-    await new Promise((resolve) => setTimeout(resolve, 0));
+    // Before the alert is listening the reading is just what the data manager already holds
+    game.dm.monsters_updated?.({ monsters: game.monsters });
+    await tick();
+};
+
+/** A wave of the given monsters, solo unless more players are named */
+const wave = (names, players = 1) => {
+    game.wire.new_battle({
+        monsters: Object.fromEntries(
+            names.map((name, i) => [
+                String(i),
+                { hrid: `/monsters/${name}`, currentHitpoints: 100, combatDetails: { maxHitpoints: 100 } },
+            ])
+        ),
+        players: Object.fromEntries(Array.from({ length: players }, (_, i) => [String(i), { name: `p${i}` }])),
+    });
+};
+
+/** Kill the monster in a slot, as a compact tick shows it */
+const kill = async (slot = 0) => {
+    game.wire.battle_updated({ mMap: { [slot]: { cHP: 0 } } });
+    await tick();
+};
+
+const fighting = (difficultyTier) => {
+    game.actions = [{ actionHrid: '/actions/combat/fly', difficultyTier, isDone: false, ordinal: 1 }];
 };
 
 describe('bestiary points alerts', () => {
-    beforeEach(() => {
+    beforeEach(async () => {
         game.settings = { [MASTER_SETTING]: true };
         game.monsters = null;
         game.characterId = 'char-a';
-        game.stored = new Map([[`${TARGET_KEY}_char-a`, 8]]);
-        game.handlers = {};
+        game.stored = new Map([[`${TARGET_KEY}_char-a`, 3]]);
+        game.dm = {};
+        game.wire = {};
         game.notified = [];
         game.readGate = null;
+        game.requests = 0;
+        game.fiberTouched = 0;
+        fighting(0);
         alerts.disable();
     });
 
@@ -101,91 +157,196 @@ describe('bestiary points alerts', () => {
         alerts.disable();
     });
 
-    test('fires once when the total crosses the target', async () => {
+    test('kills advance the estimate by tier and party credits', async () => {
+        await reading({ fly: 9 });
         await alerts.initialize();
-        await send([10, 1]); // 4 points
+
+        wave(['fly'], 2);
+        await kill(); // tier 0 across two players: half a credit
+        expect(alerts.estimatedCounts()).toEqual({ '/monsters/fly': 9.5 });
+
+        fighting(2);
+        wave(['fly'], 1);
+        await kill(); // tier 2 solo: three credits
+        expect(alerts.estimatedCounts()['/monsters/fly']).toBe(12.5);
+    });
+
+    test('a crossing on an estimate fires once, says it is about', async () => {
+        await reading({ fly: 9 }); // 1 point, target 3
+        await alerts.initialize();
         expect(game.notified).toHaveLength(0);
 
-        await send([10, 10]); // 6
-        await send([100, 10]); // 6 + 3 = 9
+        wave(['fly', 'fly']);
+        await kill(0); // fly reaches 10: 3 points
         expect(game.notified).toHaveLength(1);
-        expect(game.notified[0].message).toBe('Bestiary: 9 points — target 8 reached.');
-        expect(game.notified[0].key).toBe('bestiary-points:8');
+        expect(game.notified[0].message).toBe('Bestiary: about 3 points — target 3 reached (estimated from kills).');
 
-        await send([100, 100]); // 12, still past the same target
+        await kill(1);
+        expect(game.notified).toHaveLength(1);
+    });
+
+    test('a slot is one kill however many ticks show it at zero', async () => {
+        await reading({ fly: 5 });
+        await alerts.initialize();
+        wave(['fly']);
+        await kill();
+        await kill();
+        expect(alerts.estimatedCounts()['/monsters/fly']).toBe(6);
+    });
+
+    test('a real reading replaces the estimate and fires if the estimate missed the crossing', async () => {
+        await reading({ fly: 5 });
+        await alerts.initialize();
+        wave(['fly']);
+        await kill(); // estimate 6
+        expect(alerts.estimatedCounts()['/monsters/fly']).toBe(6);
+
+        await reading({ fly: 12 }); // the game says 3 points
+        expect(alerts.estimatedCounts()).toEqual({ '/monsters/fly': 12 });
+        expect(game.notified).toHaveLength(1);
+        expect(game.notified[0].message).toBe('Bestiary: 3 points — target 3 reached.');
+    });
+
+    test('a real reading does not repeat an estimated crossing', async () => {
+        await reading({ fly: 9 });
+        await alerts.initialize();
+        wave(['fly']);
+        await kill();
+        await reading({ fly: 10 });
+        expect(game.notified).toHaveLength(1);
+    });
+
+    test('with no baseline nothing is estimated and nothing fires', async () => {
+        await alerts.initialize();
+        wave(['fly']);
+        await kill();
+        expect(alerts.estimatedCounts()).toBeNull();
+        expect(game.notified).toHaveLength(0);
+    });
+
+    test('a stored baseline survives a reload', async () => {
+        await reading({ fly: 9 });
+        await alerts.initialize();
+        expect(game.stored.get(`${BASELINE_KEY}_char-a`)).toEqual({ '/monsters/fly': 9 });
+
+        // Reload: nothing held in the data manager, the stored baseline is all there is
+        alerts.disable();
+        game.monsters = null;
+        await alerts.initialize();
+        expect(alerts.estimatedCounts()).toEqual({ '/monsters/fly': 9 });
+        wave(['fly']);
+        await kill();
         expect(game.notified).toHaveLength(1);
     });
 
     test('a target already reached at load is not announced', async () => {
-        game.monsters = rows([100, 100]);
+        await reading({ fly: 100 });
         await alerts.initialize();
-        await vi.waitFor(() => expect(alerts.seenTarget).toBe(8));
-        await send([100, 100]);
+        await reading({ fly: 100 });
         expect(game.notified).toHaveLength(0);
     });
 
-    test('raising the target re-arms it', async () => {
+    test('raising the target re-arms it; lowering it below the total is silent', async () => {
+        await reading({ fly: 9 });
         await alerts.initialize();
-        await send([10, 1]);
-        await send([100, 10]);
+        wave(['fly']);
+        await kill();
         expect(game.notified).toHaveLength(1);
 
-        game.stored.set(`${TARGET_KEY}_char-a`, 15);
-        await send([100, 10]); // 9 points, below the new target: armed, silent
+        game.stored.set(`${TARGET_KEY}_char-a`, 6);
+        await reading({ fly: 10 });
         expect(game.notified).toHaveLength(1);
-        await send([1000, 100]); // 10 + 6 = 16
+        await reading({ fly: 100 }); // 6 points
         expect(game.notified).toHaveLength(2);
-        expect(game.notified[1].key).toBe('bestiary-points:15');
-    });
 
-    test('lowering the target below the total is not a crossing', async () => {
-        await alerts.initialize();
-        await send([10, 1]);
         game.stored.set(`${TARGET_KEY}_char-a`, 2);
-        await send([10, 1]);
-        expect(game.notified).toHaveLength(0);
+        await reading({ fly: 100 });
+        expect(game.notified).toHaveLength(2);
     });
 
     test('a character switch while the target is being read fires nothing', async () => {
+        await reading({ fly: 9 });
         await alerts.initialize();
-        await send([10, 1]);
 
         let release;
         game.readGate = new Promise((resolve) => {
             release = resolve;
         });
-        game.monsters = rows([100, 100]);
-        game.handlers.monsters_updated({ monsters: game.monsters });
-        // Switch mid-read: character B arrives with no counts yet
+        wave(['fly']);
+        game.wire.battle_updated({ mMap: { 0: { cHP: 0 } } }); // would cross for character A
         game.characterId = 'char-b';
         game.monsters = null;
         release();
         game.readGate = null;
-        await new Promise((resolve) => setTimeout(resolve, 0));
+        await tick();
+        await tick();
 
         expect(game.notified).toHaveLength(0);
     });
 
-    test('falls back to the settings default when a character has no target of its own', async () => {
-        game.stored.clear();
-        game.settings.notifications_bestiaryPointsTargetDefault = 8;
+    test('a character switch clears the estimate, and a stored baseline is per character', async () => {
+        await reading({ fly: 9 });
         await alerts.initialize();
-        await send([10, 1]);
-        await send([100, 10]);
-        expect(game.notified).toHaveLength(1);
+        game.dm.character_switching();
+        expect(alerts.estimatedCounts()).toBeNull();
+        expect(game.wire.battle_updated).toBeUndefined();
+
+        game.characterId = 'char-b';
+        game.monsters = null;
+        game.stored.set(`${TARGET_KEY}_char-b`, 3);
+        await alerts.initialize();
+        expect(alerts.estimatedCounts()).toBeNull();
     });
 
-    test('says nothing without a target', async () => {
-        game.stored.clear();
+    test('guild trial monsters and fights with no combat action are not estimated', async () => {
+        await reading({ fly: 9, trial_rat: 9 });
         await alerts.initialize();
-        await send([1000, 1000]);
+
+        wave(['trial_rat']);
+        await kill();
+        expect(alerts.estimatedCounts()).toEqual({ '/monsters/fly': 9, '/monsters/trial_rat': 9 });
+
+        game.actions = [{ actionHrid: '/actions/labyrinth', isDone: false }];
+        wave(['fly']);
+        await kill();
+        expect(alerts.estimatedCounts()['/monsters/fly']).toBe(9);
+    });
+
+    test('the alert never asks the game for the Bestiary', async () => {
+        await reading({ fly: 9 });
+        await alerts.initialize();
+        wave(['fly']);
+        await kill();
+        await reading({ fly: 12 });
+        alerts.disable();
+        await alerts.initialize();
+
+        expect(game.requests).toBe(0);
+        expect(game.fiberTouched).toBe(0);
+    });
+
+    test('falls back to the settings default, and says nothing without a target', async () => {
+        game.stored.delete(`${TARGET_KEY}_char-a`);
+        game.settings.notifications_bestiaryPointsTargetDefault = 3;
+        await reading({ fly: 9 });
+        await alerts.initialize();
+        wave(['fly']);
+        await kill();
+        expect(game.notified).toHaveLength(1);
+
+        alerts.disable();
+        game.notified = [];
+        game.settings.notifications_bestiaryPointsTargetDefault = 0;
+        await alerts.initialize();
+        await reading({ fly: 1000 });
         expect(game.notified).toHaveLength(0);
     });
 
     test('does nothing while the setting is off', async () => {
         game.settings[MASTER_SETTING] = false;
         await alerts.initialize();
-        expect(game.handlers.monsters_updated).toBeUndefined();
+        expect(game.dm.monsters_updated).toBeUndefined();
+        expect(game.wire.new_battle).toBeUndefined();
     });
 
     test('the planner path stores the target for the current character only and enables the alert', async () => {
@@ -197,22 +358,17 @@ describe('bestiary points alerts', () => {
         expect(game.stored.get(`${TARGET_KEY}_char-a`)).toBe(1200);
         expect(game.stored.has(`${TARGET_KEY}_char-b`)).toBe(false);
         expect(game.settings[MASTER_SETTING]).toBe(true);
-    });
-
-    test('a target set from the planner re-checks a running alert without a new Bestiary message', async () => {
-        await alerts.initialize();
-        await send([10, 1]);
-        game.monsters = rows([100, 100]); // 12 points, held already
-        await setBestiaryTarget(20);
-        await new Promise((resolve) => setTimeout(resolve, 0));
-        expect(game.notified).toHaveLength(0);
-        await send([1000, 1000]); // 20
-        expect(game.notified).toHaveLength(1);
-    });
-
-    test('rejects a target that is not a positive number', async () => {
         expect(await setBestiaryTarget(0)).toBe(false);
-        expect(await setBestiaryTarget('abc')).toBe(false);
+    });
+
+    test('a target set from the planner re-checks a running alert', async () => {
+        await reading({ fly: 100 }); // 6 points
+        await alerts.initialize();
+        await setBestiaryTarget(9);
+        await tick();
+        expect(game.notified).toHaveLength(0);
+        await reading({ fly: 1000 }); // 10 points
+        expect(game.notified).toHaveLength(1);
     });
 
     test('is a registered setting, off by default', () => {

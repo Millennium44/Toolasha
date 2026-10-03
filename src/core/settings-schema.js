@@ -4163,7 +4163,7 @@ export const settingsGroups = {
                 label: 'Notify when your Bestiary points reach a target',
                 type: 'checkbox',
                 default: false,
-                help: 'Fires once when your total Bestiary points first reach the target. Set the target for the current character with the "Notify me at N points" button under the Bestiary plan in the combat simulator (it also turns this on), or give every character without one the default below. The game only sends the Bestiary when asked, so this re-fetches it every two minutes while on, and the notice can lag a crossing by that long. A target already reached when the page loads is not announced; raising it re-arms the alert.',
+                help: 'Fires once when your total Bestiary points first reach the target. Set the target for the current character with the "Notify me at N points" button under the Bestiary plan in the combat simulator (it also turns this on), or give every character without one the default below. The game only sends the Bestiary when something asks for it, and this never asks: open Achievements once (or run the combat sim) to start tracking. Between those readings your points are estimated from the kills it sees, and a crossing found that way says "about"; the next real reading corrects the estimate. A target already reached when the page loads is not announced; raising it re-arms the alert.',
             },
             notifications_bestiaryPointsTargetDefault: {
                 id: 'notifications_bestiaryPointsTargetDefault',

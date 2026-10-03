@@ -5169,7 +5169,7 @@ class CombatSimUI {
                     note.textContent = 'could not set the alert';
                     return;
                 }
-                note.textContent = `alert set: ${formatWithSeparator(goal)} points · you have ${formatWithSeparator(current)}`;
+                note.textContent = `alert set: ${formatWithSeparator(goal)} points · you have ${formatWithSeparator(current)} · tracks kills from this reading; open Achievements to refresh`;
             });
         }
         showProgress().catch((error) => console.error('[CombatSimUI] Reading the Bestiary target failed:', error));
