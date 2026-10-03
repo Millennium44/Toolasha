@@ -87,7 +87,7 @@ export function runLevelWalkTrials(model, rng) {
             balance += chosen.net;
             level = chosen.nextLevel;
             step += 1;
-            if (balance <= 0) {
+            if (balance < 0 || (balance === 0 && level < targetLevel)) {
                 ruined = true;
                 break;
             }
@@ -203,7 +203,7 @@ function runLevelWalkTrials(model, rng) {
             balance += chosen.net;
             level = chosen.nextLevel;
             step += 1;
-            if (balance <= 0) {
+            if (balance < 0 || (balance === 0 && level < targetLevel)) {
                 ruined = true;
                 break;
             }

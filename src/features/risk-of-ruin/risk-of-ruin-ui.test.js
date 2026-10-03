@@ -76,6 +76,22 @@ vi.mock('../../utils/risk-of-ruin-adapters/alchemy-adapter.js', () => ({
     buildAlchemyTransmuteModel: vi.fn(() => null),
 }));
 
+vi.mock('../../utils/risk-of-ruin-adapters/enhancement-adapter.js', () => ({
+    buildEnhancementModel: vi.fn(() => null),
+}));
+
+vi.mock('../../utils/enhancement-config.js', () => ({
+    getEnhancingParams: vi.fn(() => ({
+        enhancingLevel: 100,
+        houseLevel: 0,
+        toolBonus: 0,
+        speedBonus: 0,
+        teas: { blessed: false },
+        guzzlingBonus: 1,
+        blessedTeaBonus: 0.01,
+    })),
+}));
+
 const { PANEL_ID, LAUNCHER_ID, TAB_ID, PANEL_KEY } = vi.hoisted(() => ({
     PANEL_ID: 'mwi-risk-of-ruin-panel',
     LAUNCHER_ID: 'mwi-risk-of-ruin-launcher',
@@ -85,6 +101,7 @@ const { PANEL_ID, LAUNCHER_ID, TAB_ID, PANEL_KEY } = vi.hoisted(() => ({
 
 import config from '../../core/config.js';
 import dataManager from '../../core/data-manager.js';
+import { buildEnhancementModel } from '../../utils/risk-of-ruin-adapters/enhancement-adapter.js';
 import { reopenIfLeftOpen } from '../../utils/panel-geometry.js';
 import riskOfRuinUI from './risk-of-ruin-ui.js';
 
@@ -373,5 +390,63 @@ describe('RiskOfRuinUI transmute that cannot be priced', () => {
         await riskOfRuinUI._compute();
 
         expect(root.querySelector('#mwi-ror-status').textContent).toBe('Enter a valid transmutable item name.');
+    });
+});
+
+describe('RiskOfRuinUI enhancement with incomplete input prices', () => {
+    afterEach(() => {
+        riskOfRuinUI.disable();
+        dataManager.getInitClientData.mockImplementation(() => ({ itemDetailMap: {} }));
+        dataManager.getItemDetails.mockImplementation(() => null);
+    });
+
+    test('explains the missing price and does not expose a partial depth-cap cost', async () => {
+        dataManager.getInitClientData.mockImplementation(() => ({
+            itemDetailMap: {
+                '/items/kraken_chaps_refined': {
+                    name: 'Kraken Chaps ★',
+                    enhancementCosts: [
+                        { itemHrid: '/items/pirate_essence', count: 14 },
+                        { itemHrid: '/items/umbral_leather', count: 6 },
+                        { itemHrid: '/items/coin', count: 4815 },
+                    ],
+                },
+            },
+        }));
+        dataManager.getItemDetails.mockImplementation(
+            (hrid) => dataManager.getInitClientData().itemDetailMap[hrid] ?? null
+        );
+        buildEnhancementModel.mockReturnValueOnce({ error: 'incomplete-prices' });
+        riskOfRuinUI.initialize();
+        const root = panel();
+        root.querySelector('#mwi-ror-mode').value = 'enhancement';
+        riskOfRuinUI._renderModeInputs();
+        root.querySelector('#mwi-ror-item').value = '/items/kraken_chaps_refined';
+
+        await riskOfRuinUI._compute();
+
+        expect(root.querySelector('#mwi-ror-status').textContent).toContain('price');
+        expect(riskOfRuinUI.getDepthCapContext()).toBeNull();
+    });
+
+    test('rejects protect-from +1 because the game disables that action setting', async () => {
+        dataManager.getInitClientData.mockImplementation(() => ({
+            itemDetailMap: { '/items/kraken_chaps_refined': { name: 'Kraken Chaps ★', enhancementCosts: [] } },
+        }));
+        dataManager.getItemDetails.mockImplementation(
+            (hrid) => dataManager.getInitClientData().itemDetailMap[hrid] ?? null
+        );
+        riskOfRuinUI.initialize();
+        const root = panel();
+        root.querySelector('#mwi-ror-mode').value = 'enhancement';
+        riskOfRuinUI._renderModeInputs();
+        root.querySelector('#mwi-ror-item').value = '/items/kraken_chaps_refined';
+        root.querySelector('#mwi-ror-protect-from').value = '1';
+        buildEnhancementModel.mockClear();
+
+        await riskOfRuinUI._compute();
+
+        expect(root.querySelector('#mwi-ror-status').textContent).toContain('at least +2');
+        expect(buildEnhancementModel).not.toHaveBeenCalled();
     });
 });

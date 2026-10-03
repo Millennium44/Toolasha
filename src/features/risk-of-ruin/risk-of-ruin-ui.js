@@ -689,6 +689,10 @@ class RiskOfRuinUI {
                 status.textContent = 'Enter a valid enhanceable item name.';
                 return;
             }
+            if (protectFrom === 1) {
+                status.textContent = 'Choose no protection (0) or protect from at least +2.';
+                return;
+            }
 
             const enhancingParams = getEnhancingParams();
             const enhancementModel = buildEnhancementModel(hrid, {
@@ -704,6 +708,11 @@ class RiskOfRuinUI {
                 guzzlingBonus: enhancingParams.guzzlingBonus,
                 blessedTeaBonus: enhancingParams.blessedTeaBonus,
             });
+            if (enhancementModel?.error === 'incomplete-prices') {
+                status.textContent =
+                    'Cannot estimate risk: an enhancement material or protection item has no known price.';
+                return;
+            }
             if (!enhancementModel) {
                 status.textContent = 'Could not build an enhancement model for these parameters.';
                 return;
