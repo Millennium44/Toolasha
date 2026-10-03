@@ -12,6 +12,7 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 - Replay and attribution comparisons now start a new health segment at that reset, and guild-trial debuff badges clear the replaced monster's effects. Their displayed totals and timers follow the same replacement rule as the damage tracker.
 - Combat updates that omit the damage counter still count actual health loss; an absent counter no longer looks like a monster replacement.
 - After a counterless combat update, the next cumulative counter now establishes a fresh baseline. Old hits are no longer replayed as new hits when counter data returns.
+- Replay attribution comparisons now also discard their damage-counter baseline when an update omits the counter, so a lower restored value does not hide real health loss.
 
 ### Shared agent rules brought up to date
 
