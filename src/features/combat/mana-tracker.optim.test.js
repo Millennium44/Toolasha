@@ -111,7 +111,14 @@ afterEach(() => {
 
 /** Two minutes of play spending 100 mana every 10 seconds, so 600 per minute */
 function spendSteadily() {
-    game.handlers['new_battle']({ players: [{ character: { id: 'char1' }, combatDetails: { combatStats: {} } }] });
+    game.handlers['new_battle']({
+        players: [
+            {
+                character: { id: 'char1' },
+                combatDetails: { combatStats: { foodSlots: 3, drinkSlots: 3 } },
+            },
+        ],
+    });
     for (let i = 0; i < 12; i++) {
         vi.advanceTimersByTime(10_000);
         game.handlers['battle_consumable_ability_updated']({ ability: '/abilities/fireball' });
@@ -263,6 +270,7 @@ describe('the MP supply section', () => {
         expect(text()).toContain('Cheapest MP supply');
         expect(text()).toContain('Enter a target');
         expect(text()).toContain('Most MP the slots allow');
+        expect(text()).toContain('showing base capacity of one food and one drink');
         expect(text()).not.toContain('could not be drawn');
     });
 
@@ -278,6 +286,14 @@ describe('the MP supply section', () => {
     });
 
     test('typing a target and calculating shows the cheapest set for it', () => {
+        game.handlers['new_battle']({
+            players: [
+                {
+                    character: { id: 'char1' },
+                    combatDetails: { combatStats: { foodSlots: 3, drinkSlots: 3 } },
+                },
+            ],
+        });
         manaPanel.show();
         const input = manaPanel.panel.querySelector('[data-mp-target]');
         input.value = '380';
@@ -299,9 +315,49 @@ describe('the MP supply section', () => {
 });
 
 describe('mpSupplyPlan', () => {
+    test('uses base pouch capacity until a battle reports the character slots', () => {
+        // A character without a pouch has one food and one drink slot. Before
+        // the first battle snapshot, the planner must not assume a maxed pouch.
+        game.itemDetailMap = {
+            '/items/star_fruit_gummy': {
+                name: 'Star Fruit Gummy',
+                categoryHrid: '/item_categories/food',
+                consumableDetail: {
+                    hitpointRestore: 0,
+                    manapointRestore: 280,
+                    cooldownDuration: MINUTE_NS,
+                },
+            },
+            '/items/star_fruit_yogurt': {
+                name: 'Star Fruit Yogurt',
+                categoryHrid: '/item_categories/food',
+                consumableDetail: {
+                    hitpointRestore: 0,
+                    manapointRestore: 350,
+                    recoveryDuration: 30e9,
+                    cooldownDuration: MINUTE_NS,
+                },
+            },
+        };
+        game.prices = { '/items/star_fruit_gummy': 900, '/items/star_fruit_yogurt': 1200 };
+
+        expect(mpSupplyPlan(630).best).toBeNull();
+        expect(mpSupplyPlan(0).max.items).toHaveLength(1);
+        expect(mpSupplyPlan(0).max.mpPerMinute).toBe(350);
+        manaPanel.show();
+        expect(text()).toContain('Pouch slots are not known yet');
+        expect(text()).toContain('350 MP/min');
+        expect(text()).not.toContain('630 MP/min');
+    });
+
     test('reads food haste from the character in the battle message', () => {
         game.handlers['new_battle']({
-            players: [{ character: { id: 'char1' }, combatDetails: { combatStats: { foodHaste: 0.5 } } }],
+            players: [
+                {
+                    character: { id: 'char1' },
+                    combatDetails: { combatStats: { foodHaste: 0.5, foodSlots: 3, drinkSlots: 3 } },
+                },
+            ],
         });
 
         expect(mpSupplyPlan(0).max.mpPerMinute).toBe(450 * 1.5);
@@ -311,7 +367,12 @@ describe('mpSupplyPlan', () => {
 describe('gear changes after the battle message', () => {
     const battle = () =>
         game.handlers['new_battle']({
-            players: [{ character: { id: 'char1' }, combatDetails: { combatStats: { foodHaste: 0.5 } } }],
+            players: [
+                {
+                    character: { id: 'char1' },
+                    combatDetails: { combatStats: { foodHaste: 0.5, foodSlots: 3, drinkSlots: 3 } },
+                },
+            ],
         });
 
     test('an equipment change clears the captured haste and says it will refresh', () => {
@@ -324,7 +385,8 @@ describe('gear changes after the battle message', () => {
             ],
         });
 
-        expect(mpSupplyPlan(0).max.mpPerMinute).toBe(450);
+        // Gear stats are stale until the next battle, so use base pouch capacity.
+        expect(mpSupplyPlan(0).max.mpPerMinute).toBe(350);
         manaPanel.show();
         expect(text()).toContain('refresh after the next fight');
         battle();
@@ -383,7 +445,10 @@ describe('a battle entry shaped differently', () => {
         game.handlers['new_battle']({
             players: {
                 char0: { name: 'x' },
-                char1: { character: { id: 'char1' }, combatDetails: { combatStats: { foodHaste: 0.5 } } },
+                char1: {
+                    character: { id: 'char1' },
+                    combatDetails: { combatStats: { foodHaste: 0.5, foodSlots: 3, drinkSlots: 3 } },
+                },
             },
         });
 
@@ -392,7 +457,12 @@ describe('a battle entry shaped differently', () => {
 
     test('is found by a top-level name', () => {
         game.handlers['new_battle']({
-            players: [{ name: 'Tib', combatDetails: { combatStats: { foodHaste: 0.5 } } }],
+            players: [
+                {
+                    name: 'Tib',
+                    combatDetails: { combatStats: { foodHaste: 0.5, foodSlots: 3, drinkSlots: 3 } },
+                },
+            ],
         });
 
         expect(mpSupplyPlan(0).max.mpPerMinute).toBe(450 * 1.5);
@@ -404,7 +474,10 @@ describe('a battle entry without an id', () => {
         game.handlers['new_battle']({
             players: [
                 { character: { name: 'Someone Else' }, combatDetails: { combatStats: { foodHaste: 0.1 } } },
-                { character: { name: 'Tib' }, combatDetails: { combatStats: { foodHaste: 0.5 } } },
+                {
+                    character: { name: 'Tib' },
+                    combatDetails: { combatStats: { foodHaste: 0.5, foodSlots: 3, drinkSlots: 3 } },
+                },
             ],
         });
 

@@ -80,7 +80,9 @@ let ownSlot = null;
 
 /** The character's own food haste and drink concentration, from the last `new_battle` */
 let haste = { foodHaste: 0, drinkConcentration: 0 };
-/** The character's own consumable slots, from `new_battle`; null until seen (the planner then assumes 3 + 3) */
+/** Base capacity before the pouch-adjusted slot counts arrive from `new_battle` */
+const BASE_SLOTS = { food: 1, drink: 1 };
+/** The character's own consumable slots, from `new_battle`; null until seen */
 let slots = null;
 /** The character's own max MP, from `new_battle`; null until seen (instant restores are then uncapped) */
 let maxMana = null;
@@ -249,8 +251,10 @@ export function mpSupplyPlan(targetMpPerMinute) {
         ...haste,
         maxMana,
     });
-    // A character without a maxed pouch may hold a single food: a plan that needs two must not be offered
-    const options = slots ? { maxSlots: slots } : {};
+    // Until a battle or gear update gives the pouch-adjusted counts, use the
+    // game's base capacity. Assuming the optimizer's maxed-pouch defaults here
+    // can recommend two foods to a character who only has one food slot.
+    const options = { maxSlots: slots || BASE_SLOTS };
     return {
         best: findBestOptimAllocation(candidates, targetMpPerMinute, options),
         max: findMaxMpAllocation(candidates, options),
@@ -527,6 +531,12 @@ function drawMpSupply(body) {
 
     if (plannerStale) {
         card.appendChild(panelNote('Equipment changed: slots, max MP and haste refresh after the next fight.'));
+    } else if (slots === null) {
+        card.appendChild(
+            panelNote(
+                'Pouch slots are not known yet: showing base capacity of one food and one drink until the next fight.'
+            )
+        );
     }
 
     const plan = mpSupplyPlan(target ?? 0);
