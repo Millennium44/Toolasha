@@ -90,7 +90,7 @@ function buildLevelOutcomes({
  */
 export function buildEnhancementModel(itemHrid, params) {
     const itemDetails = dataManager.getItemDetails(itemHrid);
-    if (!itemDetails) return null;
+    if (!itemDetails?.enhancementCosts?.length) return null;
 
     const {
         targetLevel,

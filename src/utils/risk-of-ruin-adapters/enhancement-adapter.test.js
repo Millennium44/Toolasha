@@ -6,6 +6,16 @@ beforeAll(() => {
 });
 
 const itemDetailsMap = { '/items/widget': { enhancementCosts: [{ itemHrid: '/items/coin', count: 1000 }] } };
+itemDetailsMap['/items/coin'] = { name: 'Coin' };
+itemDetailsMap['/items/cheese_sword'] = {
+    name: 'Cheese Sword',
+    itemLevel: 1,
+    enhancementCosts: [
+        { itemHrid: '/items/cheese', count: 5 },
+        { itemHrid: '/items/coin', count: 12 },
+    ],
+    isTradable: true,
+};
 itemDetailsMap['/items/kraken_chaps_refined'] = {
     enhancementCosts: [
         { itemHrid: '/items/pirate_essence', count: 14 },
@@ -43,6 +53,13 @@ const NEUTRAL_PARAMS = Object.freeze({
 describe('buildEnhancementModel', () => {
     test('returns null for an unknown item', () => {
         expect(buildEnhancementModel('/items/unknown', { ...NEUTRAL_PARAMS, targetLevel: 2 })).toBeNull();
+    });
+
+    test('rejects captured Coin without an enhancement recipe while accepting Cheese Sword', () => {
+        expect(buildEnhancementModel('/items/coin', { ...NEUTRAL_PARAMS, targetLevel: 2 })).toBeNull();
+        expect(buildEnhancementModel('/items/cheese_sword', { ...NEUTRAL_PARAMS, targetLevel: 2 })).toMatchObject({
+            costPerAttempt: 1000,
+        });
     });
 
     test('returns null when calculateEnhancement rejects the params', () => {

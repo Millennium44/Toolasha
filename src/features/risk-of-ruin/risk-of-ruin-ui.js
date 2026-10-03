@@ -685,7 +685,7 @@ class RiskOfRuinUI {
             const startLevel = parseInt(this.panel.querySelector('#mwi-ror-start-level').value) || 0;
             const protectFrom = parseInt(this.panel.querySelector('#mwi-ror-protect-from').value) || 0;
             const itemDetails = hrid ? dataManager.getItemDetails(hrid) : null;
-            if (!itemDetails) {
+            if (!itemDetails?.enhancementCosts?.length) {
                 status.textContent = 'Enter a valid enhanceable item name.';
                 return;
             }

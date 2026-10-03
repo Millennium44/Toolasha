@@ -431,7 +431,16 @@ describe('RiskOfRuinUI enhancement with incomplete input prices', () => {
 
     test('rejects protect-from +1 because the game disables that action setting', async () => {
         dataManager.getInitClientData.mockImplementation(() => ({
-            itemDetailMap: { '/items/kraken_chaps_refined': { name: 'Kraken Chaps ★', enhancementCosts: [] } },
+            itemDetailMap: {
+                '/items/kraken_chaps_refined': {
+                    name: 'Kraken Chaps ★',
+                    enhancementCosts: [
+                        { itemHrid: '/items/pirate_essence', count: 14 },
+                        { itemHrid: '/items/umbral_leather', count: 6 },
+                        { itemHrid: '/items/coin', count: 4815 },
+                    ],
+                },
+            },
         }));
         dataManager.getItemDetails.mockImplementation(
             (hrid) => dataManager.getInitClientData().itemDetailMap[hrid] ?? null
@@ -448,5 +457,43 @@ describe('RiskOfRuinUI enhancement with incomplete input prices', () => {
 
         expect(root.querySelector('#mwi-ror-status').textContent).toContain('at least +2');
         expect(buildEnhancementModel).not.toHaveBeenCalled();
+    });
+
+    test('rejects captured Coin as non-enhanceable before building a model', async () => {
+        dataManager.getInitClientData.mockImplementation(() => ({
+            itemDetailMap: {
+                '/items/coin': { name: 'Coin' },
+                '/items/cheese_sword': {
+                    name: 'Cheese Sword',
+                    itemLevel: 1,
+                    enhancementCosts: [
+                        { itemHrid: '/items/cheese', count: 5 },
+                        { itemHrid: '/items/coin', count: 12 },
+                    ],
+                    isTradable: true,
+                },
+            },
+        }));
+        dataManager.getItemDetails.mockImplementation(
+            (hrid) => dataManager.getInitClientData().itemDetailMap[hrid] ?? null
+        );
+        riskOfRuinUI.initialize();
+        const root = panel();
+        root.querySelector('#mwi-ror-mode').value = 'enhancement';
+        riskOfRuinUI._renderModeInputs();
+        root.querySelector('#mwi-ror-item').value = '/items/coin';
+        buildEnhancementModel.mockClear();
+
+        await riskOfRuinUI._compute();
+
+        expect(root.querySelector('#mwi-ror-status').textContent).toContain('valid enhanceable item');
+        expect(buildEnhancementModel).not.toHaveBeenCalled();
+
+        root.querySelector('#mwi-ror-item').value = '/items/cheese_sword';
+        await riskOfRuinUI._compute();
+        expect(buildEnhancementModel).toHaveBeenCalledWith(
+            '/items/cheese_sword',
+            expect.objectContaining({ itemLevel: 1 })
+        );
     });
 });
