@@ -101,12 +101,13 @@ const {
     planTaskTargets,
     groupTasksBySharedChain,
     mergedMissingRoot,
+    mergedMissingLines,
     mergedWalkOwner,
     LIVE_CHECK_INTERVAL_MS,
 } = await import('./task-crafting-train.js');
 
 /** A craft node, sized for the whole run. */
-function craft(itemHrid, quantity, actionHrid, actionsNeeded, children = []) {
+function craft(itemHrid, quantity, actionHrid, actionsNeeded, children = [], outputCount = 1) {
     return {
         itemHrid,
         itemName: itemHrid.split('/').pop(),
@@ -114,7 +115,7 @@ function craft(itemHrid, quantity, actionHrid, actionsNeeded, children = []) {
         strategy: 'craft',
         actionHrid,
         actionsNeeded,
-        outputCount: 1,
+        outputCount,
         children,
     };
 }
@@ -173,6 +174,120 @@ beforeEach(() => {
 });
 
 describe('mergeWalkSteps', () => {
+    test('several plans share multi-output surplus when action counts are merged', () => {
+        const plans = Array.from({ length: 4 }, () =>
+            craft('/items/crushed_amber', 10, '/actions/crafting/crushed_amber', 1, [buy('/items/amber', 1)], 15)
+        );
+
+        const merged = mergeWalkSteps(plans);
+
+        expect(merged.saved).toBe(6);
+        expect(merged.steps).toHaveLength(2);
+        expect(stepFor(merged.steps, 'craft:/actions/crafting/crushed_amber')).toMatchObject({
+            count: 40,
+            actions: 3,
+            outputCount: 15,
+        });
+        expect(stepFor(merged.steps, 'buy:/items/amber').count).toBe(3);
+    });
+
+    test('the merged walk and reservation both credit owned Crushed Amber', () => {
+        // Captured Super Cooking and Super Brewing Tea each need ten Crushed
+        // Amber; the captured Crushed Amber action yields fifteen from one
+        // Amber. Five already in the bag leave fifteen to craft: one action.
+        mocks.inventory = [
+            {
+                itemHrid: '/items/crushed_amber',
+                count: 5,
+                enhancementLevel: 0,
+                itemLocationHrid: '/item_locations/inventory',
+            },
+        ];
+        const taskPlans = [
+            craft('/items/super_cooking_tea', 10, '/actions/brewing/super_cooking_tea', 10, [
+                craft('/items/crushed_amber', 10, '/actions/crafting/crushed_amber', 1, [buy('/items/amber', 1)], 15),
+            ]),
+            craft('/items/super_brewing_tea', 10, '/actions/brewing/super_brewing_tea', 10, [
+                craft('/items/crushed_amber', 10, '/actions/crafting/crushed_amber', 1, [buy('/items/amber', 1)], 15),
+            ]),
+        ];
+
+        const merged = mergeWalkSteps(taskPlans);
+
+        expect(stepFor(merged.steps, 'craft:/actions/crafting/crushed_amber')).toMatchObject({
+            count: 20,
+            actions: 1,
+            outputCount: 15,
+        });
+        expect(mergedMissingLines(taskPlans, 'test-owner')).toEqual([{ itemHrid: '/items/amber', count: 1 }]);
+    });
+
+    test('later production does not shrink an earlier merged buy or reservation', () => {
+        // Hand-built per-leg choices: a 10-unit thin-market leg crafts at the
+        // captured 15-unit yield, while a 6-unit leg remains buyable at depth 7.
+        const plan = craft('/items/advanced_tea_crate', 1, '/actions/brewing/advanced_tea_crate', 1, [
+            buy('/items/crushed_amber', 6),
+            craft('/items/crushed_amber', 10, '/actions/crafting/crushed_amber', 1, [buy('/items/amber', 1)], 15),
+        ]);
+
+        const merged = mergeWalkSteps([plan]);
+
+        expect(merged).not.toBeNull();
+        expect(stepFor(merged.steps, 'craft:/actions/crafting/crushed_amber')).toMatchObject({ count: 10, actions: 1 });
+        expect(stepFor(merged.steps, 'buy:/items/crushed_amber').count).toBe(6);
+        expect(mergedMissingLines([plan], 'test-owner')).toEqual([
+            { itemHrid: '/items/crushed_amber', count: 6 },
+            { itemHrid: '/items/amber', count: 1 },
+        ]);
+    });
+
+    test('an earlier craft surplus reduces a later merged buy leg once', () => {
+        const plan = craft('/items/advanced_tea_crate', 1, '/actions/brewing/advanced_tea_crate', 1, [
+            craft('/items/crushed_amber', 10, '/actions/crafting/crushed_amber', 1, [buy('/items/amber', 1)], 15),
+            buy('/items/crushed_amber', 6),
+        ]);
+
+        const merged = mergeWalkSteps([plan]);
+
+        expect(merged).not.toBeNull();
+        expect(stepFor(merged.steps, 'craft:/actions/crafting/crushed_amber')).toMatchObject({ count: 10, actions: 1 });
+        expect(stepFor(merged.steps, 'buy:/items/crushed_amber').count).toBe(1);
+        expect(mergedMissingLines([plan], 'test-owner')).toEqual([
+            { itemHrid: '/items/amber', count: 1 },
+            { itemHrid: '/items/crushed_amber', count: 1 },
+        ]);
+    });
+
+    test('task order preserves both Crushed Amber crafts after the middle buy uses surplus', () => {
+        // These are three actual captured brewing recipes: Super Cooking Tea,
+        // Super Brewing Tea, and Super Alchemy Tea each use one Crushed Amber
+        // per action. At a 6-unit best ask, task counts 7, 6, and 7 produce
+        // craft, buy, craft child plans respectively. The Crushed Amber action
+        // yields 15 from one Amber in the captured game data.
+        const taskPlans = [
+            craft('/items/super_cooking_tea', 7, '/actions/brewing/super_cooking_tea', 7, [
+                craft('/items/crushed_amber', 7, '/actions/crafting/crushed_amber', 1, [buy('/items/amber', 1)], 15),
+            ]),
+            craft('/items/super_brewing_tea', 6, '/actions/brewing/super_brewing_tea', 6, [
+                buy('/items/crushed_amber', 6),
+            ]),
+            craft('/items/super_alchemy_tea', 7, '/actions/brewing/super_alchemy_tea', 7, [
+                craft('/items/crushed_amber', 7, '/actions/crafting/crushed_amber', 1, [buy('/items/amber', 1)], 15),
+            ]),
+        ];
+
+        const merged = mergeWalkSteps(taskPlans);
+
+        expect(merged).not.toBeNull();
+        expect(stepFor(merged.steps, 'craft:/actions/crafting/crushed_amber')).toMatchObject({
+            count: 14,
+            actions: 2,
+            outputCount: 15,
+        });
+        expect(stepFor(merged.steps, 'buy:/items/crushed_amber')).toBeUndefined();
+        expect(mergedMissingLines(taskPlans, 'test-owner')).toEqual([{ itemHrid: '/items/amber', count: 2 }]);
+    });
+
     test('two tasks sharing an intermediate merge into one list with summed counts', () => {
         const merged = mergeWalkSteps([hatPlan(), bootsPlan()]);
 
@@ -323,6 +438,16 @@ describe('groupTasksBySharedChain', () => {
 });
 
 describe('the merged walk claim', () => {
+    test('merged task reservations count shared multi-output surplus once', () => {
+        const plans = Array.from({ length: 4 }, (_, index) =>
+            craft(`/items/tea_${index}`, 1, `/actions/brewing/tea_${index}`, 1, [
+                craft('/items/crushed_amber', 10, '/actions/crafting/crushed_amber', 1, [buy('/items/amber', 1)], 15),
+            ])
+        );
+
+        expect(mergedMissingLines(plans, 'test-owner')).toEqual([{ itemHrid: '/items/amber', count: 3 }]);
+    });
+
     test('a shared material is claimed once, at the combined requirement', async () => {
         const group = groupTasksBySharedChain(
             planTaskTargets(
@@ -347,7 +472,7 @@ describe('the merged walk claim', () => {
         const hide = lines.filter((line) => line.itemHrid === '/items/hide');
         expect(hide).toHaveLength(1);
         expect(hide[0].count).toBe(150); // 90 + 60, not either alone and not double
-        expect(mocks.started).toBe(group.steps);
+        expect(mocks.started).toEqual(group.steps);
     });
 
     test('stock covering a shared material is credited once across the whole group', () => {

@@ -6,6 +6,30 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Crafting reservations follow execution order
+
+- Material collection now allocates bag stock to buy steps in plan order, so later craft steps reserve the ingredients they still need.
+
+### Guided crafting uses the materials already held
+
+- Guided crafting walks now use the same available inventory as material reservations, so owned intermediates reduce queued actions correctly. Crafting time and XP totals follow those action counts, and fully stocked steps disappear.
+
+### Crafting walks retain every required action
+
+- Merged crafting walks now retain a later crafting action when an intervening recipe has used the earlier surplus. Guided steps, time and XP totals, and reserved ingredients keep the actions required by the recipe sequence.
+
+### Crafting purchases follow the recipe sequence
+
+- A later crafting step no longer reduces an earlier material purchase or reservation. Buy Missing Materials now agrees with the shopping list and guided walk when a plan both buys and crafts the same intermediate.
+
+### Guided crafting buys only the remaining shortfall
+
+- Guided crafting and merged task walks now apply shared recipe surplus once. A partially covered material still gets its remaining buy step, matching the shopping list.
+
+### Crafting plans reuse surplus between recipes
+
+- Crafting plans now reuse leftover output across recipes, reducing raw material purchases and repeated crafting. Shopping lists, crafting time, guided walks, and merged task reservations agree on the shared amounts.
+
 ### Release build tools use patched dependencies
 
 - Release build tools now use security-patched script serialization, YAML configuration, and FTP response parsing.

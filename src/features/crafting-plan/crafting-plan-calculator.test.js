@@ -223,6 +223,155 @@ describe('buy vs craft', () => {
 });
 
 describe('multi-output recipes and upgrade items', () => {
+    test('shared multi-output intermediates reuse planned surplus across recipe branches', () => {
+        // Captured game DTOs: an Advanced Tea Crate needs ten of each Super Tea.
+        // Three recipes use crushed pearl, four use crushed amber, and one each
+        // use crushed garnet, jade, and amethyst. Each crushed gem action yields
+        // fifteen, so the shared needs take 2/3/1/1/1 actions respectively.
+        const advancedTeaCrate = '/items/advanced_tea_crate';
+        const teaRecipes = [
+            [
+                '/items/super_milking_tea',
+                '/items/milking_tea',
+                '/items/moolong_tea_leaf',
+                '/items/plum',
+                '/items/milking_essence',
+                '/items/crushed_pearl',
+            ],
+            [
+                '/items/super_foraging_tea',
+                '/items/foraging_tea',
+                '/items/moolong_tea_leaf',
+                '/items/peach',
+                '/items/foraging_essence',
+                '/items/crushed_pearl',
+            ],
+            [
+                '/items/super_woodcutting_tea',
+                '/items/woodcutting_tea',
+                '/items/moolong_tea_leaf',
+                '/items/dragon_fruit',
+                '/items/woodcutting_essence',
+                '/items/crushed_pearl',
+            ],
+            [
+                '/items/super_cooking_tea',
+                '/items/cooking_tea',
+                '/items/red_tea_leaf',
+                '/items/peach',
+                '/items/cooking_essence',
+                '/items/crushed_amber',
+            ],
+            [
+                '/items/super_brewing_tea',
+                '/items/brewing_tea',
+                '/items/red_tea_leaf',
+                '/items/dragon_fruit',
+                '/items/brewing_essence',
+                '/items/crushed_amber',
+            ],
+            [
+                '/items/super_alchemy_tea',
+                '/items/alchemy_tea',
+                '/items/red_tea_leaf',
+                '/items/star_fruit',
+                '/items/alchemy_essence',
+                '/items/crushed_amber',
+            ],
+            [
+                '/items/super_enhancing_tea',
+                '/items/enhancing_tea',
+                '/items/red_tea_leaf',
+                '/items/star_fruit',
+                '/items/enhancing_essence',
+                '/items/crushed_amber',
+            ],
+            [
+                '/items/super_cheesesmithing_tea',
+                '/items/cheesesmithing_tea',
+                '/items/emp_tea_leaf',
+                '/items/peach',
+                '/items/cheesesmithing_essence',
+                '/items/crushed_garnet',
+            ],
+            [
+                '/items/super_crafting_tea',
+                '/items/crafting_tea',
+                '/items/emp_tea_leaf',
+                '/items/dragon_fruit',
+                '/items/crafting_essence',
+                '/items/crushed_jade',
+            ],
+            [
+                '/items/super_tailoring_tea',
+                '/items/tailoring_tea',
+                '/items/emp_tea_leaf',
+                '/items/star_fruit',
+                '/items/tailoring_essence',
+                '/items/crushed_amethyst',
+            ],
+        ];
+        const crushedOutputs = [
+            ['/items/crushed_pearl', '/items/pearl'],
+            ['/items/crushed_amber', '/items/amber'],
+            ['/items/crushed_garnet', '/items/garnet'],
+            ['/items/crushed_jade', '/items/jade'],
+            ['/items/crushed_amethyst', '/items/amethyst'],
+        ];
+        const itemHrids = [advancedTeaCrate, ...teaRecipes.flat(), ...crushedOutputs.flat()];
+        for (const itemHrid of itemHrids) {
+            game.itemDetails[itemHrid] = { name: itemHrid.split('/').pop(), isTradable: true };
+            market.prices[itemHrid] = 1000;
+        }
+
+        game.initClientData.actionDetailMap['/actions/brewing/advanced_tea_crate'] = {
+            type: '/action_types/brewing',
+            category: '/action_categories/brewing/labyrinth',
+            inputItems: teaRecipes.map(([tea]) => ({ itemHrid: tea, count: 10 })),
+            outputItems: [{ itemHrid: advancedTeaCrate, count: 1 }],
+        };
+        for (const [tea, baseTea, leaf, fruit, essence, crushed] of teaRecipes) {
+            game.initClientData.actionDetailMap[`/actions/brewing/${tea.split('/').pop()}`] = {
+                type: '/action_types/brewing',
+                category: '/action_categories/brewing/tea',
+                inputItems: [
+                    { itemHrid: leaf, count: 1 },
+                    { itemHrid: fruit, count: 1 },
+                    { itemHrid: essence, count: 2 },
+                    { itemHrid: crushed, count: 1 },
+                ],
+                upgradeItemHrid: baseTea,
+                outputItems: [{ itemHrid: tea, count: 1 }],
+            };
+        }
+        for (const [crushed, baseGem] of crushedOutputs) {
+            game.initClientData.actionDetailMap[`/actions/crafting/${crushed.split('/').pop()}`] = {
+                type: '/action_types/crafting',
+                category: '/action_categories/crafting/special',
+                inputItems: [{ itemHrid: baseGem, count: 1 }],
+                outputItems: [{ itemHrid: crushed, count: 15 }],
+            };
+        }
+
+        const plan = computeBestCraftingPlan(advancedTeaCrate, 1, 'ask', new Set(), new Map(), 0, undefined, true);
+        const missing = collectMissingMaterials(plan, []);
+        const baseCounts = Object.fromEntries(missing.map(({ itemHrid, missing: count }) => [itemHrid, count]));
+
+        expect(plan.children).toHaveLength(10);
+        expect(baseCounts).toMatchObject({
+            '/items/amber': 3,
+            '/items/pearl': 2,
+            '/items/garnet': 1,
+            '/items/jade': 1,
+            '/items/amethyst': 1,
+        });
+        expect(
+            collectMissingMaterials(plan, [{ itemHrid: '/items/crushed_amber', count: 1 }]).find(
+                (line) => line.itemHrid === '/items/amber'
+            )
+        ).toMatchObject({ missing: 3, required: 3 });
+    });
+
     test('splits the input cost across every unit the action produces', () => {
         // 1 shaft (10) → 2 arrows, so an arrow costs 5 to craft, below its 8 listing
         game.itemDetails['/items/arrow'] = { name: 'Arrow', isTradable: true };
@@ -627,6 +776,84 @@ describe('collectMissingMaterials', () => {
 });
 
 describe('collectMissingMaterials — owned intermediates', () => {
+    test('buy legs preserve owned units in required totals for callers that net inventory', () => {
+        const plan = {
+            strategy: 'craft',
+            quantity: 1,
+            children: [{ strategy: 'buy', itemHrid: COWHIDE, itemName: 'Cowhide', quantity: 100, children: [] }],
+        };
+
+        expect(collectMissingMaterials(plan, [{ itemHrid: COWHIDE, count: 40 }])).toEqual([
+            { itemHrid: COWHIDE, itemName: 'Cowhide', missing: 60, required: 100, isTradeable: true },
+        ]);
+    });
+
+    test('later crushed amber production does not retroactively reduce an earlier buy leg', () => {
+        const plan = {
+            strategy: 'craft',
+            quantity: 1,
+            children: [
+                {
+                    strategy: 'buy',
+                    itemHrid: '/items/crushed_amber',
+                    itemName: 'Crushed Amber',
+                    quantity: 6,
+                    children: [],
+                },
+                {
+                    strategy: 'craft',
+                    itemHrid: '/items/crushed_amber',
+                    itemName: 'Crushed Amber',
+                    quantity: 10,
+                    actionsNeeded: 1,
+                    outputCount: 15,
+                    children: [
+                        { strategy: 'buy', itemHrid: '/items/amber', itemName: 'Amber', quantity: 1, children: [] },
+                    ],
+                },
+            ],
+        };
+
+        expect(collectMissingMaterials(plan, [])).toEqual([
+            { itemHrid: '/items/crushed_amber', itemName: 'Crushed Amber', missing: 6, required: 6, isTradeable: true },
+            { itemHrid: '/items/amber', itemName: 'Amber', missing: 1, required: 1, isTradeable: true },
+        ]);
+    });
+
+    test('planned multi-output surplus offsets a buy leg without replacing owned-inventory addback', () => {
+        const plan = {
+            strategy: 'craft',
+            quantity: 1,
+            children: [
+                {
+                    strategy: 'craft',
+                    itemHrid: '/items/crushed_amber',
+                    itemName: 'Crushed Amber',
+                    quantity: 10,
+                    outputCount: 15,
+                    actionsNeeded: 1,
+                    children: [
+                        { strategy: 'buy', itemHrid: '/items/amber', itemName: 'Amber', quantity: 1, children: [] },
+                    ],
+                },
+                {
+                    strategy: 'buy',
+                    itemHrid: '/items/crushed_amber',
+                    itemName: 'Crushed Amber',
+                    quantity: 8,
+                    children: [],
+                },
+            ],
+        };
+
+        const missing = collectMissingMaterials(plan, [{ itemHrid: '/items/crushed_amber', count: 2 }]);
+
+        expect(missing).toEqual([
+            { itemHrid: '/items/amber', itemName: 'Amber', missing: 1, required: 1, isTradeable: true },
+            { itemHrid: '/items/crushed_amber', itemName: 'Crushed Amber', missing: 1, required: 3, isTradeable: true },
+        ]);
+    });
+
     test('an owned intermediate is credited before its node is expanded', () => {
         // 10 boots = 60 rough leather = 180 cowhide. Owning 24 leather leaves 36
         // to craft, so only 108 cowhide is short — the leather is not re-expanded.
@@ -823,6 +1050,65 @@ describe('thin-market re-route', () => {
         const p = plan(COWHIDE, 10, { [COWHIDE]: 1 });
         expect(p.strategy).toBe('buy');
         expect(p.children).toEqual([]);
+    });
+
+    test('captured Super Tea tasks can choose craft, buy, then craft for Crushed Amber', () => {
+        // Captured game recipe metadata: these three actions each consume one
+        // Crushed Amber per action, and Crushed Amber crafts one Amber into 15.
+        // Different task quantities can straddle the same six-unit best ask.
+        const recipes = [
+            ['/items/super_cooking_tea', '/items/cooking_tea', '/items/peach', '/items/cooking_essence'],
+            ['/items/super_brewing_tea', '/items/brewing_tea', '/items/dragon_fruit', '/items/brewing_essence'],
+            ['/items/super_alchemy_tea', '/items/alchemy_tea', '/items/star_fruit', '/items/alchemy_essence'],
+        ];
+        const redTeaLeaf = '/items/red_tea_leaf';
+        const crushedAmber = '/items/crushed_amber';
+        const amber = '/items/amber';
+        for (const itemHrid of [redTeaLeaf, crushedAmber, amber, ...recipes.flat()]) {
+            game.itemDetails[itemHrid] = { name: itemHrid.split('/').pop(), isTradable: true };
+            market.prices[itemHrid] = 10;
+        }
+        market.prices[crushedAmber] = 5;
+        market.prices[amber] = 200;
+        for (const [tea, baseTea, fruit, essence] of recipes) {
+            game.initClientData.actionDetailMap[`/actions/brewing/${tea.split('/').pop()}`] = {
+                type: '/action_types/brewing',
+                category: '/action_categories/brewing/tea',
+                inputItems: [
+                    { itemHrid: redTeaLeaf, count: 1 },
+                    { itemHrid: fruit, count: 1 },
+                    { itemHrid: essence, count: 2 },
+                    { itemHrid: crushedAmber, count: 1 },
+                ],
+                upgradeItemHrid: baseTea,
+                outputItems: [{ itemHrid: tea, count: 1 }],
+            };
+        }
+        game.initClientData.actionDetailMap['/actions/crafting/crushed_amber'] = {
+            type: '/action_types/crafting',
+            category: '/action_categories/crafting/special',
+            inputItems: [{ itemHrid: amber, count: 1 }],
+            outputItems: [{ itemHrid: crushedAmber, count: 15 }],
+        };
+
+        const forTask = (teaHrid, quantity) => plan(teaHrid, quantity, { [crushedAmber]: 6 }, { forceRootCraft: true });
+        const tasks = [
+            forTask('/items/super_cooking_tea', 7),
+            forTask('/items/super_brewing_tea', 6),
+            forTask('/items/super_alchemy_tea', 7),
+        ];
+        const legs = tasks.map((task) => task.children.find((child) => child.itemHrid === crushedAmber));
+
+        expect(legs.map((leg) => leg.strategy)).toEqual(['craft', 'buy', 'craft']);
+        expect(legs.map((leg) => leg.quantity)).toEqual([7, 6, 7]);
+        expect(legs[0]).toMatchObject({ outputCount: 15, actionsNeeded: 1, thinMarketRerouted: true });
+        expect(legs[2]).toMatchObject({ outputCount: 15, actionsNeeded: 1, thinMarketRerouted: true });
+
+        const missing = collectMissingMaterials({ strategy: 'group', children: tasks }, [
+            { itemHrid: crushedAmber, count: 14, itemLocationHrid: '/item_locations/inventory' },
+        ]);
+        expect(missing.some((line) => line.itemHrid === crushedAmber)).toBe(false);
+        expect(missing.find((line) => line.itemHrid === amber)).toMatchObject({ missing: 1, required: 1 });
     });
 
     test('the same intermediate re-routes on a thin leg and stays buy on a fat one', () => {
