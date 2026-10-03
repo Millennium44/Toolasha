@@ -392,6 +392,22 @@ describe('bestiary points alerts', () => {
         expect(game.notified).toHaveLength(0);
     });
 
+    test('a live stop removes the handlers, and re-enabling treats a reached target as old news', async () => {
+        await reading({ fly: 9 });
+        await alerts.initialize();
+        alerts.disable(); // what the registry's live stop calls when the setting is cleared
+        expect(game.wire.new_battle).toBeUndefined();
+        expect(game.wire.battle_updated).toBeUndefined();
+        expect(game.dm.monsters_updated).toBeUndefined();
+        expect(alerts.estimatedCounts()).toBeNull();
+
+        // Kills while it is off, then it is switched back on holding a reading past the target
+        await reading({ fly: 100 });
+        game.settings[MASTER_SETTING] = true;
+        await alerts.initialize();
+        expect(game.notified).toHaveLength(0);
+    });
+
     test('does nothing while the setting is off', async () => {
         game.settings[MASTER_SETTING] = false;
         await alerts.initialize();

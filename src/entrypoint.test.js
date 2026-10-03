@@ -1186,6 +1186,13 @@ describe('the registry entries the entrypoint hands over', () => {
         expect(registered.filter((entry) => entry.concurrent).length).toBeGreaterThan(1);
     });
 
+    test('the Bestiary points alert is live-stopped, so clearing its setting removes its combat handlers', () => {
+        const entry = registered.find((e) => e.key === 'bestiaryPointsAlerts');
+
+        expect(entry, 'bestiaryPointsAlerts is no longer registered').toBeTruthy();
+        expect(entry.liveStop).toBe(true);
+    });
+
     test('two concurrent features run through the real registry overlap', async () => {
         probe.active = 0;
         probe.peak = 0;
