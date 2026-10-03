@@ -154,6 +154,17 @@ describe('the picture on a task card', () => {
         expect(pictureOf(card)).toBe(`${ITEMS_SPRITE}#milk`);
     });
 
+    test('an English card is named by its text, without reading the quest off the React tree', () => {
+        // A quest that would say otherwise shows it was never consulted: the walk costs a full tree
+        // traversal per card, and the English name already answers
+        const card = cardOnBoard('Milking - Cow', ['Go', 'Reroll', '']);
+        giveQuest(card, { actionHrid: '/actions/cheesesmithing/cheese' });
+
+        taskIcons.processAllTaskCards();
+
+        expect(pictureOf(card)).toBe(`${ITEMS_SPRITE}#milk`);
+    });
+
     test('a translated card with no readable quest is left without a picture', () => {
         const card = cardOnBoard('挤奶 - 奶牛', ['Go', 'Reroll', '']);
 

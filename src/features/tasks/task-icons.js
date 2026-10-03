@@ -358,10 +358,14 @@ class TaskIcons {
             return;
         }
 
-        // The card's own quest names the action or monster whatever the game language; the
-        // translated "SkillType - TaskName" text is only the fallback (and "Defeat" only matches
-        // English, so a monster quest also marks a combat card)
-        const quest = questForTaskCard(taskCard);
+        // An English card names its action or monster by its text, at no cost. Only when that misses
+        // is the card's own quest read: it names them whatever the game language, but finding it
+        // walks the React tree, once per card. ("Defeat" only matches English, so a monster quest
+        // also marks a combat card.)
+        const resolvedByName = taskInfo.isCombatTask
+            ? this.findMonsterHrid(taskInfo.taskName)
+            : getActionHridFromName(taskInfo.taskName);
+        const quest = resolvedByName ? null : questForTaskCard(taskCard);
         const info = { ...taskInfo, quest, isCombatTask: taskInfo.isCombatTask || Boolean(quest?.monsterHrid) };
 
         // Add appropriate icons based on task type
