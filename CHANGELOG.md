@@ -6,6 +6,22 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Transmute XP follows the selected drinks
+
+- Transmute's XP fallback now takes Catalytic Tea's success bonus from the selected loadout and its Drink Concentration. Queued and picker XP estimates no longer use a different active tea setup when profit is unavailable.
+
+### Consumable market totals fit the tile
+
+- The Consumables tile shows ask and bid costs on separate lines so missing-price counts fit. New tiles have space for both lines, and hovering a smaller saved tile shows the complete costs.
+
+### Consumable totals identify missing market quotes
+
+- Daily consumable costs now show when an ask or bid quote is missing. The Consumables tile and panel show a dash for an entirely unpriced side, and label partial totals with the number of unpriced items instead of making missing quotes look free.
+
+### Guild Trial pace retains current progress
+
+- Guild Trial pace and payout forecasts now include work already completed in the current tier when time runs out before its clear. A partly completed tier no longer appears to have only the progress forecast from now onward.
+
 ### Transmute XP remains available when profit is unknown
 
 - Enhanced Transmute keeps its queued XP estimates and XP sorting even when the returned item's enhancement level makes profit unavailable. The XP fallback uses the current tea and catalyst setup without assigning a guessed value to the returned item.

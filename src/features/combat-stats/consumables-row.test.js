@@ -32,7 +32,7 @@ vi.mock('./combat-stats-calculator.js', () => ({ calculatePlayerStats: () => ({}
 vi.mock('../../utils/consumable-forecast.js', () => ({
     forecastAll: () => [],
     drinkRatePerDay: () => 0,
-    costPerDaySides: () => ({ ask: 14_100_000, bid: 13_600_000 }),
+    costPerDaySides: () => ({ ask: 14_100_000, bid: 13_600_000, askUnpriced: 0, bidUnpriced: 0 }),
     partyOutlook: () => game.outlook,
 }));
 

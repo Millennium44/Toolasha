@@ -147,6 +147,17 @@ function burnStamp(forecasts) {
 }
 
 /**
+ * A missing market quote stays visible in the daily total.
+ * @param {number|null} amount - Cost at one side of the market
+ * @param {number} [unpriced] - Consumed items with no quote at this side
+ * @returns {string}
+ */
+function formatConsumableCostSide(amount, unpriced = 0) {
+    const total = amount === null ? '—' : formatLargeNumber(Math.round(amount));
+    return unpriced ? `${total} (${unpriced} unpriced)` : total;
+}
+
+/**
  * The Buy-all walk's floating control — outside the panel, which hides itself to
  * go shopping, so the walk's next step and its rules stay reachable while the
  * marketplace is up.
@@ -3146,7 +3157,7 @@ ${labUnpriced} item(s) could not be priced and are not in this total.`
         label.style.color = COLORS.accent;
 
         const value = document.createElement('span');
-        value.textContent = `Ask: ${formatLargeNumber(Math.round(sides.ask))} / Bid: ${formatLargeNumber(Math.round(sides.bid))}`;
+        value.textContent = `Ask: ${formatConsumableCostSide(sides.ask, sides.askUnpriced)} / Bid: ${formatConsumableCostSide(sides.bid, sides.bidUnpriced)}`;
         value.style.whiteSpace = 'nowrap';
 
         const buy = document.createElement('span');

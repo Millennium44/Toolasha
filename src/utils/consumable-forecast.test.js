@@ -183,6 +183,56 @@ describe('two-sided pricing', () => {
         const totals = costPerDaySides(forecastAll([drink, drink], pricesFor));
         expect(totals.ask).toBeCloseTo(2880, 6);
         expect(totals.bid).toBeCloseTo(1920, 6);
+        expect(totals.askUnpriced).toBe(0);
+        expect(totals.bidUnpriced).toBe(0);
+    });
+
+    test('a missing quote stays unknown for a used item instead of making the total free', () => {
+        // This is the calculator's output shape for a positive-use item with no market entry.
+        const unpricedFood = forecast({
+            itemHrid: '/items/blackberry_cake',
+            itemName: 'Blackberry Cake',
+            inventoryAmount: 100,
+            consumptionRate: 240 / 86400,
+            pricePerItem: null,
+        });
+
+        expect(costPerDaySides([unpricedFood])).toEqual({
+            ask: null,
+            bid: null,
+            askUnpriced: 1,
+            bidUnpriced: 1,
+        });
+    });
+
+    test('partial totals retain priced costs and count missing quotes', () => {
+        const pricedFood = forecast(
+            {
+                itemHrid: '/items/spaceberry_cake',
+                inventoryAmount: 100,
+                consumptionRate: 24 / 86400,
+                pricePerItem: 100,
+            },
+            { ask: 100, bid: 90 }
+        );
+        const unpricedFood = forecast({
+            itemHrid: '/items/blackberry_cake',
+            inventoryAmount: 100,
+            consumptionRate: 240 / 86400,
+            pricePerItem: null,
+        });
+
+        expect(costPerDaySides([pricedFood, unpricedFood])).toEqual({
+            ask: 2400,
+            bid: 2160,
+            askUnpriced: 1,
+            bidUnpriced: 1,
+        });
+    });
+
+    test('an unused item with no quote does not make a zero-use total look unknown', () => {
+        const unused = forecast({ ...drink, consumptionRate: 0, pricePerItem: null });
+        expect(costPerDaySides([unused])).toEqual({ ask: 0, bid: 0, askUnpriced: 0, bidUnpriced: 0 });
     });
 });
 

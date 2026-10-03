@@ -50,6 +50,17 @@ import { runningAction } from '../../utils/combat-actions.js';
 /** Long enough that a busy loot map is not repriced every tick */
 const CACHE_MS = 4000;
 
+/**
+ * A missing market quote stays visible in the daily total.
+ * @param {number|null} amount - Cost at one side of the market
+ * @param {number} [unpriced] - Consumed items with no quote at this side
+ * @returns {string}
+ */
+function formatConsumableCostSide(amount, unpriced = 0) {
+    const total = amount === null ? '—' : formatLargeNumber(Math.round(amount));
+    return unpriced ? `${total} (${unpriced} unpriced)` : total;
+}
+
 let cached = null;
 let cachedAt = 0;
 
@@ -466,8 +477,8 @@ registerRow({
     key: 'consumables',
     empty: 'Nothing slotted',
     name: 'Consumables',
-    // Four lines now the cost label has one of its own, as CRack has it
-    defaultSize: { width: 240, height: 76 },
+    // Each market side has its own line so unpriced-item counts fit.
+    defaultSize: { width: 240, height: 92 },
     // Every figure and color the tile carries, in the precision it carries
     // them: the two countdowns as they are worded, the color each is given —
     // which is a comparison against the Consumables panel's target, so a change
@@ -487,12 +498,15 @@ registerRow({
             limiting.itemHrid,
             limiting.held,
             runOutColor(limiting),
-            Math.round(sides.ask),
-            Math.round(sides.bid),
+            sides.ask === null ? 'unknown' : Math.round(sides.ask),
+            sides.bid === null ? 'unknown' : Math.round(sides.bid),
+            sides.askUnpriced || 0,
+            sides.bidUnpriced || 0,
             spriteUrl('items'),
         ].join('|');
     },
     render: (container) => {
+        container.removeAttribute('title');
         const payload = consumablesPayload();
         if (!payload) return blank(container);
 
@@ -567,12 +581,15 @@ registerRow({
         container.appendChild(label);
 
         const cost = document.createElement('div');
-        cost.textContent = `Ask: ${formatLargeNumber(Math.round(sides.ask))} / Bid: ${formatLargeNumber(Math.round(sides.bid))}`;
+        cost.textContent = `Ask: ${formatConsumableCostSide(sides.ask, sides.askUnpriced)}\nBid: ${formatConsumableCostSide(sides.bid, sides.bidUnpriced)}`;
+        // Existing layouts retain their saved dimensions; the full cost is
+        // still available on hover if a player has made the tile smaller.
+        container.title = cost.textContent;
         Object.assign(cost.style, {
             color: ROW_COLORS.neutral,
             fontSize: '90%',
             textAlign: 'left',
-            whiteSpace: 'nowrap',
+            whiteSpace: 'pre-line',
             overflow: 'hidden',
             textOverflow: 'ellipsis',
         });

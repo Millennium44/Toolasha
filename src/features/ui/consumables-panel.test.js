@@ -25,6 +25,7 @@ const game = vi.hoisted(() => ({
     characterData: null,
     currentActions: [],
     clientData: null,
+    prices: {},
 }));
 
 const settings = vi.hoisted(() => ({ values: {}, listeners: {} }));
@@ -96,7 +97,7 @@ vi.mock('../../core/data-manager.js', () => ({
         },
     },
 }));
-vi.mock('../../utils/market-data.js', () => ({ getItemPrices: () => ({}) }));
+vi.mock('../../utils/market-data.js', () => ({ getItemPrices: (hrid) => game.prices[hrid] || {} }));
 vi.mock('../../utils/marketplace-tabs.js', () => ({ navigateToMarketplace: () => {} }));
 vi.mock('../../utils/marketplace-autofill.js', () => ({
     createAutofillManager: () => ({ initialize: () => {}, setQuantity: () => {} }),
@@ -129,6 +130,7 @@ beforeEach(async () => {
     game.statsByName = {};
     game.characterData = null;
     game.clientData = null;
+    game.prices = {};
     shopping.calls.length = 0;
     game.currentActions = [];
     consumablesPanel._readinessMemo = null;
@@ -428,6 +430,42 @@ describe('a restock shows at once', () => {
         };
 
         expect(consumablesPanel._players()[0].forecasts[0].held).toBe(5);
+    });
+
+    test('the daily total marks missing prices beside the known partial total', async () => {
+        game.latest = { durationSeconds: 3600, players: [{ name: 'Me', isCurrentPlayer: true }] };
+        game.prices['/items/spaceberry_cake'] = { ask: 100, bid: 90 };
+        game.statsByName = {
+            Me: {
+                consumableBreakdown: [
+                    {
+                        itemHrid: '/items/spaceberry_cake',
+                        itemName: 'Spaceberry Cake',
+                        inventoryAmount: 100,
+                        consumptionRate: 24 / 86400,
+                        pricePerItem: 100,
+                    },
+                    {
+                        itemHrid: '/items/blackberry_cake',
+                        itemName: 'Blackberry Cake',
+                        inventoryAmount: 100,
+                        consumptionRate: 240 / 86400,
+                        pricePerItem: null,
+                    },
+                ],
+            },
+        };
+        consumablesPanel.show();
+        await settled();
+        consumablesPanel._render();
+
+        expect(consumablesPanel.bodyEl.textContent).toContain('Ask: 2K (1 unpriced) / Bid: 2K (1 unpriced)');
+
+        delete game.prices['/items/spaceberry_cake'];
+        game.statsByName.Me.consumableBreakdown = [game.statsByName.Me.consumableBreakdown[1]];
+        consumablesPanel._render();
+
+        expect(consumablesPanel.bodyEl.textContent).toContain('Ask: — (1 unpriced) / Bid: — (1 unpriced)');
     });
 });
 
