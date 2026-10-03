@@ -226,6 +226,17 @@ export function missingMaterialsButton() {
 }
 
 /**
+ * The action-time engine, for its queue-walk ledger (`buildInventoryLookup`,
+ * `calculateSingleQueueActionTime`, `deductQueueActionMaterials`). Reached
+ * through the global because the engine is an actions-bundle singleton with
+ * observers of its own; importing it into the ui bundle would copy all of it.
+ * @returns {Object|null} The engine, or null when the actions bundle is absent
+ */
+export function actionTimeDisplay() {
+    return toolashaRoot()?.Actions?.actionTimeDisplay || null;
+}
+
+/**
  * The goal planner panel.
  * @returns {Object|null} The panel, or null when the actions bundle is absent
  */

@@ -18,9 +18,13 @@ const plan = vi.hoisted(() => ({ state: null, stages: [] }));
 const loop = vi.hoisted(() => ({ result: null, warnings: [], pricing: null, offline: null, pending: null }));
 const store = vi.hoisted(() => ({ overrides: {}, snapshot: null, written: [], collapsed: false, collapses: [] }));
 const walk = vi.hoisted(() => ({ started: [], succeeds: true }));
+// What the queue walk reports; null is "the actions bundle is not there"
+const coinWalk = vi.hoisted(() => ({ walked: null }));
 // Mutable so the character-switch race test can move the active character
 // mid-flight, the way a real switch does.
 const characterId = vi.hoisted(() => ({ current: 'charA' }));
+// The data manager's event bus, so a test can deliver items_updated / actions_updated
+const events = vi.hoisted(() => ({ listeners: new Map() }));
 
 vi.mock('../../core/config.js', () => ({
     default: { Z_FLOATING_PANEL: 9000, getSetting: () => true, getSettingValue: (key, fallback) => fallback },
@@ -29,8 +33,26 @@ vi.mock('../../core/config.js', () => ({
 vi.mock('../../core/data-manager.js', () => ({
     default: {
         getCurrentCharacterId: () => characterId.current,
+        on: (event, fn) => {
+            if (!events.listeners.has(event)) events.listeners.set(event, new Set());
+            events.listeners.get(event).add(fn);
+        },
+        off: (event, fn) => events.listeners.get(event)?.delete(fn),
     },
 }));
+
+const marketListeners = vi.hoisted(() => new Set());
+vi.mock('../../api/marketplace.js', () => ({
+    default: {
+        on: (fn) => marketListeners.add(fn),
+        off: (fn) => marketListeners.delete(fn),
+    },
+}));
+
+/** Deliver a data-manager event to whatever the panel subscribed */
+const emit = (event) => {
+    for (const fn of events.listeners.get(event) || []) fn();
+};
 
 // Geometry and the stage ticks both live in IndexedDB, which is not what this
 // file is about
@@ -104,6 +126,13 @@ vi.mock('./ironcow-queue-walk.js', async (importOriginal) => {
     };
 });
 
+// The walk needs the action-time engine and the live queue, which are pinned in
+// `coin-reserve.test.js`; the reserve and the bell arithmetic stay real here.
+vi.mock('./coin-reserve.js', async (importOriginal) => {
+    const actual = await importOriginal();
+    return { ...actual, walkQueueCoins: () => coinWalk.walked };
+});
+
 const { ironCowFarmPanel } = await import('./ironcow-panel.js');
 
 const text = () => ironCowFarmPanel.panel?.textContent ?? '';
@@ -150,7 +179,7 @@ function costedLoop(overrides = {}) {
         goldPerDay: 6_660_000,
         alchemyFeePerHour: 37_500,
         bellPrice: 950_000,
-        bellPricing: { price: 950_000, source: 'bag', loose: 1_000_000, bag: 950_000, pricingMode: 'ask' },
+        bellPricing: { price: 950_000, source: 'bag', bag: 950_000, pricingMode: 'ask', quoted: true },
         bells: { perHour: 0.2921, perDay: 7.01, perWeek: 49.08 },
         pricingMode: 'hybrid',
         computedAt: Date.parse('2026-08-04T09:00:00Z'),
@@ -162,7 +191,7 @@ beforeEach(() => {
     plan.state = character();
     loop.result = costedLoop();
     loop.warnings = [];
-    loop.pricing = { price: 950_000, source: 'bag', loose: 1_000_000, bag: 950_000, pricingMode: 'ask' };
+    loop.pricing = { price: 950_000, source: 'bag', bag: 950_000, pricingMode: 'ask', quoted: true };
     loop.offline = { hours: 16, assumed: true };
     loop.pending = null;
     characterId.current = 'charA';
@@ -173,6 +202,7 @@ beforeEach(() => {
     store.collapses = [];
     walk.started = [];
     walk.succeeds = true;
+    coinWalk.walked = null;
 });
 
 afterEach(() => {
@@ -289,16 +319,138 @@ describe('what it says', () => {
         expect(text()).toContain('An iron cow sells nothing');
     });
 
-    test('says which way of buying bells is cheaper', async () => {
+    test('says bells are bought in bags of ten', async () => {
         ironCowFarmPanel.show();
         await ironCowFarmPanel.refresh();
         expect(text()).toContain('in bags of ten');
+        expect(text()).not.toContain('loose');
+    });
 
-        loop.result = costedLoop({
-            bellPricing: { price: 900_000, source: 'loose', loose: 900_000, bag: 950_000, pricingMode: 'ask' },
-        });
+    test('says how many bells the coins buy now, keeping back what the queue dips to', async () => {
+        plan.state = character({ coins: 30_000_000 });
+        coinWalk.walked = {
+            stages: [
+                { label: 'Decompose: Star Fruit', coinDelta: -4_000_000 },
+                { label: 'Coinify: Foraging Essence', coinDelta: 9_000_000 },
+            ],
+            stoppedAt: 'Star Fruit',
+        };
+        ironCowFarmPanel.show();
         await ironCowFarmPanel.refresh();
-        expect(text()).toContain('loose');
+
+        // 26M spare at 9.5M a bag of ten is two whole bags
+        expect(text()).toContain('Bells you can buy now');
+        expect(text()).toContain('20 (2 bags)');
+        expect(text()).toContain('Kept for the queue');
+        const row = [...ironCowFarmPanel.panel.querySelectorAll('div')].find(
+            (div) => div.textContent.startsWith('Bells you can buy now') && div.title
+        );
+        expect(row.title).toContain('Decompose: Star Fruit');
+        // No depth in the price feed: the count is said to be at the cheapest listing only
+        expect(row.title).toContain('all at the cheapest listing');
+        expect(text()).not.toContain(FAILED);
+    });
+
+    test('spending coins redraws the bell count while the panel stays open, and closing unsubscribes', async () => {
+        plan.state = character({ coins: 30_000_000 });
+        coinWalk.walked = { stages: [{ label: 'Decompose: Star Fruit', coinDelta: -4_000_000 }], stoppedAt: null };
+        // Other modules listen to the market too; only the panel's own listener is under test
+        const othersListening = marketListeners.size;
+        ironCowFarmPanel.show();
+        await ironCowFarmPanel.refresh();
+        expect(text()).toContain('20 (2 bags)');
+
+        // 20M spent on the market: 6M spare is no whole bag
+        plan.state = character({ coins: 10_000_000 });
+        emit('items_updated');
+        await new Promise((resolve) => setTimeout(resolve, 350));
+        expect(text()).toContain('0 (0 bags)');
+        expect(text()).not.toContain(FAILED);
+
+        // A cheaper bag listed, coins and queue unchanged: 26M spare now buys three bags
+        loop.pricing = { ...loop.pricing, price: 800_000, bag: 800_000 };
+        plan.state = character({ coins: 30_000_000 });
+        for (const fn of marketListeners) fn();
+        await new Promise((resolve) => setTimeout(resolve, 350));
+        expect(text()).toContain('30 (3 bags)');
+
+        ironCowFarmPanel.hide();
+        expect(events.listeners.get('items_updated')?.size ?? 0).toBe(0);
+        expect(events.listeners.get('actions_updated')?.size ?? 0).toBe(0);
+        expect(events.listeners.get('buffs_updated')?.size ?? 0).toBe(0);
+        expect(events.listeners.get('skills_updated')?.size ?? 0).toBe(0);
+        expect(marketListeners.size).toBe(othersListening);
+    });
+
+    test.each(['buffs_updated', 'skills_updated', 'equipment_buffs_updated', 'house_rooms_updated'])(
+        '%s redraws the bell count too',
+        async (event) => {
+            plan.state = character({ coins: 30_000_000 });
+            coinWalk.walked = {
+                stages: [{ label: 'Decompose: Star Fruit', coinDelta: -4_000_000 }],
+                stoppedAt: null,
+            };
+            ironCowFarmPanel.show();
+            await ironCowFarmPanel.refresh();
+            expect(text()).toContain('20 (2 bags)');
+
+            coinWalk.walked = {
+                stages: [{ label: 'Decompose: Star Fruit', coinDelta: -20_000_000 }],
+                stoppedAt: null,
+            };
+            emit(event);
+            await new Promise((resolve) => setTimeout(resolve, 350));
+            expect(text()).toContain('10 (1 bag)');
+        }
+    );
+
+    test('a buff ending redraws the bell count too', async () => {
+        plan.state = character({ coins: 30_000_000 });
+        coinWalk.walked = { stages: [{ label: 'Decompose: Star Fruit', coinDelta: -4_000_000 }], stoppedAt: null };
+        ironCowFarmPanel.show();
+        await ironCowFarmPanel.refresh();
+        expect(text()).toContain('20 (2 bags)');
+
+        // The queue now needs more once the success buff is gone
+        coinWalk.walked = { stages: [{ label: 'Decompose: Star Fruit', coinDelta: -20_000_000 }], stoppedAt: null };
+        emit('buffs_updated');
+        await new Promise((resolve) => setTimeout(resolve, 350));
+        expect(text()).toContain('10 (1 bag)');
+    });
+
+    test('a snapshot costed with no bell price still gets a live buy-now count once a bag is listed', async () => {
+        plan.state = character({ coins: 30_000_000 });
+        coinWalk.walked = { stages: [], stoppedAt: null };
+        store.snapshot = costedLoop({ bellPrice: null, bellPricing: { price: null }, bells: null });
+        loop.pricing = { price: null };
+        ironCowFarmPanel.show();
+        await ironCowFarmPanel.load();
+        expect(text()).toContain('No market price for a cowbell yet');
+
+        loop.pricing = { price: 950_000, source: 'bag', bag: 950_000, pricingMode: 'ask', quoted: true };
+        for (const fn of marketListeners) fn();
+        await new Promise((resolve) => setTimeout(resolve, 350));
+        expect(text()).toContain('30 (3 bags)');
+        expect(text()).not.toContain(FAILED);
+    });
+
+    test('with no bag listed for sale, no bell count is offered', async () => {
+        plan.state = character({ coins: 30_000_000 });
+        coinWalk.walked = { stages: [], stoppedAt: null };
+        loop.pricing = { ...loop.pricing, quoted: false };
+        ironCowFarmPanel.show();
+        await ironCowFarmPanel.refresh();
+
+        expect(text()).toContain('Bells you can buy now—');
+        expect(text()).not.toContain(FAILED);
+    });
+
+    test('an unreadable queue gives no bell count rather than one that ignores it', async () => {
+        ironCowFarmPanel.show();
+        await ironCowFarmPanel.refresh();
+
+        expect(text()).toContain('Bells you can buy now—');
+        expect(text()).not.toContain(FAILED);
     });
 
     test('shows the realistic daily figure against the offline window', async () => {
@@ -415,6 +567,26 @@ describe('lifecycle', () => {
 
         expect(ironCowFarmPanel.loop).toBeNull();
         expect(ironCowFarmPanel.pricedAt).toBeNull();
+    });
+
+    test('a snapshot from before bag prices were read off the book is set aside too', async () => {
+        store.snapshot = costedLoop({
+            bellPricing: { price: 40, source: 'bag', bag: 40, pricingMode: 'ask' },
+        });
+        await ironCowFarmPanel.load();
+        expect(ironCowFarmPanel.loop).toBeNull();
+    });
+
+    test('a snapshot costed at a loose cowbell price is set aside until the loop is costed again', async () => {
+        store.snapshot = costedLoop({
+            bellPricing: { price: 900_000, source: 'loose', loose: 900_000, bag: 950_000, pricingMode: 'ask' },
+        });
+        await ironCowFarmPanel.load();
+        expect(ironCowFarmPanel.loop).toBeNull();
+
+        store.snapshot = costedLoop();
+        await ironCowFarmPanel.load();
+        expect(ironCowFarmPanel.loop).not.toBeNull();
     });
 
     test("a character switch mid-costing does not apply the departing character's loop to the arriving one", async () => {

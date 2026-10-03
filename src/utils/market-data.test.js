@@ -377,6 +377,14 @@ describe('Iron Cow valuation', () => {
         expect(sell).toEqual(buy);
     });
 
+    test('a market quote reads the book whatever the valuation setting says', () => {
+        expect(getItemPriceInfo('/items/vendor_only', { mode: 'ask', marketQuote: true })).toEqual({
+            price: 500,
+            source: 'book',
+            estimated: false,
+        });
+    });
+
     test("'market' prices off the book as before", () => {
         setting.valuation = 'market';
         expect(getItemPriceInfo('/items/vendor_only', { mode: 'ask' })).toEqual({
