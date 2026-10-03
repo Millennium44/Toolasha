@@ -115,7 +115,7 @@ function spendSteadily() {
         players: [
             {
                 character: { id: 'char1' },
-                combatDetails: { combatStats: { foodSlots: 3, drinkSlots: 3 } },
+                combatDetails: { combatStats: { foodSlots: 2, drinkSlots: 2 } },
             },
         ],
     });
@@ -290,7 +290,7 @@ describe('the MP supply section', () => {
             players: [
                 {
                     character: { id: 'char1' },
-                    combatDetails: { combatStats: { foodSlots: 3, drinkSlots: 3 } },
+                    combatDetails: { combatStats: { foodSlots: 2, drinkSlots: 2 } },
                 },
             ],
         });
@@ -342,6 +342,7 @@ describe('mpSupplyPlan', () => {
         game.prices = { '/items/star_fruit_gummy': 900, '/items/star_fruit_yogurt': 1200 };
 
         expect(mpSupplyPlan(630).best).toBeNull();
+        expect(mpSupplyPlan(400).best).toBeNull();
         expect(mpSupplyPlan(0).max.items).toHaveLength(1);
         expect(mpSupplyPlan(0).max.mpPerMinute).toBe(350);
         manaPanel.show();
@@ -350,12 +351,84 @@ describe('mpSupplyPlan', () => {
         expect(text()).not.toContain('630 MP/min');
     });
 
+    test('adds pouch slot bonuses to the base capacity reported by the live client', () => {
+        game.itemDetailMap = {
+            '/items/star_fruit_gummy': {
+                name: 'Star Fruit Gummy',
+                categoryHrid: '/item_categories/food',
+                consumableDetail: { hitpointRestore: 0, manapointRestore: 280, cooldownDuration: MINUTE_NS },
+            },
+            '/items/star_fruit_yogurt': {
+                name: 'Star Fruit Yogurt',
+                categoryHrid: '/item_categories/food',
+                consumableDetail: {
+                    hitpointRestore: 0,
+                    manapointRestore: 350,
+                    recoveryDuration: 30e9,
+                    cooldownDuration: MINUTE_NS,
+                },
+            },
+        };
+        game.prices = { '/items/star_fruit_gummy': 900, '/items/star_fruit_yogurt': 1200 };
+        game.handlers['new_battle']({
+            players: [
+                {
+                    character: { id: 'char1' },
+                    combatDetails: { combatStats: { foodSlots: 1, drinkSlots: 0 } },
+                },
+            ],
+        });
+
+        // Raw bonuses of 1 food and 0 drinks mean 2 food slots and 1 drink slot.
+        expect(mpSupplyPlan(630).best.mpPerMinute).toBe(630);
+        expect(mpSupplyPlan(0).max.items).toHaveLength(2);
+
+        game.handlers['new_battle']({
+            players: [
+                {
+                    character: { id: 'char1' },
+                    combatDetails: { combatStats: { foodSlots: 0, drinkSlots: 0 } },
+                },
+            ],
+        });
+        expect(mpSupplyPlan(630).best).toBeNull();
+        expect(mpSupplyPlan(400).best).toBeNull();
+        expect(mpSupplyPlan(0).max.items).toHaveLength(1);
+        expect(mpSupplyPlan(0).max.mpPerMinute).toBe(350);
+    });
+
+    test('treats omitted pouch bonuses as zero and clears prior pouch capacity', () => {
+        game.handlers['new_battle']({
+            players: [
+                {
+                    character: { id: 'char1' },
+                    combatDetails: { combatStats: { foodSlots: 2, drinkSlots: 2 } },
+                },
+            ],
+        });
+        expect(mpSupplyPlan(0).max.items).toHaveLength(2);
+
+        game.handlers['new_battle']({
+            players: [{ character: { id: 'char1' }, combatDetails: { combatStats: { foodSlots: 0 } } }],
+        });
+
+        expect(mpSupplyPlan(0).max.items).toHaveLength(1);
+        expect(mpSupplyPlan(0).max.mpPerMinute).toBe(350);
+
+        game.handlers['new_battle']({
+            players: [{ character: { id: 'char1' }, combatDetails: { combatStats: {} } }],
+        });
+
+        expect(mpSupplyPlan(0).max.items).toHaveLength(1);
+        expect(mpSupplyPlan(0).max.mpPerMinute).toBe(350);
+    });
+
     test('reads food haste from the character in the battle message', () => {
         game.handlers['new_battle']({
             players: [
                 {
                     character: { id: 'char1' },
-                    combatDetails: { combatStats: { foodHaste: 0.5, foodSlots: 3, drinkSlots: 3 } },
+                    combatDetails: { combatStats: { foodHaste: 0.5, foodSlots: 2, drinkSlots: 2 } },
                 },
             ],
         });
@@ -370,7 +443,7 @@ describe('gear changes after the battle message', () => {
             players: [
                 {
                     character: { id: 'char1' },
-                    combatDetails: { combatStats: { foodHaste: 0.5, foodSlots: 3, drinkSlots: 3 } },
+                    combatDetails: { combatStats: { foodHaste: 0.5, foodSlots: 2, drinkSlots: 2 } },
                 },
             ],
         });
@@ -447,7 +520,7 @@ describe('a battle entry shaped differently', () => {
                 char0: { name: 'x' },
                 char1: {
                     character: { id: 'char1' },
-                    combatDetails: { combatStats: { foodHaste: 0.5, foodSlots: 3, drinkSlots: 3 } },
+                    combatDetails: { combatStats: { foodHaste: 0.5, foodSlots: 2, drinkSlots: 2 } },
                 },
             },
         });
@@ -460,7 +533,7 @@ describe('a battle entry shaped differently', () => {
             players: [
                 {
                     name: 'Tib',
-                    combatDetails: { combatStats: { foodHaste: 0.5, foodSlots: 3, drinkSlots: 3 } },
+                    combatDetails: { combatStats: { foodHaste: 0.5, foodSlots: 2, drinkSlots: 2 } },
                 },
             ],
         });
@@ -476,7 +549,7 @@ describe('a battle entry without an id', () => {
                 { character: { name: 'Someone Else' }, combatDetails: { combatStats: { foodHaste: 0.1 } } },
                 {
                     character: { name: 'Tib' },
-                    combatDetails: { combatStats: { foodHaste: 0.5, foodSlots: 3, drinkSlots: 3 } },
+                    combatDetails: { combatStats: { foodHaste: 0.5, foodSlots: 2, drinkSlots: 2 } },
                 },
             ],
         });
@@ -489,7 +562,7 @@ describe('a character with fewer consumable slots', () => {
     test('is not offered a plan that needs more food than it can equip', () => {
         // One food slot: the yogurt (350/min) and the gummy (100/min) together would reach 400
         game.handlers['new_battle']({
-            players: [{ character: { id: 'char1' }, combatDetails: { combatStats: { foodSlots: 1, drinkSlots: 1 } } }],
+            players: [{ character: { id: 'char1' }, combatDetails: { combatStats: { foodSlots: 0, drinkSlots: 0 } } }],
         });
         expect(mpSupplyPlan(400).best).toBeNull();
         expect(mpSupplyPlan(300).best.items).toHaveLength(1);

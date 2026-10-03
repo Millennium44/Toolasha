@@ -9,6 +9,7 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 ### Mana recommendations wait for pouch capacity
 
 - Before a fight supplies the character's pouch stats, mana recommendations now fit the base capacity of one food and one drink. The panel explains this temporary estimate instead of offering a food combination that may not fit.
+- Once battle stats arrive, mana recommendations now add the base slot to each pouch bonus and refresh counts when zero bonuses are omitted. Smaller pouches no longer lose a usable food slot in the plan.
 
 ### One Alchemy History tab, and a Chinese game client recognized
 

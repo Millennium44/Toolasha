@@ -338,9 +338,13 @@ export default {
                 // combatStats is sparse (zero fields are omitted): absent means no gear regen, so the 1% floor applies
                 mpRegenPer10 = Number.isFinite(stats.mpRegenPer10) ? stats.mpRegenPer10 : 0;
                 haste = { foodHaste: stats.foodHaste || 0, drinkConcentration: stats.drinkConcentration || 0 };
-                if (Number.isFinite(stats.foodSlots) && Number.isFinite(stats.drinkSlots)) {
-                    slots = { food: stats.foodSlots, drink: stats.drinkSlots };
-                }
+                // The live client reports pouch bonuses in combatStats; the
+                // character's base one slot is added when it builds slot counts.
+                // These stats are sparse, so an omitted bonus means zero.
+                slots = {
+                    food: 1 + (Number.isFinite(stats.foodSlots) ? Math.max(0, stats.foodSlots) : 0),
+                    drink: 1 + (Number.isFinite(stats.drinkSlots) ? Math.max(0, stats.drinkSlots) : 0),
+                };
             }
         };
         onAbility = (data) => {
