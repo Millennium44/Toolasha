@@ -76,19 +76,49 @@ const DOCK_HOST_CLASS = 'toolasha-overlay-dock-host';
  * @returns {HTMLElement} The container the panel should join
  */
 function buildColumn() {
-    const column = document.createElement('div');
-    column.id = 'column';
-    column.innerHTML = `
-        <div class="TabsComponent_tabsContainer__aB1">
-            <div role="tablist">
-                <button role="tab">Equipment</button>
-                <button role="tab">Inventory</button>
-            </div>
-        </div>
-        <div class="TabsComponent_tabPanelsContainer__cD2"></div>
-    `;
-    document.body.appendChild(column);
-    return column;
+    const management = document.createElement('div');
+    management.id = 'management-root';
+    management.className = 'CharacterManagement_characterManagement__test';
+    const characterTabs = document.createElement('div');
+    characterTabs.className = 'CharacterManagement_tabsComponentContainer__test';
+    const component = document.createElement('div');
+    component.id = 'column';
+    component.className = 'TabsComponent_tabsComponent__test';
+    const strip = document.createElement('div');
+    strip.className = 'TabsComponent_tabsContainer__test';
+    const tablist = document.createElement('div');
+    tablist.setAttribute('role', 'tablist');
+    for (const label of ['装备', '背包']) {
+        const tab = document.createElement('button');
+        tab.setAttribute('role', 'tab');
+        tab.textContent = label;
+        tablist.appendChild(tab);
+    }
+    strip.appendChild(tablist);
+    const panels = document.createElement('div');
+    panels.className = 'TabsComponent_tabPanelsContainer__test';
+    component.append(strip, panels);
+    characterTabs.appendChild(component);
+    management.appendChild(characterTabs);
+    document.body.appendChild(management);
+    return component;
+}
+
+/** A matching tab strip that is not the character management strip. */
+function unrelatedTabs(label) {
+    const component = document.createElement('div');
+    component.className = 'TabsComponent_tabsComponent__decoy';
+    const strip = document.createElement('div');
+    strip.className = 'TabsComponent_tabsContainer__decoy';
+    const tablist = document.createElement('div');
+    tablist.setAttribute('role', 'tablist');
+    const tab = document.createElement('button');
+    tab.setAttribute('role', 'tab');
+    tab.textContent = label;
+    tablist.appendChild(tab);
+    strip.appendChild(tablist);
+    component.appendChild(strip);
+    return component;
 }
 
 beforeEach(() => {
@@ -102,7 +132,8 @@ beforeEach(() => {
 
 afterEach(() => {
     overlayPanel.hide();
-    document.getElementById('column')?.remove();
+    document.getElementById('management-root')?.remove();
+    document.getElementById('outside-decoy')?.remove();
 });
 
 describe('docked into the character column', () => {
@@ -113,6 +144,24 @@ describe('docked into the character column', () => {
 
         expect(overlayPanel.panel.parentElement).toBe(column);
         expect(overlayPanel.panel.dataset.docked).toBe('true');
+    });
+
+    test('the direct character tab strip is found when its labels are translated', () => {
+        const host = buildColumn();
+
+        expect(overlayPanel._findDockHost()).toBe(host);
+    });
+
+    test('English and nested decoy tab strips do not replace the character host', () => {
+        const host = buildColumn();
+        const outsideDecoy = unrelatedTabs('Inventory');
+        outsideDecoy.id = 'outside-decoy';
+        const nestedDecoy = unrelatedTabs('Inventory');
+        const panels = host.querySelector('[class*="TabsComponent_tabPanelsContainer"]');
+        panels.appendChild(nestedDecoy);
+        document.body.insertBefore(outsideDecoy, document.getElementById('management-root'));
+
+        expect(overlayPanel._findDockHost()).toBe(host);
     });
 
     test('a docked panel is a Toolasha surface, so text size and font reach it', () => {
@@ -351,7 +400,7 @@ describe('after React rebuilds the column', () => {
         overlayPanel.show();
 
         // Switching tabs throws the container away and builds another
-        document.getElementById('column').remove();
+        document.getElementById('management-root').remove();
         const rebuilt = buildColumn();
         overlayPanel._ensureDocked();
 
@@ -379,7 +428,7 @@ describe('after React rebuilds the column', () => {
         overlayPanel.settings.docked = true;
         overlayPanel.show();
 
-        document.getElementById('column').remove();
+        document.getElementById('management-root').remove();
         expect(overlayPanel.isOpen).toBe(false);
 
         overlayPanel.toggle();
@@ -394,7 +443,7 @@ describe('after React rebuilds the column', () => {
         overlayPanel.show();
         const first = overlayPanel.refreshId;
 
-        document.getElementById('column').remove();
+        document.getElementById('management-root').remove();
         overlayPanel.toggle();
 
         expect(overlayPanel.refreshId).not.toBe(first);

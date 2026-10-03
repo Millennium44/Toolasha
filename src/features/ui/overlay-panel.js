@@ -1191,22 +1191,29 @@ class OverlayPanel {
     /**
      * The container the docked panel goes into.
      *
-     * Found through the character column's tab strip — the one with an Inventory
-     * tab — because every tab strip in the game shares the same classes and only
-     * this one has that. The strip's container and the body it switches are
-     * siblings; their parent is what the panel joins.
+     * Found through the character management component's direct tab strip.
+     * Other parts of the game have nested tab strips too, so the enclosing
+     * class hierarchy distinguishes this one without depending on translated
+     * tab labels. The panel joins the tab component around that strip and body.
      *
      * @returns {HTMLElement|null}
      */
     _findDockHost() {
         for (const list of document.querySelectorAll('[role="tablist"]')) {
-            const inventory = [...list.querySelectorAll('[role="tab"]')].some(
-                (tab) => tab.textContent.trim() === 'Inventory'
-            );
-            if (!inventory) continue;
-
             const container = list.closest('[class*="TabsComponent_tabsContainer"]');
-            if (container?.parentElement) return container.parentElement;
+            const component = container?.parentElement;
+            const characterTabs = component?.parentElement;
+            const characterManagement = characterTabs?.parentElement;
+            const hasClassPrefix = (element, prefix) =>
+                [...(element?.classList || [])].some((className) => className.startsWith(prefix));
+
+            if (
+                hasClassPrefix(component, 'TabsComponent_tabsComponent') &&
+                hasClassPrefix(characterTabs, 'CharacterManagement_tabsComponentContainer') &&
+                hasClassPrefix(characterManagement, 'CharacterManagement_characterManagement')
+            ) {
+                return component;
+            }
         }
         return null;
     }

@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Overlay docking works across game languages
+
+- A docked overlay now finds the character column without relying on translated tab names. Unrelated or nested tab strips are no longer mistaken for its docking location.
+
 ### Mana target drafts survive a refresh
 
 - The Mana panel keeps an unsubmitted target after you move focus away or the panel redraws. Calculate or Enter applies it, and switching characters clears the previous character's draft.
