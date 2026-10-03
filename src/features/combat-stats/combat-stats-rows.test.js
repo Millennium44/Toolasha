@@ -14,7 +14,14 @@
 
 import { describe, test, expect, beforeEach, vi } from 'vitest';
 
-const game = vi.hoisted(() => ({ dmHandlers: {}, actions: [], profitView: null }));
+const game = vi.hoisted(() => ({
+    dmHandlers: {},
+    actions: [],
+    profitView: null,
+    forecasts: [],
+    outlook: null,
+    consumableSides: { ask: 0, bid: 0, askUnpriced: 0, bidUnpriced: 0 },
+}));
 
 vi.mock('../../core/data-manager.js', () => ({
     default: {
@@ -47,6 +54,7 @@ vi.mock('./combat-stats-calculator.js', () => ({
         income: { bid: player.income ?? 0, value: player.income ?? 0 },
         consumableCosts: { bid: 0, value: 0 },
         keyCosts: { bid: 0, value: 0 },
+        consumableBreakdown: player.consumableBreakdown || [],
     }),
     describeLuckAdjustment: () => '',
 }));
@@ -63,12 +71,15 @@ vi.mock('../../utils/bundle-bridge.js', () => ({
 vi.mock('../../utils/market-data.js', () => ({ getItemPrices: () => null }));
 vi.mock('../../utils/marketplace-tabs.js', () => ({ navigateToMarketplace: () => {} }));
 vi.mock('../../utils/consumable-forecast.js', () => ({
-    forecastAll: () => [],
-    costPerDaySides: () => ({ ask: 0, bid: 0 }),
-    partyOutlook: () => ({ you: null, party: null, partyName: null }),
+    forecastAll: () => game.forecasts,
+    costPerDaySides: () => game.consumableSides,
+    partyOutlook: () => ({ you: game.outlook, party: null, partyName: null }),
     drinkRatePerDay: () => 0,
 }));
-vi.mock('../../utils/consumable-target.js', () => ({ currentTarget: () => null, loadTarget: () => {} }));
+vi.mock('../../utils/consumable-target.js', () => ({
+    currentTarget: () => ({ seconds: 86400 }),
+    loadTarget: () => {},
+}));
 
 const rowsByKey = vi.hoisted(() => new Map());
 vi.mock('../../utils/overlay-rows.js', () => ({
@@ -98,6 +109,9 @@ beforeEach(() => {
     collector.data = null;
     game.actions = [];
     game.profitView = null;
+    game.forecasts = [];
+    game.outlook = null;
+    game.consumableSides = { ask: 0, bid: 0, askUnpriced: 0, bidUnpriced: 0 };
     // partyStats() and the consumable forecast both cache at module level for
     // CACHE_MS of real time, so whatever the previous test rendered is still
     // the answer when the next one asks. character_switching is the module's
@@ -254,5 +268,20 @@ describe('the rows summarise their own inputs', () => {
         for (const key of ['combatRevenue', 'experiencePerHour', 'deathsPerHour', 'totalProfit', 'consumables']) {
             expect(versionOf(key)).toBe(versionOf(key));
         }
+    });
+
+    test('the Consumables tile preserves the unknown part of daily market totals', () => {
+        collector.data = run({ name: 'Alice', consumableBreakdown: [{ itemHrid: '/items/blackberry_cake' }] });
+        game.forecasts = [{ itemHrid: '/items/blackberry_cake', secondsLeft: 3600 }];
+        game.outlook = { itemHrid: '/items/blackberry_cake', held: 10, secondsLeft: 3600 };
+        game.consumableSides = { ask: 2400, bid: 2160, askUnpriced: 1, bidUnpriced: 1 };
+
+        const initial = versionOf('consumables');
+        expect(renderRow('consumables')).toContain('Ask: 2.40K (1 unpriced) / Bid: 2.16K (1 unpriced)');
+
+        game.consumableSides = { ask: null, bid: null, askUnpriced: 2, bidUnpriced: 2 };
+        game.dmHandlers.character_switching();
+        expect(versionOf('consumables')).not.toBe(initial);
+        expect(renderRow('consumables')).toContain('Ask: — (2 unpriced) / Bid: — (2 unpriced)');
     });
 });

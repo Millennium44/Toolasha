@@ -50,6 +50,17 @@ import { runningAction } from '../../utils/combat-actions.js';
 /** Long enough that a busy loot map is not repriced every tick */
 const CACHE_MS = 4000;
 
+/**
+ * A missing market quote stays visible in the daily total.
+ * @param {number|null} amount - Cost at one side of the market
+ * @param {number} [unpriced] - Consumed items with no quote at this side
+ * @returns {string}
+ */
+function formatConsumableCostSide(amount, unpriced = 0) {
+    const total = amount === null ? '—' : formatLargeNumber(Math.round(amount));
+    return unpriced ? `${total} (${unpriced} unpriced)` : total;
+}
+
 let cached = null;
 let cachedAt = 0;
 
@@ -487,8 +498,10 @@ registerRow({
             limiting.itemHrid,
             limiting.held,
             runOutColor(limiting),
-            Math.round(sides.ask),
-            Math.round(sides.bid),
+            sides.ask === null ? 'unknown' : Math.round(sides.ask),
+            sides.bid === null ? 'unknown' : Math.round(sides.bid),
+            sides.askUnpriced || 0,
+            sides.bidUnpriced || 0,
             spriteUrl('items'),
         ].join('|');
     },
@@ -567,7 +580,7 @@ registerRow({
         container.appendChild(label);
 
         const cost = document.createElement('div');
-        cost.textContent = `Ask: ${formatLargeNumber(Math.round(sides.ask))} / Bid: ${formatLargeNumber(Math.round(sides.bid))}`;
+        cost.textContent = `Ask: ${formatConsumableCostSide(sides.ask, sides.askUnpriced)} / Bid: ${formatConsumableCostSide(sides.bid, sides.bidUnpriced)}`;
         Object.assign(cost.style, {
             color: ROW_COLORS.neutral,
             fontSize: '90%',

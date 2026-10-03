@@ -178,17 +178,36 @@ export function refillAll(forecasts, seconds) {
  * million a day the gap between them is worth seeing rather than averaging away.
  *
  * @param {Forecast[]} forecasts - Normalised consumables
- * @returns {{ask: number, bid: number}}
+ * @returns {{ask: number|null, bid: number|null, askUnpriced: number, bidUnpriced: number}}
  */
 export function costPerDaySides(forecasts) {
-    let ask = 0;
-    let bid = 0;
+    const totals = {
+        ask: { amount: 0, unpriced: 0 },
+        bid: { amount: 0, unpriced: 0 },
+    };
 
     for (const entry of forecasts || []) {
-        ask += entry.costPerDaySides?.ask || 0;
-        bid += entry.costPerDaySides?.bid || 0;
+        // An unused slot contributes an actual zero, not an unpriced cost.
+        // For a consumed item, keep the missing market side visible instead of
+        // turning an incomplete total into a plausible-looking free one.
+        if (!(entry?.perDay > 0)) continue;
+
+        for (const side of ['ask', 'bid']) {
+            const amount = entry.costPerDaySides?.[side];
+            if (typeof amount === 'number' && Number.isFinite(amount) && amount >= 0) {
+                totals[side].amount += amount;
+            } else {
+                totals[side].unpriced += 1;
+            }
+        }
     }
-    return { ask, bid };
+
+    return {
+        ask: totals.ask.unpriced && totals.ask.amount === 0 ? null : totals.ask.amount,
+        bid: totals.bid.unpriced && totals.bid.amount === 0 ? null : totals.bid.amount,
+        askUnpriced: totals.ask.unpriced,
+        bidUnpriced: totals.bid.unpriced,
+    };
 }
 
 /**

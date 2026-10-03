@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Consumable totals identify missing market quotes
+
+- Daily consumable costs now show when an ask or bid quote is missing. The Consumables tile and panel show a dash for an entirely unpriced side, and label partial totals with the number of unpriced items instead of making missing quotes look free.
+
 ### Guild Trial pace retains current progress
 
 - Guild Trial pace and payout forecasts now include work already completed in the current tier when time runs out before its clear. A partly completed tier no longer appears to have only the progress forecast from now onward.
