@@ -11,6 +11,7 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 - Repeating the same enhancement setup as a new queue action now starts a separate tracker session, so the two runs keep their attempts and experience separate. The tracker also hides its cost versus expected comparison when a consumed material or protection has no known price, avoiding an incomplete cost estimate.
 - Session tracking now keeps the queue action identity through reload recovery and remembers any unpriced input even if later inputs gain a price. This keeps repeated runs distinct and prevents partial cost comparisons after prices change mid-run.
 - Reload recovery now checks a completed run's action ID and target before extending it. A new queue action below the prior target starts its own session, while a deliberate higher-target continuation can still extend the old one.
+- Mid-run tracker pickup now uses the action ID on its first recorded attempt. A new same-settings queue action starts a separate session, while a refresh of the current action keeps the session open.
 
 ### Shared agent rules brought up to date
 

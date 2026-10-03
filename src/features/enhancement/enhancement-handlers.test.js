@@ -268,6 +268,36 @@ describe('the run ending in the queue', () => {
         expect(state.calls).toContainEqual(['finalize']);
         expect(state.calls).toContainEqual(['pendingStart']);
     });
+
+    test('a mid-run pickup recognizes a same-settings a2 replacing its first observed a1', async () => {
+        const first = { ...attempt(5, 78).endCharacterAction, id: 'a1', isDone: false, ordinal: 0 };
+        await state.handlers.action_completed({ endCharacterAction: first });
+        expect(state.current.lastAttempt.actionId).toBe('a1');
+        state.calls = [];
+
+        const second = { ...first, id: 'a2', currentCount: 0, ordinal: 1 };
+        state.actions = [second];
+        await state.handlers.actions_updated({ endCharacterActions: [{ ...first, isDone: true }, second] });
+
+        expect(state.calls).toContainEqual(['finalize']);
+        expect(state.calls).toContainEqual(['pendingStart']);
+        await state.handlers.action_completed({
+            endCharacterAction: { ...attempt(6, 1).endCharacterAction, id: 'a2', ordinal: 1 },
+        });
+        expect(state.calls.map(([kind]) => kind)).toEqual(['pendingStart', 'finalize', 'start', 'success']);
+    });
+
+    test('a queue refresh for the first observed action does not force a new session', async () => {
+        const first = { ...attempt(5, 78).endCharacterAction, id: 'a1', isDone: false, ordinal: 0 };
+        await state.handlers.action_completed({ endCharacterAction: first });
+        state.calls = [];
+
+        state.actions = [first];
+        await state.handlers.actions_updated({ endCharacterActions: [first] });
+
+        expect(state.calls).not.toContainEqual(['pendingStart']);
+        expect(state.calls).not.toContainEqual(['finalize']);
+    });
 });
 
 describe('two attempts landing before the first has finished writing', () => {
