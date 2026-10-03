@@ -11,6 +11,17 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 - Transmute, Coinify and Decompose history now share one Alchemy History tab with a switcher that remembers your last pick; every viewer feature works as before.
 - Actions and skills are recognized by their icon and the game's own data before their English name, so action-panel profit and speed, quick inputs, task icons, remaining XP and the XP tracker work with the game set to Chinese.
 
+### XP carries across level boundaries
+
+- Level Progress and planner estimates now keep experience earned beyond each level threshold, so high-XP actions no longer add unnecessary queue completions. Action-count previews also retain that surplus instead of stopping at the first level reached.
+- Time estimates now carry efficiency repeats across level boundaries, so one action cycle that reaches multiple levels is counted once.
+- Fractional efficiency no longer adds a phantom cycle when floating-point rounding leaves an exact cycle count just above an integer.
+- Time estimates also account for rounding carried from earlier levels, preventing an extra cycle when a queue continues past the level cap.
+
+### Partial values for self-dropping gifts
+
+- Chest values now keep their partial-value warning when a gift can drop itself and that self-drop has no known price. Background calculations no longer present an incomplete value as fully priced.
+
 ### Completed tasks still occupy slots
 
 - Task slot totals, forecasts, and alerts now include completed tasks until their rewards are claimed. A full board no longer appears to have spare slots or delays its warning by an extra task cooldown.
