@@ -372,7 +372,10 @@ class IronCowFarmPanel {
         const window = offlineWindow();
         if (window?.hours > 0) this.batchHours = window.hours;
         this.batchUnit = 'h';
-        const snapshot = await loadSnapshot();
+        let snapshot = await loadSnapshot();
+        // A snapshot costed when a loose cowbell price was still taken: its bell price and every
+        // bell figure rest on a price nobody can buy at, so it waits for a fresh costing instead
+        if (snapshot?.bellPricing?.source === 'loose') snapshot = null;
         this.loop = snapshot;
         this.pricedAt = snapshot?.computedAt || null;
         this._render();
@@ -968,7 +971,7 @@ class IronCowFarmPanel {
      */
     _affordableLines(state) {
         if (!state) return [];
-        const pricing = cowbellPricing();
+        const pricing = cowbellPricing({ buyNow: true });
         if (!pricing.price) return [];
         const label = 'Bells you can buy now';
         if (!pricing.quoted) {

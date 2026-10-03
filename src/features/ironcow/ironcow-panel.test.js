@@ -513,6 +513,18 @@ describe('lifecycle', () => {
         expect(ironCowFarmPanel.pricedAt).toBeNull();
     });
 
+    test('a snapshot costed at a loose cowbell price is set aside until the loop is costed again', async () => {
+        store.snapshot = costedLoop({
+            bellPricing: { price: 900_000, source: 'loose', loose: 900_000, bag: 950_000, pricingMode: 'ask' },
+        });
+        await ironCowFarmPanel.load();
+        expect(ironCowFarmPanel.loop).toBeNull();
+
+        store.snapshot = costedLoop();
+        await ironCowFarmPanel.load();
+        expect(ironCowFarmPanel.loop).not.toBeNull();
+    });
+
     test("a character switch mid-costing does not apply the departing character's loop to the arriving one", async () => {
         // Character B has already loaded and has no snapshot of their own.
         characterId.current = 'charB';

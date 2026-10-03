@@ -85,8 +85,8 @@ vi.mock('../../core/data-manager.js', () => ({
 
 vi.mock('../../utils/market-data.js', () => ({
     getItemPrice: (hrid) => market.prices[hrid] ?? 0,
-    getItemPriceInfo: (hrid) => ({
-        price: market.prices[hrid] ?? null,
+    getItemPriceInfo: (hrid, options = {}) => ({
+        price: (options.mode === 'ask' ? market.asks?.[hrid] : undefined) ?? market.prices[hrid] ?? null,
         source: market.sources?.[hrid] ?? (market.prices[hrid] ? 'book' : null),
         estimated: market.sources?.[hrid] === 'value',
     }),
@@ -374,6 +374,15 @@ describe('bells', () => {
         market.sources = { [COWBELL_BAG]: 'value' };
         expect(cowbellPricing()).toMatchObject({ price: 950_000, quoted: false });
         market.sources = undefined;
+    });
+
+    test('a buy-now quote takes the ask, whatever the profit pricing mode', () => {
+        market.pricingMode = 'bid';
+        market.prices = { [COWBELL_BAG]: 9_000_000 };
+        market.asks = { [COWBELL_BAG]: 9_800_000 };
+        expect(cowbellPricing()).toMatchObject({ price: 900_000, pricingMode: 'bid' });
+        expect(cowbellPricing({ buyNow: true })).toMatchObject({ price: 980_000, pricingMode: 'ask' });
+        market.asks = undefined;
     });
 
     test('reports the pricing mode it quoted under', () => {
