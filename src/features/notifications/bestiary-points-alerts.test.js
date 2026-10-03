@@ -23,6 +23,7 @@ const game = vi.hoisted(() => ({
     requests: 0,
     fiberTouched: 0,
     activeSocket: 'socket-a',
+    writeFails: false,
 }));
 
 vi.mock('../../core/config.js', () => ({
@@ -66,6 +67,7 @@ vi.mock('../../utils/character-key.js', () => ({
         return value;
     },
     writeScoped: async (base, value) => {
+        if (game.writeFails) return false;
         game.stored.set(`${base}_${game.characterId}`, value);
         return true;
     },
@@ -96,7 +98,7 @@ globalThis.document = {
 };
 
 const { default: alerts, MASTER_SETTING, BASELINE_KEY, FIRED_KEY } = await import('./bestiary-points-alerts.js');
-const { setBestiaryTarget, TARGET_KEY } = await import('../../utils/bestiary-target.js');
+const { setBestiaryTarget, TARGET_KEY, TARGET_CHANGED_EVENT } = await import('../../utils/bestiary-target.js');
 
 /** Rows as `monsters_updated` carries them */
 const rows = (counts) =>
@@ -158,6 +160,7 @@ describe('bestiary points alerts', () => {
         game.readGate = null;
         game.requests = 0;
         game.fiberTouched = 0;
+        game.writeFails = false;
         fighting(0);
         alerts.disable();
     });
@@ -425,6 +428,18 @@ describe('bestiary points alerts', () => {
         expect(game.stored.has(`${TARGET_KEY}_char-b`)).toBe(false);
         expect(game.settings[MASTER_SETTING]).toBe(true);
         expect(await setBestiaryTarget(0)).toBe(false);
+    });
+
+    test('a failed target write leaves the alert setting alone and sends no change event', async () => {
+        game.settings[MASTER_SETTING] = false;
+        game.writeFails = true;
+        const changed = vi.fn();
+        game.dm[TARGET_CHANGED_EVENT] = changed;
+
+        expect(await setBestiaryTarget(1200)).toBe(false);
+
+        expect(game.settings[MASTER_SETTING]).toBe(false);
+        expect(changed).not.toHaveBeenCalled();
     });
 
     test('a target set from the planner re-checks a running alert', async () => {

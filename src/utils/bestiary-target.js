@@ -61,9 +61,11 @@ export async function setBestiaryTarget(points) {
     if (!who) return false;
     const ok = await writeScoped(TARGET_KEY, target, 'settings', true);
     if (dataManager.getCurrentCharacterId?.() !== who) return false;
+    // Nothing stored: turning the alert on now would have it fire at a stale old or default target
+    if (ok === false) return false;
     config.setSetting(ALERT_SETTING, true);
     dataManager.emit?.(TARGET_CHANGED_EVENT, { target });
-    return ok !== false;
+    return true;
 }
 
 /**
