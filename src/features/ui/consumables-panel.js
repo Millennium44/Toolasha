@@ -544,7 +544,7 @@ class ConsumablesPanel {
                 // visible — a run stops on an empty key pile exactly as it does
                 // on an empty coffee slot, so it belongs in the same list
                 if (player.isCurrentPlayer) {
-                    const key = this._keyForecast(stats, data);
+                    const key = this._keyForecast(stats, data, player);
                     if (key) forecasts.push(key);
                 }
 
@@ -570,9 +570,10 @@ class ConsumablesPanel {
      *
      * @param {Object} stats - From `calculatePlayerStats`, for its `keyBreakdown`
      * @param {Object} data - The collector's snapshot, for the action and duration
+     * @param {Object} player - The current player's raw loot map, including unpriced chests
      * @returns {Object|null} A forecast like any other, or null when not a dungeon
      */
-    _keyForecast(stats, data) {
+    _keyForecast(stats, data, player) {
         try {
             const actionHrid = data?.actionHrid;
             if (!actionHrid) return null;
@@ -586,6 +587,7 @@ class ConsumablesPanel {
                 itemName: dataManager.getItemDetails?.(keyHrid)?.name,
                 held: heldInInventory(dataManager.getInventory?.(), keyHrid),
                 keyBreakdown: stats?.keyBreakdown,
+                lootMap: player?.loot,
                 durationSeconds: data.durationSeconds || 0,
                 fallbackPrice: prices?.ask,
             });

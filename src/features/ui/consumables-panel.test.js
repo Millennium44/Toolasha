@@ -296,6 +296,24 @@ describe('the dungeon entry-key row', () => {
         );
         expect(keyRow?.textContent).toContain('?');
     });
+
+    test('unpriced key rows still use regular chests from the raw loot map', async () => {
+        denSession();
+        game.statsByName.Me.keyBreakdown = [];
+        game.statsByName.Me.consumableBreakdown = [];
+        game.inventory = game.inventory.filter((entry) => entry.itemHrid === KEY);
+        game.latest.players[0].loot = {
+            regular: { itemHrid: '/items/chimerical_chest', count: 4 },
+            refinement: { itemHrid: '/items/chimerical_refinement_chest', count: 9 },
+        };
+        consumablesPanel.show();
+        await settled();
+        consumablesPanel._render();
+
+        expect(text()).toContain('96.0/day');
+        expect(text()).not.toContain('rate unknown');
+        expect(text()).toContain('unpriced');
+    });
 });
 
 describe('the Buy-all widget', () => {
