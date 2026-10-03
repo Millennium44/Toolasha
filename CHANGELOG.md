@@ -15,6 +15,9 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 ### Export Full Party in the Shykai format
 
 - The profile export's 👥 Export Full Party now works in the Shykai format too, copying the whole party with your saved loadout for Shykai's "All players import" box.
+### Labyrinth clear chance holds steady
+
+- The live "Clear ~N%" on a labyrinth fight no longer flips between two estimates while the Labyrinth tab is open: once the fight replay has landed it keeps the header, and its tooltip shows how old it is.
 
 ### Timers clean up after themselves everywhere
 
