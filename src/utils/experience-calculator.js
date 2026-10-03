@@ -126,7 +126,13 @@ function chargeActionCycles(actionCount, efficiencyMultiplier, actionTime, carri
         return { timeElapsed: 0, carriedCapacity: carriedCapacity - carriedActions };
     }
 
-    const cycles = Math.ceil(remainingActions / efficiencyMultiplier);
+    const quotient = remainingActions / efficiencyMultiplier;
+    const nearestInteger = Math.round(quotient);
+    // Subtracting the carried capacity can leave an exact whole-cycle result a
+    // few floating-point steps above its integer. Only normalize that residue;
+    // a meaningful fraction beyond the integer still needs another full cycle.
+    const tolerance = 4 * Number.EPSILON * Math.max(1, Math.abs(quotient));
+    const cycles = Math.abs(quotient - nearestInteger) <= tolerance ? nearestInteger : Math.ceil(quotient);
     return {
         timeElapsed: cycles * actionTime,
         carriedCapacity: Math.max(0, cycles * efficiencyMultiplier - remainingActions),

@@ -112,6 +112,27 @@ describe('calculateLevelFromActions', () => {
         expect(reverse.timeElapsed).toBe(60);
     });
 
+    test('a below-requirement recipe preview does not turn floating residue into another cycle', () => {
+        // Captured Advanced Coffee Crate: 500 XP, 34 seconds, level-50 requirement.
+        // These are the native level-29 through level-32 thresholds. The preview's
+        // level deficit keeps its community efficiency at 20% over this span.
+        const gameTable = [];
+        Object.assign(gameTable, { 29: 10604, 30: 11814, 31: 13151, 32: 14629 });
+        const forward = calculateMultiLevelProgress(29, 10604, 31, 20, 34, 500, gameTable, 21);
+        const reverse = calculateLevelFromActions(29, 10604, 6, 20, 34, 500, gameTable, 21);
+
+        expect(forward).toEqual({ actionsNeeded: 6, timeNeeded: 170 });
+        expect(reverse.finalLevel).toBe(31);
+        expect(reverse.finalXP).toBe(13604);
+        expect(reverse.timeElapsed).toBe(170);
+    });
+
+    test('a cycle quotient genuinely above an integer still charges another cycle', () => {
+        const gameTable = [0, 0, 33, 76];
+        const result = calculateLevelFromActions(1, 0, 2, 99.99999, 60, 14, gameTable);
+        expect(result.timeElapsed).toBe(120);
+    });
+
     test('Pincer Gloves XP modifiers do not add a fictitious completion across real levels', () => {
         // Captured game data: Pincer Gloves grants 1,600 base XP and requires level 25.
         // The test-client XP tooltip applies the live 1.295 XP multiplier (2,072 per action).
