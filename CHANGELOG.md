@@ -14,6 +14,12 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 - After a counterless combat update, the next cumulative counter now establishes a fresh baseline. Old hits are no longer replayed as new hits when counter data returns.
 - Replay attribution comparisons now also discard their damage-counter baseline when an update omits the counter, so a lower restored value does not hide real health loss.
 
+### Iron Bell: bells you can afford
+
+- Iron Bell Farming shows how many cowbells your coins buy now while keeping enough back for the queued loop at its lowest point (decomposing pays fees before coinify earns), and what it keeps.
+- The queue helper reports the hours and bells its counts really cover once your stock has shortened the batch.
+- A cowbell is priced as a tenth of a bag of ten, the only way the market sells them, rather than at a loose price nobody can buy at.
+
 ### Shared agent rules brought up to date
 
 - Nothing a player sees changes. The workflow rules every coding agent reads now include the pull-request, review and briefing practices adopted since late September, and the newer code rules (spend buttons, non-English game clients, settings defaults).

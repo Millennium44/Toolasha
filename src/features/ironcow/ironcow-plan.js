@@ -125,7 +125,12 @@ export function readCharacterState() {
         rooms[room.hrid] = dataManager.getHouseRoomLevel?.(room.hrid) || 0;
     }
 
-    const coinEntry = inventory.find((item) => item?.itemHrid === '/items/coin');
+    // Coin rows exist in more than one location; only the bag's coins can be spent
+    const coinEntry = inventory.find(
+        (item) =>
+            item?.itemHrid === '/items/coin' &&
+            (!item.itemLocationHrid || item.itemLocationHrid === '/item_locations/inventory')
+    );
     const loopItems = resolveLoopItems();
 
     // How much of the loop's own two items are already on hand and not already
