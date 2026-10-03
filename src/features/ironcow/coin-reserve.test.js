@@ -215,6 +215,24 @@ describe('walking the queue for its coin flow', () => {
         expect(walkQueueCoins(engine)).toBeNull();
     });
 
+    test('a free coinify behind a counted fight is walked through: loot cannot raise what it costs', () => {
+        game.actionDetails['/actions/combat/fly'] = {
+            hrid: '/actions/combat/fly',
+            name: 'Fly',
+            type: '/action_types/combat',
+        };
+        game.inventory = [stack(COIN, 1_000_000), stack(ESSENCE, 2000)];
+        game.currentActions = [
+            queued(1, '/actions/combat/fly', { maxCount: 50 }),
+            queued(2, COINIFY, { item: ESSENCE, maxCount: 100 }),
+        ];
+
+        const walked = walkQueueCoins(engine);
+
+        expect(walked).not.toBeNull();
+        expect(coinReserve(walked.stages).reserve).toBe(0);
+    });
+
     test('a counted fight ahead of a row that pays no gold is walked through, not taken as the end', () => {
         game.actionDetails['/actions/combat/fly'] = {
             hrid: '/actions/combat/fly',

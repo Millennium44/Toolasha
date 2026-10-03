@@ -15,6 +15,7 @@
  */
 
 import dataManager from '../../core/data-manager.js';
+import { getAlchemyCoinCost, getAlchemyTypeFromActionHrid } from '../../utils/alchemy-fees.js';
 import { compareActionQueueOrder } from '../../utils/combat-actions.js';
 
 const COIN = '/items/coin';
@@ -32,8 +33,20 @@ export const COWBELLS_PER_BAG = 10;
  */
 const LEDGER_COINS = 1e15;
 
-/** Action types that pay gold per action: alchemy fees and enhancing costs */
-const PAYING_ACTIONS = ['/actions/alchemy/', '/actions/enhancing/'];
+/**
+ * Whether a queued action can pay gold: enhancing, and the alchemy types the game charges a fee for
+ * (coinify is free). Decided by type, before the walk reads what the row spends.
+ * @param {string} actionHrid - Full action hrid
+ * @returns {boolean} True when the action can take coins
+ */
+function canPayGold(actionHrid) {
+    const hrid = String(actionHrid);
+    if (hrid.startsWith('/actions/enhancing/')) return true;
+    if (!hrid.startsWith('/actions/alchemy/')) return false;
+    const type = getAlchemyTypeFromActionHrid(hrid);
+    // An alchemy type this cannot name is treated as paying: no reserve beats a low one
+    return type === null || getAlchemyCoinCost({}, type) > 0;
+}
 
 /**
  * The item a queued action names in its primary slot.
@@ -109,7 +122,7 @@ export function walkQueueCoins(engine, actions, inventory) {
         // A gold-paying row behind a fight, counted or not, could run on loot the walk never credited
         // (a counted one is capped by the materials held now, an uncounted one by them entirely): no
         // reserve, rather than one short of what the queue will spend
-        if (afterFight && PAYING_ACTIONS.some((prefix) => String(action.actionHrid).startsWith(prefix))) {
+        if (afterFight && canPayGold(action.actionHrid)) {
             return null;
         }
 
