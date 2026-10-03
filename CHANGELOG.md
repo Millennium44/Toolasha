@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Overlay Undo restores the active layout
+
+- Undoing an overlay layout switch now restores its previous name and Update action along with the tiles. A Dashboard opened before the character column is available also docks automatically when the column appears.
+
 ### Overlay arrangement works around unavailable tiles
 
 - Moving overlay tiles now follows the rows shown in the picker or on the dashboard, even when a saved feature is unavailable. Newly loaded tiles also stay in the layout when reordered.

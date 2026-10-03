@@ -13,6 +13,8 @@
 
 import { describe, test, expect, beforeEach, afterEach, vi } from 'vitest';
 
+const geometry = vi.hoisted(() => ({ deferNextRestore: false, pending: [] }));
+
 vi.mock('../../core/config.js', () => ({
     default: { getSetting: () => true, Z_HUD: 50, Z_FLOATING_PANEL: 1100, Z_POPUP: 9000 },
 }));
@@ -35,7 +37,13 @@ vi.mock('../../utils/panel-geometry.js', () => ({
     saveCollapsed: async () => {},
     wasCollapsed: async () => false,
     savedSize: async () => null,
-    restoreGeometry: async () => {},
+    restoreGeometry: async (panel) => {
+        if (!geometry.deferNextRestore) return;
+        geometry.deferNextRestore = false;
+        await new Promise((resolve) => geometry.pending.push(resolve));
+        panel.style.position = 'fixed';
+        panel.style.top = '777px';
+    },
     saveGeometry: async () => {},
     clearGeometry: async () => {},
     allGeometry: async () => ({}),
@@ -84,6 +92,8 @@ function buildColumn() {
 }
 
 beforeEach(() => {
+    geometry.deferNextRestore = false;
+    geometry.pending = [];
     overlayPanel.settings.docked = false;
     overlayPanel.settings.dockHeightPx = null;
     overlayPanel.settings.locked = true;
@@ -285,6 +295,52 @@ describe('docked into the character column', () => {
 
         expect(overlayPanel.panel.parentElement).toBe(document.body);
         expect(overlayPanel.panel.dataset.docked).toBeUndefined();
+        expect(
+            overlayPanel.panel.querySelector('button[title="Cancel docking when the character tabs appear"]')
+        ).not.toBeNull();
+    });
+
+    test('a floating fallback can cancel its pending dock request', () => {
+        overlayPanel.settings.docked = true;
+        overlayPanel.show();
+
+        overlayPanel.panel.querySelector('button[title="Cancel docking when the character tabs appear"]').click();
+        const column = buildColumn();
+        overlayPanel._ensureDocked();
+
+        expect(overlayPanel.settings.docked).toBe(false);
+        expect(overlayPanel.panel.parentElement).toBe(document.body);
+        expect(column.querySelector('#toolasha-overlay-panel')).toBeNull();
+    });
+
+    test('a requested dock moves into a column that appears later without a stale geometry restore', async () => {
+        geometry.deferNextRestore = true;
+        overlayPanel.settings.docked = true;
+        overlayPanel.show();
+        const fallbackPanel = overlayPanel.panel;
+        const fallbackRefresh = overlayPanel.refreshId;
+        overlayPanel.openPicker();
+
+        expect(fallbackPanel.parentElement).toBe(document.body);
+        expect(fallbackPanel.dataset.docked).toBeUndefined();
+
+        const column = buildColumn();
+        overlayPanel._ensureDocked();
+        const dockedPanel = overlayPanel.panel;
+
+        expect(dockedPanel).not.toBe(fallbackPanel);
+        expect(dockedPanel.parentElement).toBe(column);
+        expect(dockedPanel.dataset.docked).toBe('true');
+        expect(dockedPanel.style.position).toBe('relative');
+        expect(overlayPanel.isPickerOpen).toBe(true);
+        expect(overlayPanel.refreshId).not.toBe(fallbackRefresh);
+
+        geometry.pending[0]();
+        await Promise.resolve();
+        await Promise.resolve();
+
+        expect(dockedPanel.style.position).toBe('relative');
+        expect(dockedPanel.style.top).toBe('');
     });
 });
 

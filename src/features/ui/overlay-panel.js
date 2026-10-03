@@ -788,7 +788,7 @@ class OverlayPanel {
             overflow: 'hidden',
         });
 
-        this.panel.appendChild(this._createHeader(Boolean(host)));
+        this.panel.appendChild(this._createHeader(Boolean(host), this.settings.docked === true && !host));
 
         // The scroll container, so the canvas below can be as large as the tiles
         // need without the panel growing to match
@@ -1307,9 +1307,10 @@ class OverlayPanel {
 
     /**
      * @param {boolean} docked - Whether this header belongs to a docked panel
+     * @param {boolean} pendingDock - Whether the floating panel is waiting for its dock host
      * @returns {HTMLElement}
      */
-    _createHeader(docked = false) {
+    _createHeader(docked = false, pendingDock = false) {
         const header = document.createElement('div');
         Object.assign(header.style, {
             display: 'flex',
@@ -1352,10 +1353,12 @@ class OverlayPanel {
             else this.openPicker();
         });
         const dockBtn = this._iconButton(
-            docked ? '⇱' : '⇲',
+            docked ? '⇱' : pendingDock ? '⌛' : '⇲',
             docked
                 ? 'Float over the game, where it can be dragged anywhere'
-                : 'Dock below the character tabs, giving the overlay its own space instead of covering the game',
+                : pendingDock
+                  ? 'Cancel docking when the character tabs appear'
+                  : 'Dock below the character tabs, giving the overlay its own space instead of covering the game',
             () => this.toggleDock()
         );
         const closeBtn = this._iconButton('✕', 'Close', () => this.hide());
@@ -2131,9 +2134,10 @@ class OverlayPanel {
             // find auto-switching still unpaused and switch out from under the
             // choice being made
             if (byHand) this.switchState = pauseForManualChoice(this.switchState, currentActivity());
+            const appliedLayoutBefore = this.appliedLayout;
             this._setAppliedLayout(key);
 
-            await this._applyLayout(read, `switch to ${key}`);
+            await this._applyLayout(read, `switch to ${key}`, { appliedLayoutBefore });
             return true;
         } catch (error) {
             console.error('[OverlayPanel] Switching to the saved layout failed:', error);
@@ -2464,8 +2468,9 @@ class OverlayPanel {
      * which restores as a no-op.
      *
      * @param {string} what - What is about to happen, for the button's label
+     * @param {string|null} [appliedLayout] - Active layout name before the change
      */
-    _snapshot(what) {
+    _snapshot(what, appliedLayout = this.appliedLayout) {
         this.undoState = {
             what,
             // A span only means anything against the grid it was written for,
@@ -2480,6 +2485,7 @@ class OverlayPanel {
             visible: { ...this.settings.visible },
             order: [...(this.settings.order || [])],
             curatedDefaults: this.settings.curatedDefaults,
+            appliedLayout,
         };
     }
 
@@ -2487,7 +2493,8 @@ class OverlayPanel {
     _undo() {
         if (!this.undoState) return;
 
-        const { columns, columnsPinned, span, zoom, textScale, visible, order, curatedDefaults } = this.undoState;
+        const { columns, columnsPinned, span, zoom, textScale, visible, order, curatedDefaults, appliedLayout } =
+            this.undoState;
         this.settings = {
             ...this.settings,
             columns,
@@ -2499,6 +2506,7 @@ class OverlayPanel {
             order,
             curatedDefaults,
         };
+        this._setAppliedLayout(appliedLayout);
         this.undoState = null;
         this._save();
         this._applyColumns();
@@ -2676,10 +2684,12 @@ class OverlayPanel {
      *
      * @param {Object} read - What `fromOPanelConfig` returned
      * @param {string} what - What to call this on the Undo button
+     * @param {Object} [options]
+     * @param {string|null} [options.appliedLayoutBefore] - Active name before a named switch
      * @returns {Promise<void>}
      */
-    async _applyLayout(read, what) {
-        this._snapshot(what);
+    async _applyLayout(read, what, { appliedLayoutBefore = this.appliedLayout } = {}) {
+        this._snapshot(what, appliedLayoutBefore);
 
         // A layout arrives either already in this overlay's own terms — an
         // order and a set of spans — or as pixels, from OPanel or from a file
@@ -3616,14 +3626,25 @@ class OverlayPanel {
      * combat tick — costs more than the check it would be avoiding.
      */
     _ensureDocked() {
-        if (!this.panel || this.panel.dataset.docked !== 'true') return;
+        if (!this.panel || this.settings.docked !== true) return;
 
-        if (this.panel.isConnected && this.dockHost?.isConnected) {
+        if (this.panel.dataset.docked === 'true' && this.panel.isConnected && this.dockHost?.isConnected) {
             this.dockHost.classList.add(DOCK_HOST_CLASS);
             return;
         }
         const host = this._findDockHost();
         if (!host) return;
+
+        // A requested dock can start floating when the inventory column has
+        // not mounted yet. Rebuild it in docked form when that column appears;
+        // this also detaches floating geometry callbacks bound to the old node.
+        if (this.panel.dataset.docked !== 'true') {
+            const wasPicking = this.isPickerOpen;
+            this._removePanel();
+            this._createPanel();
+            if (wasPicking) this.openPicker();
+            return;
+        }
 
         host.classList.add(DOCK_HOST_CLASS);
         host.appendChild(this.panel);
