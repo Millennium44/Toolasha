@@ -1,10 +1,8 @@
 /**
  * Tests for the hardcoded Labyrinth scroll buff table.
  *
- * The game JSON carries no consumableDetail for scroll items, so these three maps are transcribed
- * from the item descriptions by hand. There is nothing to derive and nothing to compute — the only
- * failure mode is the three drifting apart, or a label quoting a percentage the value does not
- * back. That is what is asserted here.
+ * Numeric bonuses come from the game's personalBuffTypeDetailMap. These checks keep the
+ * value, item and label maps consistent and compare Gourmet against its captured game definition.
  */
 
 import { describe, test, expect } from 'vitest';
@@ -36,6 +34,27 @@ describe('values', () => {
             expect(value, buffType).toBeGreaterThan(0);
             expect(value, buffType).toBeLessThanOrEqual(1);
         }
+    });
+
+    test('Gourmet matches the game personal buff definition', () => {
+        const gourmet = {
+            hrid: '/personal_buff_types/gourmet',
+            name: 'Gourmet',
+            usableInActionTypeMap: { '/action_types/brewing': true, '/action_types/cooking': true },
+            buff: {
+                uniqueHrid: '/buff_uniques/personal_gourmet',
+                typeHrid: '/buff_types/gourmet',
+                ratioBoost: 0,
+                ratioBoostLevelBonus: 0,
+                flatBoost: 0.1,
+                flatBoostLevelBonus: 0,
+                startTime: '0001-01-01T00:00:00Z',
+                duration: 1800000000000,
+            },
+        };
+
+        expect(SCROLL_BUFF_VALUES[gourmet.buff.typeHrid]).toBe(gourmet.buff.flatBoost);
+        expect(SCROLL_BUFF_LABELS[gourmet.buff.typeHrid]).toBe('Scroll of Gourmet (+10%)');
     });
 });
 

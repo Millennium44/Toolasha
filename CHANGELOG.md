@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Gourmet scroll estimates match the game
+
+- Gourmet scroll simulation now adds the game's 10% bonus, and its selector shows +10%. Cooking and Brewing estimates no longer assume an extra six percentage points of Gourmet.
+
 ### Exchange advice follows enhancement switches
 
 - Switching between enhancement levels of the same item now refreshes its Guild Credit exchange advice, so the comparison uses the newly selected level's value.
