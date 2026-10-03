@@ -1,7 +1,8 @@
 /**
- * The three alchemy history windows fit a phone-width screen.
+ * The Alchemy History window fits a phone-width screen, whichever type's pane
+ * is in it.
  *
- * Each was `min-width: 500px` under `max-width: 95vw`; a min-width beats a
+ * Each of the three windows it replaced was `min-width: 500px` under `max-width: 95vw`; a min-width beats a
  * max-width, so on a ~390px phone the dialog was 540px wide with its padding
  * and the overlay's `align-items: center` hung it off both edges (left edge
  * -75px), where nothing can scroll to the clipped part. happy-dom does no
@@ -58,6 +59,7 @@ vi.mock('../../core/data-manager.js', () => ({
 const { transmuteHistoryViewer } = await import('./transmute-history-viewer.js');
 const { decomposeHistoryViewer } = await import('./decompose-history-viewer.js');
 const { coinifyHistoryViewer } = await import('./coinify-history-viewer.js');
+const { alchemyHistoryViewer } = await import('./alchemy-history-viewer.js');
 
 describe.each([
     ['transmute', transmuteHistoryViewer],
@@ -66,11 +68,15 @@ describe.each([
 ])('%s history window on a phone-width screen', (kind, viewer) => {
     test('has no fixed min-width wider than a phone; both bounds leave room for padding', () => {
         viewer.createModal();
-        const content = viewer.modal.querySelector(`.mwi-${kind}-history-content`);
+        const content = viewer.modal.closest('.mwi-alchemy-history-content');
+        expect(content).not.toBeNull();
+        expect(alchemyHistoryViewer.modal.contains(viewer.modal)).toBe(true);
+        expect(viewer.modal.closest(`.mwi-${kind}-history-pane`)).toBe(viewer.modal);
         // 500px stays the floor on a desktop, but only while the screen has room for it.
         expect(content.style.minWidth).toBe('min(500px, calc(100% - 56px))');
         expect(content.style.maxWidth).toBe('min(95vw, calc(100% - 56px))');
         viewer.modal.remove();
         viewer.modal = null;
+        alchemyHistoryViewer.unregister(kind);
     });
 });

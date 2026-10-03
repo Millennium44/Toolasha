@@ -225,6 +225,7 @@ export const OWNED_KEY_PREFIXES = [
 
     // Alchemy, enhancement, networth, goals, briefing, notices
     'alchemyHistory_includePreFix_',
+    'alchemyHistory_lastType',
     'alchemyItemPins',
     'alchemyItemSortOrder',
     'alchemyProtectedCategories_',
