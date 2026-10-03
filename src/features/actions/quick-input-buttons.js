@@ -104,6 +104,52 @@ function computeProgressiveQueueTime(queueCount, levelContext, baseEfficiency, a
 /**
  * QuickInputButtons class manages quick input button injection
  */
+/**
+ * A collapsible section's header text, without its arrow: what identifies it across a rebuild.
+ * @param {HTMLElement} section - A `.mwi-collapsible-section`
+ * @returns {string} The title
+ */
+function sectionTitle(section) {
+    const header = section.querySelector(':scope > .mwi-section-header');
+    return (header?.textContent || '').replace(/^[▶▼]\s*/, '').trim();
+}
+
+/**
+ * Whether a collapsible section is expanded.
+ * @param {HTMLElement} section - A `.mwi-collapsible-section`
+ * @returns {boolean} True when its content shows
+ */
+function isSectionOpen(section) {
+    return section.querySelector(':scope > .mwi-section-content')?.style.display === 'block';
+}
+
+/**
+ * Titles of the expanded collapsible sections in a panel.
+ * @param {HTMLElement} panel - The action panel
+ * @returns {Set<string>} Open section titles
+ */
+export function openSectionTitles(panel) {
+    const titles = new Set();
+    for (const section of panel.querySelectorAll('.mwi-collapsible-section')) {
+        if (isSectionOpen(section)) titles.add(sectionTitle(section));
+    }
+    return titles;
+}
+
+/**
+ * Expand the sections named in `titles` that a rebuild left closed.
+ * @param {HTMLElement} panel - The action panel
+ * @param {Set<string>} titles - From `openSectionTitles`
+ */
+export function reopenSections(panel, titles) {
+    if (titles.size === 0) return;
+    for (const section of panel.querySelectorAll('.mwi-collapsible-section')) {
+        if (!isSectionOpen(section) && titles.has(sectionTitle(section))) {
+            section.querySelector(':scope > .mwi-section-header')?.click();
+        }
+    }
+}
+
 class QuickInputButtons {
     constructor() {
         this.isInitialized = false;
@@ -348,8 +394,11 @@ class QuickInputButtons {
             if (!panel.isConnected) continue;
             const profitSections = [...panel.querySelectorAll('[data-mwi-profit-display]')];
             profitSections.forEach((section) => section.remove());
+            // The rebuilt sections start closed; the ones the player had open open again
+            const openTitles = openSectionTitles(panel);
             delete panel.dataset.mwiInjectedAction;
             this.injectButtons(panel);
+            reopenSections(panel, openTitles);
             if (profitSections.length === 0) continue;
             const sections = panel.querySelectorAll('.mwi-collapsible-section');
             const anchor = sections[sections.length - 1];
