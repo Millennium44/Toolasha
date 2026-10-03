@@ -57,6 +57,14 @@
         "rollup-plugin-banner2": "^1.2.2",
         "vitest": "^5.0.2"
     },
+    "overrides": {
+        "markdownlint-cli": {
+            "js-yaml": "^5.4.1"
+        },
+        "get-uri": {
+            "basic-ftp": "^6.2.1"
+        }
+    },
     "engines": {
         "node": ">=22.12"
     },
