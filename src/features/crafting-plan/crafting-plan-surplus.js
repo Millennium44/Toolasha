@@ -85,7 +85,11 @@ export function normalizePlannedSurplus(plan, { inventory = [] } = {}) {
             const usedOwned = Math.min(owned, quantity);
             if (usedOwned > 0) ownedStock.set(node.itemHrid, owned - usedOwned);
             const afterOwned = quantity - usedOwned;
-            const { used: usedPlanned, dependencies } = usePlannedStock(node.itemHrid, afterOwned);
+            // A task's own target node is discharged only by performing its own
+            // action, so neither bag stock nor another task's surplus covers it.
+            const { used: usedPlanned, dependencies } = skipOwnedCredit
+                ? { used: 0, dependencies: [] }
+                : usePlannedStock(node.itemHrid, afterOwned);
             plannedDependencies = dependencies;
             remaining = afterOwned - usedPlanned;
             if (!(remaining > 0)) {
@@ -121,7 +125,8 @@ export function normalizePlannedSurplus(plan, { inventory = [] } = {}) {
             }
 
             // In a merged task group the immediate children are task targets;
-            // bag stock cannot cancel actions the task itself still owes.
+            // neither bag stock nor planned surplus can cancel actions the task
+            // itself still owes.
             const skipChildOwnedCredit = node.strategy === 'group' && isRoot;
             const normalizedChild = normalize(child, false, childQuantity, skipChildOwnedCredit);
             if (normalizedChild) children.push(normalizedChild);

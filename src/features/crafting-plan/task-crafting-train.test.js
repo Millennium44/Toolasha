@@ -174,7 +174,9 @@ beforeEach(() => {
 });
 
 describe('mergeWalkSteps', () => {
-    test('several plans share multi-output surplus when action counts are merged', () => {
+    test('each task keeps its own target action when several tasks target the same craft', () => {
+        // A task is discharged only by its own action, so four tasks are four actions even
+        // though one run would yield enough for all of them.
         const plans = Array.from({ length: 4 }, () =>
             craft('/items/crushed_amber', 10, '/actions/crafting/crushed_amber', 1, [buy('/items/amber', 1)], 15)
         );
@@ -185,10 +187,10 @@ describe('mergeWalkSteps', () => {
         expect(merged.steps).toHaveLength(2);
         expect(stepFor(merged.steps, 'craft:/actions/crafting/crushed_amber')).toMatchObject({
             count: 40,
-            actions: 3,
+            actions: 4,
             outputCount: 15,
         });
-        expect(stepFor(merged.steps, 'buy:/items/amber').count).toBe(3);
+        expect(stepFor(merged.steps, 'buy:/items/amber').count).toBe(4);
     });
 
     test('the merged walk and reservation both credit owned Crushed Amber', () => {
@@ -304,6 +306,37 @@ describe('mergeWalkSteps', () => {
             keys(plain).indexOf('craft:/actions/crafting/crushed_amber')
         );
         expect(mergedMissingLines(taskPlans, 'test-owner')).toEqual([{ itemHrid: '/items/amber', count: 2 }]);
+    });
+
+    test("another task's surplus never covers a task's own target craft", () => {
+        // Task A's leather action yields 15 for the 10 it needs, leaving 5
+        // spare. Task B is itself "craft 5 leather": only performing that
+        // action discharges the task, so the spare leather must not zero it.
+        const taskA = craft('/items/hat', 10, '/actions/tailoring/hat', 10, [
+            craft('/items/leather', 10, '/actions/tailoring/leather', 1, [buy('/items/hide', 1)], 15),
+        ]);
+        const taskB = craft('/items/leather', 5, '/actions/tailoring/leather', 5, [buy('/items/hide', 5)]);
+
+        const merged = mergeWalkSteps([taskA, taskB]);
+
+        expect(merged).not.toBeNull();
+        expect(stepFor(merged.steps, 'craft:/actions/tailoring/leather')).toMatchObject({ actions: 6 });
+        expect(stepFor(merged.steps, 'buy:/items/hide').count).toBe(6);
+    });
+
+    test("another task's surplus still offsets a shared intermediate material", () => {
+        const taskA = craft('/items/hat', 10, '/actions/tailoring/hat', 10, [
+            craft('/items/leather', 10, '/actions/tailoring/leather', 1, [buy('/items/hide', 1)], 15),
+        ]);
+        const taskB = craft('/items/boots', 5, '/actions/tailoring/boots', 5, [
+            craft('/items/leather', 5, '/actions/tailoring/leather', 5, [buy('/items/hide', 5)]),
+        ]);
+
+        const merged = mergeWalkSteps([taskA, taskB]);
+
+        expect(stepFor(merged.steps, 'craft:/actions/tailoring/boots')).toMatchObject({ actions: 5 });
+        expect(stepFor(merged.steps, 'craft:/actions/tailoring/leather')).toMatchObject({ actions: 1 });
+        expect(stepFor(merged.steps, 'buy:/items/hide').count).toBe(1);
     });
 
     test('two tasks sharing an intermediate merge into one list with summed counts', () => {
