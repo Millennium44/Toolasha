@@ -2157,7 +2157,7 @@ class ConsumablesPanel {
      * rate outside a fight or a sim. Food with no sim on record still lists,
      * held and priced, with its rate honestly blank.
      *
-     * @returns {HTMLElement|null} Null when no default loadout names anything
+     * @returns {HTMLElement|null} Null when no combat or All Skills loadout exists
      */
     _idleSection() {
         const bridge = window.Toolasha?.Combat?.loadoutSnapshot;
@@ -2178,7 +2178,7 @@ class ConsumablesPanel {
         const sim = this._idleRates();
         const itemMap = dataManager.getInitClientData?.()?.itemDetailMap;
         const inventory = dataManager.getInventory?.();
-        const concentration = this._idleConcentration();
+        const concentration = this._idleConcentration(loadout);
         const simPerDay = (hrid) => {
             const perHour = sim?.perHour?.[hrid];
             return Number.isFinite(perHour) && perHour >= 0 ? perHour * 24 : null;
@@ -2195,8 +2195,6 @@ class ConsumablesPanel {
             if (!slot?.itemHrid) continue;
             entries.push({ itemHrid: slot.itemHrid, perDay: simPerDay(slot.itemHrid), isFood: true });
         }
-        if (!entries.length) return null;
-
         const section = document.createElement('div');
         section.style.marginBottom = '12px';
         const heading = document.createElement('div');
@@ -2234,13 +2232,15 @@ class ConsumablesPanel {
         source.style.color = COLORS.textDim;
         const unratedFood = entries.filter((entry) => entry.isFood && entry.perDay === null).length;
         source.textContent =
-            sim && unratedFood
-                ? `food rate unavailable for ${unratedFood} item${unratedFood === 1 ? '' : 's'} — sim this loadout to rate it`
-                : sim
-                  ? `food rated from sim (${this._zoneLabel(sim)})`
-                  : this._idleZoneKey && this._idleZoneKey !== 'last'
-                    ? 'pinned zone unsimmed — run a sim there to rate food'
-                    : 'food unrated — run a sim to rate it';
+            entries.length === 0
+                ? ''
+                : sim && unratedFood
+                  ? `food rate unavailable for ${unratedFood} item${unratedFood === 1 ? '' : 's'} — sim this loadout to rate it`
+                  : sim
+                    ? `food rated from sim (${this._zoneLabel(sim)})`
+                    : this._idleZoneKey && this._idleZoneKey !== 'last'
+                      ? 'pinned zone unsimmed — run a sim there to rate food'
+                      : 'food unrated — run a sim to rate it';
 
         const forecasts = entries.map(({ itemHrid, perDay }) =>
             forecast(
@@ -2265,6 +2265,15 @@ class ConsumablesPanel {
 
         heading.append(name, loadoutPick, zonePick, source);
         section.appendChild(heading);
+        if (!forecasts.length) {
+            const empty = document.createElement('div');
+            empty.style.color = COLORS.textDim;
+            empty.style.padding = '3px 0';
+            empty.textContent = 'No food or drinks in this loadout.';
+            section.appendChild(empty);
+            return section;
+        }
+
         section.appendChild(this._columnHeadings());
 
         for (const entry of forecasts) {
@@ -2362,13 +2371,15 @@ class ConsumablesPanel {
         return select;
     }
 
-    /** Drink concentration off worn gear, for the idle plan's arithmetic rates */
-    _idleConcentration() {
+    /** Drink concentration off the chosen loadout's resolved gear */
+    _idleConcentration(snapshot) {
         try {
-            return (
-                getDrinkConcentration(dataManager.getEquipment?.(), dataManager.getInitClientData?.()?.itemDetailMap) ||
-                0
-            );
+            const bridge = window.Toolasha?.Combat?.loadoutSnapshot;
+            const resolvedEquipment = bridge?.resolveEquipment?.(snapshot);
+            if (!Array.isArray(resolvedEquipment)) return 0;
+
+            const equipment = new Map(resolvedEquipment.map((item) => [item.itemLocationHrid, item]));
+            return getDrinkConcentration(equipment, dataManager.getInitClientData?.()?.itemDetailMap) || 0;
         } catch {
             return 0;
         }

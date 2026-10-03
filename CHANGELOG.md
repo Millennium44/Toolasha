@@ -6,6 +6,14 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Empty idle loadouts keep their picker
+
+- Choosing a saved loadout with no food or drinks now shows an empty message while keeping the loadout picker available. You can switch back to another setup directly from the Consumables panel.
+
+### Idle drink forecasts follow the selected loadout
+
+- Idle drink use, daily cost, and refill estimates now use the chosen saved loadout's Drink Concentration and resolved equipment enhancement levels. Switching the gear you are wearing no longer changes forecasts for a different saved setup.
+
 ### Measured dungeon key rates do not need a price
 
 - Dungeon key stock duration and refill estimates now retain the measured clear rate when market and crafting prices are unavailable. The cost remains unpriced, and refinement chests do not count as entry keys consumed.

@@ -26,6 +26,8 @@ const game = vi.hoisted(() => ({
     currentActions: [],
     clientData: null,
     prices: {},
+    equipment: new Map(),
+    ownedEquipment: [],
 }));
 
 const settings = vi.hoisted(() => ({ values: {}, listeners: {} }));
@@ -76,6 +78,7 @@ vi.mock('../../core/data-manager.js', () => ({
         getItemDetails: (hrid) => game.items[hrid] || null,
         getActionDetails: () => game.actionDetail,
         getInventory: () => game.inventory,
+        getEquipment: () => game.equipment,
         getInitClientData: () => game.clientData,
         getCurrentActions: () => game.currentActions,
         get characterData() {
@@ -117,6 +120,7 @@ vi.mock('../combat-stats/combat-stats-calculator.js', () => ({
 const { consumablesPanel } = await import('./consumables-panel.js');
 const { wasOpen, _resetCaches } = await import('../../utils/panel-geometry.js');
 const { default: dataManager } = await import('../../core/data-manager.js');
+const { highestOwnedEnhancements, resolveEnhancementLevel } = await import('../../utils/loadout-equipment.js');
 
 const settled = () => new Promise((resolve) => setTimeout(resolve, 0));
 
@@ -131,6 +135,8 @@ beforeEach(async () => {
     game.characterData = null;
     game.clientData = null;
     game.prices = {};
+    game.equipment = new Map();
+    game.ownedEquipment = [];
     shopping.calls.length = 0;
     game.currentActions = [];
     consumablesPanel._readinessMemo = null;
@@ -140,6 +146,14 @@ beforeEach(async () => {
     bus.characterId = 'char1';
     _resetCaches();
 });
+
+const resolvedSnapshotEquipment = (snapshot) => {
+    const owned = highestOwnedEnhancements(game.ownedEquipment);
+    return (snapshot.equipment || []).map((equip) => ({
+        ...equip,
+        enhancementLevel: resolveEnhancementLevel(snapshot, equip, owned),
+    }));
+};
 
 // `vi.spyOn` on a method that is already spied hands back the *existing* spy
 // rather than wrapping it again, so an unrestored spy is a call history that
@@ -521,6 +535,215 @@ describe('a restock shows at once', () => {
 
         expect(consumablesPanel.bodyEl.textContent).toContain('Buy all 24 known · 1 rate unknown');
         expect(consumablesPanel.bodyEl.textContent).toContain('Ask: 2K (1 rate unknown)');
+    });
+
+    const POUCH = '/items/guzzling_pouch';
+    const TEA = '/items/wisdom_coffee';
+
+    const setConcentrationFixture = () => {
+        game.clientData = {
+            itemDetailMap: {
+                [POUCH]: {
+                    equipmentDetail: {
+                        type: '/equipment_types/pouch',
+                        noncombatStats: { drinkConcentration: 0.1 },
+                        noncombatEnhancementBonuses: { drinkConcentration: 0.002 },
+                    },
+                },
+                [TEA]: {
+                    consumableDetail: {
+                        usableInActionTypeMap: { '/action_types/combat': true },
+                        buffs: [
+                            {
+                                uniqueHrid: '/buff_uniques/wisdom_coffee',
+                                typeHrid: '/buff_types/wisdom',
+                                ratioBoost: 0,
+                                ratioBoostLevelBonus: 0,
+                                flatBoost: 0.12,
+                                flatBoostLevelBonus: 0,
+                                duration: 300000000000,
+                            },
+                        ],
+                    },
+                },
+            },
+        };
+        game.items[TEA] = { name: 'Wisdom Coffee', consumableDetail: { buffs: [{ duration: 300000000000 }] } };
+    };
+
+    const idleCombatSnapshot = (overrides = {}) => ({
+        name: 'Combat ★',
+        isDefault: true,
+        actionTypeHrid: '/action_types/combat',
+        equipment: [{ itemLocationHrid: '/item_locations/pouch', itemHrid: POUCH, enhancementLevel: 0 }],
+        food: [],
+        drinks: [{ itemHrid: TEA }],
+        ...overrides,
+    });
+
+    const useIdleSnapshotBridge = (snapshot) => {
+        const previous = globalThis.window.Toolasha;
+        globalThis.window.Toolasha = {
+            Combat: {
+                loadoutSnapshot: {
+                    getAllSnapshots: () => [snapshot],
+                    resolveEquipment: resolvedSnapshotEquipment,
+                },
+            },
+        };
+        return () => {
+            if (previous === undefined) delete globalThis.window.Toolasha;
+            else globalThis.window.Toolasha = previous;
+        };
+    };
+
+    test('idle drink rate uses the selected snapshot and its resolved owned enhancement', () => {
+        setConcentrationFixture();
+        game.equipment = new Map([['/item_locations/pouch', { itemHrid: POUCH, enhancementLevel: 0 }]]);
+        game.ownedEquipment = [{ itemHrid: POUCH, enhancementLevel: 10 }];
+        const restoreBridge = useIdleSnapshotBridge(idleCombatSnapshot());
+
+        try {
+            const section = consumablesPanel._idleSection();
+
+            // Guzzling Pouch's captured 10% concentration at the owned +10 level is
+            // 12.9% for its 1x pouch slot: 86,400 / (300 / 1.129).
+            expect(section.textContent).toContain('325.2/day');
+        } finally {
+            restoreBridge();
+        }
+    });
+
+    test('an exact snapshot enhancement level overrides the higher owned copy', () => {
+        setConcentrationFixture();
+        game.equipment = new Map([['/item_locations/pouch', { itemHrid: POUCH, enhancementLevel: 10 }]]);
+        game.ownedEquipment = [{ itemHrid: POUCH, enhancementLevel: 10 }];
+        const restoreBridge = useIdleSnapshotBridge(idleCombatSnapshot({ useExactEnhancement: true }));
+
+        try {
+            const section = consumablesPanel._idleSection();
+
+            // Exact +0 remains 10% concentration even though a +10 is owned/worn.
+            expect(section.textContent).toContain('316.8/day');
+        } finally {
+            restoreBridge();
+        }
+    });
+
+    test('an explicitly empty snapshot equipment set does not borrow live gear', () => {
+        setConcentrationFixture();
+        game.equipment = new Map([['/item_locations/pouch', { itemHrid: POUCH, enhancementLevel: 10 }]]);
+        game.ownedEquipment = [{ itemHrid: POUCH, enhancementLevel: 10 }];
+        const restoreBridge = useIdleSnapshotBridge(idleCombatSnapshot({ equipment: [] }));
+
+        try {
+            const section = consumablesPanel._idleSection();
+
+            expect(section.textContent).toContain('288.0/day');
+            expect(section.textContent).not.toContain('325.2/day');
+        } finally {
+            restoreBridge();
+        }
+    });
+
+    test('an empty All Skills loadout keeps its selector and can switch back to food', async () => {
+        const previousBridge = globalThis.window.Toolasha;
+        const previousLoadoutPin = consumablesPanel._idleLoadoutName;
+        const previousZonePin = consumablesPanel._idleZoneKey;
+        const combatLoadout = {
+            name: 'Combat Donut',
+            isDefault: false,
+            actionTypeHrid: '/action_types/combat',
+            equipment: [],
+            food: [{ itemHrid: '/items/blueberry_donut' }],
+            drinks: [],
+        };
+        const allSkillsLoadout = {
+            name: 'All Skills',
+            isDefault: true,
+            actionTypeHrid: '',
+            equipment: [],
+            food: [],
+            drinks: [],
+        };
+        globalThis.window.Toolasha = {
+            Combat: {
+                loadoutSnapshot: {
+                    getAllSnapshots: () => [combatLoadout, allSkillsLoadout],
+                    resolveEquipment: (snapshot) => snapshot.equipment || [],
+                },
+            },
+        };
+        game.clientData = {
+            itemDetailMap: {
+                '/items/blueberry_donut': {
+                    categoryHrid: '/item_categories/food',
+                    consumableDetail: {
+                        cooldownDuration: 60000000000,
+                        usableInActionTypeMap: { '/action_types/combat': true },
+                        hitpointRestore: 80,
+                        manapointRestore: 0,
+                        recoveryDuration: 0,
+                        buffs: null,
+                    },
+                },
+            },
+        };
+        game.items['/items/blueberry_donut'] = {
+            name: 'Blueberry Donut',
+            consumableDetail: {
+                cooldownDuration: 60000000000,
+                usableInActionTypeMap: { '/action_types/combat': true },
+                hitpointRestore: 80,
+                manapointRestore: 0,
+                recoveryDuration: 0,
+                buffs: null,
+            },
+        };
+        consumablesPanel._idleLoadoutName = null;
+        consumablesPanel._idleZoneKey = 'last';
+
+        try {
+            consumablesPanel.show();
+            await settled();
+
+            expect(consumablesPanel.bodyEl.textContent).toContain('Blueberry Donut');
+            expect(consumablesPanel.bodyEl.querySelector('select').value).toBe('Combat Donut');
+
+            let loadoutSelect = consumablesPanel.bodyEl.querySelector('select');
+            loadoutSelect.value = 'All Skills';
+            loadoutSelect.dispatchEvent(new Event('change'));
+
+            expect(consumablesPanel.bodyEl.textContent).toContain('No food or drinks in this loadout.');
+            expect(consumablesPanel.bodyEl.textContent).not.toContain('Blueberry Donut');
+            expect(consumablesPanel.bodyEl.textContent).not.toContain('HeldItemPer day');
+            expect(consumablesPanel.bodyEl.querySelector('select')?.value).toBe('All Skills');
+            expect(consumablesPanel._buyQueues.find((queue) => queue.label === 'Idle plan')).toBeUndefined();
+
+            loadoutSelect = consumablesPanel.bodyEl.querySelector('select');
+            loadoutSelect.value = 'Combat Donut';
+            loadoutSelect.dispatchEvent(new Event('change'));
+
+            expect(consumablesPanel.bodyEl.textContent).toContain('Blueberry Donut');
+            expect(consumablesPanel.bodyEl.querySelector('select')?.value).toBe('Combat Donut');
+        } finally {
+            consumablesPanel.hide({ remember: false });
+            consumablesPanel._idleLoadoutName = previousLoadoutPin;
+            consumablesPanel._idleZoneKey = previousZonePin;
+            if (previousBridge === undefined) delete globalThis.window.Toolasha;
+            else globalThis.window.Toolasha = previousBridge;
+        }
+    });
+
+    test('the idle plan stays absent when no eligible loadout exists', () => {
+        const previousBridge = globalThis.window.Toolasha;
+        globalThis.window.Toolasha = { Combat: { loadoutSnapshot: { getAllSnapshots: () => [] } } };
+        try {
+            expect(consumablesPanel._idleSection()).toBeNull();
+        } finally {
+            if (previousBridge === undefined) delete globalThis.window.Toolasha;
+            else globalThis.window.Toolasha = previousBridge;
+        }
     });
 
     test('the selected idle food absent from the sim is unknown, not unused', () => {
