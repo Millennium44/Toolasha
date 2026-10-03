@@ -548,27 +548,29 @@ class OverlayPanel {
               { ...defaultSettings(), ...saved, curatedDefaults: saved.curatedDefaults === true }
             : freshDashboardSettings();
 
-        // The order names every row the registry knows about, once, here.
-        //
-        // It used to be written by `_renderPicker` as a side effect of drawing
-        // itself, which was harmless while the order was advisory and is not
-        // now that the order *is* the layout: opening the gear would have
-        // rewritten the arrangement into registration order. `resolveRows` does
-        // the same job correctly — saved order first, then anything it has never
-        // heard of — and a row whose feature registers after this still gets
-        // appended at draw time, in registration order, deterministically.
+        // Keep saved keys even when their row has not registered yet. Feature
+        // providers can initialize later than the overlay, and resolving only
+        // against today's registry would discard their saved positions. Unknown
+        // keys stay harmless: resolveRows only draws rows that are registered.
         const availableRows = registeredRows();
-        this.settings.order = resolveRows(availableRows, this.settings).map((row) => row.key);
-        if (freshDashboard) {
-            // Some rows, such as Account View, register during their feature's
-            // initialize call. Keep their designed dashboard position until
-            // they arrive, rather than dropping an unavailable key at startup.
-            const dashboardOrder = PRESET_LAYOUTS.Dashboard.order;
-            this.settings.order = [
-                ...dashboardOrder,
-                ...this.settings.order.filter((key) => !dashboardOrder.includes(key)),
-            ];
+        const requestedOrder = [];
+        const seen = new Set();
+        for (const key of Array.isArray(this.settings.order) ? this.settings.order : []) {
+            if (typeof key !== 'string' || key.length === 0 || seen.has(key)) continue;
+            seen.add(key);
+            requestedOrder.push(key);
         }
+
+        const resolvedOrder = resolveRows(availableRows, { ...this.settings, order: requestedOrder }).map(
+            (row) => row.key
+        );
+        const ordered = [...requestedOrder];
+        for (const key of resolvedOrder) {
+            if (typeof key !== 'string' || key.length === 0 || seen.has(key)) continue;
+            seen.add(key);
+            ordered.push(key);
+        }
+        this.settings.order = ordered;
 
         // Before the panel is drawn, so the first render of the popover already
         // has the Update button and the "Showing:" line on it

@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Saved overlay order survives delayed panels
+
+- Overlay tiles keep their saved positions when their feature loads after the dashboard. Account View no longer moves to the end after a reload.
+
 ### A fuller dashboard for new overlay layouts
 
 - New overlay layouts start with a docked Dashboard covering wealth, skill progress, queue time, combat results, consumables, and notices. Saved layouts keep their settings, and Dashboard is available as a preset when you want it.

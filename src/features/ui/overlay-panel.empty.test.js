@@ -164,20 +164,43 @@ describe('a character who has never arranged the overlay', () => {
         expect(overlayPanel.settings.visible.skillTimeToLevel).toBe(false);
     });
 
-    test('the dashboard tiles keep dashboard order across registry order', async () => {
-        // Registration order is whatever the bundles happen to import in, and a
-        // fresh layout has no saved positions — so the order the dashboard is
-        // written in is the only thing deciding what sits where
-        game.rows = [...PRESET_LAYOUTS.Dashboard.order].reverse().map((key) => row(key, { text: 'x' }));
+    test('keeps a late row position across save, reload, and provider registration', async () => {
+        // The provider is absent for both startup reads; only its persisted
+        // position can put it back where the dashboard placed it.
+        const registeredBeforeAccount = PRESET_LAYOUTS.Dashboard.order
+            .filter((key) => key !== 'accountView')
+            .map((key) => row(key, { text: 'x' }));
+        game.rows = [...registeredBeforeAccount].reverse();
 
         await overlayPanel.initialize();
+        overlayPanel._save();
+        await vi.waitFor(() => expect(saved.written).toBeTruthy());
+        saved.read = JSON.parse(JSON.stringify(saved.written));
+        saved.read.order.push('removed-row-from-older-version', 'coins', '', null, 4);
+
+        // Reload while Account View still has not registered.
+        overlayPanel.hide();
+        overlayPanel.isInitialized = false;
+        game.rows = [...registeredBeforeAccount].reverse();
+        await overlayPanel.initialize();
+
+        expect(overlayPanel.settings.order.slice(0, PRESET_LAYOUTS.Dashboard.order.length)).toEqual(
+            PRESET_LAYOUTS.Dashboard.order
+        );
+        expect(overlayPanel.settings.order).toContain('removed-row-from-older-version');
+        expect(overlayPanel.settings.order.filter((key) => key === 'coins')).toHaveLength(1);
+        expect(overlayPanel.settings.order).not.toContain('');
+        expect(overlayPanel.settings.order).not.toContain(4);
+        expect(overlayPanel.settings.visible).toEqual(saved.read.visible);
+        expect(overlayPanel.settings.span).toEqual(saved.read.span);
+        expect(overlayPanel.settings.zoom).toEqual(saved.read.zoom);
+
         overlayPanel.show();
+        expect(
+            [...overlayPanel.canvasEl.querySelectorAll('[data-overlay-row]')].map((tile) => tile.dataset.overlayRow)
+        ).not.toContain('removed-row-from-older-version');
 
         // Reading order is the layout, so it is the document order that says it
-        const drawn = [...overlayPanel.canvasEl.querySelectorAll('[data-overlay-row]')].map(
-            (tile) => tile.dataset.overlayRow
-        );
-        expect(drawn.slice(0, PRESET_LAYOUTS.Dashboard.order.length)).toEqual(PRESET_LAYOUTS.Dashboard.order);
         game.rows.push(row('accountView', { text: 'x' }));
         overlayPanel.refresh();
         const withLateRow = [...overlayPanel.canvasEl.querySelectorAll('[data-overlay-row]')].map(
