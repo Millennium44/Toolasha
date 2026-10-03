@@ -646,6 +646,106 @@ describe('a restock shows at once', () => {
         }
     });
 
+    test('an empty All Skills loadout keeps its selector and can switch back to food', async () => {
+        const previousBridge = globalThis.window.Toolasha;
+        const previousLoadoutPin = consumablesPanel._idleLoadoutName;
+        const previousZonePin = consumablesPanel._idleZoneKey;
+        const combatLoadout = {
+            name: 'Combat Donut',
+            isDefault: false,
+            actionTypeHrid: '/action_types/combat',
+            equipment: [],
+            food: [{ itemHrid: '/items/blueberry_donut' }],
+            drinks: [],
+        };
+        const allSkillsLoadout = {
+            name: 'All Skills',
+            isDefault: true,
+            actionTypeHrid: '',
+            equipment: [],
+            food: [],
+            drinks: [],
+        };
+        globalThis.window.Toolasha = {
+            Combat: {
+                loadoutSnapshot: {
+                    getAllSnapshots: () => [combatLoadout, allSkillsLoadout],
+                    resolveEquipment: (snapshot) => snapshot.equipment || [],
+                },
+            },
+        };
+        game.clientData = {
+            itemDetailMap: {
+                '/items/blueberry_donut': {
+                    categoryHrid: '/item_categories/food',
+                    consumableDetail: {
+                        cooldownDuration: 60000000000,
+                        usableInActionTypeMap: { '/action_types/combat': true },
+                        hitpointRestore: 80,
+                        manapointRestore: 0,
+                        recoveryDuration: 0,
+                        buffs: null,
+                    },
+                },
+            },
+        };
+        game.items['/items/blueberry_donut'] = {
+            name: 'Blueberry Donut',
+            consumableDetail: {
+                cooldownDuration: 60000000000,
+                usableInActionTypeMap: { '/action_types/combat': true },
+                hitpointRestore: 80,
+                manapointRestore: 0,
+                recoveryDuration: 0,
+                buffs: null,
+            },
+        };
+        consumablesPanel._idleLoadoutName = null;
+        consumablesPanel._idleZoneKey = 'last';
+
+        try {
+            consumablesPanel.show();
+            await settled();
+
+            expect(consumablesPanel.bodyEl.textContent).toContain('Blueberry Donut');
+            expect(consumablesPanel.bodyEl.querySelector('select').value).toBe('Combat Donut');
+
+            let loadoutSelect = consumablesPanel.bodyEl.querySelector('select');
+            loadoutSelect.value = 'All Skills';
+            loadoutSelect.dispatchEvent(new Event('change'));
+
+            expect(consumablesPanel.bodyEl.textContent).toContain('No food or drinks in this loadout.');
+            expect(consumablesPanel.bodyEl.textContent).not.toContain('Blueberry Donut');
+            expect(consumablesPanel.bodyEl.textContent).not.toContain('HeldItemPer day');
+            expect(consumablesPanel.bodyEl.querySelector('select')?.value).toBe('All Skills');
+            expect(consumablesPanel._buyQueues.find((queue) => queue.label === 'Idle plan')).toBeUndefined();
+
+            loadoutSelect = consumablesPanel.bodyEl.querySelector('select');
+            loadoutSelect.value = 'Combat Donut';
+            loadoutSelect.dispatchEvent(new Event('change'));
+
+            expect(consumablesPanel.bodyEl.textContent).toContain('Blueberry Donut');
+            expect(consumablesPanel.bodyEl.querySelector('select')?.value).toBe('Combat Donut');
+        } finally {
+            consumablesPanel.hide({ remember: false });
+            consumablesPanel._idleLoadoutName = previousLoadoutPin;
+            consumablesPanel._idleZoneKey = previousZonePin;
+            if (previousBridge === undefined) delete globalThis.window.Toolasha;
+            else globalThis.window.Toolasha = previousBridge;
+        }
+    });
+
+    test('the idle plan stays absent when no eligible loadout exists', () => {
+        const previousBridge = globalThis.window.Toolasha;
+        globalThis.window.Toolasha = { Combat: { loadoutSnapshot: { getAllSnapshots: () => [] } } };
+        try {
+            expect(consumablesPanel._idleSection()).toBeNull();
+        } finally {
+            if (previousBridge === undefined) delete globalThis.window.Toolasha;
+            else globalThis.window.Toolasha = previousBridge;
+        }
+    });
+
     test('the selected idle food absent from the sim is unknown, not unused', () => {
         const previous = globalThis.window.Toolasha;
         try {
