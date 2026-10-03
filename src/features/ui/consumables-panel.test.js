@@ -139,6 +139,8 @@ beforeEach(async () => {
     game.ownedEquipment = [];
     shopping.calls.length = 0;
     game.currentActions = [];
+    Object.defineProperty(window, 'innerWidth', { configurable: true, value: 1024 });
+    Object.defineProperty(window, 'innerHeight', { configurable: true, value: 768 });
     consumablesPanel._readinessMemo = null;
     consumablesPanel._profiles = [];
     consumablesPanel._dungeonHistory = [];
@@ -165,6 +167,42 @@ afterEach(() => {
 });
 
 describe('whether the panel was open', () => {
+    test('a fresh panel opens centered in the available viewport', async () => {
+        Object.defineProperty(window, 'innerWidth', { configurable: true, value: 800 });
+        Object.defineProperty(window, 'innerHeight', { configurable: true, value: 600 });
+
+        consumablesPanel.show({ remember: false });
+        await settled();
+
+        expect(consumablesPanel.panel.style.left).toBe('139px');
+        expect(consumablesPanel.panel.style.top).toBe('89px');
+    });
+
+    test('a fresh panel stays centered and reachable on a narrow viewport', async () => {
+        Object.defineProperty(window, 'innerWidth', { configurable: true, value: 320 });
+        Object.defineProperty(window, 'innerHeight', { configurable: true, value: 240 });
+
+        consumablesPanel.show({ remember: false });
+        await settled();
+
+        expect(parseFloat(consumablesPanel.panel.style.left)).toBeGreaterThanOrEqual(8);
+        expect(parseFloat(consumablesPanel.panel.style.left)).toBeLessThan(20);
+        expect(parseFloat(consumablesPanel.panel.style.top)).toBeGreaterThanOrEqual(8);
+        expect(parseFloat(consumablesPanel.panel.style.top)).toBeLessThan(30);
+    });
+
+    test('saved geometry still determines where the panel opens', async () => {
+        store.data.panelGeometry = {
+            consumablesPanel: { left: 24, top: 36, width: 500, height: 400 },
+        };
+
+        consumablesPanel.show({ remember: false });
+        await settled();
+
+        expect(consumablesPanel.panel.style.left).toBe('24px');
+        expect(consumablesPanel.panel.style.top).toBe('36px');
+    });
+
     test('opening it is remembered', async () => {
         consumablesPanel.show();
         await settled();
@@ -347,16 +385,42 @@ describe('the Buy-all widget', () => {
         };
         consumablesPanel._buyQueue = [];
         consumablesPanel._buyWidgetHidden = false;
+        consumablesPanel._buySettingsOpen = false;
     });
 
-    test('a section short of two or more items offers the walk', async () => {
+    test('an offered walk stays inline while the panel is expanded', async () => {
         consumablesPanel.show();
         await settled();
         consumablesPanel._registerBuyQueue('Combat', shortfall);
+        consumablesPanel.bodyEl.appendChild(consumablesPanel._renderInlineBuyWalk());
         consumablesPanel._syncBuyWidget();
 
-        expect(widget()).not.toBe(null);
-        expect(mainLabel()).toBe('▶ Buy all');
+        expect(widget()).toBe(null);
+        expect(document.querySelectorAll('#toolasha-lab-buy-next')).toHaveLength(0);
+        expect(document.querySelector('.toolasha-consumables-inline-next').textContent).toBe('▶ Walk buys');
+    });
+
+    test('long player labels wrap within a narrow panel without widening its controls', async () => {
+        consumablesPanel.show();
+        await settled();
+        consumablesPanel.panel.style.width = '294px';
+        const longPlayerName = 'A very long current character name that should stay inside the picker';
+        consumablesPanel._buyQueues = [
+            { label: longPlayerName, queue: shortfall },
+            { label: 'Labyrinth', queue: shortfall },
+        ];
+        consumablesPanel.bodyEl.appendChild(consumablesPanel._renderInlineBuyWalk());
+
+        const row = document.querySelector('.toolasha-consumables-inline-walk');
+        const picker = row.querySelector('select');
+
+        expect(row.style.flexWrap).toBe('wrap');
+        expect(row.style.maxWidth).toBe('100%');
+        expect(row.querySelector('span').style.minWidth).toBe('0');
+        expect(picker.style.minWidth).toBe('0');
+        expect(picker.style.maxWidth).toBe('100%');
+        expect(picker.options[0].textContent).toContain(longPlayerName);
+        expect(row.querySelector('.toolasha-consumables-inline-next').style.whiteSpace).toBe('nowrap');
     });
 
     test('one row short is left to its own Buy link', async () => {
@@ -368,46 +432,101 @@ describe('the Buy-all widget', () => {
         expect(widget()).toBe(null);
     });
 
-    test('the label becomes the next item once the walk is running', async () => {
+    test('offered controls stay with the panel when minimized and return on restore', async () => {
         consumablesPanel.show();
         await settled();
         consumablesPanel._registerBuyQueue('Combat', shortfall);
+        consumablesPanel.minimizeCtl.button.click();
         consumablesPanel._syncBuyWidget();
 
-        document.querySelector('.toolasha-lab-buy-next-main').click();
+        expect(widget()).toBe(null);
+        expect(consumablesPanel.minimizeCtl.collapsed).toBe(true);
 
-        // The first item's form is already open, so the button offers the second
-        expect(mainLabel()).toBe('▶ Next: Star Fruit Gummy (1 left)');
-        // The panel got out of the way; the control did not
-        expect(widget()).not.toBe(null);
+        document.querySelector('.toolasha-consumables-buy-settings').click();
+        expect(consumablesPanel.minimizeCtl.collapsed).toBe(false);
+        expect(document.querySelector('.toolasha-consumables-buy-settings-drawer')).not.toBe(null);
+        consumablesPanel._registerBuyQueue('Combat', shortfall);
+        consumablesPanel.bodyEl.appendChild(consumablesPanel._renderInlineBuyWalk());
+        expect(document.querySelector('.toolasha-consumables-inline-next').textContent).toBe('▶ Walk buys');
+        expect(widget()).toBe(null);
     });
 
-    test('the ✕ ends the walk and puts the widget away', async () => {
+    test('starting an inline walk opens one item and keeps the next step floating while shopping', async () => {
         consumablesPanel.show();
         await settled();
         consumablesPanel._registerBuyQueue('Combat', shortfall);
-        consumablesPanel._syncBuyWidget();
-        document.querySelector('.toolasha-lab-buy-next-main').click();
+        consumablesPanel.bodyEl.appendChild(consumablesPanel._renderInlineBuyWalk());
+
+        document.querySelector('.toolasha-consumables-inline-next').click();
+
+        expect(consumablesPanel.panel).toBe(null);
+        expect(widget()).not.toBe(null);
+        expect(document.querySelectorAll('#toolasha-lab-buy-next')).toHaveLength(1);
+        expect(mainLabel()).toBe('▶ Next: Star Fruit Gummy (1 left)');
 
         document.querySelector('.toolasha-lab-buy-next-close').click();
-
         expect(widget()).toBe(null);
         expect(consumablesPanel._buyQueue).toEqual([]);
     });
 
-    test('the gear edits the buy rules the walk decides by', async () => {
+    test('a walking panel shows the next step inline and can cancel it', async () => {
+        consumablesPanel._buyQueue = shortfall.slice();
         consumablesPanel.show();
         await settled();
-        consumablesPanel._registerBuyQueue('Combat', shortfall);
-        consumablesPanel._syncBuyWidget();
 
-        document.querySelector('.toolasha-lab-buy-next-gear').click();
-        const drawer = document.querySelector('.toolasha-lab-buy-next-settings');
+        expect(widget()).toBe(null);
+        expect(document.querySelector('.toolasha-consumables-inline-walk').textContent).toContain(
+            'Next: Peach Gummy (2 left)'
+        );
+        document.querySelector('.toolasha-consumables-inline-cancel').click();
+        expect(consumablesPanel._buyQueue).toEqual([]);
+        expect(widget()).toBe(null);
+    });
+
+    test('a walk and its saved floating position survive minimizing and reopening the panel', async () => {
+        consumablesPanel._buyWidgetPosition = { left: 120, top: 60 };
+        consumablesPanel._buyQueue = shortfall.slice();
+        consumablesPanel.show();
+        await settled();
+
+        consumablesPanel.minimizeCtl.button.click();
+        await settled();
+        expect(mainLabel()).toBe('▶ Next: Peach Gummy (2 left)');
+        expect(widget().style.left).toBe('120px');
+        expect(widget().style.top).toBe('60px');
+
+        consumablesPanel.minimizeCtl.button.click();
+        expect(widget()).toBe(null);
+        expect(consumablesPanel._buyQueue).toEqual(shortfall);
+        expect(document.querySelector('.toolasha-consumables-inline-next').textContent).toBe('▶ Next');
+
+        document.querySelector('.toolasha-consumables-inline-next').click();
+        await settled();
+        expect(widget()).not.toBe(null);
+        expect(widget().style.left).toBe('120px');
+        expect(widget().style.top).toBe('60px');
+        expect(mainLabel()).toBe('▶ Next: Star Fruit Gummy (1 left)');
+    });
+
+    test('the inline settings control keeps all buy rules editable', async () => {
+        consumablesPanel.show();
+        await settled();
+
+        document.querySelector('.toolasha-consumables-buy-settings').click();
+        const drawer = document.querySelector('.toolasha-consumables-buy-settings-drawer');
 
         const spread = drawer.querySelector('.mwi-widget-setting-market_consumableBuyMaxSpreadPct');
+        const saving = drawer.querySelector('.mwi-widget-setting-market_consumableBuyMinSaving');
+        const orderValue = drawer.querySelector('.mwi-widget-setting-market_consumableBuyMinOrderValue');
         spread.value = '7';
         spread.dispatchEvent(new Event('change'));
+        saving.value = '25';
+        saving.dispatchEvent(new Event('change'));
+        orderValue.value = '1000';
+        orderValue.dispatchEvent(new Event('change'));
         expect(settings.values.market_consumableBuyMaxSpreadPct).toBe(7);
+        expect(settings.values.market_consumableBuyMinSaving).toBe(25);
+        expect(settings.values.market_consumableBuyMinOrderValue).toBe(1000);
 
         const opens = drawer.querySelector('.mwi-widget-setting-market_consumableBuyOpenRecommended');
         opens.checked = false;
