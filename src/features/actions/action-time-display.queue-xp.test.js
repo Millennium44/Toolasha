@@ -30,6 +30,8 @@ const game = vi.hoisted(() => ({
     itemDetailMap: {},
     /** What the alchemy calculator answers for a queued alchemy row, or null for none */
     alchemyProfit: null,
+    transmuteMetrics: null,
+    transmuteMetricCalls: [],
     /** Wisdom and Charm Experience together, as a multiplier on base XP */
     xpMultiplier: 1,
 }));
@@ -89,6 +91,10 @@ vi.mock('../market/alchemy-profit-calculator.js', () => ({
         calculateCoinifyProfit: () => game.alchemyProfit,
         calculateDecomposeProfit: () => game.alchemyProfit,
         calculateTransmuteProfit: () => game.alchemyProfit,
+        calculateTransmuteMetrics: (...args) => {
+            game.transmuteMetricCalls.push(args);
+            return game.transmuteMetrics;
+        },
     },
 }));
 vi.mock('../../utils/experience-parser.js', () => ({
@@ -112,19 +118,21 @@ const COMBAT_ID = 41704;
 
 const DECOMPOSE = '/actions/alchemy/decompose';
 const COINIFY = '/actions/alchemy/coinify';
+const TRANSMUTE = '/actions/alchemy/transmute';
 /** Alchemy actions carry no experienceGain: what they teach comes from the item alchemized */
 const decompose = { hrid: DECOMPOSE, name: 'Decompose', type: '/action_types/alchemy', inputItems: [] };
 const coinify = { hrid: COINIFY, name: 'Coinify', type: '/action_types/alchemy', inputItems: [] };
+const transmute = { hrid: TRANSMUTE, name: 'Transmute', type: '/action_types/alchemy', inputItems: [] };
 const STAR_FRUIT = '/items/star_fruit';
 const FORAGING_ESSENCE = '/items/foraging_essence';
 
 /** An alchemy row as the game queues it: the item rides in primaryItemHash. */
-function alchemyAction(id, actionHrid, itemHrid, maxCount = 0) {
+function alchemyAction(id, actionHrid, itemHrid, maxCount = 0, enhancementLevel = 0) {
     return {
         id,
         ordinal: id,
         actionHrid,
-        primaryItemHash: `161296::/item_locations/inventory::${itemHrid}::0`,
+        primaryItemHash: `161296::/item_locations/inventory::${itemHrid}::${enhancementLevel}`,
         secondaryItemHash: '',
         hasMaxCount: maxCount > 0,
         maxCount,
@@ -268,6 +276,8 @@ describe('the Queued Actions panel shows what the queue is expected to teach', (
         game.inventory = [];
         game.itemDetailMap = {};
         game.alchemyProfit = null;
+        game.transmuteMetrics = null;
+        game.transmuteMetricCalls = [];
         game.xpMultiplier = 1;
         await actionTimeDisplay.refreshCombatSnapshot();
     });
@@ -434,6 +444,42 @@ describe('the Queued Actions panel shows what the queue is expected to teach', (
         // = 36, 19.8 per attempt, 198 over ten.
         expect(xpLines(menu)).toEqual(['XP: 23.10K (4.62K/hr)', 'XP: 198 (1.98K/hr)']);
         expect(totalText()).toContain('Total XP: 23.30K');
+        expect(menu.textContent).not.toContain('no xp figure');
+    });
+
+    test('enhanced Celestial Alembic keeps queued XP while its returned level is unknown', async () => {
+        const celestial = '/items/celestial_alembic';
+        game.itemDetailMap = {
+            [celestial]: {
+                hrid: celestial,
+                itemLevel: 90,
+                enhancementCosts: [
+                    { itemHrid: '/items/alchemy_essence', count: 100 },
+                    { itemHrid: '/items/holy_cheese', count: 15 },
+                    { itemHrid: '/items/coin', count: 3115 },
+                ],
+                alchemyDetail: {
+                    bulkMultiplier: 1,
+                    transmuteSuccessRate: 0.5,
+                    transmuteDropTable: [
+                        { itemHrid: celestial, dropRate: 0.88, minCount: 1, maxCount: 1 },
+                        { itemHrid: '/items/philosophers_stone', dropRate: 0.12, minCount: 1, maxCount: 1 },
+                    ],
+                },
+            },
+        };
+        game.alchemyProfit = null;
+        game.transmuteMetrics = { successRate: 0.5, actionsPerHour: 50 };
+        game.transmuteMetricCalls = [];
+        game.xpMultiplier = 1;
+        game.actionDetails = { ...game.actionDetails, [TRANSMUTE]: transmute };
+        game.currentActions = [alchemyAction(1, TRANSMUTE, celestial, 10, 10)];
+        const menu = queueMenu(['Transmute: Celestial Alembic']);
+        actionTimeDisplay.injectQueueTimes(menu);
+        await flush();
+
+        expect(game.transmuteMetricCalls).toEqual([[celestial, true, null, 'none', null]]);
+        expect(xpLines(menu)).toHaveLength(1);
         expect(menu.textContent).not.toContain('no xp figure');
     });
 

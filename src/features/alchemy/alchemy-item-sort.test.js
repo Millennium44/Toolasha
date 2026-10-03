@@ -51,6 +51,7 @@ const dataManagerMock = vi.hoisted(() => ({
 
 /** Every profit answer a test wants, keyed the same way `calculateCoinifyProfit` etc. are called */
 const profitAnswers = vi.hoisted(() => new Map());
+const transmuteMetrics = vi.hoisted(() => new Map());
 const calculatorMock = vi.hoisted(() => ({
     calculateCoinifyProfit: vi.fn((itemHrid, enhancementLevel) =>
         profitAnswers.get(`coinify:${itemHrid}:${enhancementLevel ?? 0}`)
@@ -61,7 +62,10 @@ const calculatorMock = vi.hoisted(() => ({
     calculateUnrefineProfit: vi.fn((itemHrid, enhancementLevel) =>
         profitAnswers.get(`unrefine:${itemHrid}:${enhancementLevel ?? 0}`)
     ),
-    calculateTransmuteProfit: vi.fn((itemHrid) => profitAnswers.get(`transmute:${itemHrid}:0`)),
+    calculateTransmuteProfit: vi.fn((itemHrid, _live, _tea, _catalyst, _context, enhancementLevel = 0) =>
+        profitAnswers.get(`transmute:${itemHrid}:${enhancementLevel}`)
+    ),
+    calculateTransmuteMetrics: vi.fn((itemHrid) => transmuteMetrics.get(itemHrid) ?? null),
 }));
 
 const pinsMock = vi.hoisted(() => ({ pinnedFor: vi.fn(() => []) }));
@@ -142,16 +146,34 @@ describe('alchemy item sort', () => {
         storageMock.reset();
         dataManagerEvents.clear();
         profitAnswers.clear();
+        transmuteMetrics.clear();
         pinsMock.pinnedFor.mockReturnValue([]);
         calculatorMock.calculateCoinifyProfit.mockClear();
         calculatorMock.calculateDecomposeProfit.mockClear();
         calculatorMock.calculateUnrefineProfit.mockClear();
         calculatorMock.calculateTransmuteProfit.mockClear();
+        calculatorMock.calculateTransmuteMetrics.mockClear();
         dataManagerMock.getInitClientData.mockReturnValue({ itemDetailMap: {} });
         rankingsMock.calcXpPerAction.mockClear();
         alchemyItemSort.disable();
         document.body.innerHTML = '';
         await alchemyItemSort.initialize();
+    });
+
+    test('transmute pricing passes the selected enhancement level', () => {
+        const tile = buildTile('/items/celestial_alembic', 10).querySelector('.Item_itemContainer_x');
+        const expected = { profitPerHour: 123 };
+        profitAnswers.set('transmute:/items/celestial_alembic:10', expected);
+
+        expect(alchemyItemSort.computePriceData('transmute', tile)).toBe(expected);
+        expect(calculatorMock.calculateTransmuteProfit).toHaveBeenCalledWith(
+            '/items/celestial_alembic',
+            false,
+            null,
+            null,
+            null,
+            10
+        );
     });
 
     test('the toggle renders in the picker, defaulting to Game', () => {
@@ -580,6 +602,22 @@ describe('alchemy item sort', () => {
         // (19 + 1) * 0.5 successRate(mock) * 20 actionsPerHour = 200
         const rateText = menu.querySelector(RATE_SELECTOR).textContent;
         expect(rateText).toContain('200');
+    });
+
+    test('enhanced same-HRID Transmute keeps XP ranking when profit is unavailable', () => {
+        buildTabs('transmute');
+        dataManagerMock.getInitClientData.mockReturnValue({
+            itemDetailMap: { '/items/celestial_alembic': { hrid: '/items/celestial_alembic', itemLevel: 90 } },
+        });
+        profitAnswers.set('transmute:/items/celestial_alembic:10', null);
+        transmuteMetrics.set('/items/celestial_alembic', { successRate: 0.5, actionsPerHour: 50 });
+        const { menu } = buildPicker([['/items/celestial_alembic', 10]]);
+        alchemyItemSort.apply();
+
+        menu.querySelector('[data-mwi-sort-mode="xp"]').click();
+
+        expect(calculatorMock.calculateTransmuteMetrics).toHaveBeenCalledWith('/items/celestial_alembic', true);
+        expect(menu.querySelector(RATE_SELECTOR)?.textContent).toContain('2.3K');
     });
 
     test('switching among all three modes reorders and restores correctly', () => {

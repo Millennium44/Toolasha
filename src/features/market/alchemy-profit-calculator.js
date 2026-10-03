@@ -490,6 +490,103 @@ class AlchemyProfitCalculator {
     }
 
     /**
+     * Calculate only the nonmonetary Transmute metrics used by XP displays.
+     * Enhanced self-returns have unknown output value, but that does not make
+     * the item's success rate or action speed unknown.
+     * @param {string} itemHrid - Item HRID
+     * @param {boolean} [useLiveSetup=false] - Use the queued/live catalyst and drinks
+     * @param {number|null} [teaBonusOverride=null]
+     * @param {'none'|'typeSpecific'|'prime'|null} [catalystChoice=null]
+     * @param {Object|null} [actionContext=null]
+     * @returns {{successRate:number,actionsPerHour:number}|null}
+     */
+    calculateTransmuteMetrics(
+        itemHrid,
+        useLiveSetup = false,
+        teaBonusOverride = null,
+        catalystChoice = null,
+        actionContext = null
+    ) {
+        try {
+            const gameData = dataManager.getInitClientData();
+            const itemDetails = dataManager.getItemDetails(itemHrid);
+            const actionDetails = gameData?.actionDetailMap?.['/actions/alchemy/transmute'];
+            const baseSuccessRate = itemDetails?.alchemyDetail?.transmuteSuccessRate || 0;
+            if (!gameData || !itemDetails || !actionDetails || baseSuccessRate <= 0) return null;
+
+            const itemLevel = itemDetails.itemLevel || 1;
+            const resolvedContext = actionContext ?? resolveActionContext('/action_types/alchemy');
+            const skills = actionContext?.skills ?? dataManager.getSkills();
+            const equipment = resolvedContext.equipment ?? dataManager.getEquipment();
+            const drinkSlots = resolvedContext.drinks ?? dataManager.getActionDrinkSlots('/action_types/alchemy');
+            const levelPenalty = this.getUnderLevelPenalty(itemLevel, skills, {
+                drinkSlots,
+                itemDetailMap: gameData.itemDetailMap,
+                equipment,
+            });
+            const actionStats = calculateActionStats(actionDetails, {
+                skills,
+                equipment,
+                actionContext: resolvedContext,
+                itemDetailMap: gameData.itemDetailMap,
+                includeCommunityBuff: true,
+                includeBreakdown: true,
+                levelRequirementOverride: itemDetails.itemLevel || 1,
+            });
+            if (!actionStats) return null;
+
+            const drinkConcentration = getDrinkConcentration(equipment, gameData.itemDetailMap);
+            const speedStats = buildActionSpeedStats(actionDetails, {
+                equipment,
+                itemDetailMap: gameData.itemDetailMap,
+                drinkSlots,
+                drinkConcentration,
+                actionTime: actionStats.actionTime,
+            });
+            const actionsPerHour =
+                calculateActionsPerHour(speedStats.actionTime) * (1 + actionStats.totalEfficiency / 100);
+
+            if (useLiveSetup || catalystChoice !== null) {
+                let catalystBonus = 0;
+                if (catalystChoice === 'typeSpecific') catalystBonus = CATALYST_BONUSES.typeSpecific;
+                else if (catalystChoice === 'prime') catalystBonus = CATALYST_BONUSES.prime;
+                else if (useLiveSetup && catalystChoice === null) {
+                    const catalystUse = document.querySelector(
+                        '[class*="SkillActionDetail_catalystItemInputContainer"] [class*="Item_itemContainer"] svg use'
+                    );
+                    const href = catalystUse?.getAttribute('href') || catalystUse?.getAttribute('xlink:href') || '';
+                    const liveHrid = href.match(/#(.+)$/)?.[1];
+                    if (liveHrid === 'prime_catalyst') catalystBonus = CATALYST_BONUSES.prime;
+                    else if (liveHrid && Object.values(CATALYST_HRIDS).some((hrid) => hrid.endsWith(`/${liveHrid}`))) {
+                        catalystBonus = CATALYST_BONUSES.typeSpecific;
+                    }
+                }
+                const successRate = this.calculateSuccessRateBreakdown(
+                    baseSuccessRate,
+                    catalystBonus,
+                    teaBonusOverride,
+                    levelPenalty
+                ).total;
+                return Number.isFinite(actionsPerHour) ? { successRate, actionsPerHour } : null;
+            }
+
+            // The XP picker has no trustworthy profit basis for choosing a
+            // different tea/catalyst combination here. Report the current
+            // setup's XP metrics rather than inventing a monetary optimum.
+            const successRate = this.calculateSuccessRateBreakdown(
+                baseSuccessRate,
+                0,
+                teaBonusOverride,
+                levelPenalty
+            ).total;
+            return Number.isFinite(actionsPerHour) ? { successRate, actionsPerHour } : null;
+        } catch (error) {
+            console.error('[AlchemyProfitCalculator] Failed to calculate transmute metrics:', error);
+            return null;
+        }
+    }
+
+    /**
      * Find the best catalyst+tea combination for an alchemy action.
      * Evaluates 6 combinations (no/type/prime catalyst × no/live tea) and returns
      * the combo that yields the highest profitPerHour.
@@ -1443,6 +1540,8 @@ class AlchemyProfitCalculator {
      * @param {number|null} [teaBonusOverride]
      * @param {'none'|'typeSpecific'|'prime'|null} [catalystChoice] - Force a specific catalyst
      *   instead of searching for the best one or reading the live panel.
+     * @param {Object|null} [actionContext]
+     * @param {number} [enhancementLevel=0] - Enhancement level of the input item
      * @returns {Object|null} Profit data or null if not transmutable
      */
     calculateTransmuteProfit(
@@ -1450,7 +1549,8 @@ class AlchemyProfitCalculator {
         useLiveSetup = false,
         teaBonusOverride = null,
         catalystChoice = null,
-        actionContext = null
+        actionContext = null,
+        enhancementLevel = 0
     ) {
         try {
             const gameData = dataManager.getInitClientData();
@@ -1469,6 +1569,16 @@ class AlchemyProfitCalculator {
             const baseSuccessRate = itemDetails.alchemyDetail.transmuteSuccessRate || 0;
             if (baseSuccessRate === 0) {
                 return null; // Cannot transmute
+            }
+
+            // Transmute drop rows don't carry an enhancement level. Until the server's
+            // returned-item level is known, an enhanced input with a same-HRID outcome
+            // can't be valued safely as either a self-return or a base-level sale.
+            if (
+                enhancementLevel > 0 &&
+                itemDetails.alchemyDetail.transmuteDropTable.some((drop) => drop.itemHrid === itemHrid)
+            ) {
+                return null;
             }
 
             const itemLevel = itemDetails.itemLevel || 1;
@@ -1524,7 +1634,11 @@ class AlchemyProfitCalculator {
             });
 
             // Get input cost (market price of the item being transmuted)
-            const inputPrice = getItemPrice(itemHrid, { context: 'profit', side: 'buy' });
+            const inputPrice = getItemPrice(itemHrid, {
+                context: 'profit',
+                side: 'buy',
+                enhancementLevel,
+            });
             if (inputPrice === null) {
                 return null; // No market data
             }
@@ -1710,7 +1824,7 @@ class AlchemyProfitCalculator {
                     price: inputPrice,
                     costPerAction: netMaterialCost, // Net cost after self-return
                     costPerHour: netMaterialCost * actionsPerHourWithEfficiency,
-                    enhancementLevel: 0,
+                    enhancementLevel,
                     selfReturnRate: selfReturnRate > 0 ? selfReturnRate : undefined,
                     selfReturnValue: selfReturnValue > 0 ? selfReturnValue : undefined,
                 },
@@ -1768,7 +1882,7 @@ class AlchemyProfitCalculator {
                 // Basic info
                 actionType: 'transmute',
                 itemHrid,
-                enhancementLevel: 0, // Transmute doesn't care about enhancement
+                enhancementLevel,
                 /** Output hrids left out of the revenue for want of a price */
                 unpricedOutputs: [...unpricedOutputs, ...alchemyBonus.unpricedDrops],
                 estimatedOutputs,

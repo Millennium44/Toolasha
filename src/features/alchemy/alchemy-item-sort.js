@@ -561,11 +561,11 @@ class AlchemyItemSort {
     }
 
     /**
-     * This tile's calculator answer for the given action — never a second
-     * opinion computed here. Profit and XP are both read off the same answer.
+     * This tile's calculator answer for the given action. When Transmute profit
+     * is unknown, keep a separate XP-only answer for the XP sort.
      * @param {string} action - 'coinify' | 'decompose' | 'transmute' | 'unrefine'
      * @param {HTMLElement} tile - An item tile
-     * @returns {Object|null} The calculator's raw answer for this tile, or null when it could not be priced
+     * @returns {Object|null} The profit answer or an XP-only Transmute result
      */
     computePriceData(action, tile) {
         const itemHrid = tileItemHrid(tile);
@@ -573,7 +573,20 @@ class AlchemyItemSort {
 
         try {
             if (action === 'transmute') {
-                return alchemyProfitCalculator.calculateTransmuteProfit(itemHrid) || null;
+                const profitData =
+                    alchemyProfitCalculator.calculateTransmuteProfit(
+                        itemHrid,
+                        false,
+                        null,
+                        null,
+                        null,
+                        tileEnhancementLevel(tile)
+                    ) || null;
+                if (profitData) return profitData;
+                return {
+                    profitData: null,
+                    xpData: alchemyProfitCalculator.calculateTransmuteMetrics?.(itemHrid, true) || null,
+                };
             }
             const method = CALCULATOR_METHOD[action];
             if (!method) return null;
@@ -590,7 +603,7 @@ class AlchemyItemSort {
      * @returns {number|null} Profit per hour, or null
      */
     profitValueFrom(priceData) {
-        const value = priceData?.profitPerHour;
+        const value = priceData?.profitData?.profitPerHour ?? priceData?.profitPerHour;
         return Number.isFinite(value) ? value : null;
     }
 
@@ -607,10 +620,11 @@ class AlchemyItemSort {
      */
     xpValueFor(action, itemHrid, priceData) {
         if (!priceData) return null;
-        const actionsPerHour = Number(priceData.actionsPerHour);
+        const xpData = priceData.xpData ?? priceData;
+        const actionsPerHour = Number(xpData.actionsPerHour);
         if (!Number.isFinite(actionsPerHour)) return null;
 
-        const successRate = Number.isFinite(priceData.successRate) ? priceData.successRate : 1;
+        const successRate = Number.isFinite(xpData.successRate) ? xpData.successRate : 1;
         // XP reads a level-less item at 0, as rankAlchemyType and the action panel do
         const itemLevel = dataManager.getInitClientData()?.itemDetailMap?.[itemHrid]?.itemLevel || 0;
         const value = calcXpPerAction(action, itemLevel, successRate) * actionsPerHour;
@@ -619,7 +633,7 @@ class AlchemyItemSort {
 
     /**
      * A tile's ranking value for the given mode, off the cached calculator
-     * answer — never re-fetched here.
+     * answer or its separate XP-only Transmute metrics.
      * @param {string} action - The open alchemy tab
      * @param {string} mode - 'profit' | 'xp'
      * @param {HTMLElement} tile - An item tile

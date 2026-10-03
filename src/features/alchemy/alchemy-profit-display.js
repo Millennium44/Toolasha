@@ -390,9 +390,17 @@ class AlchemyProfitDisplay {
                 // Use unified calculator for transmute
                 if (requirements && requirements.length > 0) {
                     const itemHrid = requirements[0].itemHrid;
+                    const enhancementLevel = requirements[0].enhancementLevel || 0;
 
                     // Call unified calculator
-                    profitData = alchemyProfitCalculator.calculateTransmuteProfit(itemHrid, true);
+                    profitData = alchemyProfitCalculator.calculateTransmuteProfit(
+                        itemHrid,
+                        true,
+                        null,
+                        null,
+                        null,
+                        enhancementLevel
+                    );
                 }
             } else if ((isDecompose || (!isCoinify && !isTransmute)) && requirements && requirements.length > 0) {
                 // Use unified calculator for decompose
@@ -404,7 +412,28 @@ class AlchemyProfitDisplay {
             }
 
             if (!profitData) {
-                this.removeDisplay();
+                const requirement = requirements?.[0];
+                const enhancementLevel = requirement?.enhancementLevel || 0;
+                const hasSameItemReturn = dataManager
+                    .getItemDetails(requirement?.itemHrid)
+                    ?.alchemyDetail?.transmuteDropTable?.some((drop) => drop.itemHrid === requirement?.itemHrid);
+
+                if (
+                    isTransmute &&
+                    enhancementLevel > 0 &&
+                    hasSameItemReturn &&
+                    config.getSetting('actionPanel_showProfitDetail')
+                ) {
+                    this.removeDisplay();
+                    const unavailable = document.createElement('div');
+                    unavailable.className = 'mwi-alchemy-profit-unavailable';
+                    unavailable.dataset.mwiProfitDisplay = 'true';
+                    unavailable.textContent = 'Profit unavailable: the enhancement level of returned items is unknown.';
+                    infoContainer.appendChild(unavailable);
+                    this.displayElement = unavailable;
+                } else {
+                    this.removeDisplay();
+                }
                 return;
             }
 

@@ -1,7 +1,8 @@
 /**
  * Scroll Buff Values
  * Hardcoded buff definitions for Labyrinth scrolls (formerly "Seals").
- * The game JSON has no consumableDetail for scroll items — values sourced from item descriptions.
+ * Numeric values follow the game's personalBuffTypeDetailMap. Scroll items have no
+ * consumableDetail, so the item mapping is kept separately.
  */
 
 export const SCROLL_BUFF_VALUES = {
@@ -11,7 +12,7 @@ export const SCROLL_BUFF_VALUES = {
     '/buff_types/action_speed': 0.15,
     '/buff_types/rare_find': 0.6,
     '/buff_types/processing': 0.2,
-    '/buff_types/gourmet': 0.16,
+    '/buff_types/gourmet': 0.1,
 };
 
 export const SCROLL_BUFF_ITEMS = {
@@ -31,5 +32,5 @@ export const SCROLL_BUFF_LABELS = {
     '/buff_types/action_speed': 'Scroll of Action Speed (+15%)',
     '/buff_types/rare_find': 'Scroll of Rare Find (+60%)',
     '/buff_types/processing': 'Scroll of Processing (+20%)',
-    '/buff_types/gourmet': 'Scroll of Gourmet (+16%)',
+    '/buff_types/gourmet': 'Scroll of Gourmet (+10%)',
 };

@@ -135,12 +135,12 @@ function stack(itemHrid, count) {
 }
 
 /** A queued alchemy action, the shape `characterActions` carries */
-function queued(id, actionHrid, itemHrid, { maxCount, catalyst } = {}) {
+function queued(id, actionHrid, itemHrid, { maxCount, catalyst, enhancementLevel = 0 } = {}) {
     return {
         id,
         ordinal: id,
         actionHrid,
-        primaryItemHash: hashFor(itemHrid),
+        primaryItemHash: hashFor(itemHrid, enhancementLevel),
         secondaryItemHash: catalyst ? hashFor(catalyst) : '',
         hasMaxCount: maxCount !== undefined,
         maxCount: maxCount ?? 0,
@@ -217,7 +217,14 @@ describe('a queued alchemy row is timed from the item it alchemizes', () => {
 describe('a queued alchemy row is priced with its own catalyst', () => {
     test('transmute passes the queued Prime Catalyst rather than reading the open panel', () => {
         actionTimeDisplay.calculateAlchemyProfitForAction(queued(1, TRANSMUTE, CAPE, { catalyst: PRIME }));
-        expect(game.calcCalls).toEqual([['transmute', CAPE, true, null, 'prime']]);
+        expect(game.calcCalls).toEqual([['transmute', CAPE, true, null, 'prime', null, 0]]);
+    });
+
+    test('transmute also passes the enhancement level from its queued primaryItemHash', () => {
+        actionTimeDisplay.calculateAlchemyProfitForAction(
+            queued(1, TRANSMUTE, '/items/celestial_alembic', { catalyst: PRIME, enhancementLevel: 10 })
+        );
+        expect(game.calcCalls).toEqual([['transmute', '/items/celestial_alembic', true, null, 'prime', null, 10]]);
     });
 
     test('a row with no catalyst says none, so an open panel’s catalyst is not borrowed', () => {

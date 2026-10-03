@@ -603,7 +603,8 @@ function calculateAlchemyGoldPerHour(alchemyContext, buffs, actionContext = null
             false,
             teaBonusOverride,
             null,
-            fixedActionContext
+            fixedActionContext,
+            enhancementLevel
         );
     } else if (actionType === 'unrefine') {
         profitData = alchemyProfitCalculator.calculateUnrefineProfit(
