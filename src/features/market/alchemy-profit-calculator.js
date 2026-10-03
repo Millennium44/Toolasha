@@ -67,6 +67,29 @@ const CATALYST_BONUSES = {
     prime: 0.25, // 25% multiplicative
 };
 
+/**
+ * Read Alchemy Success from the drinks in the calculation context. The active
+ * character buff map can describe a different loadout than a queued action or
+ * a planner's saved context.
+ * @param {Array} drinkSlots - Drinks for the calculation context
+ * @param {Object} itemDetailMap - Item details from init_client_data
+ * @param {number} drinkConcentration - Drink Concentration as a decimal
+ * @returns {number} Alchemy Success bonus as a decimal
+ */
+function getAlchemySuccessBonusFromDrinks(drinkSlots, itemDetailMap, drinkConcentration) {
+    let bonus = 0;
+    for (const drink of drinkSlots || []) {
+        const buffs = itemDetailMap?.[drink?.itemHrid]?.consumableDetail?.buffs;
+        if (!Array.isArray(buffs)) continue;
+        for (const buff of buffs) {
+            if (buff.typeHrid === '/buff_types/alchemy_success') {
+                bonus += (buff.ratioBoost || 0) * (1 + drinkConcentration);
+            }
+        }
+    }
+    return bonus;
+}
+
 // Under-level penalty: perLevel = UNDER_LEVEL_PENALTY_NUMERATOR (0.9) / itemLevel per level
 // below the item's level. The coinify constants live in utils/ironcow-valuation.js, which
 // values an item at its coinify output and must agree with this calculator.
@@ -536,6 +559,10 @@ class AlchemyProfitCalculator {
             if (!actionStats) return null;
 
             const drinkConcentration = getDrinkConcentration(equipment, gameData.itemDetailMap);
+            const resolvedTeaBonus =
+                teaBonusOverride !== null
+                    ? teaBonusOverride
+                    : getAlchemySuccessBonusFromDrinks(drinkSlots, gameData.itemDetailMap, drinkConcentration);
             const speedStats = buildActionSpeedStats(actionDetails, {
                 equipment,
                 itemDetailMap: gameData.itemDetailMap,
@@ -564,7 +591,7 @@ class AlchemyProfitCalculator {
                 const successRate = this.calculateSuccessRateBreakdown(
                     baseSuccessRate,
                     catalystBonus,
-                    teaBonusOverride,
+                    resolvedTeaBonus,
                     levelPenalty
                 ).total;
                 return Number.isFinite(actionsPerHour) ? { successRate, actionsPerHour } : null;
@@ -576,7 +603,7 @@ class AlchemyProfitCalculator {
             const successRate = this.calculateSuccessRateBreakdown(
                 baseSuccessRate,
                 0,
-                teaBonusOverride,
+                resolvedTeaBonus,
                 levelPenalty
             ).total;
             return Number.isFinite(actionsPerHour) ? { successRate, actionsPerHour } : null;

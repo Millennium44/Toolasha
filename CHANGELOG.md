@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Transmute XP follows the selected drinks
+
+- Transmute's XP fallback now takes Catalytic Tea's success bonus from the selected loadout and its Drink Concentration. Queued and picker XP estimates no longer use a different active tea setup when profit is unavailable.
+
 ### Consumable market totals fit the tile
 
 - The Consumables tile shows ask and bid costs on separate lines so missing-price counts fit. New tiles have space for both lines, and hovering a smaller saved tile shows the complete costs.

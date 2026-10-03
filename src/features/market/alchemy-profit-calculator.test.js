@@ -830,6 +830,40 @@ describe('official alchemy rules', () => {
         );
     });
 
+    test('XP metrics read Alchemy Success from the selected drinks, not the active character buff map', () => {
+        const catalyticTeaHrid = '/items/catalytic_tea';
+        mocks.skills = [{ skillHrid: '/skills/alchemy', level: 90 }];
+        mocks.drinkConcentration = 0.2;
+        mocks.alchemyTeaBonus = 0.25;
+        mocks.initClientData.itemDetailMap[catalyticTeaHrid] = {
+            hrid: catalyticTeaHrid,
+            name: 'Catalytic Tea',
+            consumableDetail: {
+                buffs: [
+                    {
+                        uniqueHrid: '/buff_uniques/catalytic_tea',
+                        typeHrid: '/buff_types/alchemy_success',
+                        ratioBoost: 0.05,
+                        ratioBoostLevelBonus: 0,
+                        flatBoost: 0,
+                        flatBoostLevelBonus: 0,
+                        startTime: '0001-01-01T00:00:00Z',
+                        duration: 300000000000,
+                    },
+                ],
+            },
+        };
+        const context = { equipment: new Map(), drinks: [{ itemHrid: catalyticTeaHrid }] };
+
+        expect(alchemyProfitCalculator.calculateTransmuteMetrics('/items/milk', false, null, 'none', context)).toEqual({
+            successRate: 0.53,
+            actionsPerHour: 180,
+        });
+        expect(
+            alchemyProfitCalculator.calculateTransmuteMetrics('/items/milk', false, 0, 'none', context).successRate
+        ).toBe(0.5);
+    });
+
     test('coinify pays 5× the item sell price, at bulk scale, and is charged no coin fee', () => {
         const result = alchemyProfitCalculator.calculateCoinifyProfit('/items/cheese');
         const coins = result.dropRevenues.find((d) => d.itemHrid === '/items/coin');
