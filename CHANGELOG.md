@@ -6,9 +6,8 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
-### Merged task walks, Labyrinth dates and scroll names
+### Labyrinth dates and scroll names
 
-- A merged task walk no longer drops a task's own craft when another task's extra output covers its item; each task still gets its full count, since only its own crafts complete it.
 - The Labyrinth entry forecast treats any pre-1970 date as unset, so no spelling of the game's "never set" date can bring back a false "entry ready" alert.
 - The Labyrinth scrolls are called scrolls wherever Toolasha names them (they were seals).
 
