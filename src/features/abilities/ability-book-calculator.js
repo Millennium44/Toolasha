@@ -237,10 +237,13 @@ class AbilityBookCalculator {
          * @returns {string}
          */
         const costLine = (books) => {
-            const askText = formatKMB(Math.ceil(books * ask));
-            const bidText = formatKMB(Math.ceil(books * bid));
+            if (!Number.isFinite(books)) return 'Cost: unavailable';
+            if (!(ask > 0) && !(bid > 0)) return 'Cost: no market quote';
+
+            const askText = ask > 0 ? formatKMB(Math.ceil(books * ask)) : 'no quote';
+            const bidText = bid > 0 ? formatKMB(Math.ceil(books * bid)) : 'no quote';
             if (askFloored && bidFloored) return `Cost: ${askText} (Tester shop)`;
-            const labels = `${askFloored ? 'shop' : 'ask'} / ${bidFloored ? 'shop' : 'bid'}`;
+            const labels = `${askFloored ? 'shop' : ask > 0 ? 'ask' : 'no ask'} / ${bidFloored ? 'shop' : bid > 0 ? 'bid' : 'no bid'}`;
             return `Cost: ${askText} / ${bidText} (${labels})`;
         };
 

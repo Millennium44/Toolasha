@@ -6,6 +6,22 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Exchange advice follows enhancement switches
+
+- Switching between enhancement levels of the same item now refreshes its Guild Credit exchange advice, so the comparison uses the newly selected level's value.
+
+### Exchange advice values the selected enhancement level
+
+- The Guild Credit exchange advisor now values an enhanced item and its sale order book at the selected enhancement level. It no longer recommends exchanging an expensive enhanced copy based on the unenhanced item's price, and leaves the comparison unavailable when that level has no value.
+
+### Guild Token valuation honors its off switch
+
+- Setting the Guild Token credit rate to zero now leaves tokens unpriced even when exchange rates are available from game data or captured from the Guild Shop.
+
+### Ability book costs distinguish missing prices
+
+- The Item Dictionary's ability book calculator now says when an ask or bid quote is missing instead of presenting an unpriced book as free.
+
 ### Mana recommendations wait for pouch capacity
 
 - Before a fight supplies the character's pouch stats, mana recommendations now fit the base capacity of one food and one drink. The panel explains this temporary estimate instead of offering a food combination that may not fit.

@@ -46,7 +46,8 @@ vi.mock('../../utils/bundle-bridge.js', async (importOriginal) => ({
             ? null
             : {
                   cachedBookSide: (itemHrid, level, isSell) => {
-                      const book = game.books[itemHrid];
+                      const key = level > 0 ? `${itemHrid}:${level}` : itemHrid;
+                      const book = game.books[key];
                       const listings = isSell ? book?.asks : book?.bids;
                       return listings?.length ? { listings, lastUpdated: Date.now() } : null;
                   },
@@ -737,11 +738,11 @@ describe('guild credit value — exchange advisor sell/rebuy math', () => {
      * quantity, the way the advisor reads them: an `ItemSelector_itemContainer`
      * carrying the icon sprite, and a number input beside it.
      */
-    function buildAdvisorModal(creditName, { spriteId, quantity }) {
+    function buildAdvisorModal(creditName, { spriteId, quantity, enhancementLevel = 0 }) {
         const modal = buildExchangeModal(creditName);
         const selector = document.createElement('div');
         selector.className = 'ItemSelector_itemContainer_x';
-        selector.innerHTML = `<svg aria-label="ignored"><use href="#${spriteId}"></use></svg>`;
+        selector.innerHTML = `<div class="Item_itemContainer_x"><div><div><div class="Item_item_x Item_clickable_x"><div class="Item_iconContainer_x"><svg aria-label="ignored"><use href="#${spriteId}"></use></svg></div>${enhancementLevel > 0 ? `<div class="Item_enhancementLevel_x">+${enhancementLevel}</div>` : ''}</div></div></div></div>`;
         modal.appendChild(selector);
         const input = document.createElement('input');
         input.type = 'number';
@@ -849,6 +850,137 @@ describe('guild credit value — exchange advisor sell/rebuy math', () => {
         const advisor = modal.querySelector('.mwi-exchange-advisor');
         expect(advisor.textContent).toContain(`${walked.toLocaleString()} credits`);
         expect(advisor.textContent).not.toContain(`${Math.floor(net / 50).toLocaleString()} credits`);
+    });
+
+    test('an enhanced selection that matches the base best row is not called optimal without its own quote', () => {
+        game.clientData = {
+            itemDetailMap: {
+                '/items/purple_guild_credit': { name: 'Purple Guild Credit' },
+                '/items/cheese_hammer': {
+                    hrid: '/items/cheese_hammer',
+                    name: 'Cheese Hammer',
+                    guildCreditConversions: [
+                        { creditItemHrid: '/items/purple_guild_credit', itemCount: 4, creditCount: 1 },
+                    ],
+                },
+            },
+        };
+        game.prices = { '/items/cheese_hammer': { ask: 4000, bid: 3200 } };
+
+        const modal = buildAdvisorModal('Purple Guild Credit', {
+            spriteId: 'cheese_hammer',
+            quantity: 4,
+            enhancementLevel: 10,
+        });
+        game.observers['GuildPanel_exchangeModalContent'](modal);
+
+        const advisor = modal.querySelector('.mwi-exchange-advisor');
+        expect(advisor.textContent).toContain('no price data for comparison');
+        expect(advisor.textContent).not.toContain('Optimal choice');
+    });
+
+    test('an enhanced sale uses its own quote and matching enhancement-level order book', () => {
+        game.clientData = {
+            itemDetailMap: {
+                '/items/purple_guild_credit': { name: 'Purple Guild Credit' },
+                '/items/cheese_hammer': {
+                    hrid: '/items/cheese_hammer',
+                    name: 'Cheese Hammer',
+                    guildCreditConversions: [
+                        { creditItemHrid: '/items/purple_guild_credit', itemCount: 4, creditCount: 1 },
+                    ],
+                },
+                '/items/advanced_alchemy_charm': {
+                    hrid: '/items/advanced_alchemy_charm',
+                    name: 'Advanced Alchemy Charm',
+                    guildCreditConversions: [
+                        { creditItemHrid: '/items/purple_guild_credit', itemCount: 1, creditCount: 1600 },
+                    ],
+                },
+            },
+        };
+        game.prices = {
+            '/items/cheese_hammer': { ask: 4000, bid: 3200 },
+            '/items/cheese_hammer:10': { ask: 6000, bid: 5000 },
+            '/items/advanced_alchemy_charm': { ask: 100, bid: 90 },
+        };
+        game.books = {
+            '/items/cheese_hammer': { bids: [{ price: 3200, quantity: 4 }], asks: [] },
+            '/items/cheese_hammer:10': {
+                bids: [
+                    { price: 4800, quantity: 2 },
+                    { price: 4500, quantity: 2 },
+                ],
+                asks: [],
+            },
+            '/items/advanced_alchemy_charm': { bids: [], asks: [{ price: 100, quantity: 1000 }] },
+        };
+
+        const modal = buildAdvisorModal('Purple Guild Credit', {
+            spriteId: 'cheese_hammer',
+            quantity: 4,
+            enhancementLevel: 10,
+        });
+        game.observers['GuildPanel_exchangeModalContent'](modal);
+
+        const advisor = modal.querySelector('.mwi-exchange-advisor');
+        const enhancedGross = 2 * 4800 + 2 * 4500;
+        const enhancedNet = enhancedGross - Math.floor(enhancedGross * MARKET_TAX);
+        expect(advisor.textContent).toContain(formatKMB(enhancedNet));
+        expect(advisor.textContent).toContain('order book depth');
+        const baseNet = 4 * 3200 - Math.floor(4 * 3200 * MARKET_TAX);
+        expect(advisor.textContent).not.toContain(formatKMB(baseNet));
+    });
+
+    test('switching only the enhancement badge text refreshes the same item sale value', async () => {
+        game.clientData = {
+            itemDetailMap: {
+                '/items/purple_guild_credit': { name: 'Purple Guild Credit' },
+                '/items/cheese_hammer': {
+                    hrid: '/items/cheese_hammer',
+                    name: 'Cheese Hammer',
+                    guildCreditConversions: [
+                        { creditItemHrid: '/items/purple_guild_credit', itemCount: 4, creditCount: 1 },
+                    ],
+                },
+                '/items/advanced_alchemy_charm': {
+                    hrid: '/items/advanced_alchemy_charm',
+                    name: 'Advanced Alchemy Charm',
+                    guildCreditConversions: [
+                        { creditItemHrid: '/items/purple_guild_credit', itemCount: 1, creditCount: 1600 },
+                    ],
+                },
+            },
+        };
+        game.prices = {
+            '/items/cheese_hammer': { ask: 4000, bid: 3200 },
+            '/items/cheese_hammer:9': { ask: 12_000, bid: 10_000 },
+            '/items/cheese_hammer:10': { ask: 24_000, bid: 20_000 },
+            '/items/advanced_alchemy_charm': { ask: 100, bid: 90 },
+        };
+        const modal = buildAdvisorModal('Purple Guild Credit', {
+            spriteId: 'cheese_hammer',
+            quantity: 4,
+            enhancementLevel: 9,
+        });
+        game.observers['GuildPanel_exchangeModalContent'](modal);
+
+        try {
+            const initialNet = 4 * 10_000 - Math.floor(4 * 10_000 * MARKET_TAX);
+            expect(modal.querySelector('.mwi-exchange-advisor').textContent).toContain(formatKMB(initialNet));
+
+            // React can retain the same element/icon and update only this Text
+            // node when another enhancement level of the same item is chosen.
+            modal.querySelector('[class*="Item_enhancementLevel"]').firstChild.data = '+10';
+            const nextNet = 4 * 20_000 - Math.floor(4 * 20_000 * MARKET_TAX);
+            await vi.waitFor(() => {
+                const text = modal.querySelector('.mwi-exchange-advisor').textContent;
+                expect(text).toContain(formatKMB(nextNet));
+                expect(text).not.toContain(formatKMB(initialNet));
+            });
+        } finally {
+            guildCreditValue.cleanup();
+        }
     });
 });
 

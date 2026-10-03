@@ -67,9 +67,9 @@ const CSS_CLASS = 'mwi-guild-credit-value';
  * @param {boolean} isSell - True for the asks, false for the bids
  * @returns {Array<{price: number, quantity: number}>|null} Listings, best first
  */
-function cachedListings(itemHrid, isSell) {
+function cachedListings(itemHrid, isSell, enhancementLevel = 0) {
     if (!itemHrid) return null;
-    return estimatedListingAge()?.cachedBookSide?.(itemHrid, 0, isSell)?.listings || null;
+    return estimatedListingAge()?.cachedBookSide?.(itemHrid, enhancementLevel, isSell)?.listings || null;
 }
 
 /**
@@ -85,8 +85,8 @@ function cachedListings(itemHrid, isSell) {
  * @param {number} topBid - Best bid, the fallback when no book has been seen
  * @returns {{gold: number, filled: number, quantity: number, source: 'book'|'top'}} Gross proceeds
  */
-function quoteSaleAgainstBook(itemHrid, quantity, topBid) {
-    const bids = cachedListings(itemHrid, false);
+function quoteSaleAgainstBook(itemHrid, quantity, topBid, enhancementLevel = 0) {
+    const bids = cachedListings(itemHrid, false, enhancementLevel);
     if (!bids) return { gold: quantity * topBid, filled: quantity, quantity, source: 'top' };
 
     const { filled, gold } = walkForQuantity(bids, quantity);
@@ -1757,6 +1757,7 @@ class GuildCreditValue {
                 this._advisorObserver.observe(itemSelector, {
                     subtree: true,
                     childList: true,
+                    characterData: true,
                     attributes: true,
                     attributeFilter: ['href', 'aria-label', 'class'],
                 });
@@ -3044,6 +3045,7 @@ class GuildCreditValue {
         // is the translated display name and only backs it up.
         const selectorContainer = modalEl.querySelector('[class*="ItemSelector_itemContainer"]');
         const selectedItemHrid = itemHridFromIcon(selectorContainer, dataManager.getInitClientData()?.itemDetailMap);
+        const selectedEnhancementLevel = pickerTileEnhancementLevel(selectorContainer);
         const itemSvg = selectorContainer?.querySelector('svg[aria-label]');
         const selectedItemName = itemSvg?.getAttribute('aria-label') || null;
 
@@ -3092,7 +3094,7 @@ class GuildCreditValue {
             return;
         }
 
-        if (selectedRow === bestRow) {
+        if (selectedRow === bestRow && selectedEnhancementLevel === 0) {
             advisor.style.borderColor = 'rgba(74,222,128,0.4)';
             advisor.innerHTML = `<div style="color:#4ade80; font-weight:600; text-align:center;">✓ Optimal choice for this credit type</div>`;
             modalEl.querySelector(`.${CSS_CLASS}`)?.insertAdjacentElement('afterend', advisor);
@@ -3101,7 +3103,13 @@ class GuildCreditValue {
 
         // Calculate sell → rebuy scenario
         const SELLER_TAX = MARKET_TAX;
-        const sellPrice = selectedRow.buyPrice; // bid price = what market will buy at
+        // A selected enhanced copy is a distinct marketplace quote. Missing
+        // data at that level must stay unknown instead of inheriting the base
+        // item's bid.
+        const sellPrice = getItemPrice(selectedRow.hrid, {
+            mode: 'bid',
+            enhancementLevel: selectedEnhancementLevel,
+        });
         // The exchange only ever redeems whole conversions — a typed quantity
         // that is not a multiple of `itemCount` still floors to the last one
         // the game would actually honour.
@@ -3119,7 +3127,7 @@ class GuildCreditValue {
         // everything held, and a thousand units quoted at the best bid is a
         // number the book cannot honour. Where no book has been seen the top of
         // book is still all there is — the figures then say so.
-        const sale = quoteSaleAgainstBook(selectedRow.hrid, rawQuantity, sellPrice);
+        const sale = quoteSaleAgainstBook(selectedRow.hrid, rawQuantity, sellPrice, selectedEnhancementLevel);
         const gross = sale.gold;
         const tax = Math.floor(gross * SELLER_TAX);
         const net = gross - tax;
