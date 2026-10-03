@@ -293,6 +293,32 @@ describe('walking the queue for its coin flow', () => {
         expect(walkQueueCoins(engine)).toBeNull();
     });
 
+    test('a paid row whose catalyst sets its count makes the reserve an estimate', () => {
+        const engineStub = {
+            buildInventoryLookup: () => ({ byHrid: {}, byEnhancedKey: {}, estimatedHrids: new Set() }),
+            calculateSingleQueueActionTime: () => ({ limitType: '/items/x', isTrulyInfinite: false }),
+            deductQueueActionMaterials: (ledger) => {
+                ledger.byHrid[COIN] -= 900;
+                return 1;
+            },
+        };
+        const catalyst = '42::/item_locations/inventory::/items/catalyst_of_decomposition::0';
+        game.currentActions = [{ ...queued(1, DECOMPOSE, { item: STAR_FRUIT }), secondaryItemHash: catalyst }];
+
+        engineStub.calculateSingleQueueActionTime = () => ({
+            limitType: 'material:/items/catalyst_of_decomposition',
+            isTrulyInfinite: false,
+        });
+        expect(walkQueueCoins(engineStub).stages[0].estimated).toBe(true);
+
+        // Limited by the fruit instead: the count is exact
+        engineStub.calculateSingleQueueActionTime = () => ({
+            limitType: 'material:/items/star_fruit',
+            isTrulyInfinite: false,
+        });
+        expect(walkQueueCoins(engineStub).stages[0].estimated).toBe(false);
+    });
+
     test('a queued action the game data does not know makes the walk unreadable, not free', () => {
         game.currentActions = [
             queued(1, '/actions/alchemy/unknown'),

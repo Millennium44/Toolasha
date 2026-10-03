@@ -34,6 +34,18 @@ export const COWBELLS_PER_BAG = 10;
 const LEDGER_COINS = 1e15;
 
 /**
+ * Whether the engine stopped a row at what its catalyst covers. That count divides the catalysts by the
+ * success rate, so it is an expectation, not a ceiling.
+ * @param {Object} action - The queued action
+ * @param {Object|null} timing - From `calculateSingleQueueActionTime`
+ * @returns {boolean} True when the catalyst set the row's count
+ */
+function isCatalystLimited(action, timing) {
+    const catalystHrid = itemFromHash(action?.secondaryItemHash);
+    return Boolean(catalystHrid) && timing?.limitType === `material:${catalystHrid}`;
+}
+
+/**
  * Whether a queued action can pay gold: enhancing, and the alchemy types the game charges a fee for
  * (coinify is free). Decided by type, before the walk reads what the row spends.
  * @param {string} actionHrid - Full action hrid
@@ -145,10 +157,13 @@ export function walkQueueCoins(engine, actions, inventory) {
             // A predicted spend: enhancing pays per attempt and the attempts are a prediction, and a row
             // the engine limits by materials it only expects (a self-returning transmute, a drop from
             // an earlier row) can run longer on good rolls
+            // and a row whose count its catalyst sets: catalysts go only on successes, so a run of
+            // failures makes more attempts, each paying its fee
             estimated:
                 delta < 0 &&
                 (String(action.actionHrid).startsWith('/actions/enhancing/') ||
-                    timing?.materialLimitIsEstimated === true),
+                    timing?.materialLimitIsEstimated === true ||
+                    isCatalystLimited(action, timing)),
         });
     }
     return { stages, stoppedAt };

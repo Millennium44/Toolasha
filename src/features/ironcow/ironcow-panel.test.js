@@ -569,6 +569,14 @@ describe('lifecycle', () => {
         expect(ironCowFarmPanel.pricedAt).toBeNull();
     });
 
+    test('a snapshot from before bag prices were read off the book is set aside too', async () => {
+        store.snapshot = costedLoop({
+            bellPricing: { price: 40, source: 'bag', bag: 40, pricingMode: 'ask' },
+        });
+        await ironCowFarmPanel.load();
+        expect(ironCowFarmPanel.loop).toBeNull();
+    });
+
     test('a snapshot costed at a loose cowbell price is set aside until the loop is costed again', async () => {
         store.snapshot = costedLoop({
             bellPricing: { price: 900_000, source: 'loose', loose: 900_000, bag: 950_000, pricingMode: 'ask' },

@@ -395,7 +395,9 @@ class IronCowFarmPanel {
         let snapshot = await loadSnapshot();
         // A snapshot costed when a loose cowbell price was still taken: its bell price and every
         // bell figure rest on a price nobody can buy at, so it waits for a fresh costing instead
-        if (snapshot?.bellPricing?.source === 'loose') snapshot = null;
+        // The same goes for any snapshot from before bag prices were read off the book (no `quoted`):
+        // an Iron Cow valuation setting could have stood in for the bag's price
+        if (snapshot?.bellPricing && !('quoted' in snapshot.bellPricing)) snapshot = null;
         this.loop = snapshot;
         this.pricedAt = snapshot?.computedAt || null;
         this._render();
