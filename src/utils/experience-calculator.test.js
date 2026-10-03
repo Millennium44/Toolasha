@@ -83,6 +83,100 @@ describe('calculateLevelFromActions', () => {
         const r = calculateLevelFromActions(4, 700, 1_000_000, 0, 6, 25, table);
         expect(r.timeElapsed).toBe(192 + Math.ceil(999_968 / 1.01) * 6);
     });
+
+    test('a Pincer Gloves completion carries its XP across both real thresholds', () => {
+        // Captured test-client DTO: Pincer Gloves gives 1,600 cheesesmithing XP at level 25.
+        // The public level table has thresholds 6,805 / 7,618 / 8,517 / 9,508 at levels 25–28.
+        const gameTable = { 25: 6805, 26: 7618, 27: 8517, 28: 9508 };
+        const forward = calculateMultiLevelProgress(25, 7518, 27, 0, 60, 1600, gameTable);
+        const reverse = calculateLevelFromActions(25, 7518, 1, 0, 60, 1600, gameTable);
+
+        // One real completion reaches 9,118 XP, past the level-27 threshold.
+        expect(forward).toEqual({ actionsNeeded: 1, timeNeeded: 60 });
+        expect(reverse.finalLevel).toBe(27);
+        expect(reverse.finalXP).toBe(9118);
+        expect(reverse.xpGained).toBe(1600);
+        expect(reverse.timeElapsed).toBe(60);
+    });
+
+    test('Pincer Gloves XP modifiers do not add a fictitious completion across real levels', () => {
+        // Captured game data: Pincer Gloves grants 1,600 base XP and requires level 25.
+        // The test-client XP tooltip applies the live 1.295 XP multiplier (2,072 per action).
+        const gameTable = {
+            100: 10000000,
+            101: 11404976,
+            102: 12904567,
+            103: 14514400,
+            104: 16242080,
+        };
+        const forward = calculateMultiLevelProgress(100, 10000000, 103, 75, 60, 2072, gameTable);
+        const reverse = calculateLevelFromActions(100, 10000000, 2179, 75, 60, 2072, gameTable);
+
+        expect(forward.actionsNeeded).toBe(2179);
+        expect(reverse.finalLevel).toBe(103);
+        expect(reverse.finalXP).toBe(14514888);
+        expect(reverse.xpGained).toBe(4514888);
+        expect(reverse.timeElapsed).toBe(forward.timeNeeded);
+    });
+
+    test('an action landing exactly on a threshold advances the level once', () => {
+        const gameTable = [0, 0, 33, 76, 132];
+        const result = calculateLevelFromActions(1, 19, 1, 0, 60, 14, gameTable);
+        const alreadyThere = calculateMultiLevelProgress(1, 33, 2, 0, 60, 14, gameTable);
+        const zeroQueue = calculateLevelFromActions(1, 33, 0, 0, 60, 14, gameTable);
+
+        expect(result.finalLevel).toBe(2);
+        expect(result.finalXP).toBe(33);
+        expect(result.percentToNext).toBe(0);
+        expect(alreadyThere).toEqual({ actionsNeeded: 0, timeNeeded: 0 });
+        expect(zeroQueue.finalLevel).toBe(2);
+        expect(zeroQueue.percentToNext).toBe(0);
+    });
+
+    test('fractional efficiency changes time, not XP per queued completion', () => {
+        const gameTable = [0, 0, 33, 76, 132];
+        const result = calculateLevelFromActions(1, 0, 2, 50, 60, 14, gameTable);
+
+        expect(result.finalLevel).toBe(1);
+        expect(result.finalXP).toBe(28);
+        expect(result.xpGained).toBe(28);
+        expect(result.timeElapsed).toBe(120);
+    });
+
+    test('the existing post-cap queue policy consumes time without XP', () => {
+        const gameTable = { 199: 92125192822, 200: 100000000000 };
+        const result = calculateLevelFromActions(200, 100000000000, 3, 50, 60, 1600, gameTable);
+
+        expect(result.finalLevel).toBe(200);
+        expect(result.finalXP).toBe(100000000000);
+        expect(result.xpGained).toBe(0);
+        expect(result.timeElapsed).toBe(120);
+        expect(result.percentToNext).toBe(100);
+    });
+
+    test('one completion landing exactly at level 200 agrees in both directions', () => {
+        const gameTable = { 199: 92125192822, 200: 100000000000 };
+        const forward = calculateMultiLevelProgress(199, 99999998400, 200, 174, 60, 1600, gameTable);
+        const reverse = calculateLevelFromActions(199, 99999998400, 1, 174, 60, 1600, gameTable);
+
+        expect(forward).toEqual({ actionsNeeded: 1, timeNeeded: 60 });
+        expect(reverse.finalLevel).toBe(200);
+        expect(reverse.finalXP).toBe(100000000000);
+        expect(reverse.percentToNext).toBe(100);
+    });
+
+    test('zero XP leaves the level unchanged while queued actions still take time', () => {
+        const result = calculateLevelFromActions(1, 10, 2, 50, 60, 0, table);
+        const impossible = calculateMultiLevelProgress(1, 10, 2, 50, 60, 0, table);
+
+        expect(result.finalLevel).toBe(1);
+        expect(result.finalXP).toBe(10);
+        expect(result.xpGained).toBe(0);
+        expect(result.timeElapsed).toBe(120);
+        expect(Number.isNaN(result.percentToNext)).toBe(false);
+        expect(impossible.actionsNeeded).toBe(Infinity);
+        expect(impossible.timeNeeded).toBe(Infinity);
+    });
 });
 
 describe('level efficiency deficit', () => {
@@ -95,7 +189,7 @@ describe('level efficiency deficit', () => {
         const credited = calculateMultiLevelProgress(1, 0, 3, 0, 6, 1, table, 0);
         const clamped = calculateMultiLevelProgress(1, 0, 3, 0, 6, 1, table, 1);
 
-        expect(credited.actionsNeeded).toBe(3001); // 1000 + round(ceil(2000/1.01) * 1.01)
+        expect(credited.actionsNeeded).toBe(3000); // 1,000 + 2,000 XP completions
         expect(credited.timeNeeded).toBe(17_886);
 
         expect(clamped.actionsNeeded).toBe(3000); // second level still at +0%
@@ -104,21 +198,35 @@ describe('level efficiency deficit', () => {
 
     test('a deficit larger than the whole span keeps efficiency flat throughout', () => {
         const r = calculateMultiLevelProgress(1, 0, 3, 50, 6, 1, table, 50);
-        // Every level runs at the unchanged 50%, so both levels cost the same per-action
-        // ratio: ceil(xp/1.5) performed actions, requeued at ×1.5
+        // Efficiency changes time, while XP remains one point per queued completion.
         expect(r.timeNeeded).toBe(Math.ceil(1000 / 1.5) * 6 + Math.ceil(2000 / 1.5) * 6);
-        expect(r.actionsNeeded).toBe(Math.round(Math.ceil(1000 / 1.5) * 1.5) + Math.round(Math.ceil(2000 / 1.5) * 1.5));
+        expect(r.actionsNeeded).toBe(3000); // Efficiency changes time, not XP completions
         // Without the clamp the second level would have run at 51%
         expect(r.timeNeeded).toBeGreaterThan(calculateMultiLevelProgress(1, 0, 3, 50, 6, 1, table, 0).timeNeeded);
     });
 
-    test('the round trip still lands exactly on the target with a deficit applied', () => {
+    test('the round trip reaches the target with a deficit applied', () => {
         const forward = calculateMultiLevelProgress(1, 0, 3, 10, 6, 1, table, 1.5);
         const back = calculateLevelFromActions(1, 0, forward.actionsNeeded, 10, 6, 1, table, 1.5);
         expect(back.finalLevel).toBe(3);
         expect(back.xpGained).toBe(3000);
         // The panel's "Total time" line delegates to this walk, so the two lines must match
         expect(back.timeElapsed).toBeCloseTo(forward.timeNeeded, 9);
+    });
+
+    test('fractional level deficit carries real action XP through its thresholds', () => {
+        // Captured game data: ultra crafting tea gives 72 XP; native thresholds at 90–93.
+        const gameTable = { 90: 4179145, 91: 4566274, 92: 4987741, 93: 5446463 };
+        const forward = calculateMultiLevelProgress(90, gameTable[90], 92, 50, 60, 72, gameTable, 1.5);
+        const noDeficit = calculateMultiLevelProgress(90, gameTable[90], 92, 50, 60, 72, gameTable, 0);
+        const back = calculateLevelFromActions(90, gameTable[90], forward.actionsNeeded, 50, 60, 72, gameTable, 1.5);
+
+        expect(forward.actionsNeeded).toBe(11231);
+        expect(forward.timeNeeded).toBe(7488 * 60);
+        expect(forward.timeNeeded).toBeGreaterThan(noDeficit.timeNeeded);
+        expect(back.finalLevel).toBe(92);
+        expect(back.finalXP).toBe(4987777);
+        expect(back.timeElapsed).toBe(forward.timeNeeded);
     });
 });
 

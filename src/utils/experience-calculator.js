@@ -124,7 +124,8 @@ function progressiveEfficiencyMultiplier(baseEfficiency, levelsGained, levelEffi
  * @param {number} [levelEfficiencyDeficit=0] - How far the effective level sits *below* the
  *   effective requirement right now. Level efficiency is clamped at zero, so the first
  *   `levelEfficiencyDeficit` levels gained buy no efficiency at all.
- * @returns {{ actionsNeeded: number, timeNeeded: number }}
+ * @returns {{ actionsNeeded: number, timeNeeded: number }} Infinite values when
+ *   positive experience is required but `xpPerAction` is not positive.
  */
 export function calculateMultiLevelProgress(
     currentLevel,
@@ -138,17 +139,35 @@ export function calculateMultiLevelProgress(
 ) {
     let totalActions = 0;
     let totalTime = 0;
+    let level = currentLevel;
+    let xp = currentXP;
 
-    for (let level = currentLevel; level < targetLevel; level++) {
+    while (
+        level < targetLevel &&
+        levelExperienceTable[level + 1] !== undefined &&
+        xp >= levelExperienceTable[level + 1]
+    ) {
+        level += 1;
+    }
+    if (level >= targetLevel) return { actionsNeeded: 0, timeNeeded: 0 };
+
+    // An action count is a count of completions. Efficiency changes how long
+    // those completions take, not the XP one completion grants.
+    if (!(xpPerAction > 0)) return { actionsNeeded: Infinity, timeNeeded: Infinity };
+
+    while (level < targetLevel) {
         // The table stops at the level cap; walking past it would yield NaN actions
-        if (levelExperienceTable[level + 1] === undefined) break;
+        const xpForNextLevel = levelExperienceTable[level + 1];
+        if (xpForNextLevel === undefined) break;
 
-        let xpNeeded;
-        if (level === currentLevel) {
-            xpNeeded = levelExperienceTable[level + 1] - currentXP;
-        } else {
-            xpNeeded = levelExperienceTable[level + 1] - levelExperienceTable[level];
+        // XP is cumulative and one completion can cross more than one level.
+        // Promote already-crossed thresholds without charging another action.
+        if (xp >= xpForNextLevel) {
+            level += 1;
+            continue;
         }
+
+        const actionsForLevel = Math.ceil((xpForNextLevel - xp) / xpPerAction);
 
         const efficiencyMultiplier = progressiveEfficiencyMultiplier(
             baseEfficiency,
@@ -156,11 +175,19 @@ export function calculateMultiLevelProgress(
             levelEfficiencyDeficit
         );
 
-        const xpPerPerformedAction = xpPerAction * efficiencyMultiplier;
-        const baseActionsForLevel = Math.ceil(xpNeeded / xpPerPerformedAction);
-        const actionsToQueue = Math.round(baseActionsForLevel * efficiencyMultiplier);
-        totalActions += actionsToQueue;
-        totalTime += baseActionsForLevel * actionTime;
+        totalActions += actionsForLevel;
+        totalTime += Math.ceil(actionsForLevel / efficiencyMultiplier) * actionTime;
+        xp += actionsForLevel * xpPerAction;
+
+        // Keep XP earned by the completion that crossed the threshold. It may
+        // already satisfy the next level, in which case no action is needed.
+        while (
+            level < targetLevel &&
+            levelExperienceTable[level + 1] !== undefined &&
+            xp >= levelExperienceTable[level + 1]
+        ) {
+            level += 1;
+        }
     }
 
     return { actionsNeeded: totalActions, timeNeeded: totalTime };
@@ -169,11 +196,11 @@ export function calculateMultiLevelProgress(
 /**
  * The level and xp reached after a number of actions — the reverse of
  * calculateMultiLevelProgress, walking the same per-level progressive
- * efficiency forward against a fixed action budget so the two agree (its
- * actionsNeeded fed back in lands exactly on its target level).
+ * efficiency forward against a fixed action budget. Feeding its action count
+ * back into this function reaches at least the target, carrying any XP surplus.
  * @param {number} currentLevel - Current skill level
  * @param {number} currentXP - Current experience points
- * @param {number} actionCount - Actions to spend
+ * @param {number} actionCount - Queue completions to spend
  * @param {number} baseEfficiency - Starting efficiency percentage
  * @param {number} actionTime - Seconds per action
  * @param {number} xpPerAction - Modified XP per action
@@ -198,6 +225,12 @@ export function calculateLevelFromActions(
     let timeElapsed = 0;
 
     while (remainingActions > 0) {
+        // The current XP may already have crossed one or more thresholds, for
+        // example when a single completion grants enough XP for several levels.
+        while (levelExperienceTable[level + 1] !== undefined && xp >= levelExperienceTable[level + 1]) {
+            level += 1;
+        }
+
         const xpForNextLevel = levelExperienceTable[level + 1];
         const efficiencyMultiplier = progressiveEfficiencyMultiplier(
             baseEfficiency,
@@ -212,23 +245,30 @@ export function calculateLevelFromActions(
             break;
         }
 
-        const xpNeeded = xpForNextLevel - xp;
+        // Efficiency repeats count toward the queue quantity, but each completed
+        // action grants only its own XP. With no XP gain, the queue still takes
+        // time and makes no level progress.
+        if (!(xpPerAction > 0)) {
+            timeElapsed += Math.ceil(remainingActions / efficiencyMultiplier) * actionTime;
+            remainingActions = 0;
+            break;
+        }
 
-        const xpPerPerformedAction = xpPerAction * efficiencyMultiplier;
-        const baseActionsForLevel = Math.ceil(xpNeeded / xpPerPerformedAction);
-        const actionsToClearLevel = Math.round(baseActionsForLevel * efficiencyMultiplier);
+        const actionsToNextLevel = Math.ceil((xpForNextLevel - xp) / xpPerAction);
 
-        if (actionsToClearLevel <= remainingActions) {
-            remainingActions -= actionsToClearLevel;
-            timeElapsed += baseActionsForLevel * actionTime;
-            level += 1;
-            xp = xpForNextLevel;
+        if (actionsToNextLevel <= remainingActions) {
+            remainingActions -= actionsToNextLevel;
+            timeElapsed += Math.ceil(actionsToNextLevel / efficiencyMultiplier) * actionTime;
+            xp += actionsToNextLevel * xpPerAction;
         } else {
-            const fractionUsed = remainingActions / actionsToClearLevel;
-            xp += xpNeeded * fractionUsed;
-            timeElapsed += baseActionsForLevel * actionTime * fractionUsed;
+            xp += remainingActions * xpPerAction;
+            timeElapsed += Math.ceil(remainingActions / efficiencyMultiplier) * actionTime;
             remainingActions = 0;
         }
+    }
+
+    while (levelExperienceTable[level + 1] !== undefined && xp >= levelExperienceTable[level + 1]) {
+        level += 1;
     }
 
     const xpForLevel = levelExperienceTable[level] || 0;
@@ -240,10 +280,8 @@ export function calculateLevelFromActions(
         finalLevel: level,
         finalXP: xp,
         xpGained: xp - currentXP,
-        // Efficiency buys extra completions inside one timed cycle, not a shorter cycle, so a
-        // queue of one or more actions cannot finish before the first cycle does. The mid-level
-        // branch above prorates a whole cycle's time by the fraction of the level consumed,
-        // which for a short queue at high efficiency lands under actionTime.
+        // A non-empty queue takes at least one action cycle, even when its
+        // efficiency multiplier exceeds the queued completion count.
         timeElapsed: actionCount > 0 ? Math.max(actionTime, timeElapsed) : timeElapsed,
         percentToNext,
     };
