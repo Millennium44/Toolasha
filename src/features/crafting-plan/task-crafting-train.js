@@ -134,8 +134,11 @@ export function mergeWalkSteps(plans) {
     };
 
     const validPlans = (plans || []).filter(Boolean);
-    const combinedPlan = normalizePlannedSurplus({ strategy: 'group', children: validPlans });
-    for (const plan of validPlans) separateStepCount += buildWalkSteps(plan).length;
+    const inventory = effectiveInventoryRows(dataManager.getInventory() || [], {
+        excludeOwner: mergedWalkOwner(validPlans.map((plan) => plan.itemHrid)),
+    });
+    const combinedPlan = normalizePlannedSurplus({ strategy: 'group', children: validPlans }, { inventory });
+    for (const plan of validPlans) separateStepCount += buildWalkSteps(plan, { inventory }).length;
 
     for (const step of buildWalkSteps(combinedPlan, { surplusNormalized: true })) {
         const existing = merged.get(step.key);
@@ -586,9 +589,14 @@ class TaskCraftingTrain {
      * @returns {Promise<boolean>} Whether a walk started
      */
     async startMergedWalk(group) {
-        if (!group?.steps?.length) return false;
+        if (!group?.tasks?.length) return false;
 
         const plans = group.tasks.map((task) => task.plan);
+        // The player may have gained or spent materials since the task list was
+        // rendered. Rebuild from the current bag so the prefilled craft counts
+        // match the inventory-aware reservation placed below.
+        const currentWalk = mergeWalkSteps(plans);
+        if (!currentWalk?.steps?.length) return false;
         const ownerId = mergedWalkOwner(plans.map((plan) => plan.itemHrid));
         const label = `Task walk: ${group.tasks.map((task) => task.target.label).join(', ')}`;
         const claim = () => reserve(ownerId, mergedMissingLines(plans, ownerId), { label });
@@ -622,7 +630,7 @@ class TaskCraftingTrain {
         };
         craftingPlanWalk.onStepAboutToRun = this.stepHook;
 
-        return craftingPlanWalk.start(group.steps);
+        return craftingPlanWalk.start(currentWalk.steps);
     }
 
     /** Take the button, any open chooser, and the walk hook back off. */

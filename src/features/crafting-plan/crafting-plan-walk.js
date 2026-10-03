@@ -93,6 +93,7 @@ export function walkStepFor(node) {
     if (!(count > 0)) return null;
     const isCraft = node.strategy === 'craft';
     if (isCraft && !node.actionHrid) return null;
+    if (isCraft && !(node.actionsNeeded > 0)) return null;
 
     return {
         key: isCraft ? `craft:${node.actionHrid}` : `buy:${node.itemHrid}`,
@@ -122,13 +123,27 @@ export function walkStepFor(node) {
  * @param {Object} plan - Root `CraftingPlanNode` from `computeBestCraftingPlan`
  * @param {Object} [options]
  * @param {boolean} [options.surplusNormalized=false] - Whether planned output has already been reconciled
+ * @param {Array<Object>} [options.inventory] - Effective unenhanced bag inventory available to the walk
  * @returns {Array<{key: string, kind: 'craft'|'buy', itemHrid: string, itemName: string,
  *   actionHrid: string|null, count: number, actions: number, outputCount: number}>} Steps in dependency order
  */
-export function buildWalkSteps(plan, { surplusNormalized = false } = {}) {
+export function buildWalkSteps(plan, { surplusNormalized = false, inventory = [] } = {}) {
     const steps = [];
     const byKey = new Map();
-    const executionPlan = surplusNormalized ? plan : normalizePlannedSurplus(plan);
+    const executionPlan = surplusNormalized ? plan : normalizePlannedSurplus(plan, { inventory });
+    const craftDemandByKey = new Map();
+
+    (function collectCraftDemand(node) {
+        if (!node) return;
+        if (node.strategy === 'craft' && node.actionHrid) {
+            const count = Math.ceil(node.stepCount ?? node.quantity);
+            if (count > 0) {
+                const key = `craft:${node.actionHrid}`;
+                craftDemandByKey.set(key, (craftDemandByKey.get(key) || 0) + count);
+            }
+        }
+        for (const child of node.children || []) collectCraftDemand(child);
+    })(executionPlan);
 
     const emit = (node) => {
         const step = walkStepFor(node);
@@ -152,6 +167,13 @@ export function buildWalkSteps(plan, { surplusNormalized = false } = {}) {
         for (const child of node.children || []) walk(child);
         emit(node);
     })(executionPlan);
+
+    // Surplus reconciliation can reduce a later repeated node to zero actions.
+    // Its demand still belongs in the step label, even though its actions have
+    // already been covered by an earlier craft (or by owned inventory).
+    for (const step of steps) {
+        if (step.kind === 'craft') step.count = craftDemandByKey.get(step.key) || step.count;
+    }
 
     return steps;
 }

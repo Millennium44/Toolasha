@@ -573,6 +573,10 @@ export function buildPlanUI(actionHrid, onToggle, defaultOpen = false, panel = n
 
     // === Shopping List (what to buy) ===
     const executionPlan = normalizePlannedSurplus(plan);
+    const effectiveInventory = effectiveInventoryRows(dataManager.getInventory() || [], {
+        excludeOwner: planOwner(output.itemHrid),
+    });
+    const craftExecutionPlan = normalizePlannedSurplus(plan, { inventory: effectiveInventory });
     const buyItems = new Map();
     collectBuyItems(executionPlan, buyItems);
 
@@ -680,9 +684,10 @@ export function buildPlanUI(actionHrid, onToggle, defaultOpen = false, panel = n
 
     // === Crafting Steps (what to craft, in order) ===
     const craftSteps = [];
-    collectCraftSteps(executionPlan, craftSteps);
+    collectCraftSteps(craftExecutionPlan, craftSteps);
+    const actionableCraftSteps = craftSteps.filter((step) => step.actionsNeeded > 0);
 
-    if (craftSteps.length > 0) {
+    if (actionableCraftSteps.length > 0) {
         const divider2 = document.createElement('div');
         divider2.style.cssText = 'border-top: 1px solid var(--border-color, #333); margin: 6px 0;';
         content.appendChild(divider2);
@@ -702,8 +707,8 @@ export function buildPlanUI(actionHrid, onToggle, defaultOpen = false, panel = n
         let totalCraftSeconds = 0;
         let totalXP = 0;
 
-        for (let i = 0; i < craftSteps.length; i++) {
-            const step = craftSteps[i];
+        for (let i = 0; i < actionableCraftSteps.length; i++) {
+            const step = actionableCraftSteps[i];
             const qty = formatWithSeparator(step.quantity);
             let timeStr = '';
             let xpStr = '';
@@ -762,7 +767,7 @@ export function buildPlanUI(actionHrid, onToggle, defaultOpen = false, panel = n
         // discount for the whole step, but the last several crafts would not
         // actually get it.
         const artisanWarnings = [];
-        for (const step of craftSteps) {
+        for (const step of actionableCraftSteps) {
             if (!step.actionHrid || !(step.actionsNeeded > 0)) continue;
             for (const shortfall of artisanTeaShortfall(step.actionHrid, step.actionsNeeded)) {
                 artisanWarnings.push(
@@ -793,7 +798,10 @@ export function buildPlanUI(actionHrid, onToggle, defaultOpen = false, panel = n
             walkButton.addEventListener('click', async () => {
                 // The walk steps the same plan the section above is showing —
                 // already sized to the run — not a separate re-plan.
-                const steps = buildWalkSteps(plan);
+                const inventory = effectiveInventoryRows(dataManager.getInventory() || [], {
+                    excludeOwner: planOwner(output.itemHrid),
+                });
+                const steps = buildWalkSteps(plan, { inventory });
                 if (steps.length === 0) return;
 
                 // Starting the walk is at least as much a commitment to the

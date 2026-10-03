@@ -163,6 +163,7 @@ const ledger = vi.hoisted(() => ({
     simulateGating: false,
 }));
 vi.mock('../../utils/inventory-reservations.js', () => ({
+    INVENTORY_LOCATION: '/item_locations/inventory',
     reservationsEnabled: () => ledger.enabled,
     heldInInventory: () => ledger.held,
     effectiveInventory: (hrid, level, { held } = {}) => Math.max(0, held - ledger.claimedElsewhere),
@@ -399,7 +400,10 @@ describe('the crafting plan and the reservation ledger', () => {
         await Promise.resolve();
         await Promise.resolve();
 
-        expect(ledger.rowsCalls).toEqual([{ excludeOwner: 'craftingPlan:/items/wooden_bow' }]);
+        expect(ledger.rowsCalls).toEqual([
+            { excludeOwner: 'craftingPlan:/items/wooden_bow' },
+            { excludeOwner: 'craftingPlan:/items/wooden_bow' },
+        ]);
     });
 
     test('committing to the plan claims the required totals under its own owner', async () => {
@@ -637,6 +641,135 @@ describe('the panel is sized to the run, not one unit', () => {
         expect(rows.some((row) => row.startsWith('Amber x2'))).toBe(true);
         expect(rows).toContain('Total craft time12s');
         expect(rows).toContain('Total XP4');
+    });
+
+    test('craft-step stats use the same bag stock that reduces walk actions', () => {
+        // Captured Super Cooking and Super Brewing Tea each need ten Crushed
+        // Amber, and one Amber yields fifteen. Five Crushed Amber in the bag
+        // leaves fifteen to craft across the grouped task roots.
+        state.inventory = [
+            { itemHrid: '/items/crushed_amber', count: 5, itemLocationHrid: '/item_locations/inventory' },
+        ];
+        const taskPlans = [
+            {
+                strategy: 'craft',
+                itemHrid: '/items/super_cooking_tea',
+                itemName: 'Super Cooking Tea',
+                quantity: 10,
+                actionHrid: '/actions/brewing/super_cooking_tea',
+                actionsNeeded: 10,
+                outputCount: 1,
+                children: [
+                    {
+                        strategy: 'craft',
+                        itemHrid: '/items/crushed_amber',
+                        itemName: 'Crushed Amber',
+                        quantity: 10,
+                        actionHrid: '/actions/crafting/crushed_amber',
+                        actionsNeeded: 1,
+                        outputCount: 15,
+                        children: [
+                            { strategy: 'buy', itemHrid: '/items/amber', itemName: 'Amber', quantity: 1, children: [] },
+                        ],
+                    },
+                ],
+            },
+            {
+                strategy: 'craft',
+                itemHrid: '/items/super_brewing_tea',
+                itemName: 'Super Brewing Tea',
+                quantity: 10,
+                actionHrid: '/actions/brewing/super_brewing_tea',
+                actionsNeeded: 10,
+                outputCount: 1,
+                children: [
+                    {
+                        strategy: 'craft',
+                        itemHrid: '/items/crushed_amber',
+                        itemName: 'Crushed Amber',
+                        quantity: 10,
+                        actionHrid: '/actions/crafting/crushed_amber',
+                        actionsNeeded: 1,
+                        outputCount: 15,
+                        children: [
+                            { strategy: 'buy', itemHrid: '/items/amber', itemName: 'Amber', quantity: 1, children: [] },
+                        ],
+                    },
+                ],
+            },
+        ];
+        state.plan = mergedMissingRoot(taskPlans);
+        state.planFor = undefined;
+
+        const section = buildPlanUI('/actions/brewing/super_cooking_tea');
+        const rows = [...section.querySelectorAll('div')].map((element) => element.textContent.trim());
+
+        expect(
+            rows.some((row) => row.startsWith('1. Crushed Amber') && row.includes('x20') && row.includes('6s'))
+        ).toBe(true);
+        expect(rows).toContain('Total craft time6s');
+        expect(rows).toContain('Total XP2');
+    });
+
+    test('fully held Crushed Amber is omitted from displayed craft steps', () => {
+        state.inventory = [
+            { itemHrid: '/items/crushed_amber', count: 20, itemLocationHrid: '/item_locations/inventory' },
+        ];
+        const taskPlans = [
+            {
+                strategy: 'craft',
+                itemHrid: '/items/super_cooking_tea',
+                itemName: 'Super Cooking Tea',
+                quantity: 10,
+                actionHrid: '/actions/brewing/super_cooking_tea',
+                actionsNeeded: 10,
+                outputCount: 1,
+                children: [
+                    {
+                        strategy: 'craft',
+                        itemHrid: '/items/crushed_amber',
+                        itemName: 'Crushed Amber',
+                        quantity: 10,
+                        actionHrid: '/actions/crafting/crushed_amber',
+                        actionsNeeded: 1,
+                        outputCount: 15,
+                        children: [
+                            { strategy: 'buy', itemHrid: '/items/amber', itemName: 'Amber', quantity: 1, children: [] },
+                        ],
+                    },
+                ],
+            },
+            {
+                strategy: 'craft',
+                itemHrid: '/items/super_brewing_tea',
+                itemName: 'Super Brewing Tea',
+                quantity: 10,
+                actionHrid: '/actions/brewing/super_brewing_tea',
+                actionsNeeded: 10,
+                outputCount: 1,
+                children: [
+                    {
+                        strategy: 'craft',
+                        itemHrid: '/items/crushed_amber',
+                        itemName: 'Crushed Amber',
+                        quantity: 10,
+                        actionHrid: '/actions/crafting/crushed_amber',
+                        actionsNeeded: 1,
+                        outputCount: 15,
+                        children: [
+                            { strategy: 'buy', itemHrid: '/items/amber', itemName: 'Amber', quantity: 1, children: [] },
+                        ],
+                    },
+                ],
+            },
+        ];
+        state.plan = mergedMissingRoot(taskPlans);
+        state.planFor = undefined;
+
+        const section = buildPlanUI('/actions/brewing/super_cooking_tea');
+        const rows = [...section.querySelectorAll('div')].map((element) => element.textContent.trim());
+
+        expect(rows.some((row) => row.startsWith('1. Crushed Amber'))).toBe(false);
     });
 
     test('an unreadable count is not treated as a request for that many units', () => {

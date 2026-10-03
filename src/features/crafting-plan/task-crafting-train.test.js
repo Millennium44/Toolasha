@@ -191,6 +191,37 @@ describe('mergeWalkSteps', () => {
         expect(stepFor(merged.steps, 'buy:/items/amber').count).toBe(3);
     });
 
+    test('the merged walk and reservation both credit owned Crushed Amber', () => {
+        // Captured Super Cooking and Super Brewing Tea each need ten Crushed
+        // Amber; the captured Crushed Amber action yields fifteen from one
+        // Amber. Five already in the bag leave fifteen to craft: one action.
+        mocks.inventory = [
+            {
+                itemHrid: '/items/crushed_amber',
+                count: 5,
+                enhancementLevel: 0,
+                itemLocationHrid: '/item_locations/inventory',
+            },
+        ];
+        const taskPlans = [
+            craft('/items/super_cooking_tea', 10, '/actions/brewing/super_cooking_tea', 10, [
+                craft('/items/crushed_amber', 10, '/actions/crafting/crushed_amber', 1, [buy('/items/amber', 1)], 15),
+            ]),
+            craft('/items/super_brewing_tea', 10, '/actions/brewing/super_brewing_tea', 10, [
+                craft('/items/crushed_amber', 10, '/actions/crafting/crushed_amber', 1, [buy('/items/amber', 1)], 15),
+            ]),
+        ];
+
+        const merged = mergeWalkSteps(taskPlans);
+
+        expect(stepFor(merged.steps, 'craft:/actions/crafting/crushed_amber')).toMatchObject({
+            count: 20,
+            actions: 1,
+            outputCount: 15,
+        });
+        expect(mergedMissingLines(taskPlans, 'test-owner')).toEqual([{ itemHrid: '/items/amber', count: 1 }]);
+    });
+
     test('later production does not shrink an earlier merged buy or reservation', () => {
         // Hand-built per-leg choices: a 10-unit thin-market leg crafts at the
         // captured 15-unit yield, while a 6-unit leg remains buyable at depth 7.
@@ -441,7 +472,7 @@ describe('the merged walk claim', () => {
         const hide = lines.filter((line) => line.itemHrid === '/items/hide');
         expect(hide).toHaveLength(1);
         expect(hide[0].count).toBe(150); // 90 + 60, not either alone and not double
-        expect(mocks.started).toBe(group.steps);
+        expect(mocks.started).toEqual(group.steps);
     });
 
     test('stock covering a shared material is credited once across the whole group', () => {

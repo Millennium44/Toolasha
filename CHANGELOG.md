@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Guided crafting uses the materials already held
+
+- Guided crafting walks now use the same available inventory as material reservations, so owned intermediates reduce queued actions correctly. Crafting time and XP totals follow those action counts, and fully stocked steps disappear.
+
 ### Crafting walks retain every required action
 
 - Merged crafting walks now retain a later crafting action when an intervening recipe has used the earlier surplus. Guided steps, time and XP totals, and reserved ingredients keep the actions required by the recipe sequence.

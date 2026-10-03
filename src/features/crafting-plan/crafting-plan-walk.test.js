@@ -209,6 +209,42 @@ describe('buildWalkSteps', () => {
         expect(amber).toMatchObject({ kind: 'buy', count: 2 });
     });
 
+    test('bag stock reduces the merged multi-output step prefilled into the action panel', () => {
+        const plan = {
+            strategy: 'group',
+            children: [
+                craft('/items/super_cooking_tea', 'Super Cooking Tea', 10, '/actions/brewing/super_cooking_tea', 10, [
+                    {
+                        ...craft('/items/crushed_amber', 'Crushed Amber', 10, '/actions/crafting/crushed_amber', 1, [
+                            buy('/items/amber', 'Amber', 1),
+                        ]),
+                        outputCount: 15,
+                    },
+                ]),
+                craft('/items/super_brewing_tea', 'Super Brewing Tea', 10, '/actions/brewing/super_brewing_tea', 10, [
+                    {
+                        ...craft('/items/crushed_amber', 'Crushed Amber', 10, '/actions/crafting/crushed_amber', 1, [
+                            buy('/items/amber', 'Amber', 1),
+                        ]),
+                        outputCount: 15,
+                    },
+                ]),
+            ],
+        };
+        const steps = buildWalkSteps(plan, {
+            inventory: [{ itemHrid: '/items/crushed_amber', count: 5, itemLocationHrid: '/item_locations/inventory' }],
+        });
+        const crushed = steps.find((entry) => entry.itemHrid === '/items/crushed_amber');
+
+        expect(crushed).toMatchObject({ count: 20, actions: 1, outputCount: 15 });
+        mountPanel('/actions/crafting/crushed_amber');
+        craftingPlanWalk.start([crushed]);
+        vi.advanceTimersByTime(100);
+
+        expect(mocks.filled).toHaveLength(1);
+        expect(mocks.filled[0].value).toBe(1);
+    });
+
     test('an Advanced Tea Crate walk buys enough gems for its ten captured recipe branches', () => {
         const gemRecipes = [
             ['/items/super_milking_tea', '/items/crushed_pearl', '/items/pearl'],
