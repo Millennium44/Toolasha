@@ -28,8 +28,12 @@
 /** Milliseconds in an hour */
 const HOUR_MS = 3_600_000;
 
-/** The game's unset timestamp value; its own panel treats this as no timestamp. */
-const NO_LABYRINTH_TIMESTAMP = '0001-01-01T00:00:00Z';
+/**
+ * The game marks "never set" with a year-one date (`0001-01-01T00:00:00Z`), which its own panel
+ * treats as no timestamp. Any date before 1970 is read the same way, so another spelling of that
+ * date (fractional seconds, an offset) cannot pass for a real one.
+ */
+const EARLIEST_REAL_TIMESTAMP_MS = 0;
 
 /** The Labyrinth entry stock cap. Not carried on characterInfo, so a constant. */
 export const LABYRINTH_MAX_ENTRIES = 5;
@@ -51,7 +55,8 @@ export function forecastLabyrinthEntries({ characterInfo, maxEntries = LABYRINTH
     const entries = Math.floor(Number(characterInfo.labyrinthEntries));
     const cooldownHours = Number(characterInfo.labyrinthCooldownHours);
     const timestamp = characterInfo.lastLabyrinthTimestamp;
-    const lastEntryAt = timestamp && timestamp !== NO_LABYRINTH_TIMESTAMP ? Date.parse(timestamp) : NaN;
+    const parsed = timestamp ? Date.parse(timestamp) : NaN;
+    const lastEntryAt = parsed >= EARLIEST_REAL_TIMESTAMP_MS ? parsed : NaN;
 
     if (!Number.isFinite(entries) || !Number.isFinite(cooldownHours) || cooldownHours <= 0) {
         return { ok: false, reason: 'incomplete labyrinth info' };
