@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Dungeon restarts and key estimates
+
+- Starting another action during a dungeon now ends that tracked attempt, so a stale queued wave cannot carry its time and progress into a later run. Dungeon profit estimates also charge entry keys only for regular completion chests; refinement-only and chest-free rewards no longer incur a phantom entry key.
+
 ### Shared agent rules brought up to date
 
 - Nothing a player sees changes. The workflow rules every coding agent reads now include the pull-request, review and briefing practices adopted since late September, and the newer code rules (spend buttons, non-English game clients, settings defaults).

@@ -118,11 +118,11 @@ describe('pricing a completion', () => {
         expect(bonus.entries[0].count).toBeCloseTo(1.295);
     });
 
-    test('a reward table with no chest still charges the one key the door took', () => {
+    test('a completion with no regular chest spends no entry key', () => {
         const rewards = priceRewards(new Map([['/items/chimerical_token', 40]]), pricing);
         const keys = priceKeys(DEN, rewards, pricing);
-        expect(keys.entries).toEqual([{ itemHrid: '/items/chimerical_entry_key', count: 1, unitCost: 3_000 }]);
-        expect(keys.total).toBeCloseTo(3_000);
+        expect(keys.entries).toEqual([]);
+        expect(keys.total).toBe(0);
     });
 
     test('refinement chests pull a chest key but never an entry key', () => {
@@ -138,6 +138,13 @@ describe('pricing a completion', () => {
             { itemHrid: '/items/chimerical_entry_key', count: 1, unitCost: 3_000 },
             { itemHrid: '/items/chimerical_chest_key', count: 3, unitCost: 1_000 },
         ]);
+    });
+
+    test('a refinement-only payout charges its chest key without an entry key', () => {
+        const rewards = priceRewards(new Map([['/items/chimerical_refinement_chest', 2]]), pricing);
+        const keys = priceKeys(DEN, rewards, pricing);
+        expect(keys.entries).toEqual([{ itemHrid: '/items/chimerical_chest_key', count: 2, unitCost: 1_000 }]);
+        expect(keys.total).toBe(2_000);
     });
 
     test('an unpriceable key leaves the total null rather than free', () => {
