@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Briefing tile keeps one current summary
+
+- The Briefing tile no longer repeats its attention count on every refresh. Its current summary replaces the previous line as the items needing attention change.
+
 ### Notices tile replaces its count on refresh
 
 - The Notices tile now shows one current count instead of accumulating duplicate lines. Reading or clearing notices also removes the previous count.
