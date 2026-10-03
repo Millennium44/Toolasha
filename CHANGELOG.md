@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Consumable market totals fit the tile
+
+- The Consumables tile shows ask and bid costs on separate lines so missing-price counts fit. New tiles have space for both lines, and hovering a smaller saved tile shows the complete costs.
+
 ### Consumable totals identify missing market quotes
 
 - Daily consumable costs now show when an ask or bid quote is missing. The Consumables tile and panel show a dash for an entirely unpriced side, and label partial totals with the number of unpriced items instead of making missing quotes look free.

@@ -477,8 +477,8 @@ registerRow({
     key: 'consumables',
     empty: 'Nothing slotted',
     name: 'Consumables',
-    // Four lines now the cost label has one of its own, as CRack has it
-    defaultSize: { width: 240, height: 76 },
+    // Each market side has its own line so unpriced-item counts fit.
+    defaultSize: { width: 240, height: 92 },
     // Every figure and color the tile carries, in the precision it carries
     // them: the two countdowns as they are worded, the color each is given —
     // which is a comparison against the Consumables panel's target, so a change
@@ -506,6 +506,7 @@ registerRow({
         ].join('|');
     },
     render: (container) => {
+        container.removeAttribute('title');
         const payload = consumablesPayload();
         if (!payload) return blank(container);
 
@@ -580,12 +581,15 @@ registerRow({
         container.appendChild(label);
 
         const cost = document.createElement('div');
-        cost.textContent = `Ask: ${formatConsumableCostSide(sides.ask, sides.askUnpriced)} / Bid: ${formatConsumableCostSide(sides.bid, sides.bidUnpriced)}`;
+        cost.textContent = `Ask: ${formatConsumableCostSide(sides.ask, sides.askUnpriced)}\nBid: ${formatConsumableCostSide(sides.bid, sides.bidUnpriced)}`;
+        // Existing layouts retain their saved dimensions; the full cost is
+        // still available on hover if a player has made the tile smaller.
+        container.title = cost.textContent;
         Object.assign(cost.style, {
             color: ROW_COLORS.neutral,
             fontSize: '90%',
             textAlign: 'left',
-            whiteSpace: 'nowrap',
+            whiteSpace: 'pre-line',
             overflow: 'hidden',
             textOverflow: 'ellipsis',
         });

@@ -277,11 +277,11 @@ describe('the rows summarise their own inputs', () => {
         game.consumableSides = { ask: 2400, bid: 2160, askUnpriced: 1, bidUnpriced: 1 };
 
         const initial = versionOf('consumables');
-        expect(renderRow('consumables')).toContain('Ask: 2.40K (1 unpriced) / Bid: 2.16K (1 unpriced)');
+        expect(renderRow('consumables')).toContain('Ask: 2.40K (1 unpriced)\nBid: 2.16K (1 unpriced)');
 
         game.consumableSides = { ask: null, bid: null, askUnpriced: 2, bidUnpriced: 2 };
         game.dmHandlers.character_switching();
         expect(versionOf('consumables')).not.toBe(initial);
-        expect(renderRow('consumables')).toContain('Ask: — (2 unpriced) / Bid: — (2 unpriced)');
+        expect(renderRow('consumables')).toContain('Ask: — (2 unpriced)\nBid: — (2 unpriced)');
     });
 });
