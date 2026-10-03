@@ -101,12 +101,13 @@ const {
     planTaskTargets,
     groupTasksBySharedChain,
     mergedMissingRoot,
+    mergedMissingLines,
     mergedWalkOwner,
     LIVE_CHECK_INTERVAL_MS,
 } = await import('./task-crafting-train.js');
 
 /** A craft node, sized for the whole run. */
-function craft(itemHrid, quantity, actionHrid, actionsNeeded, children = []) {
+function craft(itemHrid, quantity, actionHrid, actionsNeeded, children = [], outputCount = 1) {
     return {
         itemHrid,
         itemName: itemHrid.split('/').pop(),
@@ -114,7 +115,7 @@ function craft(itemHrid, quantity, actionHrid, actionsNeeded, children = []) {
         strategy: 'craft',
         actionHrid,
         actionsNeeded,
-        outputCount: 1,
+        outputCount,
         children,
     };
 }
@@ -173,6 +174,23 @@ beforeEach(() => {
 });
 
 describe('mergeWalkSteps', () => {
+    test('several plans share multi-output surplus when action counts are merged', () => {
+        const plans = Array.from({ length: 4 }, () =>
+            craft('/items/crushed_amber', 10, '/actions/crafting/crushed_amber', 1, [buy('/items/amber', 1)], 15)
+        );
+
+        const merged = mergeWalkSteps(plans);
+
+        expect(merged.saved).toBe(6);
+        expect(merged.steps).toHaveLength(2);
+        expect(stepFor(merged.steps, 'craft:/actions/crafting/crushed_amber')).toMatchObject({
+            count: 40,
+            actions: 3,
+            outputCount: 15,
+        });
+        expect(stepFor(merged.steps, 'buy:/items/amber').count).toBe(3);
+    });
+
     test('two tasks sharing an intermediate merge into one list with summed counts', () => {
         const merged = mergeWalkSteps([hatPlan(), bootsPlan()]);
 
@@ -323,6 +341,16 @@ describe('groupTasksBySharedChain', () => {
 });
 
 describe('the merged walk claim', () => {
+    test('merged task reservations count shared multi-output surplus once', () => {
+        const plans = Array.from({ length: 4 }, (_, index) =>
+            craft(`/items/tea_${index}`, 1, `/actions/brewing/tea_${index}`, 1, [
+                craft('/items/crushed_amber', 10, '/actions/crafting/crushed_amber', 1, [buy('/items/amber', 1)], 15),
+            ])
+        );
+
+        expect(mergedMissingLines(plans, 'test-owner')).toEqual([{ itemHrid: '/items/amber', count: 3 }]);
+    });
+
     test('a shared material is claimed once, at the combined requirement', async () => {
         const group = groupTasksBySharedChain(
             planTaskTargets(

@@ -13,8 +13,9 @@
  * Toolasha plan is a tree from `computeBestCraftingPlan` — several inputs per
  * node, buy-vs-craft decided per leg — so there is no single root to bucket on.
  * The equivalent here is to plan each task's target on its own and merge the
- * resulting step lists on the step key, which is exactly the merge
- * {@link buildWalkSteps} already performs inside one plan, lifted across plans.
+ * resulting trees under one shared surplus ledger, then turns that tree into a
+ * dependency-ordered step list. This also keeps overproduced output from one
+ * task available to the next task in the merged walk.
  *
  * The walk itself is untouched: it takes a step list, and a merged list is still
  * a step list. Nothing here presses a game button either.
@@ -25,6 +26,7 @@ import dataManager from '../../core/data-manager.js';
 import domObserver from '../../core/dom-observer.js';
 import { computeBestCraftingPlan, collectMissingMaterials } from './crafting-plan-calculator.js';
 import craftingPlanWalk, { buildWalkSteps, walkStepFor } from './crafting-plan-walk.js';
+import { normalizePlannedSurplus } from './crafting-plan-surplus.js';
 import { questForTaskCard } from '../tasks/task-card-quest.js';
 import { effectiveInventoryRows, release, releaseMissing, reserve } from '../../utils/inventory-reservations.js';
 import { formatWithSeparator } from '../../utils/formatters.js';
@@ -131,29 +133,28 @@ export function mergeWalkSteps(plans) {
         indegree.set(to, (indegree.get(to) || 0) + 1);
     };
 
-    for (const plan of plans || []) {
-        if (!plan) continue;
+    const validPlans = (plans || []).filter(Boolean);
+    const combinedPlan = normalizePlannedSurplus({ strategy: 'group', children: validPlans });
+    for (const plan of validPlans) separateStepCount += buildWalkSteps(plan).length;
 
-        for (const step of buildWalkSteps(plan)) {
-            separateStepCount += 1;
-            const existing = merged.get(step.key);
-            if (existing) {
-                existing.count += step.count;
-                existing.actions += step.actions;
-                continue;
-            }
-            merged.set(step.key, { ...step });
-            firstSeen.set(step.key, firstSeen.size);
-            if (!indegree.has(step.key)) indegree.set(step.key, 0);
+    for (const step of buildWalkSteps(combinedPlan)) {
+        const existing = merged.get(step.key);
+        if (existing) {
+            existing.count += step.count;
+            existing.actions = step.kind === 'craft' ? Math.ceil(existing.count / existing.outputCount) : 0;
+            continue;
         }
-
-        (function collectEdges(node, consumerKey) {
-            if (!node) return;
-            const key = walkStepFor(node)?.key || null;
-            for (const child of node.children || []) collectEdges(child, key || consumerKey);
-            addEdge(key, consumerKey);
-        })(plan, null);
+        merged.set(step.key, { ...step });
+        firstSeen.set(step.key, firstSeen.size);
+        if (!indegree.has(step.key)) indegree.set(step.key, 0);
     }
+
+    (function collectEdges(node, consumerKey) {
+        if (!node) return;
+        const key = walkStepFor(node)?.key || null;
+        for (const child of node.children || []) collectEdges(child, key || consumerKey);
+        addEdge(key, consumerKey);
+    })(combinedPlan, null);
 
     if (merged.size === 0) return null;
 

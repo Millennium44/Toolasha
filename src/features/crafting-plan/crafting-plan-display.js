@@ -9,6 +9,7 @@ import dataManager from '../../core/data-manager.js';
 import { openBillOwner, openMaterialsList } from '../actions/missing-materials-button.js';
 import { computeBestCraftingPlan, collectMissingMaterials } from './crafting-plan-calculator.js';
 import craftingPlanWalk, { buildWalkSteps, WALK_KEY_ATTRIBUTE } from './crafting-plan-walk.js';
+import { normalizePlannedSurplus } from './crafting-plan-surplus.js';
 import { createCollapsibleSection } from '../../utils/ui-components.js';
 import { formatKMB, formatWithSeparator, timeReadable } from '../../utils/formatters.js';
 import {
@@ -240,6 +241,7 @@ function resolveRunCount(panel, output) {
  */
 function collectBuyItems(node, buyItems) {
     if (node.strategy === 'buy') {
+        if (!(node.quantity > 0)) return;
         const existing = buyItems.get(node.itemHrid);
         if (existing) {
             existing.quantity += node.quantity;
@@ -266,19 +268,30 @@ function collectBuyItems(node, buyItems) {
  * @param {Object} node - CraftingPlanNode
  * @param {Array} craftSteps - Array to collect craft steps into
  */
-function collectCraftSteps(node, craftSteps) {
+function collectCraftSteps(node, craftSteps, byKey = new Map()) {
     // Depth-first: collect children first so deepest crafts appear first
     for (const child of node.children) {
-        collectCraftSteps(child, craftSteps);
+        collectCraftSteps(child, craftSteps, byKey);
     }
 
     if (node.strategy === 'craft' && node.actionHrid) {
-        craftSteps.push({
-            itemName: node.itemName,
-            quantity: Math.ceil(node.quantity),
-            actionsNeeded: node.actionsNeeded,
-            actionHrid: node.actionHrid,
-        });
+        const outputCount = node.outputCount || 1;
+        const key = `${node.actionHrid}:${node.itemHrid}`;
+        const existing = byKey.get(key);
+        if (existing) {
+            existing.quantity += Math.ceil(node.quantity);
+            existing.actionsNeeded = Math.ceil(existing.quantity / existing.outputCount);
+        } else {
+            const step = {
+                itemName: node.itemName,
+                quantity: Math.ceil(node.quantity),
+                actionsNeeded: node.actionsNeeded,
+                actionHrid: node.actionHrid,
+                outputCount,
+            };
+            byKey.set(key, step);
+            craftSteps.push(step);
+        }
     }
 }
 
@@ -556,8 +569,9 @@ export function buildPlanUI(actionHrid, onToggle, defaultOpen = false, panel = n
     }
 
     // === Shopping List (what to buy) ===
+    const executionPlan = normalizePlannedSurplus(plan);
     const buyItems = new Map();
-    collectBuyItems(plan, buyItems);
+    collectBuyItems(executionPlan, buyItems);
 
     if (buyItems.size > 0) {
         const divider = document.createElement('div');
@@ -663,7 +677,7 @@ export function buildPlanUI(actionHrid, onToggle, defaultOpen = false, panel = n
 
     // === Crafting Steps (what to craft, in order) ===
     const craftSteps = [];
-    collectCraftSteps(plan, craftSteps);
+    collectCraftSteps(executionPlan, craftSteps);
 
     if (craftSteps.length > 0) {
         const divider2 = document.createElement('div');
@@ -776,7 +790,7 @@ export function buildPlanUI(actionHrid, onToggle, defaultOpen = false, panel = n
             walkButton.addEventListener('click', async () => {
                 // The walk steps the same plan the section above is showing —
                 // already sized to the run — not a separate re-plan.
-                const steps = buildWalkSteps(plan);
+                const steps = buildWalkSteps(executionPlan);
                 if (steps.length === 0) return;
 
                 // Starting the walk is at least as much a commitment to the

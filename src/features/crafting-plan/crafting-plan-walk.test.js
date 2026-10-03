@@ -16,7 +16,10 @@ const mocks = vi.hoisted(() => ({
 }));
 
 vi.mock('../../core/config.js', () => ({
-    default: { getSetting: (key) => mocks.settings[key] },
+    default: {
+        getSetting: (key) => mocks.settings[key],
+        getSettingValue: (_key, fallback) => fallback,
+    },
 }));
 
 vi.mock('../../core/websocket.js', () => ({
@@ -162,6 +165,72 @@ describe('buildWalkSteps', () => {
             'craft:/actions/crafting/tool',
         ]);
         expect(steps[0].count).toBe(7);
+    });
+
+    test('shared multi-output demand queues only the actions needed for the combined yield', () => {
+        const plan = craft('/items/crate', 'Crate', 1, '/actions/brewing/crate', 1, [
+            ...Array.from({ length: 4 }, () => ({
+                ...craft('/items/crushed_amber', 'Crushed Amber', 10, '/actions/crafting/crushed_amber', 1, [
+                    buy('/items/amber', 'Amber', 1),
+                ]),
+                outputCount: 15,
+            })),
+        ]);
+
+        const steps = buildWalkSteps(plan);
+        const step = steps.find((entry) => entry.itemHrid === '/items/crushed_amber');
+        const amberStep = steps.find((entry) => entry.itemHrid === '/items/amber');
+
+        expect(step).toMatchObject({ count: 40, actions: 3, outputCount: 15 });
+        expect(amberStep.count).toBe(3);
+    });
+
+    test('an Advanced Tea Crate walk buys enough gems for its ten captured recipe branches', () => {
+        const gemRecipes = [
+            ['/items/super_milking_tea', '/items/crushed_pearl', '/items/pearl'],
+            ['/items/super_foraging_tea', '/items/crushed_pearl', '/items/pearl'],
+            ['/items/super_woodcutting_tea', '/items/crushed_pearl', '/items/pearl'],
+            ['/items/super_cooking_tea', '/items/crushed_amber', '/items/amber'],
+            ['/items/super_brewing_tea', '/items/crushed_amber', '/items/amber'],
+            ['/items/super_alchemy_tea', '/items/crushed_amber', '/items/amber'],
+            ['/items/super_enhancing_tea', '/items/crushed_amber', '/items/amber'],
+            ['/items/super_cheesesmithing_tea', '/items/crushed_garnet', '/items/garnet'],
+            ['/items/super_crafting_tea', '/items/crushed_jade', '/items/jade'],
+            ['/items/super_tailoring_tea', '/items/crushed_amethyst', '/items/amethyst'],
+        ];
+        const plan = craft(
+            '/items/advanced_tea_crate',
+            'Advanced Tea Crate',
+            1,
+            '/actions/brewing/advanced_tea_crate',
+            1,
+            gemRecipes.map(([teaHrid, crushedHrid, gemHrid]) =>
+                craft(teaHrid, teaHrid.split('/').pop(), 10, `/actions/brewing/${teaHrid.split('/').pop()}`, 10, [
+                    {
+                        ...craft(
+                            crushedHrid,
+                            crushedHrid.split('/').pop(),
+                            10,
+                            `/actions/crafting/${crushedHrid.split('/').pop()}`,
+                            1,
+                            [buy(gemHrid, gemHrid.split('/').pop(), 1)]
+                        ),
+                        outputCount: 15,
+                    },
+                ])
+            )
+        );
+
+        const steps = buildWalkSteps(plan);
+        const countFor = (itemHrid) => steps.find((step) => step.itemHrid === itemHrid)?.count;
+
+        expect(countFor('/items/amber')).toBe(3);
+        expect(countFor('/items/pearl')).toBe(2);
+        expect(countFor('/items/garnet')).toBe(1);
+        expect(countFor('/items/jade')).toBe(1);
+        expect(countFor('/items/amethyst')).toBe(1);
+        expect(steps.find((step) => step.itemHrid === '/items/crushed_amber')).toMatchObject({ count: 40, actions: 3 });
+        expect(steps.find((step) => step.itemHrid === '/items/crushed_pearl')).toMatchObject({ count: 30, actions: 2 });
     });
 
     test('coins and empty legs are not steps', () => {

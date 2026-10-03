@@ -35,6 +35,11 @@ vi.mock('../../core/data-manager.js', () => ({
                     type: '/action_types/crafting',
                     outputItems: [{ itemHrid: '/items/oak_bow', count: 1 }],
                 },
+                '/actions/crafting/crushed_amber': {
+                    type: '/action_types/crafting',
+                    actionTime: 6,
+                    outputItems: [{ itemHrid: '/items/crushed_amber', count: 15 }],
+                },
             },
             itemDetailMap: {},
         }),
@@ -63,8 +68,7 @@ vi.mock('../../core/config.js', () => ({
 vi.mock('./crafting-plan-calculator.js', () => ({
     // `planFor`, when a test sets it, builds a plan from the quantity the
     // display actually asked for — the seam the count-scaling tests need.
-    // Every other test leaves it unset and gets the fixed `state.plan`, as
-    // before.
+    // Every other test leaves it unset and gets the fixed `state.plan`, as before.
     computeBestCraftingPlan: (itemHrid, quantity) => (state.planFor ? state.planFor(quantity) : state.plan),
     collectMissingMaterials: () => state.missing,
 }));
@@ -106,14 +110,17 @@ vi.mock('../../utils/action-panel-helper.js', () => ({
     resolveDetailPanel: () => ({ actionHrid: panels.resolvedActionHrid }),
 }));
 vi.mock('../../utils/action-calculator.js', () => ({
-    calculateActionStats: () => ({ actionTime: 0, totalEfficiency: 0 }),
+    calculateActionStats: (action) => ({ actionTime: action.actionTime || 0, totalEfficiency: 0 }),
 }));
 vi.mock('../../utils/efficiency.js', () => ({ calculateEfficiencyMultiplier: () => 1 }));
 // This suite's concern is the reservation ledger and the guided walk, not the
 // artisan-tea-runs-dry warning (drink-calculator.test.js owns that arithmetic).
 vi.mock('../../utils/drink-calculator.js', () => ({ artisanTeaShortfall: () => [] }));
 vi.mock('../../utils/experience-calculator.js', () => ({
-    calculateExpPerHour: () => ({ expPerHour: 0, actionsPerHour: 0 }),
+    calculateExpPerHour: (actionHrid) =>
+        actionHrid === '/actions/crafting/crushed_amber'
+            ? { expPerHour: 1000, actionsPerHour: 500 }
+            : { expPerHour: 0, actionsPerHour: 0 },
 }));
 
 /**
@@ -465,6 +472,64 @@ describe('the panel is sized to the run, not one unit', () => {
         const eight = shoppingRow(buildPlanUI('/actions/crafting/wooden_bow', undefined, false, panel));
         expect(four).toBe('Wood x420 (5/ea)');
         expect(eight).toBe('Wood x840 (5/ea)');
+    });
+
+    test('shared multi-output crafts count once in displayed steps, time, and XP', () => {
+        state.plan = {
+            strategy: 'craft',
+            itemHrid: '/items/advanced_tea_crate',
+            itemName: 'Advanced Tea Crate',
+            quantity: 1,
+            actionHrid: '/actions/brewing/advanced_tea_crate',
+            actionsNeeded: 1,
+            outputCount: 1,
+            craftCost: 1000,
+            buyPrice: 2000,
+            unitCost: 1000,
+            children: [
+                ...Array.from({ length: 4 }, () => ({
+                    strategy: 'craft',
+                    itemHrid: '/items/crushed_amber',
+                    itemName: 'Crushed Amber',
+                    quantity: 10,
+                    actionHrid: '/actions/crafting/crushed_amber',
+                    actionsNeeded: 1,
+                    outputCount: 15,
+                    children: [
+                        {
+                            strategy: 'buy',
+                            itemHrid: '/items/amber',
+                            itemName: 'Amber',
+                            quantity: 1,
+                            unitCost: 1000,
+                            totalCost: 1000,
+                            children: [],
+                        },
+                    ],
+                })),
+                {
+                    strategy: 'buy',
+                    itemHrid: '/items/crushed_amber',
+                    itemName: 'Crushed Amber',
+                    quantity: 5,
+                    unitCost: 2000,
+                    totalCost: 10000,
+                    children: [],
+                },
+            ],
+        };
+        state.planFor = undefined;
+
+        const section = buildPlanUI('/actions/crafting/wooden_bow', undefined, true);
+        const rows = [...section.querySelectorAll('div')].map((element) => element.textContent.trim());
+
+        expect(
+            rows.some((row) => row.startsWith('1. Crushed Amber') && row.includes('x40') && row.includes('18s'))
+        ).toBe(true);
+        expect(rows.some((row) => row.startsWith('Amber x3'))).toBe(true);
+        expect(rows.some((row) => row.startsWith('Crushed Amber x0'))).toBe(false);
+        expect(rows).toContain('Total craft time18s');
+        expect(rows).toContain('Total XP6');
     });
 
     test('an unreadable count is not treated as a request for that many units', () => {
