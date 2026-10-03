@@ -5,7 +5,12 @@
 
 import dataManager from '../core/data-manager.js';
 import domObserver from '../core/dom-observer.js';
-import { getActionHridFromName } from './game-lookups.js';
+import {
+    getActionHridFromName,
+    getActionHridFromFiber,
+    getActionHridFromIconHref,
+    getIconHref,
+} from './game-lookups.js';
 
 /** The action detail panels currently mounted */
 export const PANEL_SELECTOR = '[class*="SkillActionDetail_skillActionDetail"]';
@@ -212,11 +217,14 @@ class ActionPanelDispatcher {
      * @param {string} name - Handler name for the observer's diagnostics
      * @param {string} className - Class substring of the panels to watch
      * @param {string} nameSelector - Selector of the title element inside a panel
+     * @param {function(HTMLElement): (string|null)} identify - The action by something other than
+     *   its translated title (an icon, or the component's props), or null
      */
-    constructor(name, className, nameSelector) {
+    constructor(name, className, nameSelector, identify) {
         this.name = name;
         this.className = className;
         this.nameSelector = nameSelector;
+        this.identify = identify;
         this.subscribers = [];
         this.unregister = null;
         /** @type {WeakMap<HTMLElement, {actionName: string, actionHrid: string}>} */
@@ -238,7 +246,9 @@ class ActionPanelDispatcher {
             if (cached && cached.actionName === actionName) {
                 actionHrid = cached.actionHrid;
             } else {
-                actionHrid = getActionHridFromName(actionName);
+                // Identity that does not depend on the game language first; the translated title is
+                // the fallback, and the cache is still keyed on it (it changes when the action does)
+                actionHrid = this.identify(panel) || getActionHridFromName(actionName);
                 // A miss is not remembered: the game data it needs may simply
                 // not have arrived yet, and the lookup itself is a Map.get
                 if (actionHrid) this.cache.set(panel, { actionName, actionHrid });
@@ -305,12 +315,16 @@ function directText(element) {
 const detailPanels = new ActionPanelDispatcher(
     'ActionPanelHelper-DetailPanel',
     DETAIL_PANEL_CLASS,
-    '[class*="SkillActionDetail_name"]'
+    '[class*="SkillActionDetail_name"]',
+    // The modal draws no hrid-keyed icon of its own, but its component props name the action
+    (panel) => getActionHridFromFiber(panel)
 );
 const actionTiles = new ActionPanelDispatcher(
     'ActionPanelHelper-ActionTile',
     ACTION_TILE_CLASS,
-    '[class*="SkillAction_name"]'
+    '[class*="SkillAction_name"]',
+    // A tile's sprite fragment names its action; a tree walk per tile would cost far more
+    (tile) => getActionHridFromIconHref(getIconHref(tile, 'actions_sprite'))
 );
 
 /**

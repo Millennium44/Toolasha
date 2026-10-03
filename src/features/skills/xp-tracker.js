@@ -9,6 +9,7 @@ import webSocketHook from '../../core/websocket.js';
 import config from '../../core/config.js';
 import { formatKMB } from '../../utils/formatters.js';
 import { createTimerRegistry } from '../../utils/timer-registry.js';
+import { getSkillHridFromIconHref, getIconHref } from '../../utils/game-lookups.js';
 import { createPersistedRecord, mergeSeriesMaps } from '../../utils/persisted-record.js';
 import { registerSyncMerge } from '../../utils/sync-merge-registry.js';
 import { monthToDateFor } from './skill-checkpoints.js';
@@ -50,6 +51,19 @@ SKILLS.forEach((s) => (SKILL_NAME_TO_ID[s.name.toLowerCase()] = s.id));
 // Also map hrid → skill for reverse lookups
 const SKILL_HRID_TO_ID = {};
 SKILLS.forEach((s) => (SKILL_HRID_TO_ID[s.hrid] = s.id));
+
+/**
+ * The tracked skill id behind a nav bar entry (or anything inside one). The entry's icon sprite
+ * names the skill whatever the game language; the English label is only the fallback.
+ * @param {Element|null|undefined} navEl
+ * @returns {string|null}
+ */
+function skillIdForNavEntry(navEl) {
+    const hrid = getSkillHridFromIconHref(getIconHref(navEl, 'skills_sprite'));
+    if (hrid && SKILL_HRID_TO_ID[hrid]) return SKILL_HRID_TO_ID[hrid];
+    const label = navEl?.querySelector('[class*="NavigationBar_label"]')?.textContent.trim().toLowerCase();
+    return (label && SKILL_NAME_TO_ID[label]) || null;
+}
 
 const SKILL_ID_TO_HRID = {};
 SKILLS.forEach((s) => (SKILL_ID_TO_HRID[s.id] = s.hrid));
@@ -488,11 +502,7 @@ class XPTracker {
             // Only process nav entries that have an XP bar
             if (!navEl.querySelector('[class*="NavigationBar_currentExperience"]')) return;
 
-            const labelEl = navEl.querySelector('[class*="NavigationBar_label"]');
-            if (!labelEl) return;
-
-            const skillName = labelEl.textContent.trim().toLowerCase();
-            const skillId = SKILL_NAME_TO_ID[skillName];
+            const skillId = skillIdForNavEntry(navEl);
             if (!skillId) return;
 
             const history = this.xpHistory[skillId];
@@ -568,6 +578,23 @@ class XPTracker {
     }
 
     /**
+     * The tracked skill id a tooltip belongs to. The tooltip carries no icon of its own, but it is
+     * revealed under its nav entry, whose icon names the skill in any game language; when it is
+     * not inside one, the English name in its first line is the fallback.
+     * @param {HTMLElement} tooltipEl - The tooltip
+     * @param {HTMLElement} nameEl - Its first line, the skill's displayed name
+     * @returns {string|null}
+     */
+    _tooltipSkillId(tooltipEl, nameEl) {
+        const navEl = tooltipEl.closest('[class*="NavigationBar_nav"]');
+        if (navEl) {
+            const hrid = getSkillHridFromIconHref(getIconHref(navEl, 'skills_sprite'));
+            if (hrid && SKILL_HRID_TO_ID[hrid]) return SKILL_HRID_TO_ID[hrid];
+        }
+        return SKILL_NAME_TO_ID[nameEl.textContent.trim().toLowerCase()] || null;
+    }
+
+    /**
      * The skill a tooltip is describing, and its live experience.
      *
      * The tooltip carries the skill's *name*, so the hrid comes from the name
@@ -582,7 +609,7 @@ class XPTracker {
         const divs = tooltipEl.querySelectorAll(':scope > div');
         if (divs.length < 1) return null;
 
-        const skillId = SKILL_NAME_TO_ID[divs[0].textContent.trim().toLowerCase()];
+        const skillId = this._tooltipSkillId(tooltipEl, divs[0]);
         if (!skillId) return null;
 
         const hrid = SKILL_ID_TO_HRID[skillId];
@@ -644,8 +671,7 @@ class XPTracker {
             return;
         }
 
-        const skillName = divs[0].textContent.trim().toLowerCase();
-        const skillId = SKILL_NAME_TO_ID[skillName];
+        const skillId = this._tooltipSkillId(tooltipEl, divs[0]);
         if (!skillId) {
             return;
         }

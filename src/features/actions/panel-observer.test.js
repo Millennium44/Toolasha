@@ -60,6 +60,9 @@ vi.mock('./action-filter.js', () => ({ default: { initialize: vi.fn(), cleanup: 
 vi.mock('../../utils/game-lookups.js', () => ({
     getActionHridFromName: vi.fn(),
     getItemHridFromName: vi.fn(() => '/items/gator_vest'),
+    getActionHridFromFiber: vi.fn(() => null),
+    getItemHridFromIconHref: vi.fn(() => null),
+    getIconHref: vi.fn(() => null),
 }));
 vi.mock('../../utils/action-panel-helper.js', () => ({ onActionTile: vi.fn(() => vi.fn()) }));
 vi.mock('../../utils/enhancement-config.js', () => ({ getEnhancingParams: vi.fn() }));
@@ -68,6 +71,7 @@ vi.mock('../enhancement/tooltip-enhancement.js', () => ({ calculateEnhancementPa
 const { createMutationWatcher } = await import('../../utils/dom-observer-helpers.js');
 const { getProtectionItemFromUI } = await import('./enhancement-display.js');
 const { getEnhancingParams } = await import('../../utils/enhancement-config.js');
+const { getItemHridFromName, getItemHridFromIconHref, getIconHref } = await import('../../utils/game-lookups.js');
 const { calculateEnhancementPath } = await import('../enhancement/tooltip-enhancement.js');
 const { initActionPanelObserver, disablePanelObserver } = await import('./panel-observer.js');
 
@@ -105,6 +109,31 @@ describe('late-rendered enhancement protection slot', () => {
         vi.useRealTimers();
         disablePanelObserver();
         document.body.innerHTML = '';
+    });
+
+    test('a translated item name resolves through the output icon, not the name', async () => {
+        // The Chinese client names the item "鳄鱼皮背心"; only the icon sprite is language-independent
+        getItemHridFromName.mockImplementation((name) => (name === 'Gator Vest' ? '/items/gator_vest' : null));
+        getIconHref.mockReturnValueOnce('/static/media/items_sprite.0a1b2c.svg#gator_vest');
+        getItemHridFromIconHref.mockImplementationOnce((href) =>
+            href.endsWith('#gator_vest') ? '/items/gator_vest' : null
+        );
+        const panel = buildEnhancingPanel();
+        panel.querySelector('.Item_name__2C42x').textContent = '鳄鱼皮背心';
+
+        await enhancingCallback()(panel);
+
+        expect(panel.dataset.mwiItemHrid).toBe('/items/gator_vest');
+    });
+
+    test('an icon-less item still resolves by its English name', async () => {
+        getItemHridFromName.mockImplementation((name) => (name === 'Gator Vest' ? '/items/gator_vest' : null));
+        const panel = buildEnhancingPanel();
+
+        await enhancingCallback()(panel);
+
+        expect(getItemHridFromIconHref).toHaveBeenCalledWith(null);
+        expect(panel.dataset.mwiItemHrid).toBe('/items/gator_vest');
     });
 
     test('does not mark observer setup complete before the protection slot exists', async () => {

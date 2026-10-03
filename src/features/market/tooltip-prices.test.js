@@ -91,7 +91,10 @@ vi.mock('../../utils/profit-helpers.js', () => ({
     calculatePriceAfterTax: (price) => price,
 }));
 vi.mock('../../utils/material-calculator.js', () => ({ calculateArtisanBonus: () => 0 }));
-vi.mock('../../utils/game-lookups.js', () => ({ getActionHridFromName: () => null }));
+vi.mock('../../utils/game-lookups.js', () => ({
+    getActionHridFromName: () => null,
+    getActionHridFromFiber: () => null,
+}));
 vi.mock('../../utils/production-index.js', () => ({ findProducingAction: () => null }));
 vi.mock('../../utils/dom.js', () => ({
     default: {

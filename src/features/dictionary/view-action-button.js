@@ -7,7 +7,13 @@ import domObserver from '../../core/dom-observer.js';
 import { navigateToItem, findActionForItem } from '../../utils/item-navigation.js';
 import { setReactInputValue } from '../../utils/react-input.js';
 import { calculateMaterialRequirements } from '../../utils/material-calculator.js';
-import { getActionHridFromName, getItemHridFromName } from '../../utils/game-lookups.js';
+import {
+    getActionHridFromName,
+    getItemHridFromName,
+    getActionHridFromFiber,
+    getItemHridFromIconHref,
+    getIconHref,
+} from '../../utils/game-lookups.js';
 import { parseGameNumber, gameDigitsSource } from '../../utils/number-parser.js';
 
 /**
@@ -103,7 +109,9 @@ class ViewActionButton {
         if (!nameEl) return;
 
         const itemName = nameEl.textContent.trim();
-        const itemHrid = getItemHridFromName(itemName);
+        // The popup's icon sprite names the item whatever the game language; the text is the fallback
+        const itemHrid =
+            getItemHridFromIconHref(getIconHref(actionMenu, 'items_sprite')) || getItemHridFromName(itemName);
         if (!itemHrid) return;
 
         const actionInfo = findActionForItem(itemHrid);
@@ -284,8 +292,8 @@ class ViewActionButton {
             .join('')
             .trim();
 
-        // Resolve action HRID from name
-        const actionHrid = getActionHridFromName(actionName);
+        // The detail modal's props name the action in any game language; the text is the fallback
+        const actionHrid = getActionHridFromFiber(nameEl) || getActionHridFromName(actionName);
         if (!actionHrid) return null;
 
         // Read current numActions from the count input

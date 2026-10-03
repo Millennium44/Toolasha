@@ -30,7 +30,7 @@ import {
 } from '../../utils/experience-calculator.js';
 import { createCollapsibleSection } from '../../utils/ui-components.js';
 import { calculateActionsPerHour, calculateEffectiveActionsPerHour } from '../../utils/profit-helpers.js';
-import { getActionHridFromName } from '../../utils/game-lookups.js';
+import { getActionHridFromName, getActionHridFromFiber } from '../../utils/game-lookups.js';
 import { onDetailPanel, resolveDetailPanel } from '../../utils/action-panel-helper.js';
 import { MIN_ACTION_TIME_SECONDS } from '../../utils/profit-constants.js';
 import { createCleanupRegistry } from '../../utils/cleanup-registry.js';
@@ -292,7 +292,7 @@ class QuickInputButtons {
             const currentName = nameEl?.textContent?.trim();
             const currentDetails =
                 currentName && currentName !== actionDetails.name
-                    ? this.getActionDetailsByName(currentName, gameData) || actionDetails
+                    ? this.getActionDetailsByName(currentName, gameData, panel) || actionDetails
                     : actionDetails;
             const maxValue = this.calculateMaxValue(panel, currentDetails, gameData);
             if (maxValue === '∞' || maxValue > 0) {
@@ -939,10 +939,11 @@ class QuickInputButtons {
      * Get action details by name
      * @param {string} actionName - Display name of the action
      * @param {Object} gameData - Cached game data from dataManager
+     * @param {HTMLElement} [panel] - Detail modal, whose props name the action in any game language
      * @returns {Object|null} Action details or null if not found
      */
-    getActionDetailsByName(actionName, gameData) {
-        const hrid = getActionHridFromName(actionName);
+    getActionDetailsByName(actionName, gameData, panel = null) {
+        const hrid = (panel && getActionHridFromFiber(panel)) || getActionHridFromName(actionName);
         if (!hrid) {
             return null;
         }

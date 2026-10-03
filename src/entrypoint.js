@@ -2109,12 +2109,14 @@ function registerFeatures() {
             category: 'Skills',
             module: UI.remainingXP,
             async: false,
-            // Needs a nav entry that both has an XP bar and names its skill —
-            // the name is what the remaining figure is computed from
+            // Needs a nav entry that both has an XP bar and names its skill — the skill icon
+            // (or, failing that, the label) is what the remaining figure is computed from
             healthCheck: () => {
                 const bars = [...document.querySelectorAll('[class*="NavigationBar_currentExperience"]')];
                 const named = bars.some((bar) =>
-                    bar.closest('[class*="NavigationBar_nav"]')?.querySelector('[class*="NavigationBar_label"]')
+                    bar
+                        .closest('[class*="NavigationBar_nav"]')
+                        ?.querySelector('use[href*="skills_sprite"], [class*="NavigationBar_label"]')
                 );
                 if (!named) return null;
                 return Boolean(document.querySelector('.mwi-remaining-xp'));

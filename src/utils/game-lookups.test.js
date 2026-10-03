@@ -3,7 +3,7 @@
  */
 import { describe, test, expect, vi, beforeEach } from 'vitest';
 
-const state = vi.hoisted(() => ({ gameData: null }));
+const state = vi.hoisted(() => ({ gameData: null, fibers: new Map() }));
 
 vi.mock('../core/data-manager.js', () => ({
     default: {
@@ -11,7 +11,19 @@ vi.mock('../core/data-manager.js', () => ({
     },
 }));
 
-const { getActionHridFromName, getItemHridFromName, getShopCoinCost } = await import('./game-lookups.js');
+// The fiber lookup walks the live React root; what is under test is what is read off the fiber
+vi.mock('./react-click.js', () => ({ fiberFor: (el) => state.fibers.get(el) ?? null }));
+
+const {
+    getActionHridFromName,
+    getItemHridFromName,
+    getShopCoinCost,
+    getActionHridFromIconHref,
+    getSkillHridFromIconHref,
+    getItemHridFromIconHref,
+    getIconHref,
+    getActionHridFromFiber,
+} = await import('./game-lookups.js');
 
 describe('getActionHridFromName', () => {
     beforeEach(() => {
@@ -147,5 +159,91 @@ describe('name lookups are memoised per detail map', () => {
         };
         expect(getActionHridFromName('Carrot')).toBe('/actions/foraging/carrot');
         expect(getItemHridFromName('Carrot')).toBe('/items/carrot');
+    });
+});
+
+describe('icon sprite lookups (locale-independent)', () => {
+    const ACTIONS = '/static/media/actions_sprite.0a1b2c.svg';
+    const SKILLS = '/static/media/skills_sprite.0a1b2c.svg';
+    const ITEMS = '/static/media/items_sprite.0a1b2c.svg';
+
+    beforeEach(() => {
+        state.gameData = {
+            actionDetailMap: {
+                '/actions/milking/cow': { name: 'Cow' },
+                '/actions/woodcutting/tree': { name: 'Tree' },
+            },
+            skillDetailMap: {
+                '/skills/milking': { name: 'Milking' },
+                '/skills/woodcutting': { name: 'Woodcutting' },
+            },
+            itemDetailMap: { '/items/redwood_log': { name: 'Redwood Log' } },
+        };
+    });
+
+    test('an action href resolves by its last hrid segment, whatever the tile text says', () => {
+        expect(getActionHridFromIconHref(`${ACTIONS}#cow`)).toBe('/actions/milking/cow');
+        // The translated name the tile shows would not resolve by name
+        expect(getActionHridFromName('奶牛')).toBeNull();
+    });
+
+    test('a skill href resolves to its skill hrid', () => {
+        expect(getSkillHridFromIconHref(`${SKILLS}#woodcutting`)).toBe('/skills/woodcutting');
+    });
+
+    test('an item href resolves when the item exists, and not otherwise', () => {
+        expect(getItemHridFromIconHref(`${ITEMS}#redwood_log`)).toBe('/items/redwood_log');
+        expect(getItemHridFromIconHref(`${ITEMS}#not_an_item`)).toBeNull();
+    });
+
+    test('a href into another sheet, without a fragment, or empty resolves to nothing', () => {
+        expect(getActionHridFromIconHref(`${SKILLS}#milking`)).toBeNull();
+        expect(getSkillHridFromIconHref(`${ACTIONS}#cow`)).toBeNull();
+        expect(getActionHridFromIconHref(ACTIONS)).toBeNull();
+        expect(getActionHridFromIconHref(null)).toBeNull();
+        expect(getItemHridFromIconHref('')).toBeNull();
+    });
+
+    test('without game data nothing resolves', () => {
+        state.gameData = null;
+        expect(getActionHridFromIconHref(`${ACTIONS}#cow`)).toBeNull();
+        expect(getSkillHridFromIconHref(`${SKILLS}#milking`)).toBeNull();
+    });
+
+    test('the fragment index follows a replaced detail map', () => {
+        expect(getActionHridFromIconHref(`${ACTIONS}#cow`)).toBe('/actions/milking/cow');
+        state.gameData = { actionDetailMap: { '/actions/milking/cow_two': { name: 'Cow Two' } } };
+        expect(getActionHridFromIconHref(`${ACTIONS}#cow`)).toBeNull();
+        expect(getActionHridFromIconHref(`${ACTIONS}#cow_two`)).toBe('/actions/milking/cow_two');
+    });
+
+    test('getIconHref reads the first icon in the named sheet', () => {
+        const container = {
+            querySelector: (selector) => {
+                expect(selector).toBe('svg use[href*="skills_sprite"]');
+                return { getAttribute: () => `${SKILLS}#milking` };
+            },
+        };
+        expect(getIconHref(container, 'skills_sprite')).toBe(`${SKILLS}#milking`);
+        expect(getIconHref(null, 'skills_sprite')).toBeNull();
+        expect(getIconHref({ querySelector: () => null }, 'skills_sprite')).toBeNull();
+    });
+});
+
+describe('getActionHridFromFiber', () => {
+    test('reads the action off the nearest ancestor component that carries actionDetail', () => {
+        const el = {};
+        const modal = { memoizedProps: { actionDetail: { hrid: '/actions/milking/cow' } }, return: null };
+        const host = { memoizedProps: { className: 'x' }, return: { memoizedProps: {}, return: modal } };
+        state.fibers.set(el, host);
+        expect(getActionHridFromFiber(el)).toBe('/actions/milking/cow');
+    });
+
+    test('ignores an actionDetail that is not an action, and gives up at the root', () => {
+        const el = {};
+        state.fibers.set(el, { memoizedProps: { actionDetail: { hrid: '/items/cow' } }, return: null });
+        expect(getActionHridFromFiber(el)).toBeNull();
+        expect(getActionHridFromFiber({})).toBeNull();
+        expect(getActionHridFromFiber(null)).toBeNull();
     });
 });

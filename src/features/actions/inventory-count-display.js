@@ -9,7 +9,7 @@ import dataManager from '../../core/data-manager.js';
 import domObserver from '../../core/dom-observer.js';
 import config from '../../core/config.js';
 import { formatKMB } from '../../utils/formatters.js';
-import { getActionHridFromName } from '../../utils/game-lookups.js';
+import { getActionHridFromName, getActionHridFromFiber } from '../../utils/game-lookups.js';
 import { onActionTile, resolveActionTile } from '../../utils/action-panel-helper.js';
 
 const GATHERING_TYPES = ['/action_types/foraging', '/action_types/woodcutting', '/action_types/milking'];
@@ -235,7 +235,7 @@ class InventoryCountDisplay {
         if (!nameEl) return;
 
         const actionName = nameEl.textContent.trim();
-        const actionHrid = getActionHridFromName(actionName);
+        const actionHrid = getActionHridFromFiber(panel) || getActionHridFromName(actionName);
         if (!actionHrid) return;
 
         const actionDetails = dataManager.getActionDetails(actionHrid);
