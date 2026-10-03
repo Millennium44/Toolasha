@@ -776,6 +776,18 @@ describe('collectMissingMaterials', () => {
 });
 
 describe('collectMissingMaterials — owned intermediates', () => {
+    test('buy legs preserve owned units in required totals for callers that net inventory', () => {
+        const plan = {
+            strategy: 'craft',
+            quantity: 1,
+            children: [{ strategy: 'buy', itemHrid: COWHIDE, itemName: 'Cowhide', quantity: 100, children: [] }],
+        };
+
+        expect(collectMissingMaterials(plan, [{ itemHrid: COWHIDE, count: 40 }])).toEqual([
+            { itemHrid: COWHIDE, itemName: 'Cowhide', missing: 60, required: 100, isTradeable: true },
+        ]);
+    });
+
     test('later crushed amber production does not retroactively reduce an earlier buy leg', () => {
         const plan = {
             strategy: 'craft',
@@ -1080,16 +1092,23 @@ describe('thin-market re-route', () => {
         };
 
         const forTask = (teaHrid, quantity) => plan(teaHrid, quantity, { [crushedAmber]: 6 }, { forceRootCraft: true });
-        const legs = [
-            forTask('/items/super_cooking_tea', 7).children.find((child) => child.itemHrid === crushedAmber),
-            forTask('/items/super_brewing_tea', 6).children.find((child) => child.itemHrid === crushedAmber),
-            forTask('/items/super_alchemy_tea', 7).children.find((child) => child.itemHrid === crushedAmber),
+        const tasks = [
+            forTask('/items/super_cooking_tea', 7),
+            forTask('/items/super_brewing_tea', 6),
+            forTask('/items/super_alchemy_tea', 7),
         ];
+        const legs = tasks.map((task) => task.children.find((child) => child.itemHrid === crushedAmber));
 
         expect(legs.map((leg) => leg.strategy)).toEqual(['craft', 'buy', 'craft']);
         expect(legs.map((leg) => leg.quantity)).toEqual([7, 6, 7]);
         expect(legs[0]).toMatchObject({ outputCount: 15, actionsNeeded: 1, thinMarketRerouted: true });
         expect(legs[2]).toMatchObject({ outputCount: 15, actionsNeeded: 1, thinMarketRerouted: true });
+
+        const missing = collectMissingMaterials({ strategy: 'group', children: tasks }, [
+            { itemHrid: crushedAmber, count: 14, itemLocationHrid: '/item_locations/inventory' },
+        ]);
+        expect(missing.some((line) => line.itemHrid === crushedAmber)).toBe(false);
+        expect(missing.find((line) => line.itemHrid === amber)).toMatchObject({ missing: 1, required: 1 });
     });
 
     test('the same intermediate re-routes on a thin leg and stays buy on a fat one', () => {

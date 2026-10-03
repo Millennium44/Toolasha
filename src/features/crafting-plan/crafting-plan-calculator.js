@@ -599,7 +599,7 @@ export function collectMissingMaterials(plan, inventory) {
         stock.set(row.itemHrid, (stock.get(row.itemHrid) || 0) + (row.count || 0));
         ownedStock.set(row.itemHrid, (ownedStock.get(row.itemHrid) || 0) + (row.count || 0));
     }
-    const creditedToCrafts = new Map(); // itemHrid → units the tree's craft nodes took
+    const creditedOwnedStock = new Map(); // itemHrid → bag units already allocated to plan steps
     const artisanMode = getArtisanMaterialMode();
 
     (function walk(node, scale, isRoot, quantityOverride) {
@@ -608,15 +608,24 @@ export function collectMissingMaterials(plan, inventory) {
 
         if (node.strategy === 'buy') {
             if (node.itemHrid === '/items/coin' || !(quantity > 0)) return;
-            // Only surplus produced by an earlier craft can satisfy this buy
-            // leg. Later crafts must not retroactively shrink an earlier buy.
-            const surplus = plannedSurplus.get(node.itemHrid) || 0;
-            const used = Math.min(surplus, quantity);
-            if (used > 0) {
-                plannedSurplus.set(node.itemHrid, surplus - used);
-                stock.set(node.itemHrid, Math.max(0, (stock.get(node.itemHrid) || 0) - used));
+            // Allocate bag stock to this buy leg before earlier planned output,
+            // matching normalizePlannedSurplus and the guided walk's traversal.
+            const held = ownedStock.get(node.itemHrid) || 0;
+            const usedOwned = Math.min(held, quantity);
+            if (usedOwned > 0) {
+                ownedStock.set(node.itemHrid, held - usedOwned);
+                stock.set(node.itemHrid, Math.max(0, (stock.get(node.itemHrid) || 0) - usedOwned));
+                creditedOwnedStock.set(node.itemHrid, (creditedOwnedStock.get(node.itemHrid) || 0) + usedOwned);
             }
-            const remaining = quantity - used;
+            const afterOwned = quantity - usedOwned;
+            // Later crafts must not retroactively shrink an earlier buy leg.
+            const surplus = plannedSurplus.get(node.itemHrid) || 0;
+            const usedPlanned = Math.min(surplus, afterOwned);
+            if (usedPlanned > 0) {
+                plannedSurplus.set(node.itemHrid, surplus - usedPlanned);
+                stock.set(node.itemHrid, Math.max(0, (stock.get(node.itemHrid) || 0) - usedPlanned));
+            }
+            const remaining = afterOwned - usedPlanned;
             if (!(remaining > 0)) return;
             const line = needed.get(node.itemHrid);
             if (line) line.quantity += remaining;
@@ -643,7 +652,7 @@ export function collectMissingMaterials(plan, inventory) {
                 const ownedUsed = Math.min(owned, used);
                 if (ownedUsed > 0) {
                     ownedStock.set(node.itemHrid, owned - ownedUsed);
-                    creditedToCrafts.set(node.itemHrid, (creditedToCrafts.get(node.itemHrid) || 0) + ownedUsed);
+                    creditedOwnedStock.set(node.itemHrid, (creditedOwnedStock.get(node.itemHrid) || 0) + ownedUsed);
                 }
                 const surplusHeld = plannedSurplus.get(node.itemHrid) || 0;
                 const surplusUsed = Math.min(surplusHeld, used - ownedUsed);
@@ -717,7 +726,7 @@ export function collectMissingMaterials(plan, inventory) {
             itemHrid,
             itemName: line.itemName,
             missing: short,
-            required: short + owned + (creditedToCrafts.get(itemHrid) || 0),
+            required: short + owned + (creditedOwnedStock.get(itemHrid) || 0),
             isTradeable,
         });
     }

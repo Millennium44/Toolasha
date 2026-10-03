@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Crafting reservations follow execution order
+
+- Material collection now allocates bag stock to buy steps in plan order, so later craft steps reserve the ingredients they still need.
+
 ### Guided crafting uses the materials already held
 
 - Guided crafting walks now use the same available inventory as material reservations, so owned intermediates reduce queued actions correctly. Crafting time and XP totals follow those action counts, and fully stocked steps disappear.

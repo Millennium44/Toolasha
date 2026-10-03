@@ -348,6 +348,22 @@ describe('the Buy Missing Materials button', () => {
         });
     });
 
+    test('actual inventory-aware requirements reach the shared path before it nets the bag', async () => {
+        state.plan = craftPlanBuying('/items/wood', 'Wood', 100);
+        state.inventory = [{ itemHrid: '/items/wood', count: 40, itemLocationHrid: '/item_locations/inventory' }];
+        state.useActualMissing = true;
+
+        const section = buildPlanUI('/actions/crafting/wooden_bow');
+        findBuyButton(section).click();
+        await Promise.resolve();
+        await Promise.resolve();
+
+        expect(ledger.reserveCalls[0].lines).toEqual([{ itemHrid: '/items/wood', count: 100 }]);
+        expect(state.openMaterialsList).toHaveBeenCalledWith([{ itemHrid: '/items/wood', count: 100 }], {
+            ownerId: 'craftingPlan:/items/wooden_bow',
+        });
+    });
+
     test('untradeable materials are left off the bill', async () => {
         state.plan = craftPlanBuying('/items/wood', 'Wood', 100);
         state.missing = [
