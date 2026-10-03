@@ -6454,6 +6454,30 @@ describe('the Bestiary route planner under the all-zones table', () => {
         expect(mocks.store.get('settings:combatSimBestiaryPlanHours')).toBe(1);
     });
 
+    test("the notify button sets this character's Bestiary target to where the route ends", async () => {
+        // The one-hour route below earns +4 points over the current total
+        mocks.monsters = [{ monsterHrid: '/monsters/fly', count: 8 }];
+        await ui._displayAllZonesResults(
+            [result('Farm', { '/monsters/fly': 10, '/monsters/rat': 2 }), result('Hive', { '/monsters/bee': 1 }, 2)],
+            1,
+            gameData
+        );
+        ui.panel.querySelector('#mwi-csim-bestiary-plan-value').value = '1';
+        click('#mwi-csim-bestiary-plan-btn');
+
+        const current = 1; // fly at 8 credits has passed only the first threshold
+        const button = ui.panel.querySelector('#mwi-csim-bestiary-plan-notify');
+        expect(button.textContent).toBe(`Notify me at ${current + 4} points`);
+
+        click('#mwi-csim-bestiary-plan-notify');
+        await vi.waitFor(() =>
+            expect(mocks.store.get(`settings:bestiaryPointsTarget_${mocks.characterId}`)).toBe(current + 4)
+        );
+        await vi.waitFor(() =>
+            expect(ui.panel.querySelector('#mwi-csim-bestiary-plan-notify-note').textContent).toContain('alert set')
+        );
+    });
+
     test('zones without a sim result are skipped with a note', async () => {
         mocks.monsters = [{ monsterHrid: '/monsters/fly', count: 8 }];
         await ui._displayAllZonesResults(

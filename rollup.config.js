@@ -280,6 +280,8 @@ const utilsExternalGlobals = new Map([
     [normalize(join(__dirname, 'src/utils/shared-profile-status.js')), 'Toolasha.Utils.sharedProfileStatus'],
     [normalize(join(__dirname, 'src/utils/tester-shop-nav.js')), 'Toolasha.Utils.testerShopNav'],
     [normalize(join(__dirname, 'src/utils/bestiary.js')), 'Toolasha.Utils.bestiary'],
+    // The planner (sim bundle) writes the target the alert (ui bundle) reads
+    [normalize(join(__dirname, 'src/utils/bestiary-target.js')), 'Toolasha.Utils.bestiaryTarget'],
     [normalize(join(__dirname, 'src/utils/game-text.js')), 'Toolasha.Utils.gameText'],
     [normalize(join(__dirname, 'src/utils/guild-credit-pricing.js')), 'Toolasha.Utils.guildCreditPricing'],
     [normalize(join(__dirname, 'src/utils/item-icon.js')), 'Toolasha.Utils.itemIcon'],

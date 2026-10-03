@@ -2444,6 +2444,15 @@ function registerFeatures() {
             customCheck: () => config.getSetting('notifications_ttlTargetReached'),
         },
         {
+            key: 'bestiaryPointsAlerts',
+            name: 'Bestiary Points Alerts',
+            category: 'Notifications',
+            module: UI.bestiaryPointsAlerts,
+            async: true,
+            // Schema setting is the only gate; no feature-map entry.
+            customCheck: () => config.getSetting('notifications_bestiaryPointsTarget'),
+        },
+        {
             key: 'marketUndercutAlerts',
             name: 'Market Undercut Alerts',
             category: 'Notifications',
