@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Labyrinth entry alerts ignore an unset timestamp
+
+- Labyrinth entry alerts no longer treat the game's unset regeneration timestamp as an overdue entry. A confirmed increase in your entry stock still produces the usual notification.
+
 ### Enhancement risk requires an enhanceable item
 
 - Enhancement risk forecasts now reject items with no enhancement recipe, including a typed item ID. Coins and other items that cannot be enhanced no longer produce a free enhancement plan.

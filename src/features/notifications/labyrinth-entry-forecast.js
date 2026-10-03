@@ -28,6 +28,9 @@
 /** Milliseconds in an hour */
 const HOUR_MS = 3_600_000;
 
+/** The game's unset timestamp value; its own panel treats this as no timestamp. */
+const NO_LABYRINTH_TIMESTAMP = '0001-01-01T00:00:00Z';
+
 /** The Labyrinth entry stock cap. Not carried on characterInfo, so a constant. */
 export const LABYRINTH_MAX_ENTRIES = 5;
 
@@ -47,7 +50,8 @@ export function forecastLabyrinthEntries({ characterInfo, maxEntries = LABYRINTH
 
     const entries = Math.floor(Number(characterInfo.labyrinthEntries));
     const cooldownHours = Number(characterInfo.labyrinthCooldownHours);
-    const lastEntryAt = Date.parse(characterInfo.lastLabyrinthTimestamp ?? '');
+    const timestamp = characterInfo.lastLabyrinthTimestamp;
+    const lastEntryAt = timestamp && timestamp !== NO_LABYRINTH_TIMESTAMP ? Date.parse(timestamp) : NaN;
 
     if (!Number.isFinite(entries) || !Number.isFinite(cooldownHours) || cooldownHours <= 0) {
         return { ok: false, reason: 'incomplete labyrinth info' };
