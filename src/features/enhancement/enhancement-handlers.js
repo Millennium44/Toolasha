@@ -153,7 +153,16 @@ function bootstrapFromCurrentEnhancingAction() {
     // Not the run just closed as ended, though: it is the same item near the same level, and
     // extending it would fold the new run into the old one after all.
     const { itemHrid, level } = parseItemHash(activeEnhancingAction.primaryItemHash);
-    if (!closedEndedRun && itemHrid && enhancementTracker.findExtendableSession(itemHrid, level)) return;
+    if (
+        !closedEndedRun &&
+        itemHrid &&
+        enhancementTracker.findExtendableSession(itemHrid, level, activeEnhancingAction)
+    ) {
+        // The cached row is already the run we will extend. Remember its id so
+        // a routine update of that same row cannot arm a forced new session.
+        trackedEnhanceActionId = activeEnhancingAction.id;
+        return;
+    }
 
     enhancementTracker.setPendingStart();
     trackedEnhanceActionId = activeEnhancingAction.id;
@@ -259,6 +268,7 @@ async function handleActionsUpdated(data) {
         // nothing to react to.
         return;
     }
+    const previousActionId = trackedEnhanceActionId;
     trackedEnhanceActionId = enhancingAction?.id ?? null;
     pendingBaseline = enhancingAction ? baselineFrom(enhancingAction) : null;
 
@@ -276,10 +286,14 @@ async function handleActionsUpdated(data) {
     // next action_completed starts a fresh one instead of continuing the old one.
     const currentSession = enhancementTracker.getCurrentSession();
     if (currentSession) {
+        // A new queue id is a new run even when the player queues the same item with
+        // the same target and protection settings again. Keep its attempts and XP separate.
+        const runChanged =
+            previousActionId != null && enhancingAction.id != null && previousActionId !== enhancingAction.id;
         const targetChanged = enhancingAction.enhancingMaxLevel !== currentSession.targetLevel;
         const protectionChanged =
             (enhancingAction.enhancingProtectionMinLevel || 0) !== (currentSession.protectFrom || 0);
-        if (targetChanged || protectionChanged) {
+        if (runChanged || targetChanged || protectionChanged) {
             await enhancementTracker.finalizeCurrentSession();
         }
     }
@@ -597,7 +611,11 @@ async function handleEnhancementResult(action, _data) {
 
         // If no active session, check if we can extend a completed session
         if (!currentSession) {
-            const extendableSessionId = enhancementTracker.findExtendableSession(itemHrid, baselineLevel ?? newLevel);
+            const extendableSessionId = enhancementTracker.findExtendableSession(
+                itemHrid,
+                baselineLevel ?? newLevel,
+                action
+            );
             if (extendableSessionId) {
                 const newTarget = action.enhancingMaxLevel || Math.min(newLevel + 5, 20);
                 await enhancementTracker.extendSessionTarget(extendableSessionId, newTarget);
