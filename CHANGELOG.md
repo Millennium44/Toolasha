@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Production drink cost per action
+
+- Production profit breakdowns now spread hourly drink costs over all completed actions, including efficiency repeats. Per-action drink and net-profit figures now agree with the hourly calculation when efficiency is active.
+
 ### Iron Bell: bells you can afford
 
 - Iron Bell Farming shows how many cowbells your coins buy now while keeping enough back for the queued loop at its lowest point (decomposing pays fees before coinify earns), and what it keeps.

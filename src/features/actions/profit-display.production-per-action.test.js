@@ -3,10 +3,9 @@
  * Regression coverage for the production "Per action breakdown" panel.
  *
  * The header line (`bonusRevenuePerAction`, folded into "Revenue: X/action")
- * is deliberately computed with no efficiency multiplier — the comment above
- * it in profit-display.js calls out that this section states the true cost
- * of one animation cycle, not one completion averaged over the free instant
- * repeats efficiency adds. The Essence Drops / Rare Finds subsections nested
+ * is deliberately computed with no efficiency multiplier because this section
+ * states the yield of one completed action, including efficiency repeats in
+ * the hourly completion rate. The Essence Drops / Rare Finds subsections nested
  * under that header used to apply the efficiency multiplier anyway (via
  * `getBonusDropPerHourTotals(drop, efficiencyMultiplier)`), so whenever
  * efficiency was above 0% the itemized lines summed to more than the header
@@ -120,5 +119,24 @@ describe('buildProductionPerActionBreakdown', () => {
         const drop = data.bonusRevenue.bonusDrops[0];
         const expected = drop.revenuePerHour / data.actionsPerHour;
         expect(revenuePerActionValue(essenceItemLine.textContent)).toBeCloseTo(expected, 6);
+    });
+
+    test('drink cost is spread over completed actions including efficiency repeats', () => {
+        const data = profitData();
+        data.totalTeaCostPerHour = 750;
+        data.teaCosts = [{ itemName: 'Efficiency Tea', drinksPerHour: 15, totalCost: 750, pricePerDrink: 50 }];
+
+        const section = buildProductionPerActionBreakdown(data);
+        const drinkLabel = findLabel(section, 'Drink Costs:');
+        const drinkLine = [...section.querySelectorAll('div')].find((el) =>
+            el.textContent.startsWith('• Efficiency Tea:')
+        );
+        const expectedCost = data.totalTeaCostPerHour / (data.actionsPerHour * data.efficiencyMultiplier);
+
+        expect(perActionValue(drinkLabel.textContent)).toBeCloseTo(expectedCost, 6);
+        expect(perActionValue(drinkLine.textContent)).toBeCloseTo(15 / (300 * 2.5), 6);
+        expect(revenuePerActionValue(drinkLine.textContent)).toBeCloseTo(expectedCost, 6);
+        const netLine = [...section.querySelectorAll('div')].find((el) => el.textContent.startsWith('Net Profit:'));
+        expect(perActionValue(netLine.textContent)).toBeCloseTo(1020 * 0.96 - 400 - expectedCost, 6);
     });
 });

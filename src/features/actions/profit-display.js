@@ -1749,7 +1749,8 @@ export function buildProductionPerActionBreakdown(profitData) {
     const bonusRevenueTotal = profitData.bonusRevenue?.totalBonusRevenue || 0;
     const outputAmount = profitData.outputAmount || 1;
 
-    // Per-action values (base, no efficiency multiplier — this section shows one action's true cost/revenue)
+    // Output, material and bonus-drop amounts are per completed action. Drink costs accrue
+    // with time, so spread them over completions including efficiency repeats.
     const baseItemsPerAction = outputAmount;
     const baseRevenuePerAction = baseItemsPerAction * profitData.outputPrice;
     const gourmetItemsPerAction = baseItemsPerAction * (profitData.gourmetBonus || 0);
@@ -1758,7 +1759,8 @@ export function buildProductionPerActionBreakdown(profitData) {
     const revenuePerAction = baseRevenuePerAction + gourmetRevenuePerAction + bonusRevenuePerAction;
     const marketTaxPerAction = revenuePerAction * displayMarketTaxRate();
     const materialCostPerAction = profitData.totalMaterialCost; // per-action cost is fixed, unaffected by efficiency
-    const teaCostPerAction = profitData.totalTeaCostPerHour / actionsPerHour;
+    const completedActionsPerHour = actionsPerHour * (profitData.efficiencyMultiplier ?? 1);
+    const teaCostPerAction = profitData.totalTeaCostPerHour / completedActionsPerHour;
     const costsPerAction = materialCostPerAction + teaCostPerAction + marketTaxPerAction;
     const profitPerAction = revenuePerAction - costsPerAction;
 
@@ -1936,8 +1938,8 @@ export function buildProductionPerActionBreakdown(profitData) {
     const teaCostsContent = document.createElement('div');
     if (profitData.teaCosts && profitData.teaCosts.length > 0) {
         for (const tea of profitData.teaCosts) {
-            const drinksPA = tea.drinksPerHour / actionsPerHour;
-            const costPA = tea.totalCost / actionsPerHour;
+            const drinksPA = tea.drinksPerHour / completedActionsPerHour;
+            const costPA = tea.totalCost / completedActionsPerHour;
             const line = document.createElement('div');
             line.style.marginLeft = '8px';
             const missingPriceNote = getMissingPriceIndicator(tea.missingPrice);
