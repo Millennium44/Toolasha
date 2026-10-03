@@ -85,6 +85,11 @@ vi.mock('../../core/data-manager.js', () => ({
 
 vi.mock('../../utils/market-data.js', () => ({
     getItemPrice: (hrid) => market.prices[hrid] ?? 0,
+    getItemPriceInfo: (hrid, options = {}) => ({
+        price: (options.mode === 'ask' ? market.asks?.[hrid] : undefined) ?? market.prices[hrid] ?? null,
+        source: market.sources?.[hrid] ?? (market.prices[hrid] ? 'book' : null),
+        estimated: market.sources?.[hrid] === 'value',
+    }),
     getPricingMode: () => market.pricingMode,
     isPriceEstimated: () => false,
 }));
@@ -353,12 +358,31 @@ describe('bells', () => {
         expect(bellsFrom(Number.NaN, 1_000_000)).toBeNull();
     });
 
-    test('buys them whichever way is cheaper', () => {
-        market.prices = { [COWBELL]: 1_000_000, [COWBELL_BAG]: 9_500_000 };
-        expect(cowbellPricing()).toMatchObject({ price: 950_000, source: 'bag' });
-
+    test('prices a bell as a tenth of a bag, the only way they are sold', () => {
+        // A cheaper loose quote is not a price anyone can buy at
         market.prices = { [COWBELL]: 900_000, [COWBELL_BAG]: 9_500_000 };
-        expect(cowbellPricing()).toMatchObject({ price: 900_000, source: 'loose' });
+        expect(cowbellPricing()).toMatchObject({ price: 950_000, source: 'bag', bag: 950_000 });
+
+        market.prices = { [COWBELL]: 900_000 };
+        expect(cowbellPricing()).toMatchObject({ price: null, source: null, quoted: false });
+    });
+
+    test('a bag priced only from the value map, with nothing listed, is not a quote to buy at', () => {
+        market.prices = { [COWBELL_BAG]: 9_500_000 };
+        expect(cowbellPricing()).toMatchObject({ price: 950_000, quoted: true });
+
+        market.sources = { [COWBELL_BAG]: 'value' };
+        expect(cowbellPricing()).toMatchObject({ price: 950_000, quoted: false });
+        market.sources = undefined;
+    });
+
+    test('a buy-now quote takes the ask, whatever the profit pricing mode', () => {
+        market.pricingMode = 'bid';
+        market.prices = { [COWBELL_BAG]: 9_000_000 };
+        market.asks = { [COWBELL_BAG]: 9_800_000 };
+        expect(cowbellPricing()).toMatchObject({ price: 900_000, pricingMode: 'bid' });
+        expect(cowbellPricing({ buyNow: true })).toMatchObject({ price: 980_000, pricingMode: 'ask' });
+        market.asks = undefined;
     });
 
     test('reports the pricing mode it quoted under', () => {
@@ -540,6 +564,28 @@ describe('crediting what is already on hand', () => {
 
         expect(credited.forageActions).toBe(0);
         expect(credited.decomposeActions).toBe(batch.decomposeActions);
+    });
+
+    test('a credited batch reads back the hours and bells its own counts cover, not the duration asked', async () => {
+        const loop = await calculateStarfruitLoop();
+        const batch = balanceBatch(loop, 16); // 1,600 forage, 1,600 decompose, 480 coinify
+
+        // Stock covering both upstream legs: the live case of 211K fruit and 1,028K essence
+        const credited = applyHoldings(batch, loop, {
+            starfruitHeld: 999_999,
+            essenceHeld: 999_999,
+            holdingsCredited: true,
+        });
+
+        expect(credited.forageActions).toBe(0);
+        expect(credited.decomposeActions).toBe(0);
+        expect(credited.coinifyActions).toBe(480);
+        // 480 coinify actions at 180 an hour is 2⅔h of queue, not the 16h that was asked
+        expect(credited.hours).toBeCloseTo(480 / 180, 8);
+        expect(credited.requestedHours).toBe(16);
+        // Coinifying held essence pays 480 × 15,000 × 0.7 and spends no decompose fee
+        expect(credited.gold).toBeCloseTo(480 * 15_000 * 0.7, 4);
+        expect(credited.bells).toBeCloseTo((480 * 15_000 * 0.7) / loop.bellPrice, 8);
     });
 
     test('credits nothing, and says so, when the loop items could not be resolved', async () => {
