@@ -126,11 +126,12 @@ class EnhancementTracker {
      * Find a completed session that can be extended
      * @param {string} itemHrid - Item HRID
      * @param {number} currentLevel - Current enhancement level
+     * @param {Object|null} [action] - Queue action now running, when known
      * @returns {string|null} Session ID if found, null otherwise
      */
-    findExtendableSession(itemHrid, currentLevel) {
+    findExtendableSession(itemHrid, currentLevel, action = null) {
         for (const [sessionId, session] of Object.entries(this.sessions)) {
-            if (canExtendSession(session, itemHrid, currentLevel)) {
+            if (canExtendSession(session, itemHrid, currentLevel, action)) {
                 return sessionId;
             }
         }

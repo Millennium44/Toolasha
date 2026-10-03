@@ -382,14 +382,28 @@ export function sessionMatches(session, itemHrid, currentLevel, targetLevel, pro
  * @param {Object} session - Session object
  * @param {string} itemHrid - Item HRID
  * @param {number} currentLevel - Current enhancement level
+ * @param {Object|null} [action] - Queue action now running, when known
  * @returns {boolean} True if session can be extended
  */
-export function canExtendSession(session, itemHrid, currentLevel) {
+export function canExtendSession(session, itemHrid, currentLevel, action = null) {
     // Must be same item
     if (session.itemHrid !== itemHrid) return false;
 
     // Must be completed
     if (session.state !== SessionState.COMPLETED) return false;
+
+    if (action) {
+        const lastActionId = session.lastAttempt?.actionId;
+        const sameAction = lastActionId != null && action.id != null && lastActionId === action.id;
+        if (!sameAction) {
+            // A different queue action can extend a completed climb only when
+            // the old target was reached and the new target is higher. A run
+            // canceled below target is its own attempt, even at the same level.
+            if (!(session.currentLevel >= session.targetLevel && action.enhancingMaxLevel > session.targetLevel)) {
+                return false;
+            }
+        }
+    }
 
     // Current level should match where session ended (or close)
     const levelDiff = Math.abs(session.currentLevel - currentLevel);

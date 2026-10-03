@@ -5,6 +5,7 @@
 import { describe, test, expect } from 'vitest';
 import {
     createSession,
+    canExtendSession,
     extendSession,
     finalizeSession,
     getCurrentLegCounters,
@@ -15,6 +16,24 @@ import {
     recordSuccess,
     SessionState,
 } from './enhancement-session.js';
+
+describe('completed session extension across queue actions', () => {
+    test('a canceled a1 below its target cannot be folded into a2 at the same level', () => {
+        const session = createSession('/items/test_sword', 'Test Sword', 0, 15, 2);
+        session.currentLevel = 5;
+        session.lastAttempt = { actionId: 'a1', level: 5, currentCount: 10 };
+        finalizeSession(session);
+        expect(canExtendSession(session, '/items/test_sword', 5, { id: 'a2', enhancingMaxLevel: 15 })).toBe(false);
+    });
+
+    test('a completed target may be intentionally extended to a higher target on a2', () => {
+        const session = createSession('/items/test_sword', 'Test Sword', 0, 5, 2);
+        session.currentLevel = 5;
+        session.lastAttempt = { actionId: 'a1', level: 5, currentCount: 10 };
+        finalizeSession(session);
+        expect(canExtendSession(session, '/items/test_sword', 5, { id: 'a2', enhancingMaxLevel: 8 })).toBe(true);
+    });
+});
 
 /** Run `count` failures at `level`, each landing back on the same level. */
 function fail(session, level, count) {
