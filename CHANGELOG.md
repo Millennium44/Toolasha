@@ -9,6 +9,9 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 ### Chest badges match net worth
 
 - Chests and crates with a market price now show it on their inventory badge, as net worth does; the estimated value of their contents is used only when there's no market price.
+### Bulk Sell vendor sales go through
+
+- Bulk Sell's vendor step now presses the game's "Confirm Sell For" the way the game accepts it, as the task reroll walk does; it used to stall at "confirm sent" without selling.
 
 ### Timers clean up after themselves everywhere
 

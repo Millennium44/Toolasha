@@ -55,10 +55,17 @@ import { holdKey, collectHeldKeys } from './bulk-sell-holds.js';
 import { watchlistEntries } from '../inventory/watchlist.js';
 import bundledLoadoutSnapshot from '../combat/loadout-snapshot.js';
 import { loadoutSnapshot } from '../../utils/bundle-bridge.js';
+import { clickThroughReact } from '../../utils/react-click.js';
 
 /** Bound on waiting for the vendor button to relabel after its arming click */
 const VENDOR_ARM_WAIT_MS = 1000;
 const VENDOR_ARM_POLL_MS = 50;
+/**
+ * How long the armed button must have stood before it is pressed. The game ignores a Confirm Sell For
+ * that lands within a few tens of milliseconds of the arming click (measured on the test server
+ * 2026-10-02: pressed 60 ms after arming, nothing sold; ~300 ms after, it sold every time)
+ */
+const VENDOR_CONFIRM_SETTLE_MS = 400;
 
 const BUTTON_ID = 'mwi-bulk-sell-btn';
 const CHIP_ID = 'mwi-bulk-sell-chip';
@@ -1245,7 +1252,138 @@ class BulkSellAssistant {
             this._armVendorThenPress(target.button);
             return;
         }
+        // Armed already (by the player's own Sell For click, perhaps a moment ago): the game ignores a
+        // confirm landing right after the arming, so it stands for the settle interval here too
+        if (target.armed === true) {
+            this._pressArmedVendorAfterSettle();
+            return;
+        }
         this._pressConfirm(target.button);
+    }
+
+    /**
+     * Press an already-armed vendor button once it has stood for `VENDOR_CONFIRM_SETTLE_MS`, checking
+     * again that the step, the menu and the armed button are all still the ones this press is for.
+     */
+    async _pressArmedVendorAfterSettle() {
+        if (this._vendorArming) return;
+        const key = this._stepKey();
+        // The player may press the armed button themselves during the wait. Whether that click is the
+        // sale depends on how long the button had stood armed, which `_trackVendorArming` recorded; an
+        // arming it never saw is treated as long past
+        const wait = this._beginVendorWait(key);
+        const watch = wait.watch;
+        watch.armedAt = this._vendorArmedAt;
+        try {
+            await new Promise((resolve) => setTimeout(resolve, VENDOR_CONFIRM_SETTLE_MS));
+            if (!wait.live() || this.state !== 'awaiting_confirm' || this._stepKey() !== key || this._confirmSent())
+                return;
+            if (watch.menuClicked) {
+                this.confirmNote = 'the item menu was clicked while Confirm waited, so it pressed nothing';
+                this._render();
+                return;
+            }
+            const settled = this._confirmTarget();
+            if (settled.why || !settled.armed) {
+                this.confirmNote = settled.why || 'the Sell For button was no longer armed, so it pressed nothing';
+                this._render();
+                return;
+            }
+            this._pressConfirm(settled.button);
+        } finally {
+            this._endVendorWait(wait);
+        }
+    }
+
+    /**
+     * Start a vendor press's wait: mark arming in progress and watch the item menu. The wait is
+     * registered so `_clearTransient` (Stop, Skip, teardown) can end it at once: its listener comes
+     * down, the arming flag clears for a restarted run, and `live()` turns false so the sleeping
+     * press returns without touching the new run's state.
+     * @param {string} key - The step key the waiting press belongs to
+     * @returns {{watch: Object, live: Function}} The wait
+     */
+    _beginVendorWait(key) {
+        this._cancelVendorWait();
+        const watch = this._watchMenuClicks(key);
+        const wait = { watch, cancelled: false, live: () => !wait.cancelled };
+        this._vendorWait = wait;
+        this._vendorArming = true;
+        return wait;
+    }
+
+    /** End a vendor press's wait; a wait already cancelled leaves the flags to whoever owns them now */
+    _endVendorWait(wait) {
+        wait.watch.stop();
+        if (this._vendorWait !== wait) return;
+        this._vendorWait = null;
+        this._vendorArming = false;
+    }
+
+    _cancelVendorWait() {
+        const wait = this._vendorWait;
+        if (!wait) return;
+        wait.cancelled = true;
+        wait.watch.stop();
+        this._vendorWait = null;
+        this._vendorArming = false;
+    }
+
+    /**
+     * Watch for clicks inside the item menu while a vendor press waits. The player's own click on the
+     * armed "Confirm Sell For" button is that step's sale: it is let through, the step counts as sent
+     * and the guard goes up (a listener added mid-dispatch skips this event), so a second click or a
+     * double-click's other half is swallowed and our own press never follows. Clicks made while
+     * `watch.ownClick` is set are ours and ignored.
+     *
+     * Except a click within `VENDOR_CONFIRM_SETTLE_MS` of the arming (`watch.armedAt`): the
+     * game may ignore that one, so it only cancels our press and the step stays unsent — the button
+     * stays clickable for a retry, and a sale that did go through closes the menu, which advances the
+     * step anyway.
+     * @param {string} key - The step key the waiting press belongs to
+     * @returns {{menuClicked: boolean, ownClick: boolean, armedAt: number|null, stop: Function}} Live
+     *   watch state
+     */
+    _watchMenuClicks(key) {
+        const watch = { menuClicked: false, ownClick: false, armedAt: null, stop: null };
+        const onClick = (event) => {
+            if (watch.ownClick || !event.target?.closest?.('[class*="Item_actionMenu"]')) return;
+            watch.menuClicked = true;
+            const sold = event.target.closest('button');
+            const early = watch.armedAt !== null && Date.now() - watch.armedAt < VENDOR_CONFIRM_SETTLE_MS;
+            if (sold && !early && /^confirm\s+sell for\b/i.test(sold.textContent.trim())) {
+                this._confirmedStep = key;
+                this._guardSale(sold);
+                this._render();
+            }
+        };
+        document.addEventListener('click', onClick, true);
+        watch.stop = () => document.removeEventListener('click', onClick, true);
+        return watch;
+    }
+
+    /**
+     * Record when the item menu's vendor button is armed (a click on an unarmed "Sell For"), by the
+     * player or by us, for as long as this vendor step lasts. The game ignores a confirm landing soon
+     * after the arming, so a player's own confirm click is only taken as the sale once the button has
+     * stood armed for `VENDOR_CONFIRM_SETTLE_MS` — see `_watchMenuClicks`.
+     */
+    _trackVendorArming() {
+        this._stopTrackingVendorArming();
+        this._vendorArmedAt = null;
+        const onClick = (event) => {
+            const button = event.target?.closest?.('[class*="Item_actionMenu"] button');
+            if (button && /^sell for\b/i.test(button.textContent.trim())) this._vendorArmedAt = Date.now();
+        };
+        document.addEventListener('click', onClick, true);
+        this._vendorArmTracker = onClick;
+    }
+
+    _stopTrackingVendorArming() {
+        if (!this._vendorArmTracker) return;
+        document.removeEventListener('click', this._vendorArmTracker, true);
+        this._vendorArmTracker = null;
+        this._vendorArmedAt = null;
     }
 
     /** Mark the step sent and press the game's button — the one game action of this step */
@@ -1255,7 +1393,12 @@ class BulkSellAssistant {
         this._render();
         // Read before the click: the label is what says this is the vendor sale
         const vendorSale = /^confirm\s+sell for\b/i.test(button.textContent.trim());
-        button.click();
+        // The vendor's Confirm Sell For handler ignores a click without isTrusted (measured on the
+        // test server, 2026-10-02), as the task reroll spend buttons do, so it is pressed through the
+        // game's React handler the way the reroll walk presses those. Still one press of ours for one
+        // sale. Market modal confirms accept a plain click.
+        if (vendorSale) clickThroughReact(button, { reactFirst: true });
+        else button.click();
         // Both routes (already armed, or armed by us) end here, so one place guards them
         if (vendorSale) this._guardSale(button);
     }
@@ -1275,37 +1418,23 @@ class BulkSellAssistant {
      */
     async _armVendorThenPress(button) {
         if (this._vendorArming) return;
-        this._vendorArming = true;
         const key = this._stepKey();
-        let ownClick = false;
-        let menuClicked = false;
-        const onClick = (event) => {
-            if (ownClick || !event.target?.closest?.('[class*="Item_actionMenu"]')) return;
-            menuClicked = true;
-            // The player's click on the armed button is the sale itself. It is let
-            // through; the guard goes up now (a listener added mid-dispatch skips
-            // this event) so a second click or a double-click's other half is
-            // swallowed, and the step counts as sent so our own press never follows.
-            const sold = event.target.closest('button');
-            if (sold && /^confirm\s+sell for\b/i.test(sold.textContent.trim())) {
-                this._confirmedStep = key;
-                this._guardSale(sold);
-                this._render();
-            }
-        };
-        document.addEventListener('click', onClick, true);
+        const wait = this._beginVendorWait(key);
+        const watch = wait.watch;
         try {
-            ownClick = true;
+            watch.ownClick = true;
+            watch.armedAt = Date.now();
             try {
                 button.click();
             } finally {
-                ownClick = false;
+                watch.ownClick = false;
             }
             let result = { why: 'the Sell For button did not arm in time' };
             for (let waited = 0; waited <= VENDOR_ARM_WAIT_MS; waited += VENDOR_ARM_POLL_MS) {
                 await new Promise((resolve) => setTimeout(resolve, VENDOR_ARM_POLL_MS));
-                if (this.state !== 'awaiting_confirm' || this._stepKey() !== key || this._confirmSent()) return;
-                if (menuClicked) {
+                if (!wait.live() || this.state !== 'awaiting_confirm' || this._stepKey() !== key || this._confirmSent())
+                    return;
+                if (watch.menuClicked) {
                     result = { why: 'the item menu was clicked while Confirm waited, so it pressed nothing' };
                     break;
                 }
@@ -1322,10 +1451,25 @@ class BulkSellAssistant {
                 this._render();
                 return;
             }
-            this._pressConfirm(result.button);
+            // Let the armed button stand before pressing it (see VENDOR_CONFIRM_SETTLE_MS), then check
+            // again that nothing moved meanwhile
+            await new Promise((resolve) => setTimeout(resolve, VENDOR_CONFIRM_SETTLE_MS));
+            if (!wait.live() || this.state !== 'awaiting_confirm' || this._stepKey() !== key || this._confirmSent())
+                return;
+            if (watch.menuClicked) {
+                this.confirmNote = 'the item menu was clicked while Confirm waited, so it pressed nothing';
+                this._render();
+                return;
+            }
+            const settled = this._confirmTarget();
+            if (settled.why || !settled.armed) {
+                this.confirmNote = settled.why || 'the Sell For button was no longer armed, so it pressed nothing';
+                this._render();
+                return;
+            }
+            this._pressConfirm(settled.button);
         } finally {
-            document.removeEventListener('click', onClick, true);
-            this._vendorArming = false;
+            this._endVendorWait(wait);
         }
     }
 
@@ -1829,6 +1973,8 @@ class BulkSellAssistant {
         // caller fall back to the normal market flow
         if (!tile) return false;
 
+        // From before the menu can open: an arming during the wait for it still counts
+        this._trackVendorArming();
         (tile.querySelector('[class*="Item_item"]') || tile).dispatchEvent(
             new MouseEvent('click', { bubbles: true, cancelable: true })
         );
@@ -2005,7 +2151,9 @@ class BulkSellAssistant {
     }
 
     _clearTransient() {
+        this._cancelVendorWait();
         this._releaseSaleGuard();
+        this._stopTrackingVendorArming();
         if (this.bookTimeout) {
             clearTimeout(this.bookTimeout);
             this.bookTimeout = null;
