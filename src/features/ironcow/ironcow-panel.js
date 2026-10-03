@@ -74,6 +74,8 @@ const PANEL_ID = 'toolasha-ironcow-farm-panel';
 // saved under it. Renaming it would orphan that saved position and size.
 const GEOMETRY_KEY = 'ironCowFarmPanel';
 const DEFAULT_PANEL = { width: 520, height: 620 };
+/** How long a burst of coin or queue updates settles before the bells-you-can-buy lines redraw */
+const LIVE_REDRAW_MS = 300;
 
 const COLORS = {
     background: 'rgba(10, 12, 20, 0.97)',
@@ -507,9 +509,32 @@ class IronCowFarmPanel {
 
         this._render();
         if (!this.loaded) this.loaded = this.load();
+
+        // Coins spent and rows queued change what the bells-you-can-buy count must be; redraw just
+        // those lines, a beat after a burst of updates settles
+        this._liveHandler = () => {
+            clearTimeout(this._liveTimer);
+            this._liveTimer = setTimeout(() => this._onLiveChange(), LIVE_REDRAW_MS);
+        };
+        dataManager.on('items_updated', this._liveHandler);
+        dataManager.on('actions_updated', this._liveHandler);
+    }
+
+    /** Redraw the bells-you-can-buy lines against the coins and queue as they stand now */
+    _onLiveChange() {
+        if (!this.affordableEl?.isConnected) return;
+        this.affordableEl.replaceChildren(...this._affordableLines(this._safeState()));
     }
 
     _remove() {
+        if (this._liveHandler) {
+            dataManager.off('items_updated', this._liveHandler);
+            dataManager.off('actions_updated', this._liveHandler);
+            this._liveHandler = null;
+        }
+        clearTimeout(this._liveTimer);
+        this._liveTimer = null;
+        this.affordableEl = null;
         this.detachDrag?.();
         this.detachResize?.();
         this.detachDrag = null;
@@ -883,7 +908,11 @@ class IronCowFarmPanel {
         holder.appendChild(
             line('Buy them', 'in bags of ten', COLORS.good, 'The market sells cowbells only in bags of ten.')
         );
-        holder.append(...this._affordableLines(state, pricing));
+        // Its own box, so a coin or queue change can redraw just these lines (see `_onLiveChange`)
+        const affordable = document.createElement('div');
+        affordable.append(...this._affordableLines(state));
+        this.affordableEl = affordable;
+        holder.appendChild(affordable);
 
         if (!loop || loop.missing?.length || !loop.bells) {
             holder.appendChild(
@@ -929,13 +958,15 @@ class IronCowFarmPanel {
     /**
      * How many bells the coins on hand buy now, keeping back what the queue
      * needs at its lowest point (see `coin-reserve.js`).
+     * Priced off the live market quote, not the costed snapshot: this is a purchase to make now.
      * @param {Object|null} state - From `readCharacterState`
-     * @param {Object} pricing - From `cowbellPricing()`
      * @returns {Array<HTMLElement>} Zero, one or two lines
      * @private
      */
-    _affordableLines(state, pricing) {
+    _affordableLines(state) {
         if (!state) return [];
+        const pricing = cowbellPricing();
+        if (!pricing.price) return [];
         const label = 'Bells you can buy now';
         const walked = walkQueueCoins(actionTimeDisplay());
         if (!walked) {

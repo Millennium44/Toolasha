@@ -23,6 +23,8 @@ const coinWalk = vi.hoisted(() => ({ walked: null }));
 // Mutable so the character-switch race test can move the active character
 // mid-flight, the way a real switch does.
 const characterId = vi.hoisted(() => ({ current: 'charA' }));
+// The data manager's event bus, so a test can deliver items_updated / actions_updated
+const events = vi.hoisted(() => ({ listeners: new Map() }));
 
 vi.mock('../../core/config.js', () => ({
     default: { Z_FLOATING_PANEL: 9000, getSetting: () => true, getSettingValue: (key, fallback) => fallback },
@@ -31,8 +33,18 @@ vi.mock('../../core/config.js', () => ({
 vi.mock('../../core/data-manager.js', () => ({
     default: {
         getCurrentCharacterId: () => characterId.current,
+        on: (event, fn) => {
+            if (!events.listeners.has(event)) events.listeners.set(event, new Set());
+            events.listeners.get(event).add(fn);
+        },
+        off: (event, fn) => events.listeners.get(event)?.delete(fn),
     },
 }));
+
+/** Deliver a data-manager event to whatever the panel subscribed */
+const emit = (event) => {
+    for (const fn of events.listeners.get(event) || []) fn();
+};
 
 // Geometry and the stage ticks both live in IndexedDB, which is not what this
 // file is about
@@ -322,11 +334,30 @@ describe('what it says', () => {
         expect(text()).toContain('Bells you can buy now');
         expect(text()).toContain('20 (2 bags)');
         expect(text()).toContain('Kept for the queue');
-        const row = [...ironCowFarmPanel.panel.querySelectorAll('div')].find((div) =>
-            div.textContent.startsWith('Bells you can buy now')
+        const row = [...ironCowFarmPanel.panel.querySelectorAll('div')].find(
+            (div) => div.textContent.startsWith('Bells you can buy now') && div.title
         );
         expect(row.title).toContain('Decompose: Star Fruit');
         expect(text()).not.toContain(FAILED);
+    });
+
+    test('spending coins redraws the bell count while the panel stays open, and closing unsubscribes', async () => {
+        plan.state = character({ coins: 30_000_000 });
+        coinWalk.walked = { stages: [{ label: 'Decompose: Star Fruit', coinDelta: -4_000_000 }], stoppedAt: null };
+        ironCowFarmPanel.show();
+        await ironCowFarmPanel.refresh();
+        expect(text()).toContain('20 (2 bags)');
+
+        // 20M spent on the market: 6M spare is no whole bag
+        plan.state = character({ coins: 10_000_000 });
+        emit('items_updated');
+        await new Promise((resolve) => setTimeout(resolve, 350));
+        expect(text()).toContain('0 (0 bags)');
+        expect(text()).not.toContain(FAILED);
+
+        ironCowFarmPanel.hide();
+        expect(events.listeners.get('items_updated')?.size ?? 0).toBe(0);
+        expect(events.listeners.get('actions_updated')?.size ?? 0).toBe(0);
     });
 
     test('an unreadable queue gives no bell count rather than one that ignores it', async () => {

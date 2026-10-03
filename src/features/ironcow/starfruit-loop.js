@@ -123,8 +123,9 @@ function ironCowSuccessRate(result) {
  *   and `bag` are per bell; null with no bag price
  */
 export function cowbellPricing() {
-    // 'buy' side, because buying cowbells is the only market act available.
-    const bag = getItemPrice(COWBELL_BAG, { context: 'profit', side: 'buy' });
+    // 'buy' side, because buying cowbells is the only market act available. The book's quote even
+    // under an Iron Cow valuation setting: that values loot, but these bags are bought for coins.
+    const bag = getItemPrice(COWBELL_BAG, { context: 'profit', side: 'buy', marketQuote: true });
     const pricingMode = getPricingMode('profit', 'buy');
 
     const perBellFromBag = typeof bag === 'number' && bag > 0 ? bag / COWBELLS_PER_BAG : null;
