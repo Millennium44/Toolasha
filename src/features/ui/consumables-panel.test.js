@@ -287,9 +287,32 @@ describe('the dungeon entry-key row', () => {
 
         expect(text()).toContain('Chimerical Entry Key');
         // No measured rate is not a zero rate — the row keeps the count and
-        // declines to invent a countdown
+        // labels the unknown rate instead of claiming it lasts forever.
         expect(text()).not.toContain('96.0/day');
-        expect(text()).toContain('∞');
+        expect(text()).toContain('rate unknown');
+        expect(text()).not.toContain('Stocked ✓');
+        const keyRow = [...consumablesPanel.bodyEl.querySelectorAll('div[style*="grid-template-columns"]')].find(
+            (row) => row.textContent.includes('Chimerical Entry Key')
+        );
+        expect(keyRow?.textContent).toContain('?');
+    });
+
+    test('unpriced key rows still use regular chests from the raw loot map', async () => {
+        denSession();
+        game.statsByName.Me.keyBreakdown = [];
+        game.statsByName.Me.consumableBreakdown = [];
+        game.inventory = game.inventory.filter((entry) => entry.itemHrid === KEY);
+        game.latest.players[0].loot = {
+            regular: { itemHrid: '/items/chimerical_chest', count: 4 },
+            refinement: { itemHrid: '/items/chimerical_refinement_chest', count: 9 },
+        };
+        consumablesPanel.show();
+        await settled();
+        consumablesPanel._render();
+
+        expect(text()).toContain('96.0/day');
+        expect(text()).not.toContain('rate unknown');
+        expect(text()).toContain('unpriced');
     });
 });
 
@@ -467,6 +490,117 @@ describe('a restock shows at once', () => {
 
         expect(consumablesPanel.bodyEl.textContent).toContain('Ask: — (1 unpriced) / Bid: — (1 unpriced)');
     });
+
+    test('known purchase totals identify slots whose consumption rates are unknown', async () => {
+        game.items['/items/spaceberry_cake'] = { name: 'Spaceberry Cake', consumableDetail: {} };
+        game.items['/items/blackberry_cake'] = { name: 'Blackberry Cake', consumableDetail: {} };
+        game.prices['/items/spaceberry_cake'] = { ask: 100, bid: 90 };
+        game.latest = { durationSeconds: 3600, players: [{ name: 'Me', isCurrentPlayer: true }] };
+        game.statsByName = {
+            Me: {
+                consumableBreakdown: [
+                    {
+                        itemHrid: '/items/spaceberry_cake',
+                        itemName: 'Spaceberry Cake',
+                        inventoryAmount: 0,
+                        consumptionRate: 24 / 86400,
+                        pricePerItem: 100,
+                    },
+                    {
+                        itemHrid: '/items/blackberry_cake',
+                        itemName: 'Blackberry Cake',
+                        inventoryAmount: 14,
+                        consumptionRate: null,
+                    },
+                ],
+            },
+        };
+        consumablesPanel.show();
+        await settled();
+        consumablesPanel._render();
+
+        expect(consumablesPanel.bodyEl.textContent).toContain('Buy all 24 known · 1 rate unknown');
+        expect(consumablesPanel.bodyEl.textContent).toContain('Ask: 2K (1 rate unknown)');
+    });
+
+    test('the selected idle food absent from the sim is unknown, not unused', () => {
+        const previous = globalThis.window.Toolasha;
+        try {
+            globalThis.window.Toolasha = {
+                Combat: {
+                    loadoutSnapshot: {
+                        getAllSnapshots: () => [
+                            {
+                                name: 'Combat ★',
+                                isDefault: true,
+                                actionTypeHrid: '/action_types/combat',
+                                food: [{ itemHrid: '/items/blackberry_cake' }],
+                                drinks: [],
+                            },
+                        ],
+                    },
+                },
+            };
+            game.items['/items/blackberry_cake'] = { name: 'Blackberry Cake', consumableDetail: {} };
+            game.inventory = [
+                {
+                    itemHrid: '/items/blackberry_cake',
+                    count: 14,
+                    itemLocationHrid: '/item_locations/inventory',
+                },
+            ];
+            consumablesPanel._simRates = { perHour: { '/items/other_food': 5 } };
+            consumablesPanel._simRatesByZone = {};
+
+            const section = consumablesPanel._idleSection();
+            expect(section.textContent).toContain('food rate unavailable for 1 item');
+            expect(section.textContent).toContain('14');
+            expect(section.textContent).toContain('?—??');
+            expect(section.textContent).not.toContain('Stocked ✓');
+        } finally {
+            if (previous === undefined) delete globalThis.window.Toolasha;
+            else globalThis.window.Toolasha = previous;
+        }
+    });
+
+    test('idle food with no sim is not marked stocked', () => {
+        const previous = globalThis.window.Toolasha;
+        try {
+            globalThis.window.Toolasha = {
+                Combat: {
+                    loadoutSnapshot: {
+                        getAllSnapshots: () => [
+                            {
+                                name: 'Combat ★',
+                                isDefault: true,
+                                actionTypeHrid: '/action_types/combat',
+                                food: [{ itemHrid: '/items/blackberry_cake' }],
+                                drinks: [],
+                            },
+                        ],
+                    },
+                },
+            };
+            game.items['/items/blackberry_cake'] = { name: 'Blackberry Cake', consumableDetail: {} };
+            game.inventory = [
+                {
+                    itemHrid: '/items/blackberry_cake',
+                    count: 14,
+                    itemLocationHrid: '/item_locations/inventory',
+                },
+            ];
+            consumablesPanel._simRates = null;
+            consumablesPanel._simRatesByZone = {};
+
+            const section = consumablesPanel._idleSection();
+            expect(section.textContent).toContain('food unrated — run a sim to rate it');
+            expect(section.textContent).toContain('?');
+            expect(section.textContent).not.toContain('Stocked ✓');
+        } finally {
+            if (previous === undefined) delete globalThis.window.Toolasha;
+            else globalThis.window.Toolasha = previous;
+        }
+    });
 });
 
 describe('the readiness card is not stale', () => {
@@ -493,11 +627,23 @@ describe('the readiness card is not stale', () => {
         };
     };
 
-    const players = (secondsLeft) => [
+    const players = (secondsLeft, includeUnknownRate = false) => [
         {
             name: 'Me',
             isCurrent: true,
-            forecasts: [{ itemHrid: '/items/power_coffee', name: 'Power Coffee', secondsLeft }],
+            forecasts: [
+                { itemHrid: '/items/power_coffee', name: 'Power Coffee', rateKnown: true, secondsLeft },
+                ...(includeUnknownRate
+                    ? [
+                          {
+                              itemHrid: '/items/blackberry_cake',
+                              name: 'Blackberry Cake',
+                              rateKnown: false,
+                              secondsLeft: null,
+                          },
+                      ]
+                    : []),
+            ],
         },
     ];
 
@@ -536,6 +682,18 @@ describe('the readiness card is not stale', () => {
         const after = consumablesPanel._readinessModel(players(600));
 
         expect(after.members.find((row) => row.isSelf).secondsLeft).toBe(600);
+    });
+
+    test('an unknown slot invalidates the memo and removes a complete-readiness claim', () => {
+        partyAtTheDoor();
+        const before = consumablesPanel._readinessModel(players(9000));
+        expect(before.members.find((row) => row.isSelf).unknown).toBeNull();
+
+        const after = consumablesPanel._readinessModel(players(9000, true));
+        const me = after.members.find((row) => row.isSelf);
+        expect(after).not.toBe(before);
+        expect(me.unknown).toContain('rates are unknown');
+        expect(after.stopsFirst).toMatchObject({ source: 'keys', known: 0, partial: 1 });
     });
 
     test('nothing moving still reuses the model', () => {

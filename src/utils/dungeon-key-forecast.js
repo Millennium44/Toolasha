@@ -20,10 +20,12 @@
  * - **How fast they go**: the same session measurement the panel's cost figures
  *   already use. `calculateKeyCosts` counts one entry key per regular chest the
  *   run dropped, and dividing that by the session's duration is a measured clear
- *   rate. No chests yet means no rate — reported as none rather than guessed.
+ *   rate. Raw regular-chest counts retain that measurement when a missing price
+ *   excludes the key from the priced breakdown; without a count the rate is unknown.
  */
 
 import { entryKeyFor } from './key-ledger.js';
+import { DUNGEON_CHEST_ENTRY_KEYS } from './dungeon-keys.js';
 
 /** Where a key has to be sitting for it to be spendable on a run */
 const INVENTORY = '/item_locations/inventory';
@@ -78,26 +80,52 @@ export function heldInInventory(items, itemHrid) {
  *
  * The rate comes from the session's key breakdown — one entry key per regular
  * chest, over the session's duration — which is the same measurement the combat
- * stats already price keys with. A session that has dropped no chests yet has
- * no rate, and the entry says so with a rate of zero: the panel renders that as
- * "—" for the rates while still showing what is held, which is honest about
- * what has and has not been measured.
+ * stats already price keys with. Raw regular-chest counts fill in when a
+ * missing price excludes the key row. No matching count means unknown;
+ * an explicit zero-count row remains a known zero.
  *
  * @param {Object} input - What is known about the key
  * @param {string} input.itemHrid - The key
  * @param {string} [input.itemName] - Display name, falling back to the breakdown's
  * @param {number} input.held - How many are in the inventory
  * @param {Array<Object>} [input.keyBreakdown] - `keyBreakdown` from `calculatePlayerStats`
+ * @param {Object} [input.lootMap] - Raw player loot, including chests skipped from priced key rows
  * @param {number} [input.durationSeconds] - The session the breakdown covers
  * @param {number|null} [input.fallbackPrice] - Price when the breakdown has none
  * @returns {Object} A breakdown-shaped entry for `forecast()`
  */
-export function keyConsumableEntry({ itemHrid, itemName, held, keyBreakdown, durationSeconds, fallbackPrice = null }) {
+export function keyConsumableEntry({
+    itemHrid,
+    itemName,
+    held,
+    keyBreakdown,
+    lootMap,
+    durationSeconds,
+    fallbackPrice = null,
+}) {
     const row = (keyBreakdown || []).find((entry) => entry?.itemHrid === itemHrid) || null;
 
-    const count = Number(row?.count) || 0;
+    let rawCount = row?.count;
+    let hasCount = row !== null;
+    if (!row && lootMap && typeof lootMap === 'object') {
+        const matchingChests = Object.values(lootMap).filter(
+            (loot) => DUNGEON_CHEST_ENTRY_KEYS[loot?.itemHrid] === itemHrid
+        );
+        if (
+            matchingChests.length &&
+            matchingChests.every(
+                (loot) => loot?.count != null && Number.isFinite(Number(loot.count)) && Number(loot.count) >= 0
+            )
+        ) {
+            rawCount = matchingChests.reduce((sum, loot) => sum + Number(loot.count), 0);
+            hasCount = true;
+        }
+    }
+    const count = Number(rawCount);
     const duration = Number(durationSeconds) || 0;
-    const rate = count > 0 && duration > 0 ? count / duration : 0;
+    const rateKnown =
+        hasCount && rawCount !== null && rawCount !== undefined && Number.isFinite(count) && count >= 0 && duration > 0;
+    const rate = rateKnown ? count / duration : null;
 
     // The breakdown's price is the cheaper of buying and crafting the key,
     // which is what the panel's cost columns should agree with; the market ask
@@ -111,7 +139,7 @@ export function keyConsumableEntry({ itemHrid, itemName, held, keyBreakdown, dur
         itemName: itemName || row?.itemName || itemHrid,
         inventoryAmount: Number(held) || 0,
         consumptionRate: rate,
-        consumedPerDay: rate > 0 ? Math.ceil(rate * 86400) : 0,
+        consumedPerDay: rate === null ? null : Math.ceil(rate * 86400),
         pricePerItem: price,
     };
 }

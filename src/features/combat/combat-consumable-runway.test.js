@@ -184,6 +184,16 @@ describe('runwayByItem', () => {
         expect(runways.get(GUMMY)).toBe(Infinity);
     });
 
+    test('a missing measured rate stays unknown rather than becoming infinite', () => {
+        const runways = runwayByItem({
+            latest: () => snapshot([{ itemHrid: GUMMY, inventoryAmount: 20, consumptionRate: null }]),
+            stats: (player) => ({ consumableBreakdown: player.breakdown }),
+            itemDetails: () => null,
+        });
+
+        expect(runways.get(GUMMY)).toBeNull();
+    });
+
     test('no tracked data for this character yields nothing to draw', () => {
         expect(runwayByItem({ latest: () => null }).size).toBe(0);
         expect(runwayByItem({ latest: () => ({ players: [{ isCurrentPlayer: false }] }) }).size).toBe(0);
@@ -199,6 +209,10 @@ describe('captionFor', () => {
 
     test('an unused slot reads infinite rather than as a duration', () => {
         expect(captionFor(Infinity, 3600).text).toBe('∞');
+    });
+
+    test('an unknown rate is labelled separately from an unused slot', () => {
+        expect(captionFor(null, 3600)).toEqual({ text: '?', color: expect.any(String) });
     });
 });
 

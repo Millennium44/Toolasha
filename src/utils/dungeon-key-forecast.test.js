@@ -91,11 +91,77 @@ describe('keyConsumableEntry', () => {
             fallbackPrice: 85000,
         });
 
-        expect(entry.consumptionRate).toBe(0);
-        expect(entry.consumedPerDay).toBe(0);
+        expect(entry.consumptionRate).toBeNull();
+        expect(entry.consumedPerDay).toBeNull();
         expect(entry.inventoryAmount).toBe(40);
         // The market stands in only when no run has priced the key
         expect(entry.pricePerItem).toBe(85000);
+    });
+
+    test('raw loot recovers a priced-out regular-chest count without pricing refinement chests', () => {
+        const entry = keyConsumableEntry({
+            itemHrid: KEY,
+            held: 40,
+            keyBreakdown: [],
+            lootMap: {
+                regular: { itemHrid: '/items/chimerical_chest', count: 4 },
+                refinement: { itemHrid: '/items/chimerical_refinement_chest', count: 9 },
+                otherDungeon: { itemHrid: '/items/sinister_chest', count: 3 },
+            },
+            durationSeconds: 3600,
+        });
+
+        expect(entry.consumptionRate).toBeCloseTo(4 / 3600);
+        expect(entry.consumedPerDay).toBe(96);
+        expect(entry.pricePerItem).toBeNull();
+        expect(forecast(entry).costPerDay).toBeNull();
+    });
+
+    test('a refinement chest alone does not measure entry-key consumption', () => {
+        const entry = keyConsumableEntry({
+            itemHrid: KEY,
+            held: 40,
+            lootMap: { refinement: { itemHrid: '/items/chimerical_refinement_chest', count: 9 } },
+            durationSeconds: 3600,
+        });
+
+        expect(entry.consumptionRate).toBeNull();
+    });
+
+    test('an explicit zero-count regular chest remains a known zero from raw loot', () => {
+        const entry = keyConsumableEntry({
+            itemHrid: KEY,
+            held: 40,
+            lootMap: { regular: { itemHrid: '/items/chimerical_chest', count: 0 } },
+            durationSeconds: 3600,
+        });
+
+        expect(entry.consumptionRate).toBe(0);
+        expect(forecast(entry).secondsLeft).toBe(Infinity);
+    });
+
+    test('a regular chest with an unavailable count does not become measured zero', () => {
+        const entry = keyConsumableEntry({
+            itemHrid: KEY,
+            held: 40,
+            lootMap: { '/items/chimerical_chest': { itemHrid: '/items/chimerical_chest', count: null } },
+            durationSeconds: 3600,
+        });
+
+        expect(entry.consumptionRate).toBeNull();
+        expect(forecast(entry).secondsLeft).toBeNull();
+    });
+
+    test('an explicit zero-count measurement remains a known zero rate', () => {
+        const entry = keyConsumableEntry({
+            itemHrid: KEY,
+            held: 40,
+            keyBreakdown: [{ itemHrid: KEY, count: 0 }],
+            durationSeconds: 3600,
+        });
+
+        expect(entry.consumptionRate).toBe(0);
+        expect(forecast(entry).secondsLeft).toBe(Infinity);
     });
 
     test('the breakdown price beats the market fallback', () => {
@@ -116,7 +182,7 @@ describe('keyConsumableEntry', () => {
             keyBreakdown: [{ itemHrid: '/items/chimerical_chest_key', count: 4, pricePerItem: 12000 }],
             durationSeconds: 3600,
         });
-        expect(entry.consumptionRate).toBe(0);
+        expect(entry.consumptionRate).toBeNull();
     });
 
     test('feeds the forecast arithmetic like any other consumable', () => {

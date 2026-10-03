@@ -19,8 +19,9 @@ const game = vi.hoisted(() => ({
     actions: [],
     profitView: null,
     forecasts: [],
+    partySummary: null,
     outlook: null,
-    consumableSides: { ask: 0, bid: 0, askUnpriced: 0, bidUnpriced: 0 },
+    consumableSides: { ask: 0, bid: 0, askUnpriced: 0, bidUnpriced: 0, askUnknown: 0, bidUnknown: 0 },
 }));
 
 vi.mock('../../core/data-manager.js', () => ({
@@ -71,9 +72,9 @@ vi.mock('../../utils/bundle-bridge.js', () => ({
 vi.mock('../../utils/market-data.js', () => ({ getItemPrices: () => null }));
 vi.mock('../../utils/marketplace-tabs.js', () => ({ navigateToMarketplace: () => {} }));
 vi.mock('../../utils/consumable-forecast.js', () => ({
-    forecastAll: () => game.forecasts,
+    forecastAll: (breakdown) => (typeof game.forecasts === 'function' ? game.forecasts(breakdown) : game.forecasts),
     costPerDaySides: () => game.consumableSides,
-    partyOutlook: () => ({ you: game.outlook, party: null, partyName: null }),
+    partyOutlook: () => game.partySummary || { you: game.outlook, party: null, partyName: null },
     drinkRatePerDay: () => 0,
 }));
 vi.mock('../../utils/consumable-target.js', () => ({
@@ -110,8 +111,9 @@ beforeEach(() => {
     game.actions = [];
     game.profitView = null;
     game.forecasts = [];
+    game.partySummary = null;
     game.outlook = null;
-    game.consumableSides = { ask: 0, bid: 0, askUnpriced: 0, bidUnpriced: 0 };
+    game.consumableSides = { ask: 0, bid: 0, askUnpriced: 0, bidUnpriced: 0, askUnknown: 0, bidUnknown: 0 };
     // partyStats() and the consumable forecast both cache at module level for
     // CACHE_MS of real time, so whatever the previous test rendered is still
     // the answer when the next one asks. character_switching is the module's
@@ -273,7 +275,7 @@ describe('the rows summarise their own inputs', () => {
     test('the Consumables tile preserves the unknown part of daily market totals', () => {
         collector.data = run({ name: 'Alice', consumableBreakdown: [{ itemHrid: '/items/blackberry_cake' }] });
         game.forecasts = [{ itemHrid: '/items/blackberry_cake', secondsLeft: 3600 }];
-        game.outlook = { itemHrid: '/items/blackberry_cake', held: 10, secondsLeft: 3600 };
+        game.outlook = { itemHrid: '/items/blackberry_cake', held: 10, rateKnown: true, secondsLeft: 3600 };
         game.consumableSides = { ask: 2400, bid: 2160, askUnpriced: 1, bidUnpriced: 1 };
 
         const initial = versionOf('consumables');
@@ -283,5 +285,122 @@ describe('the rows summarise their own inputs', () => {
         game.dmHandlers.character_switching();
         expect(versionOf('consumables')).not.toBe(initial);
         expect(renderRow('consumables')).toContain('Ask: — (2 unpriced)\nBid: — (2 unpriced)');
+    });
+
+    test('the consumables tile stays visible when rates are unknown', () => {
+        collector.data = run({ name: 'Alice', consumableBreakdown: [{ itemHrid: '/items/blackberry_cake' }] });
+        game.forecasts = [
+            {
+                itemHrid: '/items/blackberry_cake',
+                name: 'Blackberry Cake',
+                held: 14,
+                rateKnown: false,
+                secondsLeft: null,
+            },
+        ];
+        game.outlook = null;
+        game.consumableSides = {
+            ask: null,
+            bid: null,
+            askUnpriced: 0,
+            bidUnpriced: 0,
+            askUnknown: 1,
+            bidUnknown: 1,
+        };
+
+        expect(versionOf('consumables')).not.toBe('blank');
+        expect(renderRow('consumables')).toContain('rate unknown');
+        expect(renderRow('consumables')).toContain('Ask: — (1 rate unknown)');
+    });
+
+    test('the tile marks a known countdown as partial when another rate is unknown', () => {
+        collector.data = run({ name: 'Alice', consumableBreakdown: [{ itemHrid: '/items/blackberry_cake' }] });
+        game.forecasts = [
+            {
+                itemHrid: '/items/spaceberry_cake',
+                name: 'Spaceberry Cake',
+                held: 100,
+                rateKnown: true,
+                secondsLeft: 900,
+            },
+            {
+                itemHrid: '/items/blackberry_cake',
+                name: 'Blackberry Cake',
+                held: 14,
+                rateKnown: false,
+                secondsLeft: null,
+            },
+        ];
+        game.outlook = { itemHrid: '/items/spaceberry_cake', held: 100, rateKnown: true, secondsLeft: 900 };
+        game.consumableSides = {
+            ask: 2400,
+            bid: 2160,
+            askUnpriced: 0,
+            bidUnpriced: 0,
+            askUnknown: 1,
+            bidUnknown: 1,
+        };
+        game.dmHandlers.character_switching();
+
+        expect(renderRow('consumables')).toContain('15m + ?');
+        expect(renderRow('consumables')).toContain('Ask: 2.40K (1 rate unknown)');
+    });
+
+    test('the version changes when a party member gains an unknown rate beside the same limiter', () => {
+        collector.data = {
+            durationSeconds: 600,
+            players: [
+                { name: 'Alice', isCurrentPlayer: true, consumableBreakdown: [{ itemHrid: '/items/spaceberry_cake' }] },
+                {
+                    name: 'Bob',
+                    consumableBreakdown: [
+                        { itemHrid: '/items/blackberry_cake' },
+                        { itemHrid: '/items/spaceberry_cake' },
+                    ],
+                },
+            ],
+        };
+        let partyRateKnown = true;
+        game.forecasts = (breakdown) => {
+            const isParty = breakdown[0].itemHrid === '/items/blackberry_cake';
+            const entries = [
+                {
+                    itemHrid: breakdown[0].itemHrid,
+                    name: isParty ? 'Blackberry Cake' : 'Spaceberry Cake',
+                    held: isParty ? 20 : 10,
+                    rateKnown: isParty ? partyRateKnown : true,
+                    secondsLeft: isParty ? (partyRateKnown ? 1800 : null) : 900,
+                },
+            ];
+            if (isParty) {
+                entries.push({
+                    itemHrid: '/items/spaceberry_cake',
+                    name: 'Spaceberry Cake',
+                    held: 10,
+                    rateKnown: true,
+                    secondsLeft: 1200,
+                });
+            }
+            return entries;
+        };
+        game.outlook = {
+            itemHrid: '/items/spaceberry_cake',
+            held: 10,
+            rateKnown: true,
+            secondsLeft: 900,
+        };
+        game.partySummary = {
+            you: game.outlook,
+            party: { itemHrid: '/items/spaceberry_cake', held: 10, rateKnown: true, secondsLeft: 1200 },
+            partyName: 'Bob',
+        };
+
+        const before = versionOf('consumables');
+        partyRateKnown = false;
+        game.dmHandlers.character_switching();
+        const after = versionOf('consumables');
+
+        expect(after).not.toBe(before);
+        expect(renderRow('consumables')).toContain('20m + ?');
     });
 });

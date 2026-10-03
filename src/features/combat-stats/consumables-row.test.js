@@ -50,7 +50,7 @@ const draw = () => {
 beforeEach(() => {
     game.items = { '/items/purples_gift': { name: "Purple's Gift" } };
     game.outlook = {
-        you: { itemHrid: '/items/purples_gift', held: 3170, secondsLeft: 165_000 },
+        you: { itemHrid: '/items/purples_gift', held: 3170, rateKnown: true, secondsLeft: 165_000 },
         party: null,
         partyName: null,
     };

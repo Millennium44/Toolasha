@@ -122,6 +122,21 @@ describe('memberReadiness', () => {
         const row = memberReadiness({ name: 'Idle', forecasts: [{ name: 'Cake', secondsLeft: Infinity }] });
         expect(row.unknown).toBe(UNKNOWN_CONSUMABLES);
     });
+
+    test('one missing rate keeps a finite slot from claiming complete food coverage', () => {
+        const row = memberReadiness({
+            name: 'Me',
+            forecasts: [
+                { name: 'Known Cake', rateKnown: true, secondsLeft: 1200 },
+                { name: 'Blackberry Cake', rateKnown: false, secondsLeft: null },
+            ],
+            runSeconds: RUN,
+        });
+
+        expect(row.secondsLeft).toBe(1200);
+        expect(row.unknown).toContain('rates are unknown');
+        expect(memberLimit(row)).toMatchObject({ source: null });
+    });
 });
 
 describe('a member whose keys are known but whose food is not', () => {
@@ -245,6 +260,20 @@ describe('whoStopsFirst', () => {
             memberReadiness({ name: 'Ally', forecasts: null, keysHeld: 1 }),
         ];
         expect(whoStopsFirst(rows)).toMatchObject({ name: 'Me', source: 'food' });
+    });
+
+    test('a measured slot does not hide an unknown rate in the same member', () => {
+        const rows = [
+            memberReadiness({
+                name: 'Me',
+                isSelf: true,
+                forecasts: [
+                    { name: 'Known Cake', rateKnown: true, secondsLeft: 1200 },
+                    { name: 'Blackberry Cake', rateKnown: false, secondsLeft: null },
+                ],
+            }),
+        ];
+        expect(whoStopsFirst(rows)).toBeNull();
     });
 });
 

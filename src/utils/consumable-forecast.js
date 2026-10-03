@@ -29,8 +29,9 @@
  * @property {string} itemHrid - The item
  * @property {string} name - Display name
  * @property {number} held - How many are in the inventory
- * @property {number} perDay - How many are consumed a day
- * @property {number} secondsLeft - Until it runs out; `Infinity` when it is not being used
+ * @property {number|null} perDay - How many are consumed a day, or null when unknown
+ * @property {boolean} rateKnown - Whether consumption is measured or known to be zero
+ * @property {number|null} secondsLeft - Until it runs out; `Infinity` when unused, null when unknown
  * @property {number|null} costPerDay - What a day of it costs, or null with no price
  * @property {number|null} price - Price per item, or null
  * @property {{ask: number|null, bid: number|null}} costPerDaySides - A day's cost at each side
@@ -44,27 +45,33 @@
  */
 export function forecast(entry, prices = null) {
     const held = Number(entry?.inventoryAmount ?? entry?.currentCount ?? 0) || 0;
-    const rate = Number(entry?.consumptionRate) || 0;
+    const rawRate = entry?.consumptionRate;
+    const rate =
+        rawRate !== null && rawRate !== undefined && Number.isFinite(Number(rawRate)) && Number(rawRate) >= 0
+            ? Number(rawRate)
+            : null;
+    const rateKnown = rate !== null;
     const price = Number(entry?.pricePerItem) > 0 ? Number(entry.pricePerItem) : null;
 
     // Not being used is not the same as lasting forever, but it is the same
     // arithmetic — what keeps them apart is that the headline ignores anything
     // infinite rather than letting it win the minimum
-    const secondsLeft = rate > 0 ? held / rate : Infinity;
-    const perDay = rate * 86400;
+    const secondsLeft = !rateKnown ? null : rate > 0 ? held / rate : Infinity;
+    const perDay = rateKnown ? rate * 86400 : null;
 
     // Both sides, because buying costs ask and the stock you already hold is
     // worth bid — MCS shows the pair and the gap between them is real money
-    const side = (value) => (value > 0 ? perDay * value : null);
+    const side = (value) => (!rateKnown || !(value > 0) ? null : perDay * value);
 
     return {
         itemHrid: entry?.itemHrid || '',
         name: entry?.itemName || entry?.itemHrid || 'Unknown',
         held,
+        rateKnown,
         perDay,
         secondsLeft,
         price,
-        costPerDay: price === null ? null : perDay * price,
+        costPerDay: !rateKnown || price === null ? null : perDay * price,
         costPerDaySides: { ask: side(prices?.ask), bid: side(prices?.bid) },
     };
 }
@@ -86,18 +93,23 @@ export function forecastAll(breakdown, pricesFor = null, { keepOrder = false } =
     // The order the game gave them is slot order, which is how they are equipped
     // and therefore how you think about them — the soonest is already marked, so
     // sorting by it as well trades a familiar list for a shuffling one
-    return keepOrder ? list : list.sort((a, b) => a.secondsLeft - b.secondsLeft);
+    return keepOrder
+        ? list
+        : list.sort((a, b) => {
+              if (a.rateKnown !== b.rateKnown) return a.rateKnown ? -1 : 1;
+              return (a.secondsLeft ?? Infinity) - (b.secondsLeft ?? Infinity);
+          });
 }
 
 /**
  * When the character actually stops.
  *
  * The minimum, not the mean — a run ends when its first consumable runs out.
- * Anything not being used is left out entirely, because "never" is not a
- * candidate for "soonest" however the arithmetic is written.
+ * Unused and unknown-rate entries are left out: neither has a finite countdown
+ * that can be compared honestly with measured use.
  *
  * @param {Forecast[]} forecasts - Normalised consumables
- * @returns {Forecast|null} The one that goes first, or null when nothing is being used
+ * @returns {Forecast|null} The one that goes first, or null when no rate is known
  */
 export function firstToRunOut(forecasts) {
     let soonest = null;
@@ -111,21 +123,26 @@ export function firstToRunOut(forecasts) {
 /**
  * What a day of every consumable costs.
  *
- * Unpriced items are counted as nothing and reported separately, rather than
- * silently making the total look smaller than it is.
+ * Unpriced and unrated items are excluded from the sum and counted separately,
+ * rather than silently making the total look smaller than it is.
  *
  * @param {Forecast[]} forecasts - Normalised consumables
- * @returns {{total: number, unpriced: number}}
+ * @returns {{total: number, unpriced: number, unrated: number}}
  */
 export function costPerDay(forecasts) {
     let total = 0;
     let unpriced = 0;
+    let unrated = 0;
 
     for (const entry of forecasts || []) {
+        if (!entry.rateKnown) {
+            unrated++;
+            continue;
+        }
         if (entry.costPerDay === null) unpriced++;
         else total += entry.costPerDay;
     }
-    return { total, unpriced };
+    return { total, unpriced, unrated };
 }
 
 /**
@@ -136,9 +153,10 @@ export function costPerDay(forecasts) {
  *
  * @param {Forecast} entry - Normalised consumable
  * @param {number} seconds - How long it should last
- * @returns {{count: number, cost: number|null}} Zero when there is already enough
+ * @returns {{count: number|null, cost: number|null, rateUnknown?: boolean}} Null count when the rate is unknown
  */
 export function refillFor(entry, seconds) {
+    if (!entry?.rateKnown) return { count: null, cost: null, rateUnknown: true };
     // Something not being consumed needs nothing, however long the target
     if (!(entry?.perDay > 0) || !(seconds > 0)) return { count: 0, cost: 0 };
 
@@ -153,22 +171,27 @@ export function refillFor(entry, seconds) {
  *
  * @param {Forecast[]} forecasts - Normalised consumables
  * @param {number} seconds - Target duration
- * @returns {{items: number, cost: number, unpriced: number}}
+ * @returns {{items: number, cost: number, unpriced: number, unrated: number}}
  */
 export function refillAll(forecasts, seconds) {
     let items = 0;
     let cost = 0;
     let unpriced = 0;
+    let unrated = 0;
 
     for (const entry of forecasts || []) {
         const need = refillFor(entry, seconds);
+        if (need.rateUnknown) {
+            unrated++;
+            continue;
+        }
         if (!need.count) continue;
 
         items += need.count;
         if (need.cost === null) unpriced++;
         else cost += need.cost;
     }
-    return { items, cost, unpriced };
+    return { items, cost, unpriced, unrated };
 }
 
 /**
@@ -178,19 +201,27 @@ export function refillAll(forecasts, seconds) {
  * million a day the gap between them is worth seeing rather than averaging away.
  *
  * @param {Forecast[]} forecasts - Normalised consumables
- * @returns {{ask: number|null, bid: number|null, askUnpriced: number, bidUnpriced: number}}
+ * @returns {{ask: number|null, bid: number|null, askUnpriced: number, bidUnpriced: number,
+ * askUnknown: number, bidUnknown: number}}
  */
 export function costPerDaySides(forecasts) {
     const totals = {
         ask: { amount: 0, unpriced: 0 },
         bid: { amount: 0, unpriced: 0 },
+        askUnknown: 0,
+        bidUnknown: 0,
     };
 
     for (const entry of forecasts || []) {
         // An unused slot contributes an actual zero, not an unpriced cost.
         // For a consumed item, keep the missing market side visible instead of
         // turning an incomplete total into a plausible-looking free one.
-        if (!(entry?.perDay > 0)) continue;
+        if (!entry?.rateKnown) {
+            totals.askUnknown++;
+            totals.bidUnknown++;
+            continue;
+        }
+        if (!(entry.perDay > 0)) continue;
 
         for (const side of ['ask', 'bid']) {
             const amount = entry.costPerDaySides?.[side];
@@ -203,10 +234,12 @@ export function costPerDaySides(forecasts) {
     }
 
     return {
-        ask: totals.ask.unpriced && totals.ask.amount === 0 ? null : totals.ask.amount,
-        bid: totals.bid.unpriced && totals.bid.amount === 0 ? null : totals.bid.amount,
+        ask: (totals.ask.unpriced || totals.askUnknown) && totals.ask.amount === 0 ? null : totals.ask.amount,
+        bid: (totals.bid.unpriced || totals.bidUnknown) && totals.bid.amount === 0 ? null : totals.bid.amount,
         askUnpriced: totals.ask.unpriced,
         bidUnpriced: totals.bid.unpriced,
+        askUnknown: totals.askUnknown,
+        bidUnknown: totals.bidUnknown,
     };
 }
 
