@@ -67,6 +67,13 @@ const EVENT_KEY_PREFIX = 'bestiary-points';
 /** Device-local (`toolasha_local_`), per character: the last real counts, so a reload has a baseline */
 export const BASELINE_KEY = 'toolasha_local_bestiaryCounts';
 
+/**
+ * Device-local, per character: the target value an alert last fired for. An estimated crossing is
+ * never stored as a reading, so without this a reload restores the older baseline, re-arms, and the
+ * next kill announces the same crossing again.
+ */
+export const FIRED_KEY = 'toolasha_local_bestiaryFiredTarget';
+
 /** Guild trial monsters are not tier-weighted, so a kill's credit cannot be estimated from tier */
 const TRIAL_MONSTER_PREFIX = '/monsters/trial_';
 
@@ -99,6 +106,8 @@ class BestiaryPointsAlerts {
         this.partySize = 1;
         this.seenTarget = null;
         this.armed = false;
+        /** The target value the alert last fired for (stored, so a reload stays disarmed); null if none */
+        this.firedTarget = null;
     }
 
     /**
@@ -145,6 +154,12 @@ class BestiaryPointsAlerts {
             'battle_updated',
             guard('Reading a battle tick', (data) => this.onBattleUpdated(data))
         );
+
+        // The target already announced, so an estimated crossing is not announced again after a reload
+        const firedWho = dataManager.getCurrentCharacterId?.();
+        const fired = await readScoped(FIRED_KEY, 'settings', null);
+        if (!this.isInitialized || dataManager.getCurrentCharacterId?.() !== firedWho) return;
+        if (typeof fired === 'number' && Number.isFinite(fired)) this.firedTarget = fired;
 
         // A reading already held this session, else the one kept from the last page load
         const held = dataManager.getCharacterMonsters?.();
@@ -249,7 +264,7 @@ class BestiaryPointsAlerts {
 
         if (this.seenTarget !== target) {
             this.seenTarget = target;
-            this.armed = total < target;
+            this.armed = total < target && this.firedTarget !== target;
         }
         if (!this.armed || total < target) return;
 
@@ -259,7 +274,11 @@ class BestiaryPointsAlerts {
             `Bestiary: ${shown} points — target ${formatWithSeparator(target)} reached${real ? '' : ' (estimated from kills)'}.`,
             { title: 'Bestiary target reached', subject: `${formatWithSeparator(target)} points` }
         );
-        if (result?.fired) this.armed = false;
+        if (result?.fired) {
+            this.armed = false;
+            this.firedTarget = target;
+            writeScoped(FIRED_KEY, target, 'settings').catch(() => {});
+        }
     }
 
     /**

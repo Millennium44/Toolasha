@@ -93,7 +93,7 @@ globalThis.document = {
     },
 };
 
-const { default: alerts, MASTER_SETTING, BASELINE_KEY } = await import('./bestiary-points-alerts.js');
+const { default: alerts, MASTER_SETTING, BASELINE_KEY, FIRED_KEY } = await import('./bestiary-points-alerts.js');
 const { setBestiaryTarget, TARGET_KEY } = await import('../../utils/bestiary-target.js');
 
 /** Rows as `monsters_updated` carries them */
@@ -237,6 +237,30 @@ describe('bestiary points alerts', () => {
         wave(['fly']);
         await kill();
         expect(game.notified).toHaveLength(1);
+    });
+
+    test('an estimated crossing does not repeat after a reload that restores the older baseline', async () => {
+        await reading({ fly: 9 });
+        await alerts.initialize();
+        wave(['fly']);
+        await kill(); // estimated crossing, announced
+        expect(game.notified).toHaveLength(1);
+        expect(game.stored.get(`${FIRED_KEY}_char-a`)).toBe(3);
+
+        // Reload: only the real baseline (9) is stored; no monsters_updated arrives first
+        alerts.disable();
+        game.monsters = null;
+        await alerts.initialize();
+        wave(['fly']);
+        await kill();
+        expect(game.notified).toHaveLength(1);
+
+        // A raised target still re-arms
+        game.stored.set(`${TARGET_KEY}_char-a`, 6);
+        await reading({ fly: 10 });
+        expect(game.notified).toHaveLength(1);
+        await reading({ fly: 100 }); // 6 points
+        expect(game.notified).toHaveLength(2);
     });
 
     test('a target already reached at load is not announced', async () => {
